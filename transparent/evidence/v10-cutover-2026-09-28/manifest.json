@@ -1,0 +1,79 @@
+{
+  "run_id": "v10-cutover-2026-09-28",
+  "runtime_source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "managed_ops_sha": "4905d3a30f63b096e514ab6851a95d4b9b0e80e0",
+  "deployment": "direct SSH, explicitly authorized; long-running CI bypassed",
+  "cutover_verified_utc": "2026-09-28T22:17:04.163204+00:00",
+  "schema": "transparent-shard-v10",
+  "journal_version": 2,
+  "sqlite_schema": 3,
+  "filter_profile": "zcash-transparent-range-v2",
+  "directory_choice": "all",
+  "backend": "reinspiring-two-mask-m29-v1",
+  "ipir_sp_commit": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+  "key_reuse": "none; fresh key per query",
+  "shards": 86,
+  "archive_shards": 77,
+  "recent_shards": 9,
+  "frozen_range_inclusive": [
+    0,
+    3499341
+  ],
+  "cutoff_height": 3262749,
+  "events": 353795624,
+  "allocated_table_bytes": 31457280000,
+  "row_bytes": 4096,
+  "geometries": {
+    "archive-wide": {
+      "directory_rows": 32768,
+      "page_rows": 65536
+    },
+    "recent-4k-8k": {
+      "directory_rows": 4096,
+      "page_rows": 8192
+    }
+  },
+  "live_first_verified_height": 3499627,
+  "regression": {
+    "cases": 11,
+    "checkpoints": 68,
+    "requests": 2319,
+    "attempts": 2319,
+    "failed_attempts": 0
+  },
+  "smoke": {
+    "concurrency": 1,
+    "syncs": 124,
+    "completed": 124,
+    "exact": 124,
+    "failed": 0
+  },
+  "four_client_load": {
+    "started_utc": "2026-09-28T22:19:59.294162+00:00",
+    "completed_utc": "2026-09-28T22:31:49.547981+00:00",
+    "concurrency": 4,
+    "dispatch_duration_seconds": 300,
+    "actual_seconds": 710.181912115,
+    "attempts": 47,
+    "completed": 46,
+    "exact": 46,
+    "failed": 0,
+    "query_budget_incomplete": 1,
+    "private_query_limit_per_sync": 6000,
+    "http_deadline_seconds": 600,
+    "http_max_attempts": 3
+  },
+  "host_facts": "deployment/host-facts.json",
+  "build": "publication/bin/build.json",
+  "operator_commands": [
+    "deployment/cutover-commands.jsonl",
+    "deployment/cutover-commands-2.jsonl"
+  ],
+  "rollback_rehearsal": "not performed after the successful cutover",
+  "consumer_scope": "wallet-pir reference client and SQLite store; no downstream application qualification",
+  "resource_observations": "observation-summary.json",
+  "post_load_canonical_height": 3499638,
+  "transient_public_init_probe_503": "2026-09-28T22:28:48.730461+00:00; recovered next 5-second sample; retained transition log",
+  "completion_check": "deployment/completion-status.json",
+  "evidence_checksums": "SHA256SUMS"
+}

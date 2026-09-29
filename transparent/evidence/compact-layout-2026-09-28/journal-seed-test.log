@@ -1,0 +1,10 @@
+    Blocking waiting for file lock on build directory
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/wallet-pir/transparent/tools/transparent-regression)
+    Finished `test` profile [optimized + debuginfo] target(s) in 20.56s
+     Running unittests src/bin/hierarchical-filter-eval.rs (target/debug/deps/hierarchical_filter_eval-d9fcefe36e81f2cb)
+
+running 1 test
+test seed_tests::journal_seeds_verify_window_and_preserve_only_prior_events ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

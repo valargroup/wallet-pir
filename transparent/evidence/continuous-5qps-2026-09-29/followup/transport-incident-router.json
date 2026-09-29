@@ -1,0 +1,394 @@
+{
+  "version": "2.6.2",
+  "query_failed_at_unix": 1790653975.207106,
+  "rows": [
+    {
+      "systemd": "Reloading caddy.service - Caddy..."
+    },
+    {
+      "ts": 1790653972.955066,
+      "level": "info",
+      "msg": "using config from file"
+    },
+    {
+      "ts": 1790653972.9588122,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653972.960905,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653972.963116,
+      "level": "info",
+      "msg": "adapted config to JSON"
+    },
+    {
+      "ts": 1790653972.9678516,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "received request"
+    },
+    {
+      "ts": 1790653972.9744518,
+      "level": "info",
+      "logger": "admin",
+      "msg": "admin endpoint started"
+    },
+    {
+      "ts": 1790653972.9749315,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS"
+    },
+    {
+      "ts": 1790653972.9750054,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "enabling automatic HTTP->HTTPS redirects"
+    },
+    {
+      "ts": 1790653972.9788604,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling HTTP/3 listener"
+    },
+    {
+      "ts": 1790653972.9789066,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653972.9789753,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653972.9789822,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653972.9789875,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653972.9790635,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653972.9790733,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653972.979093,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653972.9791,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling automatic TLS certificate management"
+    },
+    {
+      "ts": 1790653972.9791768,
+      "level": "info",
+      "logger": "http",
+      "msg": "servers shutting down with eternal grace period"
+    },
+    {
+      "ts": 1790653972.980035,
+      "level": "info",
+      "msg": "autosaved config (load with --resume flag)"
+    },
+    {
+      "ts": 1790653972.980147,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "load complete"
+    },
+    {
+      "ts": 1790653972.985134,
+      "level": "info",
+      "logger": "admin",
+      "msg": "stopped previous server"
+    },
+    {
+      "systemd": "Reloaded caddy.service - Caddy."
+    },
+    {
+      "systemd": "Reloading caddy.service - Caddy..."
+    },
+    {
+      "ts": 1790653973.97659,
+      "level": "info",
+      "msg": "using config from file"
+    },
+    {
+      "ts": 1790653973.9818568,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653973.9844599,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653973.9867337,
+      "level": "info",
+      "msg": "adapted config to JSON"
+    },
+    {
+      "ts": 1790653973.9892044,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "received request"
+    },
+    {
+      "ts": 1790653973.993841,
+      "level": "info",
+      "logger": "admin",
+      "msg": "admin endpoint started"
+    },
+    {
+      "ts": 1790653973.994466,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS"
+    },
+    {
+      "ts": 1790653973.9944973,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "enabling automatic HTTP->HTTPS redirects"
+    },
+    {
+      "ts": 1790653973.9994197,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling HTTP/3 listener"
+    },
+    {
+      "ts": 1790653973.9998891,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653974.0000138,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653974.0000234,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653974.0000284,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653974.00011,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653974.0001168,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653974.000122,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653974.0001287,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling automatic TLS certificate management"
+    },
+    {
+      "ts": 1790653974.0001938,
+      "level": "info",
+      "logger": "http",
+      "msg": "servers shutting down with eternal grace period"
+    },
+    {
+      "ts": 1790653974.0005596,
+      "level": "info",
+      "msg": "autosaved config (load with --resume flag)"
+    },
+    {
+      "ts": 1790653974.0006468,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "load complete"
+    },
+    {
+      "ts": 1790653974.0031765,
+      "level": "info",
+      "logger": "admin",
+      "msg": "stopped previous server"
+    },
+    {
+      "systemd": "Reloaded caddy.service - Caddy."
+    },
+    {
+      "systemd": "Reloading caddy.service - Caddy..."
+    },
+    {
+      "ts": 1790653975.1961877,
+      "level": "info",
+      "msg": "using config from file"
+    },
+    {
+      "ts": 1790653975.1985633,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653975.199942,
+      "level": "warn",
+      "logger": "caddyfile",
+      "msg": "Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"
+    },
+    {
+      "ts": 1790653975.2021573,
+      "level": "info",
+      "msg": "adapted config to JSON"
+    },
+    {
+      "ts": 1790653975.2037578,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "received request"
+    },
+    {
+      "ts": 1790653975.2079432,
+      "level": "info",
+      "logger": "admin",
+      "msg": "admin endpoint started"
+    },
+    {
+      "ts": 1790653975.2086184,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS"
+    },
+    {
+      "ts": 1790653975.2086809,
+      "level": "info",
+      "logger": "http.auto_https",
+      "msg": "enabling automatic HTTP->HTTPS redirects"
+    },
+    {
+      "ts": 1790653975.2171905,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling HTTP/3 listener"
+    },
+    {
+      "ts": 1790653975.2172327,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653975.2172985,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653975.2173045,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653975.2173097,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653975.217356,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/2 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653975.2173612,
+      "level": "warn",
+      "logger": "http",
+      "msg": "HTTP/3 skipped because it requires TLS"
+    },
+    {
+      "ts": 1790653975.217365,
+      "level": "info",
+      "logger": "http.log",
+      "msg": "server running"
+    },
+    {
+      "ts": 1790653975.2173715,
+      "level": "info",
+      "logger": "http",
+      "msg": "enabling automatic TLS certificate management"
+    },
+    {
+      "ts": 1790653975.2174335,
+      "level": "info",
+      "logger": "http",
+      "msg": "servers shutting down with eternal grace period"
+    },
+    {
+      "ts": 1790653975.2195892,
+      "level": "info",
+      "msg": "autosaved config (load with --resume flag)"
+    },
+    {
+      "ts": 1790653975.2208054,
+      "level": "info",
+      "logger": "admin.api",
+      "msg": "load complete"
+    },
+    {
+      "systemd": "Reloaded caddy.service - Caddy."
+    },
+    {
+      "ts": 1790653975.226648,
+      "level": "info",
+      "logger": "admin",
+      "msg": "stopped previous server"
+    }
+  ],
+  "interpretation": "Failure overlaps router reload to the millisecond; original load version omitted underlying transport cause. Correlation, not proof of the exact transport error. No decoded-row mismatch."
+}

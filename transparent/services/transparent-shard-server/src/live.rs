@@ -119,7 +119,14 @@ impl LiveService {
         })))
     }
     pub fn router(&self) -> Router {
-        Router::new().fallback(dispatch).with_state(self.clone())
+        let telemetry = self.0.active.read().unwrap().state.metrics().http.clone();
+        Router::new()
+            .fallback(dispatch)
+            .layer(axum::middleware::from_fn_with_state(
+                telemetry,
+                pir_observability::observe,
+            ))
+            .with_state(self.clone())
     }
 
     pub async fn command(&self, command: Command) -> Result<serde_json::Value, String> {

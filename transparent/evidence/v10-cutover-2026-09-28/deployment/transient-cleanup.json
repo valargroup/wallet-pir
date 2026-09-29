@@ -1,0 +1,98 @@
+{
+  "utc": "2026-09-28T22:39:38.377933+00:00",
+  "hosts": [
+    {
+      "host": "root@167.99.42.60",
+      "failed_transient_units_before": [
+        {
+          "unit": "wallet-pir-v10-cutover.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/usr/bin/python3 /opt/transparent-v10-8e69ea75/cutover.py"
+        },
+        {
+          "unit": "wallet-pir-v10-qualification.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/usr/bin/python3 /opt/transparent-v10-8e69ea75/qualify.py"
+        },
+        {
+          "unit": "wallet-pir-v10-relocation.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/usr/bin/python3 /opt/transparent-v10-8e69ea75/relocate.py"
+        },
+        {
+          "unit": "wallet-pir-v10-staging-2.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/usr/bin/python3 /opt/transparent-v10-8e69ea75/stage.py"
+        },
+        {
+          "unit": "wallet-pir-v10-staging.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/usr/bin/python3 /opt/transparent-v10-8e69ea75/stage.py"
+        }
+      ],
+      "reset_failed_units": [
+        "wallet-pir-v10-cutover.service",
+        "wallet-pir-v10-qualification.service",
+        "wallet-pir-v10-relocation.service",
+        "wallet-pir-v10-staging-2.service",
+        "wallet-pir-v10-staging.service"
+      ],
+      "reason": "Logs and failed attempts retained in evidence; clear only this task's stopped transient units."
+    },
+    {
+      "host": "roman-ipir-bench-8vcpu",
+      "failed_transient_units_before": [
+        {
+          "unit": "wallet-pir-v10-production-build-2.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/root/.cargo/bin/cargo build --locked --release -p transparent-filter-server -p transparent-shard-server -p transparent-regression -p transparent-loadtest --bins --example native_certificate"
+        },
+        {
+          "unit": "wallet-pir-v10-production-build-3.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/root/.cargo/bin/cargo build --locked --release -p transparent-filter-server -p transparent-shard-server -p transparent-regression -p transparent-loadtest --bins --example native_certificate"
+        },
+        {
+          "unit": "wallet-pir-v10-production-build-4.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/root/.cargo/bin/cargo build --locked --release -p transparent-filter-server -p transparent-shard-server -p transparent-regression -p transparent-loadtest --bins --example native_certificate"
+        },
+        {
+          "unit": "wallet-pir-v10-production-build.service",
+          "load": "loaded",
+          "active": "failed",
+          "sub": "failed",
+          "description": "/root/.cargo/bin/cargo build --locked --release -p transparent-filter-server -p transparent-shard-server -p transparent-publish-controller -p transparent-shard-control -p transparent-regression -p transparent-loadtest --bins --example native_certificate"
+        }
+      ],
+      "reset_failed_units": [
+        "wallet-pir-v10-production-build-2.service",
+        "wallet-pir-v10-production-build-3.service",
+        "wallet-pir-v10-production-build-4.service",
+        "wallet-pir-v10-production-build.service"
+      ],
+      "reason": "Logs and failed attempts retained in evidence; clear only this task's stopped transient units."
+    }
+  ],
+  "monitor_units_stopped": [
+    "wallet-pir-v10-health-monitor",
+    "wallet-pir-v10-resources",
+    "wallet-pir-v10-public-availability"
+  ]
+}

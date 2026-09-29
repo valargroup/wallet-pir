@@ -759,6 +759,17 @@ fn json(status: StatusCode, body: serde_json::Value) -> Response {
 }
 
 pub fn router(state: ServiceState) -> Router {
+    state.inner.metrics.http.initialize(&[
+        "init",
+        "map",
+        "filter",
+        "manifest",
+        "setup",
+        "query_directory",
+        "query_pages",
+        "query_other",
+    ]);
+    let telemetry = state.inner.metrics.http.clone();
     Router::new()
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
@@ -781,6 +792,10 @@ pub fn router(state: ServiceState) -> Router {
             "/v1/shards/:shard_id/revisions/:digest/query/:table",
             post(query),
         )
+        .layer(axum::middleware::from_fn_with_state(
+            telemetry,
+            pir_observability::observe,
+        ))
         .with_state(state)
 }
 

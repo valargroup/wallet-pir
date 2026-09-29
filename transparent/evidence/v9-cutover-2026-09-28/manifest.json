@@ -1,0 +1,34 @@
+{
+  "run_id": "v9-cutover-2026-09-28",
+  "kind": "production schema cutover: transparent-shard-v7 to transparent-shard-v9",
+  "window_utc": ["2026-09-28T15:30:53Z", "2026-09-28T16:31:20Z"],
+  "source": {
+    "binaries_commit": "f2c24432",
+    "scripts_commit": "ab0e824efcc0b0008d1e702faf46226ee25999c3",
+    "note": "Rust sources are identical between f2c24432 and ab0e824e; later commits changed only ops scripts",
+    "binaries_sha256": {
+      "transparent-shard-server": "9bf62655f0f9dbdac78c3e37bc0aa65b3c57a3c9f986da3af6b2f729f9b487a9",
+      "transparent-publish-controller": "1e10417045e9131eefe6cd9303b7a4b06c5492e667b70c51b53f30981ae57600",
+      "transparent-filter-server": "b80812e2519be63d337181e06e7fc8afec5b41e7e52bb8e3c914a1f40fc1d76c",
+      "shard-publish": "7ae76df6513312382f3390b2c15074266a13d0f394222c2a61e6eab3b73b5355",
+      "shard-assign": "ccfb2e4d3e4d7a8f6fd4a06e6c42a9462c59b6ca7b39d7c908c1632347edcb48",
+      "regression-export": "2adc7f015a6fe7eeffea228dc6e5fcf058b4ba698e9eff85fd1022a0f57f384d"
+    },
+    "build_env": "RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq' CXXFLAGS=-mpclmul CFLAGS=-mpclmul, release, built on the coordinator",
+    "ci": "skipped at the operator's request; deployed over SSH, not through the workflows"
+  },
+  "publication": {
+    "directory": "/srv/zakura/transparent-shards-v9-full",
+    "journal": "/srv/zakura/transparent-event-data-v2 (version 2)",
+    "command": "shard-publish --data-dir /srv/zakura/transparent-event-data-v2 --output /srv/zakura/transparent-shards-v9-full --through 3499274 --recent-geometry recent-4k-8k --archive-geometry archive-wide --recent-from 3262749 --range-profile zcash-transparent-range-v2 --directory-choice all",
+    "record": "publication.json",
+    "resources": "time.txt"
+  },
+  "fleet": {
+    "roster": "4 recent replicas (4 vCPU / 8 GiB), 2 archive owners (8 vCPU / 64 GiB), router 10.142.0.11",
+    "assignment_sha256": "c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04",
+    "env": "deploy-transparent-shard.sh fleet-deploy with TRANSPARENT_SCHEMA_CUTOVER=true, TRANSPARENT_DEFER_PUBLIC_VERIFY=true, owner activation parallel, replicas paired, force redeploy",
+    "timings": "deploy-timings.tsv"
+  },
+  "outputs": ["verify.json", "verify.log", "fleet-preflight.log", "fleet-deploy-attempt1.log", "fleet-deploy-attempt2.log", "fleet-deploy.log", "publisher-shadow.log", "publisher-activate.log", "served-map.json", "regression-report.json", "regression-junit.xml", "fixture-compare.json", "pre-controller.json", "pre-controller-status.json"]
+}

@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/opt/transparent-v10-8e69ea75/relocate.py", line 7, in <module>
+    if subprocess.run(['systemctl','is-active','--quiet','wallet-pir-v10-qualification']).returncode!=0: raise RuntimeError('qualification failed')
+                                                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: qualification failed

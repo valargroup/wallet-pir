@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/opt/transparent-v10-8e69ea75/stage.py", line 8, in <module>
+    raise RuntimeError('qualification stopped without completion marker; inspect its logs')
+RuntimeError: qualification stopped without completion marker; inspect its logs

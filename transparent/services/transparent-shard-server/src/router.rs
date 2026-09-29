@@ -269,6 +269,7 @@ pub fn render_caddyfile_with(
     internal_listen: Option<&str>,
 ) -> String {
     let mut out = String::new();
+    out.push_str("{\n\tservers {\n\t\tmetrics\n\t}\n}\n\n");
     out.push_str(&format!(
         "# Rendered by shard-assign for assignment {}.\n\
          # Do not edit: the assignment is the source, and every worker reports\n\

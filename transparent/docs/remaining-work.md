@@ -177,11 +177,42 @@ recovery failure is explained and reproducibly resolved. Release-affecting fixes
 restart observation. Final acceptance records source, supported workloads,
 capacity, outage limitations, trust assumptions and excluded features.
 
+## Schema v10 qualification and republication
+
+The compact codec, byte-weighted directory placement, greedy page packing and
+restart-safe fragment validation are implemented and deployed. The version-2
+journal remains unchanged. [Layout evidence](../evidence/compact-layout-2026-09-28/README.md)
+records the storage work; [cutover evidence](../evidence/v10-cutover-2026-09-28/README.md)
+records production source, failed attempts, public checks and bounded load.
+
+- [x] Build a separate v10 full-chain publication, verify every emitted table and
+  filter, check exact selected ledger histories, and retain v9 for rollback.
+  All 86 emitted shards match the census; eight selected shards rebuilt exactly.
+  This is not an independent all-script audit of event extraction.
+- [x] Recompute native correctness certificates on the actual tables. All 172
+  pass the configured floor; the 170 sealed public setups match the reports.
+- [x] Verify native compact outpoints and the SQLite restart boundary. The
+  reference store persists the logical preceding event and fragment byte count.
+- [x] Deploy directly over SSH under explicit user authorization and run the full
+  public regression and staged bounded load. See the dated evidence for results
+  and the metadata maintenance interval; full CI was deliberately bypassed.
+- [ ] Run a controlled paired native query/build and whole-wallet timing study;
+  the full publication, private prewarm and public load observations are not a
+  controlled CPU or latency comparison. Keep all incomplete work in denominators.
+- [ ] Qualify downstream wallet consumers and existing-database migration for v10
+  and the new publication lineage. The reference client/store is covered by this
+  rollout; no application upgrade or release lifecycle acceptance is implied.
+  Existing v9 clients fail closed on v10; old pending pages must not be resumed
+  against changed shard identifiers.
+- [ ] Complete sustained capacity and recovery exercises, including a live
+  post-cutover rollback rehearsal. Preserved rollback material alone is not proof
+  of fleet recovery. The bounded load run does not close the M5 envelope.
+
 ## Schema v9 republication and cluster rollout
 
 The 2026-09-27 six-month architecture review is closed: its client, native-scheme
 and operations tracks are implemented, and [architecture](architecture.md)
-describes the result. What it leaves open is a format that exists only in source.
+describes the result. The v9 rollout is historical; v10 now supersedes its publication.
 Schema v9, the `zcash-transparent-range-v2` filter profile and the `recent-4k-8k`
 geometry all change every manifest, and runtime cache keys include the revision,
 so they ride one republication and one cold rebuild of every runtime, archive
@@ -190,15 +221,15 @@ wallet-libraries transparent branches. The
 [cluster qualification baseline](../evidence/cluster-qualification-2026-09-28/README.md)
 is the acceptance gate for each step below.
 
-- [ ] Build a candidate full publication into a new directory on the coordinator:
+- [x] Build a candidate full publication into a new directory on the coordinator:
   v9 records and tags, the v2 filter profile, `recent-4k-8k` for the recent tier,
   `--directory-choice all` on every shard, both tiers. Verify with `shard-verify`,
   real placement and exact replay against the journal, and verify every choice
   route at load. Decide whether provisional tails carry tables.
-- [ ] Rehearse the cold rebuild on bench copies of one archive owner and one
+- [ ] (Skipped on 2026-09-28 at the operator's request; the production rollout measured 866–1,187 s cold per archive owner, see the [cutover evidence](../evidence/v9-cutover-2026-09-28/README.md).) Rehearse the cold rebuild on bench copies of one archive owner and one
   recent replica. Measure rebuild time and peak memory per role; that is what
   sizes the maintenance window for the rollout.
-- [ ] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
+- [x] Deploy the candidate: continuous publisher on the v2 profile, fixed-publication
   rollout to all workers, rollback set retained. Port the choice-table lookup and
   the v9 record codec to wallet-libraries before the fleet serves it.
 - [ ] Measure the deployed format against the current state in one paired cluster
@@ -283,3 +314,13 @@ sanitized evidence; never commit wallet secrets or private histories. Code chang
 run repository-required checks. Wallet changes additionally run native tests,
 generated-binding checks, Flutter tests and a macOS release build. Documentation
 changes run `make check-docs`.
+
+
+## Service-quality rollout follow-up (2026-09-29)
+
+- [ ] Accept the fresh six-hour / 300-block telemetry canary and gated five-worker rollout.
+- [ ] Complete full-fleet observation; retain failures and exact-query/configuration provenance.
+- [ ] Review 24 hours of complete shadow coverage and exercise firing/recovery through the existing notification outbox.
+- [ ] Activate only the new APM quality and independent service-probe families, then observe 24 active hours.
+
+The live dashboard and initial passing probes do not close these elapsed-time gates.

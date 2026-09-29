@@ -37,7 +37,7 @@ on:
       sample_path:
         description: Workload sample, relative to the checkout
         required: false
-        default: transparent/evidence/workload-sample-2026-09-08/sample.json
+        default: transparent/evidence/v9-cutover-2026-09-28/load/sample-v2codec.json
         type: string
       steps:
         description: Concurrency steps, comma separated

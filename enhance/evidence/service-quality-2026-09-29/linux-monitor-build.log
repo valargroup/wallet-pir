@@ -1,0 +1,34 @@
+    Blocking waiting for file lock on build directory
+   Compiling typenum v1.19.0
+   Compiling tracing v0.1.44
+   Compiling hyper-util v0.1.20
+   Compiling generic-array v0.14.7
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling rustls v0.23.37
+   Compiling tower v0.5.3
+   Compiling either v1.15.0
+   Compiling valar-spiral-rs v0.5.3-rc.1
+   Compiling rayon v1.12.0
+   Compiling tokio-rustls v0.26.4
+   Compiling regex-automata v0.4.14
+   Compiling tower-http v0.6.8
+   Compiling inspiring v0.1.0-rc.2 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling hyper-rustls v0.27.7
+   Compiling regex v1.12.3
+   Compiling axum-core v0.4.5
+   Compiling env_filter v1.0.1
+   Compiling reqwest v0.12.28
+   Compiling axum v0.7.9
+   Compiling env_logger v0.11.10
+   Compiling simplepir-kernel v0.1.0-rc.3 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling reinspiring v0.1.2 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling sha1 v0.10.6
+   Compiling pir-apm v0.1.0 (/opt/pir-quality-build/enhance/services/pir-apm)
+   Compiling ipir-sp v0.1.0-rc.6 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling hex v0.4.3
+   Compiling enhance-pir v0.0.1 (/opt/pir-quality-build/enhance/crates/enhance-pir)
+   Compiling pir-monitor v0.1.0 (/opt/pir-quality-build/enhance/tools/monitor)
+    Finished `release` profile [optimized] target(s) in 12m 48s

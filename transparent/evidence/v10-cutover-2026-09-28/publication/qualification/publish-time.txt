@@ -1,0 +1,23 @@
+	Command being timed: "/opt/transparent-v10-8e69ea75/bin/shard-publish --data-dir /srv/zakura/transparent-event-snapshot-v10-8e69ea75 --output /srv/zakura/transparent-shards-v10-full --through 3499341 --recent-geometry recent-4k-8k --archive-geometry archive-wide --recent-from 3262749 --range-profile zcash-transparent-range-v2 --directory-choice all --zakura-cookie /dev/null --record /opt/transparent-v10-8e69ea75/qualification/publication.json --source-sha 8e69ea75b1e0071e3b978b0c78cc0487377f9e82"
+	User time (seconds): 4576.31
+	System time (seconds): 100.46
+	Percent of CPU this job got: 96%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:20:23
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 4665892
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 3
+	Minor (reclaiming a frame) page faults: 23135392
+	Voluntary context switches: 71815
+	Involuntary context switches: 998925
+	Swaps: 0
+	File system inputs: 79033544
+	File system outputs: 61500672
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

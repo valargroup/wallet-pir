@@ -72,6 +72,12 @@ struct Public {
     filters: ShardFilters,
 }
 struct Inner {
+    cycle_duration: pir_observability::Distribution,
+    publication_freshness: pir_observability::Distribution,
+    telemetry: pir_observability::HttpMetrics,
+    publication_attempts: AtomicU64,
+    publication_failures: AtomicU64,
+    last_publication: AtomicU64,
     active: RwLock<Arc<Public>>,
     withdrawn: AtomicBool,
     epoch: AtomicU64,
@@ -84,8 +90,15 @@ struct Inner {
 pub struct Authority(Arc<Inner>);
 impl Authority {
     pub fn router(&self) -> Router {
+        self.0
+            .telemetry
+            .initialize(&["init", "map", "filter", "manifest"]);
         Router::new()
             .fallback(public_request)
+            .layer(axum::middleware::from_fn_with_state(
+                self.0.telemetry.clone(),
+                pir_observability::observe,
+            ))
             .with_state(self.clone())
     }
 }
@@ -260,6 +273,12 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         return Err("publication genesis does not match the journal".into());
     }
     let authority = Authority(Arc::new(Inner {
+        cycle_duration: Default::default(),
+        publication_freshness: Default::default(),
+        telemetry: Default::default(),
+        publication_attempts: AtomicU64::new(0),
+        publication_failures: AtomicU64::new(0),
+        last_publication: AtomicU64::new(0),
         active: RwLock::new(Arc::new(public)),
         withdrawn: AtomicBool::new(true),
         epoch: AtomicU64::new(0),
@@ -309,6 +328,10 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
     });
     loop {
         if let Err(error) = publish_once(&config, &rpc, &store, &authority).await {
+            authority
+                .0
+                .publication_failures
+                .fetch_add(1, Ordering::Relaxed);
             tracing::error!(%error,"publication failed; keeping valid coverage and retrying");
             authority.0.status.write().unwrap()["publication_error"] = error.to_string().into();
         }
@@ -521,6 +544,10 @@ async fn publish_once(
             return Ok(());
         }
     }
+    authority
+        .0
+        .publication_attempts
+        .fetch_add(1, Ordering::Relaxed);
     let snapshot = {
         let journal = store.lock().await;
         Snapshot::capture(&journal, old.filters.map())?
@@ -662,6 +689,18 @@ async fn publish_once(
         status["public_hash"] = hash.clone().into();
         status["map_sha256"] = publication.map_sha256.clone().into();
         status["cycle_seconds"] = started.elapsed().as_secs_f64().into();
+        authority
+            .0
+            .cycle_duration
+            .observe(started.elapsed().as_secs_f64());
+        authority.0.publication_freshness.observe(freshness);
+        authority.0.last_publication.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+            Ordering::Relaxed,
+        );
         status["freshness_seconds"] = freshness.into();
         status["ready_replicas"] = activated["recent_replicas"].clone();
         status.as_object_mut().unwrap().remove("publication_error");
@@ -700,7 +739,35 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
             .range((public.saturating_add(1))..)
             .map(|(_, t)| t.elapsed().as_secs_f64())
             .fold(0f64, f64::max);
-        let mut text = String::new();
+        let mut text = authority.0.telemetry.render();
+        text.push_str(
+            &authority
+                .0
+                .cycle_duration
+                .render("transparent_publication_cycle_seconds"),
+        );
+        text.push_str(
+            &authority
+                .0
+                .publication_freshness
+                .render("transparent_publication_freshness_seconds"),
+        );
+        for (name, value) in [
+            (
+                "attempts_total",
+                authority.0.publication_attempts.load(Ordering::Relaxed),
+            ),
+            (
+                "failures_total",
+                authority.0.publication_failures.load(Ordering::Relaxed),
+            ),
+            (
+                "last_success_timestamp_seconds",
+                authority.0.last_publication.load(Ordering::Relaxed),
+            ),
+        ] {
+            text.push_str(&format!("transparent_publication_{name} {value}\n"));
+        }
         for (name, value) in [
             ("node_height", node as f64),
             (
@@ -1035,6 +1102,12 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         let authority = Authority(Arc::new(Inner {
+            cycle_duration: Default::default(),
+            publication_freshness: Default::default(),
+            telemetry: Default::default(),
+            publication_attempts: AtomicU64::new(0),
+            publication_failures: AtomicU64::new(0),
+            last_publication: AtomicU64::new(0),
             active: RwLock::new(Arc::new(read_public(initial, Vec::new()).unwrap())),
             withdrawn: AtomicBool::new(false),
             epoch: AtomicU64::new(0),

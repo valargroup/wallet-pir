@@ -1,0 +1,32 @@
+Analysis of sampling hierarchical_filter_eval-d9fcefe36e81f2cb (pid 72774) every 1 millisecond
+Process:         hierarchical_filter_eval-d9fcefe36e81f2cb [72774]
+Path:            /Users/USER/*/hierarchical_filter_eval-d9fcefe36e81f2cb
+Load Address:    0x102890000
+Identifier:      hierarchical_filter_eval-d9fcefe36e81f2cb
+Version:         ???
+Code Type:       ARM64
+Parent Process:  cargo [67868]
+Target Type:     live task
+
+Date/Time:       2026-09-28 22:53:21.697 +0400
+Launch Time:     2026-09-28 22:51:40.463 +0400
+OS Version:      macOS 26.2 (25C56)
+Report Version:  7
+Analysis Tool:   /usr/bin/sample
+
+Physical footprint:         96K
+Physical footprint (peak):  96K
+Idle exit:                  untracked
+----
+
+Call graph:
+    930 Thread_226137868: Main Thread   DispatchQueue_<multiple>
+      930 _dyld_start  (in dyld) + 0  [0x102cb09c0]
+
+Total number in stack (recursive counted multiple, when >=5):
+
+Sort by top of stack, same collapsed (when >= 5):
+        _dyld_start  (in dyld)        930
+
+Binary images description not available
+

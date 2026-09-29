@@ -1,0 +1,317 @@
+5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8 describes the set at /srv/zakura/transparent-shards-v10-full (86 shards, map 3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f)
+assignment file 19f4b71d94c36b7fb92193c9c4be63046585973a07141a1724a0d023c87e129c for map 3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f
+shard set /srv/zakura/transparent-shards-v10-full: 86 shards, -86 superseded revisions retained
+== diff transparent-pir-recent-01: restart (binary, effective assignment, unit and warm readiness compared)
+== diff transparent-pir-recent-02: restart (binary, effective assignment, unit and warm readiness compared)
+== diff transparent-pir-recent-03: restart (binary, effective assignment, unit and warm readiness compared)
+== diff transparent-pir-recent-04: restart (binary, effective assignment, unit and warm readiness compared)
+== diff transparent-pir-archive-01: restart (binary, effective assignment, unit and warm readiness compared)
+== diff transparent-pir-archive-02: restart (binary, effective assignment, unit and warm readiness compared)
+== timing fleet_diff: 3s
+== preflight transparent-pir-recent-01 (10.142.0.10)
+memory: 7 GiB total, 5 GiB available
+transparent-pir-recent-01 needs 614 MiB; has 150751 MiB free
+== preflight transparent-pir-recent-02 (10.142.0.8)
+memory: 7 GiB total, 5 GiB available
+transparent-pir-recent-02 needs 614 MiB; has 151189 MiB free
+== preflight transparent-pir-recent-03 (10.142.0.7)
+memory: 7 GiB total, 5 GiB available
+transparent-pir-recent-03 needs 614 MiB; has 151352 MiB free
+== preflight transparent-pir-recent-04 (10.142.0.12)
+memory: 7 GiB total, 5 GiB available
+transparent-pir-recent-04 needs 614 MiB; has 151359 MiB free
+== preflight transparent-pir-archive-01 (10.142.0.6)
+memory: 62 GiB total, 37 GiB available
+transparent-pir-archive-01 needs 15188 MiB; has 142002 MiB free
+== preflight transparent-pir-archive-02 (10.142.0.9)
+memory: 62 GiB total, 37 GiB available
+transparent-pir-archive-02 needs 14803 MiB; has 142013 MiB free
+== preflight router (10.142.0.11)
+== timing fleet_preflight: 8s
+== stage transparent-pir-recent-01 (10.142.0.10): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-recent-01 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.10:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 483,472,388 bytes  received 4,333 bytes  138,136,206.00 bytes/sec
+total size is 484,301,455  speedup is 1.00
+== stage transparent-pir-recent-02 (10.142.0.8): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-recent-02 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.8:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 483,472,388 bytes  received 4,337 bytes  138,136,207.14 bytes/sec
+total size is 484,301,455  speedup is 1.00
+== stage transparent-pir-recent-03 (10.142.0.7): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-recent-03 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.7:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 483,472,388 bytes  received 4,337 bytes  138,136,207.14 bytes/sec
+total size is 484,301,455  speedup is 1.00
+== stage transparent-pir-recent-04 (10.142.0.12): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-recent-04 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.12:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 483,472,388 bytes  received 4,333 bytes  138,136,206.00 bytes/sec
+total size is 484,301,455  speedup is 1.00
+== stage transparent-pir-archive-01 (10.142.0.6): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-archive-01 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.6:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 15,737,690,403 bytes  received 5,477 bytes  226,441,667.34 bytes/sec
+total size is 15,745,601,578  speedup is 1.00
+== stage transparent-pir-archive-02 (10.142.0.9): binary, tools, unit, assignment
+shard-prune: OK
+transparent-shard-server: OK
+== ship transparent-pir-archive-02 subset (/srv/zakura/transparent-shards-v10-full -> 10.142.0.9:/srv/transparent-pir/sets-v10/transparent-shards-v10-full)
+
+sent 15,334,938,744 bytes  received 5,435 bytes  211,516,471.43 bytes/sec
+total size is 15,348,693,960  speedup is 1.00
+== stage router (10.142.0.11): Caddyfile
+{"level":"info","ts":1790630569.8820255,"msg":"using provided configuration","config_file":"/tmp/transparent-pir-8e69ea75b1e0071e3b978b0c78cc0487377f9e82/Caddyfile","config_adapter":"caddyfile"}
+{"level":"info","ts":1790630569.8934987,"logger":"http","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+{"level":"info","ts":1790630569.8935306,"logger":"http","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+{"level":"info","ts":1790630569.893767,"logger":"tls.cache.maintenance","msg":"started background certificate maintenance","cache":"0xc000184690"}
+{"level":"info","ts":1790630569.897623,"logger":"tls.cache.maintenance","msg":"stopped background certificate maintenance","cache":"0xc000184690"}
+Valid configuration
+router config changes (live -> staged):
+--- /etc/caddy/Caddyfile	2026-09-28 21:22:12.363888651 +0000
++++ /tmp/transparent-pir-8e69ea75b1e0071e3b978b0c78cc0487377f9e82/Caddyfile	2026-09-28 21:22:49.509078791 +0000
+@@ -1,8 +1,18 @@
++# Rendered by shard-assign for assignment 5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8.
++# Do not edit: the assignment is the source, and every worker reports
++# the assignment digest it runs under.
+ transparent-pir.valargroup.dev {
++	tls {
++		issuer acme {
++			dir https://acme-v02.api.letsencrypt.org/directory
++		}
++	}
++
+ 	request_body {
+ 		max_size 1MB
+ 	}
+-	@recent path_regexp ^/v1/shards/(126|127|128|129|130|131|132|133|134|135|136|137|138)/revisions/[0-9a-f]{64}/(setup|query)/
++
++	@recent path_regexp ^/v1/shards/(77|78|79|80|81|82|83|84|85)/revisions/[0-9a-f]{64}/(setup|query)/
+ 	handle @recent {
+ 		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
+ 			lb_policy round_robin
+@@ -14,11 +24,10 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@transparent_pir_archive_01 path_regexp ^/v1/shards/(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62)/revisions/[0-9a-f]{64}/(setup|query)/
+-	handle @transparent_pir_archive_01 {
++
++	@owner_transparent_pir_archive_01 path_regexp ^/v1/shards/(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38)/revisions/[0-9a-f]{64}/(setup|query)/
++	handle @owner_transparent_pir_archive_01 {
+ 		reverse_proxy 10.142.0.6:8093 {
+-			lb_policy round_robin
+-			lb_try_duration 2s
+ 			health_uri /v1/ready
+ 			health_interval 1s
+ 			health_timeout 5s
+@@ -26,11 +35,33 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@transparent_pir_archive_02 path_regexp ^/v1/shards/(63|64|65|66|67|68|69|70|71|72|73|74|75|76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|91|92|93|94|95|96|97|98|99|100|101|102|103|104|105|106|107|108|109|110|111|112|113|114|115|116|117|118|119|120|121|122|123|124|125)/revisions/[0-9a-f]{64}/(setup|query)/
+-	handle @transparent_pir_archive_02 {
++
++	@owner_transparent_pir_archive_02 path_regexp ^/v1/shards/(39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63|64|65|66|67|68|69|70|71|72|73|74|75|76)/revisions/[0-9a-f]{64}/(setup|query)/
++	handle @owner_transparent_pir_archive_02 {
+ 		reverse_proxy 10.142.0.9:8093 {
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
++	@manifest path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{64}/manifest$
++	handle @manifest {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
++	handle /v1/shards/init {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
+ 			lb_policy round_robin
+-			lb_try_duration 2s
+ 			health_uri /v1/ready
+ 			health_interval 1s
+ 			health_timeout 5s
+@@ -38,12 +69,29 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest
+-	handle @metadata {
+-		reverse_proxy https://enhance-pir.valargroup.dev {
+-			header_up Host {upstream_hostport}
++
++	handle /v1/shards {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
++	handle /v1/filters/* {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
+ 		}
+ 	}
++
+ 	handle {
+ 		respond 404
+ 	}
+@@ -54,11 +102,13 @@
+ 	}
+ }
+ 
++# Internal plain-HTTP listener, VPC only: the same routes without TLS.
+ http://10.142.0.11:8080 {
+ 	request_body {
+ 		max_size 1MB
+ 	}
+-	@recent path_regexp ^/v1/shards/(126|127|128|129|130|131|132|133|134|135|136|137|138)/revisions/[0-9a-f]{64}/(setup|query)/
++
++	@recent path_regexp ^/v1/shards/(77|78|79|80|81|82|83|84|85)/revisions/[0-9a-f]{64}/(setup|query)/
+ 	handle @recent {
+ 		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
+ 			lb_policy round_robin
+@@ -70,11 +120,10 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@transparent_pir_archive_01 path_regexp ^/v1/shards/(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38|39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62)/revisions/[0-9a-f]{64}/(setup|query)/
+-	handle @transparent_pir_archive_01 {
++
++	@owner_transparent_pir_archive_01 path_regexp ^/v1/shards/(0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24|25|26|27|28|29|30|31|32|33|34|35|36|37|38)/revisions/[0-9a-f]{64}/(setup|query)/
++	handle @owner_transparent_pir_archive_01 {
+ 		reverse_proxy 10.142.0.6:8093 {
+-			lb_policy round_robin
+-			lb_try_duration 2s
+ 			health_uri /v1/ready
+ 			health_interval 1s
+ 			health_timeout 5s
+@@ -82,11 +131,22 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@transparent_pir_archive_02 path_regexp ^/v1/shards/(63|64|65|66|67|68|69|70|71|72|73|74|75|76|77|78|79|80|81|82|83|84|85|86|87|88|89|90|91|92|93|94|95|96|97|98|99|100|101|102|103|104|105|106|107|108|109|110|111|112|113|114|115|116|117|118|119|120|121|122|123|124|125)/revisions/[0-9a-f]{64}/(setup|query)/
+-	handle @transparent_pir_archive_02 {
++
++	@owner_transparent_pir_archive_02 path_regexp ^/v1/shards/(39|40|41|42|43|44|45|46|47|48|49|50|51|52|53|54|55|56|57|58|59|60|61|62|63|64|65|66|67|68|69|70|71|72|73|74|75|76)/revisions/[0-9a-f]{64}/(setup|query)/
++	handle @owner_transparent_pir_archive_02 {
+ 		reverse_proxy 10.142.0.9:8093 {
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
++	@manifest path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{64}/manifest$
++	handle @manifest {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
+ 			lb_policy round_robin
+-			lb_try_duration 2s
+ 			health_uri /v1/ready
+ 			health_interval 1s
+ 			health_timeout 5s
+@@ -94,12 +154,40 @@
+ 			max_fails 3
+ 		}
+ 	}
+-	@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest
+-	handle @metadata {
+-		reverse_proxy https://enhance-pir.valargroup.dev {
+-			header_up Host {upstream_hostport}
++
++	handle /v1/shards/init {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
++	handle /v1/shards {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
+ 		}
+ 	}
++
++	handle /v1/filters/* {
++		reverse_proxy 10.142.0.10:8093 10.142.0.8:8093 10.142.0.7:8093 10.142.0.12:8093 {
++			lb_policy round_robin
++			health_uri /v1/ready
++			health_interval 1s
++			health_timeout 5s
++			fail_duration 10s
++			max_fails 3
++		}
++	}
++
+ 	handle {
+ 		respond 404
+ 	}
+== timing fleet_prepare: 75s
+== verify prepared transparent-pir-recent-01 (10.142.0.10)
+[2m2026-09-28T21:22:54.657321Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":1661803632,"limit_bytes":10737418240,"missing_bytes":1661803632,"temporary_bytes":100711032,"used_bytes":0},"verified":true}
+== verify prepared transparent-pir-recent-02 (10.142.0.8)
+[2m2026-09-28T21:22:54.823095Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":1661803632,"limit_bytes":10737418240,"missing_bytes":1661803632,"temporary_bytes":100711032,"used_bytes":0},"verified":true}
+== verify prepared transparent-pir-recent-03 (10.142.0.7)
+[2m2026-09-28T21:22:54.649958Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-03" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":1661803632,"limit_bytes":10737418240,"missing_bytes":1661803632,"temporary_bytes":100711032,"used_bytes":0},"verified":true}
+== verify prepared transparent-pir-recent-04 (10.142.0.12)
+[2m2026-09-28T21:22:54.006196Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m9 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-recent-04" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":1661803632,"limit_bytes":10737418240,"missing_bytes":1661803632,"temporary_bytes":100711032,"used_bytes":0},"verified":true}
+== verify prepared transparent-pir-archive-01 (10.142.0.6)
+[2m2026-09-28T21:22:56.813422Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.145674705
+[2m2026-09-28T21:24:21.032615Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m39 [3mrevisions[0m[2m=[0m39 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-archive-01" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":20941688976,"limit_bytes":103079215104,"missing_bytes":20941688976,"temporary_bytes":335592056,"used_bytes":0},"verified":true}
+== verify prepared transparent-pir-archive-02 (10.142.0.9)
+[2m2026-09-28T21:22:57.729088Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.199472794
+[2m2026-09-28T21:22:59.208909Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.378607024
+[2m2026-09-28T21:23:00.744664Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.106308184
+[2m2026-09-28T21:23:02.140721Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.25359711
+[2m2026-09-28T21:23:12.293417Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.130594989
+[2m2026-09-28T21:23:13.784099Z[0m [33m WARN[0m [2mtransparent_shard_server::filecache[0m[2m:[0m public artifact cache advice delayed [3mfd[0m[2m=[0m10 [3mseconds[0m[2m=[0m0.295060051
+[2m2026-09-28T21:24:44.860514Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m38 [3mrevisions[0m[2m=[0m38 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f" [3mworker_id[0m[2m=[0m"transparent-pir-archive-02" [3massignment_sha256[0m[2m=[0m"5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3499341
+{"runtime_cache":{"assignment_bytes":20404722592,"limit_bytes":103079215104,"missing_bytes":20404722592,"temporary_bytes":335592056,"used_bytes":0},"verified":true}
+== timing fleet_verify_prepared: 115s
+fleet preflight complete; every subset verified with the staged binary; nothing was activated

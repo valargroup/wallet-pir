@@ -1,0 +1,417 @@
+{
+  "baseline": "transparent/evidence/v9-cutover-2026-09-28/load/v9-pinned-live-2.json",
+  "new": "load-4.json",
+  "byte_accounting": "Logical wallet-stage payloads. All attempts included. Excludes HTTP/TLS overhead and retransmissions hidden by transport retries. Key upload derived as 27648 bytes per native query; non-key upload is the remainder. Cached public setup distinguished from uploads/responses.",
+  "completion_definition": "Synthetic range coverage with exact digest; unresolved-spends-only outcomes count as completed while the wallet withholds its anchor. Query-budget outcomes are incomplete.",
+  "comparison_limits": "Same sample and bounded four-client flags, different dates/tips/background workloads; not a controlled latency or capacity comparison.",
+  "classes": [
+    {
+      "class": "catch-up-1d",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.175,
+          "p50": 0.132,
+          "p95": 0.175,
+          "p99": 0.175
+        },
+        "logical_queries": 13,
+        "key_upload_bytes_derived": 359424,
+        "non_key_query_upload_bytes_derived": 401512,
+        "private_response_bytes": 73424,
+        "cacheable_setup_payload_bytes": 160964,
+        "filter_payload_bytes": 471225,
+        "stage_payload_bytes_all_attempts": 1540059
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.193,
+          "p50": 0.156,
+          "p95": 0.193,
+          "p99": 0.193
+        },
+        "logical_queries": 14,
+        "key_upload_bytes_derived": 387072,
+        "non_key_query_upload_bytes_derived": 451696,
+        "private_response_bytes": 79072,
+        "cacheable_setup_payload_bytes": 181073,
+        "filter_payload_bytes": 622815,
+        "stage_payload_bytes_all_attempts": 1816708
+      },
+      "logical_payload_per_attempt_change_percent": 17.96353256596013
+    },
+    {
+      "class": "catch-up-30d",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.459,
+          "p50": 0.2,
+          "p95": 0.459,
+          "p99": 0.459
+        },
+        "logical_queries": 21,
+        "key_upload_bytes_derived": 580608,
+        "non_key_query_upload_bytes_derived": 702632,
+        "private_response_bytes": 118608,
+        "cacheable_setup_payload_bytes": 321928,
+        "filter_payload_bytes": 1146800,
+        "stage_payload_bytes_all_attempts": 3002519
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.27,
+          "p50": 0.161,
+          "p95": 0.27,
+          "p99": 0.27
+        },
+        "logical_queries": 19,
+        "key_upload_bytes_derived": 525312,
+        "non_key_query_upload_bytes_derived": 677528,
+        "private_response_bytes": 107312,
+        "cacheable_setup_payload_bytes": 221311,
+        "filter_payload_bytes": 1075930,
+        "stage_payload_bytes_all_attempts": 2716565
+      },
+      "logical_payload_per_attempt_change_percent": -9.523803179929924
+    },
+    {
+      "class": "catch-up-7d",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "unresolved-spends": 3
+        },
+        "latency_all_attempts": {
+          "max": 0.398,
+          "p50": 0.192,
+          "p95": 0.398,
+          "p99": 0.398
+        },
+        "logical_queries": 22,
+        "key_upload_bytes_derived": 608256,
+        "non_key_query_upload_bytes_derived": 752816,
+        "private_response_bytes": 124256,
+        "cacheable_setup_payload_bytes": 261570,
+        "filter_payload_bytes": 876015,
+        "stage_payload_bytes_all_attempts": 2747711
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "unresolved-spends": 3
+        },
+        "latency_all_attempts": {
+          "max": 0.24,
+          "p50": 0.164,
+          "p95": 0.24,
+          "p99": 0.24
+        },
+        "logical_queries": 16,
+        "key_upload_bytes_derived": 442368,
+        "non_key_query_upload_bytes_derived": 552064,
+        "private_response_bytes": 90368,
+        "cacheable_setup_payload_bytes": 160956,
+        "filter_payload_bytes": 622815,
+        "stage_payload_bytes_all_attempts": 1963551
+      },
+      "logical_payload_per_attempt_change_percent": -28.538663636750726
+    },
+    {
+      "class": "multi-script",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "unresolved-spends": 5
+        },
+        "latency_all_attempts": {
+          "max": 3.585,
+          "p50": 2.679,
+          "p95": 3.585,
+          "p99": 3.585
+        },
+        "logical_queries": 329,
+        "key_upload_bytes_derived": 9096192,
+        "non_key_query_upload_bytes_derived": 10062920,
+        "private_response_bytes": 1858192,
+        "cacheable_setup_payload_bytes": 1891308,
+        "filter_payload_bytes": 3785795,
+        "stage_payload_bytes_all_attempts": 27290470
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "unresolved-spends": 5
+        },
+        "latency_all_attempts": {
+          "max": 3.369,
+          "p50": 2.173,
+          "p95": 3.369,
+          "p99": 3.369
+        },
+        "logical_queries": 300,
+        "key_upload_bytes_derived": 8294400,
+        "non_key_query_upload_bytes_derived": 9109344,
+        "private_response_bytes": 1694400,
+        "cacheable_setup_payload_bytes": 1327862,
+        "filter_payload_bytes": 3413795,
+        "stage_payload_bytes_all_attempts": 24370781
+      },
+      "logical_payload_per_attempt_change_percent": -10.698566202780679
+    },
+    {
+      "class": "restore-6m",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 1.075,
+          "p50": 0.331,
+          "p95": 1.075,
+          "p99": 1.075
+        },
+        "logical_queries": 27,
+        "key_upload_bytes_derived": 746496,
+        "non_key_query_upload_bytes_derived": 727768,
+        "private_response_bytes": 152496,
+        "cacheable_setup_payload_bytes": 402432,
+        "filter_payload_bytes": 3785795,
+        "stage_payload_bytes_all_attempts": 6014286
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 1.003,
+          "p50": 0.232,
+          "p95": 1.003,
+          "p99": 1.003
+        },
+        "logical_queries": 27,
+        "key_upload_bytes_derived": 746496,
+        "non_key_query_upload_bytes_derived": 727768,
+        "private_response_bytes": 152496,
+        "cacheable_setup_payload_bytes": 382291,
+        "filter_payload_bytes": 3413795,
+        "stage_payload_bytes_all_attempts": 5682634
+      },
+      "logical_payload_per_attempt_change_percent": -5.514403538508139
+    },
+    {
+      "class": "restore-old",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 17.167,
+          "p50": 2.627,
+          "p95": 17.167,
+          "p99": 17.167
+        },
+        "logical_queries": 211,
+        "key_upload_bytes_derived": 5833728,
+        "non_key_query_upload_bytes_derived": 56800920,
+        "private_response_bytes": 1191728,
+        "cacheable_setup_payload_bytes": 3178878,
+        "filter_payload_bytes": 157645680,
+        "stage_payload_bytes_all_attempts": 227995694
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 10.631,
+          "p50": 1.706,
+          "p95": 10.631,
+          "p99": 10.631
+        },
+        "logical_queries": 160,
+        "key_upload_bytes_derived": 4423680,
+        "non_key_query_upload_bytes_derived": 44356864,
+        "private_response_bytes": 903680,
+        "cacheable_setup_payload_bytes": 2253368,
+        "filter_payload_bytes": 131337470,
+        "stage_payload_bytes_all_attempts": 186290012
+      },
+      "logical_payload_per_attempt_change_percent": -18.292311257422256
+    },
+    {
+      "class": "reused-tail",
+      "v9": {
+        "attempts": 6,
+        "completed": 4,
+        "exact": 4,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "query-budget": 2
+        },
+        "latency_all_attempts": {
+          "max": 785.919,
+          "p50": 22.047,
+          "p95": 785.919,
+          "p99": 785.919
+        },
+        "logical_queries": 14572,
+        "key_upload_bytes_derived": 402886656,
+        "non_key_query_upload_bytes_derived": 5548026720,
+        "private_response_bytes": 82302656,
+        "cacheable_setup_payload_bytes": 10763924,
+        "filter_payload_bytes": 66152882,
+        "stage_payload_bytes_all_attempts": 6119536978
+      },
+      "v10": {
+        "attempts": 6,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {
+          "query-budget": 1
+        },
+        "latency_all_attempts": {
+          "max": 710.655,
+          "p50": 14.599,
+          "p95": 710.655,
+          "p99": 710.655
+        },
+        "logical_queries": 12302,
+        "key_upload_bytes_derived": 340125696,
+        "non_key_query_upload_bytes_derived": 4717068912,
+        "private_response_bytes": 69481696,
+        "cacheable_setup_payload_bytes": 6800226,
+        "filter_payload_bytes": 58629949,
+        "stage_payload_bytes_all_attempts": 5200357488
+      },
+      "logical_payload_per_attempt_change_percent": -15.020409114357669
+    },
+    {
+      "class": "small-active",
+      "v9": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.16,
+          "p50": 0.087,
+          "p95": 0.16,
+          "p99": 0.16
+        },
+        "logical_queries": 6,
+        "key_upload_bytes_derived": 165888,
+        "non_key_query_upload_bytes_derived": 175664,
+        "private_response_bytes": 33888,
+        "cacheable_setup_payload_bytes": 120728,
+        "filter_payload_bytes": 1605027,
+        "stage_payload_bytes_all_attempts": 2162823
+      },
+      "v10": {
+        "attempts": 5,
+        "completed": 5,
+        "exact": 5,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.176,
+          "p50": 0.072,
+          "p95": 0.176,
+          "p99": 0.176
+        },
+        "logical_queries": 6,
+        "key_upload_bytes_derived": 165888,
+        "non_key_query_upload_bytes_derived": 175664,
+        "private_response_bytes": 33888,
+        "cacheable_setup_payload_bytes": 120722,
+        "filter_payload_bytes": 1490021,
+        "stage_payload_bytes_all_attempts": 2073487
+      },
+      "logical_payload_per_attempt_change_percent": -4.130527555884123
+    },
+    {
+      "class": "unused",
+      "v9": {
+        "attempts": 6,
+        "completed": 6,
+        "exact": 6,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 2.447,
+          "p50": 1.0,
+          "p95": 2.447,
+          "p99": 2.447
+        },
+        "logical_queries": 2,
+        "key_upload_bytes_derived": 55296,
+        "non_key_query_upload_bytes_derived": 401424,
+        "private_response_bytes": 11296,
+        "cacheable_setup_payload_bytes": 40242,
+        "filter_payload_bytes": 189174816,
+        "stage_payload_bytes_all_attempts": 189773901
+      },
+      "v10": {
+        "attempts": 6,
+        "completed": 6,
+        "exact": 6,
+        "failed": 0,
+        "incomplete_by_reason": {},
+        "latency_all_attempts": {
+          "max": 0.852,
+          "p50": 0.655,
+          "p95": 0.852,
+          "p99": 0.852
+        },
+        "logical_queries": 2,
+        "key_upload_bytes_derived": 55296,
+        "non_key_query_upload_bytes_derived": 225808,
+        "private_response_bytes": 11296,
+        "cacheable_setup_payload_bytes": 40242,
+        "filter_payload_bytes": 157604964,
+        "stage_payload_bytes_all_attempts": 158017035
+      },
+      "logical_payload_per_attempt_change_percent": -16.734053435514294
+    }
+  ]
+}

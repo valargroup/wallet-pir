@@ -1,0 +1,14 @@
+{
+  "start_utc": "2026-09-28T19:18:25.286498+00:00",
+  "source": "/srv/zakura/transparent-event-data-v2",
+  "snapshot": "/srv/zakura/transparent-event-snapshot-v10-8e69ea75",
+  "checkpoint_hex": "7eb1e46109000000d019030a00000000",
+  "files": {
+    "meta.json": 125,
+    "writer.lock": 0,
+    "events.bin": 40297083262,
+    "blocks.bin": 167975376,
+    "checkpoint.bin": 16
+  },
+  "pause_seconds": 0.07147693634033203
+}

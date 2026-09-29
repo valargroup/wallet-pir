@@ -1,0 +1,52 @@
+   Compiling serde_core v1.0.228
+   Compiling serde_json v1.0.149
+   Compiling tokio v1.51.1
+   Compiling regex-automata v0.4.14
+   Compiling secp256k1-sys v0.10.1
+   Compiling transparent-events v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-events)
+   Compiling axum-core v0.4.5
+   Compiling serde v1.0.228
+   Compiling valar-spiral-rs v0.5.3-rc.1
+   Compiling regex v1.12.3
+   Compiling inspiring v0.1.0-rc.2 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling hyper v1.9.0
+   Compiling secp256k1 v0.29.1
+   Compiling tower v0.5.3
+   Compiling hyper-util v0.1.20
+   Compiling env_filter v1.0.1
+   Compiling bitcoin v0.32.102
+   Compiling env_logger v0.11.10
+   Compiling simplepir-kernel v0.1.0-rc.3 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling reinspiring v0.1.2 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling serde_urlencoded v0.7.1
+   Compiling matchers v0.2.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling ring v0.17.14
+   Compiling tracing-subscriber v0.3.23
+   Compiling ipir-sp v0.1.0-rc.6 (https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec65)
+   Compiling transparent-filter v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-filter)
+   Compiling transparent-native v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-native)
+   Compiling transparent-shard v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-shard)
+   Compiling axum v0.7.9
+   Compiling tower-http v0.5.2
+   Compiling tower-http v0.6.8
+   Compiling libsqlite3-sys v0.30.1
+   Compiling rustls v0.23.37
+   Compiling getrandom v0.4.2
+   Compiling tempfile v3.27.0
+   Compiling rustls-webpki v0.103.10
+   Compiling transparent-shard-server v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/services/transparent-shard-server)
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-rustls v0.27.7
+   Compiling reqwest v0.12.28
+   Compiling transparent-wallet v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-wallet)
+   Compiling rusqlite v0.32.1
+   Compiling transparent-wallet-store v0.1.0 (/root/wallet-pir-v10-build-8e69ea75/transparent/crates/transparent-wallet-store)
+    Finished `release` profile [optimized] target(s) in 2m 20s
+     Running tests/wallet_continuation.rs (/tmp/wallet-pir-v10-production-target/release/deps/wallet_continuation-61e33daeeff3b5d8)
+
+running 1 test
+test compact_outpoint_context_resets_across_a_sqlite_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 4.34s
+

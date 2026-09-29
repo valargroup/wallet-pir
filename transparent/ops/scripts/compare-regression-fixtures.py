@@ -104,7 +104,7 @@ def compare_case(previous, nxt, tolerance):
     return blocking, review
 
 
-def compare(previous, nxt, tolerance):
+def compare(previous, nxt, tolerance, same_anchor=False):
     blocking, review, notes = [], [], []
 
     old_anchor = max(int(h) for h in previous['accepted_headers'])
@@ -115,7 +115,18 @@ def compare(previous, nxt, tolerance):
     if previous['map_sha256'] == nxt['map_sha256']:
         review.append('map digest is unchanged; this fixture gates the same '
                       'publication as the one it replaces')
-    if new_anchor <= old_anchor:
+    if same_anchor:
+        if new_anchor != old_anchor:
+            blocking.append(f'same-anchor comparison requires equal anchors: {old_anchor} -> {new_anchor}')
+        if previous['cutoff_height'] != nxt['cutoff_height']:
+            blocking.append('same-anchor comparison changed the cutoff height')
+        if previous['cases'] != nxt['cases']:
+            blocking.append('same-anchor comparison changed case definitions or checkpoint expectations')
+        for key in ('genesis_hash', 'network', 'start_height', 'profile'):
+            if previous.get('map', {}).get(key) != nxt.get('map', {}).get(key):
+                blocking.append(f'same-anchor comparison changed map identity field {key}')
+        notes.append('same-anchor schema replacement: case definitions and expectations must be identical')
+    elif new_anchor <= old_anchor:
         blocking.append(f'new anchor {new_anchor} is not above {old_anchor}')
 
     for height, hash_ in previous['accepted_headers'].items():
@@ -163,11 +174,13 @@ def main():
     p.add_argument('--next', dest='next_', type=Path, required=True)
     p.add_argument('--tolerance', type=float, default=0.25,
                    help='relative anchor-state change reported for review')
+    p.add_argument('--same-anchor', action='store_true',
+                   help='schema replacement at identical height; require unchanged cases, expectations, cutoff and map identity')
     p.add_argument('--out', type=Path, help='write the findings as JSON')
     a = p.parse_args()
 
     previous, nxt = load(a.previous), load(a.next_)
-    blocking, review, notes = compare(previous, nxt, a.tolerance)
+    blocking, review, notes = compare(previous, nxt, a.tolerance, a.same_anchor)
 
     for note in notes:
         print(f'  {note}')

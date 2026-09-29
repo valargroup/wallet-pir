@@ -2593,6 +2593,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pir-observability"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "http-body",
+ "serde",
+ "tokio",
+ "tower 0.5.3",
+]
+
+[[package]]
 name = "pkcs8"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4202,6 +4213,7 @@ dependencies = [
  "clap",
  "hex",
  "libc",
+ "pir-observability",
  "prometheus",
  "reqwest",
  "serde",
@@ -4329,6 +4341,7 @@ dependencies = [
  "http-body",
  "ipir-sp",
  "memmap2",
+ "pir-observability",
  "rayon",
  "reinspiring",
  "reqwest",

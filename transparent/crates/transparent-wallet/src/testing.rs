@@ -112,6 +112,7 @@ pub fn commit(
 pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
     PendingPages {
         validated_events: 0,
+        boundary: None,
         target_anchor: None,
         id: None,
         shard_id: 1,

@@ -1,0 +1,20 @@
+[Unit]
+Description=Transparent PIR continuous 5 QPS exact-query load and health watchdog
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/transparent-5qps-20260929
+ExecStart=/usr/bin/python3 -u /opt/transparent-5qps-20260929/supervise.py
+Environment=RAYON_NUM_THREADS=2
+Nice=10
+CPUQuota=200%
+MemoryHigh=2G
+MemoryMax=3G
+KillMode=control-group
+TimeoutStopSec=20
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

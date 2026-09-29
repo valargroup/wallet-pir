@@ -515,6 +515,7 @@ class Fleet:
         # During a batch restart the private router can exercise the new fleet,
         # while controller retries cannot accidentally reopen the public site.
         text = '\n'.join(site+' {\n'+(unavailable if guarded and site == host else '\n'.join(body))+'\n}\n' for site in sites)
+        text = '{\n\tservers {\n\t\tmetrics\n\t}\n}\n' + text
         target = self.c.get('router_file','/etc/caddy/Caddyfile')
         quoted = shlex.quote(target)
         # Record successful application separately: a crash after rename but before

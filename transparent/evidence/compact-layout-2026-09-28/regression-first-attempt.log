@@ -1,0 +1,23 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on build directory
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-shard-server)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+   Compiling transparent-regression v0.1.0 (/Users/roman/projects/wallet-pir/transparent/tools/transparent-regression)
+    Finished `test` profile [optimized + debuginfo] target(s) in 2m 20s
+     Running unittests src/lib.rs (target/debug/deps/transparent_regression-b4d85bcd5647c8fc)
+
+running 2 tests
+test tests::reference_keeps_zero_balance_history_and_bounds_spends_by_anchor ... ok
+test journal::tests::respects_committed_lengths_without_truncating_the_journal ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/hierarchical-filter-eval.rs (target/debug/deps/hierarchical_filter_eval-d9fcefe36e81f2cb)
+error: test failed, to rerun pass `-p transparent-regression --bin hierarchical-filter-eval`
+
+Caused by:
+  process didn't exit successfully: `/Users/roman/projects/wallet-pir/target/debug/deps/hierarchical_filter_eval-d9fcefe36e81f2cb` (signal: 15, SIGTERM: termination signal)

@@ -1,0 +1,12 @@
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-shard-server)
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+    Finished `test` profile [optimized + debuginfo] target(s) in 11.01s
+     Running tests/wallet_continuation.rs (target/debug/deps/wallet_continuation-64d332d5bf9c8850)
+
+running 1 test
+test compact_outpoint_context_resets_across_a_sqlite_restart ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 11 filtered out; finished in 1.45s
+

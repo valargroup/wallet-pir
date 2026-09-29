@@ -1,0 +1,18 @@
+Started transparent-5qps-build-4.service - /bin/bash /tmp/transparent-5qps-build.sh.
+   Compiling transparent-shard-server v0.1.0 (/root/wallet-pir-8e69ea75/transparent/services/transparent-shard-server)
+error[E0308]: `match` arms have incompatible types
+   --> transparent/services/transparent-shard-server/examples/rate-query.rs:299:49
+    |
+297 |           let enqueued = match tx.try_send((sequence, due, target, row, logical_id, attempt)) {
+    |                          -------------------------------------------------------------------- `match` arms have incompatible types
+298 |               Ok(()) => true,
+    |                         ---- this is found to be of type `bool`
+299 |               Err(mpsc::TrySendError::Full(_)) => emit(
+    |  _________________________________________________^
+300 | |                 serde_json::json!({"event":"missed_slot","unix":now(),"sequence":sequence,"reason":"client worker queue full"}),
+301 | |             ),
+    | |_____________^ expected `bool`, found `()`
+For more information about this error, try `rustc --explain E0308`.
+error: could not compile `transparent-shard-server` (example "rate-query") due to 1 previous error
+transparent-5qps-build-4.service: Main process exited, code=exited, status=101/n/a
+transparent-5qps-build-4.service: Failed with result 'exit-code'.

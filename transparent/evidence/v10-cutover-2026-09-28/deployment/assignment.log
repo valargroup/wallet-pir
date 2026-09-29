@@ -1,0 +1,7 @@
+assignment 5631c33096938d8c9585cff13f1fc5ee97e968f657dc055af7b938ec487dbff8 written to /opt/transparent-v10-8e69ea75/assignment.json
+  transparent-pir-archive-01 archive-owner     39 shards   20941683984 bytes reserved of   51539607552 cache  0-38
+  transparent-pir-archive-02 archive-owner     38 shards   20404717728 bytes reserved of   51539607552 cache  39-76
+  transparent-pir-recent-01 recent-replica     9 shards    1661802480 bytes reserved of    5368709120 cache  77-85
+  transparent-pir-recent-02 recent-replica     9 shards    1661802480 bytes reserved of    5368709120 cache  77-85
+  transparent-pir-recent-03 recent-replica     9 shards    1661802480 bytes reserved of    5368709120 cache  77-85
+  transparent-pir-recent-04 recent-replica     9 shards    1661802480 bytes reserved of    5368709120 cache  77-85

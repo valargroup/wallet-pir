@@ -10,6 +10,7 @@ mod metrics;
 mod monitoring;
 mod packing_fleet;
 mod placement;
+mod quality;
 mod schema;
 mod slack;
 mod status_apm;
@@ -105,6 +106,7 @@ async fn main() -> Result<()> {
         ));
     }
     monitoring::start(dashboard.clone(), config.clone())?;
+    quality::start(dashboard.clone(), &config)?;
     let scrape_dashboard = Arc::clone(&dashboard);
     let scrape_config = config.clone();
     tokio::spawn(async move {
@@ -320,6 +322,14 @@ async fn fetch(
 
 fn dashboard_router(dashboard: SharedDashboard) -> Router {
     Router::new()
+        .route("/apm/transparent/", get(quality::page))
+        .route("/transparent/", get(quality::page))
+        .route("/apm/quality/", get(quality::page))
+        .route("/quality/", get(quality::page))
+        .route("/apm/transparent/workers/:name/", get(quality::worker_page))
+        .route("/transparent/workers/:name/", get(quality::worker_page))
+        .route("/apm/api/quality", get(quality::api))
+        .route("/api/quality", get(quality::api))
         .route("/", get(dashboard::index))
         .route("/apm", get(dashboard::index))
         .route("/apm/", get(dashboard::index))

@@ -7,10 +7,12 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | Parameter | Recent | Archive |
 |---|---|---|
 | Initial range | Last six calendar months of pinned anchor time | Genesis through block before recent range |
-| Initial profile | `recent-8k` | `archive-wide` |
-| Directory/page rows | 8192 / 8192 | 32768 / 65536 |
+| Selected profile | `recent-4k-8k` | `archive-wide` |
+| Directory/page rows | 4096 / 8192 | 32768 / 65536 |
 | Row bytes; inline events | 4096; 2 | 4096; 2 |
-| Seal target:capacity (scripts, pages) | Derive with `SealPolicy::for_geometry` (`147456:172032,7936:8192` at `recent-8k` under schema v9) | `589824:688128,63488:65536`, verify against derivation |
+| V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
+| V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
+| Page-row target:capacity | `7936:8192` | `63488:65536` |
 | Workers | 4 full recent replicas | 2 disjoint archive assignments |
 | Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
@@ -30,9 +32,36 @@ Fleet configuration lives in one place: a roster (repository variable `TRANSPARE
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
 
-## Geometry optimization, not a launch dependency
+## Geometry and schema cutovers
 
-Add optional `recent-4k-8k` (4096 directory / 8192 page rows), seal policy `73728:86016,7936:8192` under schema v9 (`56174:65536,7936:8192` under v8's 16-slot directory row; `49152:57344,7936:8192` under v7's 14-slot row). Do not change the meaning of `recent-4k`, which already means 4096/4096. Promote only on same-range census, real placement, and total wallet-byte/latency evidence. Smaller directory upload alone does not establish a smaller sync. Initial full-chain deployment proceeds with `recent-8k`. Schema v9 is source only and is not published. A version-2 event journal is built only into a new directory. The version-1 production journal must be left untouched: this binary refuses it and does not move it aside.
+Use `recent-4k-8k` (4096 directory / 8192 page rows) for the recent tier and
+`archive-wide` for archive. `recent-4k` continues to mean 4096 / 4096; do not
+change an existing profile's meaning. The v10 targets above derive from
+`SealPolicy::for_geometry` plus the directory-byte limit: reserve one seventh
+of directory bytes and one thirty-second of page rows. The absolute script
+limit is independent; reaching it is not proof that variable entries fit.
+
+The compact schema reuses the unchanged version-2 journal at
+`/srv/zakura/transparent-event-data-v2`. Publish into a separate lineage, with
+matching clients and a new pending-page context; never reinterpret v9 bytes or
+resume its pending pages against new shard identifiers. Actual-table native
+correctness certificates and public recovery checks are required in addition
+to the storage census. [Status](status.md) records the SSH v10 rollout.
+
+A schema cutover runs the fixed-publication rollout with
+`TRANSPARENT_SCHEMA_CUTOVER=true` and `TRANSPARENT_DEFER_PUBLIC_VERIFY=true`,
+then the publisher deployment in shadow and activate. Public metadata is
+withdrawn during the switch. Keep schema caches separate using
+`TRANSPARENT_RUNTIME_CACHE_DIR`; later deployments preserve the installed path.
+The old live collector must not prune the candidate cache, and the new collector
+must not prune rollback data. Preserve the old publication root, active records,
+units, binaries and cache outside the new collector's namespace.
+
+Place the initial publication within the live publication's writable parent,
+or verify equivalent hard-link behavior inside the controller's systemd sandbox.
+A read-only source mount can make hard linking fail and silently cause a full
+copy on each revision. Measure free space on the actual target filesystem,
+including resolved symlinks, before allocating the candidate and rollback copies.
 
 Do not publish `archive-32k` as the selected target: uniform-chain evidence favors `archive-wide`. Preserve the tested registry entry for compatibility/research. Geometry fallback is an explicit decision with re-census, storage, client and capacity review; never silently rewrite an already published profile.
 
@@ -141,6 +170,18 @@ written atomically under a process-shared lock. After verified activation, cache
 pruning retains all revision directories in the active and rollback sets. When
 both units name the same physical set, plaintext revision pruning is deferred.
 Never delete a rollback set to make a capacity check pass.
+
+For a schema cutover, use a separate static-set parent and set
+`TRANSPARENT_RUNTIME_CACHE_DIR` to a separate cache directory. The fleet deploy
+preserves that explicit cache path on later runs and checks disk headroom on its
+actual filesystem. A live publisher's collector retains only its active,
+prepared and retired runtime digests; sharing a cache with a different schema
+would let either publisher remove the other's prepared or rollback entries.
+After the old controller stops and the fixed fleet switches, move the old
+worker publication roots aside before restoring publication control. Save the
+active and revocation records, and restore paths, records, binaries and routing
+together on rollback. Static cutover pruning being disabled alone does not
+protect data from the live collector.
 
 `assignment_sha256` remains the full assignment-document digest. The additive
 `worker_assignment_sha256` readiness field excludes generation timestamp, source
@@ -480,3 +521,21 @@ recovery-only beta. Existing hardening/publication gates above still apply.
 These are release-test criteria, not automatic deployment, fault-injection or
 infrastructure-provisioning actions. Any revised target needs an explicit recorded
 change before retesting, with the previous failed result retained.
+
+
+## Service-quality monitoring
+
+The dedicated page is `/apm/transparent/` on the Enhance APM origin. The shared
+[observability guide](../../enhance/docs/observability-alerting.md) owns collector,
+history, guardrail and independent-canary configuration. Metrics stay on private
+service endpoints or loopback Caddy admin; no public metrics route is introduced.
+
+For telemetry worker upgrades, the existing supervised hardening rollout accepts
+`--production-lock`, `--load-service`, `--load-root`, and `--load-identity-file`.
+The three load options must be supplied together. The identity JSON must cover
+exactly the current roster. The runner checks predecessors, pauses continuous
+load for each upgrade, verifies the expected post-upgrade identities, writes new
+pins atomically, then resumes load. Failures leave load stopped for investigation.
+An existing correctness/resource latch blocks mutation. The observer chooses a
+query shard from the selected worker's current assignment unless explicitly pinned.
+The existing six-hour / 300-block and full-fleet observation gates are unchanged.

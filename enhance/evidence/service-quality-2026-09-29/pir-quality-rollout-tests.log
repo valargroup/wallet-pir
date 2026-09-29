@@ -1,0 +1,14 @@
+{"phase": "canary_upgrade", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source", "error": "continuous load has an unresolved critical latch"}
+.{"phase": "canary_upgrade", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "failed", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source", "error": "upgrade failed"}
+.{"phase": "canary_upgrade", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "canary_observation", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "fleet_upgrade", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "fleet_observation", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+{"phase": "complete", "binary_sha256": "dda18a0e21ae47c53b4309434cbc02ae8bf764fa83a6defbb719431242722aa7", "source_sha": "source"}
+.
+----------------------------------------------------------------------
+Ran 3 tests in 0.009s
+
+OK

@@ -7,6 +7,9 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Continuous 5 QPS query load](continuous-5qps-2026-09-29/README.md) | Enabled ongoing public-path query load; fresh keys, exact row hashes, 80% recent / 20% archive across 85 sealed shards; frozen initial observations and persistent health gates; not whole-wallet throughput or completed capacity acceptance |
+| [Schema v10 production cutover](v10-cutover-2026-09-28/README.md) | Same-history 86-shard publication verified and deployed over SSH; public regression 11/11 cases and 68/68 checkpoints; 124/124 exact smoke syncs; four-client load 46 exact of 47 attempts, one query-budget incomplete; one transient init probe 503; no sustained-capacity acceptance |
+| [Compact schema v10 layout](compact-layout-2026-09-28/README.md) | Actual sample builder; [full-journal census](compact-layout-2026-09-28/census.md): 38.79% fewer allocated table bytes / 63.36% more capacity for the same history; not throughput or deployment acceptance |
 | [M0 baseline](productionize-m0-2026-09-09/README.md) | Source/application inventory; later milestones own acceptance |
 | [M1 accepted six-hour window](productionize-m1-six-hour-acceptance-2026-09-13/README.md) | Complete observation includes the later failed 24-hour command; M5 follow-up stays open |
 | [M1 matching canary and fleet rollout](productionize-m1-deferred-collection-2026-09-11/README.md) | Includes failed upgrade and recovery, exact source/build and corrected rollout |
@@ -31,6 +34,7 @@ The following records establish only their stated revision, workload and coverag
 | [Cluster qualification baseline](cluster-qualification-2026-09-28/README.md) | Live regression 11/11 cases passed; pinned-anchor load runs, all completed syncs exact; v7 cluster before v8 |
 | [Native correctness on real archive tables](archive-native-certificate-2026-09-28/README.md) | Real v8 archive-wide segments certify 149–170 bits (pages) and 197–211 (directories); 83-bit worst-case exception accepted |
 | [Native two-mask correctness screen](native-certificate-2026-09-28/README.md) | Analytic certificates for v8 shapes; worst-case query term passes 128 bits to 32,768 rows, 83 bits at 65,536; no served snapshot certified |
+| [Schema v9 cutover](v9-cutover-2026-09-28/README.md) | Production v7 to v9: 139-shard set verified, fleet rollout (one automatic rollback), publisher activated; 60-minute metadata window; regression 11/11 cases, 68/68 checkpoints; [pinned load run](v9-cutover-2026-09-28/load/README.md) 45/45 exact with 48–75% fewer bytes in most classes; no capacity series |
 | [Version-2 event journal](journal-v2-conversion-2026-09-28/README.md) | Production v1 journal re-encoded into a new directory and extended to 3,499,198; 5 × 5,000-block ranges byte-identical to fresh v9 ingests; spot check 11/11; nothing published |
 | [Initial full-chain publication](continuous-publication-2026-09-08/README.md) | Historical topology and rollout; M1 is the later operational acceptance |
 | [Parent-filter evaluation](parent-filters-2026-09-08/README.md) | Offline sweep and incomplete paired HTTP performance evaluation |

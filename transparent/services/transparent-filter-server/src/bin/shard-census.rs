@@ -18,8 +18,7 @@ use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::shard_matches::MatchCounter;
 use transparent_shard::layout::{
-    by_name as geometry_by_name, entries_per_row, Geometry, EVENTS_PER_PAGE, PAGE_ROW_BYTES,
-    PAGE_ROW_HEADER_BYTES,
+    by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 use transparent_shard::seal::{
     ChoiceMeasure, Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer,
@@ -65,38 +64,27 @@ struct Cli {
     page_rows_per_segment: Option<u64>,
     /// Directory rows per segment to score against.
     ///
-    /// Reporting only, on the same terms as `--page-rows-per-segment`. The
-    /// scheme pads a row count up to a multiple of 2,048 and refuses fewer, so
-    /// the compiled 2,048 is its floor and this can only go up. What it buys is
-    /// scripts per shard, and therefore fewer shards for a wallet to open;
-    /// what it costs is the row-count term of every directory query upload,
-    /// which at 2,048 rows is 10,240 bytes of 96,264.
+    /// Row counts must be multiples of 2,048 and at least that large. More rows
+    /// increase directory byte capacity and the selection-query upload.
     #[arg(long)]
     directory_rows_per_segment: Option<u64>,
     /// Directory row bytes to score against.
     ///
-    /// Quantised: the scheme charges in whole instances of 3,584 bytes, so the
-    /// only step up is 7,168, and it doubles both the query response and the
-    /// published setup. Slots per row are derived from this and the inline
-    /// allowance, never set directly.
+    /// The scheme charges whole 4,096-byte instances; doubling width doubles
+    /// responses and setup. The source codec still publishes only 4,096 bytes.
     #[arg(long)]
     directory_row_bytes: Option<usize>,
     /// Events carried inline in a directory entry, to score against.
     ///
-    /// Unlike the two above this changes *boundaries*, not just arithmetic: the
-    /// allowance decides whether a history reaches the page table, so it moves
-    /// page demand and the shard limit that binds. It is also what buys
-    /// directory slots — one inline event gives 23 per row against 14, two
-    /// gives 14, three gives 10.
+    /// The allowance changes directory byte demand, the paged prefix and
+    /// shard boundaries. Only the compiled allowance is publishable.
     #[arg(long)]
     inline_events: Option<u32>,
     /// Run the real two-choice placer over each shard's scripts.
     ///
-    /// Off by default because it costs a sort and a placement pass per shard,
-    /// and because leaving it off is what keeps a default run comparable with
-    /// the archived censuses. On, it replaces the one modelled figure in this
-    /// report — `scripts / slots` — with what the builder would actually do,
-    /// and reports how much headroom the fullest row has left.
+    /// Off by default because it costs a sort and placement pass per shard.
+    /// Enabling it replaces the byte-density lower bound with actual placement
+    /// and reports maximum occupied bytes per row.
     #[arg(long)]
     placement: bool,
     /// Build each shard's single-lookup choice table from its real placement.
@@ -297,6 +285,21 @@ fn describe(label: &str, values: &mut [u64]) {
 /// Three separate ratios, because they fail independently and the fix differs:
 /// how many rows of a pinned table are used at all, how full each used row is,
 /// and the two together against the bytes actually stored.
+// A byte-density lower bound unless the real placer was requested. Variable
+// entries cannot be modelled by a fixed number of directory slots.
+fn directory_segments(shard: &SealedShard, geometry: &Geometry) -> u64 {
+    shard.placement.map_or_else(
+        || {
+            let payload = geometry.directory_row_bytes as u64 - 4;
+            u64::from(transparent_shard::layout::segments_for(
+                shard.occupancy.directory_bytes.div_ceil(payload),
+                geometry.directory_rows,
+            ))
+        },
+        |p| u64::from(p.segments),
+    )
+}
+
 fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     if shards.is_empty() {
         return;
@@ -304,8 +307,7 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     let n = shards.len() as u64;
     let page_rows_per_segment = geometry.page_rows;
     let dir_rows_per_segment = geometry.directory_rows;
-    let slots = geometry.directory_slots();
-    let per_page = transparent_shard::EVENTS_PER_PAGE as u64;
+    let row_payload = geometry.directory_row_bytes as u64 - 4;
 
     let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
     let page_rows: u64 = shards.iter().map(|s| s.occupancy.fragments).sum();
@@ -318,10 +320,7 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     let mut dir_segments = 0u64;
     let mut page_segments = 0u64;
     for shard in shards {
-        let d = transparent_shard::layout::segments_for(
-            shard.occupancy.scripts.div_ceil(slots),
-            dir_rows_per_segment,
-        ) as u64;
+        let d = directory_segments(shard, geometry);
         let p = transparent_shard::layout::segments_for(
             shard.occupancy.fragments,
             page_rows_per_segment,
@@ -336,29 +335,40 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
     // Live bytes: what a reader would actually get back if the padding were
     // stripped. Directory entries carry their inline events, so those are not
     // counted again as page content.
-    let live = scripts * geometry.directory_entry_bytes() as u64
+    let live = shards
+        .iter()
+        .map(|s| s.occupancy.directory_bytes)
+        .sum::<u64>()
         + page_rows * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
-        + paged * transparent_events::EVENT_BYTES as u64;
+        + shards
+            .iter()
+            .map(|s| s.occupancy.demand.event_bytes())
+            .sum::<u64>();
 
-    let dir_row_use = scripts.div_ceil(slots) as f64 / (dir_segments * dir_rows_per_segment) as f64;
-    let dir_fill = scripts as f64 / (dir_segments * dir_rows_per_segment * slots) as f64;
+    let directory_bytes: u64 = shards.iter().map(|s| s.occupancy.directory_bytes).sum();
+    let dir_fill =
+        directory_bytes as f64 / (dir_segments * dir_rows_per_segment * row_payload) as f64;
     let page_row_use = page_rows as f64 / (page_segments * page_rows_per_segment) as f64;
     let page_fill = if page_rows == 0 {
         0.0
     } else {
-        paged as f64 / (page_rows * per_page) as f64
+        (page_rows * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
+            + shards
+                .iter()
+                .map(|s| s.occupancy.demand.event_bytes())
+                .sum::<u64>()) as f64
+            / (page_rows * transparent_shard::packing::ROW_PAYLOAD as u64) as f64
     };
 
-    println!("  utilisation");
+    println!("  utilisation (directory segments use real placement when requested, otherwise a byte-density lower bound)");
     println!(
-        "    directory   rows {:>5.1}%  slots {:>5.1}%  ({:.1} of {slots} per row, {} segments)",
-        dir_row_use * 100.0,
+        "    directory   bytes {:>5.1}%  ({:.1} entries per allocated row, {} segments)",
         dir_fill * 100.0,
         scripts as f64 / (dir_segments * dir_rows_per_segment) as f64,
         dir_segments,
     );
     println!(
-        "    pages       rows {:>5.1}%  slots {:>5.1}%  ({:.1} of {per_page} per row, {} segments)",
+        "    pages       rows {:>5.1}%  bytes {:>5.1}%  ({:.1} events per fragment, {} segments)",
         page_row_use * 100.0,
         page_fill * 100.0,
         if page_rows == 0 {
@@ -376,9 +386,7 @@ fn utilisation(shards: &[SealedShard], geometry: &Geometry) {
         pinned as f64 / n as f64 / 1e6,
     );
     // Split, because the two tables answer to different limits and a geometry
-    // change moves bytes between them. At the compiled geometry the directory
-    // is a fifth of the total, which is why a page-row decision has dominated
-    // the pinned-byte argument and a directory-row decision will not.
+    // change moves bytes between them.
     println!(
         "    pinned split  directory {:.1} MB ({:>4.1}%), pages {:.1} MB ({:>4.1}%)",
         dir_pinned as f64 / 1e6,
@@ -453,14 +461,9 @@ fn single_lookup(shards: &[SealedShard]) {
 
 /// What the real two-choice placer does with the same script sets.
 ///
-/// Everything above models the directory as `scripts / slots`, which is what
-/// placement would cost if rows filled evenly. They do not, and the difference
-/// is the entire question of how close to a segment's capacity a script target
-/// may sit: the fullest row is what adds a segment, and a segment doubles the
-/// directory query and setup cost of every wallet that touches the shard.
-///
-/// Silent when no shard was asked for its placement, so the default run is
-/// unchanged and remains comparable with the archived censuses.
+/// Maximum occupied bytes and segment count under actual weighted placement.
+/// Silent unless placement was requested. More segments increase every lookup's
+/// setup, response bytes and server work for that shard.
 fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64) {
     let placed: Vec<(&SealedShard, transparent_shard::build::Placement)> = shards
         .iter()
@@ -469,7 +472,7 @@ fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64
     if placed.is_empty() {
         return;
     }
-    let slots = geometry.directory_slots();
+    let row_payload = geometry.directory_row_bytes as u64 - 4;
     let real_segments: u64 = placed.iter().map(|(_, p)| p.segments as u64).sum();
     let stacked = placed.iter().filter(|(_, p)| p.segments > 1).count();
 
@@ -481,17 +484,17 @@ fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64
     let mut loads: Vec<u64> = placed
         .iter()
         .filter(|(_, p)| p.segments == 1)
-        .map(|(_, p)| p.max_row_load)
+        .map(|(_, p)| p.max_row_bytes)
         .collect();
     loads.sort_unstable();
     let (worst, worst_shard) = placed
         .iter()
         .filter(|(_, p)| p.segments == 1)
-        .map(|(shard, p)| (p.max_row_load, shard.shard_id))
+        .map(|(shard, p)| (p.max_row_bytes, shard.shard_id))
         .max()
         .unwrap_or((0, 0));
 
-    println!("  placement (the real two-choice placer, not scripts / slots)");
+    println!("  placement (the byte-weighted two-choice placer)");
     println!(
         "    segments     {real_segments} placed against {modelled_segments} modelled; \
 {stacked} of {} shards need more than one",
@@ -501,7 +504,7 @@ fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64
         println!("    fullest row  no shard placed in one segment");
     } else {
         println!(
-            "    fullest row  {worst} of {slots} in shard {worst_shard}, p50 {}, p95 {} \
+            "    fullest row  {worst} of {row_payload} bytes in shard {worst_shard}, p50 {}, p95 {} \
 (over the {} shards that fit one segment)",
             percentile(&loads, 50.0),
             percentile(&loads, 95.0),
@@ -514,35 +517,24 @@ fn placement(shards: &[SealedShard], geometry: &Geometry, modelled_segments: u64
 directory segment, and each added segment doubles the directory query and setup cost of every \
 wallet that touches that shard"
         );
-    } else if worst + 1 >= slots {
+    } else if worst + transparent_shard::records::MAX_DIRECTORY_ENTRY_BYTES as u64 > row_payload {
         println!(
-            "    the fullest row is one entry short of its slot count: this target is at the \
-edge of needing a second segment"
+            "    the fullest row cannot accept a maximum-size entry directly; further placement may need relocation"
         );
     }
 }
 
 /// What the same content would cost with short histories packed into shared rows.
 ///
-/// This is arithmetic over per-script event counts, not a measurement. No v5
-/// codec, builder or published set exists at this commit: the boundaries below
-/// are the v4 boundaries above, with packed demand carried alongside them as a
-/// passenger. It says what the packing rule *would* ask for, and the only way
-/// it can be wrong is if a builder that does not yet exist disagrees.
-///
-/// Two further caveats it shares with the measured figures above: directory
-/// placement is modelled as `scripts / slots` rather than run through the real
-/// two-choice placer, so directory segment counts are a lower bound; and
-/// encoding overhead is a modelled constant rather than emitted bytes.
+/// Exact compact page demand over these boundaries, using the builder's
+/// packing rule. Directory segments use measured placement when requested,
+/// otherwise a byte-density lower bound. No native table is materialized here.
 fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, basis: PageBasis) {
     if shards.is_empty() {
         return;
     }
     let per_row = PAGE_ROW_BYTES - PAGE_ROW_HEADER_BYTES;
     let page_rows_per_segment = geometry.page_rows;
-    let dir_rows_per_segment = geometry.directory_rows;
-    let slots = geometry.directory_slots();
-
     println!();
     match basis {
         PageBasis::Packed => {
@@ -573,39 +565,18 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
         }
     }
 
-    // Per class: scripts across the whole set, and rows, which must be summed
-    // per shard because the ceiling is per shard.
-    println!("  proj_classes (p = paged events; a class of one script still costs a row)");
-    let mut class_scripts = [0u64; EVENTS_PER_PAGE as usize + 1];
-    let mut class_rows = [0u64; EVENTS_PER_PAGE as usize + 1];
+    println!("  compact_classes (entry bytes, including header; rows before tail sharing)");
+    let mut classes: std::collections::BTreeMap<usize, (u64, u64)> = Default::default();
     for shard in shards {
-        for p in 1..=EVENTS_PER_PAGE as usize {
-            let n = shard.occupancy.demand.class(p as u32);
-            class_scripts[p] += n;
-            class_rows[p] += n.div_ceil(entries_per_row(p as u32) as u64);
+        for (bytes, count) in shard.occupancy.demand.classes() {
+            let totals = classes.entry(bytes).or_default();
+            totals.0 += count;
+            totals.1 += count.div_ceil((4092 / bytes) as u64);
         }
     }
-    for p in 1..=EVENTS_PER_PAGE as usize {
-        if class_scripts[p] == 0 {
-            continue;
-        }
-        let per = entries_per_row(p as u32) as u64;
-        let waste = class_rows[p] * per - class_scripts[p];
-        println!(
-            "    p {p:>2}  scripts {:>9}  rows {:>8}  {per:>2} per row  tail slack {waste:>7}",
-            class_scripts[p], class_rows[p]
-        );
+    for (bytes, (scripts, rows)) in classes {
+        println!("    bytes {bytes:>4} scripts {scripts:>9} grouped rows {rows:>8}");
     }
-    let short_rows: u64 = class_rows.iter().sum();
-    let short_scripts: u64 = class_scripts.iter().sum();
-    let long_rows: u64 = shards.iter().map(|s| s.occupancy.demand.long_rows()).sum();
-    let long_scripts: u64 = shards
-        .iter()
-        .map(|s| s.occupancy.demand.long_scripts())
-        .sum();
-    println!(
-        "    short  scripts {short_scripts:>9}  rows {short_rows:>8}   long  scripts {long_scripts:>7}  rows {long_rows:>8}"
-    );
 
     // Per shard, R against the unpacked figure that actually sealed it.
     let mut proj: Vec<u64> = shards
@@ -629,20 +600,21 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
 
     // The byte model under packing: one entry header per fragment, one row
     // header per used row, and the events themselves.
-    let scripts: u64 = shards.iter().map(|s| s.occupancy.scripts).sum();
-    let paged: u64 = shards.iter().map(|s| s.occupancy.paged_events()).sum();
-    let live = scripts * geometry.directory_entry_bytes() as u64
+    let live = shards
+        .iter()
+        .map(|s| s.occupancy.directory_bytes)
+        .sum::<u64>()
         + fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
         + packed * PAGE_ROW_HEADER_BYTES as u64
-        + paged * transparent_events::EVENT_BYTES as u64;
+        + shards
+            .iter()
+            .map(|s| s.occupancy.demand.event_bytes())
+            .sum::<u64>();
     let mut pinned = 0u64;
     let mut page_segments = 0u64;
     let mut dir_segments = 0u64;
     for shard in shards {
-        let d = transparent_shard::layout::segments_for(
-            shard.occupancy.scripts.div_ceil(slots),
-            dir_rows_per_segment,
-        ) as u64;
+        let d = directory_segments(shard, geometry);
         let g = transparent_shard::layout::segments_for(
             shard.occupancy.packed_page_rows,
             page_rows_per_segment,
@@ -654,10 +626,12 @@ fn projection(shards: &[SealedShard], policy: &SealPolicy, geometry: &Geometry, 
     }
 
     // Row fill is measured in bytes, not events. Once a row mixes classes,
-    // "events of 36" describes nothing: a row of 22 one-event entries is 98%
-    // full and holds 22 events.
+    // a fixed event-slot fraction is no longer a measure of byte occupancy.
     let used_bytes: u64 = fragments * transparent_shard::PAGE_ENTRY_HEADER_BYTES as u64
-        + paged * transparent_events::EVENT_BYTES as u64;
+        + shards
+            .iter()
+            .map(|s| s.occupancy.demand.event_bytes())
+            .sum::<u64>();
     println!(
         "  proj_utilisation  page rows {:>5.1}%  row bytes {:>5.1}%  ({} page segments)",
         packed as f64 / (page_segments * page_rows_per_segment) as f64 * 100.0,
@@ -955,7 +929,7 @@ fn main() -> Result<(), BoxError> {
     };
     if geometry != compiled {
         println!(
-            "\nscoring against {} directory rows x {} slots ({} scripts, {} B rows, {} inline \
+            "\nscoring against {} directory rows x at most {} entries ({} script count bound, {} B rows, {} inline \
 events) and {} page rows, rather than the compiled {} x {} ({} scripts) and {}",
             geometry.directory_rows,
             geometry.directory_slots(),
@@ -1446,7 +1420,7 @@ mod tests {
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
         assert_eq!(
             scripts,
-            vec![147_456, 6_144, 12_288, 18_432, 24_576, 36_864]
+            vec![407_260, 16_969, 33_938, 50_907, 67_876, 101_814]
         );
         // Every entry seals pages at the geometry's own limit, so the sweep
         // varies the script limit and nothing else.
@@ -1478,7 +1452,7 @@ mod tests {
         let scripts: Vec<u64> = policies.iter().map(|(_, p)| p.scripts.target).collect();
         assert_eq!(
             scripts,
-            vec![589_824, 24_576, 49_152, 73_728, 98_304, 147_456]
+            vec![1_629_038, 67_876, 135_753, 203_629, 271_506, 407_259]
         );
         for (name, policy) in &policies {
             assert_eq!(policy.page_rows.capacity, 65_536, "{name}");

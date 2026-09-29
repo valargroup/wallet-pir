@@ -9,23 +9,13 @@
 //!
 //! # Why three thresholds and not one
 //!
-//! The three tables are keyed differently, so no single quantity bounds them:
-//!
-//! - the filter and the directory are sized by *distinct scripts*;
-//! - the pages table is sized by *page rows*, which is
-//!   `sum over scripts of fragments_for(events)` — not the event count, because
-//!   pages are per script and padded, so many three-event histories cost far
-//!   more rows than the same events in one long history.
-//!
-//! Both are monotone as blocks stream in. That is a convenient property but not
-//! the reason one incremental pass decides every boundary: what actually makes
-//! the pass sound is that each block's per-script delta is *exact*, so the
-//! projection a capacity decision is made on is the state absorbing will
-//! produce. The distinction matters because packed row demand, carried here as
-//! [`Occupancy::packed_page_rows`] and sealed on under [`PageBasis::Packed`],
-//! is not monotone —
-//! see [`crate::layout::PackedDemand`] for the counterexample. Nothing may
-//! reason that content which does not fit now can never fit later.
+//! Distinct script count bounds the filter, actual compact directory bytes
+//! bound directory storage, and packed page rows bound page storage. Each
+//! block's projection applies the same per-history encoding and packing rule
+//! as the builder. Variable packing is not monotone: a later event can change
+//! inline compression or the mix of shared entries. Decisions use the exact
+//! projected state; they never assume that a history which does not fit now
+//! cannot fit later.
 //!
 //! Distinct transaction ids are counted and reported but do not seal:
 //! they size the optional transaction-detail table, which this POC does not
@@ -54,6 +44,7 @@
 
 use crate::build::Placement;
 use crate::layout::{Geometry, PackedDemand};
+use crate::packing::HistoryLayout;
 use crate::records::MAX_SCRIPT_BYTES;
 use std::collections::{HashMap, HashSet};
 use transparent_events::{TransparentEvent, Txid};
@@ -87,7 +78,8 @@ impl Limit {
 /// both would be holding incompatible coverage. Changing any of them re-shards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SealPolicy {
-    /// Distinct scripts, which size the filter and the directory.
+    /// Distinct script count. Actual directory bytes have an additional
+    /// geometry-derived limit with the same one-seventh reserve.
     pub scripts: Limit,
     /// Page rows, which size the pages table.
     pub page_rows: Limit,
@@ -99,16 +91,12 @@ impl SealPolicy {
     /// Capacity is what the tables hold; the targets are the headroom each one
     /// needs, and both fractions are load-bearing rather than round numbers.
     ///
-    /// The directory keeps a **seventh** in reserve. That covers two things at
-    /// once: whatever one more block adds between crossing the target and the
-    /// seal taking effect, and the slack two-choice placement needs to fit
-    /// every script into one segment. Placement is not a perfect packing, so a
-    /// directory filled to capacity would overflow into a second segment — and
-    /// a second segment costs every wallet an extra query against this shard,
-    /// forever.
+    /// Script count and actual directory bytes keep a seventh in reserve for
+    /// block growth and weighted two-choice placement. This is headroom, not
+    /// a proof that placement always fits one segment; the placer may add one.
     ///
     /// The page table keeps a **thirty-second**, far less, because its demand
-    /// is checked against the exact post-absorb state rather than projected:
+    /// is projected exactly before absorbing each block:
     /// the reserve only has to absorb one block, not a placement failure.
     ///
     /// Deriving both here rather than at each call site is what keeps a
@@ -136,8 +124,7 @@ impl SealPolicy {
 ///
 /// Not part of [`SealPolicy`], which is schema: this selects between two ways
 /// of counting the same content, and only one of them can be right for a given
-/// builder. It exists so the packed figure can be sealed on and measured before
-/// a packed builder exists to emit it.
+/// builder. Other bases remain diagnostic alternatives only.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PageBasis {
     /// Short histories sharing rows, which is what the builder emits.
@@ -169,7 +156,7 @@ pub struct Occupancy {
     pub scripts: u64,
     /// The figure that closes the shard, under the sealer's [`PageBasis`].
     pub page_rows: u64,
-    /// A row per fragment, as the v4 builder emits them.
+    /// Fragment count before sharing rows.
     pub fragments: u64,
     pub txids: u64,
     pub events: u64,
@@ -180,6 +167,8 @@ pub struct Occupancy {
     /// `2 * scripts` would be wrong for every script holding a single event,
     /// which the measured distribution says is common.
     pub inline_events: u64,
+    /// Actual compact directory-entry bytes, excluding row headers.
+    pub directory_bytes: u64,
     pub blocks: u64,
     /// Page rows the same content needs with short histories packed into shared
     /// rows.
@@ -288,11 +277,8 @@ pub struct Sealer {
     basis: PageBasis,
     /// The geometry occupancy is counted against.
     ///
-    /// Only the inline allowance is read here — it is what decides whether a
-    /// script's history reaches the page table, and therefore where a boundary
-    /// falls. The rest of the geometry is reporting, and belongs to the caller.
-    /// Defaults to the compiled constants, so a sealer that is not told
-    /// otherwise seals exactly as the publisher does.
+    /// Inline allowance determines the paged prefix; directory dimensions
+    /// determine the independent byte limit. Defaults match the publisher.
     geometry: Geometry,
     /// Whether each closed shard reports its real directory placement.
     measure_placement: bool,
@@ -301,14 +287,15 @@ pub struct Sealer {
     /// Whether each closed shard carries its script set out with it.
     retain_scripts: bool,
     next_shard_id: u64,
-    /// Per-script event counts within the shard being accumulated.
-    scripts: HashMap<Vec<u8>, u32>,
+    /// Compact history summaries within the shard being accumulated.
+    scripts: HashMap<Vec<u8>, HistoryLayout>,
     txids: HashSet<Txid>,
     fragments: u64,
     /// Maintained rather than recomputed: `occupancy()` is reached up to five
     /// times per block, and a full scan of the script map each time is the
     /// difference between a runnable and an unrunnable full-journal census.
     inline_events: u64,
+    directory_bytes: u64,
     /// Packed row demand, carried as a passenger. See [`Occupancy::packed_page_rows`].
     demand: PackedDemand,
     events: u64,
@@ -372,6 +359,7 @@ impl Sealer {
             txids: HashSet::new(),
             fragments: 0,
             inline_events: 0,
+            directory_bytes: 0,
             demand: PackedDemand::default(),
             events: 0,
             start_height: None,
@@ -411,7 +399,7 @@ impl Sealer {
         match basis {
             PageBasis::Fragments => fragments,
             PageBasis::Packed => demand.rows(),
-            PageBasis::PackedOrdinary => demand.rows() - demand.long_rows(),
+            PageBasis::PackedOrdinary => demand.ordinary_rows(),
         }
     }
 
@@ -424,12 +412,13 @@ impl Sealer {
             txids: self.txids.len() as u64,
             events: self.events,
             inline_events: self.inline_events,
+            directory_bytes: self.directory_bytes,
             blocks: match (self.start_height, self.last_height) {
                 (Some(start), Some(last)) => last - start + 1,
                 _ => 0,
             },
             packed_page_rows: packed,
-            demand: self.demand,
+            demand: self.demand.clone(),
         }
     }
 
@@ -438,6 +427,7 @@ impl Sealer {
         self.txids.clear();
         self.fragments = 0;
         self.inline_events = 0;
+        self.directory_bytes = 0;
         self.demand = PackedDemand::default();
         self.events = 0;
         self.start_height = None;
@@ -450,22 +440,25 @@ impl Sealer {
     /// order — the two things the builder does, and both of them matter. A
     /// script too long to index is filtered publicly but never placed, and
     /// placement in any other order is a different placement.
-    fn placeable(&self) -> Vec<&[u8]> {
+    fn placeable(&self) -> Vec<(&[u8], usize)> {
         crate::build::placement_order(
             self.scripts
                 .iter()
                 .filter(|(script, _)| script.len() <= MAX_SCRIPT_BYTES)
-                .map(|(script, events)| (script.as_slice(), *events)),
+                .map(|(script, history)| (script.as_slice(), history.directory_bytes())),
         )
     }
 
     fn placement(&self) -> (Placement, Option<Result<ChoiceMeasure, String>>) {
-        let placeable = self.placeable();
+        let ordered = self.placeable();
+        let placeable: Vec<_> = ordered.iter().map(|(script, _)| *script).collect();
+        let sizes: Vec<_> = ordered.iter().map(|(_, size)| *size).collect();
         let (placement, assignment) = crate::build::place_scripts(
             self.next_shard_id,
             &placeable,
+            &sizes,
             self.geometry.directory_rows,
-            self.geometry.directory_slots(),
+            self.geometry.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES,
         )
         // The rule adds a segment until everything fits and the cap is a
         // bug-catcher far above any reachable load, so a census reaching it is
@@ -499,9 +492,11 @@ impl Sealer {
             scripts: self.retain_scripts.then(|| {
                 self.placeable()
                     .into_iter()
-                    .map(|script| {
-                        let events = self.scripts.get(script).copied().unwrap_or(0);
-                        let fragments = self.geometry.fragments_for(events) as u32;
+                    .map(|(script, _)| {
+                        let fragments = self
+                            .scripts
+                            .get(script)
+                            .map_or(0, |history| history.fragments);
                         (script.to_vec(), fragments)
                     })
                     .collect()
@@ -521,39 +516,58 @@ impl Sealer {
     ///
     /// Computed without mutating, because the answer decides whether the block
     /// belongs to this shard at all.
-    fn projected(&self, events: &[(ScriptBytes, TransparentEvent)]) -> Occupancy {
-        let mut added_scripts: HashMap<&[u8], u32> = HashMap::new();
-        let mut added_txids: HashSet<Txid> = HashSet::new();
+    fn updated_histories(
+        &self,
+        events: &[(ScriptBytes, TransparentEvent)],
+    ) -> Vec<(Vec<u8>, HistoryLayout)> {
+        let mut added: HashMap<&[u8], Vec<TransparentEvent>> = HashMap::new();
         for (script, event) in events {
-            *added_scripts.entry(script.as_slice()).or_insert(0) += 1;
-            added_txids.insert(event.txid());
+            added.entry(script.as_slice()).or_default().push(*event);
         }
+        added
+            .into_iter()
+            .map(|(script, mut events)| {
+                events.sort_by_key(TransparentEvent::sort_key);
+                let mut history = self.scripts.get(script).cloned().unwrap_or_default();
+                for event in events {
+                    history.push(event, self.geometry.inline_events);
+                }
+                (script.to_vec(), history)
+            })
+            .collect()
+    }
 
+    fn projected(&self, events: &[(ScriptBytes, TransparentEvent)]) -> Occupancy {
         let mut scripts = self.scripts.len() as u64;
         let mut fragments = self.fragments;
         let mut inline_events = self.inline_events;
-        let mut demand = self.demand;
-        for (script, added) in &added_scripts {
-            let existing = self.scripts.get(*script).copied().unwrap_or(0);
-            if existing == 0 {
+        let mut directory_bytes = self.directory_bytes;
+        let mut demand = self.demand.clone();
+        for (script, updated) in self.updated_histories(events) {
+            let empty = HistoryLayout::default();
+            let old = self.scripts.get(&script).unwrap_or(&empty);
+            if old.events == 0 {
                 scripts += 1;
             }
-            let inline = self.geometry.inline_events;
-            fragments += self.geometry.fragments_for(existing + added)
-                - self.geometry.fragments_for(existing);
-            inline_events +=
-                u64::from((existing + added).min(inline)) - u64::from(existing.min(inline));
+            fragments += u64::from(updated.fragments - old.fragments);
+            inline_events += (updated.inline.len() - old.inline.len()) as u64;
             if script.len() <= MAX_SCRIPT_BYTES {
-                demand.shift_inline(existing, existing + added, inline);
+                directory_bytes = directory_bytes
+                    - if old.events == 0 {
+                        0
+                    } else {
+                        old.directory_bytes() as u64
+                    }
+                    + updated.directory_bytes() as u64;
+                demand.shift(old, &updated);
             }
         }
-        let txids = added_txids
-            .iter()
-            .filter(|txid| !self.txids.contains(*txid))
-            .count() as u64
-            + self.txids.len() as u64;
-
-        let packed = demand.rows();
+        let added_txids: HashSet<_> = events.iter().map(|(_, event)| event.txid()).collect();
+        let txids = self.txids.len() as u64
+            + added_txids
+                .iter()
+                .filter(|id| !self.txids.contains(*id))
+                .count() as u64;
         Occupancy {
             scripts,
             page_rows: Self::page_rows(self.basis, fragments, &demand),
@@ -561,18 +575,34 @@ impl Sealer {
             txids,
             events: self.events + events.len() as u64,
             inline_events,
+            directory_bytes,
             blocks: match (self.start_height, self.last_height) {
-                (Some(start), Some(last)) => last - start + 1 + 1,
+                (Some(start), Some(last)) => last - start + 2,
                 _ => 1,
             },
-            packed_page_rows: packed,
+            packed_page_rows: demand.rows(),
             demand,
+        }
+    }
+
+    fn directory_limit(&self) -> Limit {
+        let capacity = self.geometry.directory_rows
+            * (self.geometry.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES)
+                as u64;
+        Limit {
+            target: capacity - capacity / 7,
+            capacity,
         }
     }
 
     fn over_capacity(&self, projected: &Occupancy) -> Option<(&'static str, u64, u64)> {
         for (name, value, limit) in [
             ("scripts", projected.scripts, self.policy.scripts),
+            (
+                "directory bytes",
+                projected.directory_bytes,
+                self.directory_limit(),
+            ),
             ("page rows", projected.page_rows, self.policy.page_rows),
         ] {
             if value > limit.capacity {
@@ -586,6 +616,11 @@ impl Sealer {
         let occupancy = self.occupancy();
         for (name, value, limit) in [
             ("scripts", occupancy.scripts, self.policy.scripts),
+            (
+                "directory bytes",
+                occupancy.directory_bytes,
+                self.directory_limit(),
+            ),
             ("page rows", occupancy.page_rows, self.policy.page_rows),
         ] {
             if value >= limit.target {
@@ -600,32 +635,27 @@ impl Sealer {
             self.start_height = Some(height);
         }
         self.last_height = Some(height);
-
-        // Aggregate the block by script before applying it, so this runs the
-        // same per-script delta as `projected` rather than a second code path.
-        // Applying events one at a time would also walk a history through every
-        // intermediate packing class on its way to the one it lands in.
-        let mut added: HashMap<&[u8], u32> = HashMap::new();
-        for (script, event) in events {
-            *added.entry(script.as_slice()).or_insert(0) += 1;
-            self.txids.insert(event.txid());
-            self.events += 1;
-        }
-        for (script, added) in added {
-            let existing = self.scripts.get(script).copied().unwrap_or(0);
-            let updated = existing + added;
-            let inline = self.geometry.inline_events;
-            self.fragments +=
-                self.geometry.fragments_for(updated) - self.geometry.fragments_for(existing);
-            self.inline_events += u64::from(updated.min(inline)) - u64::from(existing.min(inline));
-            // A script too long for a directory entry is filtered publicly but
-            // never paged, so it contributes no packed rows. `page_rows` still
-            // counts it, which is the v4 behaviour this projection rides on.
+        for (script, updated) in self.updated_histories(events) {
+            let empty = HistoryLayout::default();
+            let old = self.scripts.get(&script).unwrap_or(&empty);
+            self.fragments += u64::from(updated.fragments - old.fragments);
+            self.inline_events += (updated.inline.len() - old.inline.len()) as u64;
             if script.len() <= MAX_SCRIPT_BYTES {
-                self.demand.shift_inline(existing, updated, inline);
+                self.directory_bytes = self.directory_bytes
+                    - if old.events == 0 {
+                        0
+                    } else {
+                        old.directory_bytes() as u64
+                    }
+                    + updated.directory_bytes() as u64;
+                self.demand.shift(old, &updated);
             }
-            self.scripts.insert(script.to_vec(), updated);
+            self.scripts.insert(script, updated);
         }
+        for (_, event) in events {
+            self.txids.insert(event.txid());
+        }
+        self.events += events.len() as u64;
     }
 
     /// Offers one block to the sealer, returning the shards it sealed.
@@ -724,20 +754,20 @@ mod tests {
     #[test]
     fn the_default_geometry_implies_the_policy_the_publisher_used() {
         let policy = SealPolicy::for_geometry(&crate::layout::RECENT_8K);
-        assert_eq!(policy.scripts.capacity, 172_032);
-        assert_eq!(policy.scripts.target, 147_456);
+        assert_eq!(policy.scripts.capacity, 475_136);
+        assert_eq!(policy.scripts.target, 407_260);
         assert_eq!(policy.page_rows.capacity, 8_192);
         assert_eq!(policy.page_rows.target, 7_936);
     }
 
     /// The seal policy the deployment plan names for `recent-4k-8k`
-    /// (`73728:86016,7936:8192` under the v9 21-slot directory row) is the one
+    /// (with separate directory-byte limits under v10) is the one
     /// the geometry derives.
     #[test]
     fn the_recent_4k_8k_policy_is_the_one_deployment_names() {
         let policy = SealPolicy::for_geometry(&crate::layout::RECENT_4K_8K);
-        assert_eq!(policy.scripts.target, 73_728);
-        assert_eq!(policy.scripts.capacity, 86_016);
+        assert_eq!(policy.scripts.target, 203_630);
+        assert_eq!(policy.scripts.capacity, 237_568);
         assert_eq!(policy.page_rows.target, 7_936);
         assert_eq!(policy.page_rows.capacity, 8_192);
     }
@@ -776,7 +806,7 @@ mod tests {
         assert!(archive.scripts.target > recent.scripts.target);
         assert!(archive.page_rows.target > recent.page_rows.target);
     }
-    use crate::layout::{fragments_for, EVENTS_PER_PAGE, INLINE_EVENTS};
+    use crate::layout::{EVENTS_PER_PAGE, INLINE_EVENTS};
     use transparent_events::ReceiveEvent;
 
     fn policy(scripts: (u64, u64), page_rows: (u64, u64)) -> SealPolicy {
@@ -898,8 +928,8 @@ mod tests {
     /// sealer's count is the builder's count.
     #[test]
     fn a_script_set_past_one_segment_places_into_two() {
-        // A geometry small enough to overrun cheaply: one inline event gives 23
-        // slots a row, and 2,048 rows of them is 47,104 scripts.
+        // A geometry small enough to overrun cheaply: one inline event gives 58
+        // minimum entries per row.
         let geometry = Geometry {
             inline_events: 1,
             ..Default::default()
@@ -909,10 +939,11 @@ mod tests {
         let mut sealer = Sealer::with_geometry(generous(), 1, PageBasis::default(), geometry);
         sealer.measure_placement(true);
         let block: Vec<_> = (0..scripts as u32).map(|tag| event(1, tag, 0)).collect();
-        sealer.push_block(1, &block).expect("valid block");
-        let placement = sealer
-            .finish()
-            .expect("a tail")
+        let mut sealed = sealer.push_block(1, &block).expect("valid block");
+        sealed.extend(sealer.finish());
+        let placement = sealed
+            .pop()
+            .expect("one shard")
             .placement
             .expect("placement was asked for");
         assert!(
@@ -1396,48 +1427,30 @@ mod tests {
             let recounted: u64 = sealer
                 .scripts
                 .values()
-                .map(|count| u64::from((*count).min(INLINE_EVENTS)))
+                .map(|history| history.inline.len() as u64)
                 .sum();
             assert_eq!(occupancy.inline_events, recounted, "at height {height}");
 
-            let fragments: u64 = sealer.scripts.values().map(|c| fragments_for(*c)).sum();
+            let fragments: u64 = sealer
+                .scripts
+                .values()
+                .map(|h| u64::from(h.fragments))
+                .sum();
             assert_eq!(occupancy.fragments, fragments, "at height {height}");
         }
     }
 
-    /// Packing never costs more rows than giving each history its own, and a
-    /// block never adds more rows than it touches scripts.
-    ///
-    /// The second bound is what replaces monotonicity. Packed demand is not
-    /// monotone — see `layout::tests::row_demand_can_fall_as_events_arrive` —
-    /// so "a shard that overshot its target stays overshot" is not available as
-    /// a reason for the gap between target and capacity. This bound is.
+    /// Sharing rows never needs more rows than one per fragment.
     #[test]
-    fn a_block_adds_at_most_one_row_per_script_it_touches() {
+    fn packing_is_bounded_by_the_fragment_count() {
         let mut sealer = Sealer::new(generous(), 100);
         for height in 100..200u64 {
-            let mut block = Vec::new();
-            // Irregular: some blocks empty, some wide, histories of every shape.
-            for i in 0..(height as u32 % 17) {
-                block.push(event(height, (height as u32 * 5 + i) % 60, i));
-            }
-            let touched: std::collections::HashSet<&[u8]> =
-                block.iter().map(|(s, _)| s.as_slice()).collect();
-
-            let before = sealer.occupancy().packed_page_rows;
+            let block: Vec<_> = (0..height as u32 % 17)
+                .map(|i| event(height, (height as u32 * 5 + i) % 60, i))
+                .collect();
             sealer.push_block(height, &block).unwrap();
-            let after = sealer.occupancy();
-
-            assert!(
-                after.packed_page_rows <= before + touched.len() as u64,
-                "height {height}: {before} -> {} for {} scripts",
-                after.packed_page_rows,
-                touched.len()
-            );
-            assert!(
-                after.packed_page_rows <= after.fragments,
-                "height {height}: packing cost more than not packing"
-            );
+            let occupancy = sealer.occupancy();
+            assert!(occupancy.packed_page_rows <= occupancy.fragments);
         }
     }
 

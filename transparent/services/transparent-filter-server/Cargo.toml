@@ -28,6 +28,10 @@ name = "journal-convert-v1"
 path = "src/bin/journal-convert-v1.rs"
 
 [[bin]]
+name = "sample-redigest"
+path = "src/bin/sample-redigest.rs"
+
+[[bin]]
 name = "shard-cutoff"
 path = "src/bin/shard-cutoff.rs"
 
@@ -52,6 +56,7 @@ name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
 
 [dependencies]
+pir-observability = { path = "../../../shared/pir-observability" }
 transparent-blocks = { path = "../../crates/transparent-blocks" }
 tempfile = "3"
 axum = "0.7"

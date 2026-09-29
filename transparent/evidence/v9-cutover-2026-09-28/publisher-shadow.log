@@ -1,0 +1,78 @@
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.133139, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.32733, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.420194, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.334306, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.339709, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.247124, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.276256, "exit_code": 0}
+{"covered_through":3499274,"genesis_hash":"00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08","map_sha256":"8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef","network":"main","profile":"zcash-transparent-range-v2","schema":"transparent-shard-v9","shard_dir":"/srv/zakura/transparent-shards-v9-full","shards":139,"start_height":0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.59574, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.396782, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.021512, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.590405, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.085149, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.192501, "exit_code": 0}
+2026-09-28T16:16:09.395981Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=13 revisions=13 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-recent-01" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017142, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.800885, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.338494, "exit_code": 0}
+transparent-pir-recent-01: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.263955, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.012961, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.088542, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.060087, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 152.992812, "exit_code": 0}
+2026-09-28T16:18:59.061942Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=63 revisions=63 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-archive-01" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.55308, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.394754, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.54245, "exit_code": 0}
+transparent-pir-archive-01: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.598859, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.011888, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.115278, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.064726, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 156.374529, "exit_code": 0}
+2026-09-28T16:25:34.019399Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=63 revisions=63 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-archive-02" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.637636, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.991723, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.668525, "exit_code": 0}
+transparent-pir-archive-02: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.037081, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.032444, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.136533, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.078083, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.865198, "exit_code": 0}
+2026-09-28T16:29:51.778706Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=13 revisions=13 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-recent-02" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.018943, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.81016, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.526369, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.309023, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.022203, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.501812, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.102023, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.963254, "exit_code": 0}
+2026-09-28T16:30:18.074208Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=13 revisions=13 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-recent-03" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.022748, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.001818, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.432608, "exit_code": 0}
+transparent-pir-recent-03: warm with publication control
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.988745, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016339, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.44047, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.074714, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 6.610597, "exit_code": 0}
+2026-09-28T16:30:42.729563Z  INFO transparent_shard_server: loaded shard set shards=139 assigned=13 revisions=13 prunable=0 geometries=["archive-wide", "recent-4k-8k"] map_sha256="8d8025e52f6a9557fc3997247c4c53f50a1b55fcac1835fc7b1ee219fa6fc8ef" worker_id="transparent-pir-recent-04" assignment_sha256="c522a8704e281a7cf24720e451936fdd822df0a7316c1d747321ba1ad77d3b04" start=0 covered_through=3499274
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.013805, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.7017, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.318145, "exit_code": 0}
+transparent-pir-recent-04: warm with publication control
+{
+  "build_seconds": 2.763395197,
+  "candidate_height": 3499339,
+  "journal_height": 3499339,
+  "node_hash": "00000000004d8748f3c8f3478c5df6ee9810267846fb856d643bae5ae511e63b",
+  "node_height": 3499339,
+  "phase": "shadow_verified",
+  "shadow_hash": "00000000004523b8954a8bf7cf3f7c1e35517f86866c910b62c8156579ad31ee"
+}

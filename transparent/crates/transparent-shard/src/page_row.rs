@@ -1,31 +1,19 @@
-//! The packed page row: several scripts' histories sharing one fixed row.
+//! Compact page entries sharing one fixed-width PIR row.
 //!
-//! A v4 page row belonged to one script. The measured history distribution is
-//! p50 two events, p90 five, p95 eight, and the newest two live inline in the
-//! directory entry, so the common script that needs a page at all needs a
-//! handful of event slots out of forty-six. A row per script spent the rest on
-//! padding nobody chose.
+//! Each entry has a 34-byte header and a variable byte stream of complete
+//! events. A fragment is the longest canonical prefix that fits 4,058 event
+//! bytes; receive/spend mix determines its count, bounded by 86. A local
+//! outpoint reference never crosses an entry boundary.
 //!
-//! Here a row holds a count and then that many variable-length entries, each a
-//! 34-byte header followed by its events. Thirty-three one-event histories fit
-//! in a row; nineteen two-event ones; thirteen three-event ones. Past
-//! twenty-three paged events an entry is more than half a row and packing
-//! stops paying, which is why histories longer than one fragment get a
-//! contiguous run of rows to themselves and share with nothing.
+//! Long histories occupy contiguous rows. Short histories use descending
+//! best-fit packing, including spare space in long histories' final rows.
+//! The builder uses equal-byte-size groups instead if they require fewer rows.
 //!
-//! # What packing does not change
-//!
-//! A directory entry still names a 1-based `first_page`, and a history still
-//! costs `ceil(p / 46)` page queries once the first page has reported `K`.
-//! What changed is that a reader
-//! selects an entry *within* the row rather than taking the row whole. Several
-//! scripts naming the same row is expected; a reader must find its own entry and
-//! ignore the rest.
-//!
-//! It must also not *use* the rest. Two of a wallet's own scripts sharing a row
-//! still cost two fetches. Skipping the second because the first response
-//! happened to carry it would make the request transcript depend on which
-//! scripts share a row, which is a fact about other people's history.
+//! A directory entry names a 1-based `first_page`. Its first page reports `K`,
+//! and the wallet fetches all K fragments and checks each greedy boundary.
+//! A reader selects only its own tag within the row. Even two of a wallet's
+//! scripts sharing a row cost separate fetches: response reuse would make the
+//! request transcript depend on which scripts share a row.
 //!
 //! # What a decoder must not trust
 //!
@@ -37,12 +25,13 @@
 //! matching my tag" a well-defined operation rather than a choice.
 
 use crate::layout::{
-    entries_per_row, entry_bytes, EVENTS_PER_PAGE, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES,
-    PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
+    EVENTS_PER_PAGE, MAX_ENTRIES_PER_ROW, PAGE_ENTRY_HEADER_BYTES, PAGE_ROW_BYTES,
+    PAGE_ROW_HEADER_BYTES,
 };
 use crate::records::RecordError;
 use crate::tag::SCRIPT_TAG_BYTES;
-use transparent_events::{TransparentEvent, EVENT_BYTES};
+use crate::{compact, packing::FRAGMENT_PAYLOAD};
+use transparent_events::TransparentEvent;
 
 // Entry header field offsets, relative to the start of the entry.
 const PE_TAG: usize = 0;
@@ -57,7 +46,6 @@ const PE_END: usize = PE_MAX_HEIGHT + 4;
 /// size formula and every capacity derived from it depend on this being true, so
 /// a field added without widening the header should fail the build.
 const _: () = assert!(PE_END == PAGE_ENTRY_HEADER_BYTES);
-const _: () = assert!(PAGE_ROW_HEADER_BYTES + entry_bytes(EVENTS_PER_PAGE) <= PAGE_ROW_BYTES);
 
 /// One fragment of one script's history, as it sits inside a shared row.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,7 +73,9 @@ impl PageEntry {
         if events.is_empty() {
             return Err(RecordError::Malformed("an entry holds no events".into()));
         }
-        if events.len() > EVENTS_PER_PAGE as usize {
+        if events.len() > EVENTS_PER_PAGE as usize
+            || compact::encoded_len(&events) > FRAGMENT_PAYLOAD
+        {
             return Err(RecordError::TooManyEvents(events.len()));
         }
         if fragment_count == 0 || ordinal >= fragment_count {
@@ -107,7 +97,7 @@ impl PageEntry {
 
     /// Bytes this entry occupies inside a row.
     pub fn encoded_len(&self) -> usize {
-        entry_bytes(self.events.len() as u32)
+        PAGE_ENTRY_HEADER_BYTES + compact::encoded_len(&self.events)
     }
 }
 
@@ -172,10 +162,10 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
         head[PE_MIN_HEIGHT..PE_MAX_HEIGHT].copy_from_slice(&entry.min_height.to_le_bytes());
         head[PE_MAX_HEIGHT..PE_END].copy_from_slice(&entry.max_height.to_le_bytes());
         at += PAGE_ENTRY_HEADER_BYTES;
-        for event in &entry.events {
-            row[at..at + EVENT_BYTES].copy_from_slice(&event.to_bytes());
-            at += EVENT_BYTES;
-        }
+        let mut encoded = Vec::with_capacity(compact::encoded_len(&entry.events));
+        compact::encode(&entry.events, &mut encoded)?;
+        row[at..at + encoded.len()].copy_from_slice(&encoded);
+        at += encoded.len();
     }
     Ok(row)
 }
@@ -231,12 +221,12 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
             )));
         }
 
-        let mut events = Vec::with_capacity(event_count);
         let body = at + PAGE_ENTRY_HEADER_BYTES;
-        for index in 0..event_count {
-            let bytes = take(row, body + index * EVENT_BYTES, EVENT_BYTES)?;
-            events.push(TransparentEvent::from_bytes(bytes)?);
-        }
+        let (events, event_bytes) = compact::decode(
+            row.get(body..)
+                .ok_or_else(|| RecordError::Malformed("entry runs past row".into()))?,
+            event_count,
+        )?;
 
         // Ordering is what a replay depends on, and what lets a client stop
         // reading once it is past its checkpoint. A row that arrived shuffled
@@ -265,7 +255,7 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
             ));
         }
 
-        at = body + event_count * EVENT_BYTES;
+        at = body + event_bytes;
         entries.push(PageEntry {
             tag,
             ordinal,
@@ -282,12 +272,6 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
         ));
     }
     Ok(entries)
-}
-
-/// Entries of a `p`-event history that fit one row, re-exported where the codec
-/// that depends on it lives.
-pub const fn row_capacity(p: u32) -> u32 {
-    entries_per_row(p)
 }
 
 #[cfg(test)]
@@ -344,8 +328,8 @@ mod tests {
     /// so each is exercised rather than sampled.
     #[test]
     fn every_class_fills_a_row_to_its_capacity() {
-        for p in 1..=EVENTS_PER_PAGE {
-            let per = entries_per_row(p) as usize;
+        for p in 1..=79 {
+            let per = 4092 / (34 + p as usize * 51);
             assert!(per >= 1, "class {p} must fit at least one entry");
             let full: Vec<PageEntry> = (0..per).map(|i| entry(i as u8 + 1, p)).collect();
             let row = encode_page_row(&full).expect("a full class row encodes");
@@ -365,10 +349,10 @@ mod tests {
 
     #[test]
     fn a_full_fragment_uses_the_bytes_the_layout_promises() {
-        let one = entry(1, EVENTS_PER_PAGE);
-        assert_eq!(one.encoded_len(), 4_036);
+        let one = entry(1, 79);
+        assert_eq!(one.encoded_len(), 4_063);
         let row = encode_page_row(std::slice::from_ref(&one)).unwrap();
-        assert_eq!(row[4_040..].iter().filter(|b| **b != 0).count(), 0);
+        assert_eq!(row[4_067..].iter().filter(|b| **b != 0).count(), 0);
         assert_eq!(decode_page_row(&row).unwrap(), vec![one]);
     }
 
@@ -401,10 +385,8 @@ mod tests {
     /// The row cannot hold them, so the walk must stop rather than read past.
     #[test]
     fn a_count_larger_than_the_row_holds_is_refused() {
-        let entries: Vec<PageEntry> = (0..3)
-            .map(|i| entry(i as u8 + 1, EVENTS_PER_PAGE))
-            .collect();
-        let mut row = encode_page_row(&[entry(1, EVENTS_PER_PAGE)]).unwrap();
+        let entries: Vec<PageEntry> = (0..3).map(|i| entry(i as u8 + 1, 79)).collect();
+        let mut row = encode_page_row(&[entry(1, 79)]).unwrap();
         row[..4].copy_from_slice(&3u32.to_le_bytes());
         assert!(decode_page_row(&row).is_err());
         let _ = entries;
@@ -465,7 +447,7 @@ mod tests {
 
         // Built by hand, since the encoder refuses to produce it.
         let mut row = encode_page_row(&[entry(1, 2), entry(2, 2)]).unwrap();
-        let second = PAGE_ROW_HEADER_BYTES + entry_bytes(2);
+        let second = PAGE_ROW_HEADER_BYTES + entry(1, 2).encoded_len();
         let first_tag = row
             [PAGE_ROW_HEADER_BYTES + PE_TAG..PAGE_ROW_HEADER_BYTES + PE_TAG + SCRIPT_TAG_BYTES]
             .to_vec();
@@ -518,22 +500,18 @@ mod tests {
             ),
             (
                 "a full class-1 row",
-                (0..entries_per_row(1))
-                    .map(|i| entry(i as u8 + 1, 1))
-                    .collect(),
-                "6e92bdab5e5006d66d5c018e580b90e0359fe5af52ad328369b5675e6fdcc83b",
+                (0..48).map(|i| entry(i as u8 + 1, 1)).collect(),
+                "9f59e6ff938299362ab6230c42c297738b2d6ab1d0fee784e00df970caa7564a",
             ),
             (
                 "a full class-2 row",
-                (0..entries_per_row(2))
-                    .map(|i| entry(i as u8 + 1, 2))
-                    .collect(),
-                "2c8a27f5f1911b7e1626078aceb2228222eac0241c987cd37b51bf2903766ab4",
+                (0..30).map(|i| entry(i as u8 + 1, 2)).collect(),
+                "01cf3e1818578abe2701a4b9db50b1c337e9002e037e65af22bacb886e2e305d",
             ),
             (
                 "a full fragment",
-                vec![entry(1, EVENTS_PER_PAGE)],
-                "5d802ad82f273a22c83b691adf682d28e70322e37dbc91dd7dbc43b6b3316f37",
+                vec![entry(1, 79)],
+                "aae7a43e41f9be5b1131469f91dab24523879046fa838ada2feb8c4122156a10",
             ),
         ] {
             let row = encode_page_row(&entries).expect("encodes");

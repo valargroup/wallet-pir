@@ -1,0 +1,16 @@
+{"start": "pre-cutover-fleet", "utc": "2026-09-28T22:01:17.569813+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/fleet-observe.py"]}
+{"end": "pre-cutover-fleet", "utc": "2026-09-28T22:01:18.062577+00:00", "returncode": 0}
+{"start": "backup-v9", "utc": "2026-09-28T22:01:18.062656+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/backup-v9.py"]}
+{"end": "backup-v9", "utc": "2026-09-28T22:01:22.736901+00:00", "returncode": 0}
+{"start": "fleet-deploy", "utc": "2026-09-28T22:01:22.737005+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/fleet.py", "fleet-deploy"]}
+{"end": "fleet-deploy", "utc": "2026-09-28T22:07:13.816531+00:00", "returncode": 0}
+{"start": "cutover-paths", "utc": "2026-09-28T22:07:13.816600+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/cutover-paths.py"]}
+{"end": "cutover-paths", "utc": "2026-09-28T22:07:14.834317+00:00", "returncode": 0}
+{"start": "publisher-shadow", "utc": "2026-09-28T22:07:14.834387+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/fleet.py", "publisher-shadow"]}
+{"end": "publisher-shadow", "utc": "2026-09-28T22:16:52.526813+00:00", "returncode": 0}
+{"start": "publisher-activate", "utc": "2026-09-28T22:16:52.526892+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/fleet.py", "publisher-activate"]}
+{"end": "publisher-activate", "utc": "2026-09-28T22:17:03.032065+00:00", "returncode": 0}
+{"start": "control-sessions", "utc": "2026-09-28T22:17:03.032130+00:00", "args": ["systemctl", "enable", "--now", "transparent-control-sessions"]}
+{"end": "control-sessions", "utc": "2026-09-28T22:17:03.300157+00:00", "returncode": 0}
+{"start": "public-check", "utc": "2026-09-28T22:17:03.300249+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/public-check.py"]}
+{"end": "public-check", "utc": "2026-09-28T22:17:04.163102+00:00", "returncode": 0}

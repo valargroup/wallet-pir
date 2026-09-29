@@ -1556,6 +1556,9 @@ fn verify_manifest(
             expected: transparent_shard::SCHEMA,
         });
     }
+    if manifest.layout != transparent_shard::ManifestLayout::current() {
+        return Err(mismatch("layout"));
+    }
     if manifest.tag_salt_counter > transparent_shard::tag::MAX_TAG_SALT_COUNTER {
         return Err(mismatch("tag_salt_counter"));
     }
@@ -1922,6 +1925,7 @@ fn retrieve_shard_into<S: WalletStore>(
                 if let Some(base) = found.page_base() {
                     pending_upsert.push(PendingPages {
                         validated_events: found.inline.len() as u32,
+                        boundary: None,
                         target_anchor: Some(target_anchor.clone()),
                         id: None,
                         shard_id,
@@ -2047,6 +2051,12 @@ fn finish_pages<S: WalletStore>(
     for item in owed {
         let wanted = transparent_shard::script_tag(salt, &item.script);
         let mut recovered = item.validated_events;
+        let mut boundary = item.boundary.clone();
+        if item.next_ordinal != 0 && boundary.is_none() {
+            return Err(SyncError::Invalid(
+                "missing resumed fragment boundary".into(),
+            ));
+        }
         let mut ordinal = item.next_ordinal;
         let mut page_count = item.page_count;
         loop {
@@ -2126,12 +2136,19 @@ fn finish_pages<S: WalletStore>(
                 page_count = fragment.fragment_count;
             }
             let last = ordinal + 1 == page_count;
-            let full = transparent_shard::EVENTS_PER_PAGE as usize;
-            if !last && fragment.events.len() != full {
-                return Err(SyncError::Invalid(format!(
-                    "shard {shard_id} page {row} is not a full fragment"
-                )));
+            let next_boundary = validate_page_boundary(boundary.as_ref(), &fragment.events)?;
+            let last_event = *fragment.events.last().expect("nonempty fragment");
+            if last
+                && item
+                    .inline
+                    .first()
+                    .is_some_and(|inline| last_event.sort_key() > inline.sort_key())
+            {
+                return Err(SyncError::Invalid(
+                    "paged history follows inline history".into(),
+                ));
             }
+            boundary = Some(next_boundary);
             recovered = recovered
                 .checked_add(fragment.events.len() as u32)
                 .ok_or_else(|| SyncError::Invalid("page event count overflow".into()))?;
@@ -2149,6 +2166,7 @@ fn finish_pages<S: WalletStore>(
             progressed.page_count = page_count;
             progressed.next_ordinal = ordinal + 1;
             progressed.validated_events = recovered;
+            progressed.boundary = boundary.clone();
             progressed.attempts += 1;
             commit_bounded(
                 store,
@@ -2182,6 +2200,28 @@ fn finish_pages<S: WalletStore>(
         }
     }
     Ok(None)
+}
+
+fn validate_page_boundary(
+    previous: Option<&crate::store::PageBoundary>,
+    events: &[transparent_events::TransparentEvent],
+) -> Result<crate::store::PageBoundary, SyncError> {
+    let first = events
+        .first()
+        .ok_or_else(|| SyncError::Invalid("empty fragment".into()))?;
+    if let Some(previous) = previous {
+        if previous.last_event.sort_key() > first.sort_key()
+            || previous.event_bytes as usize
+                + transparent_shard::compact::event_len(first, Some(&previous.last_event))
+                <= transparent_shard::packing::FRAGMENT_PAYLOAD
+        {
+            return Err(SyncError::Invalid("noncanonical fragment boundary".into()));
+        }
+    }
+    Ok(crate::store::PageBoundary {
+        event_bytes: transparent_shard::compact::encoded_len(events) as u32,
+        last_event: *events.last().expect("nonempty fragment"),
+    })
 }
 
 /// Fetches the published setup for every segment of a shard's table, once,
@@ -2616,6 +2656,22 @@ mod tests {
             &map,
         )
         .expect("genuine, chained");
+        let mut bad_layout = genuine_second.clone();
+        bad_layout.layout.events_per_page = 46;
+        let mut matching_entry = second.clone();
+        matching_entry.manifest_digest = bad_layout.digest();
+        assert!(matches!(
+            verify_manifest(
+                &bad_layout.canonical_bytes(),
+                &matching_entry,
+                &first.manifest_digest,
+                &map
+            ),
+            Err(SyncError::ManifestMismatch {
+                field: "layout",
+                ..
+            })
+        ));
 
         // Any change to the bytes changes the digest, so the first refusal is
         // always the digest's.
@@ -2727,5 +2783,37 @@ mod tests {
             within(overload_backoff(20, None), OVERLOAD_BACKOFF_CAP),
             "doubling is capped too"
         );
+    }
+    #[test]
+    fn compact_boundaries_reject_underfilled_reordered_and_cross_row_reference_shortcuts() {
+        use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+        let receive = TransparentEvent::Receive(ReceiveEvent {
+            height: 100,
+            transaction_index: 0,
+            txid: Txid([7; 32]),
+            output_index: 3,
+            value: 9,
+            coinbase: false,
+        });
+        let spend = TransparentEvent::Spend(SpendEvent {
+            height: 101,
+            transaction_index: 0,
+            spending_txid: Txid([8; 32]),
+            input_index: 0,
+            spent_txid: Txid([7; 32]),
+            spent_output_index: 3,
+        });
+        let mut boundary = crate::store::PageBoundary {
+            event_bytes: 4000,
+            last_event: receive,
+        };
+        // 58 spare bytes would hold the local 43-byte form. Treating this
+        // spend as 79 bytes would incorrectly accept the premature boundary.
+        assert!(validate_page_boundary(Some(&boundary), &[spend]).is_err());
+        boundary.event_bytes = 4029;
+        let next = validate_page_boundary(Some(&boundary), &[spend]).unwrap();
+        assert_eq!(next.event_bytes, 79); // References reset at the new fragment.
+        assert!(validate_page_boundary(Some(&next), &[receive]).is_err());
+        assert!(validate_page_boundary(None, &[]).is_err());
     }
 }

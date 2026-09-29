@@ -1,0 +1,4 @@
+{"start": "pre-cutover-fleet", "utc": "2026-09-28T21:59:03.428978+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/fleet-observe.py"]}
+{"end": "pre-cutover-fleet", "utc": "2026-09-28T21:59:03.979880+00:00", "returncode": 0}
+{"start": "backup-v9", "utc": "2026-09-28T21:59:03.979985+00:00", "args": ["python3", "/opt/transparent-v10-8e69ea75/backup-v9.py"]}
+{"end": "backup-v9", "utc": "2026-09-28T21:59:18.801149+00:00", "returncode": 1}

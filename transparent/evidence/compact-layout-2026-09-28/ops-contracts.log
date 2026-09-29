@@ -1,0 +1,37 @@
+== shell syntax and lint
+  ops/scripts/check-jq-contracts.sh  ok
+  ops/scripts/wallet-pir-terraform.sh ok
+  transparent/ops/scripts/deploy-transparent-filter.sh ok
+  transparent/ops/scripts/deploy-transparent-shard.sh ok
+  transparent/ops/scripts/transparent-fleet-state.sh ok
+== transparent/ops/scripts/deploy-transparent-shard.sh: compile and evaluate
+  JQ_MAP_SHARD_COUNT                 ok against shards.json
+  JQ_MAP_DIGESTS                     ok against shards.json
+  JQ_MAP_FIRST_DIGEST                ok against shards.json
+  JQ_MAP_GEOMETRIES                  ok against shards.json
+  JQ_HEALTH_SERVING                  ok against health.json
+  JQ_HEALTH_SHARDS                   ok against health.json
+  JQ_HEALTH_ASSIGNED                 ok against health.json
+  JQ_READY_OK                        ok against ready.json
+  JQ_READY_MAP                       ok against ready.json
+  JQ_READY_ASSIGNMENT                ok against ready.json
+  JQ_READY_WARM                      ok against ready.json
+  JQ_READY_REASON                    ok against ready.json
+  JQ_READY_BINARY                    ok against ready.json
+  JQ_READY_WORKER_ASSIGNMENT         ok against ready.json
+  JQ_INIT_COMPLETE                   ok against init.json
+  JQ_INIT_GEOMETRY_NAMES             ok against init.json
+  JQ_INIT_SHARDS                     ok against init.json
+  JQ_INIT_HAS_GEOMETRIES             ok against init.json
+  JQ_INIT_MAP                        ok against init.json
+  JQ_INIT_ASSIGNED                   ok against init.json
+  JQ_INIT_GEOMETRY_COMPLETE          ok against init.json
+  JQ_INIT_SUMMARY                    ok against init.json
+== transparent/ops/scripts/deploy-transparent-filter.sh: compile only (no fixtures yet)
+  JQ_FILTER_CHECK_MAP                compiles
+  JQ_FILTER_CHECK_SUMMARY            compiles
+  JQ_FILTER_HEALTH_SERVING           compiles
+== transparent/ops/scripts/deploy-transparent-shard.sh validate, against the real fixture
+  validate                           accepts the published fixture
+
+all ops contract checks passed

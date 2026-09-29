@@ -1,0 +1,24 @@
+{
+  "observation_date_utc": "2026-09-29",
+  "host": "dedicated independent monitor",
+  "wrong_pin": {
+    "exit_status": 1,
+    "result": {
+      "category": "oracle_invalid",
+      "duration_seconds": 0.006075748,
+      "passed": false
+    }
+  },
+  "wrong_plaintext_expectation": {
+    "exit_status": 1,
+    "result": {
+      "category": "answer_mismatch",
+      "duration_seconds": 1.3274224669999999,
+      "passed": false
+    }
+  },
+  "source_fingerprint": {
+    "checked_files": 287,
+    "mismatches": []
+  }
+}

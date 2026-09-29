@@ -112,6 +112,39 @@ class CompareTest(unittest.TestCase):
         blocking, _, _ = self.run_compare(nxt=copy.deepcopy(self.previous))
         self.assertTrue(any('not above' in b for b in blocking), blocking)
 
+    def test_same_anchor_schema_replacement_is_explicit(self):
+        nxt = copy.deepcopy(self.previous)
+        nxt['map_sha256'] = 'b' * 64
+        self.assertTrue(compare.compare(self.previous, nxt, .25)[0])
+        blocking, review, _ = compare.compare(self.previous, nxt, .25, same_anchor=True)
+        self.assertEqual((blocking, review), ([], []))
+
+    def test_same_anchor_mode_refuses_changed_or_missing_case_context(self):
+        for change in ['birthday', 'checkpoint', 'state', 'cutoff', 'identity', 'header']:
+            with self.subTest(change=change):
+                nxt = copy.deepcopy(self.previous)
+                nxt['map_sha256'] = 'b' * 64
+                if change == 'birthday':
+                    nxt['cases'][0]['required_from'] = 1
+                elif change == 'checkpoint':
+                    nxt['cases'][0]['checkpoints'].pop(0)
+                elif change == 'state':
+                    nxt['cases'][0]['checkpoints'][0]['expected']['confirmed_balance'] += 1
+                elif change == 'cutoff':
+                    nxt['cutoff_height'] += 1
+                elif change == 'identity':
+                    nxt['map'] = {'genesis_hash': 'f' * 64}
+                else:
+                    nxt['accepted_headers']['200'] = 'f' * 64
+                self.assertTrue(compare.compare(self.previous, nxt, .25, same_anchor=True)[0])
+
+    def test_same_anchor_mode_refuses_advancing_or_regressing_anchors(self):
+        for anchor in [199, 201]:
+            nxt = copy.deepcopy(self.previous)
+            nxt['accepted_headers'].pop('200')
+            nxt['accepted_headers'][str(anchor)] = f'{anchor:064x}'
+            self.assertTrue(compare.compare(self.previous, nxt, .25, same_anchor=True)[0])
+
     def test_unchanged_map_is_flagged_for_review(self):
         nxt = copy.deepcopy(self.next_)
         nxt['map_sha256'] = self.previous['map_sha256']

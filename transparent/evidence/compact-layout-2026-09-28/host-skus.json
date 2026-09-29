@@ -1,0 +1,20 @@
+[
+  {
+    "id": 597122227,
+    "name": "roman-ipir-bench-8vcpu",
+    "memory": 32768,
+    "vcpus": 8,
+    "disk": 120,
+    "size_slug": "g-8vcpu-32gb-intel",
+    "region": "ams3"
+  },
+  {
+    "id": 597174997,
+    "name": "wallet-pir-coordinator-01",
+    "memory": 65536,
+    "vcpus": 8,
+    "disk": 200,
+    "size_slug": "m-8vcpu-64gb-intel",
+    "region": "ams3"
+  }
+]

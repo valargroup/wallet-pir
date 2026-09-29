@@ -1,10 +1,90 @@
 # Transparent PIR status
 
-Updated 2026-09-27 (release rollout below); milestone text last updated 2026-09-13. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-29 UTC (v10 rollout and continuous load below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
+
+## Service-quality rollout, 2026-09-29
+
+The separate [Transparent APM page](https://enhance-pir.valargroup.dev/apm/transparent/)
+is live, with seven-day aggregate history shared with Enhance and Status quality
+views. The dedicated monitor now runs native Status and Transparent exact-query
+checks; initial positive checks and wrong-pin/wrong-answer negative controls
+passed. This does not establish whole-wallet availability or a capacity milestone.
+
+The publisher and `transparent-pir-recent-01` have the new HTTP instrumentation.
+The remaining five workers are still predecessors while a fresh six-hour / 300-block
+canary gate runs. The supervised rollout may advance only after that gate, then
+observes the full fleet for 24 hours. Continuous 5 QPS load pauses during upgrades
+and resumes only after exact-query verification and per-worker identity checks.
+A critical load latch prevents progression and is never cleared automatically.
+
+The first observer attempt failed because its historical default shard no longer
+exists in v10. The observer now selects from the current worker assignment; the
+replacement observation starts fresh and does not reuse that failed interval.
+Existing alerts remain active. New quality/probe alert families remain in shadow;
+24-hour shadow review, notification-path validation, activation and 24-hour active
+observation are still outstanding. See the [rollout evidence](../../enhance/evidence/service-quality-2026-09-29/README.md)
+and [operations guide](../../enhance/docs/observability-alerting.md).
+
+## Continuous query load, 2026-09-29
+
+At the user's request, `transparent-5qps-continuous.service` was enabled on the
+coordinator. It targets five fresh encrypted PIR queries per second through the
+public origin, split 80% recent / 20% archive and equally between directory/page
+tables. Each decoded row is checked against an independent published-plaintext
+hash. The workload rotates across all 85 sealed shards; the moving tail is
+monitored separately. This is a query-serving workload, not five wallet syncs/s.
+
+The service retains query and health logs and samples workers, router, coordinator
+and publication state about every 15 seconds. Its watchdog pauses admission on
+sustained failures, and critical incidents remain latched for investigation.
+The [initial evidence](../evidence/continuous-5qps-2026-09-29/README.md) records
+observed rates, correctness and resources; the process continues beyond that
+snapshot. It does not establish a sustained-capacity milestone or guarantee
+future health. At that initial snapshot, production service binaries were at `8e69ea75`; the later telemetry rollout is described above.
+
+## Compact layout production cutover, 2026-09-28
+
+Schema v10 is deployed on all six workers at runtime source `8e69ea75`, with
+operations overlays from `4905d3a3`. Direct SSH activation and public verification
+completed at **22:17:04 UTC**; long-running CI was bypassed at the user's request.
+The version-2 event journal is unchanged. The new publication has 77 archive and
+9 recent shards; the same pinned history uses **38.79% fewer allocated table
+bytes / 63.36% more capacity** than v9. This is a storage result, not throughput.
+
+Both public origins agreed, all six workers were warm on the expected binary,
+170 sealed public setup digests matched their certificates, and the served hash
+matched the node. The public native regression passed **11 cases / 68 checkpoints**
+with **2,319 HTTP attempts and no failed attempts**. A one-client smoke completed
+**124 exact synthetic range syncs**, zero failures. Four-client load finished with
+**47 attempts, 46 exact completions, zero failures and one query-budget incomplete**.
+Minimum sampled available memory was 73.84%,
+maximum reported freshness 23.249 s, and no OOM or automatic restart was observed.
+An independent init probe returned one transient 503 across publication; it
+recovered at the next five-second sample while both maps stayed consistent.
+Raw load and resource observations are recorded in the
+[cutover evidence](../evidence/v10-cutover-2026-09-28/README.md).
+
+The successful maintenance interval was **22:01:18–22:17:04**. An earlier backup
+attempt failed on transient Unix sockets and automatically resumed v9 before any
+worker binary changed; the corrected backup preserves durable files and excludes
+sockets. V9 publications, state, binaries and caches remain separate for rollback.
+A post-cutover rollback rehearsal is not claimed.
+
+The reference SQLite store migrates to schema 3 and preserves compact-fragment
+validation through restart; native tests cover the fragment-boundary outpoint
+case. Existing v9 clients fail closed on v10, and pending work needs the new
+publication lineage. This rollout does not qualify downstream wallet applications.
+All 172 actual-table native certificates pass the configured floor; seven archive
+page segments are below 128 correctness bits (minimum 96, accepted floor 83).
+These are conditional decryption-failure bounds, not security levels. Full
+publication took 80 min 23 s and peaked at 4.45 GiB RSS. See the evidence for
+commands, raw failures, exact hashes, limitations and the retained rollback paths.
+[Remaining work](remaining-work.md#schema-v10-qualification-and-republication)
+keeps consumer, sustained-capacity and controlled-comparison gates open.
 
 ## Current milestone evidence
 
@@ -177,7 +257,7 @@ index completeness. No mnemonic, private ledger or raw wallet log is published.
 
 | Capability | Observed state |
 |---|---|
-| Shard schema | Source is `transparent-shard-v9` (4,096-byte rows, 21 directory slots, 46 events per page, 14-byte salted tags, 87-byte events). Implemented and unpublished. The live fleet remains the v7 publication described in the rollout above. A version-2 event journal is built only into a new directory; opening the version-1 production journal with this binary returns an error and leaves the files in place. On 2026-09-28 a version-2 journal was derived at `/srv/zakura/transparent-event-data-v2` on the coordinator, through height 3,499,198, and verified ([evidence](../evidence/journal-v2-conversion-2026-09-28/README.md)). Nothing appends to it and nothing publishes from it; the live publisher still writes the version-1 journal |
+| Shard schema | **Live: `transparent-shard-v9` since 2026-09-28 16:31 UTC** (4,096-byte rows, 21 directory slots, 46 events per page, 14-byte salted tags, 87-byte events), `zcash-transparent-range-v2`, `archive-wide` + `recent-4k-8k`, choice tables on every shard, published from the version-2 journal. Cutover, one automatic rollback, 60-minute metadata window and regression 11/11 are in the [cutover evidence](../evidence/v9-cutover-2026-09-28/README.md). A [pinned-anchor load run](../evidence/v9-cutover-2026-09-28/load/README.md) against it was 45/45 exact, matching the v7 baseline, with 48–75% fewer bytes per sync in eight of nine classes (4 clients, one run; not a capacity result). Wallets built before v9 cannot read it. The v7 rollback material (v7 set, v7 publication root, version-1 journal, v7 filter binary, worker v7 sets and active records) was deleted on 2026-09-28 after the cutover; rolling back to v7 now needs a republication |
 | Registry | `recent-8k` 8192/8192; `recent-4k` 4096/4096; `archive-32k` 32768/32768; `archive-wide` 32768/65536 |
 | Optional recent pairing | `recent-4k-8k` 4096/8192 registered; not published. Real shards and a [placement study](../evidence/directory-placement-4k-2026-09-28/README.md) fit it in one segment with no overflow up to 96% load |
 | Single-lookup directory | **Live for new tail and sealed revisions since 2026-09-27 22:43 UTC** (see the release rollout above). Optional manifest `directory_choice`; publisher `--directory-choice off\|sealed\|all` (controller config `directory_choice`, default `off`); the builder verifies every route against the encoded rows, and the server refuses a repeated script tag and checks the entry count (rows carry tags, so it cannot recompute routes); wallet sends one directory query per matched script when present. [Measured locally](../evidence/single-lookup-measure-2026-09-27/README.md): 939/939 exact syncs, directory queries halved, restore-6m payload −24%; a [temporary bench fleet](../evidence/single-lookup-fleet-2026-09-27/README.md) reproduced this at 8 and 32 wallets. wallet-libraries not updated |

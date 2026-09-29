@@ -1,0 +1,211 @@
+{
+  "utc": "2026-09-28T22:43:27.378801+00:00",
+  "services": {
+    "transparent-filter-server": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "transparent-publish-controller": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "transparent-replica-reconciler": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running"
+    },
+    "transparent-control-sessions": {
+      "NRestarts": "0",
+      "ActiveState": "active",
+      "SubState": "running"
+    }
+  },
+  "workers": [
+    {
+      "assigned_shards": 9,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 7.688746,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1998111728,
+        "hits": 22,
+        "limit_bytes": 10737418240,
+        "misses": 36,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "70db41c09e611f38fe0c376859432b98df8980628c225883cdf5083e75e3ffef",
+      "worker_id": "transparent-pir-recent-01"
+    },
+    {
+      "assigned_shards": 9,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 7.605237,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1998111728,
+        "hits": 22,
+        "limit_bytes": 10737418240,
+        "misses": 36,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "800fa07ea89d39aca09a813934559aa4ba4a3a939510861e73cd61388f196032",
+      "worker_id": "transparent-pir-recent-02"
+    },
+    {
+      "assigned_shards": 9,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 7.685534,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1998111728,
+        "hits": 22,
+        "limit_bytes": 10737418240,
+        "misses": 36,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "85e57c99c361c254e0fac54771be60ac26248edcfe237240cac34a5429d301bb",
+      "worker_id": "transparent-pir-recent-03"
+    },
+    {
+      "assigned_shards": 9,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 6.053584,
+      "ready": true,
+      "replica_group": "recent",
+      "role": "recent-replica",
+      "runtime_cache": {
+        "bytes": 1880575744,
+        "hits": 18,
+        "limit_bytes": 10737418240,
+        "misses": 32,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 18,
+      "warm_runtimes": 18,
+      "worker_assignment_sha256": "effe61f08bfd3bda4af9385feee91ac814baaa1ea0abe6ad5eaeb7a8737e460a",
+      "worker_id": "transparent-pir-recent-04"
+    },
+    {
+      "assigned_shards": 39,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 0.00014,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "runtime_cache": {
+        "bytes": 18324443280,
+        "hits": 78,
+        "limit_bytes": 103079215104,
+        "misses": 0,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 78,
+      "warm_runtimes": 78,
+      "worker_assignment_sha256": "bc9dae682248acadecc1bde35aaf68b924378475960ebee1d872e143f48fa6dc",
+      "worker_id": "transparent-pir-archive-01"
+    },
+    {
+      "assigned_shards": 38,
+      "assignment_sha256": "698fd8b996dfffb9b5f08cb6d20b06f302b0c6ff60c236f0d47d074ca74d03d9",
+      "binary_sha256": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+      "mode": "warm",
+      "prewarm_failed": 0,
+      "prewarm_finished": true,
+      "prewarm_seconds": 0.000178,
+      "ready": true,
+      "replica_group": null,
+      "role": "archive-owner",
+      "runtime_cache": {
+        "bytes": 17854585760,
+        "hits": 76,
+        "limit_bytes": 103079215104,
+        "misses": 0,
+        "pending_saves": 0,
+        "restore_slots": 4,
+        "write_failures": 0
+      },
+      "shards": 86,
+      "target_runtimes": 76,
+      "warm_runtimes": 76,
+      "worker_assignment_sha256": "857fce73ef217a238f3dbe88c6135cfc7cb517800fa7c3abb23422e799b88404",
+      "worker_id": "transparent-pir-archive-02"
+    }
+  ],
+  "controller": {
+    "candidate_height": 3499641,
+    "cycle_seconds": 14.036250624,
+    "freshness_seconds": 14.10216167,
+    "journal_height": 3499641,
+    "map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+    "node_hash": "000000000049de8859b0c8965e4937fe8b1fb67dfa0300b31ade5a2ccb51b5a8",
+    "node_height": 3499641,
+    "phase": "serving",
+    "public_hash": "000000000049de8859b0c8965e4937fe8b1fb67dfa0300b31ade5a2ccb51b5a8",
+    "public_height": 3499641,
+    "ready_replicas": 1
+  },
+  "public_schema": "transparent-shard-v10",
+  "public_origins_identical": true,
+  "public_map_sha256": "487b78cdee5bf6e6bbfa14c4a5033dfad855e8163950b44e02179448ddd69227",
+  "monitor_states": {
+    "wallet-pir-v10-health-monitor": "inactive",
+    "wallet-pir-v10-resources": "inactive",
+    "wallet-pir-v10-public-availability": "inactive"
+  },
+  "rollback_root_retained": true
+}

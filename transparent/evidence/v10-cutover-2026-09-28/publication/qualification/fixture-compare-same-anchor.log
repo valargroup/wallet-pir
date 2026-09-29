@@ -1,0 +1,23 @@
+  anchor 3499341 -> 3499341
+  cutoff 3262749 -> 3262749
+  map 99706d5afc6090e2... -> 3780f252bde6256f...
+  same-anchor schema replacement: case definitions and expectations must be identical
+
+case                                  events         utxos             balance
+unused-p2pkh                               0             0                   0
+unused-p2sh                                0             0                   0
+small-active                               1             1            75441400
+zero-balance                               4             0                   0
+old-receive-recent-spend                   2             0                   0
+offline-receive-spend                      2             0                   0
+active-p2sh                                1             1             1000000
+reused-pages                             106             2         55747589938
+multi-script-self-transfer               478           140             3150355
+recent-birthday                           12             0                   0
+coinbase                                1643             3           375623399
+
+BLOCKING (0): every shared checkpoint reduces identically
+
+REVIEW (0)
+
+wrote /opt/transparent-v10-8e69ea75/qualification/fixture-compare-same-anchor.json

@@ -1,0 +1,25 @@
+{
+  "source": "/srv/zakura/transparent-shards-v10-full",
+  "target": "/srv/transparent-data-v10/publications/initial",
+  "source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "started_utc": "2026-09-28T21:15:38.714940+00:00",
+  "logical_bytes": 31487623852,
+  "files": 345,
+  "destination_space_before": {
+    "total": 206900281344,
+    "used": 107642888192,
+    "free": 99240615936
+  },
+  "completed_utc": "2026-09-28T21:21:20.368528+00:00",
+  "destination_space_after": {
+    "total": 206900281344,
+    "used": 138730844160,
+    "free": 68152659968
+  },
+  "journal_volume_space_after": {
+    "total": 1098974756864,
+    "used": 848772235264,
+    "free": 250202521600
+  },
+  "all_files_sha256_equal": true
+}

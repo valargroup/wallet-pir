@@ -1,0 +1,14 @@
+Started transparent-5qps-build-5.service - /bin/bash /tmp/transparent-5qps-build.sh.
+   Compiling transparent-shard-server v0.1.0 (/root/wallet-pir-8e69ea75/transparent/services/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 30.41s
+   Compiling transparent-shard-server v0.1.0 (/root/wallet-pir-8e69ea75/transparent/services/transparent-shard-server)
+    Finished `release` profile [optimized] target(s) in 23.34s
+     Running unittests examples/rate-query.rs (/tmp/wallet-pir-v10-production-target/release/examples/rate_query-514029617b7179df)
+running 4 tests
+test tests::application_errors_are_never_retried ... ok
+test tests::mix_is_exact_over_every_ten_slots ... ok
+test tests::missing_or_denied_permit_stops_admission ... ok
+test tests::closed_connection_is_retryable ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+transparent-5qps-build-5.service: Deactivated successfully.
+transparent-5qps-build-5.service: Consumed 53.930s CPU time, 540.7M memory peak, 0B memory swap peak.

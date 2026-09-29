@@ -4,6 +4,7 @@ members = [
     "receiver/crates/receiver-directory",
     "receiver/crates/receiver-pir",
     "receiver/services/receiver-pir-server",
+    "shared/pir-observability",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-events",

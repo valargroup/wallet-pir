@@ -178,7 +178,11 @@ pub(super) fn overview_pane(data: &DashboardData, status: bool) -> String {
             escape(error)
         ));
     }
-    body.push_str(&format!("<nav class=\"apm-tabs\" aria-label=\"PIR APM panes\"><a href=\"/apm/?pane=enhance\" {}>Enhance APM</a><a href=\"/apm/?pane=status\" {}>Status APM</a></nav>",if status {""} else {"aria-current=\"page\""},if status {"aria-current=\"page\""}else{""}));
+    body.push_str(&format!("<nav class=\"apm-tabs\" aria-label=\"PIR APM panes\"><a href=\"/apm/?pane=enhance\" {}>Enhance APM</a><a href=\"/apm/?pane=status\" {}>Status APM</a><a href=\"/apm/transparent/\">Transparent APM</a></nav>",if status {""} else {"aria-current=\"page\""},if status {"aria-current=\"page\""}else{""}));
+    body.push_str(&crate::quality::summary(
+        &data.quality,
+        if status { "status" } else { "enhance" },
+    ));
     if status {
         body.push_str(&crate::status_apm::pane(&data.status));
     } else {

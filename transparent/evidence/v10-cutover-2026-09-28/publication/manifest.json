@@ -1,0 +1,44 @@
+{
+  "run_id": "v10-full-publication-2026-09-28",
+  "runtime_source": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "ops_source": "4905d3a30f63b096e514ab6851a95d4b9b0e80e0",
+  "scope": "Full-chain publication qualification; no claim of public cutover in this sub-bundle",
+  "host": {
+    "sku": "m-8vcpu-64gb-intel",
+    "region": "ams3",
+    "vcpu": 8,
+    "ram_gib": 64
+  },
+  "journal_version": 2,
+  "shard_schema": "transparent-shard-v10",
+  "filter_profile": "zcash-transparent-range-v2",
+  "geometry": {
+    "recent": [
+      4096,
+      8192,
+      4096
+    ],
+    "archive": [
+      32768,
+      65536,
+      4096
+    ]
+  },
+  "directory_choice": "all",
+  "height_range_inclusive": [
+    0,
+    3499341
+  ],
+  "recent_from": 3262749,
+  "events": 353795624,
+  "table_bytes": 31457280000,
+  "shards": 86,
+  "independent_rebuilds": 8,
+  "native_certificates": 172,
+  "minimum_correctness_bits": 96,
+  "certificate_policy": {
+    "directory": 128,
+    "recent_pages": 128,
+    "archive_pages": 83
+  }
+}

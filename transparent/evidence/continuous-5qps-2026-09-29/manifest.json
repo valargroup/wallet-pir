@@ -1,0 +1,33 @@
+{
+  "server_source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "client_build_base_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "client_overlay_file": "transparent/services/transparent-shard-server/examples/rate-query.rs",
+  "client_overlay_sha256": "1020757e567bcabd7ae85b26f7c6db721231dfcb199e524683d733d87d5acf23",
+  "fixture_sha256": "1316d72b0d72ad1aaf58b2d7ab2a4e8c6953c249767ff2fd8b824c68be6094bb",
+  "linux_release_tests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "macos_tests": {
+    "passed": 4,
+    "failed": 0
+  },
+  "watchdog_tests": {
+    "passed": 5,
+    "failed": 0
+  },
+  "clippy": "macOS cargo clippy --locked -p transparent-shard-server --example rate-query -- -D warnings passed; Linux toolchain has no cargo-clippy component",
+  "deployment": "SSH; load client/watchdog only; production server binaries unchanged",
+  "rate_definition": "Target 5 encrypted POST attempts per second, fresh key per attempt. Connection interruptions can retry at most three total attempts; retries consume scheduled slots rather than exceeding the rate. Setup and operator probes are separate.",
+  "workload": "New selections: 40% recent directory, 40% recent pages, 10% archive directory, 10% archive pages across 85 sealed shards / 5440 fixture rows. Transport retries retain the original target and use scheduled slots.",
+  "control": "An enabled systemd service runs indefinitely. Missing/denied/>45-second-old permit blocks query admission. Health sampling about every 15 seconds; sustained noncritical failure pauses and recovers after two healthy samples. OOM/restarts/memory below 15%, disk below 10%, changed worker binary or correctness failure latch until investigation. A correctness failure terminates query generation immediately.",
+  "client_initial_overlay_sha256": "9ba4a8112129cd896c260a468826e523298658e94ebe4ead1b966beb09afb055",
+  "client_initial_binary_sha256": "6160069ecfaeb4d320bc8e7c6c532068dda939d3e9aa93a509a9d6496b8281af",
+  "current_query_binary_sha256": "255db36a6b6af777b6d322a42773f832e325c40f557c932fb011c485c9e1e189",
+  "frozen_observation": "snapshot/analysis.json",
+  "snapshot_captured_utc": "2026-09-29T04:05:46.502969+00:00",
+  "retry_v1_overlay_sha256": "00670a873a20d0072ecd64815c6c2afd32e5c43f680efe902fee4f4698f4e72e",
+  "retry_v1_binary_sha256": "71c67b9133ad90cf9fbd94bd25775360c34699283488383f5d42b552485e5989",
+  "latest_frozen_observation": "followup/analysis.json",
+  "latest_snapshot_captured_utc": "2026-09-29T04:16:35.641288+00:00"
+}

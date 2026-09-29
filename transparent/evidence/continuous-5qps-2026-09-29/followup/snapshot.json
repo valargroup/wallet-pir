@@ -1,0 +1,10 @@
+{
+  "captured_utc": "2026-09-29T04:16:35.641288+00:00",
+  "ongoing": true,
+  "query_binary_sha256": "255db36a6b6af777b6d322a42773f832e325c40f557c932fb011c485c9e1e189",
+  "service": "NRestarts=0\nExecMainStatus=0\nMemoryCurrent=41902080\nMemoryPeak=53866496\nCPUUsageNSec=35437292000\nActiveState=active\n",
+  "enabled": "enabled",
+  "server_source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "client_build_base_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "snapshot_directory": "/opt/transparent-5qps-20260929/snapshots/20260929T041635Z"
+}

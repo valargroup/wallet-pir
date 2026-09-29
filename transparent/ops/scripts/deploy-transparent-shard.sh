@@ -852,7 +852,9 @@ report="$("$staged/transparent-shard-server" $args --verify-only)"
 echo "$report"
 if jq -e '.runtime_cache != null' <<<"$report" >/dev/null; then
   need="$(jq -r '.runtime_cache | .missing_bytes + .temporary_bytes' <<<"$report")"
-  read -r total available < <(df -PB1 /srv/transparent-pir/runtime-cache | awk 'NR==2 {print $2, $4}')
+  cache_dir="$(sed -n '/^ExecStart=/s/.* --runtime-cache-dir \([^ ]*\).*/\1/p' "$staged/unit.rendered")"
+  [[ -n "$cache_dir" ]] || { echo "verified runtime cache has no directory in the staged unit" >&2; exit 1; }
+  read -r total available < <(df -PB1 "$cache_dir" | awk 'NR==2 {print $2, $4}')
   (( available - need >= total / 5 )) || { echo "runtime cache would violate 20% filesystem headroom" >&2; exit 1; }
 fi
 REMOTE
@@ -1161,6 +1163,8 @@ set_path="$1"; id="$2"
 # From the ExecStart line only: the unit's comments mention the flag too.
 assignment="$(sed -n '/^ExecStart=/s/.*--assignment \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
 [[ -n "$assignment" && "$assignment" != *$'\n'* ]] || { echo "could not read the assignment path from the unit" >&2; exit 1; }
+cache_dir="$(sed -n '/^ExecStart=/s/.* --runtime-cache-dir \([^ ]*\).*/\1/p' /etc/systemd/system/transparent-shard-server.service)"
+[[ -n "$cache_dir" && "$cache_dir" != *$'\n'* ]] || { echo "could not read the runtime cache path from the unit" >&2; exit 1; }
 # Keep every retained revision in the current and rollback publication.
 old_unit="/opt/transparent-pir/transactions/$3/transparent-shard-server.service"
 keep=(--runtime-cache-prune-set "$set_path")
@@ -1175,7 +1179,7 @@ if [[ "${old_set:-}" != "$set_path" ]]; then
 sudo /usr/local/bin/shard-prune --shard-dir "$set_path" --assignment "$assignment" --worker-id "$id" --apply \
   | jq -r '"\(.deleted | length) removed, \(.bytes_freed) bytes freed"'
 fi
-sudo /usr/local/bin/transparent-shard-server --runtime-cache-dir /srv/transparent-pir/runtime-cache "${keep[@]}"
+sudo /usr/local/bin/transparent-shard-server --runtime-cache-dir "$cache_dir" "${keep[@]}"
 REMOTE
   done
 }

@@ -7,6 +7,7 @@ retains all logs. No timer, stale gate file, or service restart advances a phase
 import argparse
 import asyncio
 import hashlib
+import fcntl
 import json
 from pathlib import Path
 import sys
@@ -48,6 +49,51 @@ async def run(args):
         temporary.write_text(json.dumps(value, indent=2)+'\n')
         temporary.replace(args.out/'status.json')
         print(json.dumps(value), flush=True)
+    async def apply_upgrade(name, extra, selected):
+        lock = None
+        load_service = getattr(args, 'load_service', None)
+        try:
+            if getattr(args, 'production_lock', None):
+                lock = args.production_lock.open('a')
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if load_service:
+                if (args.load_root/'latched.json').exists():
+                    raise RuntimeError('continuous load has an unresolved critical latch')
+                pins = json.loads(args.load_identity_file.read_text())
+                config = json.loads(args.fleet_config.read_text())
+                roster = json.loads(Path(config['roster']).read_text())
+                if set(pins) != {w['id'] for w in roster}:
+                    raise RuntimeError('load identity pins do not cover the current roster')
+                if not all(isinstance(v, str) and len(v) == 64 and all(c in '0123456789abcdef' for c in v) for v in pins.values()):
+                    raise RuntimeError('invalid qualified binary identity')
+                for worker in roster:
+                    def predecessor():
+                        with urllib.request.urlopen('http://'+worker['upstream']+'/v1/ready', timeout=5) as response:
+                            return json.load(response)
+                    value = await asyncio.to_thread(predecessor)
+                    if not value.get('ready') or value.get('binary_sha256') != pins[worker['id']]:
+                        raise RuntimeError('predecessor differs from qualified load identity: '+worker['id'])
+                await command(['systemctl', 'stop', load_service], args.out/(name+'-load-stop.log'))
+                if (args.load_root/'latched.json').exists():
+                    raise RuntimeError('critical latch appeared while pausing load')
+            await command(upgrade+extra+['--out', args.out/name], args.out/(name+'.log'))
+            if load_service:
+                for worker in roster:
+                    expected = binary if selected is None or worker['id'] == selected else pins[worker['id']]
+                    def ready():
+                        with urllib.request.urlopen('http://'+worker['upstream']+'/v1/ready', timeout=5) as response:
+                            return json.load(response)
+                    value = await asyncio.to_thread(ready)
+                    if not value.get('ready') or value.get('binary_sha256') != expected:
+                        raise RuntimeError('post-upgrade identity/readiness differs for '+worker['id'])
+                    pins[worker['id']] = expected
+                temporary = args.load_identity_file.with_suffix('.next')
+                temporary.write_text(json.dumps(pins, indent=2)+'\n')
+                temporary.replace(args.load_identity_file)
+                await command(['systemctl', 'start', load_service], args.out/(name+'-load-start.log'))
+        finally:
+            if lock is not None:
+                lock.close()
     try:
         if getattr(args, 'observe_installed_canary', False):
             # An operations-only correction can reuse the already verified
@@ -63,12 +109,12 @@ async def run(args):
                 raise RuntimeError('installed canary does not match the selected warm managed binary')
         else:
             phase('canary_upgrade')
-            await command(upgrade+['--worker', canary, '--out', args.out/'canary-upgrade'], args.out/'canary-upgrade.log')
+            await apply_upgrade('canary-upgrade', ['--worker', canary], canary)
         phase('canary_observation')
         await command(monitor+['--worker', canary, '--query-binary', query, '--seconds', '21600', '--blocks', '300',
                                '--out', args.out/'canary'], args.out/'canary.log')
         phase('fleet_upgrade')
-        await command(upgrade+['--canary-result', args.out/'canary/result.json', '--out', args.out/'fleet-upgrade'], args.out/'fleet-upgrade.log')
+        await apply_upgrade('fleet-upgrade', ['--canary-result', args.out/'canary/result.json'], None)
         phase('fleet_observation')
         config = json.loads(args.fleet_config.read_text())
         roster = json.loads(Path(config['roster']).read_text())
@@ -91,7 +137,14 @@ def main():
     parser.add_argument('--source-sha', required=True)
     parser.add_argument('--observe-installed-canary', action='store_true', help='Reuse a matching warm canary after an operations-only correction; never reuse prior gate samples')
     parser.add_argument('--out', type=Path, required=True)
-    asyncio.run(run(parser.parse_args()))
+    parser.add_argument('--production-lock', type=Path)
+    parser.add_argument('--load-service')
+    parser.add_argument('--load-root', type=Path)
+    parser.add_argument('--load-identity-file', type=Path)
+    args = parser.parse_args()
+    if any([args.load_service, args.load_root, args.load_identity_file]) and not all([args.load_service, args.load_root, args.load_identity_file]):
+        parser.error('load service, root and identity file must be configured together')
+    asyncio.run(run(args))
 
 
 if __name__ == '__main__':

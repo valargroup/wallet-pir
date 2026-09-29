@@ -22,6 +22,8 @@ def sample(url):
             "failure_category": body.get("failure_category"),
             "delivery": body.get("delivery"),
             "publication": body.get("publication"),
+            "quality": body.get("quality"),
+            "services": body.get("services"),
             "chain": body.get("chain"),
             "incident_details": [i for i in body.get("incidents", [])
                                  if i.get("active")],

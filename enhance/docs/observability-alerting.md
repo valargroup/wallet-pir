@@ -235,3 +235,95 @@ manifest supersedes the original shadow start time. Earlier evidence remains
 retained; incident/outbox databases are not cleared. The updated observer retains
 publication measurements, chain state, and active incident details so the next
 review can distinguish stalls from sustained backlog and transient retries.
+
+## Seven-day quality history and Transparent page
+
+`/apm/transparent/` is a separate service page. `/apm/quality/?service=enhance`
+and `?service=status` expose the same history controls for existing services.
+Worker links retain the selected service. The aggregate API is
+`/apm/api/quality?service=transparent&range=1h` (`24h` and `7d` also supported).
+History begins at deployment; it does not backfill earlier observations.
+
+Set `PIR_APM_HISTORY_PATH` to a writable SQLite file (defaults to `quality.sqlite`
+next to the incident database). Five-second observations are persisted as minute
+aggregates, retained for seven days, and merged into 1/5/30-minute display bins.
+Histograms merge buckets, never percentiles. Process changes, invalid histograms,
+counter resets and missing observations break continuity. Gauges retain their
+latest value in each bin. Database failure and dropped batches are exposed by
+the API; history work runs outside request and scrape tasks.
+
+`PIR_APM_TRANSPARENT_CONFIG` names a root-owned JSON file:
+
+```json
+{
+  "publisher_url": "http://127.0.0.1:8094/metrics",
+  "roster": "/opt/transparent-publisher/roster.json",
+  "router_metrics_url": "file:///var/lib/pir-apm/edge.prom",
+  "synthetic_status": "/opt/transparent-5qps-20260929/status.json",
+  "host_snapshot": "/var/lib/pir-apm/hosts.json",
+  "public_origins": [
+    "https://transparent-pir.valargroup.dev",
+    "https://enhance-pir.valargroup.dev"
+  ]
+}
+```
+
+The existing fleet roster is authoritative. No public metrics route is added.
+The host sampler uses explicitly configured private SSH targets and loopback
+Caddy metrics. Its output contains resource numbers and fixed source names.
+Caddy 2.6 metrics must be enabled in the generated router configuration. Only
+the deployed top-level `subroute` handler boundary is counted; nested handler
+totals must not be added. This includes responses and refusals at that route. Caddy size
+estimates and service payload byte counters have different semantics.
+
+Transparent HTTP instrumentation measures arrivals, cancellations, status
+classes, consumed request bytes, emitted response bytes, body errors and dropped
+responses. Timing ends when a response is constructed, not at client receipt.
+Worker evaluation/cache/admission timings remain separate. Public revision,
+assignment, client address, script, row selection and query bytes are not labels
+in the quality store. A cancelled handler releases the in-flight count; nested
+live/static routing records each request once.
+
+Publisher cycle and visibility distributions are separate from time since the
+last publication. Canonical verification uses direct node RPC and both public
+origins; a publication that changes between reads is unknown, not a mismatch.
+This check runs separately from collection. RPC remains the same chain node,
+not an independently operated consensus oracle.
+
+`PIR_APM_SERVICE_MONITOR_URL` optionally reads the dedicated monitor's aggregate
+Status and Transparent results. `PIR_MONITOR_SERVICE_PROBES_CONFIG` contains an
+array of `{service, command, timeout_seconds}` records. Commands are absolute
+argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
+Build the Transparent native `quality-canary` separately from native Enhance
+features. Pin the fixture checksum and independently verify its canonical
+anchor. Never construct expected answers from the encrypted server response.
+The existing Enhance canary remains unchanged.
+
+New alert families have independent modes: `PIR_APM_QUALITY_ALERT_MODE` and
+`PIR_MONITOR_SERVICE_ALERT_MODE`, both defaulting to `shadow`. Existing active
+alerts and outbox state retain their mode. New rules cover metric/resource
+coverage, publication identity/freshness, readiness/redundancy, HTTP outcomes,
+latency, OOM/disk/memory, history writes, and independent probe availability and
+correctness. Thresholds are operational guardrails, not an SLO commitment.
+
+### Rollout and rollback
+
+1. Build portable Linux artifacts with `target-cpu=haswell`; record source and
+   artifact checksums. Run aggregate, restart, cancellation and exact-query tests.
+2. Run APM on a separate loopback port with separate incident/history files and
+   an override **EnvironmentFile listed last**. systemd EnvironmentFile values
+   override Environment entries. Validate all sources and public-safe JSON.
+3. Preserve current binary paths, systemd overrides, incident databases and
+   encrypted Slack credentials. Acquire the existing production deployment lock
+   before changes. Switch APM only after staging verification.
+4. A Transparent worker update must use the existing canary and full-fleet
+   deployment gates. Pause continuous load before intentional worker restarts;
+   verify pinned binary identity and health before resuming. Never delete a
+   correctness/OOM latch as routine deployment cleanup.
+5. Observe new rules in shadow for 24 hours, review every candidate and test
+   firing/recovery through the existing notification outbox. Then activate only
+   the new families and observe another 24 hours. These elapsed-time gates cannot
+   be satisfied by source tests or a short smoke test.
+6. Roll back binaries/config overrides to recorded paths and restart affected
+   services. Retain SQLite history and incident/outbox files. Demoting a family
+   to shadow does not discard a previously announced incident's recovery.

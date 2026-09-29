@@ -1,0 +1,8 @@
+    Checking transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+    Checking transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+    Checking transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-shard-server)
+    Checking transparent-blocks v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-blocks)
+    Checking transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+    Checking transparent-regression v0.1.0 (/Users/roman/projects/wallet-pir/transparent/tools/transparent-regression)
+    Checking transparent-filter-server v0.1.0 (/Users/roman/projects/wallet-pir/transparent/services/transparent-filter-server)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.68s

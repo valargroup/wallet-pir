@@ -1,0 +1,9 @@
+{
+  "binary_source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "ops_source_sha": "4905d3a30f63b096e514ab6851a95d4b9b0e80e0",
+  "overlaid_files": {
+    "source/transparent/ops/scripts/transparent-fleet-state.sh": "611a228fb81b2c4c7d5ba9f536e26f4b34d138664a65dbdd45330fbb4c6403df",
+    "source/transparent/ops/scripts/deploy-transparent-shard.sh": "6cf23994856c8e1c151c7cea2a7c6367a4ce573d21c6a5198f84e6a079767e0b",
+    "source/transparent/ops/scripts/compare-regression-fixtures.py": "280be2174c9bce88a58e26d16f595cde67d3a6b3121ba09b36bd22e2c079631a"
+  }
+}

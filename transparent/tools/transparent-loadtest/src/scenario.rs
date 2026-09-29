@@ -53,6 +53,14 @@ struct Cli {
     preparation_cache_dir: Option<PathBuf>,
     #[arg(long)]
     preparation_concurrency: Option<usize>,
+    /// Wallets of one class prepared at once. Defaults to the class's profile
+    /// count, which serializes a class the scenario runs one of.
+    #[arg(long)]
+    preparation_class_concurrency: Option<usize>,
+    /// Attempts per wallet whose preparation fails only on transport errors.
+    /// Any other failure still stops preparation.
+    #[arg(long)]
+    preparation_wallet_attempts: Option<usize>,
     #[arg(long)]
     measured_http_attempts: Option<usize>,
 }
@@ -102,6 +110,14 @@ pub struct Config {
     pub seed: u64,
     #[serde(default = "preparation_concurrency")]
     pub preparation_concurrency: usize,
+    /// Per-class preparation limit; 0 uses the class's profile count.
+    /// Preparation is not measured, so raising it changes only its duration.
+    #[serde(default)]
+    pub preparation_class_concurrency: usize,
+    /// Attempts per wallet whose preparation failed only on transport errors;
+    /// 0 or 1 keeps a single attempt.
+    #[serde(default)]
+    pub preparation_wallet_attempts: usize,
     #[serde(default)]
     pub allow_advancing_publication: bool,
     #[serde(default)]
@@ -869,6 +885,12 @@ pub fn entry(interrupted: Arc<AtomicBool>) -> Result<()> {
     if let Some(n) = cli.preparation_concurrency {
         config.preparation_concurrency = n;
     }
+    if let Some(n) = cli.preparation_class_concurrency {
+        config.preparation_class_concurrency = n;
+    }
+    if let Some(n) = cli.preparation_wallet_attempts {
+        config.preparation_wallet_attempts = n;
+    }
     if let Some(n) = cli.measured_http_attempts {
         config.measured_http_attempts = n;
     }
@@ -1184,6 +1206,7 @@ fn prepare(
     }
     let (tx, rx) = mpsc::channel();
     let mut active = BTreeMap::<usize, (usize, String)>::new();
+    let mut attempts = BTreeMap::<usize, usize>::new();
     let mut completed = 0;
     let mut failed = 0;
     let mut last_checkpoint = Instant::now() - Duration::from_secs(5);
@@ -1199,10 +1222,12 @@ fn prepare(
                         .filter(|(_, class)| *class == sample.clients[*i].class)
                         .count()
                         < config.profiles[&sample.clients[*i].class]
+                            .max(config.preparation_class_concurrency)
                 }) else {
                     break;
                 };
                 let (i, miss) = queue.remove(position).unwrap();
+                *attempts.entry(i).or_default() += 1;
                 let batch = parent.preparation.len();
                 let link = format!("preparation/batch-{batch}/report.html");
                 let directory = out.join("preparation").join(format!("batch-{batch}"));
@@ -1295,6 +1320,16 @@ fn prepare(
                                         entry["cache"]["warning"] = json!(e.to_string());
                                     }
                                 }
+                            } else if report.errors.iter().all(|e| e.contains("transport"))
+                                && !report.errors.is_empty()
+                                && attempts[&i] < config.preparation_wallet_attempts
+                                && !interrupted.load(Ordering::Relaxed)
+                            {
+                                // A router reload drops in-flight transfers;
+                                // prepare this wallet again rather than
+                                // discard every other preparation.
+                                entry["retried"] = json!(true);
+                                queue.push_back((i, "retry after transport failure".into()));
                             } else {
                                 failed += 1;
                             }

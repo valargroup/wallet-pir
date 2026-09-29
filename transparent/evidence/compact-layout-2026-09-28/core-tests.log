@@ -1,0 +1,217 @@
+   Compiling transparent-shard v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-shard)
+warning: unnecessary parentheses around assigned value
+   --> transparent/crates/transparent-shard/src/page_row.rs:339:23
+    |
+339 |             let per = (4092 / (34 + p as usize * 51));
+    |                       ^                             ^
+    |
+    = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+    |
+339 -             let per = (4092 / (34 + p as usize * 51));
+339 +             let per = 4092 / (34 + p as usize * 51);
+    |
+
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet)
+warning: `transparent-shard` (lib test) generated 1 warning (run `cargo fix --lib -p transparent-shard --tests` to apply 1 suggestion)
+   Compiling transparent-wallet-store v0.1.0 (/Users/roman/projects/wallet-pir/transparent/crates/transparent-wallet-store)
+    Finished `test` profile [optimized + debuginfo] target(s) in 35.09s
+     Running unittests src/lib.rs (target/debug/deps/transparent_shard-62c3e48a14793e05)
+
+running 118 tests
+test build::tests::events_outside_the_declared_range_are_refused ... ok
+test build::tests::encoded_rows_must_hold_every_entry_where_it_was_assigned ... ok
+test build::tests::mixed_size_directory_placement_preserves_every_byte_budget ... ok
+test build::tests::inline_events_and_pages_together_hold_the_complete_history ... ok
+test build::tests::the_filter_matches_every_script_the_shard_holds ... ok
+test build::tests::the_same_script_lands_in_unrelated_rows_in_different_shards ... ok
+test build::tests::a_long_history_keeps_its_run_and_shares_only_its_tail ... ok
+test build::tests::an_unindexable_script_is_filtered_but_counted_as_excluded ... ok
+test build::tests::the_inline_events_are_the_newest_ones ... ok
+test build::tests::every_script_is_retrievable_from_one_of_its_candidate_rows ... ok
+test choice::tests::an_unindexed_script_still_names_one_candidate ... ok
+test choice::tests::duplicates_are_refused ... ok
+test build::tests::two_scripts_can_name_the_same_row ... ok
+test choice::tests::encoding_round_trips ... ok
+test choice::tests::malformed_bytes_are_refused_before_use ... ok
+test choice::tests::the_bytes_depend_on_the_set_not_the_order ... ok
+test build::tests::building_is_deterministic_regardless_of_input_order ... ok
+test compact::tests::malformed_reference_flags_counts_and_truncation_are_refused ... ok
+test compact::tests::widths_reconstruction_and_independent_wire_vectors ... ok
+test layout::tests::a_geometry_the_scheme_would_not_serve_is_refused ... ok
+test layout::tests::a_row_splits_into_its_segment_and_its_row_within_it ... ok
+test layout::tests::a_servable_width_is_not_automatically_a_publishable_one ... ok
+test layout::tests::a_shard_always_has_at_least_one_segment_of_each_table ... ok
+test layout::tests::doubling_the_rows_doubles_the_capacity ... ok
+test layout::tests::every_registry_entry_is_publishable ... ok
+test layout::tests::registry_names_are_distinct_and_resolvable ... ok
+test layout::tests::the_archive_candidates_hold_what_they_claim ... ok
+test layout::tests::the_default_geometry_is_the_one_that_ships ... ok
+test layout::tests::the_inline_allowance_is_what_buys_directory_slots ... ok
+test layout::tests::the_registry_varies_row_counts_only ... ok
+test manifest::tests::a_grown_tail_takes_the_next_revision_and_names_its_predecessor ... ok
+test manifest::tests::a_manifest_round_trips_through_its_canonical_bytes ... ok
+test manifest::tests::a_sealed_shard_whose_content_changed_is_refused ... ok
+test manifest::tests::a_shard_published_for_the_first_time_is_revision_zero ... ok
+test choice::tests::the_shard_id_keys_the_positions ... ok
+test manifest::tests::an_absent_choice_table_leaves_the_canonical_bytes_unchanged ... ok
+test manifest::tests::changing_any_field_changes_the_identity ... ok
+test manifest::tests::republishing_the_same_shard_keeps_its_revision ... ok
+test manifest::tests::the_digest_is_stable_across_encodings ... ok
+test packing::tests::fragment_boundaries_reset_references_and_reconstruct_every_event ... ok
+test packing::tests::incremental_summaries_equal_whole_history_fragmentation ... ok
+test page_row::tests::a_count_larger_than_the_row_holds_is_refused ... ok
+test page_row::tests::a_full_fragment_uses_the_bytes_the_layout_promises ... ok
+test page_row::tests::a_payload_behind_a_zero_count_is_refused ... ok
+test page_row::tests::a_row_of_the_wrong_length_is_refused ... ok
+test page_row::tests::a_row_round_trips_whatever_it_holds ... ok
+test page_row::tests::a_script_may_not_appear_twice_in_a_row ... ok
+test page_row::tests::an_impossible_entry_count_is_refused_before_it_is_used ... ok
+test page_row::tests::an_impossible_event_count_is_refused ... ok
+test page_row::tests::an_ordinal_outside_its_fragment_count_is_refused ... ok
+test page_row::tests::an_unused_row_decodes_as_empty ... ok
+test page_row::tests::arbitrary_bytes_never_panic ... ok
+test page_row::tests::content_past_the_last_entry_is_refused ... ok
+test page_row::tests::events_out_of_canonical_order_are_refused ... ok
+test page_row::tests::every_class_fills_a_row_to_its_capacity ... ok
+test page_row::tests::heights_that_disagree_with_the_events_are_refused ... ok
+test page_row::tests::the_encoding_is_frozen ... ok
+test records::tests::a_directory_entry_round_trips ... ok
+test records::tests::a_directory_row_round_trips_and_rejects_overfill ... ok
+test records::tests::a_duplicate_tag_in_a_row_is_refused ... ok
+test records::tests::a_row_with_content_past_its_count_is_refused ... ok
+test records::tests::a_script_too_long_for_a_private_table_is_refused_not_truncated ... ok
+test records::tests::an_empty_slot_carrying_content_is_refused ... ok
+test records::tests::an_empty_slot_decodes_as_absent ... ok
+test records::tests::every_directory_row_is_the_same_size_however_full ... ok
+test records::tests::inline_slots_must_be_a_prefix_and_pages_require_both ... ok
+test records::tests::the_geometry_is_what_the_layout_promises ... ok
+test seal::tests::a_block_adds_at_most_one_row_per_script_it_touches ... ok
+test seal::tests::a_block_larger_than_a_segment_becomes_a_shard_of_its_own ... ok
+test seal::tests::a_block_that_would_breach_capacity_seals_the_shard_before_it ... ok
+test seal::tests::a_geometry_change_on_an_existing_boundary_seals_nothing ... ok
+test seal::tests::a_geometry_change_seals_the_shard_before_it ... ok
+test seal::tests::a_journal_below_every_limit_yields_one_unsealed_tail ... ok
+test seal::tests::a_journal_ending_on_a_boundary_leaves_no_tail ... ok
+test build::tests::tables_are_exactly_the_pinned_size_whatever_the_shard_holds ... ok
+test seal::tests::a_shard_can_seal_on_page_rows_with_few_scripts ... ok
+test seal::tests::a_wider_geometry_seals_later_in_both_tables ... ok
+test seal::tests::an_empty_journal_seals_nothing ... ok
+test seal::tests::an_oversized_block_after_a_seal_closes_two_shards ... ok
+test seal::tests::an_unindexable_script_contributes_no_packed_rows ... ok
+test seal::tests::blocks_must_arrive_in_order ... ok
+test seal::tests::empty_blocks_extend_the_span_without_adding_occupancy ... ok
+test seal::tests::every_geometry_implies_a_usable_policy ... ok
+test seal::tests::ids_continue_across_a_geometry_change ... ok
+test seal::tests::limits_must_be_positive_and_ordered ... ok
+test seal::tests::maintained_counters_match_a_full_recount ... ok
+test seal::tests::no_sealed_shard_ever_exceeds_capacity ... ok
+test seal::tests::no_valid_block_is_ever_refused ... ok
+test seal::tests::ordering_is_enforced_across_a_seal ... ok
+test choice::tests::it_costs_about_one_and_a_quarter_bits_per_key ... ok
+test seal::tests::placement_is_not_measured_unless_it_is_asked_for ... ok
+test seal::tests::reaching_the_script_target_seals_the_block_that_reached_it ... ok
+test build::tests::the_tag_salt_is_reproduced_by_a_rebuild_and_moves_with_the_terminal_block ... ok
+test seal::tests::shards_tile_the_journal_without_gaps_or_overlaps ... ok
+test seal::tests::the_default_geometry_implies_the_policy_the_publisher_used ... ok
+test seal::tests::the_basis_decides_where_a_shard_ends ... ok
+test seal::tests::the_inline_allowance_changes_what_a_shard_is_counted_to_hold ... ok
+test seal::tests::the_recent_4k_8k_policy_is_the_one_deployment_names ... ok
+test seal::tests::the_projection_equals_what_absorbing_produces ... ok
+test seal::tests::the_same_journal_seals_identically_every_time ... ok
+test tag::tests::a_forced_collision_increments_the_counter_and_keeps_every_script ... ok
+test tag::tests::a_tag_from_another_salt_is_not_the_one_the_wallet_derives ... ok
+test tag::tests::a_tag_is_not_a_prefix_of_the_script ... ok
+test tag::tests::the_salt_moves_with_the_terminal_block_and_the_counter ... ok
+test choice::tests::every_indexed_script_returns_its_bit ... ok
+test packing::tests::batched_best_fit_matches_an_independent_item_by_item_packer ... ok
+test build::tests::the_sealer_predicts_the_placement_the_builder_produces ... ok
+test seal::tests::placement_costs_more_than_dividing_scripts_by_slots ... ok
+test build::tests::placement_order_reproduces_the_published_rows ... ok
+test build::tests::relocation_keeps_one_segment_past_the_greedy_ceiling ... ok
+test build::tests::the_choice_bit_names_the_one_row_holding_each_script ... ok
+test build::tests::a_relocated_script_is_still_in_one_of_its_candidates ... ok
+test build::tests::placement_is_reproducible ... ok
+test build::tests::the_sealer_measures_the_builders_fullest_row_on_mixed_shapes ... ok
+test build::tests::content_too_large_for_one_segment_takes_another ... ok
+test build::tests::short_histories_of_a_length_share_rows ... ok
+test build::tests::the_choice_bit_routes_across_segments ... ok
+test seal::tests::a_script_set_past_one_segment_places_into_two ... ok
+
+test result: ok. 118 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.38s
+
+     Running unittests src/lib.rs (target/debug/deps/transparent_wallet-25e3e169cc327897)
+
+running 40 tests
+test backoff::tests::exponential_doubles_to_its_cap ... ok
+test ledger::tests::a_conflicting_receive_for_one_outpoint_is_an_error ... ok
+test ledger::tests::a_fully_spent_wallet_has_no_balance_but_keeps_its_history ... ok
+test ledger::tests::a_receive_and_its_spend_in_one_block_resolve_by_transaction_index ... ok
+test ledger::tests::a_repeated_unresolved_spend_is_recorded_once ... ok
+test ledger::tests::a_receive_becomes_a_utxo_and_a_balance ... ok
+test ledger::tests::a_spend_extended_later_resolves_against_a_kept_receive ... ok
+test backoff::tests::a_delay_is_never_shorter_than_asked_and_spreads_up_to_half_again ... ok
+test ledger::tests::a_spend_of_an_unknown_output_is_recorded_as_unresolved ... ok
+test ledger::tests::a_spend_removes_its_output_and_is_recorded ... ok
+test ledger::tests::an_unresolved_spend_is_resolved_by_a_receive_extended_later ... ok
+test ledger::tests::coinbase_status_survives_replay_without_being_applied ... ok
+test ledger::tests::duplicate_events_are_idempotent ... ok
+test ledger::tests::events_are_replayed_in_chain_order_whatever_order_they_arrive_in ... ok
+test ledger::tests::several_outputs_of_one_transaction_are_distinct ... ok
+test ledger::tests::history_reports_net_value_per_transaction ... ok
+test ledger::tests::the_identical_spend_twice_is_idempotent ... ok
+test ledger::tests::the_same_outpoint_spent_by_two_transactions_is_an_error ... ok
+test ledger::tests::truncating_above_a_height_restores_outputs_spent_above_it ... ok
+test store::tests::ranges_are_kept_per_shard_in_order_without_repeats ... ok
+test store::tests::uncovered_reports_the_gaps_and_nothing_else ... ok
+test sync::tests::a_different_set_identity_is_not_a_continuation ... ok
+test sync::tests::a_re_cut_covered_shard_is_not_a_continuation ... ok
+test sync::tests::appended_shards_continue_the_set ... ok
+test sync::tests::a_replaced_tail_over_an_agreeing_prefix_continues_the_set ... ok
+test sync::tests::backoff_prefers_the_services_figure_and_caps_it ... ok
+test sync::tests::compact_boundaries_reject_underfilled_reordered_and_cross_row_reference_shortcuts ... ok
+test sync::tests::coverage_ending_below_what_was_read_is_not_a_continuation ... ok
+test sync::tests::a_malformed_directory_choice_is_refused_with_the_manifest ... ok
+test sync::tests::reseal_is_refused_but_a_new_geometry_is_not ... ok
+test sync::tests::withdrawing_a_covered_shard_is_not_a_continuation ... ok
+test transport::tests::a_refusal_is_found_through_a_wrapping_error ... ok
+test transport::tests::a_stale_refusal_survives_a_body_it_cannot_parse ... ok
+test transport::tests::a_stale_refusal_carries_the_map_digest_the_service_reported ... ok
+test sync::tests::a_manifest_is_accepted_only_when_it_agrees_with_the_map_in_every_field ... ok
+test transport::tests::an_ordinary_failure_is_neither_refusal ... ok
+test transport::tests::an_overload_is_recognised_by_its_delay_not_its_status ... ok
+test transport::tests::an_unparsable_delay_is_still_an_overload ... ok
+test transport::tests::only_a_conflict_is_a_stale_refusal ... ok
+test transport::tests::refusal_dispatches_on_what_the_reply_says ... ok
+
+test result: ok. 40 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/birthday_to_balance.rs (target/debug/deps/birthday_to_balance-d65e4d9269930079)
+
+running 4 tests
+test the_ledger_replays_identically_from_shards_and_from_a_direct_traversal ... ok
+test a_later_birthday_recovers_exactly_the_history_from_that_shard_forward ... ok
+test byte_accounting_separates_the_unconditional_floor_from_the_gated_work ... ok
+test an_unused_wallet_matches_nothing_and_issues_no_queries ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src/lib.rs (target/debug/deps/transparent_wallet_store-296d94f8084a8496)
+
+running 1 test
+test coverage_append_tests::appending_checkpoints_does_not_rewrite_prior_coverage ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/store_semantics.rs (target/debug/deps/store_semantics-80e6c93085c4e402)
+
+running 6 tests
+test the_memory_store_meets_the_contract ... ok
+test the_sqlite_store_meets_the_contract_in_memory ... ok
+test fragment_boundary_survives_update_and_reopen ... ok
+test v2_migration_preserves_events_and_adds_empty_boundary_state ... ok
+test migration_preserves_events_but_invalidates_unbound_legacy_progress ... ok
+test the_sqlite_store_meets_the_contract_on_disk_and_survives_reopening ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+

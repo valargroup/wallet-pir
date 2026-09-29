@@ -167,6 +167,16 @@ async def observe(args):
     queries = []
     query_logs = []
     if args.query_binary:
+        if args.shard is None:
+            target = fleet.reconciliation_target()
+            if target is None:
+                raise RuntimeError('cannot select a query shard while publication is withdrawn')
+            assignment = json.loads(Path(target[0]['assignment']).read_text())
+            selected = next(w['shards'] for w in assignment['workers'] if w['id'] == args.worker)
+            if not selected:
+                raise RuntimeError('selected worker has no assigned query shard')
+            args.shard = selected[-1]
+        provenance['query_shard'] = args.shard
         for index in range(args.query_workers):
             log = (output/f'query-{index}.ndjson').open('w', buffering=1)
             query_logs.append(log)
@@ -324,7 +334,7 @@ def main():
     parser.add_argument('--query-workers', type=int, default=2)
     parser.add_argument('--minimum-queries', type=int, default=1000)
     parser.add_argument('--publications', default='/srv/zakura/transparent-publications')
-    parser.add_argument('--shard', type=int, default=173)
+    parser.add_argument('--shard', type=int, help='defaults to the last shard in the selected worker current assignment')
     parser.add_argument('--worker', required=True)
     parser.add_argument('--binary-sha256', required=True)
     parser.add_argument('--out', required=True)

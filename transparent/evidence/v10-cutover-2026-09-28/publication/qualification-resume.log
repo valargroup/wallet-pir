@@ -1,0 +1,10 @@
+{
+  "source_sha": "8e69ea75b1e0071e3b978b0c78cc0487377f9e82",
+  "shards": 86,
+  "certificate_segments": 172,
+  "fixture_comparison": "fixture-compare-same-anchor.json",
+  "comparison_ops_sha": "4905d3a30f63b096e514ab6851a95d4b9b0e80e0",
+  "resumed_after": "Original comparison required the anchor to advance. Explicit same-anchor mode additionally requires identical cases, expectations, cutoff and map identity. Original failed log and report retained.",
+  "completed_utc": "2026-09-28T21:15:20.275274+00:00"
+}
+

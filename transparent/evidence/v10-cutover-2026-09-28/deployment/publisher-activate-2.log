@@ -1,0 +1,13 @@
+waiting for activation: <urlopen error [Errno 111] Connection refused>
+{
+  "candidate_height": 3499627,
+  "cycle_seconds": 9.75873492,
+  "freshness_seconds": 9.768501581,
+  "map_sha256": "514ab81397113ce83898b7720bc36696f1aa236d9954d1dd0776b17a482ce6da",
+  "node_hash": "0000000000053b84b2c12442a372b6cb77e844555429acd696712990a386aedc",
+  "node_height": 3499627,
+  "phase": "serving",
+  "public_hash": "0000000000053b84b2c12442a372b6cb77e844555429acd696712990a386aedc",
+  "public_height": 3499627,
+  "ready_replicas": 1
+}

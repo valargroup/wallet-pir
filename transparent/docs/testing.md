@@ -181,6 +181,13 @@ exits non-zero. Separately it reports cases whose character changed -- a profile
 whose meaning no longer holds, a script set that moved, an anchor state that
 moved by more than the tolerance. Those are decisions to make, not failures.
 
+For a schema replacement at the same anchor, pass `--same-anchor` to the
+comparison tool. This requires identical anchor heights, cutoff, case
+definitions (including birthdays), checkpoint expectations and map identity
+fields. Existing accepted headers still must agree. The default re-cut mode
+continues to require an advancing anchor; the explicit mode does not relax
+ledger or reorg checks.
+
 Three further conditions only a journal replay settles, which the re-cut tool
 prints before the run:
 `recent-birthday`'s birthday moves with the cutoff and the export refuses if any

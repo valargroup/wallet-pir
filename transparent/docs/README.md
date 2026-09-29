@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Status recorded 2026-09-13; documentation consolidated 2026-09-14. The accepted target is four small recent replicas and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
+Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is four small recent replicas and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
 
 ## Reading order and authority
 
@@ -39,6 +39,14 @@ Retained raw evidence lives under `transparent/evidence/`; its bytes and histori
 provenance are preserved. Superseded diagnostics and designs are recorded in the
 [cleanup ledger](../../docs/cleanup-2026-09-14.md). Use Git history for those records;
 they are not current instructions. Follow the [retention rules](../../evidence/README.md).
+
+## Compact layout
+
+Schema v10 is deployed; the [SSH cutover and public checks](../evidence/v10-cutover-2026-09-28/README.md) record the verified production state. See the
+[architecture](architecture.md#private-record-layout),
+[storage evidence](../evidence/compact-layout-2026-09-28/README.md) and
+[qualification gates](remaining-work.md#schema-v10-qualification-and-republication).
+The journal remains version 2.
 
 ## Experiments
 

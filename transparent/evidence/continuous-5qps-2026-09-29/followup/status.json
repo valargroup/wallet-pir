@@ -1,0 +1,130 @@
+{
+  "utc": "2026-09-29T04:16:32.905808+00:00",
+  "started_unix": 1790655175.1952083,
+  "mode": "running",
+  "target_query_qps": 5,
+  "client_location": "coordinator; shares host with ingest/publication; Nice=10 CPUQuota=200%",
+  "workload": "80% recent, 20% archive; directory/pages equally split; sealed revisions; fresh keys; exact row hashes; separate moving-tail health probes",
+  "ready": {
+    "event": "ready",
+    "fixture_sha256": "1316d72b0d72ad1aaf58b2d7ab2a4e8c6953c249767ff2fd8b824c68be6094bb",
+    "http_attempts_per_call": 1,
+    "maximum_attempts_per_logical_query": 3,
+    "mix": "40% recent directory, 40% recent pages, 10% archive directory, 10% archive pages",
+    "qps": 5,
+    "retry_budget": "retries consume scheduled slots; every attempt has a fresh key",
+    "targets": [
+      8,
+      8,
+      77,
+      77
+    ],
+    "unix": 1790655176.2232246,
+    "workers": 8
+  },
+  "counts": {
+    "ready": 1,
+    "paused": 4,
+    "query": 979
+  },
+  "trailing_60s": {
+    "exact": 299,
+    "errors": 0,
+    "missed_slots": 0,
+    "completed_qps": 4.983333333333333,
+    "http_p50_seconds": 0.017443025,
+    "http_p95_seconds": 0.044799698,
+    "http_p99_seconds": 0.685712437,
+    "max_schedule_lag_seconds": 0.049424346
+  },
+  "reasons": [],
+  "incidents": 0,
+  "publisher": {
+    "candidate_height": 3499902,
+    "cycle_seconds": 13.306252426,
+    "freshness_seconds": 13.383413095,
+    "journal_height": 3499902,
+    "map_sha256": "e4f337e187be41cdb3ad621262d2d11973d919993f956295c5ef7e6121199b95",
+    "node_hash": "00000000008444e487427e4671d4ce5c84d4f70e8e3f0da44f8b021e8c9f4f80",
+    "node_height": 3499902,
+    "phase": "serving",
+    "public_hash": "00000000008444e487427e4671d4ce5c84d4f70e8e3f0da44f8b021e8c9f4f80",
+    "public_height": 3499902,
+    "ready_replicas": 1,
+    "reorg_depth": 1
+  },
+  "workers": [
+    {
+      "id": "transparent-pir-recent-01",
+      "available_memory_percent": 74.58735971706072,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 6033409453000,
+      "ready": true
+    },
+    {
+      "id": "transparent-pir-recent-02",
+      "available_memory_percent": 75.05953186141288,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 6106922258000,
+      "ready": true
+    },
+    {
+      "id": "transparent-pir-recent-03",
+      "available_memory_percent": 73.89078405957859,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 6253119748000,
+      "ready": true
+    },
+    {
+      "id": "transparent-pir-recent-04",
+      "available_memory_percent": 74.6990695764027,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 4956050727000,
+      "ready": true
+    },
+    {
+      "id": "transparent-pir-archive-01",
+      "available_memory_percent": 74.69109790083921,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 579878414000,
+      "ready": true
+    },
+    {
+      "id": "transparent-pir-archive-02",
+      "available_memory_percent": 75.2134278650993,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 1344405780000,
+      "ready": true
+    },
+    {
+      "id": "transparent-router",
+      "available_memory_percent": 85.37745918564819,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 21123198468000,
+      "ready": true
+    },
+    {
+      "id": "transparent-coordinator",
+      "available_memory_percent": 86.10945930422675,
+      "restarts": 0,
+      "oom": 0,
+      "oom_kill": 0,
+      "cpu_ns": 1491383807000,
+      "ready": true
+    }
+  ]
+}
