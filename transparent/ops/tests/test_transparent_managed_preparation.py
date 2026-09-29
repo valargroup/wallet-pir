@@ -6,6 +6,7 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+import unittest.mock
 from unittest.mock import AsyncMock
 SPEC=importlib.util.spec_from_file_location('fleet',Path(__file__).resolve().parents[1]/'scripts/transparent-live-fleet.py')
 M=importlib.util.module_from_spec(SPEC);SPEC.loader.exec_module(M)
@@ -94,11 +95,23 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
                 async with self.f.lock('reconciler',wait=False):
                     self.fail('duplicate reconciler acquired ownership')
 
-    async def test_unknown_canonicality_removes_member_and_withdraws_without_quorum(self):
+    async def test_unknown_canonicality_needs_repeated_evidence_before_withdrawal(self):
+        # A node lookup failure is not evidence of a fork; one blip keeps the
+        # member routed, and only a sustained failure removes it.
+        self.f.c.update(membership_failures=3, membership_failure_seconds=0)
         self.f.canonical_hash=AsyncMock(side_effect=RuntimeError('node unavailable'))
+        for _ in range(2):
+            await self.f.reconcile_member(self.worker)
+            self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner','recent'])
+            self.f.route.assert_not_awaited()
         await self.f.reconcile_member(self.worker)
         self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
         self.assertEqual(self.f.route.await_args.args[0],[])
+
+    async def test_a_fork_removes_a_routed_member_at_once(self):
+        self.f.canonical_hash=AsyncMock(return_value='fork')
+        await self.f.reconcile_member(self.worker)
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
 
     async def test_transient_status_transport_failure_does_not_withdraw_a_warm_quorum(self):
         # Exercise real control parsing/retry and membership with a broken first
@@ -115,10 +128,11 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner','recent'])
             self.f.route.assert_not_awaited()
 
-    async def test_status_retry_cannot_mask_unavailable_or_invalid_worker(self):
+    async def test_status_retry_cannot_mask_an_invalid_worker(self):
+        # A status that answers but does not attest is semantic evidence and
+        # removes the member at once, whatever the transport did first.
         self.f.control=M.Fleet.control.__get__(self.f)
-        cases=[RuntimeError('still offline'),
-               json.dumps({'ok':True,'result':{**self.status,'warm':False}}).encode(),
+        cases=[json.dumps({'ok':True,'result':{**self.status,'warm':False}}).encode(),
                json.dumps({'ok':True,'result':{**self.status,'active':{'map_sha256':'other'}}}).encode()]
         for second in cases:
             self.active('a');self.f.route.reset_mock()
@@ -128,12 +142,39 @@ class ManagedTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
             self.assertEqual(self.f.route.await_args.args[0],[])
 
+    async def test_unreachable_worker_is_removed_only_after_repeated_failures_spanning_time(self):
+        self.f.control=M.Fleet.control.__get__(self.f)
+        self.f.ssh=AsyncMock(side_effect=RuntimeError('still offline'))
+        clock=[1000.0]
+        with unittest.mock.patch.object(M.time,'monotonic',side_effect=lambda:clock[0]):
+            for _ in range(3):
+                await self.f.reconcile_member(self.worker)
+                clock[0]+=1
+            # Three failures inside five seconds are not yet enough.
+            self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner','recent'])
+            self.f.route.assert_not_awaited()
+            clock[0]+=5
+            await self.f.reconcile_member(self.worker)
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
+        self.assertEqual(self.f.route.await_args.args[0],[])
+
+    async def test_a_successful_status_resets_the_failure_count(self):
+        self.f.c.update(membership_failures=2, membership_failure_seconds=0)
+        replies=[RuntimeError('blip'), self.status.copy(), RuntimeError('blip')]
+        self.f.control=AsyncMock(side_effect=replies)
+        for _ in replies:
+            await self.f.reconcile_member(self.worker)
+        self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner','recent'])
+        self.f.route.assert_not_awaited()
+
     async def test_restarted_or_unreachable_member_is_removed(self):
         self.status['warm']=False
         await self.f.reconcile_member(self.worker)
         self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
         self.active('a');self.f.control=AsyncMock(side_effect=RuntimeError('offline'))
-        await self.f.reconcile_member(self.worker)
+        self.f.c.update(membership_failures=3, membership_failure_seconds=0)
+        for _ in range(3):
+            await self.f.reconcile_member(self.worker)
         self.assertEqual(json.loads((self.root/'active.json').read_text())['workers'],['owner'])
 
     async def test_valid_replacement_can_rejoin_with_historical_revocations(self):

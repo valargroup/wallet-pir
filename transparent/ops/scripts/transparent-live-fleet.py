@@ -34,6 +34,19 @@ ROUTER_HEALTH = ('\t\t\thealth_uri /v1/ready\n\t\t\thealth_interval 1s\n\t\t\the
 # refusal does, so wallets back off instead of abandoning the sync.
 ROUTER_PROXY_ERRORS = ('\n\thandle_errors {\n\t\theader Retry-After 1\n'
                        '\t\trespond "no worker could take the request; retry shortly"\n\t}\n')
+# Fleet settings chosen by operators and rollouts rather than by a publisher
+# deployment. A redeploy that regenerates fleet.json must carry them over;
+# silently dropping them once disabled status forwarding and replica catch-up.
+OPERATIONAL_KEYS = ('control_sessions', 'status_socket_forwarding', 'headless_console', 'storage_nodiscard',
+                    'manage_all_workers', 'managed_recent_workers', 'reconcile_workers',
+                    'membership_failures', 'membership_failure_seconds', 'activation_grace_seconds',
+                    'activation_lock_seconds')
+ASSIGNMENT_SCHEMA = 'transparent-assignment-v1'
+
+
+def carry_operational(config, previous):
+    """`config` with every operational setting of `previous` carried over."""
+    return {**config, **{key: previous[key] for key in OPERATIONAL_KEYS if key in previous}}
 
 
 def atomic_json(path, value):
@@ -94,6 +107,11 @@ class Fleet:
         control_dir.chmod(0o700)
         self.control_dir = control_dir
         self.canonical = {}
+        self.canonical_at = {}
+        # Consecutive status failures per worker: (count, first monotonic).
+        self.failures = {}
+        # Latest reconciler observation per worker, published as membership.json.
+        self.observations = {}
         self.rpc_slots = asyncio.Semaphore(8)
         self.direct_ssh_args = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes',
                          '-o', 'UserKnownHostsFile=' + config['known_hosts'], '-i', config['ssh_key']]
@@ -105,8 +123,9 @@ class Fleet:
                     raise ValueError(f'invalid roster {field}')
 
     @asynccontextmanager
-    async def lock(self, name, wait=True):
+    async def lock(self, name, wait=True, timeout=None):
         # Shared with the reconciler process. Never block the event loop on flock.
+        deadline = None if timeout is None else time.monotonic() + timeout
         with (self.root / (name + '.lock')).open('a') as stream:
             while True:
                 try:
@@ -115,6 +134,8 @@ class Fleet:
                 except BlockingIOError:
                     if not wait:
                         raise RuntimeError('worker preparation already in progress')
+                    if deadline is not None and time.monotonic() >= deadline:
+                        raise TimeoutError(name + ' lock is held')
                     await asyncio.sleep(0.05)
             try:
                 yield
@@ -148,8 +169,22 @@ class Fleet:
                         return body['result']
                     return await asyncio.to_thread(request)
             self.canonical[height] = asyncio.create_task(fetch())
+            self.canonical_at[height] = time.monotonic()
         # Cancelling a slow replica must not cancel a lookup shared by owners.
         return await asyncio.shield(self.canonical[height])
+
+    async def recent_canonical(self, height, max_age=1.0):
+        """A canonical lookup at most `max_age` seconds old, shared by members.
+
+        Membership checks run every half second per worker; one node lookup
+        per height and second keeps the reorg defence without an RPC per probe.
+        A failed lookup is never reused.
+        """
+        task = self.canonical.get(height)
+        if (task is not None and (time.monotonic() - self.canonical_at.get(height, 0) > max_age
+                                  or (task.done() and (task.cancelled() or task.exception() is not None)))):
+            self.canonical.pop(height, None)
+        return await self.canonical_hash(height)
 
     async def node_height(self):
         # Sample the node independently of the controller's ingest loop.
@@ -176,11 +211,13 @@ class Fleet:
         return keep
 
     def transfer_ssh_args(self, host):
-        """Reuse a supervised worker connection; never silently replace a dead master."""
-        if self.c.get('control_sessions'):
-            worker = next((w for w in self.roster if w['ssh_host'] == host), None)
-            if worker is not None:
-                return self.control_session_args(worker)
+        """Artifact transfer never shares the supervised control connection.
+
+        Status reads travel over the owned control master (and its forwarded
+        socket). An rsync on the same TCP connection delayed them past their
+        budget exactly while a member was staging, which removed healthy
+        members from routing. Transfers reuse their own short-lived master.
+        """
         return self.ssh_args
 
     async def ssh(self, host, command, data=None, timeout=25, multiplex=True):
@@ -347,7 +384,29 @@ class Fleet:
         return all(w['id'] in ids for w in self.roster if w['role'] == 'archive-owner') and any(
             w['id'] in ids for w in self.roster if w['role'] == 'recent-replica')
 
-    async def collect(self, operation, workers, early=False):
+    def routing_generation(self):
+        """Counter bumped under the routing lock by activation, invalidation
+        and withdrawal: every event that can make a status observation stale."""
+        try:
+            return json.loads((self.root/'routing-generation.json').read_text())['generation']
+        except FileNotFoundError:
+            return 0
+
+    def bump_generation(self):
+        atomic_json(self.root/'routing-generation.json', {'generation': self.routing_generation() + 1})
+
+    @staticmethod
+    def valid_plan(path, digest):
+        """A complete assignment for exactly this publication, or False."""
+        try:
+            value = json.loads(Path(path).read_text())
+        except (OSError, ValueError):
+            return False
+        return (isinstance(value, dict) and value.get('schema') == ASSIGNMENT_SCHEMA
+                and isinstance(value.get('set'), dict) and value['set'].get('map_sha256') == digest
+                and isinstance(value.get('workers'), list) and bool(value['workers']))
+
+    async def collect(self, operation, workers, early=False, grace=0.5):
         tasks = {asyncio.create_task(operation(w)): w for w in workers}
         done_values = {}
         try:
@@ -363,7 +422,7 @@ class Fleet:
                     # Give other healthy replicas a short opportunity to finish,
                     # without letting a failed replica hold the public pointer.
                     if tasks:
-                        finished, _ = await asyncio.wait(tasks, timeout=0.5)
+                        finished, _ = await asyncio.wait(tasks, timeout=grace)
                         for task in finished:
                             worker = tasks.pop(task)
                             try:
@@ -430,8 +489,15 @@ class Fleet:
                     await run(['rsync', '-a', '--ignore-existing', '--files-from', listing.name,
                                '-e', shlex.join(self.transfer_ssh_args(worker['ssh_host'])), str(source)+'/',
                                'root@'+worker['ssh_host']+':'+remote_dir+'/'], file_output=True)
+            # One assignment per publication, written once. A worker's durable
+            # active record points at this file, so replacing it would change
+            # what a later restart loads without any prepare observing it.
+            target = shlex.quote(remote_assignment)
+            write_once = (f'set -eu\nif [ -e {target} ]; then\n'
+                          f'  cmp -s - {target} || {{ echo "a different assignment exists for this publication" >&2; exit 3; }}\n'
+                          f'else\n  cat > {target}.next\n  mv {target}.next {target}\nfi')
             async with self.stage_timing(worker, req, 'assignment'):
-                await self.ssh(worker['ssh_host'], 'cat > ' + shlex.quote(remote_assignment), assignment.read_bytes())
+                await self.ssh(worker['ssh_host'], write_once, assignment.read_bytes())
             publication = {'directory': remote_dir, 'assignment': remote_assignment, 'map_sha256': digest}
             if worker['id'] in self.managed_ids():
                 self.job(worker, req, 'warming')
@@ -445,11 +511,33 @@ class Fleet:
             raise ValueError('invalid map digest')
         source = Path(req['directory']).resolve(strict=True)
         assignment = self.root / (digest + '.assignment.json')
-        # Same map retries preserve assignment provenance and its digest.
+        # Same map retries preserve assignment provenance and its digest. The
+        # plan is written once and completely: the controller can kill this
+        # adapter mid-plan, and a truncated file must never be reused.
+        if assignment.exists() and not self.valid_plan(assignment, digest):
+            assignment.rename(assignment.with_name(f'{assignment.name}.invalid-{time.time_ns()}'))
         if not assignment.exists():
-            await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', self.c['roster'],
-                       '--recent-from-height', str(req['recent_from']), '--headroom', '0.05',
-                       '--out-assignment', assignment, '--source-sha', req['source_sha']])
+            partial = assignment.with_name(f'{assignment.name}.{os.getpid()}.partial')
+            try:
+                await run([self.c['assign_binary'], 'plan', '--shard-dir', source, '--roster', self.c['roster'],
+                           '--recent-from-height', str(req['recent_from']), '--headroom', '0.05',
+                           '--out-assignment', partial, '--source-sha', req['source_sha']])
+                if not self.valid_plan(partial, digest):
+                    raise RuntimeError('shard-assign wrote an incomplete assignment')
+                with partial.open('rb') as stream:
+                    os.fsync(stream.fileno())
+                try:
+                    # Create-if-absent: a concurrent planner's complete file wins.
+                    os.link(partial, assignment)
+                except FileExistsError:
+                    pass
+                fd = os.open(self.root, os.O_RDONLY)
+                try:
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            finally:
+                partial.unlink(missing_ok=True)
         req = {**req, 'assignment':str(assignment)}
         atomic_json(self.root/(digest+'.request.json'), req)
         atomic_json(self.root/'desired.json', req)
@@ -543,7 +631,10 @@ class Fleet:
         prepared = req['prepared']['workers']
         workers = [w for w in self.roster if w['id'] in prepared]
         async def activate_worker(worker):
-            async with self.lock('worker-' + worker['id']):
+            # Bounded: while this publication is current the reconciler holds a
+            # worker lock only for a status probe. A member that misses the
+            # quorum window is activated and routed by the reconciler later.
+            async with self.lock('worker-' + worker['id'], timeout=self.c.get('activation_lock_seconds', 10)):
                 async with self.stage_timing(worker, req, 'activate'):
                     await self.control(worker, {'operation':'activate','expected':prepared[worker['id']]['expected'],'map_sha256':digest})
                 async with self.stage_timing(worker, req, 'attest'):
@@ -551,16 +642,20 @@ class Fleet:
                     if not self.attests(status, digest):
                         raise RuntimeError('worker activation did not attest warm candidate')
                 return True
-        active = await self.collect(activate_worker, workers)
+        active = await self.collect(activate_worker, workers, early=True,
+                                    grace=self.c.get('activation_grace_seconds', 0.5))
+        self.bump_generation()
         if not self.quorum(active):
             await self.route([])
             raise RuntimeError('activation quorum unavailable; router withdrawn')
+        # Only members attesting the new digest serve it: a member still on the
+        # previous digest cannot answer the new tail revision.
         workers = [w for w in workers if w['id'] in active]
         assignment = json.loads(Path(req['prepared']['assignment']).read_text())
         router = {'id':'router', 'ssh_host':self.c['router_host']}
         async with self.stage_timing(router, req, 'route'):
             await self.route(workers, assignment)
-        atomic_json(self.root/'active.json',{'map_sha256':digest,'workers':list(active),'assignment':req['prepared']['assignment']})
+        atomic_json(self.root/'active.json',{'map_sha256':digest,'workers':sorted(active),'assignment':req['prepared']['assignment']})
         atomic_json(self.root/'withdrawn.json', {'withdrawn':False})
         return {'ok':True,'upstreams':[w['upstream'] for w in workers], 'recent_replicas':sum(w['role']=='recent-replica' for w in workers)}
 
@@ -597,6 +692,8 @@ class Fleet:
         return {w['id'] for w in workers}
 
     async def _invalidate(self, req):
+        # Observations made before a reorg must never be applied after it.
+        self.bump_generation()
         try:
             retained = await self.retained_publication(req)
         except Exception:
@@ -685,6 +782,10 @@ class Fleet:
         await asyncio.gather(*(catch_up(w) for w in self.roster))
 
     def managed_ids(self):
+        # With manage_all_workers every roster member, archive owners included,
+        # is prepared by the reconciler and never staged by the foreground.
+        if self.c.get('manage_all_workers', False):
+            return {w['id'] for w in self.roster}
         return set(self.c.get('managed_recent_workers', []))
 
     @staticmethod
@@ -728,52 +829,160 @@ class Fleet:
                     return {'expected':status['active']['map_sha256']}
             await asyncio.sleep(0.1)
 
+    def transport_failure(self, worker):
+        """Count one failed observation; True once the worker is unavailable.
+
+        A single slow status read must not unroute a healthy member: the
+        router's own health check already ejects a dead upstream within a
+        second. Only several consecutive failures spanning several seconds
+        are evidence enough to change membership.
+        """
+        now = time.monotonic()
+        count, first = self.failures.get(worker['id'], (0, now))
+        self.failures[worker['id']] = (count + 1, first)
+        return (count + 1 >= self.c.get('membership_failures', 3)
+                and now - first >= self.c.get('membership_failure_seconds', 5))
+
+    async def probe(self, worker):
+        """One bounded status read: (status or None, unavailable)."""
+        try:
+            status = await asyncio.wait_for(self.control(worker, {'operation':'status'}), 3)
+        except Exception as error:
+            print(json.dumps({'event':'membership_status_failed', 'worker':worker['id'],
+                              'error_type':type(error).__name__}), file=sys.stderr)
+            return None, self.transport_failure(worker)
+        return status, False
+
+    def observe(self, worker, status, error=None):
+        """Record what the reconciler last saw; published as membership.json."""
+        try:
+            active = json.loads((self.root/'active.json').read_text())
+        except (FileNotFoundError, ValueError):
+            active = {'map_sha256': None, 'workers': []}
+        digest, routed = active.get('map_sha256'), worker['id'] in active.get('workers', [])
+        if status is None:
+            state = 'unreachable'
+        elif status.get('invalidated'):
+            state = 'invalidated'
+        elif self.attests(status, digest):
+            state = 'serving' if routed else 'prepared'
+        elif status.get('preparing'):
+            state = 'warming'
+        elif (status.get('candidate') or {}).get('warm') is True:
+            state = 'prepared'
+        else:
+            state = 'lagging'
+        candidate = (status or {}).get('candidate') or {}
+        self.observations[worker['id']] = dict(
+            role=worker['role'], state=state, routed=routed,
+            map_sha256=((status or {}).get('active') or {}).get('map_sha256'),
+            warm=(status or {}).get('warm'), candidate_map_sha256=candidate.get('map_sha256'),
+            preparing=bool((status or {}).get('preparing')),
+            transport_failures=self.failures.get(worker['id'], (0, 0))[0],
+            error=error, observed_unix=time.time())
+
+    def write_membership(self):
+        try:
+            active = json.loads((self.root/'active.json').read_text())
+        except (FileNotFoundError, ValueError):
+            active = {'map_sha256': None, 'workers': []}
+        routed = [w for w in self.roster if w['id'] in active.get('workers', [])]
+        value = dict(schema=1, updated_unix=time.time(), active_map_sha256=active.get('map_sha256'),
+                     routed=sorted(w['id'] for w in routed),
+                     routed_recent=sum(w['role'] == 'recent-replica' for w in routed),
+                     routing_generation=self.routing_generation(), members=self.observations)
+        atomic_json(self.root/'membership.json', value)
+
+    async def member_canonical(self, req, fresh=False):
+        """True or False for the target's endpoint; None when unknown."""
+        tail = json.loads((Path(req['directory'])/'shards.json').read_text())['shards'][-1]
+        if fresh:
+            self.canonical.pop(tail['end_height'], None)
+        try:
+            return await self.recent_canonical(tail['end_height']) == tail['terminal_block_hash']
+        except Exception as exc:
+            print(json.dumps({'event':'membership_canonical_check_failed','error':str(exc)}), file=sys.stderr)
+            return None
+
     async def reconcile_member(self, worker):
         # Membership is derived from live status, not a historical list of
         # successful activations. Restarted or unreachable workers are removed.
+        # The probe runs without the routing lock, so a steady member never
+        # delays foreground activation; a change is applied under the lock only
+        # if no activation, invalidation or withdrawal happened meanwhile.
+        target = self.reconciliation_target()
+        if target is None:
+            return
+        active, req = target
+        digest = active['map_sha256']
+        generation = self.routing_generation()
+        async with self.lock('worker-'+worker['id'], wait=False):
+            status, unavailable = await self.probe(worker)
+            canonical = None
+            if status is not None and self.prepared_status(status, digest):
+                canonical = await self.member_canonical(req)
+                if canonical is None:
+                    # An unknown endpoint is not evidence of a fork.
+                    unavailable = self.transport_failure(worker)
+            if status is not None and not (canonical is None and self.prepared_status(status, digest)):
+                # A complete observation ends any run of failures.
+                self.failures.pop(worker['id'], None)
+        observed = time.monotonic()
+        self.observe(worker, status)
+        routed = worker['id'] in active['workers']
+        if status is None or (canonical is None and self.prepared_status(status, digest)):
+            if unavailable and routed:
+                await self.apply_member(worker, None, None, digest, generation, observed)
+            return
+        valid = canonical is True and self.attests(status, digest)
+        joining = canonical is True and not valid and self.prepared_status(status, digest)
+        if valid == routed and not joining:
+            return
+        await self.apply_member(worker, status, canonical, digest, generation, observed)
+
+    async def apply_member(self, worker, status, canonical, digest, generation, observed):
         async with self.lock('routing'):
             target = self.reconciliation_target()
-            if target is None:
+            if (target is None or target[0]['map_sha256'] != digest
+                    or self.routing_generation() != generation or time.monotonic() - observed > 2):
+                # The observation may be stale; the next probe decides.
                 return
             active, req = target
-            digest = active['map_sha256']
             ids = set(active['workers'])
-            async with self.lock('worker-'+worker['id'], wait=False):
-                try:
-                    status = await asyncio.wait_for(self.control(worker, {'operation':'status'}), 3)
-                except Exception as error:
-                    print(json.dumps({'event':'membership_status_failed', 'worker':worker['id'],
-                                      'error_type':type(error).__name__}), file=sys.stderr)
-                    status = None
-                valid = status is not None and self.attests(status, digest)
-                if status is not None and self.prepared_status(status, digest):
-                    tail = json.loads((Path(req['directory'])/'shards.json').read_text())['shards'][-1]
-                    self.canonical.pop(tail['end_height'], None)
-                    try:
-                        canonical = await self.canonical_hash(tail['end_height']) == tail['terminal_block_hash']
-                    except Exception as exc:
-                        canonical = False
-                        print(json.dumps({'event':'membership_canonical_check_failed','worker':worker['id'],'error':str(exc)}),file=sys.stderr)
-                    if canonical and not valid:
+            valid = status is not None and canonical is True and self.attests(status, digest)
+            if status is not None and canonical is True and not valid and self.prepared_status(status, digest):
+                # Activation is the one irreversible step: recheck the
+                # endpoint against the node immediately before it.
+                if await self.member_canonical(req, fresh=True) is True:
+                    async with self.lock('worker-'+worker['id'], wait=False):
                         await self.control(worker, {'operation':'activate', 'expected':status['active']['map_sha256'], 'map_sha256':digest})
                         status = await self.control(worker, {'operation':'status'})
                         valid = self.attests(status, digest)
-                    valid = valid and canonical
-                updated = ids | {worker['id']} if valid else ids - {worker['id']}
-                if updated != ids:
-                    await self.route([w for w in self.roster if w['id'] in updated] if self.quorum(updated) else [], json.loads(Path(active['assignment']).read_text()))
-                    atomic_json(self.root/'active.json', {**active, 'workers':sorted(updated)})
-                    print(json.dumps({'event':'worker_membership','worker':worker['id'],'map_sha256':digest,'eligible':valid}),file=sys.stderr)
+                    self.observe(worker, status)
+            updated = ids | {worker['id']} if valid else ids - {worker['id']}
+            if updated != ids:
+                await self.route([w for w in self.roster if w['id'] in updated] if self.quorum(updated) else [], json.loads(Path(active['assignment']).read_text()))
+                atomic_json(self.root/'active.json', {**active, 'workers':sorted(updated)})
+                print(json.dumps({'event':'worker_membership','worker':worker['id'],'map_sha256':digest,'eligible':valid}),file=sys.stderr)
+                self.observe(worker, status)
 
     async def managed_once(self, worker):
-        await self.reconcile_member(worker)
-        await self.advance_unrouted(worker)
+        # Routing membership after activation is reconciled for recent
+        # replicas only. Archive owners are prepared here but leave routing only
+        # through activation quorum or invalidation, never on a status blip:
+        # each owns its range alone, and removing it withdraws the service.
+        replica = worker['role'] == 'recent-replica'
+        if replica:
+            await self.reconcile_member(worker)
+            await self.advance_unrouted(worker)
         path = self.root/'desired.json'
         if not path.exists():
             return
         req = json.loads(path.read_text())
         digest = req['map_sha256']
         status = await self.control(worker, {'operation':'status'})
+        if not replica:
+            self.observe(worker, status)
         if self.prepared_status(status, digest):
             self.job(worker, req, 'prepared', expected=status['active']['map_sha256'])
             return
@@ -797,8 +1006,9 @@ class Fleet:
         if not self.prepared_status(status, digest):
             raise RuntimeError('completed preparation did not attest requested revision')
         self.job(worker, req, 'prepared', expected=status['active']['map_sha256'], seconds=time.monotonic()-started)
-        await self.reconcile_member(worker)
-        await self.advance_unrouted(worker)
+        if replica:
+            await self.reconcile_member(worker)
+            await self.advance_unrouted(worker)
         # The next iteration reads the latest desired target; no obsolete
         # intermediate targets accumulate in a queue.
 
@@ -839,20 +1049,46 @@ class Fleet:
                     raise RuntimeError('unrouted advancement did not attest its canonical revision')
                 print(json.dumps({'event':'worker_private_progress','worker':worker['id'],'map_sha256':digest,'height':tail['end_height'],'public_map_sha256':target[0]['map_sha256']}),file=sys.stderr)
 
+    def desired_mark(self):
+        try:
+            stat = (self.root/'desired.json').stat()
+            return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            return None
+
+    async def wait_desired_change(self, mark, timeout=0.5):
+        """Sleep up to `timeout`, waking as soon as a new target is desired.
+
+        A managed archive owner is on the publication's critical path, so a
+        new target must not wait out a fixed polling interval.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.desired_mark() != mark:
+                return
+            await asyncio.sleep(0.05)
+
     async def serve_reconciler(self):
         managed = [w for w in self.roster if w['id'] in self.managed_ids()]
-        if any(w['role'] != 'recent-replica' for w in managed) or len(managed) != len(self.managed_ids()):
+        manage_all = self.c.get('manage_all_workers', False)
+        if len(managed) != len(self.managed_ids()) or (
+                not manage_all and any(w['role'] != 'recent-replica' for w in managed)):
             raise ValueError('managed preparation requires known recent replicas')
         async def worker_loop(worker):
             while True:
+                mark = self.desired_mark()
                 try:
                     await self.managed_once(worker)
                 except Exception as exc:
                     self.job(worker, {}, 'failed', error=type(exc).__name__+': '+str(exc))
-                await asyncio.sleep(0.5)
+                await self.wait_desired_change(mark)
         async def heartbeat():
             while True:
                 atomic_json(self.root/'reconciler-heartbeat.json', {'monotonic':time.monotonic(), 'workers':sorted(self.managed_ids())})
+                try:
+                    self.write_membership()
+                except Exception as exc:
+                    print(json.dumps({'event':'membership_write_failed','error':str(exc)}), file=sys.stderr)
                 await asyncio.sleep(1)
         async def legacy():
             while True:
@@ -864,7 +1100,10 @@ class Fleet:
         async with self.lock('reconciler', wait=False):
             async with asyncio.TaskGroup() as group:
                 group.create_task(heartbeat())
-                group.create_task(legacy())
+                # Every member is managed: the unmanaged catch-up loop has
+                # nothing left to do and would only compete for worker locks.
+                if not manage_all:
+                    group.create_task(legacy())
                 for worker in managed:
                     group.create_task(worker_loop(worker))
 
@@ -877,6 +1116,7 @@ class Fleet:
             return await self.invalidate(req)
         if req['operation']=='withdraw':
             async with self.lock('routing'):
+                self.bump_generation()
                 atomic_json(self.root/'withdrawn.json', {'withdrawn':True})
                 await self.route([])
                 return {'ok':True}

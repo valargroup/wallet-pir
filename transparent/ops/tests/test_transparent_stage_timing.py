@@ -65,20 +65,23 @@ class StageTimingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(rows[-1]['state'], type(error).__name__)
             self.assertNotIn('private command payload', output.getvalue())
 
-    async def test_staging_uses_owned_worker_connection_and_preserves_explicit_direct_mode(self):
+    async def test_staging_never_shares_the_owned_control_connection(self):
         fleet = object.__new__(M.Fleet)
         fleet.c = {'control_sessions': True, 'known_hosts': 'known', 'ssh_key': 'key'}
         fleet.roster = [{'id':'a', 'ssh_host':'worker'}]
         fleet.control_dir = Path('/private/control')
         fleet.direct_ssh_args = ['ssh', '-oBatchMode=yes']
         fleet.ssh_args = ['ssh', '-oControlMaster=auto']
-        expected = fleet.control_session_args(fleet.roster[0])
-        self.assertIn('-oProxyCommand=false', expected)
-        self.assertEqual(fleet.transfer_ssh_args('worker'), expected)
+        # Status reads travel over the owned control master; a bulk transfer
+        # on the same connection delayed them past their budget.
+        control = fleet.control_session_args(fleet.roster[0])
+        self.assertIn('-oProxyCommand=false', control)
+        self.assertEqual(fleet.transfer_ssh_args('worker'), fleet.ssh_args)
         self.assertEqual(fleet.transfer_ssh_args('router'), fleet.ssh_args)
         with patch.object(M, 'run', new=AsyncMock(return_value=b'ok')) as run:
             self.assertEqual(await fleet.ssh('worker', 'true'), b'ok')
-            self.assertEqual(run.call_args.args[0], expected + ['root@worker', 'true'])
+            self.assertEqual(run.call_args.args[0], fleet.ssh_args + ['root@worker', 'true'])
+            self.assertNotIn(str(fleet.control_path(fleet.roster[0])), ' '.join(run.call_args.args[0]))
             self.assertTrue(run.call_args.kwargs['file_output'])
             await fleet.ssh('worker', 'true', multiplex=False)
             self.assertIn('-oControlPath=none', run.call_args.args[0])

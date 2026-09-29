@@ -323,6 +323,10 @@ async def main():
         fleet_config=dict(roster=str(ROOT/'roster.json'),state_dir=str(ROOT/'state'),ssh_key=str(ROOT/'credentials/deploy-ssh'),known_hosts=str(ROOT/'credentials/known_hosts'),
                           assign_binary='/usr/local/bin/shard-assign',public_host='transparent-pir.valargroup.dev',router_host=os.environ['TRANSPARENT_ROUTER_HOST'],
                           authority_upstream='https://enhance-pir.valargroup.dev',internal_listen=os.environ['TRANSPARENT_ROUTER_HOST']+':8080')
+        # Operators and rollouts own these settings. Regenerating the file
+        # without them once disabled status forwarding and replica catch-up.
+        if 'fleet.json' in previous_files:
+            fleet_config=LIVE.carry_operational(fleet_config,json.loads(previous_files['fleet.json']))
         LIVE.atomic_json(ROOT/'fleet.json',fleet_config)
         config=dict(data_dir=str(args.data_dir),publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
                     recent_from=3262749,recent_geometry=args.recent_geometry,archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',

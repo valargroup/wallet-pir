@@ -27,7 +27,7 @@ check: check-ops check-docs check-reports check-tools
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
 .PHONY: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
-check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
+check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership
 
 check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
@@ -61,6 +61,14 @@ check-ops-observation:
 
 check-ops-stage-timing:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'
+
+# Fleet membership, managed preparation and the rollouts that rewrite fleet config.
+check-ops-membership:
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_membership.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_managed_preparation.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_reconciler.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_maintenance.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_worker_upgrade.py'
 
 .PHONY: check-reports
 check-reports:
