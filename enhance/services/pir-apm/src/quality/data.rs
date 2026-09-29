@@ -276,10 +276,14 @@ pub fn parse(text: &str, at: u64) -> Result<Reading, &'static str> {
         if s.labels.contains_key("endpoint") && !label_allowed("endpoint", &s.labels["endpoint"]) {
             continue;
         }
-        let suffix = s
+        let mut labels = s
             .labels
             .iter()
             .filter(|(k, v)| label_allowed(k, v))
+            .collect::<Vec<_>>();
+        labels.sort_unstable();
+        let suffix = labels
+            .into_iter()
             .map(|(k, v)| format!("{k}={v}"))
             .collect::<Vec<_>>()
             .join(",");
@@ -393,6 +397,18 @@ mod tests {
             assert!(!serde_json::to_string(&parsed.values)
                 .unwrap()
                 .contains("assignment_sha256"));
+        }
+    }
+    #[test]
+    fn label_order_is_canonical_across_counter_samples() {
+        let a = parse("process_start_time_seconds 1\npir_http_responses_total{endpoint=\"query_pages\",code=\"2xx\"} 100",100).unwrap();
+        for _ in 0..32 {
+            let b = parse("process_start_time_seconds 1\npir_http_responses_total{code=\"2xx\",endpoint=\"query_pages\"} 110",105).unwrap();
+            let p = b.delta(Some(&a));
+            assert_eq!(
+                p.values.counters["pir_http_responses_total|code=2xx,endpoint=query_pages"],
+                10.
+            );
         }
     }
     #[test]

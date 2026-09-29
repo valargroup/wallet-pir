@@ -97,6 +97,21 @@ pub async fn worker_page(
 fn escape(s: &str) -> String {
     crate::dashboard::escape(s)
 }
+fn metric_label(name: &str) -> String {
+    let (base, labels) = name.split_once('|').unwrap_or((name, ""));
+    let title = match base {
+        "caddy_http_request_duration_seconds" => "Edge response completion".into(),
+        "caddy_http_response_duration_seconds" => "Edge time to first byte".into(),
+        "transparent_publication_cycle_seconds" => "Successful publication cycle".into(),
+        "transparent_publication_freshness_seconds" => "Successful publication visibility".into(),
+        _ => base.replace('_', " "),
+    };
+    if labels.is_empty() {
+        title
+    } else {
+        format!("{title} · {labels}")
+    }
+}
 fn number(v: Option<f64>) -> String {
     v.map(|n| format!("{n:.2}")).unwrap_or_else(|| "—".into())
 }
@@ -135,7 +150,7 @@ fn counters(point: &Point) -> String {
         }
         rows.push_str(&format!(
             "<tr><th>{}</th><td>{value:.0}</td><td>{}</td></tr>",
-            escape(&name.replace('_', " ").replace('|', " · ")),
+            escape(&metric_label(name)),
             number(
                 (point.observed_seconds > 0)
                     .then_some(value / point.observed_seconds.max(1) as f64)
@@ -164,6 +179,17 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
             "<p>Retained values below are stale. They do not establish current health.</p>",
         );
     }
+    if source.role == "independent-probe" {
+        out.push_str(&chart(
+            points,
+            "probe_duration_seconds",
+            "latest value",
+            true,
+            |p| p.values.gauges.get("probe_duration_seconds").copied(),
+        ));
+        out.push_str("<p>One exact query per minute. Probe duration includes client preparation and canonical checks.</p></section>");
+        return out;
+    }
     out.push_str(&format!(
         "<p>Five-minute window: {} seconds observed; {} discontinuities.</p>",
         window.observed_seconds, window.discontinuities
@@ -182,7 +208,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
         }
         out.push_str(&format!(
             "<tr><th>{}</th><td>{:.0}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            escape(&name.replace('_', " ").replace('|', " · ")),
+            escape(&metric_label(name)),
             h.counts.last().copied().unwrap_or(0.),
             quantile(h, 0.5),
             quantile(h, 0.9),
@@ -244,7 +270,7 @@ fn source_card(name: &str, source: &Source, points: &[Point]) -> String {
     for (name, value) in &source.current.gauges {
         out.push_str(&format!(
             "<tr><th>{}</th><td>{value:.2}</td></tr>",
-            escape(&name.replace('_', " ").replace('|', " · "))
+            escape(&metric_label(name))
         ));
     }
     out.push_str("</tbody></table></div></details></section>");
@@ -301,7 +327,7 @@ fn chart(
     if !segment.is_empty() {
         paths.push_str(&format!("<polyline points=\"{segment}\"/>"));
     }
-    format!("<figure><figcaption>{} · {} · upper scale {:.3}</figcaption><svg role=\"img\" aria-label=\"Metric history with gaps\" viewBox=\"0 0 700 150\"><g fill=\"none\" stroke=\"#b9915f\" stroke-width=\"2\">{paths}</g><g fill=\"#b9915f\">{dots}</g></svg></figure>",escape(&name.replace('_'," ")),escape(unit),max)
+    format!("<figure><figcaption>{} · {} · upper scale {:.3}</figcaption><svg role=\"img\" aria-label=\"Metric history with gaps\" viewBox=\"0 0 700 150\"><g fill=\"none\" stroke=\"#b9915f\" stroke-width=\"2\">{paths}</g><g fill=\"#b9915f\">{dots}</g></svg></figure>",escape(&metric_label(name)),escape(unit),max)
 }
 async fn render(
     state: SharedDashboard,
