@@ -272,6 +272,11 @@ the API; history work runs outside request and scrape tasks.
 The existing fleet roster is authoritative. No public metrics route is added.
 The host sampler uses explicitly configured private SSH targets and loopback
 Caddy metrics. Its output contains resource numbers and fixed source names.
+With a `roster` block (`{"path": ".../roster.json", "unit":
+"transparent-shard-server.service"}`) it derives one target per enrolled or
+draining transparent worker from the roster on every cycle, so elastic members
+and replaced owners are sampled under their own names. A static list sampled
+archive-03 as `transparent-pir-recent-03` after the 2026-09-29 owner move.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
