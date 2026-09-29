@@ -14,6 +14,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -25,6 +26,11 @@ INVENTORY_SPEC = importlib.util.spec_from_file_location('fleet_inventory', SCRIP
 INVENTORY = importlib.util.module_from_spec(INVENTORY_SPEC)
 INVENTORY_SPEC.loader.exec_module(INVENTORY)
 ROOT = Path('/opt/transparent-publisher')
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(SCRIPT.parents[2]/'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import transparent_unit  # noqa: E402
 
 
 def execute(args, **kwargs):
@@ -174,15 +180,10 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
     # RuntimeDirectory is created before the binary opens its control socket.
     if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
         new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
-    if worker['role'] in ('recent-replica', 'archive-owner'):
-        # Reclaim file cache before transient admission reaches the 7 GiB
-        # hard limit. The four-replica target is measured with a 5.5 GiB high
-        # threshold; anonymous allocations still obey the work/cache guards.
-        new_unit='\n'.join(line for line in new_unit.splitlines() if not line.startswith('MemoryHigh='))+'\n'
-        # Archive hosts otherwise retain ~10 GiB of file cache on top of their
-        # ~46 GiB anonymous working set, exceeding the cgroup headroom gate.
-        high = 5905580032 if worker['role'] == 'recent-replica' else 51539607552
-        new_unit=new_unit.replace('[Service]',f'[Service]\nMemoryHigh={high}',1)
+    if worker['role'] in transparent_unit.MEMORY_HIGH:
+        # Reclaim file cache before the hard limit; anonymous allocations
+        # still obey the work/cache guards. The values are per role.
+        new_unit=transparent_unit.set_memory_high(new_unit, worker['role'])
     headless = fleet.c.get('headless_console', False)
     if type(headless) is not bool:
         raise ValueError('headless_console must be a boolean')

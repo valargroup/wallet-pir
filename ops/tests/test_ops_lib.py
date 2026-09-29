@@ -1,5 +1,6 @@
 """The shared operations primitives: durable files, the pinned-host lock, the
-saved-plan runner, the read-only DigitalOcean client and pinned SSH."""
+saved-plan runner, the read-only DigitalOcean client, pinned SSH and the
+transparent worker unit rewriter."""
 import hashlib
 import http.server
 import json
@@ -19,7 +20,7 @@ import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
-from wallet_pir_ops import digitalocean, durable, hostlock, pinned_ssh, terraform  # noqa: E402
+from wallet_pir_ops import digitalocean, durable, hostlock, pinned_ssh, terraform, transparent_unit  # noqa: E402
 
 MACHINE = 'a' * 32
 
@@ -347,6 +348,32 @@ class PinnedSSHTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'changed'):
                     remote.copy([], '/tmp/')
                 run.assert_not_called()
+
+
+class TransparentUnitTests(unittest.TestCase):
+    UNIT = ('[Unit]\nDescription=w\n\n[Service]\nMemoryHigh=5905580032\n'
+            'ExecStart=/usr/local/bin/transparent-shard-server --shard-dir /p/old --cache-bytes 5368709120 '
+            '--worker-id=transparent-pir-recent-01 --runtime-cache-dir /srv/transparent-pir/runtime-cache '
+            '--active-record /opt/transparent-publisher/active.json\nMemoryMax=7G\n')
+
+    def test_flags_are_replaced_in_either_spelling_and_appended_only_on_request(self):
+        unit, found = transparent_unit.rewrite_exec(self.UNIT, {'--worker-id': 'a3', '--cache-bytes': 7, '--query-slots': 2})
+        self.assertEqual(found, {'--worker-id', '--cache-bytes'})
+        self.assertIn('--worker-id=a3 ', unit)
+        self.assertIn('--cache-bytes 7 ', unit)
+        self.assertNotIn('--query-slots', unit)
+        unit, _ = transparent_unit.rewrite_exec(self.UNIT, {'--query-slots': 2}, append=True)
+        self.assertTrue(transparent_unit.exec_args(unit)[-2:] == ['--query-slots', '2'])
+        with self.assertRaisesRegex(ValueError, 'ExecStart'):
+            transparent_unit.rewrite_exec('[Service]\n', {'--worker-id': 'x'})
+
+    def test_service_directives_are_set_once_and_directories_found(self):
+        unit = transparent_unit.set_service(self.UNIT, {'MemoryMax': '56G', 'MemoryHigh': 51539607552})
+        self.assertEqual(unit.count('MemoryMax='), 1)
+        self.assertIn('[Service]\nMemoryMax=56G\nMemoryHigh=51539607552\n', unit)
+        self.assertIn('MemoryHigh=51539607552', transparent_unit.set_memory_high(self.UNIT, 'archive-owner'))
+        self.assertEqual(list(transparent_unit.unit_directories(self.UNIT)),
+                         ['/srv/transparent-pir/runtime-cache', '/opt/transparent-publisher'])
 
 
 if __name__ == '__main__':

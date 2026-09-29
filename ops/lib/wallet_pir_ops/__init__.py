@@ -10,4 +10,6 @@ is installed on hosts by itself.
 - `terraform`: a saved-plan runner that passes that lock to Terraform.
 - `digitalocean`: a read-only API client that never follows redirects.
 - `pinned_ssh`: SSH and SCP against a verified, pinned known-hosts file.
+- `transparent_unit`: rewriting a serving transparent worker's systemd unit for
+  a new worker, and the per-role memory limits it carries.
 """

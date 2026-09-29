@@ -24,6 +24,11 @@ import urllib.request
 import uuid
 
 SCRIPTS = Path(__file__).resolve().parent
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(SCRIPTS.parents[2]/'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import transparent_unit  # noqa: E402
 NAME = re.compile(r'^transparent-pir-recent-(\d{2,3})$')
 SERVE_DEADLINE = 25 * 60
 DRAIN_SECONDS = 120
@@ -633,15 +638,7 @@ def publication_fresh(actuator):
     return status.get('phase') == 'serving' and status.get('freshness_seconds', 1e9) <= actuator.c['freshness_pause_seconds']
 
 
-def unit_directories(unit):
-    """Directories the worker expects to exist before its first start."""
-    for line in unit.splitlines():
-        if line.startswith('ExecStart='):
-            args = shlex.split(line[len('ExecStart='):])
-            for flag in ('--runtime-cache-dir', '--active-record'):
-                if flag in args:
-                    value = args[args.index(flag) + 1]
-                    yield value if flag == '--runtime-cache-dir' else str(Path(value).parent)
+unit_directories = transparent_unit.unit_directories
 
 
 def newest_plan_naming(state, name):
@@ -668,29 +665,11 @@ def render_unit(actuator, name, publication):
     roster = {w['id']: w for w in json.loads(Path(actuator.fleet['roster']).read_text())}
     peer = sorted(m for m in INVENTORY.serving_recent(record) if m in roster)[0]
     unit = actuator.remote.run(roster[peer]['ssh_host'], 'cat /etc/systemd/system/transparent-shard-server.service')
-    lines = []
-    for line in unit.splitlines():
-        if line.startswith('ExecStart='):
-            args = shlex.split(line[len('ExecStart='):])
-            replace = {'--worker-id': name, '--shard-dir': publication,
-                       '--assignment': publication + '/assignment.json'}
-            out, skip = [], False
-            for index, arg in enumerate(args):
-                if skip:
-                    skip = False
-                    continue
-                if arg in replace:
-                    out += [arg, replace[arg]]
-                    skip = True
-                elif arg.split('=', 1)[0] in replace:
-                    out.append(arg.split('=', 1)[0] + '=' + replace[arg.split('=', 1)[0]])
-                else:
-                    out.append(arg)
-            if '--worker-id' not in out:
-                raise ActuatorError('the peer unit has no --worker-id to replace')
-            line = 'ExecStart=' + shlex.join(out)
-        lines.append(line)
-    return '\n'.join(lines) + '\n'
+    unit, found = transparent_unit.rewrite_exec(unit, {'--worker-id': name, '--shard-dir': publication,
+                                                       '--assignment': publication + '/assignment.json'})
+    if '--worker-id' not in found:
+        raise ActuatorError('the peer unit has no --worker-id to replace')
+    return unit
 
 
 def main(argv=None):
