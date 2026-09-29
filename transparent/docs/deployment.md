@@ -13,7 +13,7 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
 | V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
 | Page-row target:capacity | `7936:8192` | `63488:65536` |
-| Workers | 4 full recent replicas | 2 disjoint archive assignments |
+| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 2 disjoint archive assignments, static |
 | Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
@@ -31,6 +31,32 @@ These are proposed operating budgets within the accepted architecture, not targe
 Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's cache and memory budgets and `--assignment … --worker-id … --prune-excess`.
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
+
+### Elastic recent replicas
+
+The accepted recent tier is two full copies; four hosts was a load target, not a
+requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
+runtime construction in its own low-priority pool
+([evidence](../evidence/recent-floor-2026-09-29/README.md)). Elastic copies are
+added and removed by the actuator from `ops/infra/digitalocean/transparent-elastic/`
+(one droplet and project entry per member, its own state and host lock), never
+by the production root; the scaler decides within `scaler/policy.json`
+(`min_recent` 2, `max_recent`, budgets, cost cap). Serving recent replicas never
+drop below two outside maintenance. Archive owners stay static and manual: the
+scaler and actuator never change them, the partition or `recent_from`. The fleet
+inventory owns membership once it exists; `TRANSPARENT_FLEET_JSON` only seeds it.
+Formats and invariants: [elastic recent replicas](elastic-recent.md).
+
+Operator commands on the coordinator:
+
+- `transparent-fleet-inventory.py drain|undrain|retire|quarantine <id>`: intent;
+  drain needs two other serving recent replicas.
+- `transparent-fleet-actuator status|scale-out --count N|scale-in [--member id]|replace <id>`:
+  journaled operations with the runtime credential; `touch scaler/disabled` stops
+  every side effect. `resolve-apply` and `abandon` clear a fenced operation after
+  Terraform state and DigitalOcean are reconciled by hand.
+- Pause the scaler (`mode: observe`) during a canary soak or full-fleet upgrade:
+  the canary gate binds the whole roster.
 
 ## Geometry and schema cutovers
 

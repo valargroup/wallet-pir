@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is four small recent replicas and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
+Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is two small recent replicas, grown elastically under load, and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
 
 ## Reading order and authority
 

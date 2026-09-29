@@ -71,6 +71,17 @@ def current_roster(previous):
  try:return json.loads(pathlib.Path(FLEET['roster']).read_text())
  except (OSError,ValueError):return previous
 
+SERVED=set()
+def monitored(roster):
+ # A newly enrolled replica boots and warms for minutes before the router
+ # sends it traffic; judge it only once it has been rendered, while every
+ # member qualified at start stays under watch from the beginning.
+ try:
+  members=json.loads((pathlib.Path(FLEET['state_dir'])/'membership.json').read_text())['members']
+  SERVED.update(i for i,v in members.items() if v.get('rendered'))
+ except (OSError,ValueError,KeyError):pass
+ return [w for w in roster if w['id'] in EXPECTED_BINARIES or w['id'] in SERVED]
+
 def main():
  global PROC,FLEET,NODES,EXPECTED_BINARIES
  FLEET=json.loads(FLEET_PATH.read_text())
@@ -90,7 +101,7 @@ def main():
   thread=threading.Thread(target=reader,args=(PROC,),daemon=True);thread.start()
   while not STOP:
    tick=time.monotonic()
-   roster=current_roster(roster);NODES=nodes(roster)
+   roster=current_roster(roster);NODES=nodes(monitored(roster))
    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     futures=[pool.submit(worker,w) for w in NODES]
     c=pool.submit(fetch,'http://127.0.0.1:8094/v1/status');public=pool.submit(fetch,'https://transparent-pir.valargroup.dev/v1/shards/init')
