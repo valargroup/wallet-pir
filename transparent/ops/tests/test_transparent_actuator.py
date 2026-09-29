@@ -273,6 +273,14 @@ class ActuatorTests(unittest.TestCase):
             self.actuator.start('scale_out', count=1)
         self.actuator.start('replace', member=failed, count=1)
 
+    def test_a_refused_request_is_answered_in_the_history(self):
+        self.policy(mode='act', max_recent=2)
+        (self.scaler/'request.json').write_text(json.dumps(
+            {'schema': 1, 'decision_id': 'd9', 'action': 'scale_out', 'count': 1}))
+        self.assertIsNone(self.actuator.run_once())
+        last = self.actuator.history()[-1]
+        self.assertEqual((last['decision_id'], last['phase']), ('d9', 'refused'))
+
     def test_scale_out_respects_max_recent(self):
         self.policy(mode='act', max_recent=2)
         with self.assertRaisesRegex(A.ActuatorError, 'max_recent'):

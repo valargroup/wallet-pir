@@ -185,6 +185,13 @@ class Actuator:
             op = self.start(request['action'], **fields)
         except ActuatorError as error:
             log('request_refused', decision_id=request['decision_id'], error=str(error))
+            # Recorded like a finished operation so the scaler sees its
+            # decision answered at once instead of waiting out its TTL.
+            (self.journal/'done').mkdir(parents=True, exist_ok=True)
+            sequence = len(list((self.journal/'done').glob('*.json')))
+            atomic_json(self.journal/'done'/f"{sequence:06d}-refused.json",
+                        dict(kind=request['action'], decision_id=request['decision_id'], phase='refused',
+                             outcome='refused: ' + str(error), finished_unix=self.now()))
             return None
         if mode == 'act-dry':
             op = self.save(op, dry=True)
