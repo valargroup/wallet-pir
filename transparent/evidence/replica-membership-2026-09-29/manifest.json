@@ -1,0 +1,73 @@
+{
+  "run_id": "replica-membership-2026-09-29",
+  "purpose": "Track A phase 0: keep every healthy recent replica routed",
+  "utc": {
+    "before_window": [
+      "2026-09-29T09:20:00Z",
+      "2026-09-29T11:20:00Z"
+    ],
+    "fleet_adapter_deployed": "2026-09-29T11:20:12Z",
+    "prepare_grace_deployed": "2026-09-29T11:22:13Z",
+    "after_grace_window": [
+      "2026-09-29T11:23:00Z",
+      "2026-09-29T12:02:00Z"
+    ],
+    "controller_restarted": "2026-09-29T12:02:12Z",
+    "recent_workers_restarted": {
+      "transparent-pir-recent-01": "2026-09-29T12:03:49Z",
+      "transparent-pir-recent-02": "2026-09-29T12:04:14Z",
+      "transparent-pir-recent-03": "2026-09-29T12:04:45Z",
+      "transparent-pir-recent-04": "2026-09-29T12:05:08Z"
+    },
+    "continuous_load_restarted": "2026-09-29T12:05:52Z"
+  },
+  "sources": {
+    "fleet_adapter": "e0b19e91 (transparent/ops/scripts/transparent-live-fleet.py), prepare grace 89ceb3ee",
+    "binaries": "dbeb3960",
+    "rolling_script": "ff772282 (transparent/ops/scripts/roll-recent-replicas.py)",
+    "previous_main": "c255ee54"
+  },
+  "build": {
+    "host": "roman-ipir-bench-8vcpu",
+    "toolchain": "1.91.0-x86_64-unknown-linux-gnu",
+    "command": "cargo build --locked --release -p transparent-shard-server -p transparent-filter-server --bin transparent-shard-server --bin shard-assign --bin shard-control --bin transparent-publish-controller",
+    "rustflags": "-C target-cpu=haswell",
+    "sha256": {
+      "transparent-shard-server": "14eb8c58eead0a63d431ec6ba95697a41855767a4ac2bdfc528105e520e4e570",
+      "shard-assign": "d7156021f04ae77628bba9704662aaa664cdc8a39ab4b030595e8ba94e110a2a",
+      "shard-control": "0c80de07f98364458ac2dd1198bfcf250f002b5192b3ff7afe511338653bbf53",
+      "transparent-publish-controller": "769a6761a1535c41502bde6576c7a6c5950ccddd7b04b4a1cb7382c695c013ea"
+    }
+  },
+  "fleet": {
+    "coordinator": "wallet-pir coordinator (publisher, fleet adapter, reconciler)",
+    "router": "10.142.0.11, Caddy 2.6.2",
+    "recent_replicas": [
+      "transparent-pir-recent-01",
+      "transparent-pir-recent-02",
+      "transparent-pir-recent-03",
+      "transparent-pir-recent-04"
+    ],
+    "archive_owners_not_upgraded": {
+      "transparent-pir-archive-01": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b",
+      "transparent-pir-archive-02": "0ece0ae1ac7f526c8471b01bb06c35c0138c80eb2c46cbaff992fa237c45f36b"
+    },
+    "publication_schema": "transparent-shard-v10, 86 shards (77 archive-wide + 9 recent-4k-8k)"
+  },
+  "files": {
+    "membership-before.json": "reconciler events and prepared sets, 09:20-11:20 UTC",
+    "membership-after-grace.json": "same, 11:23-12:02 UTC",
+    "membership-after-roll.json": "same, 12:06-12:19 UTC after the rolling upgrade",
+    "fleet-config-before.json": "fleet.json before 11:20 UTC, credentials omitted",
+    "fleet-config-after.json": "fleet.json after 11:22 UTC, credentials omitted",
+    "roll.log": "roll-recent-replicas.py output",
+    "load-after-roll.json": "continuous 5 QPS supervisor trailing minute at 12:19:30 UTC",
+    "membership-window.py": "capture script"
+  },
+  "method": "membership-window.py (in this directory) run on the coordinator as root: reads journalctl -u transparent-replica-reconciler and the mtimes of state/*.prepared.json; read-only",
+  "limits": [
+    "not a capacity or tail-latency measurement",
+    "24-hour routing gate open",
+    "deployed without CI or soak at the owner's request"
+  ]
+}

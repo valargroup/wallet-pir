@@ -318,9 +318,46 @@ changes run `make check-docs`.
 
 ## Service-quality rollout follow-up (2026-09-29)
 
-- [ ] Accept the fresh six-hour / 300-block telemetry canary and gated five-worker rollout.
+- [x] Superseded 2026-09-29 at the owner's request: the six-hour / 300-block telemetry canary and gated five-worker rollout were stopped, and recent replicas were rolled to `dbeb3960` without the soak (see [replica membership](../evidence/replica-membership-2026-09-29/README.md)). Archive owners still run the predecessor binary and need a maintenance-window upgrade.
 - [ ] Complete full-fleet observation; retain failures and exact-query/configuration provenance.
 - [ ] Review 24 hours of complete shadow coverage and exercise firing/recovery through the existing notification outbox.
 - [ ] Activate only the new APM quality and independent service-probe families, then observe 24 active hours.
 
 The live dashboard and initial passing probes do not close these elapsed-time gates.
+
+## Track A: elastic recent replicas (approved 2026-09-29)
+
+The recent tier grows and shrinks automatically; the archive stays two static,
+manually operated owners with R=1 per range, and its single-owner outage risk is
+accepted. Tier-boundary movement (ownership aging, cutoff advance, geometry
+epoch) is a separate later design. The steady-state recent tier is two full
+copies; four hosts was a load target, not a requirement. Each phase is started
+only on the owner's explicit go-ahead.
+
+- [x] **0. Membership correctness.** Every member managed, probes off the routing
+  lock, failure hysteresis, write-once plans, prepare grace, `membership.json`,
+  live `ready_replicas`, slot metrics, rolling recent upgrades. Production gate:
+  4 of 4 recent replicas routed in at least 99% of blocks over 24 hours (open;
+  see [status](status.md)).
+- [ ] **1. Dynamic inventory and pinned placement.** Durable intent inventory with
+  compare-and-swap writes, the archive partition pinned so adding or removing
+  recent members never re-cuts archive ranges, v1 assignments only, deploy and
+  publisher scripts reading the inventory. Gate: the planner reproduces the live
+  assignment; enroll, drain and retire a recent replica on a bench fleet under
+  load.
+- [ ] **1b. Recent tier from four to two.** Drain recent-03 and recent-04, run
+  20 QPS on the pair (p99 < 2 s, p50 < 700 ms), then retire them and reduce
+  `transparent_recent_count`; cancel the drains if the gate fails. Standing gate:
+  2 of 2 routed in at least 99% of blocks over 24 hours.
+- [ ] **2. Elastic recent provisioning.** A recent-only isolated Terraform root
+  following the Enhance `enhance-v4` pattern, a journaled actuator and a saved-plan
+  validator that refuses archive and production-root addresses.
+- [ ] **3. Automatic recent failure replacement** (make-before-break) and
+  capacity-forecast alerts in APM, shadow before active.
+- [ ] **4. Recent load autoscaler** from a capacity model measured on a bench fleet:
+  observe, recommend and act-dry before act.
+
+Invariants for every phase: serving recent replicas never drop below two outside
+withdrawal or maintenance; the scaler and actuator never change archive members,
+ranges, `recent_from` or archive droplets; stale signals mean hold.
+

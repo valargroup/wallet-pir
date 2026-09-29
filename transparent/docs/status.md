@@ -6,6 +6,33 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Replica membership fix, 2026-09-29
+
+Before 11:20 UTC only one recent replica served each publication: over the two
+preceding hours 91 of 93 publications activated exactly one (recent-04),
+recent-01 rejoined routing 92 times, and recent-02/03 sat warm on older digests.
+Only recent-01 was managed, the unmanaged catch-up loop was disabled, and a
+publisher redeploy had dropped status forwarding from `fleet.json`, so each
+status read opened a new SSH connection and often timed out.
+
+Deployed over SSH at the owner's request, without CI or soak:
+
+- 11:20 UTC, fleet adapter `e0b19e91`: every member managed, probes off the
+  routing lock, failure hysteresis, write-once plans, `membership.json`; status
+  forwarding re-enabled.
+- 11:22 UTC, `prepare_grace_seconds: 3.5` (`89ceb3ee`): 17 of the next 20
+  publications activated all four recent replicas, with no status transport
+  failures. Freshness was 12–16 s.
+- 12:02 UTC, publish controller and `shard-assign` from `dbeb3960`:
+  `ready_replicas` follows the routed recent count.
+- 12:03–12:05 UTC, recent replicas rolled one at a time to worker `dbeb3960`
+  (slot metrics, assignment guard) without maintenance; each was routed again
+  20–48 s after its roll began. Archive owners still run `0ece0ae1` and need a
+  maintenance window.
+
+The 24-hour 4-of-4 routing gate in [remaining work](remaining-work.md) is open.
+See the [evidence](../evidence/replica-membership-2026-09-29/README.md).
+
 ## Service-quality rollout, 2026-09-29
 
 The separate [Transparent APM page](https://enhance-pir.valargroup.dev/apm/transparent/)

@@ -264,11 +264,34 @@ coverage remains contiguous. Historical catch-up and deep reorg rebuilding are
 reported separately from steady-state freshness.
 
 Activation requires all archive owners and at least one warm recent replica.
-Lagging replicas leave current routing and are retried on later publications.
-Artifact transfer commands may reuse authenticated SSH sessions for up to 60
-seconds. Control commands use independent connections; bounded read-only status
-retry is described in the hardening gate below. Cancelling a slower replica
-does not delay an already warm quorum. An unchanged router configuration skips
+With `manage_all_workers: true` the reconciler prepares every member, archive
+owners included; the foreground adapter only waits for those jobs and never
+stages a worker itself. Preparation returns at quorum plus
+`prepare_grace_seconds`, so recent replicas that finish their tail build moments
+after the first one activate together; the grace costs freshness directly. A
+replica that misses it is activated and routed by the reconciler as soon as it
+attests the current publication. Activation also returns at quorum plus a short
+grace and waits at most `activation_lock_seconds` for a worker lock.
+
+Membership probes run without the routing lock. A change is applied under it
+only if no activation, invalidation or withdrawal happened since the probe
+(`state/routing-generation.json`). A transport failure, or an unknown canonical
+endpoint, unroutes a recent replica only after three consecutive failures
+spanning five seconds (`membership_failures`, `membership_failure_seconds`); a
+status that answers but does not attest (not warm, another digest, a fork)
+removes it at once. Archive owners leave routing only through activation quorum
+or invalidation. The reconciler writes observed member states and the routed
+recent count to `state/membership.json`; the controller's `ready_replicas`
+reads it while it is under ten seconds old.
+
+Artifact transfers use their own SSH master for up to 60 seconds, never the
+owned control session: a transfer on that connection delayed status past its
+budget. Assignment plans are written once per publication, locally and on each
+worker; a worker refuses a prepare that names a publication it already holds
+under a different row of the assignment. A publisher redeploy carries
+operational `fleet.json` settings over (`OPERATIONAL_KEYS` in
+`transparent-live-fleet.py`). Cancelling a slower replica does not delay an
+already warm quorum. An unchanged router configuration skips
 reload only when its successful application marker matches; an interrupted
 rename/reload is retried.
 Workers prepare through a root-only Unix control socket, keep current runtimes
@@ -399,7 +422,13 @@ the approved duration and preserve complete results and query logs.
 The full-fleet gate must match the tested binary, fleet script, configuration
 and roster digest; elapsed time alone is insufficient. The foreground adapter and
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
-recent-01 at the canary stage and all four recent replicas after their upgrade.
+recent-01 at the canary stage; once every worker's binary reports the control
+status fields, set `manage_all_workers: true` instead.
+`transparent/ops/scripts/roll-recent-replicas.py` upgrades recent replicas one at
+a time without a maintenance window, only while two others are routed, and
+waits for each to be routed again before the next. Archive owners still use the
+maintenance upgrade. Stop observers that latch on worker restarts, such as the
+continuous-load supervisor, before a roll and re-qualify their binaries after.
 The installer applies an explicit roster `build_slots` value to the staged worker
 unit before verification; an omitted value preserves the installed setting.
 With `control_sessions: true`, short control commands use authenticated SSH
@@ -422,8 +451,9 @@ same status timeout/retry policy. Missing forwards do not fall back to helper
 execution. Mutations keep their existing SSH paths. Verify all worker forwards
 before enabling clients; changes require matching acceptance evidence.
 
-Returned status still must attest the current warm publication. Two failed reads
-withdraw membership; invalid or rejected status is not retried. Mutating control
+Returned status still must attest the current warm publication. Transport
+failures change membership only under the hysteresis above; invalid or rejected
+status is not retried. Mutating control
 commands are never blindly retried after an ambiguous transport failure.
 One daemon task owns each managed worker's preparation across foreground quorum
 cancellation; it coalesces queued targets and reattests status after restart.
