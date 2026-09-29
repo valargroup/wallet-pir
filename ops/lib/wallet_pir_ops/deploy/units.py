@@ -10,7 +10,10 @@ import os
 import re
 import shlex
 
-MANAGED_DROP_IN = 'zz-wallet-pir-release.conf'
+# Sorts after every drop-in the manual rollouts stacked (the longest seen on
+# 2026-09-30 began with 17 z's), so its ExecStart is the effective one. A plan
+# refuses a unit with an ExecStart drop-in that would sort after it.
+MANAGED_DROP_IN = 'z' * 32 + '-wallet-pir-release.conf'
 BINARY = '@BINARY@'
 MANAGED_HEADER = ('# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n'
                   '# this file. Record any other change in its own drop-in.\n')

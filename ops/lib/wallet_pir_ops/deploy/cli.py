@@ -86,6 +86,8 @@ def parser():
         command.add_argument('--sha256', help='binary digest only; for a no-op check or an already staged release')
         command.add_argument('--allow-unit-drift', action='store_true',
                              help='accept a new unit that differs from the live one beyond the binary')
+        command.add_argument('--only', action='append', metavar='ROLE[@HOST]',
+                             help='limit to these targets (repeatable), e.g. worker@worker-01')
         command.add_argument('--retire-historical', action='store_true',
                              help='move historical ExecStart-only drop-ins into the transaction directory')
         if name == 'preflight':
@@ -117,7 +119,8 @@ def main(argv=None, executor=None, out=print, **options):
         service = services[args.service]
         inventory = descriptors.load_inventory(args.inventory)
         executor = executor or SSHExecutor(inventory)
-        deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out, **options)
+        deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out,
+                            only=getattr(args, 'only', None), **options)
         if args.command == 'capture-baseline':
             deployer.capture_baseline(args.output)
         elif args.command == 'status':

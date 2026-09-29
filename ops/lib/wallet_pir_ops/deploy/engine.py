@@ -61,7 +61,7 @@ class TargetPlan:
 
 class Deployer:
     def __init__(self, service, inventory, executor, state_dir, baseline_path=None, lock=None,
-                 out=print, sleep=time.sleep, clock=time.monotonic, poll_seconds=2.0):
+                 out=print, sleep=time.sleep, clock=time.monotonic, poll_seconds=2.0, only=None):
         self.service = service
         self.inventory = inventory
         self.ex = executor
@@ -73,7 +73,7 @@ class Deployer:
         self.sleep = sleep
         self.clock = clock
         self.poll_seconds = poll_seconds
-        self.targets = descriptors.targets(service, inventory)
+        self.targets = descriptors.select(descriptors.targets(service, inventory), only)
 
     # ------------------------------------------------------------ inspection
 
@@ -89,7 +89,7 @@ class Deployer:
     def probe(self):
         return {t.key: self.ex.probe_unit(t.host, t.unit) for t in self.targets}
 
-    def plan_target(self, target, state, sha):
+    def plan_target(self, target, state, sha, retire_historical=False):
         plan = TargetPlan(target, state)
         role = target.role
         if state['load_state'] != 'loaded':
@@ -124,13 +124,18 @@ class Deployer:
             elif not units.sets_exec_start(text):
                 disposition = 'keep'
             elif units.adoptable(path, role.adoptable_drop_ins) or name == units.MANAGED_DROP_IN:
-                if units.exec_start_only(text):
+                if units.exec_start_only(text) and (retire_historical or name == units.MANAGED_DROP_IN
+                                                     or role.mode != 'exec-drop-in'):
                     disposition = 'retire'
                 elif role.mode == 'exec-drop-in' and name < units.MANAGED_DROP_IN:
                     disposition = 'supersede'
                 else:
                     disposition = 'refuse'
                     plan.refusals.append('historical drop-in %s sets more than ExecStart and cannot be superseded' % path)
+            elif role.mode == 'exec-drop-in' and name < units.MANAGED_DROP_IN:
+                # A layer from an earlier manual rollout: left in place and
+                # shadowed by the managed drop-in, which sorts after it.
+                disposition = 'supersede'
             else:
                 disposition = 'refuse'
                 plan.refusals.append('unmanaged drop-in %s overrides ExecStart; reconcile it first' % path)
@@ -172,7 +177,7 @@ class Deployer:
         """Plans for every target and the reasons, if any, a deploy must not start. Read-only."""
         states = self.probe()
         problems = self.baseline_problems(states, required=require_baseline)
-        plans = [self.plan_target(t, states[t.key], sha) for t in self.targets]
+        plans = [self.plan_target(t, states[t.key], sha, retire_historical) for t in self.targets]
         for plan in plans:
             key = plan.target.key
             problems += ['%s: %s' % (key, reason) for reason in plan.refusals]
@@ -248,8 +253,9 @@ class Deployer:
         problems = []
         if baseline.get('service') != self.service.name:
             return ['baseline %s is for service %r' % (self.baseline_path, baseline.get('service'))]
-        if set(baseline['targets']) != set(live):
-            problems.append('baseline targets %s differ from the inventory %s'
+        # A deploy limited with --only needs its own targets in the baseline.
+        if not set(live) <= set(baseline['targets']):
+            problems.append('baseline targets %s do not cover %s'
                             % (sorted(baseline['targets']), sorted(live)))
         for key in sorted(set(baseline['targets']) & set(live)):
             old, new = baseline['targets'][key], live[key]
@@ -266,6 +272,11 @@ class Deployer:
     def refresh_baseline(self):
         """After a transaction ends, the state it produced is the new known state."""
         baseline = self.snapshot(self.probe())
+        # Targets outside an --only selection keep their recorded state.
+        if self.baseline_path.exists():
+            previous = json.loads(self.baseline_path.read_text())
+            if previous.get('service') == self.service.name:
+                baseline['targets'] = {**previous.get('targets', {}), **baseline['targets']}
         self.baseline_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         durable.atomic_json(self.baseline_path, baseline, mode=0o600)
 

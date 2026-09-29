@@ -99,7 +99,9 @@ def load_descriptors(path):
             require(isinstance(spec.get('health'), str) and spec['health'].startswith('http://'),
                     '%s.%s: health must be an http:// URL checked from the host' % (name, role_name))
             template = None
-            if mode == 'template':
+            # Required to render a template role; an exec-drop-in role may name
+            # the template its base unit was installed from.
+            if mode == 'template' or spec.get('template'):
                 template = path.parent / spec.get('template', '')
                 require(spec.get('template') and template.is_file(), '%s.%s: template file missing' % (name, role_name))
             ready = spec.get('ready')
@@ -142,6 +144,22 @@ def load_inventory(path):
                 and all(isinstance(entry, dict) and entry.get('address') for entry in hosts.values()),
                 'inventory: pinned SSH needs ssh.key, known_hosts, known_hosts_sha256 and an address per host')
     return Inventory(hosts, ssh, lock, document.get('services', {}))
+
+
+def select(targets, only):
+    """The targets named by `only` ("role" or "role@host" selectors), in rollout order.
+
+    Lets a replicated role roll alone while single-instance roles are left
+    running; every selector must match something.
+    """
+    if not only:
+        return targets
+    chosen = []
+    for selector in only:
+        matched = [t for t in targets if selector in (t.role.name, t.key)]
+        require(matched, 'no target matches %r; targets are %s' % (selector, [t.key for t in targets]))
+        chosen += matched
+    return [t for t in targets if t in chosen]
 
 
 def targets(service, inventory):

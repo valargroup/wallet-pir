@@ -107,9 +107,10 @@ cutover did not run Terraform.
 ## Deploy CLI
 
 `ops/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
-for Enhance and Status. It has not yet been used against production. Until a
-no-op run and a real release have been exercised there, the manual runbook below
-remains the procedure and the fallback.
+for Enhance and Status. Read-only `capture-baseline`, `plan` and `preflight`
+runs against production on 2026-09-30 matched the live units; it has not yet
+restarted a production role. Until a real release has been exercised there, the
+manual runbook below remains the procedure and the fallback.
 
 The tool runs on the coordinator, or on a workstation with the production SSH
 access, and takes a local inventory (`--inventory` or
@@ -138,13 +139,18 @@ which is enough for a no-op check or an already staged release.
   `deploy` refreshes the baseline after it commits or rolls back.
 - The binary is installed as `/opt/enhance-pir/releases/<sha256>/enhance-pir-server`
   and must pass `--help` on each host before any unit changes.
-- Each unit gets one managed drop-in, `zz-wallet-pir-release.conf`, that clears
-  `ExecStart` and sets it to the release binary with the live argument tail.
-  Unknown drop-ins that set `ExecStart` are refused. The historical
-  `zz-cleanup-*.conf` drop-ins set only `ExecStart`; with `--retire-historical`
-  they are moved into the host's transaction directory. `90-v7.conf` also sets
-  other directives, so it stays in place and the managed drop-in overrides its
-  `ExecStart`.
+- Each unit gets one managed drop-in whose name (32 `z`s, then
+  `-wallet-pir-release.conf`) sorts after the drop-ins the manual rollouts
+  stacked. It clears `ExecStart` and sets it to the release binary with the live
+  argument tail. Earlier drop-ins that set `ExecStart` stay in place and are
+  shadowed; one that would sort after the managed drop-in is refused. With
+  `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
+  instead moved into the host's transaction directory.
+- `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
+  targets, so the replicated workers can roll while single-instance roles keep
+  running.
+- In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
+  may jump through the coordinator to private addresses.
 - A unit whose running executable and effective configuration already match is
   skipped, so deploying the running binary is a no-op.
 - Every host must accept the deploy identity before anything changes. Mutating

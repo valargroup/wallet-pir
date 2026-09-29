@@ -101,9 +101,9 @@ class Fleet(unittest.TestCase):
         self.status_binary = self.dir / 'status-pir'
         self.status_binary.write_bytes(STATUS_NEW)
 
-    def deployer(self, name='enhance'):
+    def deployer(self, name='enhance', only=None):
         deployer = Deployer(SERVICES[name], self.inventory, self.fake, self.state, out=self.lines.append,
-                            sleep=self.clock.sleep, clock=self.clock, poll_seconds=5)
+                            sleep=self.clock.sleep, clock=self.clock, poll_seconds=5, only=only)
         for target in deployer.targets:
             for url in (target.url(target.role.health), target.url(target.role.ready_url)):
                 if url:
@@ -146,6 +146,23 @@ class Fleet(unittest.TestCase):
 
 
 class DeployTests(Fleet):
+    def test_only_the_selected_targets_roll(self):
+        self.enhance_fleet()
+        deployer = self.deployer(only=['worker@worker-02', 'worker@worker-01'])
+        self.assertEqual([t.key for t in deployer.targets], ['worker@worker-01', 'worker@worker-02'])
+        self.deployer().capture_baseline()
+        self.fake.log.clear()
+        self.assertEqual(deployer.deploy(NEW_SHA, self.binary).status, 'committed')
+        self.assertEqual(self.restarts(), [('worker-01', 'enhance-pir-worker.service'),
+                                           ('worker-02', 'enhance-pir-worker.service')])
+        for host, unit in ENHANCE:
+            self.assertEqual(self.running(host, unit), NEW_SHA if unit == 'enhance-pir-worker.service' else OLD_SHA)
+        # The refreshed baseline still records the targets left out.
+        self.assertEqual(len(json.loads(deployer.baseline_path.read_text())['targets']), len(ENHANCE))
+        self.assertEqual(self.deployer().baseline_problems(self.deployer().probe(), required=True), [])
+        with self.assertRaisesRegex(Exception, 'no target matches'):
+            self.deployer(only=['worker@nowhere'])
+
     def test_noop_deploy_with_the_running_binary_changes_nothing(self):
         deployer = self.enhance_fleet()
         self.assertIsNone(deployer.deploy(OLD_SHA))
@@ -185,11 +202,13 @@ class DeployTests(Fleet):
         self.assertIsNone(deployer.deploy(NEW_SHA, self.binary))
         self.assertEqual(self.fake.log, [])
 
-    def test_retiring_historical_drop_ins_needs_the_flag(self):
+    def test_historical_drop_ins_are_superseded_unless_retirement_is_asked_for(self):
         deployer = self.enhance_fleet()
-        with self.assertRaisesRegex(DeployError, 'retire-historical'):
-            deployer.deploy(NEW_SHA, self.binary)
-        self.assertEqual(self.fake.log, [])
+        self.assertEqual(deployer.deploy(NEW_SHA, self.binary).status, 'committed')
+        for host, unit in ENHANCE:
+            self.assertEqual(self.running(host, unit), NEW_SHA)
+            # Left in place; the managed drop-in sorts after it and wins.
+            self.assertIn(dropin(unit, 'zz-cleanup-71be21f.conf'), self.fake.host(host).files)
 
     def test_failure_rolls_back_only_touched_targets_in_reverse(self):
         deployer = self.enhance_fleet()
@@ -212,16 +231,27 @@ class DeployTests(Fleet):
         # Nothing new is known, so the baseline still matches and allows a later deploy.
         self.assertEqual(deployer.baseline_problems(deployer.probe(), required=True), [])
 
-    def test_unmanaged_exec_start_drop_in_is_refused_before_any_change(self):
+    def test_only_an_exec_start_drop_in_sorting_after_the_managed_one_is_refused(self):
         self.enhance_fleet()
         unit = 'enhance-pir-worker.service'
         self.fake.edit('worker-02', dropin(unit, '50-local.conf'), '[Service]\nExecStart=\nExecStart=%s worker\n' % LEGACY)
         deployer = self.deployer()
         deployer.capture_baseline()
         self.fake.log.clear()
-        with self.assertRaisesRegex(DeployError, 'unmanaged drop-in .*50-local.conf overrides ExecStart'):
+        # An earlier ExecStart layer is superseded: it stays and the managed drop-in wins.
+        self.assertEqual(deployer.deploy(NEW_SHA, self.binary, retire_historical=True).status, 'committed')
+        self.assertIn(dropin(unit, '50-local.conf'), self.fake.host('worker-02').files)
+        self.assertEqual(self.running('worker-02', unit), NEW_SHA)
+        deployer.rollback()
+        # One sorting after the managed drop-in would still win, so it is refused.
+        late = 'z' * 40 + '-local.conf'
+        self.fake.edit('worker-02', dropin(unit, late), '[Service]\nExecStart=\nExecStart=%s worker\n' % LEGACY)
+        deployer.capture_baseline()
+        self.fake.log.clear()
+        with self.assertRaisesRegex(DeployError, 'unmanaged drop-in .*-local.conf overrides ExecStart'):
             deployer.deploy(NEW_SHA, self.binary, retire_historical=True)
         self.assertEqual(self.fake.log, [])
+        del self.fake.host('worker-02').files[dropin(unit, late)]
         # A drop-in that does not touch ExecStart is part of the unit, not a refusal.
         self.fake.edit('worker-02', dropin(unit, '50-local.conf'), '[Service]\nMemoryHigh=6G\n')
         deployer.capture_baseline()

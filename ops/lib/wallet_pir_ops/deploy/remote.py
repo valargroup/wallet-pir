@@ -101,8 +101,11 @@ class SSHExecutor(Executor):
         ssh = self.inventory.ssh
         entry = self.inventory.hosts[host]
         if ssh['mode'] == 'config':
-            return ['ssh', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-o', 'ConnectTimeout=10',
-                    '-o', 'ForwardAgent=no', entry.get('ssh_alias', host)]
+            # An optional operator SSH config supplies aliases, e.g. ProxyJump
+            # through the coordinator to private addresses.
+            config = ['-F', str(Path(ssh['config_file']).expanduser())] if ssh.get('config_file') else []
+            return ['ssh', *config, '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes',
+                    '-o', 'ConnectTimeout=10', '-o', 'ForwardAgent=no', entry.get('ssh_alias', host)]
         if host not in self.pinned:
             self.pinned[host] = pinned_ssh.PinnedSSH(entry['address'], Path(ssh['key']).expanduser(),
                                                      Path(ssh['known_hosts']).expanduser(),
