@@ -1,0 +1,23 @@
+{
+ "terraform_version": "1.14.8",
+ "changes": [
+  {
+   "address": "digitalocean_droplet.transparent_recent[2]",
+   "actions": [
+    "delete"
+   ]
+  },
+  {
+   "address": "digitalocean_droplet.transparent_recent[3]",
+   "actions": [
+    "delete"
+   ]
+  },
+  {
+   "address": "digitalocean_project_resources.wallet",
+   "actions": [
+    "update"
+   ]
+  }
+ ]
+}

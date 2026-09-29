@@ -1,0 +1,114 @@
+{
+ "overall": {
+  "queries": 12519,
+  "exact": 12519,
+  "p50": 0.019221948,
+  "p95": 0.03980805,
+  "p99": 0.053174444,
+  "max": 0.242140093
+ },
+ "errors": 2,
+ "error_samples": [
+  {
+   "attempt": 1,
+   "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/80/revisions/3a15477be6135e2750fda5156952c7c582bc295a767451e146e82df759a87567/query/directory)",
+   "error_chain": [
+    "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/80/revisions/3a15477be6135e2750fda5156952c7c582bc295a767451e146e82df759a87567/query/directory)",
+    "client error (SendRequest)",
+    "connection closed before message completed"
+   ],
+   "event": "error",
+   "kind": "query_or_decode",
+   "logical_id": 3123,
+   "retry_scheduled": true,
+   "seconds": 0.016468432,
+   "sequence": 3123,
+   "shard": 80,
+   "table": "directory",
+   "unix": 1790687218.2490058
+  },
+  {
+   "attempt": 1,
+   "error": "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/15/revisions/591b781acc7e42111ed56598dc7d2398549e9d0e4c46849403ded851ee9ed468/query/directory)",
+   "error_chain": [
+    "error sending request for url (https://transparent-pir.valargroup.dev/v1/shards/15/revisions/591b781acc7e42111ed56598dc7d2398549e9d0e4c46849403ded851ee9ed468/query/directory)",
+    "client error (SendRequest)",
+    "connection closed before message completed"
+   ],
+   "event": "error",
+   "kind": "query_or_decode",
+   "logical_id": 3238,
+   "retry_scheduled": true,
+   "seconds": 0.050018009,
+   "sequence": 3238,
+   "shard": 15,
+   "table": "directory",
+   "unix": 1790687235.1953583
+  }
+ ],
+ "missed_slots": 52,
+ "achieved_qps": 20.892811323712245,
+ "classes": {
+  "archive-wide/directory": {
+   "queries": 1251,
+   "exact": 1251,
+   "p50": 0.020284518,
+   "p95": 0.035766185,
+   "p99": 0.046500787,
+   "max": 0.242140093
+  },
+  "archive-wide/pages": {
+   "queries": 1251,
+   "exact": 1251,
+   "p50": 0.031239934,
+   "p95": 0.05167022,
+   "p99": 0.066722833,
+   "max": 0.133323982
+  },
+  "recent-4k-8k/directory": {
+   "queries": 5010,
+   "exact": 5010,
+   "p50": 0.016507441,
+   "p95": 0.033684952,
+   "p99": 0.046517548,
+   "max": 0.084863854
+  },
+  "recent-4k-8k/pages": {
+   "queries": 5007,
+   "exact": 5007,
+   "p50": 0.019305752,
+   "p95": 0.037153269,
+   "p99": 0.051873823,
+   "max": 0.093289575
+  }
+ },
+ "workers": {
+  "10.142.0.10": {
+   "queries": 4980.0,
+   "errors": 0.0,
+   "slot_utilization": 0.03820634893267652
+  },
+  "10.142.0.8": {
+   "queries": 5043.0,
+   "errors": 0.0,
+   "slot_utilization": 0.03433109441707717
+  },
+  "10.142.0.6": {
+   "queries": 1362.0,
+   "errors": 0.0,
+   "slot_utilization": null
+  },
+  "10.142.0.9": {
+   "queries": 1144.0,
+   "errors": 0.0,
+   "slot_utilization": null
+  }
+ },
+ "gate": {
+  "p99_below_2s": true,
+  "p50_below_700ms": true,
+  "no_errors": false,
+  "all_exact": true,
+  "passed": false
+ }
+}
