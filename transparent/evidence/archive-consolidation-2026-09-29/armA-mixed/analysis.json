@@ -1,0 +1,144 @@
+{
+ "window": [
+  1790694146.0715842,
+  1790694745.2102027
+ ],
+ "overall": {
+  "queries": 12530,
+  "exact": 12530,
+  "wrong": 0,
+  "p50": 0.016808506,
+  "p95": 0.03654061,
+  "p99": 0.050035828,
+  "max": 0.094612301
+ },
+ "achieved_qps": 20.91168823670691,
+ "missed_slots": 46,
+ "transport_errors": 0,
+ "failed_queries": 0,
+ "error_samples": [],
+ "classes": {
+  "archive-wide/directory": {
+   "queries": 1252,
+   "exact": 1252,
+   "wrong": 0,
+   "p50": 0.017167695,
+   "p95": 0.033328472,
+   "p99": 0.041520027,
+   "max": 0.058425371
+  },
+  "archive-wide/pages": {
+   "queries": 1252,
+   "exact": 1252,
+   "wrong": 0,
+   "p50": 0.026246725,
+   "p95": 0.046171351,
+   "p99": 0.05565864,
+   "max": 0.08112326
+  },
+  "recent-4k-8k/directory": {
+   "queries": 5018,
+   "exact": 5018,
+   "wrong": 0,
+   "p50": 0.014573446,
+   "p95": 0.031390749,
+   "p99": 0.044862245,
+   "max": 0.093510181
+  },
+  "recent-4k-8k/pages": {
+   "queries": 5008,
+   "exact": 5008,
+   "wrong": 0,
+   "p50": 0.016950217,
+   "p95": 0.03616351,
+   "p99": 0.051261423,
+   "max": 0.094612301
+  }
+ },
+ "workers": {
+  "transparent-pir-archive-01": {
+   "role": "archive-owner",
+   "queries": 1678.0,
+   "server_errors": 0.0,
+   "evaluation_mean_seconds": 0.009050095351609057,
+   "evaluation_p50_le": 0.025,
+   "evaluation_p99_le": 0.025,
+   "queue_wait_mean_seconds": 2.2011918951132298e-05,
+   "slot_utilization": null,
+   "cpu_cores": 0.1664004192019125,
+   "rss_max_gib": 17.34701156616211,
+   "cgroup_max_gib": 14.937995910644531,
+   "mem_available_min": 0.7463559961265402,
+   "loadavg1_max": 0.5,
+   "restarted": false,
+   "builds": 0.0
+  },
+  "transparent-pir-archive-02": {
+   "role": "archive-owner",
+   "queries": 1444.0,
+   "server_errors": 0.0,
+   "evaluation_mean_seconds": 0.011465932825484759,
+   "evaluation_p50_le": 0.025,
+   "evaluation_p99_le": 0.05,
+   "queue_wait_mean_seconds": 1.8581717451523562e-05,
+   "slot_utilization": null,
+   "cpu_cores": 0.17563585384200275,
+   "rss_max_gib": 16.950111389160156,
+   "cgroup_max_gib": 14.603008270263672,
+   "mem_available_min": 0.7514892082065547,
+   "loadavg1_max": 0.75,
+   "restarted": false,
+   "builds": 0.0
+  },
+  "transparent-pir-recent-01": {
+   "role": "recent-replica",
+   "queries": 6235.0,
+   "server_errors": 0.0,
+   "evaluation_mean_seconds": 0.008332035124298318,
+   "evaluation_p50_le": 0.01,
+   "evaluation_p99_le": 0.05,
+   "queue_wait_mean_seconds": 2.606575781876504e-06,
+   "slot_utilization": 0.043621221137016976,
+   "cpu_cores": 0.5296066498187105,
+   "rss_max_gib": 1.6759033203125,
+   "cgroup_max_gib": 1.1905364990234375,
+   "mem_available_min": 0.7473276453617781,
+   "loadavg1_max": 1.71,
+   "restarted": false,
+   "builds": 16.0
+  },
+  "transparent-pir-recent-02": {
+   "role": "recent-replica",
+   "queries": 6250.0,
+   "server_errors": 0.0,
+   "evaluation_mean_seconds": 0.008754747200000001,
+   "evaluation_p50_le": 0.01,
+   "evaluation_p99_le": 0.05,
+   "queue_wait_mean_seconds": 5.1888e-06,
+   "slot_utilization": 0.046149411614000935,
+   "cpu_cores": 0.5331349760808587,
+   "rss_max_gib": 1.6748237609863281,
+   "cgroup_max_gib": 1.20660400390625,
+   "mem_available_min": 0.7615055990201407,
+   "loadavg1_max": 1.11,
+   "restarted": false,
+   "builds": 16.0
+  }
+ },
+ "freshness_max_seconds": 17.680318088,
+ "freshness_p50_seconds": 16.329698182,
+ "scaler_desired_seen": [
+  2,
+  4
+ ],
+ "gate": {
+  "p99_below_2s": true,
+  "p50_below_700ms": true,
+  "all_exact": true,
+  "no_failed_queries": true,
+  "not_client_bound": true,
+  "no_restarts": true,
+  "archive_memory_25pct": true,
+  "passed": true
+ }
+}

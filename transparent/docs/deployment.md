@@ -96,11 +96,11 @@ Do not publish `archive-32k` as the selected target: uniform-chain evidence favo
 
 ## Sizing and availability
 
-Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. Production figures for that owner: (measurement pending).
+Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. In production (`transparent-pir-archive-03`, worker `a704616c`) it runs at 34.1 GiB RSS with 52% of host memory available, and at about 20 archive queries/s uses 1.4 of 8 cores and 12% of its query slots, with the same per-query evaluation time (about 11 ms) as the two-owner split ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
 
 Retain space for the current assignment, candidate publication and rollback artifacts plus at least 20% disk headroom. The publisher needs independent peak-RSS and temporary-disk measurements; census RSS is not publisher RSS. Do not duplicate immutable sealed bytes per tail revision unnecessarily.
 
-There is one copy of the archive. Losing or restarting its owner makes every archive shard unavailable until it is warm again: about 100 s from a warm disk runtime cache, about 16 minutes cold. With two owners the same event took out half. This is an accepted risk (2026-09-29). Recent replication does not make archive or router highly available. If archive availability requirements rise, the path is two 128 GiB hosts each holding a complete archive copy, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
+There is one copy of the archive. Losing or restarting its owner makes every archive shard unavailable until it is warm again: about 100–300 s from its disk runtime cache (291 s measured, including a restage), about 27 minutes cold at one build slot (1,596 s measured). With two owners the same event took out half. This is an accepted risk (2026-09-29). Recent replication does not make archive or router highly available. If archive availability requirements rise, the path is two 128 GiB hosts each holding a complete archive copy, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
 
 ### Archive owner changes
 
@@ -114,6 +114,9 @@ publication until the new ones activate.
    production tfvars and apply a saved plan reviewed as one droplet create and
    one in-place project change. The first plan after the `count` to `for_each`
    change must show only moves.
+   Set `transparent_worker_deploy_public_key` in the same tfvars so the fleet
+   key reaches the new host at first boot; it was unset on 2026-09-29 and the
+   key was installed by hand.
 2. **Standby.** Pin the new host's key (verified out of band) in a known_hosts
    file and run, from `/opt/transparent-publisher/releases/current/repo`:
    `transparent/ops/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
@@ -121,9 +124,15 @@ publication until the new ones activate.
    SHA256SUMS, plans the active publication with the new host pinned to the
    whole archive, copies at `--bwlimit-kbps` (pausing while freshness is over
    20 s), starts the archive unit and waits (40 minutes by default) until the
-   host attests the publication warm. Rerunning is safe. Qualify it with
-   low-rate exact queries to its private `:8093` and record memory and warm
-   time. Standby warm time: (measurement pending).
+   host attests the publication warm, then checks that the router reaches
+   the host's `/v1/ready` (a reused VPC address can leave a stale neighbour
+   entry on the router). Rerunning is safe: it hard-links what the host already
+   holds. Qualify it with low-rate exact queries to its private `:8093` and
+   record memory and warm time. Measured on 2026-09-29: 1,596 s cold at one
+   build slot; 291 s to restart onto a newer publication from the disk runtime
+   cache. The coordinator keeps only about nine publications, so a copy that
+   outlives its source fails and is rerun; `repartition` checks the standby
+   against the worker's own copy of the map it serves.
 3. **Cutover.** `transparent-fleet-inventory.py --archive repartition --ranges a2:0-76 --owner transparent-pir-archive-NN=<ssh_host>,<ssh_host>:8093,<host key or file>,51539607552,56G,1`.
    It refuses unless the new owner is ready and warm on the active archive
    shards. The next publication plans the new owner; the reconciler stages it
@@ -141,7 +150,17 @@ publication until the new ones activate.
    reviewed as exactly one destroy per name and one project change. After that
    `restore` is no longer possible.
 
-Combined 20 QPS results for the two-owner and one-owner topologies: (measurement pending).
+Combined 20 QPS results (2026-09-29, 10 minutes each on top of the continuous
+5 QPS load, two recent replicas, every query exact, [evidence](../evidence/archive-consolidation-2026-09-29/README.md)):
+
+| Topology | Mixed 3 × 7 QPS: p50 / p99 | Archive-only 4 × 5 QPS: p50 / p99 |
+|---|---|---|
+| Two archive owners | 17 / 50 ms at 20.9 QPS | 16 / 33 ms at 19.5 QPS |
+| One archive owner | 14 / 45 ms at 20.9 QPS | 18 / 35 ms at 19.6 QPS |
+
+The cutover itself failed twelve synthetic archive queries over about twelve
+seconds while the router could not yet dial the new owner; the standby tool now
+checks that path first.
 
 ## Proposed wallet objectives from the 2026-09-08 fleet series
 

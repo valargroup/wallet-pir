@@ -368,4 +368,22 @@ Open observation gates for Track A:
   fire-and-recover, then `PIR_APM_SCALING_ALERT_MODE=active`.
 - [ ] Refine `capacity_qps_per_replica` from a measurement above 8.3 QPS per
   replica; the production value (10) is conservative, not a measured limit.
-- [ ] Upgrade archive owners (still `0ece0ae1`) in a maintenance window.
+- [x] Upgrade archive owners (still `0ece0ae1`) in a maintenance window.
+  Superseded 2026-09-29: the archive moved to one owner on `a704616c` without
+  maintenance ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
+
+## Single archive owner (2026-09-29)
+
+The archive runs on one static owner, `transparent-pir-archive-03`, holding
+shards 0–76; the single-copy availability risk is accepted in
+[deployment](deployment.md#sizing-and-availability).
+
+- [x] Named archive owners in Terraform, `repartition`/`restore`, standby tool,
+  cutover, and the combined 20 QPS measurement on both topologies
+  ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
+- [ ] Remove `transparent-pir-archive-01` and `-02` after the owner confirms:
+  stop them, drop their names from `transparent_archive_names`, apply a saved
+  plan of exactly two destroys and one project change. `restore` ends there.
+- [ ] Set `transparent_worker_deploy_public_key` in the production tfvars.
+- [ ] Rehearse archive-owner loss and rebuild on the single owner (restart from
+  the disk runtime cache and a cold rebuild), with the public effect recorded.

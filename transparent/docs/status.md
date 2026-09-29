@@ -6,6 +6,21 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Single archive owner, 2026-09-29
+
+- 16:24 UTC: the archive (shards 0–76) moved from `transparent-pir-archive-01`
+  and `-02` (`0ece0ae1`) to one owner, `transparent-pir-archive-03`
+  (`m-8vcpu-64gb`, worker `a704616c`), through `repartition` at a publication
+  boundary. Twelve synthetic archive queries failed in the twelve seconds after
+  the switch while the router could not yet dial the new owner (a reused VPC
+  address); no row was wrong and the recent tier was unaffected.
+- The same combined 20 QPS measurement before and after passed on both
+  topologies: mixed 20.9 QPS, p99 50 ms before and 45 ms after; archive-only
+  19.5–19.6 QPS, p99 33 ms before and 35 ms after, every query exact
+  ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)). The single owner used 1.4 of 8 cores and 34 GiB.
+- archive-01 and archive-02 are retired in the inventory, unrouted and still
+  running, so `restore --revision 18` remains possible until they are removed.
+
 ## Elastic recent tier, 2026-09-29
 
 - 13:13 UTC: the fleet inventory owns membership; archive owners are pinned to
@@ -25,8 +40,8 @@ checklist; [deployment](deployment.md) owns operating targets.
   ([evidence](../evidence/elastic-recent-validation-2026-09-29/README.md)).
   Two actuator defects found there were fixed (`f76a3172`, `a5c77d40`).
 - Since 14:35 UTC the scaler acts under the production policy (two to six
-  recent replicas). APM scaling alerts run in shadow. Archive owners still run
-  `0ece0ae1`.
+  recent replicas). APM scaling alerts run in shadow. The archive moved to one
+  owner on worker `a704616c` at 16:24 (above).
 
 See the [evidence](../evidence/recent-floor-2026-09-29/README.md).
 

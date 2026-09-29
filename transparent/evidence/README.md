@@ -7,6 +7,7 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Archive tier from two owners to one](archive-consolidation-2026-09-29/README.md) | Cutover to a single archive owner and the same combined 20 QPS measurement (mixed and archive-only) before and after, recent tier held at two; the archive-only client is built from an uncommitted change |
 | [Elastic recent tier validation](elastic-recent-validation-2026-09-29/README.md) | Real droplets in production: operator scale-out/in, scaler-driven scale-out, make-before-break replacement and scale-in under a temporary low-capacity policy; not a capacity measurement |
 | [Recent tier from four to two](recent-floor-2026-09-29/README.md) | Inventory rollout and two 20 QPS gates on two recent replicas (before and after moving runtime builds off the query pool); retirement of recent-03/04 |
 | [Replica membership fix](replica-membership-2026-09-29/README.md) | Before/after routing of recent replicas across one production deploy over SSH (no CI or soak); every member managed, recent replicas rolled without maintenance; not capacity, and the 24-hour routing gate is open |
