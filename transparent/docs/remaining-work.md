@@ -352,12 +352,20 @@ only on the owner's explicit go-ahead.
 - [x] **2. Elastic recent provisioning.** Validated 2026-09-29: recent-05 created, bootstrapped and routed, then drained and destroyed by the actuator. A recent-only isolated Terraform root
   following the Enhance `enhance-v4` pattern, a journaled actuator and a saved-plan
   validator that refuses archive and production-root addresses.
-- [ ] **3. Automatic recent failure replacement** (make-before-break) and
+- [x] **3. Automatic recent failure replacement** Validated 2026-09-29: a stopped elastic replica was replaced make-before-break by the scaler and actuator ([evidence](../evidence/elastic-recent-validation-2026-09-29/README.md)). (make-before-break) and
   capacity-forecast alerts in APM, shadow before active.
-- [ ] **4. Recent load autoscaler** from a capacity model measured on a bench fleet:
+- [x] **4. Recent load autoscaler** Validated 2026-09-29 under a low-capacity validation policy (scale-out under load, scale-in after it); production policy in `act` since 14:35 UTC. from a capacity model measured on a bench fleet:
   observe, recommend and act-dry before act.
 
 Invariants for every phase: serving recent replicas never drop below two outside
 withdrawal or maintenance; the scaler and actuator never change archive members,
 ranges, `recent_from` or archive droplets; stale signals mean hold.
 
+Open observation gates for Track A:
+
+- [ ] 24 hours with both enrolled recent replicas routed in at least 99% of blocks.
+- [ ] 24 hours of the APM `scaling` family in shadow, including a real
+  fire-and-recover, then `PIR_APM_SCALING_ALERT_MODE=active`.
+- [ ] Refine `capacity_qps_per_replica` from a measurement above 8.3 QPS per
+  replica; the production value (10) is conservative, not a measured limit.
+- [ ] Upgrade archive owners (still `0ece0ae1`) in a maintenance window.

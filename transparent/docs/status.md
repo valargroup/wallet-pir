@@ -19,8 +19,14 @@ checklist; [deployment](deployment.md) owns operating targets.
   stopped, retired and destroyed it (droplet 604659753). The continuous 5 QPS
   load stayed exact throughout; it paused for five minutes while the new
   replica booted, fixed since.
-- Archive owners still run `0ece0ae1`. The actuator timer is enabled; the
-  scaler policy is in `observe` until the scaler is deployed.
+- 13:47–14:35 UTC: the scaler ran in `act` under a validation policy. It
+  scaled out to three replicas under extra load, replaced a deliberately
+  stopped replica make-before-break, and scaled back to two after the load
+  ([evidence](../evidence/elastic-recent-validation-2026-09-29/README.md)).
+  Two actuator defects found there were fixed (`f76a3172`, `a5c77d40`).
+- Since 14:35 UTC the scaler acts under the production policy (two to six
+  recent replicas). APM scaling alerts run in shadow. Archive owners still run
+  `0ece0ae1`.
 
 See the [evidence](../evidence/recent-floor-2026-09-29/README.md).
 

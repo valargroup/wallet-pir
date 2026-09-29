@@ -7,6 +7,8 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Elastic recent tier validation](elastic-recent-validation-2026-09-29/README.md) | Real droplets in production: operator scale-out/in, scaler-driven scale-out, make-before-break replacement and scale-in under a temporary low-capacity policy; not a capacity measurement |
+| [Recent tier from four to two](recent-floor-2026-09-29/README.md) | Inventory rollout and two 20 QPS gates on two recent replicas (before and after moving runtime builds off the query pool); retirement of recent-03/04 |
 | [Replica membership fix](replica-membership-2026-09-29/README.md) | Before/after routing of recent replicas across one production deploy over SSH (no CI or soak); every member managed, recent replicas rolled without maintenance; not capacity, and the 24-hour routing gate is open |
 | [Continuous 5 QPS query load](continuous-5qps-2026-09-29/README.md) | Enabled ongoing public-path query load; fresh keys, exact row hashes, 80% recent / 20% archive across 85 sealed shards; frozen initial observations and persistent health gates; not whole-wallet throughput or completed capacity acceptance |
 | [Schema v10 production cutover](v10-cutover-2026-09-28/README.md) | Same-history 86-shard publication verified and deployed over SSH; public regression 11/11 cases and 68/68 checkpoints; 124/124 exact smoke syncs; four-client load 46 exact of 47 attempts, one query-budget incomplete; one transient init probe 503; no sustained-capacity acceptance |
