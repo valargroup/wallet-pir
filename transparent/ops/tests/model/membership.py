@@ -34,6 +34,10 @@ state that not having probed also reaches.
 
 Members: 0 is the archive owner (static); 1 and 2 are static recent replicas;
 3 (and 4, when a configuration replaces 3) are elastic recent replicas.
+Member 0 is exactly one owner holding the whole archive (shards 0-76), the
+single-owner topology. Two owners with ranges (0-38, 39-76) are the same
+protocol with member 0 standing for both: activation and routing need every
+owner, so their conjunction behaves as one member whose crash is either's.
 `explore(config, mutation=None)` returns (states, violations); each mutation
 is a deliberate protocol bug the tests require to be caught.
 """

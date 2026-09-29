@@ -44,6 +44,8 @@ DAY = 86400.0
 BOUNDS = (0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0, 600.0,
           math.inf)
 PRICE = 48.0
+# The static archive owners: two ranges (0-38, 39-76) by default; a
+# scenario may name one owner holding the whole archive (0-76) instead.
 ARCHIVE = ('transparent-pir-archive-01', 'transparent-pir-archive-02')
 SLOTS = 2
 DEADLINE = 10.0
@@ -219,7 +221,7 @@ class Actuator:
             return self.step_scale_in(op, phase, elapsed, now)
         if action == 'replace' and phase == 'requested':
             target = fleet.workers.get(op['member'])
-            if op['member'] in ARCHIVE:
+            if op['member'] in fleet.archive:
                 fleet.violation('actuator asked to replace an archive member')
             if target is None or target.intent != 'enrolled':
                 self.finish(now, 'refused')
@@ -289,7 +291,7 @@ class Actuator:
         fleet = self.fleet
         victim = fleet.workers.get(op['member'])
         if phase == 'requested':
-            if op['member'] in ARCHIVE:
+            if op['member'] in fleet.archive:
                 fleet.violation('actuator asked to scale in an archive member')
             others = [w for w in fleet.serving() if w.id != op['member']]
             if victim is None or victim.origin != 'elastic' or victim.intent != 'enrolled' or len(others) < 2:
@@ -334,12 +336,13 @@ class Actuator:
 
 
 class Scenario:
-    def __init__(self, seed, trace, hours, faults=(), capacity=1.0, policy=None, name=None):
+    def __init__(self, seed, trace, hours, faults=(), capacity=1.0, policy=None, name=None, archive=ARCHIVE):
         self.seed, self.trace, self.hours = seed, trace, hours
+        self.archive = tuple(archive)
         self.faults = {f: True for f in faults} if not isinstance(faults, dict) else dict(faults)
         self.capacity = capacity
         self.policy = policy
-        self.name = name or f'{trace.kind}-{seed}'
+        self.name = name or f'{trace.kind}-{seed}' + ('' if self.archive == ARCHIVE else f'-{len(self.archive)}owner')
 
 
 class Fleet:
@@ -359,7 +362,8 @@ class Fleet:
         self.events = []
         self.violations = []
         self.fenced_once = False
-        self.archive_down_until = {a: -math.inf for a in ARCHIVE}
+        self.archive = scenario.archive
+        self.archive_down_until = {a: -math.inf for a in self.archive}
         self.withdrawn = False
         self.generation = 1
         # Publication.
@@ -413,7 +417,7 @@ class Fleet:
         if self._inventory is None:
             members = [{'id': a, 'role': 'archive-owner', 'group': f'a{i}', 'origin': 'static',
                         'intent': 'enrolled', 'ssh_host': a, 'upstream': a + ':8093'}
-                       for i, a in enumerate(ARCHIVE)]
+                       for i, a in enumerate(self.archive)]
             for w in self.workers.values():
                 members.append({'id': w.id, 'role': 'recent-replica', 'group': 'recent', 'origin': w.origin,
                                 'intent': w.intent, 'ssh_host': w.id, 'upstream': w.id + ':8093',
@@ -426,7 +430,7 @@ class Fleet:
         return [w for w in self.workers.values() if w.intent in ('enrolled', 'draining')]
 
     def archive_up(self):
-        return all(self.now >= self.archive_down_until[a] for a in ARCHIVE)
+        return all(self.now >= self.archive_down_until[a] for a in self.archive)
 
     def rendered(self):
         if self.withdrawn or not self.archive_up():
@@ -450,7 +454,7 @@ class Fleet:
             return self.membership_cache
         rendered = self.rendered_ids()
         members = {}
-        for a in ARCHIVE:
+        for a in self.archive:
             up = self.now >= self.archive_down_until[a]
             members[a] = {'role': 'archive-owner', 'intent': 'enrolled', 'state': 'serving' if up else 'unreachable',
                           'routed': up, 'rendered': up and not self.withdrawn, 'observed_unix': self.now}
@@ -527,9 +531,9 @@ class Fleet:
                 self.log('restart', w.id)
         crash = getattr(self, 'archive_crash', None)
         if crash and crash[0] <= now:
-            self.archive_down_until[ARCHIVE[0]] = now + crash[1]
+            self.archive_down_until[self.archive[0]] = now + crash[1]
             self.archive_crash = None
-            self.log('archive-down', ARCHIVE[0])
+            self.log('archive-down', self.archive[0])
         was = self.withdrawn
         self.withdrawn = not self.archive_up()
         if was and not self.withdrawn:

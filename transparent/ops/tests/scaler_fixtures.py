@@ -11,6 +11,9 @@ if str(OPS) not in sys.path:
 from scaler import decide as D  # noqa: E402
 
 NOW = 1_790_680_000.0
+# The static archive owners: two ranges by default; `archive_owners=1` is
+# the single owner holding the whole archive (shards 0-76).
+ARCHIVE = ('transparent-pir-archive-01', 'transparent-pir-archive-02')
 POLICY = json.loads((OPS / 'deploy' / 'transparent-fleet-scaler.policy.example.json').read_text())
 
 
@@ -49,11 +52,14 @@ def load(offered=4.0, recent=None, p99=0.3, error_ratio=0.0, rejections=0.0, lat
             'latency_count': latency_count, 'utilization': 0.2, 'window_seconds': 300}
 
 
-def snapshot(members=None, **overrides):
+def archive(owners=2, **extra):
+    return {a: member(role='archive-owner', **extra) for a in ARCHIVE[:owners]}
+
+
+def snapshot(members=None, archive_owners=2, **overrides):
     if members is None:
         members = {
-            'transparent-pir-archive-01': member(role='archive-owner'),
-            'transparent-pir-archive-02': member(role='archive-owner'),
+            **archive(archive_owners),
             'transparent-pir-recent-01': member(),
             'transparent-pir-recent-02': member(),
         }
@@ -75,8 +81,8 @@ def elastic(n, **extra):
     return f'transparent-pir-recent-{n:02d}', member(origin='elastic', size='s-4vcpu-8gb', **extra)
 
 
-def fleet(*elastic_ids, **extra):
-    members = snapshot()['members']
+def fleet(*elastic_ids, archive_owners=2, **extra):
+    members = snapshot(archive_owners=archive_owners)['members']
     for n in elastic_ids:
         key, value = elastic(n, **extra)
         members[key] = value

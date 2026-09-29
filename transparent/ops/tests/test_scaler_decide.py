@@ -3,9 +3,7 @@ import copy
 import random
 import unittest
 
-from scaler_fixtures import D, NOW, elastic, fleet, load, member, policy, run, snapshot
-
-ARCHIVE = ('transparent-pir-archive-01', 'transparent-pir-archive-02')
+from scaler_fixtures import ARCHIVE, D, NOW, elastic, fleet, load, member, policy, run, snapshot
 
 
 def hot(**overrides):
@@ -579,12 +577,55 @@ class ModeAndRequestTests(unittest.TestCase):
         self.assertFalse(fresh['request']['consumed'])
 
 
+class SingleArchiveOwnerTests(unittest.TestCase):
+    """One archive owner holding the whole archive: the scaler acts on the
+    recent tier exactly as with two, and the lone owner is still never named."""
+
+    def test_scale_out_in_and_replace(self):
+        decision, _ = run(snapshot(archive_owners=1, load=load(offered=40.0)), fast())
+        self.assertEqual((decision['action'], decision['count']), ('scale_out', 3))
+        state = D.initial_state()
+        state['below_since'] = NOW - 3600
+        members = fleet(5, 10, archive_owners=1)
+        self.assertEqual([m for m in members if m in ARCHIVE], [ARCHIVE[0]])
+        decision, _ = run(snapshot(members=members, load=load(offered=1.0)), fast(), state)
+        self.assertEqual((decision['action'], decision['member']), ('scale_in', 'transparent-pir-recent-10'))
+        members = fleet(5, archive_owners=1)
+        members['transparent-pir-recent-05'] = elastic(5, serving=False, attesting=False)[1]
+        state = D.initial_state()
+        state['members']['transparent-pir-recent-05'] = {'unhealthy_since': NOW - 900, 'first_seen_unix': NOW - 5000}
+        decision, _ = run(snapshot(members=members), fast(), state)
+        self.assertEqual((decision['action'], decision['member']), ('replace', 'transparent-pir-recent-05'))
+
+    def test_the_lone_owner_unhealthy_holds_and_is_never_named(self):
+        members = fleet(archive_owners=1)
+        members['transparent-pir-recent-02'] = member(serving=False, attesting=False)
+        members[ARCHIVE[0]] = member(role='archive-owner', serving=False, attesting=False)
+        state = D.initial_state()
+        for m in ('transparent-pir-recent-02', ARCHIVE[0]):
+            state['members'][m] = {'unhealthy_since': NOW - 5000, 'first_seen_unix': 0}
+        decision, _ = run(snapshot(members=members), fast(), state)
+        self.assertEqual(decision['action'], 'hold')
+        self.assertIn('correlated failures', decision['reason'])
+        members = fleet(archive_owners=1)
+        members[ARCHIVE[0]] = member(role='archive-owner', serving=False, attesting=False)
+        state = D.initial_state()
+        state['members'][ARCHIVE[0]] = {'unhealthy_since': NOW - 10_000, 'first_seen_unix': NOW - 5000}
+        decision, _ = run(snapshot(members=members), fast(), state)
+        self.assertNotEqual(decision['action'], 'replace')
+
+
 class PropertyTests(unittest.TestCase):
     def test_random_snapshots_never_name_archive_or_static_victims(self):
+        for owners in (2, 1):
+            with self.subTest(archive_owners=owners):
+                self.random_snapshots(owners)
+
+    def random_snapshots(self, owners):
         rng = random.Random(7)
         for _ in range(2000):
             members = {}
-            for a in ARCHIVE:
+            for a in ARCHIVE[:owners]:
                 members[a] = member(role='archive-owner', serving=rng.random() > 0.2)
             for n in range(1, rng.randint(2, 4) + 1):
                 ok = rng.random() > 0.2

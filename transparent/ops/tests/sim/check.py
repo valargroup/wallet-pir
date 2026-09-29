@@ -23,7 +23,7 @@ import math
 
 from scaler import decide as D
 
-from .fleet import ARCHIVE, DAY, DECIDE_EVERY, HOUR, MINUTE, PRICE, STALE, T0, TICK, Fleet, SimScaler
+from .fleet import DAY, DECIDE_EVERY, HOUR, MINUTE, PRICE, STALE, T0, TICK, Fleet, SimScaler
 
 DEFAULT = {
     'schema': 1, 'mode': 'act', 'min_recent': 2, 'max_recent': 6, 'size': 's-4vcpu-8gb',
@@ -69,7 +69,7 @@ class Checks:
             fleet.violation(f'{action} requested while {fleet.request["decision_id"]} is unconsumed')
         member = request.get('member')
         target = fleet.workers.get(member)
-        if member in ARCHIVE:
+        if member in fleet.archive:
             fleet.violation(f'{action} names archive member {member}')
         elif member is not None and target is None:
             fleet.violation(f'{action} names unknown member {member}')
@@ -118,7 +118,7 @@ class Checks:
         cost = PRICE * sum(1 for w in fleet.workers.values() if w.droplet)
         if cost > p['monthly_cost_cap_usd']:
             fleet.violation(f'fleet costs {cost} a month')
-        if any(w.id in ARCHIVE for w in fleet.workers.values()):
+        if any(w.id in fleet.archive for w in fleet.workers.values()):
             fleet.violation('archive member in the recent fleet')
 
 

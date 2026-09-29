@@ -17,8 +17,8 @@ import scaler_fixtures  # noqa: F401 - puts transparent/ops on the path
 from scaler import decide as D
 from sim import traces as T
 from sim.check import run
-from sim.fleet import HOUR, MINUTE, T0, Scenario
-from sim.scenarios import run_entry, suite
+from sim.fleet import ARCHIVE, HOUR, MINUTE, T0, Scenario
+from sim.scenarios import run_entry, single_owner, suite
 
 
 def workers():
@@ -138,6 +138,18 @@ class BehaviourTest(unittest.TestCase):
                 self.assertIn('capacity model drift', naive.flags)
                 self.assertEqual(naive.max_serving, 6)
 
+    def test_a_single_archive_owner_keeps_every_invariant(self):
+        crashed = False
+        for scenario in single_owner():
+            fleets = []
+            result = run(scenario, setup=fleets.append)
+            self.assertEqual(result.violations, [], scenario.name)
+            owners = [m['id'] for m in fleets[0].inventory()['members'] if m['role'] == 'archive-owner']
+            self.assertEqual(owners, [ARCHIVE[0]])
+            crashed |= any(e[1] == 'archive-down' for e in result.events)
+        # The lone owner's outage is exercised, not just configured.
+        self.assertTrue(crashed)
+
     def test_deterministic(self):
         scenario = suite()[-1]
         self.assertEqual(run(scenario).events, run(scenario).events)
@@ -183,6 +195,8 @@ class MutationTest(unittest.TestCase):
         updown = Scenario(8, T.UpDown(3, 24, 45 * MINUTE, 165 * MINUTE), 5.5)
         self.assertCaught('names static member', updown, renamed('scale_in', 'transparent-pir-recent-01'))
         self.assertCaught('names archive member', updown, renamed('scale_in', 'transparent-pir-archive-01'))
+        alone = Scenario(8, T.UpDown(3, 24, 45 * MINUTE, 165 * MINUTE), 5.5, archive=ARCHIVE[:1])
+        self.assertCaught('names archive member', alone, renamed('scale_in', ARCHIVE[0]))
 
 
 if __name__ == '__main__':

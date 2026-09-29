@@ -7,7 +7,7 @@ with every fault and with capacity models that are wrong in both directions.
 import random
 
 from . import traces as T
-from .fleet import HOUR, MINUTE, Scenario
+from .fleet import ARCHIVE, HOUR, MINUTE, Scenario
 
 FAULTS = ('crash', 'never_warms', 'slow_status', 'burst', 'reconciler_stall', 'publisher_stall',
           'publisher_down', 'fence', 'archive_crash', 'maintenance')
@@ -65,6 +65,22 @@ def randomized(count, seed=2026, first=1000):
             faults = {**{f: True for f in faults}, 'crash': 2}
         capacity = rng.choice((1.0, 1.0, 1.0, 0.6, 0.45, 1.4))
         out.append(Scenario(first + i, trace, hours, faults, capacity))
+    return out
+
+
+def single_owner():
+    """A small set with one archive owner holding the whole archive (0-76):
+    its outage withdraws the fleet exactly as either of two owners' did."""
+    one = ARCHIVE[:1]
+    out = [Scenario(3001, T.Flat(8), 3, archive=one),
+           Scenario(3002, T.Step(4, 24, HOUR), 2.5, archive=one),
+           Scenario(3003, T.UpDown(3, 24, 45 * MINUTE, 165 * MINUTE), 5.5, archive=one),
+           Scenario(3004, T.Step(4, 18, HOUR), 3, ('archive_crash',), archive=one),
+           Scenario(3005, T.Flat(12), 3, ('archive_crash', 'crash'), archive=one)]
+    for scenario in randomized(5, seed=2027, first=3100):
+        scenario.archive = one
+        scenario.name += '-1owner'
+        out.append(scenario)
     return out
 
 
