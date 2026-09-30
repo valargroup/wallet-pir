@@ -477,7 +477,7 @@ mod tests {
         })
         .unwrap();
         let mut expected = Vec::new();
-        let mut direct = EventStore::open(&dir.path().join("v3"), "g", 0).unwrap();
+        let mut direct = EventStore::open(dir.path().join("v3"), "g", 0).unwrap();
         for height in 0..20u32 {
             let events = events_at(height);
             for (script, event) in &events {

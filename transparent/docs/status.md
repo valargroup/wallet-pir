@@ -20,8 +20,8 @@ whole-wallet capacity. [Retained evidence](../evidence/activity-metadata-2026-09
 Genesis ingestion is running separately under
 `transparent-activity-full-ingest-release-a1c4b809`, fixed anchor 3500738, on the
 new 250 GiB volume. At 22:14 UTC the controlled release-binary handoff retained
-checkpoint 324000 and 145,862,121 events. By 22:28 UTC the durable checkpoint
-reached 330000. At 22:23 UTC its health guard observed
+checkpoint 324000 and 145,862,121 events. By 22:56 UTC the durable checkpoint
+reached 350000 with 167,594,544 events. At 22:23 UTC its health guard observed
 88% available host memory, 82% available candidate-volume disk, 23% chain-disk
 headroom and 30% root-disk headroom, with no ingest restart. Canonical origins
 remain v10.
@@ -35,9 +35,13 @@ identical SQLite reopen and no qualification or activation. These controlled
 public-script fixtures do not establish financial ownership or shielded recovery.
 The follow-up review fixed local mixed-send fee suppression and crash-before-ack
 withdrawal reconciliation loss. All 29 history and six adapter tests passed.
-PR 77 is ready at `cc6656f23`, with exact-head CI pending before the authorized
-merge. Wallet-pir store lint repairs are on main at `a65c618e`; fast CI passed,
-comprehensive CI remains pending, and its new fat-LTO artifact build is running.
+Full CI passed at `cc6656f23`; PR 77 merged to main as `9dabaa68` at
+22:52 UTC, with an identical tree. Wallet-pir store lint repairs are on main at
+`a65c618e`; fast CI and the 16-artifact fat-LTO build passed. Comprehensive CI
+found two additional shard-cache sort lints. The complete transparent package
+group then passed strict all-target/all-feature Clippy after equivalent filter
+and test-only corrections; the affected check passed in 39.55 seconds. Exact
+repaired-source CI and release artifacts remain open before deployment acceptance.
 
 A one-hour candidate 5 QPS observation passed 17,920 exact queries with no
 failures, p50 5 ms and p99 33 ms. The next bounded observation runs under

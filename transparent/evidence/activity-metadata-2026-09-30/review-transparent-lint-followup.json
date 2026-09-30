@@ -1,0 +1,29 @@
+{
+  "baseline_sha": "f10fdb1f2ca9dca1cbb27ab92c65383f84f0c40a",
+  "file_sha256": {
+    "transparent/services/transparent-shard-server/src/shardset.rs": "ebe37800befd550cefe5c92cd3ffba9db145d7881a72ed069907691d4c67105b",
+    "transparent/services/transparent-filter-server/src/ingest.rs": "1213b2842ca1ca7a08e734b9aa93810e33f80a5b9b5b7652f006cb0ccb7e7c49",
+    "transparent/services/transparent-filter-server/src/publication.rs": "8d3ace2de9fc11b31a5dc625c308985f2d71800c60f01f153af86c89e27bf81f",
+    "transparent/services/transparent-filter-server/src/extract.rs": "2759c057530d3267ec3ed42390ea98995f54c1ccd0db776575bd338abaecf00b",
+    "transparent/services/transparent-filter-server/src/bin/journal-convert-v1.rs": "af3d3c4a8bd6214e4626111625ad0aaae6df2296880bf216dd91876733c275ee"
+  },
+  "changes": [
+    "Equivalent descending key sorts in shard retention, prewarm and publication retention",
+    "Equivalent while-let rollback reconciliation loop",
+    "Remove needless test Arc clone and generic path borrow"
+  ],
+  "affected_check": {
+    "command": "make check-fast BASE=f10fdb1f",
+    "status": "pass",
+    "duration_seconds": 39.54587645805441,
+    "owner": "0ac2fca9001b4db8a9efb4affba58f08"
+  },
+  "clippy": {
+    "status": "pass",
+    "scope": "complete transparent package group, all targets and features, release-fast, warnings denied"
+  },
+  "limitations": [
+    "Comprehensive CI remains required against the committed repaired source",
+    "Artifact build and local checks do not establish canonical deployment or sustained qualification"
+  ]
+}

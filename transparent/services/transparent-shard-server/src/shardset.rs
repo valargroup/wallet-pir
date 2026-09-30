@@ -906,7 +906,7 @@ impl ShardSet {
         // still hold and lets the oldest go.
         let mut prunable = Vec::new();
         for (shard_id, mut held) in retained {
-            held.sort_by(|a, b| b.revision.cmp(&a.revision));
+            held.sort_by_key(|entry| std::cmp::Reverse(entry.revision));
             let mut kept = 0usize;
             let mut kept_bytes = 0u64;
             for Superseded {
@@ -1062,7 +1062,7 @@ impl ShardSet {
             self.current.values().map(|&i| &self.revisions[i]).collect();
         match self.scope.as_ref().map(|scope| scope.role) {
             Some(WorkerRole::RecentReplica) => {
-                current.sort_by(|a, b| b.manifest.shard_id.cmp(&a.manifest.shard_id))
+                current.sort_by_key(|entry| std::cmp::Reverse(entry.manifest.shard_id))
             }
             _ => current.sort_by_key(|shard| shard.manifest.shard_id),
         }

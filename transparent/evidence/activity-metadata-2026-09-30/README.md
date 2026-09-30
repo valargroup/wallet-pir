@@ -98,9 +98,22 @@ export intent before returning a batch; repaired-source CI remains required.
 
 [Library review and repaired-source record](review-library-cc6656f23.json) pins
 the review findings, red/green regressions and unchanged code after the doc-only
-base update. PR 77 is ready; exact-head comprehensive CI must pass before merge.
+base update. PR 77 subsequently passed exact-head comprehensive CI and merged as recorded below.
 [Local raw retention](raw-cache-local-retention-a1c4b809.json) confirms the 2.11 GB
 independent input bundle is read-only and checksum verified. The transfer helper
 reported a Git-head mismatch because documentation advanced during copying;
 its exit was zero and retention was accepted against the immutable source-pinned
 bundle hash, not as a code-test result.
+
+[Pre-merge CI snapshot](library-premerge-cc6656f23.json) records every required
+configuration and repository check successful at the repaired library head.
+[PR 77 merge](library-merge-77.json) records main `9dabaa68`, whose tree is identical
+to the verified head. The [a65c618e fat-LTO build](release-a65c618e.json) passed
+and all 16 retained hashes were verified. Its comprehensive CI nevertheless
+found [two further shard-cache sort lints](ci-a65c618e-lint-failure.json); the
+artifact build does not establish comprehensive qualification.
+
+[Transparent lint follow-up](review-transparent-lint-followup.json) records the
+equivalent corrections and hashes of all affected source files. Strict Clippy
+for the complete transparent package group and the 39.55-second affected check
+passed. Comprehensive CI and fat-LTO artifacts must match the committed repair.

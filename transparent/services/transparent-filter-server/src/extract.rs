@@ -416,7 +416,7 @@ mod tests {
             vec![prevout_input(first), prevout_input(second)],
             vec![recipient],
         );
-        let events = extract_events(&[tx.clone()], &mut previous, 100).unwrap();
+        let events = extract_events(std::slice::from_ref(&tx), &mut previous, 100).unwrap();
         assert_eq!(
             events.len(),
             2,

@@ -26,10 +26,7 @@ pub async fn reconcile(
     state: &ServiceState,
 ) -> Result<(), BoxError> {
     let mut rolled_back = 0u64;
-    loop {
-        let Some(height) = store.covered_through() else {
-            break;
-        };
+    while let Some(height) = store.covered_through() {
         let stored = store
             .block_hash_at(height)
             .expect("covered height has a hash");

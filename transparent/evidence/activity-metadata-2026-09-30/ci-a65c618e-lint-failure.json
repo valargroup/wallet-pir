@@ -1,0 +1,8 @@
+{
+  "source_sha": "a65c618e42219cdf8fa89792a9e518c3f8885e1e",
+  "run_id": 36786936709,
+  "job_id": 110130548245,
+  "failure": "unnecessary_sort_by in shardset.rs lines 909 and 1065",
+  "repair": "Equivalent descending key sorting with std::cmp::Reverse; no retention order or protocol change",
+  "full_ci": "remaining jobs still running; do not infer pass from artifact build"
+}

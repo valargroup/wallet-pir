@@ -739,7 +739,7 @@ pub fn publish(
                     retained.push((manifest.revision, manifest.digest()));
                 }
             }
-            retained.sort_by(|a, b| b.0.cmp(&a.0));
+            retained.sort_by_key(|entry| std::cmp::Reverse(entry.0));
             for (_, digest) in retained.into_iter().take(3) {
                 link_revision(previous_dir, &cli.output, &digest)?;
             }
