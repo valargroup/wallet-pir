@@ -549,8 +549,8 @@ async fn run_range(
         .body(wrong_binding)
         .send()
         .await?;
-    if response.status().is_success() {
-        return Err("wrong table binding accepted".into());
+    if response.status() != reqwest::StatusCode::BAD_REQUEST {
+        return Err("wrong table binding refusal mismatch".into());
     }
     let response = client
         .http
@@ -562,8 +562,8 @@ async fn run_range(
         ))
         .send()
         .await?;
-    if response.status().is_success() {
-        return Err("wrong revision accepted".into());
+    if response.status() != reqwest::StatusCode::CONFLICT {
+        return Err("wrong revision refusal mismatch".into());
     }
     let after = metrics.resident_bytes.load(Ordering::Relaxed);
     let history_warm = if let Some((script, event)) = history_fact {

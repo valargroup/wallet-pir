@@ -200,7 +200,14 @@ impl Journal for Snapshot {
             .blocks
             .get(&height)
             .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
-        crate::display_journal::read(&self.display_dir, block.block_hash)
+        let records = crate::display_journal::read(&self.display_dir, block.block_hash)?;
+        crate::display_journal::validate_events(
+            &records,
+            &self.events_at(height)?.ok_or_else(|| {
+                EventStoreError::Invariant("snapshot display events missing".into())
+            })?,
+        )?;
+        Ok(records)
     }
     fn genesis_hash(&self) -> &str {
         &self.genesis

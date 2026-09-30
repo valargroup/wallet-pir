@@ -403,32 +403,7 @@ impl EventStore {
         if height != self.next_height() {
             return Err(EventStoreError::Invariant("display append height".into()));
         }
-        let by_id: std::collections::BTreeMap<_, _> =
-            records.iter().map(|r| (r.txid.0, r)).collect();
-        for (script, event) in events {
-            let record = by_id
-                .get(&event.txid().0)
-                .ok_or_else(|| EventStoreError::Invariant("event missing display record".into()))?;
-            if event.metadata() != Some(record.metadata) {
-                return Err(EventStoreError::Invariant(
-                    "display/event metadata contradiction".into(),
-                ));
-            }
-            if let TransparentEvent::Receive(receive) = event {
-                let output = record
-                    .outputs
-                    .get(receive.output_index as usize)
-                    .ok_or_else(|| EventStoreError::Invariant("display output missing".into()))?;
-                if output.value != receive.value
-                    || output.script != script.as_slice()
-                    || receive.coinbase != record.coinbase
-                {
-                    return Err(EventStoreError::Invariant(
-                        "display/receive contradiction".into(),
-                    ));
-                }
-            }
-        }
+        crate::display_journal::validate_events(records, events)?;
         let (oversized, ordinary): (Vec<_>, Vec<_>) =
             events.iter().cloned().partition(|(script, _)| {
                 script.as_slice().len() > crate::display_journal::JOURNAL_SCRIPT_LIMIT
@@ -444,7 +419,14 @@ impl EventStore {
         let block = self.block_at(height).ok_or_else(|| {
             EventStoreError::Invariant("display height outside checkpoint".into())
         })?;
-        crate::display_journal::read(&self.dir, block.block_hash)
+        let records = crate::display_journal::read(&self.dir, block.block_hash)?;
+        crate::display_journal::validate_events(
+            &records,
+            &self
+                .events_at(height)?
+                .ok_or_else(|| EventStoreError::Invariant("missing display event block".into()))?,
+        )?;
+        Ok(records)
     }
 
     /// Reads back one covered block's events, in the order they were appended.

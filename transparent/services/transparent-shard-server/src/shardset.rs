@@ -1080,7 +1080,7 @@ impl ShardSet {
         });
         let mut targets = Vec::new();
         for shard in current.into_iter().chain(superseded) {
-            for table in [Table::Directory, Table::Pages] {
+            for table in Table::ALL {
                 for segment in 0..shard.segments(table) {
                     targets.push((shard.digest.clone(), table, segment));
                 }

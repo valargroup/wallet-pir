@@ -17,6 +17,8 @@ pub enum LookupResult {
     Unsupported,
     PlacementUnknown,
 }
+type SetupKey = (String, Table, u32);
+type PublishedSetup = (Vec<u8>, [u8; 8]);
 pub struct PrivateClient {
     pub http: reqwest::Client,
     pub url: String,
@@ -24,7 +26,7 @@ pub struct PrivateClient {
     pub uploaded: u64,
     pub downloaded: u64,
     pub queries: u64,
-    setup: HashMap<(String, Table, u32), (Vec<u8>, [u8; 8])>,
+    setup: HashMap<SetupKey, PublishedSetup>,
 }
 impl PrivateClient {
     /// Placement is supplied by the caller's accepted chain; never discover it

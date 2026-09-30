@@ -34,17 +34,10 @@ async fn native_display_queries_bind_and_decode_every_segment() -> Result<(), tx
         },
         outputs: vec![DisplayOutput {
             value: 9,
-            script: vec![0x6a; 9000],
+            script: vec![0x51; 65_536],
         }],
     };
     let mut store = EventStore::open(&journal, transparent_filter::MAINNET_GENESIS_DISPLAY, 1)?;
-    store.append_block_with_display(
-        1,
-        BlockHash::from_internal_bytes([3; 32]),
-        &[],
-        std::slice::from_ref(&record),
-    )?;
-    store.commit()?;
     let options = PublishOptions::parse_from([
         "publish",
         "--output",
@@ -55,10 +48,34 @@ async fn native_display_queries_bind_and_decode_every_segment() -> Result<(), tx
         "recent-4k",
         "--txid-display",
     ]);
+    store.append_block(1, BlockHash::from_internal_bytes([3; 32]), &[])?;
+    store.commit()?;
+    assert!(publish(&options, &store, BlockHash::from_internal_bytes([2; 32])).is_err());
+    store.rollback_to(None)?;
+    let events = vec![(
+        transparent_filter::ScriptBytes::new(record.outputs[0].script.clone()),
+        transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+            height: 1,
+            txid: record.txid,
+            transaction_index: 0,
+            output_index: 0,
+            value: 9,
+            coinbase: false,
+            metadata: Some(record.metadata),
+        }),
+    )];
+    store.append_block_with_display(
+        1,
+        BlockHash::from_internal_bytes([3; 32]),
+        &events,
+        std::slice::from_ref(&record),
+    )?;
+    store.commit()?;
     let mut map = publish(&options, &store, BlockHash::from_internal_bytes([2; 32]))?;
     let old = original.join(&map.shards[0].manifest_digest);
     let mut manifest: transparent_shard::ShardManifest =
         serde_json::from_slice(&std::fs::read(old.join("manifest.json"))?)?;
+    assert_eq!(manifest.occupancy.excluded_scripts, 1);
     let zeros = vec![0; RECENT_4K.directory_rows as usize * 4096];
     let extra = transparent_shard::TableGeometry {
         rows: RECENT_4K.directory_rows,
@@ -95,11 +112,26 @@ async fn native_display_queries_bind_and_decode_every_segment() -> Result<(), tx
     };
     assert!(ServiceState::build(set, denied).is_err()); // Display tables count toward warm admission.
     let set = ShardSet::open(&published, DEFAULT_RETAIN_REVISIONS)?;
-    let state = ServiceState::build(set, ServiceConfig::default())?;
+    assert_eq!(set.warm_targets().len(), 6);
+    let state = ServiceState::build(
+        set,
+        ServiceConfig {
+            readiness: ReadinessMode::Warm,
+            ..Default::default()
+        },
+    )?;
+    state.spawn_prewarm().await?;
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let address = listener.local_addr()?;
     let server = tokio::spawn(async move { axum::serve(listener, router(state)).await });
     let mut client = txquery::PrivateClient::new(format!("http://{address}"));
+    assert!(client
+        .http
+        .get(format!("http://{address}/v1/ready"))
+        .send()
+        .await?
+        .status()
+        .is_success());
     let txquery::LookupResult::Found(actual) =
         client.lookup_mined(&map, record.txid, Some(1)).await?
     else {

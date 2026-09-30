@@ -54,8 +54,9 @@ transparent input or output is outside this capability.
 `display-v1/`. The sidecar is synced and linked durably before its block is
 appended to the existing event journal. The existing checkpoint determines which
 block hashes are covered. A crash or reorg can leave an orphan sidecar, but it
-cannot make that sidecar evidence of committed coverage. Sidecars are immutable;
-a different payload under the same hash is a contradiction. Scripts above the existing journal's 10,000-byte reader ceiling use an additional
+cannot make that sidecar evidence of committed coverage. Sidecars carry a corruption checksum and are immutable;
+a different payload under the same hash is a contradiction. Publication rechecks
+metadata and receive-output agreement with the recovered event projection. Scripts above the existing journal's 10,000-byte reader ceiling use an additional
 sidecar envelope carrying the unchanged shared event bytes and raw script.
 Publisher projections merge those events so the public filter and excluded-script
 counts retain them; no event codec is reinterpreted. Snapshot publication

@@ -2,6 +2,7 @@
 //! the authority: sidecars are durable before its block entry can be appended.
 //! Uncommitted/reorged sidecars remain unreachable, never coverage evidence.
 use crate::events::EventStoreError;
+use sha2::{Digest, Sha256};
 use std::{
     io::{Read, Write},
     path::Path,
@@ -11,7 +12,7 @@ use transparent_filter::{BlockHash, ScriptBytes};
 use transparent_shard::txid::TransparentDisplayRecord;
 // Conservative envelope bound over a 2 MB canonical block, including txid and
 // length headers for every indexed transaction. Never allocate from disk length.
-const MAX_BLOCK_DISPLAY_BYTES: usize = 8_000_044;
+const MAX_BLOCK_DISPLAY_BYTES: usize = 8_000_076;
 pub(crate) const JOURNAL_SCRIPT_LIMIT: usize = 10_000;
 type IndexedEvents = Vec<(ScriptBytes, TransparentEvent)>;
 
@@ -69,6 +70,12 @@ pub fn write_with_events(
             ));
         }
     }
+    bytes.extend(Sha256::digest(&bytes));
+    if bytes.len() > MAX_BLOCK_DISPLAY_BYTES {
+        return Err(EventStoreError::Invariant(
+            "display block size bound".into(),
+        ));
+    }
     let dir = dir.join("display-v1");
     std::fs::create_dir_all(&dir)?;
     let path = dir.join(format!("{}.bin", hash.to_display_hex()));
@@ -101,6 +108,13 @@ fn read_block(
             .join(format!("{}.bin", hash.to_display_hex())),
     )?;
     let fail = || EventStoreError::Invariant("invalid display sidecar".into());
+    if bytes.len() < 76 {
+        return Err(fail());
+    }
+    let (bytes, digest) = bytes.split_at(bytes.len() - 32);
+    if Sha256::digest(bytes).as_slice() != digest {
+        return Err(fail());
+    }
     if bytes.len() < 44 || &bytes[..8] != b"TPIRTX01" || bytes[8..40] != hash.internal_bytes()[..] {
         return Err(fail());
     }
@@ -164,6 +178,37 @@ pub fn oversized_events(dir: &Path, hash: BlockHash) -> Result<IndexedEvents, Ev
         return Ok(Vec::new());
     }
     Ok(read_block(dir, hash)?.1)
+}
+pub fn validate_events(
+    records: &[TransparentDisplayRecord],
+    events: &[(ScriptBytes, TransparentEvent)],
+) -> Result<(), EventStoreError> {
+    let by_id: std::collections::BTreeMap<_, _> = records.iter().map(|r| (r.txid.0, r)).collect();
+    for (script, event) in events {
+        let record = by_id
+            .get(&event.txid().0)
+            .ok_or_else(|| EventStoreError::Invariant("event missing display record".into()))?;
+        if event.metadata() != Some(record.metadata) {
+            return Err(EventStoreError::Invariant(
+                "display/event metadata contradiction".into(),
+            ));
+        }
+        if let TransparentEvent::Receive(receive) = event {
+            let output = record
+                .outputs
+                .get(receive.output_index as usize)
+                .ok_or_else(|| EventStoreError::Invariant("display output missing".into()))?;
+            if output.value != receive.value
+                || output.script != script.as_slice()
+                || receive.coinbase != record.coinbase
+            {
+                return Err(EventStoreError::Invariant(
+                    "display/receive contradiction".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 fn bounded_read(path: &Path) -> Result<Vec<u8>, EventStoreError> {
     let mut bytes = Vec::new();

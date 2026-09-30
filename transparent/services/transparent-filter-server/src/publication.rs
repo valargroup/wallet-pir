@@ -297,15 +297,17 @@ pub fn publish(
             Err(error) => return Err(error.into()),
         };
 
+    if previous
+        .values()
+        .any(|entry| entry.txid_segments.is_some() != cli.txid_display)
+    {
+        return Err("changing txid capability requires a separate publication directory".into());
+    }
+
     // Preserve sealed artifacts only while their chain endpoints agree. A
     // changed sealed suffix belongs to a separate publication directory.
     let mut resume_height = first;
     for entry in previous.values() {
-        if entry.txid_segments.is_some() != cli.txid_display {
-            return Err(
-                "changing txid capability requires a separate publication directory".into(),
-            );
-        }
         if !entry.sealed
             || entry.end_height > covered
             || store

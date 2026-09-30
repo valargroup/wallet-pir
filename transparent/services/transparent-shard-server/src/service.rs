@@ -254,10 +254,16 @@ impl ServiceState {
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
             for table in Table::ALL {
-                if !set
-                    .revisions()
-                    .iter()
-                    .any(|s| s.geometry.name == geometry.name && s.segments(table) > 0)
+                if matches!(table, Table::TxDirectory | Table::TxPages)
+                    && !set
+                        .map
+                        .shards
+                        .iter()
+                        .any(|s| s.geometry == geometry.name && s.txid_segments.is_some())
+                    && !set
+                        .revisions()
+                        .iter()
+                        .any(|s| s.geometry.name == geometry.name && s.segments(table) > 0)
                 {
                     continue;
                 }
