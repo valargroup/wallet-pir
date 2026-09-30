@@ -27,12 +27,17 @@ headroom and 30% root-disk headroom, with no ingest restart. Canonical origins
 remain v10.
 
 The library metadata, summaries, bounded HTTP adapter and headless shadow SQLite
-harness are in [draft PR 77](https://github.com/zakura-core/wallet-libraries/pull/77).
+harness are in [PR 77](https://github.com/zakura-core/wallet-libraries/pull/77).
 Its full CI passed at `deac2aed495ee3ca6f4f68bdaff044cb17583a88`, including all
 feature configurations and separate facade modes. Real HTTP recovered 9 receives
 and 7 spends, independently matched to retained raw block/prevout inputs, with
 identical SQLite reopen and no qualification or activation. These controlled
 public-script fixtures do not establish financial ownership or shielded recovery.
+The follow-up review fixed local mixed-send fee suppression and crash-before-ack
+withdrawal reconciliation loss. All 29 history and six adapter tests passed.
+PR 77 is ready at `cc6656f23`, with exact-head CI pending before the authorized
+merge. Wallet-pir store lint repairs are on main at `a65c618e`; fast CI passed,
+comprehensive CI remains pending, and its new fat-LTO artifact build is running.
 
 A one-hour candidate 5 QPS observation passed 17,920 exact queries with no
 failures, p50 5 ms and p99 33 ms. The next bounded observation runs under

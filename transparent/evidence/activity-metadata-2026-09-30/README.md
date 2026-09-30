@@ -95,3 +95,12 @@ library regressions reproduced before repair. The store's equivalent key-based
 sort passed all-target Clippy and the [affected check](review-store-lint-fix.json).
 The library fixes retain local construction facts and durably record conservative
 export intent before returning a batch; repaired-source CI remains required.
+
+[Library review and repaired-source record](review-library-cc6656f23.json) pins
+the review findings, red/green regressions and unchanged code after the doc-only
+base update. PR 77 is ready; exact-head comprehensive CI must pass before merge.
+[Local raw retention](raw-cache-local-retention-a1c4b809.json) confirms the 2.11 GB
+independent input bundle is read-only and checksum verified. The transfer helper
+reported a Git-head mismatch because documentation advanced during copying;
+its exit was zero and retention was accepted against the immutable source-pinned
+bundle hash, not as a code-test result.

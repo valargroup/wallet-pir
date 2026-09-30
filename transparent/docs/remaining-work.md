@@ -30,11 +30,16 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   wallet HTTP requests used filter/PIR routes. The account remained inactive.
   CI found one obsolete provenance-fence test constant, corrected at `deac2aed4`;
   its focused check and full CI passed, including every feature/facade mode.
-  PR 77 remains draft during end-to-end qualification. This fixture does not prove
+  Follow-up review reproduced and fixed mixed local-send fee suppression and
+  crash-before-ack withdrawal loss. All 29 history and six adapter tests passed.
+  PR 77 is ready at `cc6656f23`; exact-head full CI is pending, and the user
+  authorized merge once checks pass. This fixture does not prove
   financial ownership, shielded scanning or final lifecycle qualification.
 - [ ] Verify fat-LTO release artifacts and perform guarded SSH canonical cutover with v10 rollback retained.
   The 16-artifact `3cfbc484` fat-LTO build passed. Full-publication verification,
-  native certificates and worker transfer/cutover remain open. Candidate load
+  native certificates and worker transfer/cutover remain open. The repaired
+  `a65c618e` source has a new fat-LTO owner, `transparent-activity-release-a65c618e`.
+  Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.
   The `a1c4b809` cache oracle passed all 100 dense early-chain blocks and 83,730

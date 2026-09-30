@@ -1,0 +1,38 @@
+{
+  "library_reviewed_head": "cc6656f2342b37b5acc612ece42a57855cadf660",
+  "library_base": "c2675c4fe67710c46c1a917b792035f6ddec005e",
+  "review_verdict": "approve code after fixes; exact-head full CI and deployment qualification remain separate gates",
+  "findings": [
+    {
+      "issue": "mixed metadata erases independent local-send fee",
+      "reproduced_before_fix": {
+        "actual": "Unknown",
+        "expected": "Known(15000)"
+      },
+      "fixed": "local construction fee facts stay independent of metadata",
+      "regression": "local_intent_and_fee_survive_mixed_transaction_metadata",
+      "result": "passed"
+    },
+    {
+      "issue": "wallet may commit before adapter acknowledges, losing withdrawal reconciliation after a crash",
+      "reproduced_before_fix": {
+        "actual_reconciliation_count": 0,
+        "expected_reconciliation_count": 1
+      },
+      "fixed": "durable conservative export intent before returning batch",
+      "regression": "possible_wallet_export_survives_crash_before_ack_and_withdrawal",
+      "result": "passed"
+    }
+  ],
+  "focused_validation": {
+    "history_tests": 29,
+    "adapter_tests": 6,
+    "all_passed": true,
+    "provenance": "Focused checks ran on the repaired working tree before publication. Rebase added only upstream documentation; changed Rust code is identical at reviewed head. Comprehensive CI is pending on that exact head."
+  },
+  "files_sha256": {
+    "librustzcash/zcash_client_sqlite/src/wallet/transparent_ledger/history.rs": "c98cd147e82eb283b09674d745534e5322ceff8a85b90453c423750c4fea4c88",
+    "librustzcash/zcash_client_sqlite/src/wallet/transparent_ledger/tests/recovery/activation/history.rs": "6fde2dd2f626046031a5e908322b6073869ea2e1bd6df902ad67fc1adff60467",
+    "zakura/pir-transparent/src/recovery.rs": "96f3f4fe53d1d14921d1a501f2a3784f7bd996ace9d7bf11488b5990dacf9b46"
+  }
+}
