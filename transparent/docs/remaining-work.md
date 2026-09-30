@@ -42,7 +42,11 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Its full CI found two further shard-cache sort lints. Equivalent corrections,
   plus filter and test-only lints exposed by the complete transparent group,
   passed strict all-target/all-feature Clippy and the 39.55-second affected check.
-  Exact repaired-source CI and release artifacts remain required.
+  Exact repaired-source CI and release artifacts remain required. The publisher
+  now accepts the new publication root and renders sandbox mounts; 31 focused
+  tests, ops contracts and a coordinator hard-link probe passed. Repeat the
+  probe under the installed unit. Release bundles now retain all 18 artifacts,
+  including the two deployment helpers missing from earlier retention lists.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

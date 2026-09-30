@@ -56,6 +56,24 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.fleet.routing_availability()['available'])
         self.assertEqual(self.fleet.routing_availability()['unavailable_events'], 2)
 
+    def test_publisher_sandbox_uses_selected_v3_volume_paths(self):
+        journal = Path('/srv/transparent-activity/full-v3/journal')
+        publication = Path('/srv/transparent-activity/full-v11/publications')
+        initial = publication/'initial set'
+        service = deploy.publisher_service(journal, publication, initial)
+        writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
+        import shlex
+        self.assertEqual(shlex.split(writable.removeprefix('ReadWritePaths=')),
+                         [str(journal), str(publication), str(initial), str(deploy.ROOT/'state')])
+        self.assertIn('ProtectSystem=strict', service)
+        self.assertNotIn('/srv/zakura/transparent-event-data-v2', service)
+        self.assertNotIn('/srv/zakura/transparent-publications', service)
+
+    def test_publisher_sandbox_rejects_relative_root_and_unit_injection(self):
+        for path in ('relative', '/', '/srv/%i', '/srv/bad\nReadWritePaths=/'):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                deploy.publisher_service(Path(path), Path('/srv/publications'), Path('/srv/initial'))
+
     def test_quorum_requires_all_archive_owners_and_only_one_recent(self):
         self.assertTrue(self.fleet.quorum({'a1','a2','r2'}))
         self.assertFalse(self.fleet.quorum({'a1','r1','r2'}))

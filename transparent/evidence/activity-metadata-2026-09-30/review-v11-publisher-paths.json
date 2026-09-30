@@ -1,0 +1,30 @@
+{
+  "baseline_sha": "0abce392691977b9e0c73a0ce8112d71d8e87fa6",
+  "files": {
+    "transparent/ops/scripts/activity-prototype-build.py": "b47d9b44a295f511a05bf6408a69dd8c42dec9d74dc3a4a9c56d42866e5ad9e0",
+    "transparent/ops/scripts/deploy-transparent-publisher.py": "2c7670ef906cf0db5915ff0fa90067bf9d2a1986f5a4104b939957f136e1a89a",
+    "transparent/ops/tests/test_transparent_publication.py": "5a5e5a267483ff414b0dd9d7b8ac53f0b705158d4198511576c5ec5b4b3865e7"
+  },
+  "findings_fixed": [
+    "Explicit publication root and sandbox mounts replace hardcoded v2 journal/publication paths",
+    "Retain shard-assign and shard-control required by production deployment"
+  ],
+  "focused_publication_tests": {
+    "status": "passed",
+    "count": 31,
+    "seconds": 6.331
+  },
+  "affected_ops_check": {
+    "status": "passed",
+    "seconds": 1.2423798750387505,
+    "owner": "88adbc96919743aeb54504f14e7047f1",
+    "scope": "ops contracts; ran before artifact-retention list addition"
+  },
+  "syntax_check": "passed for both modified scripts",
+  "hardlink_probe": "publisher-hardlink-probe.json",
+  "remaining": [
+    "Complete publication and repeat probe under actual installed publisher unit",
+    "Exact final source CI and 18-artifact fat-LTO production bundle",
+    "Preserve and exercise coherent v10 rollback before reopening a failed schema cutover"
+  ]
+}

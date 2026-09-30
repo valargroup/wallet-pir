@@ -93,7 +93,8 @@ def main():
     if failure is None:
         for name in ['transparent-event-ingest', 'shard-publish', 'event-spotcheck',
                      'shard-verify', 'script-sample', 'transparent-publish-controller',
-                     'shard-cutoff', 'journal-inventory', 'shard-census', 'transparent-shard-server',
+                     'shard-cutoff', 'journal-inventory', 'shard-census', 'shard-assign', 'shard-control',
+                     'transparent-shard-server',
                      'transparent-filter-server', 'transparent-loadtest', 'transparent-measure',
                      'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen']:
             path = args.target / args.profile / name

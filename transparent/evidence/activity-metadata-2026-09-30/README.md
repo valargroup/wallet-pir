@@ -117,3 +117,12 @@ artifact build does not establish comprehensive qualification.
 equivalent corrections and hashes of all affected source files. Strict Clippy
 for the complete transparent package group and the 39.55-second affected check
 passed. Comprehensive CI and fat-LTO artifacts must match the committed repair.
+
+[Publisher deployment review](review-v11-publisher-paths.json) records an explicit
+publication root and sandbox mounts for the new volume, with 31 focused tests
+and ops contracts passing. The [coordinator hard-link probe](publisher-hardlink-probe.json)
+passed in the planned strict sandbox; repeat it against the installed unit and
+complete publication before activation. The build driver now retains the two
+deployment helpers as well, making an 18-artifact release bundle. Prior
+16-artifact build reports remain valid build observations, not complete
+deployment bundles. Library post-merge main CI run 36787992346 also passed.

@@ -695,6 +695,13 @@ before SSH transfer. Production binaries require the fat-LTO `release` profile,
 executable checksums verified after transfer, compiler/profile/dependency provenance,
 and matching publication identities and native certificates.
 
+The publisher shadow installer accepts `--publication-root`. For v11, use
+`/srv/transparent-activity/full-v11/publications` alongside
+`--data-dir /srv/transparent-activity/full-v3/journal` and an initial publication
+inside that publication parent. The installer renders sandbox write paths for
+those exact locations and the initial source, retaining `ProtectSystem=strict`.
+Verify hard-link behavior under the resulting unit before activation.
+
 For canonical cutover, coordinate with publication/deployment owners, take the
 existing deployment lock and put the scaler in observe mode. Pause maintenance
 load, withdraw metadata at both public origins, stage the complete fleet assignment,

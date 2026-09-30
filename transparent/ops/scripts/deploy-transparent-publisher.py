@@ -33,6 +33,30 @@ if LIB not in sys.path:
 from wallet_pir_ops import transparent_unit  # noqa: E402
 
 
+
+def publisher_service(data_dir, publication_root, initial_publication):
+    """Grant only the selected journal/publication paths inside the sandbox.
+
+    The initial publication must be writable in the mount namespace too:
+    linking an immutable source through a read-only mount can fail with EROFS.
+    """
+    paths = []
+    for path in (data_dir, publication_root, initial_publication, ROOT/'state'):
+        path = Path(path)
+        value = str(path)
+        if not path.is_absolute() or path == Path('/') or '%' in value or any(ord(c) < 32 for c in value):
+            raise ValueError('publisher paths must be absolute non-root paths without control characters or systemd specifiers')
+        if value not in paths:
+            paths.append(value)
+    template = (SCRIPT.parent/'deploy/transparent-publish-controller.service').read_text()
+    lines = template.splitlines()
+    indices = [i for i, line in enumerate(lines) if line.startswith('ReadWritePaths=')]
+    if len(indices) != 1:
+        raise ValueError('publisher unit must contain exactly one ReadWritePaths setting')
+    lines[indices[0]] = 'ReadWritePaths=' + ' '.join(json.dumps(path, ensure_ascii=False) for path in paths)
+    return '\n'.join(lines) + '\n'
+
+
 def execute(args, **kwargs):
     subprocess.run(list(map(str,args)),check=True,**kwargs)
 
@@ -304,10 +328,13 @@ async def main():
     cli.add_argument('--recent-geometry',default='recent-8k',
                      help='Recent geometry the controller publishes (shadow mode); must match the initial publication')
     cli.add_argument('--data-dir',type=Path,default=Path('/srv/zakura/transparent-event-data-v2'),
-                     help='Event journal the controller publishes from (shadow mode); version 2 since schema v9')
+                     help='Event journal the controller publishes from (shadow mode); use a separate v3 journal for schema v11')
+    cli.add_argument('--publication-root',type=Path,default=Path('/srv/zakura/transparent-publications'),
+                     help='Writable publication parent (shadow mode); keep it on the journal filesystem')
     cli.add_argument('--directory-choice',choices=['off','sealed','all'],default='off',
                      help='Which newly built shards publish a directory choice table (shadow mode)')
     args=cli.parse_args()
+    service = publisher_service(args.data_dir, args.publication_root, args.initial_publication) if args.mode=='shadow' else None
     if os.geteuid()!=0:
         raise RuntimeError('run on the coordinator as root')
     ROOT.mkdir(exist_ok=True)
@@ -338,7 +365,7 @@ async def main():
         if 'fleet.json' in previous_files:
             fleet_config=LIVE.carry_operational(fleet_config,json.loads(previous_files['fleet.json']))
         LIVE.atomic_json(ROOT/'fleet.json',fleet_config)
-        config=dict(data_dir=str(args.data_dir),publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
+        config=dict(data_dir=str(args.data_dir),publication_root=str(args.publication_root),initial_publication=str(args.initial_publication),
                     recent_from=3262749,recent_geometry=args.recent_geometry,archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
                     fleet_command=str(ROOT/'transparent-live-fleet.py'),fleet_config=str(ROOT/'fleet.json'),listen='127.0.0.1:8094',source_sha=args.source_sha,shadow=True)
         # Written only when enabled, so a controller built before the field
@@ -388,10 +415,10 @@ async def main():
             os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
         shutil.copy2(SCRIPT/'transparent-fleet-inventory.py',ROOT/'transparent-fleet-inventory.py')
-        shutil.copy2(SCRIPT.parent/'deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
+        args.publication_root.mkdir(parents=True,exist_ok=True)
+        Path('/etc/systemd/system/transparent-publish-controller.service').write_text(service)
         shutil.copy2(SCRIPT.parent/'deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
         shutil.copy2(SCRIPT.parent/'deploy/transparent-control-sessions.service','/etc/systemd/system/transparent-control-sessions.service')
-        Path('/srv/zakura/transparent-publications').mkdir(exist_ok=True)
         # Recent canary first; archive owners follow serially, then other replicas.
         recent=[w for w in fleet.roster if w['role']=='recent-replica']
         owners=[w for w in fleet.roster if w['role']=='archive-owner']
