@@ -139,7 +139,10 @@ whose full CI succeeded. Start with `mode=preflight`, then use `mode=deploy`.
 The workflow accepts only the optional GPU worker, takes the shared production
 lock, and preserves its state root, arguments, CUDA library path and placement.
 Preflight uploads verified validation binaries and runs fresh loopback fixture
-processes with a single CUDA replica. It does not restart the production unit.
+processes with two isolated CUDA replicas on device 0 to satisfy the reservation
+quorum. Both replicas must publish native CUDA health; their summed evaluation
+counter must increase during exact fixture queries. Each uses a separate loopback
+port and temporary state root. Preflight does not restart the production unit.
 Deployment swaps the server binary transactionally, verifies native v9/CUDA
 health and executable identity, then runs public exact-answer queries at 1 QPS
 for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
