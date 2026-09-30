@@ -678,7 +678,10 @@ rows and registry geometries. Recalculate shard occupancy from actual v11 encode
 bytes; v10 capacity arithmetic does not establish a v11 capacity benefit.
 
 Genesis ingestion uses the RocksDB secondary reader, journal v3, fixed anchor
-3500738, two workers, CPU quota 200%, a 16 GiB memory ceiling and no swap.
+3500738, four workers, CPU quota 400%, a 16 GiB memory ceiling and no swap.
+The current owner is `transparent-activity-full-ingest-release-a1c4b809`, using
+the immutable, checksum-verified fat-LTO release binary; its independent oracle
+and uncached journal comparison passed before checkpoint handoff.
 The ceiling includes RocksDB file cache; the initial 6 GiB limit caused direct
 reclaim despite roughly 89% available host memory. Its dedicated health guard retains
 source SHA, executable hash, PID/unit, checkpoint and terminal result, sampling

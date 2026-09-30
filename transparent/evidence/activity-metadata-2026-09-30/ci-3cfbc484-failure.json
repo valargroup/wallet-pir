@@ -1,0 +1,13 @@
+{
+  "source_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "run_id": 36773301811,
+  "run_url": "https://github.com/valargroup/wallet-pir/actions/runs/36773301811",
+  "conclusion": "failure",
+  "transparent_lint": [
+    "ledger observation key type complexity",
+    "ledger unnecessary sort_by",
+    "memory store unnecessary sort_by"
+  ],
+  "transparent_tests_failure": "operator payload golden fixtures retained v10 schema and derived setup identities",
+  "disposition": "Refresh fixtures from actual v11 service; name observation key and use equivalent sort_by_key; full CI remains required at repaired source."
+}

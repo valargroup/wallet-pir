@@ -144,7 +144,7 @@ impl WalletStore for MemoryStore {
             .chain(self.state.spends.values())
             .cloned()
             .collect();
-        events.sort_by(|a, b| a.event.sort_key().cmp(&b.event.sort_key()));
+        events.sort_by_key(|entry| entry.event.sort_key());
         Ok(events)
     }
 

@@ -18,10 +18,13 @@ loopback runs establish the prototype milestone, not canonical HTTPS or sustaine
 whole-wallet capacity. [Retained evidence](../evidence/activity-metadata-2026-09-30/README.md).
 
 Genesis ingestion is running separately under
-`transparent-activity-full-ingest-release-3cfbc484`, fixed anchor 3500738, on the
-new 250 GiB volume. At 21:59 UTC it reached 310000 with 136,351,316 events;
-the health guard retained at least 84% available host memory and 84% available
-candidate-volume disk. Canonical origins remain v10.
+`transparent-activity-full-ingest-release-a1c4b809`, fixed anchor 3500738, on the
+new 250 GiB volume. At 22:14 UTC the controlled release-binary handoff retained
+checkpoint 324000 and 145,862,121 events. By 22:28 UTC the durable checkpoint
+reached 330000. At 22:23 UTC its health guard observed
+88% available host memory, 82% available candidate-volume disk, 23% chain-disk
+headroom and 30% root-disk headroom, with no ingest restart. Canonical origins
+remain v10.
 
 The library metadata, summaries, bounded HTTP adapter and headless shadow SQLite
 harness are in [draft PR 77](https://github.com/zakura-core/wallet-libraries/pull/77).
@@ -37,11 +40,12 @@ failures, p50 5 ms and p99 33 ms. The next bounded observation runs under
 count toward canonical continuous publication qualification. The 16-artifact
 fat-LTO build at `3cfbc484` passed. A block-local, strictly bounded parent-output
 cache at `a1c4b809` passed focused checks and reproduced an uncached 100-block,
-83,730-event journal byte for byte. Its independent early-chain oracle and
-fat-LTO build are running; ingestion will keep the verified binary until those
-gates pass. The complete publication, canonical SSH cutover and final sustained
-qualification remain open. The previously paused quality supervisor stays
-inactive and new quality alerts stay in shadow.
+83,730-event journal byte for byte. The independent early-chain oracle matched
+all events, and its 16-artifact fat-LTO build passed. Ingestion now uses that
+immutable binary after a controlled checkpoint handoff. The complete publication,
+canonical SSH cutover and final sustained qualification remain open. The
+previously paused quality supervisor stays inactive and new quality alerts stay
+in shadow.
 
 ## Recent replicas on `6360f0d8`, 2026-09-30
 

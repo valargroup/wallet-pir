@@ -1,0 +1,19 @@
+{
+  "base_sha": "d11fcc2bc322a2479715f017b169cb96f19b2d80",
+  "command": "make check-fast BASE=d11fcc2bc322a2479715f017b169cb96f19b2d80",
+  "status": "pass",
+  "exit_code": 0,
+  "seconds": 48.244443083996885,
+  "input_files_sha256": {
+    "transparent/crates/transparent-wallet/src/ledger.rs": "299fde17f845961365fbd36c3a897c021df17bfc4826e46aa0c1494f4a3e11d6",
+    "transparent/crates/transparent-wallet/src/memory_store.rs": "592e112787496105787b6340a5eb1bb64e86a0e66bcdf9f13cc8827bb452a94d",
+    "transparent/ops/fixtures/transparent-shard/health.json": "a0cd94b3f8ddadd0f39bbf2a646bc4e1e0478299473f578043635702ef605d15",
+    "transparent/ops/fixtures/transparent-shard/init.json": "12daf59142c70aa21b84b018952d6f6e83e9356e5032fe530878151eae6f72e5",
+    "transparent/ops/fixtures/transparent-shard/ready.json": "f6f5fd9b7f6fbf19b076a1c7819ca77e591b4b5b5468ab89ebbc9cb2751464e4",
+    "transparent/ops/fixtures/transparent-shard/shards.json": "da886315bfacc342d5b04fbb3b7ce7f4d7e7744f4fe47a751c38a1ed220a9dbd"
+  },
+  "focused_operator_fixture_refresh": "passed",
+  "deploy_jq_contracts": "passed",
+  "wallet_all_target_clippy": "passed",
+  "note": "Affected working-tree checks; comprehensive repaired-source CI remains pending. Ingest and load use their separately frozen artifact identities."
+}

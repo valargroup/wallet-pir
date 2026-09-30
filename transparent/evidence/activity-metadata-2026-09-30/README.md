@@ -63,3 +63,27 @@ completed 17,920 exact queries at 4.978 QPS with no failures, p50 5 ms and p99
 all 16 required binaries/examples. [Backfill handoff](ingest-handoff-release-3cfbc484.json)
 records checkpoint 269000 and the controlled move from two release-fast workers
 to four fat-LTO workers. The full publication and production cutover remain open.
+
+The bounded parent-output cache at `a1c4b809` passed the
+[independent dense early-chain oracle](cache-oracle-a1c4b809.json): 100 blocks
+and 83,730 events matched. The cached and uncached journals are byte-identical
+([comparison](cache-comparison-a1c4b809.json)). Database lookups fell
+from 51,239 to 31,987; different build profiles and rounded timing prevent a
+precise speedup claim. The [fat-LTO release build](release-a1c4b809.json) passed
+all three stages and retained 16 executable hashes. The
+[controlled backfill handoff](ingest-handoff-cache-a1c4b809.json) records checkpoint
+324000, the exact new binary hash and its source identity.
+
+[Raw cache-oracle retention](raw-cache-retention-a1c4b809.json) pins the immutable
+2.11 GB RPC input bundle, including all 486 HTTP attempts and the separate first
+capture-start failure. The bundle exceeds GitHub's file limit and stays outside
+Git through this clone's local exclusion, with a remote recovery path and digest.
+Preserve retained raw inputs before archiving the worktree. The passed retry does
+not remove the failed setup attempt from the evidence.
+
+[Earlier full CI failure](ci-3cfbc484-failure.json) retains the v10 operator-golden
+fixture mismatch and reference-wallet lint findings. The fixtures were regenerated
+from the actual v11 service response, and the deploy script's jq contract check
+passed against them. A named observation key and equivalent key-based sorting
+resolve the three Clippy findings; the focused wallet Clippy check passed.
+Repaired comprehensive CI remains a separate pending qualification gate.

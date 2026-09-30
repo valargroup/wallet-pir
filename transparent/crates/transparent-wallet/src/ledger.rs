@@ -108,9 +108,12 @@ impl TransactionSummary {
     }
 }
 
+/// Canonical chain order and event identity, matching `TransparentEvent::sort_key`.
+type ObservationKey = (u32, u16, u8, Txid, u32, Txid, u32);
+
 #[derive(Debug, Default)]
 pub struct Ledger {
-    observations: BTreeMap<(u32, u16, u8, Txid, u32, Txid, u32), TransparentEvent>,
+    observations: BTreeMap<ObservationKey, TransparentEvent>,
     utxos: BTreeMap<(Txid, u32), Utxo>,
     /// Every recovered receive, kept after it is spent so history survives.
     receives: BTreeMap<(Txid, u32), Utxo>,
@@ -147,7 +150,7 @@ impl Ledger {
                 .values()
                 .chain(events.iter().map(|(_, event)| event)),
         )?;
-        events.sort_by(|a, b| a.1.sort_key().cmp(&b.1.sort_key()));
+        events.sort_by_key(|entry| entry.1.sort_key());
         for (script, event) in events.iter() {
             self.apply(script, event)?;
             self.observations.insert(event.sort_key(), *event);
