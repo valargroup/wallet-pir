@@ -8,6 +8,10 @@
 //! errors can sum to the right number, and a balance check would pass a
 //! reconstruction that had lost a receive and a spend of equal value.
 
+#[path = "common/prepared.rs"]
+mod prepared;
+use prepared::prepared_shard;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -15,7 +19,7 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
-use transparent_shard::build::{build_shard, BuiltShard};
+use transparent_shard::build::BuiltShard;
 use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
@@ -216,7 +220,7 @@ fn publish_profiled(
         let geometry = geometry_for(shard_id);
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
-        let built = build_shard(
+        let built = prepared_shard(
             shard_id,
             start,
             end,
@@ -225,8 +229,7 @@ fn publish_profiled(
             profile,
             geometry,
             events,
-        )
-        .expect("build");
+        );
 
         let manifest = ShardManifest {
             schema: SCHEMA.to_string(),
