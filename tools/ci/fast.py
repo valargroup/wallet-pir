@@ -181,8 +181,6 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
     options = ['--locked', '--profile', 'release-fast']
     if offline:
         options += ['--offline']
-    if features:
-        options += ['--features', features]
     registry = json.loads((ROOT / 'tools/ci/slow-tests.json').read_text())
     for package in metadata['packages']:
         name = package['name']
@@ -196,10 +194,17 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
             kinds = ['--test', test_target]
         if not kinds:
             continue
-        command = ['cargo', 'test', *options, '-p', name, *kinds]
+        # CLI is a cheap client feature, not a protocol/hardware mode. Cargo
+        # otherwise silently skips these required-feature binary test targets.
+        required = {f for t in targets for f in t.get('required-features', [])}
+        enabled = features or ','.join(sorted(required & {'cli'}))
+        feature_args = ['--features', enabled] if enabled else []
+        command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
         run([*command, '--no-run'], stage=f'compile:{name}')
         listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True)
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
+        if test_target and not discovered:
+            raise ValueError(f'{name}: {test_target} has no enabled tests; select its required FEATURES')
         slow = {} if test_target else registry.get(name, {})
         stale = set(slow) - discovered if not features else set()
         if stale:

@@ -25,7 +25,8 @@ it suppresses subprocess output and never prints tokens. Missing dependencies ar
 fixed explicitly, not by interactive repair in a test command.
 
 Fast Rust checks run library and binary unit tests in `release-fast`, plus the
-classified Enhance fast integration targets. Package-qualified slow names are
+classified Enhance fast integration targets. Required CLI features are enabled
+for binary unit targets; protocol and hardware modes remain explicit choices. Package-qualified slow names are
 validated against executable test discovery before skips apply; removed/renamed
 entries fail. Full tests retain these cases. An explicit TEST filter can run a slow case; custom
 FEATURES select unit targets with those features and do not add default-feature

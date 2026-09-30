@@ -156,6 +156,28 @@ class PlannerTests(unittest.TestCase):
             helpers.targets(['check-docs; unsafe'])
 
 
+    def test_required_cli_binary_tests_are_enabled_without_changing_protocol(self):
+        metadata = {'packages': [{'name': 'example', 'targets': [
+            {'name': 'client', 'kind': ['bin'], 'required-features': ['cli']}]}]}
+        calls = []
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'args: test\n']), \
+             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
+            fast.rust_checks(['example'])
+        self.assertIn('cli', calls[-1])
+        self.assertNotIn('native-reinspiring', calls[-1])
+        groups = full.inventory()
+        self.assertIn('enhance-pir/cli', full.commands('enhance', groups)[0])
+        self.assertIn('transparent-filter/cli', full.commands('transparent', groups)[0])
+
+
+    def test_explicit_disabled_integration_target_cannot_pass_with_zero_tests(self):
+        metadata = {'packages': [{'name': 'example', 'targets': [{'name': 'native', 'kind': ['test']}]}]}
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), '0 tests\n']), \
+             patch.object(fast, 'run'):
+            with self.assertRaisesRegex(ValueError, 'no enabled tests'):
+                fast.rust_checks(['example'], test_target='native')
+
+
 
 class IntegrityTests(unittest.TestCase):
     def test_partial_rerun_labels_reused_jobs_without_negative_queue_time(self):

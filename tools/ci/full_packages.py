@@ -31,7 +31,9 @@ def commands(group, groups, lint=False):
     # This server's full registry includes lib, bins and every integration target.
     ordinary = [name for name in names if name != 'enhance-pir-server']
     result = [['bash', 'tools/ci/full-test.sh', '--locked', '--profile', 'release-fast',
-               *[arg for name in ordinary for arg in ('-p', name)]]]
+               *[arg for name in ordinary for arg in ('-p', name)],
+               *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
+                 ['--features', 'transparent-filter/cli'] if group == 'transparent' else [])]]
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full'])
     return result
