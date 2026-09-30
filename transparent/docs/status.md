@@ -18,11 +18,29 @@ loopback runs establish the prototype milestone, not canonical HTTPS or sustaine
 whole-wallet capacity. [Retained evidence](../evidence/activity-metadata-2026-09-30/README.md).
 
 Genesis ingestion is running separately under
-`transparent-activity-full-ingest-e47bdf79`, fixed anchor 3500738, on the new
-250 GiB volume. Canonical origins remain v10. The wallet-libraries metadata and
-summary change is in [draft PR 77](https://github.com/zakura-core/wallet-libraries/pull/77);
-the real-source adapter, complete publication, production release and final
-qualification remain outstanding. The previously paused quality supervisor stays
+`transparent-activity-full-ingest-release-3cfbc484`, fixed anchor 3500738, on the
+new 250 GiB volume. At 21:59 UTC it reached 310000 with 136,351,316 events;
+the health guard retained at least 84% available host memory and 84% available
+candidate-volume disk. Canonical origins remain v10.
+
+The library metadata, summaries, bounded HTTP adapter and headless shadow SQLite
+harness are in [draft PR 77](https://github.com/zakura-core/wallet-libraries/pull/77).
+Its full CI passed at `deac2aed495ee3ca6f4f68bdaff044cb17583a88`, including all
+feature configurations and separate facade modes. Real HTTP recovered 9 receives
+and 7 spends, independently matched to retained raw block/prevout inputs, with
+identical SQLite reopen and no qualification or activation. These controlled
+public-script fixtures do not establish financial ownership or shielded recovery.
+
+A one-hour candidate 5 QPS observation passed 17,920 exact queries with no
+failures, p50 5 ms and p99 33 ms. The next bounded observation runs under
+`transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation does not
+count toward canonical continuous publication qualification. The 16-artifact
+fat-LTO build at `3cfbc484` passed. A block-local, strictly bounded parent-output
+cache at `a1c4b809` passed focused checks and reproduced an uncached 100-block,
+83,730-event journal byte for byte. Its independent early-chain oracle and
+fat-LTO build are running; ingestion will keep the verified binary until those
+gates pass. The complete publication, canonical SSH cutover and final sustained
+qualification remain open. The previously paused quality supervisor stays
 inactive and new quality alerts stay in shadow.
 
 ## Recent replicas on `6360f0d8`, 2026-09-30

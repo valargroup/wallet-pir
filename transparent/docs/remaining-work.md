@@ -21,7 +21,7 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency
   1/4/8 matched fixtures and independently recomputed metadata and summaries
   after SQLite reopen. These brief runs do not establish sustained capacity.
-- [ ] Integrate metadata, source evidence, honest summaries and bounded real HTTP adapter in wallet-libraries.
+- [x] Implement metadata, source evidence, honest summaries and bounded real HTTP adapter in wallet-libraries.
   Draft [library PR 77](https://github.com/zakura-core/wallet-libraries/pull/77)
   includes the bounded adapter and real HTTP shadow SQLite harness. Five adapter
   tests, 28 history tests and the candidate metadata/reopen/authority test passed
@@ -29,13 +29,20 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   block/prevout checker matched every event and its persisted metadata. All 17
   wallet HTTP requests used filter/PIR routes. The account remained inactive.
   CI found one obsolete provenance-fence test constant, corrected at `deac2aed4`;
-  its focused check passed and full CI is pending. This fixture does not prove
+  its focused check and full CI passed, including every feature/facade mode.
+  PR 77 remains draft during end-to-end qualification. This fixture does not prove
   financial ownership, shielded scanning or final lifecycle qualification.
 - [ ] Verify fat-LTO release artifacts and perform guarded SSH canonical cutover with v10 rollback retained.
   The 16-artifact `3cfbc484` fat-LTO build passed. Full-publication verification,
   native certificates and worker transfer/cutover remain open. Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.
+  Cache qualification at `a1c4b809`: `transparent-activity-cache-oracle-a1c4b809-2`
+  and `transparent-activity-release-a1c4b809` own the pending independent dense
+  early-chain oracle and fat-LTO build. Candidate/uncached journals are byte-equal
+  for 100 blocks and 83,730 events. Only hand off backfill after the independent
+  oracle, release artifact hashes and host floors pass; retain checkpoint and
+  controlled-handoff evidence. One oracle startup race is retained as a failure.
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 

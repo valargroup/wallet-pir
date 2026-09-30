@@ -1,0 +1,15 @@
+{
+  "status": "passed",
+  "source_cached": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+  "source_uncached": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "blocks": 100,
+  "events": 83730,
+  "journals_byte_equal": true,
+  "cached_state_lookups": 31987,
+  "uncached_state_lookups": 51239,
+  "cached_profile": "release-fast",
+  "uncached_profile": "release",
+  "cached_logged_seconds": 8,
+  "uncached_logged_seconds": 9,
+  "limitation": "Different optimization profiles; integer-rounded times do not establish a precise speedup. Both include concurrent backfill/publication/load."
+}
