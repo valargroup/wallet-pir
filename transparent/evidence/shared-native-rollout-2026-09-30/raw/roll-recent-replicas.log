@@ -1,0 +1,33 @@
+{"event": "roll_start", "worker": "transparent-pir-recent-01", "others_serving": ["transparent-pir-recent-02", "transparent-pir-recent-08"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017426, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.01456, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.188523, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.076343, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 8.819979, "exit_code": 0}
+[2m2026-09-30T04:46:05.008706Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"4526cf00ee9a0bb1fc6098476208c8a913445307eb7a82e01b26b2bb84ac4a8d" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"411bd2dd113c2a6c59a3c21e38b9a3943d69638b38a01d1e57b7a6606357d5d7" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3501080
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.034099, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.191192, "exit_code": 0}
+transparent-pir-recent-01: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-01", "seconds": 25.4}
+{"event": "roll_start", "worker": "transparent-pir-recent-02", "others_serving": ["transparent-pir-recent-01", "transparent-pir-recent-08"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015523, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014943, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.242567, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.073666, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 6.78643, "exit_code": 0}
+[2m2026-09-30T04:46:28.423877Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"4526cf00ee9a0bb1fc6098476208c8a913445307eb7a82e01b26b2bb84ac4a8d" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"411bd2dd113c2a6c59a3c21e38b9a3943d69638b38a01d1e57b7a6606357d5d7" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3501080
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017695, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.80111, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-02", "seconds": 23.0}
+{"event": "roll_start", "worker": "transparent-pir-recent-08", "others_serving": ["transparent-pir-recent-01", "transparent-pir-recent-02"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.32906, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016703, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.407812, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.075775, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 6.579957, "exit_code": 0}
+[2m2026-09-30T04:46:51.690780Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m86 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"4526cf00ee9a0bb1fc6098476208c8a913445307eb7a82e01b26b2bb84ac4a8d" [3mworker_id[0m[2m=[0m"transparent-pir-recent-08" [3massignment_sha256[0m[2m=[0m"411bd2dd113c2a6c59a3c21e38b9a3943d69638b38a01d1e57b7a6606357d5d7" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3501080
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016157, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.723906, "exit_code": 0}
+transparent-pir-recent-08: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-08", "seconds": 23.2}

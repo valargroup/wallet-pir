@@ -1,10 +1,24 @@
 # Transparent PIR status
 
-Updated 2026-09-29 UTC (v10 rollout and continuous load below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
+Updated 2026-09-30 UTC (recent replicas on `6360f0d8` below); milestone acceptance remains separately scoped. The target remains an opt-in, recovery-only macOS beta on
 existing infrastructure. **M0, M1 and M2 are accepted; M3 is partially validated;
 M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
+
+## Recent replicas on `6360f0d8`, 2026-09-30
+
+- 04:46–04:48 UTC: recent-01, recent-02 and the elastic `transparent-pir-recent-08`
+  (added at 04:41 so two replicas stayed routed during each restart) were rolled
+  without maintenance to worker `291cd504` (`6360f0d8`, shared `pir-native`
+  crate, `incarnation`/`started_unix` in `/v1/ready`). The archive owner still
+  runs `a704616c`. A 10-minute 20 QPS gate on three routed replicas returned
+  12,528/12,528 exact, p99 48 ms
+  ([evidence](../evidence/shared-native-rollout-2026-09-30/README.md)).
+- recent-08 remains until the scaler, back in `act`, removes it once the daily
+  destroy budget allows.
+- The APM host sampler now derives worker targets from the roster; it had
+  sampled archive-03 under the name recent-03.
 
 ## Single archive owner, 2026-09-29
 
