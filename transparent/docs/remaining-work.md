@@ -38,7 +38,8 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [x] Repin to the landed metadata source and pass the final integrated native gates.
 - [x] Retain the [stable-source native report](../evidence/txid-display-2026-10-01/README.md).
 - [x] Pass the [focused repository check](../evidence/txid-display-2026-10-01/fast-check.json).
-- [ ] Rebase onto verified main, push only this completed change and monitor main CI.
+- [x] Rebase onto verified main and push only this completed server change.
+- [ ] Finish post-push main CI follow-up; report inherited lint failures separately.
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
