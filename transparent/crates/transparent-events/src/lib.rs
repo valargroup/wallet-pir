@@ -167,7 +167,13 @@ pub fn check_transaction_consistency<'a>(
     let mut inputs = std::collections::BTreeMap::new();
     for event in events {
         event.validate_metadata()?;
-        let facts = (event.height(), event.transaction_index(), event.metadata());
+        let coinbase = matches!(event, TransparentEvent::Receive(receive) if receive.coinbase);
+        let facts = (
+            event.height(),
+            event.transaction_index(),
+            event.metadata(),
+            coinbase,
+        );
         if transactions
             .insert(event.txid(), facts)
             .is_some_and(|previous| previous != facts)

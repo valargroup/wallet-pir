@@ -1,0 +1,89 @@
+{
+  "checks": [
+    {
+      "check": "load",
+      "detail": "2 shards, 2 revisions held, every manifest, table segment and filter verified in 2.0s",
+      "ok": true
+    },
+    {
+      "check": "coverage-contiguous",
+      "detail": "3499739-3500738 across 2 shards",
+      "ok": true
+    },
+    {
+      "check": "coverage-start",
+      "detail": "map starts at 3499739, expected 3499739",
+      "ok": true
+    },
+    {
+      "check": "coverage-through",
+      "detail": "last shard ends at Some(3500738), expected 3500738",
+      "ok": true
+    },
+    {
+      "check": "anchor-hash",
+      "detail": "terminal block Some(\"00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665\"), expected 00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+      "ok": true
+    },
+    {
+      "check": "tiers",
+      "detail": "1 archive-wide shards below 3500239, 1 recent-4k-8k shards from it",
+      "ok": true
+    },
+    {
+      "check": "map-sha256",
+      "detail": "shards.json digests to 7383171e56855a250651dbf5a9567d860677c837ecb3c771f5ded859c317b832, expected 7383171e56855a250651dbf5a9567d860677c837ecb3c771f5ded859c317b832",
+      "ok": true
+    },
+    {
+      "check": "rebuild-0",
+      "detail": "3499739-3500238 15721 events, filter same, directory same, pages same, 1.5s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-1",
+      "detail": "3500239-3500738 11147 events, filter same, directory same, pages same, 0.2s",
+      "ok": true
+    }
+  ],
+  "failures": 0,
+  "generated_at": "2026-09-30T18:45:01.327121262+00:00",
+  "publication": "/srv/transparent-activity/prototype/e47bdf79/evidence/publication.json",
+  "schema": "transparent-shard-verify-v1",
+  "set": {
+    "geometries": [
+      "archive-wide",
+      "recent-4k-8k"
+    ],
+    "map_file_sha256": "7383171e56855a250651dbf5a9567d860677c837ecb3c771f5ded859c317b832",
+    "map_served_sha256": "2ad5c061afdf1c1a54e74ed05f58b9ecfe36728e20fe87a33d16af50c0c981b9",
+    "multi_segment_shards": [],
+    "rebuilt": [
+      {
+        "directory": true,
+        "events": 15721,
+        "filter": true,
+        "geometry": "archive-wide",
+        "pages": true,
+        "seconds": 1.533707741,
+        "shard_id": 0
+      },
+      {
+        "directory": true,
+        "events": 11147,
+        "filter": true,
+        "geometry": "recent-4k-8k",
+        "pages": true,
+        "seconds": 0.220121981,
+        "shard_id": 1
+      }
+    ],
+    "revisions_held": 2,
+    "shards": 2,
+    "start_height": 3499739,
+    "terminal_block_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+    "through": 3500738
+  },
+  "shard_dir": "/srv/transparent-activity/prototype/e47bdf79/publication",
+  "tool_sha": "e47bdf7904a359411e596ce4bf6a489b8a47830e"
+}

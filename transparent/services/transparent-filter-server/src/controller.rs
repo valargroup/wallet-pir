@@ -134,6 +134,7 @@ impl Authority {
 /// Snapshot only rebuilt event rows plus the endpoint hashes used to establish
 /// reuse. It stays valid even if ingest truncates and rewrites its journal.
 pub struct Snapshot {
+    journal_version: u16,
     genesis: String,
     first: u64,
     end: u64,
@@ -173,6 +174,7 @@ impl Snapshot {
             );
         }
         Ok(Self {
+            journal_version: store.version(),
             genesis: store.genesis_hash().into(),
             first: store.start_height(),
             end,
@@ -185,6 +187,9 @@ impl Snapshot {
     }
 }
 impl Journal for Snapshot {
+    fn journal_version(&self) -> u16 {
+        self.journal_version
+    }
     fn genesis_hash(&self) -> &str {
         &self.genesis
     }

@@ -1,0 +1,122 @@
+{
+  "source_sha": "e47bdf7904a359411e596ce4bf6a489b8a47830e",
+  "source": "/srv/transparent-activity/build/sources/e47bdf7904a359411e596ce4bf6a489b8a47830e",
+  "profile": "release-fast",
+  "target": "/srv/transparent-activity/build/target",
+  "unit": "transparent-activity-build-e47bdf79",
+  "pid": 1500194,
+  "log": "/srv/transparent-activity/build/evidence/e47bdf7904a359411e596ce4bf6a489b8a47830e/build.log",
+  "result": "/srv/transparent-activity/build/evidence/e47bdf7904a359411e596ce4bf6a489b8a47830e/result.json",
+  "started_at": 1790793053.008793,
+  "ended_at": 1790793159.795865,
+  "stages": [
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "-p",
+        "transparent-shard-server",
+        "-p",
+        "transparent-loadtest",
+        "-p",
+        "transparent-measure",
+        "-p",
+        "transparent-regression",
+        "--bins"
+      ],
+      "seconds": 81.7880816059187,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "extract::"
+      ],
+      "seconds": 15.520013584755361,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "events::"
+      ],
+      "seconds": 0.3336352137848735,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--bin",
+        "event-spotcheck"
+      ],
+      "seconds": 8.847880545072258,
+      "exit_code": 0
+    }
+  ],
+  "status": "passed",
+  "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "cargo_lock_sha256": "f17a055fa04a7740528f0eafadcb772e3cca39e8e7781f9a87c30192f82e3156",
+  "binaries": {
+    "transparent-event-ingest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-event-ingest",
+      "sha256": "afc656bd8f27b2b7e9e204e3eb0821de8337413d5eed204963709f141d46ac31"
+    },
+    "shard-publish": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-publish",
+      "sha256": "23c62062ed4d7b114a5ba9667c36f9b48b3e46cbafdb2813d61a523f2fbd4acc"
+    },
+    "event-spotcheck": {
+      "path": "/srv/transparent-activity/build/target/release-fast/event-spotcheck",
+      "sha256": "6a775418fc128835855eb7aac11d94d6bb44ac75cf19c23a9a38b470b125e496"
+    },
+    "shard-verify": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-verify",
+      "sha256": "a024a38dc0e175aac7d27043beb633633bcab647430b4fdd1b30dc97cb436333"
+    },
+    "script-sample": {
+      "path": "/srv/transparent-activity/build/target/release-fast/script-sample",
+      "sha256": "9ad4bb0a140e116f9fd859ef9ad94dddc4e68afdcfb9e7ebcd0c295a01f9f740"
+    },
+    "transparent-shard-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-shard-server",
+      "sha256": "9515bb1e4275a31a587696e5dc3ee806414d8b7bd99da19c4bdc53e62139876e"
+    },
+    "transparent-filter-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-filter-server",
+      "sha256": "24125349ea08907e5cd3c9086f4b08a26d65043a67a3ccba14f07fc0c7d14036"
+    },
+    "transparent-loadtest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-loadtest",
+      "sha256": "c1abc4f41b63f3e08b7f10826483a9a7be79a495c725d8372875a0036324dc17"
+    },
+    "transparent-measure": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-measure",
+      "sha256": "83e605517ef78a4e687bea85d484e1831f154388fa1ca741478e77ebdc49a934"
+    }
+  }
+}

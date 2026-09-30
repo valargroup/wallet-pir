@@ -176,6 +176,9 @@ pub fn publish(
     store: &impl Journal,
     base_parent: BlockHash,
 ) -> Result<transparent_filter::ShardMap, BoxError> {
+    if store.journal_version() != 3 {
+        return Err("v11 publication requires a fresh v3 journal with transaction metadata".into());
+    }
     let started = std::time::Instant::now();
     let Some(journal_end) = store.covered_through() else {
         return Err("the journal is empty".into());
@@ -600,6 +603,11 @@ pub fn publish(
         let events = store
             .events_at(height)?
             .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+        if events.iter().any(|(_, event)| event.metadata().is_none()) {
+            return Err(
+                format!("height {height} lacks transaction metadata required by v11").into(),
+            );
+        }
         pending.push((height, events));
         let block = pending.last().expect("just pushed");
         // One block can close two shards: the one it would have overrun, and
@@ -771,6 +779,7 @@ pub fn publish(
 
 /// Immutable journal view used by both the one-shot tool and controller snapshots.
 pub trait Journal {
+    fn journal_version(&self) -> u16;
     fn genesis_hash(&self) -> &str;
     fn start_height(&self) -> u64;
     fn covered_through(&self) -> Option<u64>;
@@ -785,6 +794,9 @@ pub trait Journal {
     >;
 }
 impl Journal for EventStore {
+    fn journal_version(&self) -> u16 {
+        self.version()
+    }
     fn genesis_hash(&self) -> &str {
         self.genesis_hash()
     }
@@ -915,7 +927,11 @@ mod tests {
         let events = vec![(
             ScriptBytes::new(vec![0x51, tag]),
             TransparentEvent::Receive(ReceiveEvent {
-                metadata: None,
+                metadata: Some(transparent_events::TransactionMetadata {
+                    fee: transparent_events::FeeState::Exact(0),
+                    transparent_input_count: 1,
+                    has_shielded_components: false,
+                }),
                 height: h as u32,
                 txid: transparent_events::Txid([tag; 32]),
                 transaction_index: 0,

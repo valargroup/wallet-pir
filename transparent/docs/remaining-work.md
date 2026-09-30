@@ -13,9 +13,13 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [x] Isolate both repositories at the recorded source bases.
 - [x] Provision and mount the selected 250 GiB coordinator volume, preserving v10 state.
 - [ ] Finish focused extraction, v11 codec, reference SQLite, contradiction and independent-oracle checks.
-- [ ] Freeze prototype source/artifacts; publish bounded real-chain recent and archive geometry data.
+- [x] Freeze prototype source/artifacts; publish bounded real-chain recent and archive geometry data.
 - [ ] Establish nonempty HTTP SQLite recovery and exact 5 QPS / 20 QPS prototype gates.
 - [ ] Backfill a separate genesis-to-anchor v3 journal and complete v11 publication.
+  Ingest owner: `transparent-activity-full-ingest-e47bdf79` on the coordinator;
+  journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
+  Candidate 5/20 QPS gates passed; retained SQLite/reopen and concurrency 4/8
+  checks remain before closing the prototype milestone.
 - [ ] Integrate metadata, source evidence, honest summaries and bounded real HTTP adapter in wallet-libraries.
 - [ ] Verify fat-LTO release artifacts and perform guarded SSH canonical cutover with v10 rollback retained.
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.

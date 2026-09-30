@@ -1,0 +1,34 @@
+{
+  "source_sha": "e47bdf7904a359411e596ce4bf6a489b8a47830e",
+  "pid": 1521199,
+  "started_unix": 1790794649.5423417,
+  "driver_sha256": "7a5c57a9099afe3e7fe7cbada3ed3eaa4c5f21cf8e5f9978faa2b391e1be7a47",
+  "binary_sha256": "82ff43e581bebe07146cfbc189629ad93492fc4ae767ea6eb24f29786ce5fcd4",
+  "fixture_sha256": "0c82e07cb79f4683ba38da6d616893f6a16443b5c05463f71be5136db9d5de4b",
+  "target_qps": 5,
+  "duration_seconds": 120,
+  "processes": 1,
+  "url": "http://127.0.0.1:8192",
+  "result": "/srv/transparent-activity/prototype/e47bdf79/evidence/query-5/result.json",
+  "child_pids": [
+    1521200
+  ],
+  "ended_unix": 1790794774.6151237,
+  "status": "passed",
+  "failures": [],
+  "exact": 596,
+  "logical_failures": 0,
+  "failed_attempts": 0,
+  "failed_attempt_ratio": 0.0,
+  "completed_qps": 4.966666666666667,
+  "p50_seconds": 0.003191819,
+  "p99_seconds": 0.021893407,
+  "missed_slots": 0,
+  "child_exit_codes": [
+    0
+  ],
+  "limitations": [
+    "Candidate endpoint only; production background traffic is measured separately",
+    "Row equality does not establish extraction correctness or completed-wallet capacity"
+  ]
+}

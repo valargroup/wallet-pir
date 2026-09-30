@@ -14,4 +14,21 @@ a missing schema destructuring field and a missing store codec dependency. These
 failed checks do not establish passing validation. Final check outputs and exact
 candidate identities are retained separately when available.
 
-No loaded prototype, production cutover or sustained qualification is claimed.
+The frozen [e47bdf79 prototype](prototype-e47bdf79/publication.json) publishes
+1,000 real blocks (3499739–3500738), 26,868 events, and both selected geometries.
+The [independent RPC oracle](prototype-e47bdf79/oracle-all.json) matched every
+block's events and transaction metadata. [Artifact verification](prototype-e47bdf79/verify.json)
+reproduced both shards' filters, directories and pages exactly.
+
+The [5 QPS gate](prototype-e47bdf79/query-5-result.json) completed 596 exact
+queries in 120 seconds; the [20 QPS gate](prototype-e47bdf79/query-20-result.json)
+completed 11,965 in 600 seconds across four processes. Both had zero failed
+attempts, logical failures and missed slots. These are loopback HTTP candidate
+measurements on the coordinator with frozen revisions, including the frozen tail;
+they do not qualify canonical HTTPS or whole-wallet sustained capacity.
+
+The first [SQLite run](prototype-e47bdf79/wallet-one.json) retained six failures
+caused by a missing store directory. Its [corrected run](prototype-e47bdf79/wallet-one-retry.json)
+completed 17 exact recoveries with no failures. That tool deleted each completed
+database; a retained database/reopen check is still required. No production
+cutover or sustained qualification is claimed.
