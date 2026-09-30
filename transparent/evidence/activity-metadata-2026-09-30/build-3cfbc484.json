@@ -1,0 +1,286 @@
+{
+  "source_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "source": "/srv/transparent-activity/build/sources/3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "profile": "release-fast",
+  "target": "/srv/transparent-activity/build/target",
+  "unit": "transparent-activity-build-3cfbc484",
+  "pid": 1589581,
+  "log": "/srv/transparent-activity/build/evidence/3cfbc4848b92b1385b9215174251f8e51fbfa804/build.log",
+  "result": "/srv/transparent-activity/build/evidence/3cfbc4848b92b1385b9215174251f8e51fbfa804/result.json",
+  "started_at": 1790799521.4254096,
+  "ended_at": 1790799848.0935366,
+  "stages": [
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "-p",
+        "transparent-shard-server",
+        "-p",
+        "transparent-loadtest",
+        "-p",
+        "transparent-measure",
+        "-p",
+        "transparent-regression",
+        "--bins"
+      ],
+      "seconds": 136.61847108835354,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-shard-server",
+        "--example",
+        "rate-query",
+        "--example",
+        "native_certificate"
+      ],
+      "seconds": 50.08991183899343,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-events",
+        "--lib"
+      ],
+      "seconds": 0.7217027838341892,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-shard",
+        "--lib",
+        "compact"
+      ],
+      "seconds": 7.436409051995724,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--lib"
+      ],
+      "seconds": 10.175591757986695,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--test",
+        "store_semantics",
+        "metadata"
+      ],
+      "seconds": 2.9794680238701403,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--example",
+        "activity-reopen"
+      ],
+      "seconds": 0.9991013240069151,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "extract::"
+      ],
+      "seconds": 61.25316876685247,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "events::"
+      ],
+      "seconds": 0.4294209210202098,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "publication::"
+      ],
+      "seconds": 4.21756263403222,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--bin",
+        "event-spotcheck"
+      ],
+      "seconds": 9.600727236829698,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--bin",
+        "journal-convert-v1"
+      ],
+      "seconds": 1.4341176636517048,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet",
+        "--features",
+        "reqwest",
+        "--lib",
+        "http::"
+      ],
+      "seconds": 34.09834614675492,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "pir-apm",
+        "--lib"
+      ],
+      "seconds": 6.2178268688730896,
+      "exit_code": 0
+    }
+  ],
+  "status": "passed",
+  "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "cargo_lock_sha256": "eb7223296ab2bff2d3853cbea577e32df99c0eaf396079e9f9bef62fb2350b75",
+  "binaries": {
+    "transparent-event-ingest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-event-ingest",
+      "sha256": "de3c5cf06c11586f0b7d065d870477484057c3c4ee696280da82e604f723573b"
+    },
+    "shard-publish": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-publish",
+      "sha256": "da4db99f6b869e839fe60b64df146d274161034f8745c4a86602355c09421f9a"
+    },
+    "event-spotcheck": {
+      "path": "/srv/transparent-activity/build/target/release-fast/event-spotcheck",
+      "sha256": "c2869d3e1d24d4261dc21b9f6c8b11ef0e93fc92ddfbaa5ae9ec5b9c486c7d3f"
+    },
+    "shard-verify": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-verify",
+      "sha256": "bfe59704911c456ec4a5478524bfb214f3c1c2a9ddd5844f42c56045138bc2e6"
+    },
+    "script-sample": {
+      "path": "/srv/transparent-activity/build/target/release-fast/script-sample",
+      "sha256": "6e70020e64a3dfae63b70211900ad561e1071345374bad724c54a5b6368fb33f"
+    },
+    "transparent-shard-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-shard-server",
+      "sha256": "44f66eba24df7a3b4a4f02b89c8e3be68aa52e28fb64c81b0f8bbeb9d0c918a6"
+    },
+    "transparent-filter-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-filter-server",
+      "sha256": "25066b2b79b45c3289011caafa2d555f89519898860d4656eea6b2b94857a014"
+    },
+    "transparent-loadtest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-loadtest",
+      "sha256": "b8e61d10be99150e2460d326f9a382ce84e78705bd29bb23c39a56c06e965903"
+    },
+    "transparent-measure": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-measure",
+      "sha256": "c4cbff65700eb51186c84462322ed6bd7bde9c64871e4b9926f1d71a2690e993"
+    },
+    "examples/rate-query": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/rate-query",
+      "sha256": "c23ca0a29fd6220670851f23fd41bb5eb49262ffb52ef528e9577b1bdd8650fa"
+    },
+    "examples/native_certificate": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/native_certificate",
+      "sha256": "d65f0aa49252ca6a40b9ae60ce26490e5c01dfcaa03c2833742ce16f44a2c073"
+    },
+    "examples/activity-reopen": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/activity-reopen",
+      "sha256": "ef9a700a52bad5c1f8536ad5a13aa402b305e006102e20292fd909f49bd4af9c"
+    }
+  }
+}

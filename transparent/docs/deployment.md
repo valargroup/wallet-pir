@@ -662,3 +662,48 @@ pins atomically, then resumes load. Failures leave load stopped for investigatio
 An existing correctness/resource latch blocks mutation. The observer chooses a
 query shard from the selected worker's current assignment unless explicitly pinned.
 The existing six-hour / 300-block and full-fleet observation gates are unchanged.
+
+## Activity metadata v3/v11 prototype and cutover
+
+The candidate journal and publication share the 250 GiB XFS coordinator volume
+at `/srv/transparent-activity`. V10 data, binaries, units, active records and caches
+remain outside that namespace. Prototype data covers only blocks 3499739–3500738;
+it cannot replace the complete canonical publication.
+
+The prototype shard service is loopback port 8192, with CPU quota 400%, 8 GiB
+process memory, no swap, 4 GiB runtime reservation, 8 GiB disk-cache limit and
+1 build / 4 query slots. Release-fast artifacts are disposable prototype artifacts.
+The frozen candidate repeats metadata on events and uses unchanged 4096-byte PIR
+rows and registry geometries. Recalculate shard occupancy from actual v11 encoded
+bytes; v10 capacity arithmetic does not establish a v11 capacity benefit.
+
+Genesis ingestion uses the RocksDB secondary reader, journal v3, fixed anchor
+3500738, two workers, CPU quota 200%, a 16 GiB memory ceiling and no swap.
+The ceiling includes RocksDB file cache; the initial 6 GiB limit caused direct
+reclaim despite roughly 89% available host memory. Its dedicated health guard retains
+source SHA, executable hash, PID/unit, checkpoint and terminal result, sampling
+memory and disk every five seconds. Stop candidate ingestion at less than 20%
+available memory or disk, or an unexpected process replacement. Independent
+chain comparisons and a complete publication remain separate acceptance gates.
+
+Build in the persistent coordinator lane with sequential Cargo writers, a 12 GiB
+memory ceiling, no swap and low CPU/I/O priority. Compress immutable source exports
+before SSH transfer. Production binaries require the fat-LTO `release` profile,
+executable checksums verified after transfer, compiler/profile/dependency provenance,
+and matching publication identities and native certificates.
+
+For canonical cutover, coordinate with publication/deployment owners, take the
+existing deployment lock and put the scaler in observe mode. Pause maintenance
+load, withdraw metadata at both public origins, stage the complete fleet assignment,
+prewarm workers, align public filter and shard origins, verify accepted anchors,
+setup and directory/page answers, then reopen. Verify schema-separated caches and
+hard links inside the publisher sandbox. Resume canonical 5-QPS traffic only with
+updated fixtures and worker pins. The paused quality supervisor remains inactive;
+new quality alerts remain in shadow. Restore the coherent v10 fleet and origins
+before reopening if a cutover gate fails; migrated clients need compatible readers.
+
+The loaded prototype and early production cutover do not establish qualification.
+Preserve the final six-hour/300-block freshness window, three sustained 60-minute
+runs at each of 8/20/40 wallets, every failed or incomplete attempt, lifecycle faults,
+and rollback/redeploy gates in the approved activity metadata plan. Supported
+completed-sync demand is at most 50% of measured sustainable throughput.

@@ -1,0 +1,15 @@
+{
+  "source_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "pid": 1598065,
+  "unit": "transparent-activity-fast-3cfbc484",
+  "started_unix": 1790799895.6176968,
+  "driver_sha256": "064d727c915f191335df8505900f6679ec90fce3d891f5d937e7f9a73a81758a",
+  "log": "/srv/transparent-activity/build/evidence/fast-3cfbc4848b92b1385b9215174251f8e51fbfa804/check.log",
+  "result": "/srv/transparent-activity/build/evidence/fast-3cfbc4848b92b1385b9215174251f8e51fbfa804/result.json",
+  "status": "passed",
+  "exit_code": 0,
+  "ended_unix": 1790800251.8569176,
+  "check_seconds": 356.21658515930176,
+  "target": "/srv/transparent-activity/build/target",
+  "source_after": "3cfbc4848b92b1385b9215174251f8e51fbfa804"
+}
