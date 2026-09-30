@@ -15,7 +15,8 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/ci"))
-from stage import run  # noqa: E402
+from stage import run, inherited_fds  # noqa: E402
+from target_lease import local_target  # noqa: E402
 FULL_GROUPS = {'enhance', 'transparent', 'shared', 'ops', 'enhance_infra', 'transparent_infra'}
 OPS = {'check-ops-enhance', 'check-ops-shared', 'check-ops-control-sessions',
        'check-ops-deploy', 'check-ops-contracts', 'check-ops-parents', 'check-ops-fleet',
@@ -176,7 +177,7 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
 def rust_checks(selected, *, features='', test='', test_target='', offline=False):
     if not selected:
         return
-    metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT))
+    metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT, **inherited_fds()))
     run(['cargo', 'fmt', '--all', '--check'], stage='format')
     options = ['--locked', '--profile', 'release-fast']
     if offline:
@@ -204,7 +205,7 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         feature_args = ['--features', enabled] if enabled else []
         command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
         run([*command, '--no-run'], stage=f'compile:{name}')
-        listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True)
+        listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True, **inherited_fds())
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
         if test_target and not discovered:
             raise ValueError(f'{name}: {test_target} has no enabled tests; select its required FEATURES')
@@ -254,7 +255,7 @@ def main():
                 out.write(f'{group}={str(group in selected["groups"]).lower()}\n')
     if args.select_only:
         return
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with local_target(ROOT, enabled=bool(selected['packages'])), ThreadPoolExecutor(max_workers=4) as pool:
         futures = []
         if selected['helpers']:
             futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']], stage='helpers'))

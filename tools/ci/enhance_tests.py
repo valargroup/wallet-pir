@@ -9,9 +9,12 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'shared/dev'))
+from target_lease import inherited_fds  # noqa: E402
 PACKAGE = 'enhance-pir-server'
 
 
@@ -47,7 +50,7 @@ def main():
     args = parser.parse_args()
     if args.tier:
         metadata = json.loads(subprocess.check_output(
-            ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if args.offline else [])], cwd=ROOT))
+            ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if args.offline else [])], cwd=ROOT, **inherited_fds()))
     else:
         package_root = ROOT / 'enhance/services/enhance-pir-server'
         manifest = tomllib.loads((package_root / 'Cargo.toml').read_text())
@@ -65,13 +68,13 @@ def main():
         env = {key: value for key, value in env.items() if not key.startswith('QUALIFY_')}
         command = ['bash', str(ROOT / 'tools/ci/full-test.sh'), *cargo_args(registry, args.tier), *(['--offline'] if args.offline else [])]
         print('+ ' + ' '.join(command), flush=True)
-        subprocess.run(command, cwd=ROOT, env=env, check=True)
+        subprocess.run(command, cwd=ROOT, env=env, check=True, **inherited_fds(env))
         if args.tier == 'full':
             # Explicit lib/bin/integration selectors do not run library doctests.
             subprocess.run(['python3', 'tools/ci/stage.py', 'doctests', '--',
                             'cargo', 'test', '--locked', '--profile', 'release-fast',
                             '-p', PACKAGE, '--doc', *(['--offline'] if args.offline else [])],
-                           cwd=ROOT, env=env, check=True)
+                           cwd=ROOT, env=env, check=True, **inherited_fds(env))
 
 
 if __name__ == '__main__':

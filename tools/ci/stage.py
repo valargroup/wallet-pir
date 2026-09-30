@@ -8,12 +8,14 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / 'shared/dev'))
+from target_lease import inherited_fds  # noqa: E402
 
 
 def run(command, *, env=None, stage='helper'):
     start = time.monotonic()
     print('+ ' + ' '.join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, env=env)
+    result = subprocess.run(command, cwd=ROOT, env=env, **inherited_fds(env))
     elapsed = time.monotonic() - start
     record = {'stage': stage, 'seconds': round(elapsed, 3), 'exit': result.returncode}
     print('CHECK_STAGE ' + json.dumps(record), flush=True)

@@ -51,9 +51,22 @@ deployment binaries retain fat LTO and native/q48/CUDA isolation.
 
 ## Build and monitor ownership
 
-Sequential compatible commands reuse the worktree's target. Concurrent writers
-use separate worktrees or persistent target lanes; do not create a cold directory
-for each command. Trusted CI release-native and q48 targets are separate lanes.
+`check-fast` and `check-package` automatically lease reusable local target lanes
+under `target/dev-lanes/<compatibility>/lane-N`. A local `CARGO_TARGET_DIR`
+override sets the pool root. The first free lane is reused; a busy lane is skipped
+using a nonblocking OS lock. Toolchain, Cargo configuration and build flags
+partition compatible pools; feature, profile and dependency changes retain
+Cargo's own fingerprint validation. Documentation-only checks need no lease or
+compiler. Leases cover compilation, test discovery, execution and nested Enhance
+checks. Child processes inherit the lease, so killing the wrapper cannot release
+a lane while Cargo or its children remain alive. Lease files must never be
+deleted to force reuse. `TARGET_LEASE` output identifies the chosen directory.
+
+Raw Cargo commands and other make targets still require separately owned targets;
+they do not participate in these wrapper leases. Registry/download locks are
+shared across lanes; `OFFLINE=1` avoids downloads but does not eliminate every
+registry-cache lock. GitHub Actions keeps its existing owned target/cache lanes.
+Trusted CI release-native and q48 targets are separate lanes.
 CUDA caches are separate by the Ubuntu 22.04 ABI, pinned compiler and CPU flags.
 Caches cannot cross from PR code into trusted release users.
 
