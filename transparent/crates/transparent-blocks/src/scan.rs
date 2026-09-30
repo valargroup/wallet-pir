@@ -36,7 +36,7 @@ impl Scanner {
             "invalid scanner range"
         );
         store.bind_set(&SetIdentity {
-            shard_schema: transparent_shard::SCHEMA.to_string(),
+            shard_schema: "compact-blocks-v1".to_string(),
             network: "benchmark".into(),
             genesis_hash: manifest.genesis_hash.clone(),
             profile: format!("compact-blocks:{}", manifest.id()?),
