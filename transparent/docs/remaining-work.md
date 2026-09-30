@@ -35,8 +35,9 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [x] Link canonical extraction and display publication to the existing checkpoint.
 - [x] Pass frozen confirmed-vector native HTTP retrieval and internal negative controls.
 - [x] Pass codec/fragment bounds, multi-segment native retrieval and sidecar restart/reorg tests.
-- [ ] Repin to the metadata agent's final source and verify the final integrated change.
-- [ ] Retain the stable-source native report and focused repository check result.
+- [x] Repin to the landed metadata source and pass the final integrated native gates.
+- [x] Retain the [stable-source native report](../evidence/txid-display-2026-10-01/README.md).
+- [x] Pass the [focused repository check](../evidence/txid-display-2026-10-01/fast-check.json).
 - [ ] Rebase onto verified main, push only this completed change and monitor main CI.
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.

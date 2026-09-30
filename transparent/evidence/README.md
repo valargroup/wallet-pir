@@ -59,3 +59,5 @@ They do not establish an accepted sustained beta operating envelope.
 Follow the [shared metadata and retention rules](../../evidence/README.md). Superseded diagnostic
 runs are listed in the [cleanup ledger](../../docs/cleanup-2026-09-14.md); their old
 status descriptions must not be read as present blockers or current fleet settings.
+
+- [Native txid display qualification](txid-display-2026-10-01/README.md): frozen confirmed vectors, private HTTP retrieval and explicit measurement limits.
