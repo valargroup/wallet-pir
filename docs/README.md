@@ -2,6 +2,7 @@
 
 - [Enhance PIR](../enhance/docs/README.md): Ironwood integration, architecture, deployment and measured performance.
 - [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
+- [Transparent activity metadata plan](transparent-pir-activity-metadata-plan.md): proposed compact fee/shape metadata, accepted activity limitations, and separate future txid PIR.
 - [Evidence](../evidence/README.md): retained measurements and their provenance.
 - [Serving contract](serving-contract.md): process identity, serving authority and refusal codes across Enhance, Status and Transparent.
 - [Control sessions](control-sessions.md): the shared supervised SSH control transport and the restricted forwarding account (source only; not deployed).
