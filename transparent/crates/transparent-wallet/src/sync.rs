@@ -2432,6 +2432,7 @@ mod tests {
             txids: 1,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: format!("{:064x}", shard_id + 300),
             revision: 0,
             sealed,
@@ -2615,6 +2616,7 @@ mod tests {
                 txids: 1,
                 excluded_scripts: 0,
             },
+            txid_display: None,
             directory_choice: None,
         }
     }

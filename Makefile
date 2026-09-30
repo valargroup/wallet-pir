@@ -326,3 +326,7 @@ check-tools:
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
 	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
+
+.PHONY: transparent-txid-demo
+transparent-txid-demo:
+	python3 transparent/tools/txid-display/demo.py $(if $(REPORT),--report "$(REPORT)") $(if $(filter 1,$(OFFLINE)),--offline)

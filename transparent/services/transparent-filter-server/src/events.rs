@@ -100,6 +100,9 @@ fn truncate(path: &Path, len: u64) -> Result<(), EventStoreError> {
 }
 
 impl EventStore {
+    pub(crate) fn directory(&self) -> &Path {
+        &self.dir
+    }
     pub fn version(&self) -> u16 {
         self.meta.version
     }
@@ -389,6 +392,61 @@ impl EventStore {
         Ok(())
     }
 
+    /// Commit display facts before appending the checkpoint-referenced block.
+    pub fn append_block_with_display(
+        &mut self,
+        height: u64,
+        block_hash: BlockHash,
+        events: &[(ScriptBytes, TransparentEvent)],
+        records: &[transparent_shard::txid::TransparentDisplayRecord],
+    ) -> Result<(), EventStoreError> {
+        if height != self.next_height() {
+            return Err(EventStoreError::Invariant("display append height".into()));
+        }
+        let by_id: std::collections::BTreeMap<_, _> =
+            records.iter().map(|r| (r.txid.0, r)).collect();
+        for (script, event) in events {
+            let record = by_id
+                .get(&event.txid().0)
+                .ok_or_else(|| EventStoreError::Invariant("event missing display record".into()))?;
+            if event.metadata() != Some(record.metadata) {
+                return Err(EventStoreError::Invariant(
+                    "display/event metadata contradiction".into(),
+                ));
+            }
+            if let TransparentEvent::Receive(receive) = event {
+                let output = record
+                    .outputs
+                    .get(receive.output_index as usize)
+                    .ok_or_else(|| EventStoreError::Invariant("display output missing".into()))?;
+                if output.value != receive.value
+                    || output.script != script.as_slice()
+                    || receive.coinbase != record.coinbase
+                {
+                    return Err(EventStoreError::Invariant(
+                        "display/receive contradiction".into(),
+                    ));
+                }
+            }
+        }
+        let (oversized, ordinary): (Vec<_>, Vec<_>) =
+            events.iter().cloned().partition(|(script, _)| {
+                script.as_slice().len() > crate::display_journal::JOURNAL_SCRIPT_LIMIT
+            });
+        crate::display_journal::write_with_events(&self.dir, block_hash, records, &oversized)?;
+        self.append_block(height, block_hash, &ordinary)
+    }
+
+    pub fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<Vec<transparent_shard::txid::TransparentDisplayRecord>, EventStoreError> {
+        let block = self.block_at(height).ok_or_else(|| {
+            EventStoreError::Invariant("display height outside checkpoint".into())
+        })?;
+        crate::display_journal::read(&self.dir, block.block_hash)
+    }
+
     /// Reads back one covered block's events, in the order they were appended.
     pub fn events_at(
         &self,
@@ -401,7 +459,13 @@ impl EventStore {
         let end = self
             .block_at(height + 1)
             .map_or(self.events_len, |next| next.offset);
-        let events = read_event_record_version(&mut file, entry, end, self.meta.version)?;
+        let mut events = read_event_record_version(&mut file, entry, end, self.meta.version)?;
+        if let Some(events) = &mut events {
+            events.extend(crate::display_journal::oversized_events(
+                &self.dir,
+                entry.block_hash,
+            )?);
+        }
         if events.as_ref().is_some_and(|events| {
             events
                 .iter()

@@ -53,6 +53,24 @@ only its assignment's shards, and the router's configuration is rendered from th
 assignment alone and routes on the shard id in the path. The separate artifact origin is a
 target; the publisher's own origins serve the public map, filters and setup today.
 
+## Private transparent display capability
+
+The opt-in [txid display contract and native demo](txid-display.md) extend the
+same coordinator with `txdirectory` and `txpages`. This is separate from script
+history discovery. Full txids select packed 4 KiB rows privately; inline records
+up to 128 bytes and overflow fragments carry shared transaction metadata and
+complete ordered transparent outputs, including scripts outside the history
+profile. Canonical extraction and block-hash-addressed display sidecars use the
+existing event checkpoint; missing sidecars prevent complete display publication.
+
+The capability has its own codec identity, manifest digests and table bindings.
+Workers verify its tables and include them in readiness, assignment and bounded
+cache accounting. No production activation or data migration follows from this
+source change. The reference query helper is demo/test code. The next wallet
+stage adds history/display lanes to one coordinator, preserves local send facts,
+and keeps confirmation, fee availability, financial coverage and display
+completeness independent. A display failure cannot authorize public lookup.
+
 ## Component ownership
 
 | Component | Source | Responsibility |

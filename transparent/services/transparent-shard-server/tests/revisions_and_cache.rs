@@ -165,6 +165,7 @@ fn write_revision_geometry(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        txid_display: None,
         directory_choice: None,
     };
 
@@ -226,6 +227,7 @@ fn write_map_geometry(
             txids: 0,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: digest.to_string(),
             revision,
             sealed: false,

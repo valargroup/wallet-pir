@@ -26,6 +26,21 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 
+## Server txid display stage (2026-10-01)
+
+Scope and reproducible acceptance command: [txid display](txid-display.md).
+
+- [x] Isolate the server change on `codex/tpir-txid-display`.
+- [x] Implement independent display codec, packed directory/pages and worker routing.
+- [x] Link canonical extraction and display publication to the existing checkpoint.
+- [x] Pass frozen confirmed-vector native HTTP retrieval and internal negative controls.
+- [x] Pass codec/fragment bounds, multi-segment native retrieval and sidecar restart/reorg tests.
+- [ ] Repin to the metadata agent's final source and verify the final integrated change.
+- [ ] Retain the stable-source native report and focused repository check result.
+- [ ] Rebase onto verified main, push only this completed change and monitor main CI.
+- [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
+- [ ] Qualify production capacity and release artifacts; obtain deployment approval.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

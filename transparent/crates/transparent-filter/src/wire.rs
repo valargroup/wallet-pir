@@ -114,6 +114,9 @@ pub struct ShardMapEntry {
     /// is never named in a request.
     pub directory_segments: u32,
     pub page_segments: u32,
+    /// Optional directory/pages segment counts for the txid display capability.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txid_segments: Option<[u32; 2]>,
     /// Digest of the shard's manifest: the identity of *this revision* of it.
     ///
     /// A growing tail is republished as a new revision with its own digest, so
@@ -214,6 +217,12 @@ impl ShardMap {
             // accepted one would advance coverage over a range it never read.
             if shard.directory_segments == 0 || shard.page_segments == 0 {
                 return Err(format!("shard {index} declares no segments"));
+            }
+            if shard
+                .txid_segments
+                .is_some_and(|counts| counts.contains(&0))
+            {
+                return Err(format!("shard {index} txid display declares no segments"));
             }
             // A geometry with no published thresholds is a shard whose
             // boundary cannot be checked, and one with no name is a shard whose

@@ -84,11 +84,11 @@ pub type IndexedEvent = (ScriptBytes, TransparentEvent);
 /// not part of an event. A wallet resolves height to hash against its own
 /// accepted chain, which is the only source that can safely answer whether an
 /// event sits on a branch it accepts.
-pub fn extract_events(
+pub fn extract_block(
     transactions: &[Arc<Transaction>],
     previous: &mut impl PreviousOutputs,
     height: u32,
-) -> Result<Vec<IndexedEvent>, ExtractError> {
+) -> Result<ExtractedBlock, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
     let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
@@ -105,6 +105,7 @@ pub fn extract_events(
     }
 
     let mut events: Vec<IndexedEvent> = Vec::new();
+    let mut display = Vec::new();
 
     for (transaction_index, transaction) in transactions.iter().enumerate() {
         let txid = Txid(transaction.hash().0);
@@ -169,6 +170,25 @@ pub fn extract_events(
             .validate(coinbase)
             .map_err(|e| ExtractError::Metadata(e.to_string()))?;
 
+        if !transaction.inputs().is_empty() || !transaction.outputs().is_empty() {
+            let record = transparent_shard::txid::TransparentDisplayRecord {
+                txid,
+                coinbase,
+                metadata,
+                outputs: transaction
+                    .outputs()
+                    .iter()
+                    .map(|o| transparent_shard::txid::DisplayOutput {
+                        value: u64::from(o.value),
+                        script: o.lock_script.as_raw_bytes().to_vec(),
+                    })
+                    .collect(),
+            };
+            record
+                .encode()
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            display.push(record);
+        }
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
         for (output_index, output) in transaction.outputs().iter().enumerate() {
             let script = ScriptBytes::new(output.lock_script.as_raw_bytes().to_vec());
@@ -225,7 +245,20 @@ pub fn extract_events(
         }
     }
 
-    Ok(events)
+    Ok(ExtractedBlock { events, display })
+}
+
+pub struct ExtractedBlock {
+    pub events: Vec<IndexedEvent>,
+    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
+}
+
+pub fn extract_events(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+    height: u32,
+) -> Result<Vec<IndexedEvent>, ExtractError> {
+    Ok(extract_block(transactions, previous, height)?.events)
 }
 
 /// The element set for one block.

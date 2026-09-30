@@ -28,6 +28,7 @@ pub mod page_row;
 pub mod records;
 pub mod seal;
 pub mod tag;
+pub mod txid;
 
 pub use build::{
     build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,

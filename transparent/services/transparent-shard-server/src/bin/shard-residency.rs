@@ -171,6 +171,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let other = match table {
         Table::Directory => Table::Pages,
         Table::Pages => Table::Directory,
+        Table::TxDirectory => Table::TxPages,
+        Table::TxPages => Table::TxDirectory,
     };
     let other_shared = SharedParams::build(geometry, other)?;
     let other_reserved = other_shared.reserved_bytes();

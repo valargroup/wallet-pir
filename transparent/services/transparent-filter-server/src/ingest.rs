@@ -5,7 +5,7 @@
 //! back one block at a time until the stored hash agrees with the node, which
 //! is what makes a reorg a rollback rather than a silently divergent history.
 
-use crate::extract::{extract_events, IndexedEvent};
+use crate::extract::{extract_block, IndexedEvent};
 use crate::prevout::{prefetch_previous_outputs, OutputCache, ZakuraPreviousOutputs};
 use crate::service::{Phase, ServiceState};
 use crate::store::FilterStore;
@@ -64,6 +64,7 @@ pub struct BuiltFilter {
 pub struct BuiltEvents {
     pub block_hash: BlockHash,
     pub events: Vec<IndexedEvent>,
+    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
     pub rpc_lookups: u64,
     pub cache_hits: u64,
 }
@@ -123,7 +124,7 @@ pub async fn build_fetched_block_events(
         let mut cache_owned = std::mem::replace(cache, OutputCache::new(1));
         move || {
             let mut previous = ZakuraPreviousOutputs::new(&client, runtime, &mut cache_owned);
-            let result = extract_events(&transactions, &mut previous, event_height);
+            let result = extract_block(&transactions, &mut previous, event_height);
             let counts = (previous.rpc_lookups, previous.cache_hits);
             (result, counts.0, counts.1, cache_owned)
         }
@@ -131,9 +132,11 @@ pub async fn build_fetched_block_events(
     .await?;
     *cache = cache_out;
 
+    let extracted = events?;
     Ok(BuiltEvents {
         block_hash,
-        events: events?,
+        events: extracted.events,
+        display: extracted.display,
         // The pre-pass did the fetching; any straggler resolved during
         // extraction is counted with it.
         rpc_lookups: rpc_lookups + batched,

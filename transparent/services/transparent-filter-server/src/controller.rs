@@ -143,6 +143,7 @@ pub struct Snapshot {
     events: std::sync::Mutex<std::fs::File>,
     events_offset: u64,
     events_first: u64,
+    display_dir: PathBuf,
 }
 impl Snapshot {
     pub fn capture(store: &EventStore, previous: &ShardMap) -> Result<Self, BoxError> {
@@ -183,12 +184,23 @@ impl Snapshot {
             events: std::sync::Mutex::new(events),
             events_offset,
             events_first: first,
+            display_dir: store.directory().to_path_buf(),
         })
     }
 }
 impl Journal for Snapshot {
     fn journal_version(&self) -> u16 {
         self.journal_version
+    }
+    fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<Vec<transparent_shard::txid::TransparentDisplayRecord>, EventStoreError> {
+        let block = self
+            .blocks
+            .get(&height)
+            .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
+        crate::display_journal::read(&self.display_dir, block.block_hash)
     }
     fn genesis_hash(&self) -> &str {
         &self.genesis
@@ -226,7 +238,14 @@ impl Journal for Snapshot {
             .map_or(file.metadata()?.len(), |next| {
                 next.offset - self.events_offset
             });
-        crate::events::read_event_record(&mut file, entry, end)
+        let mut events = crate::events::read_event_record(&mut file, entry, end)?;
+        if let Some(events) = &mut events {
+            events.extend(crate::display_journal::oversized_events(
+                &self.display_dir,
+                entry.block_hash,
+            )?);
+        }
+        Ok(events)
     }
 }
 
@@ -556,7 +575,26 @@ async fn ingest_once(
         }
         {
             let mut journal = store.lock().await;
-            journal.append_block(next, built.block_hash, &built.events)?;
+            let display = authority
+                .0
+                .active
+                .read()
+                .unwrap()
+                .filters
+                .map()
+                .shards
+                .iter()
+                .any(|s| s.txid_segments.is_some());
+            if display {
+                journal.append_block_with_display(
+                    next,
+                    built.block_hash,
+                    &built.events,
+                    &built.display,
+                )?;
+            } else {
+                journal.append_block(next, built.block_hash, &built.events)?;
+            }
             journal.commit()?;
         }
         authority.0.status.write().unwrap()["journal_height"] = next.into();
@@ -647,6 +685,12 @@ async fn publish_once(
             record: Some(directory.join("publication.json")),
             source_sha: Some(config.source_sha.clone()),
             directory_choice: config.directory_choice,
+            txid_display: old
+                .filters
+                .map()
+                .shards
+                .iter()
+                .any(|s| s.txid_segments.is_some()),
             range_profile: config.range_profile.clone(),
         };
         tokio::task::spawn_blocking(move || {
@@ -1153,6 +1197,7 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
+            txid_display: false,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();

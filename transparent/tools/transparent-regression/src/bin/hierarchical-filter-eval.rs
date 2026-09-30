@@ -697,6 +697,7 @@ mod seed_tests {
             txids: 2,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: "22".repeat(32),
             revision: 0,
             sealed: false,

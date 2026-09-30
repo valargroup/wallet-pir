@@ -19,6 +19,8 @@ The contract governs intended behavior; code establishes implementation; deploym
 8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
 9. [Elastic recent replicas](elastic-recent.md): inventory, membership, scaler and actuator formats for the automatically scaled recent tier.
 
+10. [Txid display PIR](txid-display.md): opt-in server tables, native HTTP demo and subsequent wallet integration.
+
 ## Product boundaries
 
 Active transparent recovery uses `transparent/crates/transparent-events`, `transparent/crates/transparent-filter`, `transparent/crates/transparent-shard`, `transparent/crates/transparent-wallet`, `transparent/crates/transparent-wallet-store`, `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.

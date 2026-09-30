@@ -54,8 +54,8 @@ pub struct ManifestOccupancy {
     pub fragments: u64,
     pub events: u64,
     pub blocks: u64,
-    /// Distinct transaction ids. Reported only; the transaction-detail table
-    /// they would size is not built.
+    /// Distinct transaction ids in supported script histories. Display coverage
+    /// is counted separately because it also includes unindexed raw scripts.
     pub txids: u64,
     /// Scripts present in the filter but absent from the directory because they
     /// exceed `max_script_bytes`.
@@ -204,6 +204,8 @@ pub struct ShardManifest {
     /// not decode is a malformed publication, not an absent one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory_choice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txid_display: Option<crate::txid::DisplayTables>,
 }
 
 /// Why a published choice table cannot be used.
@@ -390,6 +392,7 @@ mod tests {
                 txids: 10_355,
                 excluded_scripts: 0,
             },
+            txid_display: None,
             directory_choice: None,
         }
     }

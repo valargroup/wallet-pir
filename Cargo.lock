@@ -4313,10 +4313,12 @@ dependencies = [
  "tracing-subscriber",
  "transparent-events",
  "transparent-filter",
+ "transparent-filter-server",
  "transparent-native",
  "transparent-shard",
  "transparent-wallet",
  "transparent-wallet-store",
+ "zakura-chain 9.0.0",
 ]
 
 [[package]]

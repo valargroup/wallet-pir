@@ -35,7 +35,7 @@
 //! irrelevant. Near the tip it means a height can be briefly absent, which
 //! surfaces as [`StateError::MissingBlock`] rather than as a wrong answer.
 
-use crate::extract::{extract_events, outpoint_label, PreviousOutputs};
+use crate::extract::{extract_block, outpoint_label, PreviousOutputs};
 use crate::ingest::BuiltEvents;
 use std::path::{Path, PathBuf};
 use transparent_filter::BlockHash;
@@ -164,10 +164,11 @@ impl StateReader {
             db: &self.db,
             lookups: 0,
         };
-        let events = extract_events(&block.transactions, &mut previous, event_height)?;
+        let extracted = extract_block(&block.transactions, &mut previous, event_height)?;
         Ok(BuiltEvents {
             block_hash,
-            events,
+            events: extracted.events,
+            display: extracted.display,
             // Named for the field the RPC path fills. These are local database
             // reads, and a run reporting thousands of them per second is
             // reporting that, not network traffic.
