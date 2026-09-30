@@ -178,6 +178,22 @@ class PlannerTests(unittest.TestCase):
                 fast.rust_checks(['example'], test_target='native')
 
 
+    def test_feature_gated_classifications_enable_discovery_and_reject_renames(self):
+        metadata = {'packages': [{'name': 'transparent-wallet', 'targets': [{'kind': ['lib']}]}]}
+        registry = json.loads((ROOT/'tools/ci/slow-tests.json').read_text())['transparent-wallet']
+        listing = ''.join(name + ': test\n' for name in registry)
+        calls = []
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), listing]), \
+             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
+            fast.rust_checks(['transparent-wallet'])
+        self.assertIn('reqwest', calls[-1])
+        self.assertIn('--skip', calls[-1])
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'renamed: test\n']), \
+             patch.object(fast, 'run'):
+            with self.assertRaisesRegex(ValueError, 'stale'):
+                fast.rust_checks(['transparent-wallet'])
+
+
 
 class IntegrityTests(unittest.TestCase):
     def test_partial_rerun_labels_reused_jobs_without_negative_queue_time(self):

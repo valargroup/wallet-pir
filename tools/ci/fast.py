@@ -197,7 +197,10 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         # CLI is a cheap client feature, not a protocol/hardware mode. Cargo
         # otherwise silently skips these required-feature binary test targets.
         required = {f for t in targets for f in t.get('required-features', [])}
-        enabled = features or ','.join(sorted(required & {'cli'}))
+        slow = {} if test_target else registry.get(name, {})
+        classified_features = {f for entry in slow.values() if isinstance(entry, dict)
+                               for f in entry.get('features', [])}
+        enabled = features or ','.join(sorted((required & {'cli'}) | classified_features))
         feature_args = ['--features', enabled] if enabled else []
         command = ['cargo', 'test', *options, *feature_args, '-p', name, *kinds]
         run([*command, '--no-run'], stage=f'compile:{name}')

@@ -5,8 +5,18 @@
     "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery."
   },
   "transparent-wallet": {
-    "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": "Exercises real HTTP retry/backoff waits across multiple responses.",
-    "http::observation_tests::retries_established_connection_failures_with_bounded_attempts": "Exercises real connection failures and bounded retry/backoff waits."
+    "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": {
+      "reason": "Exercises real HTTP retry/backoff waits across multiple responses.",
+      "features": [
+        "reqwest"
+      ]
+    },
+    "http::observation_tests::retries_established_connection_failures_with_bounded_attempts": {
+      "reason": "Exercises real connection failures and bounded retry/backoff waits.",
+      "features": [
+        "reqwest"
+      ]
+    }
   },
   "transparent-filter-server": {
     "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end."
