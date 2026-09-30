@@ -1,0 +1,11 @@
+{
+  "base_sha": "0d843d4b752d252331c2887f12f5916777913d33",
+  "check_fast": {
+    "status": "pass",
+    "seconds": 24.45439924998209,
+    "exit_code": 0
+  },
+  "all_target_store_clippy": "passed",
+  "changed_file_sha256": "dc11d03d02ea11355bca0f7b2662e7e1060e737ef181faf55ae82eb11e24b20d",
+  "change": "Equivalent key-based event ordering resolves the remaining store lint gate. No protocol or publication identity change."
+}

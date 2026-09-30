@@ -87,3 +87,11 @@ from the actual v11 service response, and the deploy script's jq contract check
 passed against them. A named observation key and equivalent key-based sorting
 resolve the three Clippy findings; the focused wallet Clippy check passed.
 Repaired comprehensive CI remains a separate pending qualification gate.
+
+The follow-up review found one remaining store lint and two wallet-library bugs:
+metadata could suppress an independently known mixed local-send fee, and a crash
+before export acknowledgment could omit later withdrawal reconciliation. Both
+library regressions reproduced before repair. The store's equivalent key-based
+sort passed all-target Clippy and the [affected check](review-store-lint-fix.json).
+The library fixes retain local construction facts and durably record conservative
+export intent before returning a batch; repaired-source CI remains required.

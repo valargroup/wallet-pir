@@ -571,7 +571,7 @@ impl WalletStore for SqliteStore {
                 revision_digest,
             });
         }
-        events.sort_by(|a, b| a.event.sort_key().cmp(&b.event.sort_key()));
+        events.sort_by_key(|entry| entry.event.sort_key());
         Ok(events)
     }
 
