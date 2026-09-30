@@ -22,6 +22,7 @@ fast, timings, snapshot = load('fast'), load('timings'), load('snapshot_check')
 import sys
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 full = load('full_packages')
+scaler = load('scaler_tests')
 
 
 class PlannerTests(unittest.TestCase):
@@ -118,6 +119,31 @@ class PlannerTests(unittest.TestCase):
             fast.rust_checks(['pir-apm'], test='failed_and_slow')
         self.assertIn('failed_and_slow', calls[-1])
         self.assertNotIn('--skip', calls[-1])
+
+    def test_explicit_integration_target_preserves_features_and_filter(self):
+        metadata = {'packages': [{'name': 'example', 'targets': [{'name': 'http', 'kind': ['test']}]}]}
+        calls = []
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'answers: test\n']), \
+             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
+            fast.rust_checks(['example'], features='native', test_target='http', test='answers')
+        self.assertIn('native', calls[-1])
+        self.assertEqual(calls[-1][-2:], ['--', 'answers'])
+        self.assertIn('--test', calls[-1])
+        self.assertNotIn('--lib', calls[-1])
+        self.assertNotIn('--skip', calls[-1])
+
+
+    def test_scaler_fast_excludes_exhaustive_models_and_registry_rejects_renames(self):
+        result = fast.plan(self.packages, ['transparent/ops/scaler/decide.py'])
+        self.assertIn('check-ops-scaler-fast', result['helpers'])
+        self.assertNotIn('check-ops-scaler', result['helpers'])
+        registry = json.loads((ROOT/'tools/ci/scaler-tests.json').read_text())
+        scaler.validate(registry)
+        self.assertIn('test_membership_model', registry['full'])
+        registry['fast'][0] = 'renamed'
+        with self.assertRaisesRegex(ValueError, 'classification mismatch'):
+            scaler.validate(registry)
+
 
 
 class IntegrityTests(unittest.TestCase):

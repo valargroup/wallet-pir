@@ -345,7 +345,7 @@ jobs:
           lane: release
       - name: Build optimized release binaries once
         run: >-
-          cargo build --locked --release
+          python3 tools/ci/stage.py compile:release -- cargo build --locked --release
           -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
           -p transparent-filter-server -p transparent-shard-server
           --bin enhance-pir-server --bin enhance-pir-load-test
@@ -355,7 +355,7 @@ jobs:
       - name: Assemble checksummed release bundles
         env:
           SHA: ${{ github.sha }}
-        run: python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
+        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
       # The native profile serves an incompatible protocol; build it in its own
       # target directory so feature unification never leaks into the q48 bundle.
       - uses: ./.github/actions/rust-setup
@@ -363,19 +363,19 @@ jobs:
           lane: release-native
       - name: Build native Enhance binaries
         run: >-
-          cargo build --locked --release
+          python3 tools/ci/stage.py compile:native -- cargo build --locked --release
           -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test
           --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir
           --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
       - name: Assemble native Enhance bundle
         env:
           SHA: ${{ github.sha }}
-        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target "$CARGO_TARGET_DIR" --output release-bundles-native
+        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target "$CARGO_TARGET_DIR" --output release-bundles-native
       # Status roles and controller come from the same native build.
       - name: Assemble Status bundle
         env:
           SHA: ${{ github.sha }}
-        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target "$CARGO_TARGET_DIR" --output release-bundles-status
+        run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target "$CARGO_TARGET_DIR" --output release-bundles-status
       - uses: actions/upload-artifact@v4
         with:
           name: status-pir-${{ github.sha }}
@@ -465,7 +465,7 @@ jobs:
           GIT_CONFIG_KEY_0: safe.directory
           GIT_CONFIG_VALUE_0: ${{ github.workspace }}
         run: >-
-          python3 tools/ci/release.py assemble --sha "$SHA"
+          python3 tools/ci/stage.py artifact:cuda -- python3 tools/ci/release.py assemble --sha "$SHA"
           --kind enhance-pir-native-cuda --target target/native-cuda
           --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda
       - uses: actions/upload-artifact@v4

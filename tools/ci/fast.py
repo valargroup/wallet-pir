@@ -10,16 +10,18 @@ import json
 import os
 from pathlib import Path
 import subprocess
-import time
+import sys
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools/ci"))
+from stage import run  # noqa: E402
 FULL_GROUPS = {'enhance', 'transparent', 'shared', 'ops', 'enhance_infra', 'transparent_infra'}
 OPS = {'check-ops-enhance', 'check-ops-shared', 'check-ops-control-sessions',
        'check-ops-deploy', 'check-ops-contracts', 'check-ops-parents', 'check-ops-fleet',
        'check-ops-publication', 'check-ops-burst', 'check-ops-regression-recut',
        'check-ops-regression-fixtures', 'check-ops-observation', 'check-ops-stage-timing',
-       'check-ops-membership', 'check-ops-elastic', 'check-ops-scaler'}
+       'check-ops-membership', 'check-ops-elastic', 'check-ops-scaler-fast'}
 HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 
 
@@ -73,7 +75,7 @@ def route(path):
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
     if path.startswith('transparent/ops/'):
         if 'scaler' in path or 'membership_model' in path:
-            targets = {'check-ops-scaler'}
+            targets = {'check-ops-scaler-fast'}
         elif 'elastic' in path or 'test_transparent_plan' in path:
             targets = {'check-ops-elastic'}
         elif 'burst' in path:
@@ -166,20 +168,8 @@ def changed_paths(base='', head='HEAD', *, local=True, root=ROOT):
     return sorted(paths - {''})
 
 
-def run(command, *, env=None, stage='helper'):
-    start = time.monotonic()
-    print('+ ' + ' '.join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, env=env)
-    elapsed = time.monotonic() - start
-    record = {'stage': stage, 'seconds': round(elapsed, 3), 'exit': result.returncode}
-    print('CHECK_STAGE ' + json.dumps(record), flush=True)
-    if os.environ.get('GITHUB_STEP_SUMMARY'):
-        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as out:
-            out.write(f'| {stage} | {elapsed:.2f}s | {result.returncode} |\n')
-    result.check_returncode()
 
-
-def rust_checks(selected, *, features='', test='', offline=False):
+def rust_checks(selected, *, features='', test='', test_target='', offline=False):
     if not selected:
         return
     metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if offline else [])], cwd=ROOT))
@@ -195,22 +185,26 @@ def rust_checks(selected, *, features='', test='', offline=False):
         if name not in selected:
             continue
         targets = [t for t in package['targets'] if t.get('test', True) and any(k in ('lib', 'bin') for k in t['kind'])]
+        if test_target and not any(t['name'] == test_target and 'test' in t['kind'] for t in package['targets']):
+            raise ValueError(f'{name}: unknown integration target: {test_target}')
         kinds = [flag for kind, flag in [('lib', '--lib'), ('bin', '--bins')] if any(kind in t['kind'] for t in targets)]
+        if test_target:
+            kinds = ['--test', test_target]
         if not kinds:
             continue
         command = ['cargo', 'test', *options, '-p', name, *kinds]
         run([*command, '--no-run'], stage=f'compile:{name}')
         listing = subprocess.check_output([*command, '--', '--list'], cwd=ROOT, text=True)
         discovered = {line.removesuffix(': test') for line in listing.splitlines() if line.endswith(': test')}
-        slow = registry.get(name, {})
+        slow = {} if test_target else registry.get(name, {})
         stale = set(slow) - discovered if not features else set()
         if stale:
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
         if test and not any(test in name for name in discovered):
-            raise ValueError(f'{name}: test filter matched no unit tests: {test}')
+            raise ValueError(f'{name}: test filter matched no tests: {test}')
         args = ['--', *([test] if test else []), *sum((['--skip', n] for n in slow if not test), [])]
         run([*command, *args], env=dict(os.environ, RUST_TEST_THREADS='1'), stage=f'tests:{name}')
-    if 'enhance-pir-server' in selected and not test and not features:
+    if 'enhance-pir-server' in selected and not test and not test_target and not features:
         command = ['python3', 'tools/ci/enhance_tests.py', '--tier', 'fast']
         if offline:
             command.append('--offline')
@@ -226,6 +220,7 @@ def main():
     parser.add_argument('--package', action='append')
     parser.add_argument('--features', default='')
     parser.add_argument('--test', default='')
+    parser.add_argument('--test-target', default='')
     parser.add_argument('--offline', action='store_true')
     parser.add_argument('--select-only', action='store_true')
     parser.add_argument('--github-output', action='store_true')
@@ -250,7 +245,7 @@ def main():
         futures = []
         if selected['helpers']:
             futures.append(pool.submit(run, ['make', '-j4', *selected['helpers']], stage='helpers'))
-        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, offline=args.offline))
+        futures.append(pool.submit(rust_checks, selected['packages'], features=args.features, test=args.test, test_target=args.test_target, offline=args.offline))
         errors = []
         for future in futures:
             try:

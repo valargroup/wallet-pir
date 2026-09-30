@@ -35,7 +35,7 @@ def elapsed(start, end):
 
 
 def percentile95(values):
-    return sorted(values)[math.ceil(len(values) * .95) - 1] if values else None
+    return sorted(values)[math.ceil(len(values) * .95) - 1] if len(values) >= 20 else None
 
 
 def report(repo, run_id):

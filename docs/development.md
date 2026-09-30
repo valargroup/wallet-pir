@@ -13,6 +13,7 @@ make doctor
 make prepare-dev  # explicit, one-time fetch of pinned dependencies
 make check-fast BASE=origin/main OFFLINE=1
 make check-package PACKAGE=pir-apm TEST=dashboard FEATURES= OFFLINE=1
+make check-package PACKAGE=transparent-shard-server TEST_TARGET=wallet_sync TEST=a_choice OFFLINE=1
 make check-full   # comprehensive local validation, not the default inner loop
 ```
 
@@ -31,6 +32,11 @@ FEATURES select unit targets with those features and do not add default-feature
 integration targets. Full package families are validated against every workspace
 member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP, crypto, fault injection,
 restart and deployment qualification remain distinct from short model tests.
+
+Fast scaler feedback runs decision, forecast, signal, daemon and metrics unit
+tests. Seeded fleet simulations and exhaustive membership/mutant checks remain
+in full operations qualification; their module registry rejects missing or
+renamed assignments. No production clocks or thresholds change.
 
 Full PR jobs select affected product/shared/operations/infrastructure families.
 Shared library changes expand through reverse dependencies, while unknown paths
@@ -71,7 +77,8 @@ python3 tools/ci/measure.py --category docs --population warm --runs 20 \
 
 Categories are docs, ops, leaf, shared, dependency and artifact. Cold/warm labels
 are operator assertions, not inferred from speed. The recorder never purges a
-cache. It reports p95 only after 20 successful, unchanged-snapshot runs and keeps
+cache. `TEST_TARGET` selects a named integration executable; `TEST` filters test
+names in that executable (or unit targets when TEST_TARGET is omitted). It reports p95 only after 20 successful, unchanged-snapshot runs and keeps
 failures visible. Compare the same workload, host, flags and population before
 and after; local execution excludes Actions queue/setup. The warm CI target is
 30 seconds; deployment's prepared-artifact target remains two minutes. These

@@ -14,7 +14,9 @@
   "enhance-pir-server": {
     "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
-    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions.",
+    "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence."
   },
   "pir-apm": {
     "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",

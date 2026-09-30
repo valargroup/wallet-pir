@@ -24,7 +24,7 @@ check-fast:
 
 check-package:
 	@test -n "$(PACKAGE)" || { echo "Set PACKAGE=<workspace package>"; exit 1; }
-	python3 tools/ci/fast.py --package "$(PACKAGE)" $(if $(TEST),--test "$(TEST)") $(if $(FEATURES),--features "$(FEATURES)") $(if $(filter 1,$(OFFLINE)),--offline)
+	python3 tools/ci/fast.py --package "$(PACKAGE)" $(if $(TEST),--test "$(TEST)") $(if $(TEST_TARGET),--test-target "$(TEST_TARGET)") $(if $(FEATURES),--features "$(FEATURES)") $(if $(filter 1,$(OFFLINE)),--offline)
 
 doctor:
 	python3 tools/ci/doctor.py $(if $(filter 1,$(NETWORK)),--network)
@@ -113,8 +113,11 @@ check-ops-elastic:
 # simulator (test_scaler_sim.py) and the exhaustive membership and actuation
 # model (test_membership_model.py).
 check-ops-scaler:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_scaler_*.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_membership_model.py'
+	python3 tools/ci/scaler_tests.py --tier full
+
+.PHONY: check-ops-scaler-fast
+check-ops-scaler-fast:
+	python3 tools/ci/scaler_tests.py --tier fast
 
 .PHONY: check-reports
 check-reports:
@@ -317,6 +320,7 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
+	python3 tools/ci/scaler_tests.py
 	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
