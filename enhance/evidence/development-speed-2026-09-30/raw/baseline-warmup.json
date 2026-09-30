@@ -1,0 +1,13 @@
+{
+  "command": [
+    "make",
+    "check-package",
+    "PACKAGE=pir-control",
+    "TEST=identity",
+    "OFFLINE=1"
+  ],
+  "exit": 0,
+  "seconds": 7.534304542001337,
+  "host": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "sha": "a73c85f0ff63376839e75fbd6d582930454c84e0"
+}

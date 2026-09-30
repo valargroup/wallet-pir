@@ -1,0 +1,96 @@
+{
+  "sha": "4f0c98cdec73fd6132d3e7842d1998889d7f8452",
+  "host": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "command": [
+    "make",
+    "check-package",
+    "PACKAGE=pir-control",
+    "TEST=identity",
+    "OFFLINE=1"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target",
+    "RUSTFLAGS": null,
+    "CFLAGS": null,
+    "CXXFLAGS": null
+  },
+  "runs": [
+    {
+      "index": 0,
+      "start_seconds": 0.001031,
+      "end_seconds": 9.025859,
+      "elapsed_seconds": 9.024828,
+      "exit": 0,
+      "targets": [
+        {
+          "target": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1",
+          "compatibility": "0be2c833532909a0b337",
+          "owner_pid": 34436
+        }
+      ],
+      "cargo_intervals": [
+        {
+          "start_seconds": 1.068161,
+          "end_seconds": 8.408547,
+          "stage": "compile:pir-control",
+          "seconds": 7.34,
+          "exit": 0
+        },
+        {
+          "start_seconds": 8.897797,
+          "end_seconds": 9.018887,
+          "stage": "tests:pir-control",
+          "seconds": 0.121,
+          "exit": 0
+        }
+      ],
+      "lock_waits": [
+        {
+          "at_seconds": 1.183226,
+          "line": "    Blocking waiting for file lock on package cache"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "start_seconds": 0.000996,
+      "end_seconds": 9.607202,
+      "elapsed_seconds": 9.606206,
+      "exit": 0,
+      "targets": [
+        {
+          "target": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-0",
+          "compatibility": "0be2c833532909a0b337",
+          "owner_pid": 34437
+        }
+      ],
+      "cargo_intervals": [
+        {
+          "start_seconds": 1.068175,
+          "end_seconds": 9.125994,
+          "stage": "compile:pir-control",
+          "seconds": 8.058,
+          "exit": 0
+        },
+        {
+          "start_seconds": 9.495051,
+          "end_seconds": 9.600943,
+          "stage": "tests:pir-control",
+          "seconds": 0.106,
+          "exit": 0
+        }
+      ],
+      "lock_waits": [
+        {
+          "at_seconds": 1.11316,
+          "line": "    Blocking waiting for file lock on package cache"
+        }
+      ]
+    }
+  ],
+  "cargo_overlap_seconds": [
+    7.340372,
+    0.12109
+  ]
+}

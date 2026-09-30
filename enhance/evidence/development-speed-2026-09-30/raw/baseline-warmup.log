@@ -1,0 +1,54 @@
+python3 tools/ci/fast.py --package "pir-control" --test "identity"   --offline
+{
+  "packages": [
+    "pir-control"
+  ],
+  "helpers": [],
+  "groups": [],
+  "reasons": [
+    "explicit package check"
+  ]
+}
++ cargo fmt --all --check
+CHECK_STAGE {"stage": "format", "seconds": 0.804, "exit": 0}
++ cargo test --locked --profile release-fast --offline -p pir-control --lib --no-run
+   Compiling libc v0.2.184
+   Compiling version_check v0.9.5
+   Compiling typenum v1.19.0
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.45
+   Compiling zerocopy v0.8.48
+   Compiling unicode-ident v1.0.24
+   Compiling cfg-if v1.0.4
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling hex v0.4.3
+   Compiling generic-array v0.14.7
+   Compiling getrandom v0.2.17
+   Compiling cpufeatures v0.2.17
+   Compiling rand_core v0.6.4
+   Compiling syn v2.0.117
+   Compiling serde_derive v1.0.228
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling ppv-lite86 v0.2.21
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.5
+   Compiling pir-control v0.1.0 (/Users/roman/.codex/worktrees/97ee/wallet-pir/shared/pir-control)
+    Finished `release-fast` profile [optimized] target(s) in 5.96s
+  Executable unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/release-fast/deps/pir_control-bcf82a358a56f3fd)
+CHECK_STAGE {"stage": "compile:pir-control", "seconds": 5.988, "exit": 0}
+    Finished `release-fast` profile [optimized] target(s) in 0.08s
+     Running unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/release-fast/deps/pir_control-bcf82a358a56f3fd)
++ cargo test --locked --profile release-fast --offline -p pir-control --lib -- identity
+    Finished `release-fast` profile [optimized] target(s) in 0.09s
+     Running unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/release-fast/deps/pir_control-bcf82a358a56f3fd)
+
+running 1 test
+test tests::identity_is_stable_within_a_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+CHECK_STAGE {"stage": "tests:pir-control", "seconds": 0.122, "exit": 0}

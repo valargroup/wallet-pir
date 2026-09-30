@@ -1,0 +1,112 @@
+{
+  "sha": "4f0c98cdec73fd6132d3e7842d1998889d7f8452",
+  "host": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "command": [
+    "make",
+    "check-package",
+    "PACKAGE=pir-control",
+    "TEST=identity",
+    "OFFLINE=1"
+  ],
+  "environment": {
+    "CARGO_TARGET_DIR": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target",
+    "RUSTFLAGS": null,
+    "CFLAGS": null,
+    "CXXFLAGS": null
+  },
+  "runs": [
+    {
+      "index": 0,
+      "start_seconds": 0.000221,
+      "end_seconds": 1.448598,
+      "elapsed_seconds": 1.448377,
+      "exit": 0,
+      "targets": [
+        {
+          "target": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-0",
+          "compatibility": "0be2c833532909a0b337",
+          "owner_pid": 35090
+        }
+      ],
+      "cargo_intervals": [
+        {
+          "start_seconds": 0.97153,
+          "end_seconds": 1.133499,
+          "stage": "compile:pir-control",
+          "seconds": 0.162,
+          "exit": 0
+        },
+        {
+          "start_seconds": 1.288278,
+          "end_seconds": 1.441419,
+          "stage": "tests:pir-control",
+          "seconds": 0.153,
+          "exit": 0
+        }
+      ],
+      "lock_waits": [
+        {
+          "at_seconds": 0.998932,
+          "line": "    Blocking waiting for file lock on package cache"
+        },
+        {
+          "at_seconds": 1.158601,
+          "line": "    Blocking waiting for file lock on package cache"
+        },
+        {
+          "at_seconds": 1.312762,
+          "line": "    Blocking waiting for file lock on package cache"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "start_seconds": 0.000178,
+      "end_seconds": 1.438949,
+      "elapsed_seconds": 1.438772,
+      "exit": 0,
+      "targets": [
+        {
+          "target": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1",
+          "compatibility": "0be2c833532909a0b337",
+          "owner_pid": 35091
+        }
+      ],
+      "cargo_intervals": [
+        {
+          "start_seconds": 0.973354,
+          "end_seconds": 1.125553,
+          "stage": "compile:pir-control",
+          "seconds": 0.152,
+          "exit": 0
+        },
+        {
+          "start_seconds": 1.279311,
+          "end_seconds": 1.432091,
+          "stage": "tests:pir-control",
+          "seconds": 0.153,
+          "exit": 0
+        }
+      ],
+      "lock_waits": [
+        {
+          "at_seconds": 1.063856,
+          "line": "    Blocking waiting for file lock on package cache"
+        },
+        {
+          "at_seconds": 1.214807,
+          "line": "    Blocking waiting for file lock on package cache"
+        },
+        {
+          "at_seconds": 1.368831,
+          "line": "    Blocking waiting for file lock on package cache"
+        }
+      ]
+    }
+  ],
+  "cargo_overlap_seconds": [
+    0.152199,
+    0.143813
+  ]
+}

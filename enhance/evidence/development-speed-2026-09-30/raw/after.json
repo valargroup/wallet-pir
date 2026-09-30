@@ -1,0 +1,111 @@
+{
+  "sha": "4f0c98cdec73fd6132d3e7842d1998889d7f8452",
+  "category": "shared",
+  "population": "warm",
+  "platform": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+  "architecture": "arm64",
+  "runs": [
+    {
+      "seconds": 1.29,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.273,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.281,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.475,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.297,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.295,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.276,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.289,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.309,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.287,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.287,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.312,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.327,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.278,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.285,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.299,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.287,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.431,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.37,
+      "exit": 0,
+      "snapshot_valid": true
+    },
+    {
+      "seconds": 1.321,
+      "exit": 0,
+      "snapshot_valid": true
+    }
+  ],
+  "successful_runs": 20,
+  "p95_seconds": 1.431
+}
