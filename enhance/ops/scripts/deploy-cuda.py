@@ -132,7 +132,8 @@ def main():
             result['smoke_exit_code'] = code
             result['smoke_output'] = output[-4000:]
             for name in ['summary.json', 'queries.json', 'metadata.json', 'health-before.json', 'health-after.json',
-                         'worker.log', 'coordinator.log', 'load.log']:
+                         'worker1.log', 'worker2.log', 'worker1-health-before.json', 'worker2-health-before.json',
+                         'worker1-health-after.json', 'worker2-health-after.json', 'coordinator.log', 'load.log']:
                 data = executor.read(target.host, smoke_path + '/' + name)
                 if data is not None:
                     (args.evidence_dir / ('smoke-' + name)).write_text(data)
