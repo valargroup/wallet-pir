@@ -100,6 +100,7 @@ def main():
             if latest and latest.status not in FINAL:
                 raise DeployError('unfinished transaction; resume rollback before CUDA deployment')
             current = executor.probe_unit(target.host, target.unit)
+            result['previous_binary_sha256'] = current['exe_sha256']
             ok, reason = deployer.check({'host': target.host, 'unit': target.unit, 'verify': {
                 'health': target.url(target.role.health), 'ready': target.role.ready,
                 'health_equals': target.health_equals}}, current['exe_sha256'])
