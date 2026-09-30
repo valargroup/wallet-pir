@@ -5,6 +5,7 @@ from the control socket. A master fails its first $FAKE_SSH_FAILURES starts
 the way a refused connection does; later starts bind their `-L` listeners and
 their control socket, then run until SIGTERM, as `ssh -N -M` does.
 """
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -31,9 +32,15 @@ if '-O' in args:
     print(f'Master running (pid={os.getpid()})', file=sys.stderr)
     sys.exit(0)
 
-counter = Path(os.environ['FAKE_SSH_STATE']) / 'starts'
-starts = int(counter.read_text()) + 1 if counter.exists() else 1
-counter.write_text(str(starts))
+# Both sessions start together. The shared failure count has to move in one
+# step, or two masters can read the same value and the suite sees an extra
+# refused connection.
+state = Path(os.environ['FAKE_SSH_STATE'])
+counter = state / 'starts'
+with (state / 'starts.lock').open('a') as handle:
+    fcntl.flock(handle, fcntl.LOCK_EX)
+    starts = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(starts))
 if starts <= int(os.environ.get('FAKE_SSH_FAILURES', '0')):
     print(f'ssh: connect to host {destination.partition("@")[2]} port 22: Connection refused', file=sys.stderr)
     sys.exit(255)
