@@ -13,7 +13,9 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {
-    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
+    # it has no native variant.
+    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
     # Same binaries built with `native-reinspiring`; they serve an incompatible
     # protocol and come from a separate target directory.
     'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
