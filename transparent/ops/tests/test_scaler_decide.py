@@ -568,6 +568,29 @@ class ModeAndRequestTests(unittest.TestCase):
         self.assertIsNone(state['request'])
         self.assertEqual(state['last_complete_unix'], NOW + 60)
 
+    def test_a_refused_scale_out_is_not_a_completion(self):
+        # 2026-09-29: a refusal is written to the done journal so the request
+        # is answered at once. Treating that record as a successful scale-out
+        # starts the 15-minute cooldown and, while p99 stays breached, the
+        # one-hour non-improvement hold, after a change that never happened.
+        overloaded = load(offered=40.0, p99=2.0, error_ratio=0.2)
+        decision, state = run(snapshot(load=overloaded), fast())
+        did = decision['decision_id']
+        breach_since = state['p99_breach_since']
+        decision, state = run(
+            snapshot(load=overloaded, done_decision_ids=[did], refused_decision_ids=[did]),
+            fast(), state, NOW + 60)
+        self.assertEqual(decision['action'], 'scale_out')
+        self.assertIsNone(state['last_scale_out_complete_unix'])
+        self.assertIsNone(state['last_complete_unix'])
+        self.assertIsNone(state['pending_eval'])
+        self.assertIsNone(state['no_improvement_until'])
+        self.assertEqual(state['p99_breach_since'], breach_since)
+        self.assertTrue(any(f'request {did} refused' in flag for flag in decision['flags']))
+        # The refusal is refunded; only the new request spends budget.
+        self.assertEqual(state['summary']['budget']['actions_left'], 5)
+        self.assertNotEqual(state['request']['decision_id'], did)
+
     def test_unconsumed_request_expires_with_a_flag(self):
         first, state = run(hot(), fast())
         decision, state = run(hot(), fast(), state, NOW + 599)

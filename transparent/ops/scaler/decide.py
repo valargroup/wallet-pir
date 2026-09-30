@@ -27,7 +27,8 @@ The rules, in order (transparent/docs/elastic-recent.md is the contract):
    when the model alone saw no deficit. Cooldown from the completion of the
    last scale-out; a scale-out that lowered the load per replica but did not
    improve p99 or errors within 15 minutes holds further scale-outs and
-   flags.
+   flags. A request the actuator refused is an answer, not a completion: it
+   spends no budget, starts no cooldown and leaves breach timers running.
 4. Scale-in: desired below serving for `scale_in.hold_seconds`, zero
    rejections and p99 under `scale_in.p99_seconds` over the window, nothing
    warming, booting, draining or failed, `cooldown_in_seconds` since the last
@@ -204,15 +205,24 @@ def _track_request(st, snapshot, policy, now, flags):
     if request is None or not snapshot.get('journal_ok', False):
         return
     operation = snapshot.get('operation')
-    completed = request['decision_id'] in (snapshot.get('done_decision_ids') or [])
+    decision_id = request['decision_id']
+    # The actuator records a refusal in the done journal so the request is
+    # answered at once. Nothing was created or destroyed, so this is not a
+    # completion: no cooldown, no improvement window, and breach timers keep
+    # the time they have already accumulated.
+    if decision_id in set(snapshot.get('refused_decision_ids') or []):
+        st['request'] = None
+        flags.append(f"request {decision_id} refused; it changed nothing")
+        return
+    completed = decision_id in (snapshot.get('done_decision_ids') or [])
     if not completed and operation is not None:
-        if operation.get('decision_id') == request['decision_id']:
+        if operation.get('decision_id') == decision_id:
             request['consumed'] = True
         elif (operation.get('decision_id') is None and operation.get('age_seconds') is not None
               and now - operation['age_seconds'] >= request['created_unix'] - 1):
             request['consumed'] = True
     if not completed and request['consumed'] and (
-            operation is None or (operation.get('decision_id') not in (None, request['decision_id']))):
+            operation is None or (operation.get('decision_id') not in (None, decision_id))):
         completed = True
     if completed:
         st['request'] = None

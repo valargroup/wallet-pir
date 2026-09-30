@@ -151,7 +151,11 @@ by `decision_id`):
 ```
 
 `action` is `scale_out` (with `count`), `scale_in` or `replace` (with
-`member`). The scaler never names an archive member.
+`member`). The scaler never names an archive member. A request the actuator
+refuses is written to `journal/done/` with `phase: refused`. That answers the
+request and spends no action or destroy budget. It is not a completion: it
+starts no cooldown, opens no improvement window and does not reset breach
+timers, so a fleet that still needs capacity can ask again.
 
 `scaler/status.json` (scaler, every cycle; read by APM):
 
