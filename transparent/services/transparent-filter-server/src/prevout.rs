@@ -353,6 +353,6 @@ mod tests {
             index: 0,
         };
         assert!(cache.get(&gone).is_none(), "oldest entry should be evicted");
-        assert_eq!(cache.get(&kept), Some(&vec![0x76, 0xa9, 3]));
+        assert_eq!(cache.get(&kept), Some(&third.outputs()[0]));
     }
 }

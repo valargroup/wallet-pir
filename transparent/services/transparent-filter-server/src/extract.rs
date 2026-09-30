@@ -259,6 +259,7 @@ pub(crate) mod testing {
     #[derive(Clone, Default)]
     pub struct MapPreviousOutputs {
         pub scripts: std::collections::HashMap<OutPoint, Vec<u8>>,
+        pub values: std::collections::HashMap<OutPoint, u64>,
         pub lookups: usize,
     }
 
@@ -269,7 +270,10 @@ pub(crate) mod testing {
         ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
             self.lookups += 1;
             Ok(self.scripts.get(outpoint).map(|bytes| Output {
-                value: zakura_chain::amount::Amount::try_from(100_000_000u64).unwrap(),
+                value: zakura_chain::amount::Amount::try_from(
+                    *self.values.get(outpoint).unwrap_or(&100_000_000),
+                )
+                .unwrap(),
                 lock_script: zakura_chain::transparent::Script::new(bytes),
             }))
         }
@@ -356,6 +360,55 @@ mod tests {
 
     fn contains(elements: &[Vec<u8>], script: &[u8]) -> bool {
         elements.iter().any(|element| element == script)
+    }
+
+    #[test]
+    fn exact_fee_counts_all_inputs_and_is_attributed_to_the_spender() {
+        let first = OutPoint {
+            hash: zakura_chain::transaction::Hash([10; 32]),
+            index: 0,
+        };
+        let second = OutPoint {
+            hash: zakura_chain::transaction::Hash([11; 32]),
+            index: 1,
+        };
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(first, p2pkh(1));
+        previous.scripts.insert(second, vec![]);
+        previous.values.insert(first, 1000);
+        previous.values.insert(second, 2000);
+        let mut recipient = output(p2pkh(2));
+        recipient.value = Amount::try_from(2500).unwrap();
+        let tx = transaction(
+            vec![prevout_input(first), prevout_input(second)],
+            vec![recipient],
+        );
+        let events = extract_events(&[tx.clone()], &mut previous, 100).unwrap();
+        assert_eq!(
+            events.len(),
+            2,
+            "the empty consumed script does not create an event"
+        );
+        for (_, event) in events {
+            assert_eq!(event.txid(), Txid(tx.hash().0));
+            assert_eq!(
+                event.metadata(),
+                Some(TransactionMetadata {
+                    fee: FeeState::Exact(500),
+                    transparent_input_count: 2,
+                    has_shielded_components: false,
+                })
+            );
+        }
+        assert_eq!(
+            previous.lookups, 2,
+            "unindexed inputs still contribute value and count"
+        );
+        previous.values.insert(first, 0);
+        assert!(
+            extract_events(&[tx], &mut previous, 100).is_err(),
+            "negative fees abort extraction"
+        );
     }
 
     #[test]
@@ -597,9 +650,16 @@ mod tests {
 
     #[test]
     fn a_receive_carries_its_value_outpoint_and_coinbase_status() {
+        let funding = transaction(vec![coinbase_input()], vec![output(p2pkh(1))]);
         let transactions = vec![
-            transaction(vec![coinbase_input()], vec![output(p2pkh(1))]),
-            transaction(vec![], vec![output(p2pkh(2))]),
+            funding.clone(),
+            transaction(
+                vec![prevout_input(OutPoint {
+                    hash: funding.hash(),
+                    index: 0,
+                })],
+                vec![output(p2pkh(2))],
+            ),
         ];
         let mut previous = MapPreviousOutputs::default();
         let events = events_of(&transactions, &mut previous);
