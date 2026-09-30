@@ -280,7 +280,14 @@ impl Store {
                     )?;
                 }
             }
-            tx.execute("INSERT INTO incidents(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![c.key,serde_json::to_string(&i)?])?;
+            if c.retired {
+                // Its resource is gone. Once any RETIRED event is recorded, forget
+                // the incident, so the view stops listing a closed incident as
+                // firing and the next cycle does not retire it again.
+                tx.execute("DELETE FROM incidents WHERE key=?", [&c.key])?;
+            } else {
+                tx.execute("INSERT INTO incidents(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", params![c.key,serde_json::to_string(&i)?])?;
+            }
         }
         tx.execute("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",[self.mode_key.as_str(),if shadow {"shadow"} else {"active"}])?;
         tx.commit()?;
@@ -735,8 +742,14 @@ mod delivery_tests {
         assert_eq!(s.health(true, 120).unwrap().pending, 1);
         c.retired = true;
         c.sample = 130;
-        s.evaluate(&[c], 130, false, "test", "").unwrap();
-        assert!(!s.incidents().unwrap()[0].active);
+        s.evaluate(&[c.clone()], 130, false, "test", "").unwrap();
+        // The RETIRED notice is queued and the incident is forgotten.
+        assert!(s.incidents().unwrap().is_empty());
         assert_eq!(s.health(true, 130).unwrap().pending, 2);
+        // A resource that returns starts a fresh incident.
+        c.retired = false;
+        c.sample = 140;
+        s.evaluate(&[c], 140, false, "test", "").unwrap();
+        assert!(s.incidents().unwrap()[0].active);
     }
 }

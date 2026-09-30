@@ -1,0 +1,6 @@
+worker@worker-01 enhance-pir-worker.service: active a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d, 11 drop-in(s)
+worker@worker-02 enhance-pir-worker.service: active a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d, 11 drop-in(s)
+packing-router@router-01 enhance-pir-packing-router.service: active a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d, 9 drop-in(s)
+query-ingress@coordinator enhance-pir-query-ingress.service: active a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d, 7 drop-in(s)
+coordinator@coordinator enhance-pir-coordinator.service: active b6857a65a526280b2fc25aafc66ea456f243ad3dc0f9fe448e3d235bec153781, 13 drop-in(s)
+baseline written to /private/tmp/claude-501/-Users-roman-projects-wallet-pir/22db427a-fee0-48c7-b31e-8bcfce1090d7/scratchpad/baseline-enhance.json
