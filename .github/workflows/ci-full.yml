@@ -300,12 +300,25 @@ jobs:
         run: >-
           cargo build --locked --release
           -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test
-          --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli
+          --bin enhance-pir-server --bin enhance-pir-load-test --bin enhance-pir-cli --bin status-pir
           --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-load-test/native-reinspiring
       - name: Assemble native Enhance bundle
         env:
           SHA: ${{ github.sha }}
         run: python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target target-native --output release-bundles-native
+      # Status roles and controller come from the same native build.
+      - name: Assemble Status bundle
+        env:
+          SHA: ${{ github.sha }}
+        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target target-native --output release-bundles-status
+      - uses: actions/upload-artifact@v4
+        with:
+          name: status-pir-${{ github.sha }}
+          path: release-bundles-status/status-pir.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: enhance-pir-native-${{ github.sha }}

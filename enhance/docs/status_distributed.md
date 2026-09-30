@@ -116,8 +116,8 @@ the coordinator's controller, whose binary alone is swapped. The tunnels are not
 [deploy.toml](../ops/deploy/deploy.toml) records each role's `/control/health`
 or `/internal/health` readiness check. The `status-pir` release kind in
 `tools/ci/release.py` bundles the binary with these templates. It is assembled
-only on request, from a `native-reinspiring` target directory. Full CI does not
-build or upload it yet, so `--binary` is the input until it does.
+from the `native-reinspiring` target directory; full CI uploads it as the
+`status-pir-<sha>` artifact.
 
 The tool compares each rendered unit's effective configuration with the live
 one and refuses any difference beyond the binary unless `--allow-unit-drift` is
