@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 #[derive(Clone, Deserialize)]
@@ -95,6 +95,49 @@ fn check_answers(measured_wrong: u64, warmup_wrong: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn write_measurement_marker(path: &std::path::Path) -> anyhow::Result<()> {
+    use std::io::Write;
+    let marker = serde_json::json!({
+        "phase": "measured",
+        "protocol": enhance_pir::protocol::PROTOCOL_REVISION,
+        "unix_ms": SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis(),
+    });
+    let temporary = path.with_extension(format!("phase-{}.tmp", std::process::id()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporary)?;
+    let result = (|| -> anyhow::Result<()> {
+        file.write_all(serde_json::to_string(&marker)?.as_bytes())?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+        std::fs::rename(&temporary, path)?;
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn arrival_time(start: Instant, index: u64, rate: f64) -> Instant {
+    start + Duration::from_secs_f64(index as f64 / rate)
+}
+
+fn error_class(error: &ClientError) -> String {
+    match error {
+        ClientError::HttpStatus(status) => format!("http_{status}"),
+        ClientError::Http(_) => "transport".into(),
+        ClientError::OutsideCoverage(_) => "coverage".into(),
+        ClientError::Response(_) => "invalid_response".into(),
+        _ => "client".into(),
+    }
+}
+
+fn stop_on_failure(enabled: bool, wrong: u64, errors: &BTreeMap<String, u64>) -> bool {
+    enabled && (wrong > 0 || errors.values().any(|count| *count > 0))
+}
+
 pub async fn run(args: Args) -> anyhow::Result<()> {
     ensure!(
         args.parallelism > 0 && !args.duration.is_zero(),
@@ -136,8 +179,15 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     }
     // Warm every generator independently before starting the measurement clock.
     let mut warmup = tokio::task::JoinSet::new();
+    let stopped = Arc::new(AtomicBool::new(false));
+    let warmup_start = Instant::now();
+    let warmup_next = Arc::new(AtomicU64::new(0));
     for mut client in clients {
         let duration = args.warmup;
+        let rate = args.rate;
+        let fail_fast = args.fail_fast;
+        let stopped = stopped.clone();
+        let warmup_next = warmup_next.clone();
         let position = positions.first().copied().unwrap_or(0);
         let expected = if args.fixture_oracle {
             let mut bytes = vec![0; RECORD_BYTES];
@@ -148,13 +198,35 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         };
         warmup.spawn(async move {
             let mut samples = WarmupSamples::default();
-            let until = Instant::now() + duration;
+            let until = warmup_start + duration;
             loop {
+                if stopped.load(Ordering::Relaxed) {
+                    break;
+                }
+                if let Some(rate) = rate {
+                    let index = warmup_next.fetch_add(1, Ordering::Relaxed);
+                    let at = arrival_time(warmup_start, index, rate);
+                    if at >= until {
+                        break;
+                    }
+                    tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
+                    if Instant::now() >= until {
+                        break;
+                    }
+                }
                 let result = client.query_position_with_timing(position).await;
                 let backoff = match result {
                     Ok((record, _)) => samples.observe(Ok(record.as_ref()), &expected)?,
+                    Err(error) if fail_fast => {
+                        *samples.errors.entry(error_class(&error)).or_default() += 1;
+                        false
+                    }
                     Err(error) => samples.observe(Err(error), &expected)?,
                 };
+                if stop_on_failure(fail_fast, samples.wrong, &samples.errors) {
+                    stopped.store(true, Ordering::Relaxed);
+                    break;
+                }
                 if backoff {
                     tokio::time::sleep(Duration::from_millis(50)).await;
                 }
@@ -177,6 +249,11 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
             *warmup_errors.entry(class).or_default() += count;
         }
     }
+    if !stopped.load(Ordering::Relaxed) {
+        if let Some(path) = &args.phase_file {
+            write_measurement_marker(path)?;
+        }
+    }
     let start = Instant::now();
     let end = start + args.duration;
     let next = Arc::new(AtomicU64::new(0));
@@ -192,6 +269,8 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
         let started = started.clone();
         let rate = args.rate;
         let fixture = args.fixture_oracle;
+        let fail_fast = args.fail_fast;
+        let stopped = stopped.clone();
         let seed = args.seed.unwrap_or(0) + index as u64;
         tasks.spawn(async move {
             let mut rng = StdRng::seed_from_u64(seed);
@@ -203,19 +282,19 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                 errors: BTreeMap::new(),
                 completed: 0,
             };
-            while Instant::now() < end {
+            while Instant::now() < end && !stopped.load(Ordering::Relaxed) {
                 let scheduled = if let Some(rate) = rate {
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     if index >= offered.unwrap() {
                         break;
                     }
-                    let at = start + Duration::from_secs_f64(index as f64 / rate);
+                    let at = arrival_time(start, index, rate);
                     tokio::time::sleep_until(tokio::time::Instant::from_std(at)).await;
                     at
                 } else {
                     Instant::now()
                 };
-                if Instant::now() >= end {
+                if Instant::now() >= end || stopped.load(Ordering::Relaxed) {
                     break;
                 }
                 started.fetch_add(1, Ordering::Relaxed);
@@ -251,18 +330,16 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
                         }
                     }
                     Err(error) => {
-                        if matches!(error, ClientError::HttpStatus(429 | 502 | 503)) {
+                        if !fail_fast && matches!(error, ClientError::HttpStatus(429 | 502 | 503)) {
                             tokio::time::sleep(Duration::from_millis(50)).await;
                         }
-                        let class = match error {
-                            ClientError::HttpStatus(s) => format!("http_{s}"),
-                            ClientError::Http(_) => "transport".into(),
-                            ClientError::OutsideCoverage(_) => "coverage".into(),
-                            ClientError::Response(_) => "invalid_response".into(),
-                            _ => "client".into(),
-                        };
+                        let class = error_class(&error);
                         *sample.errors.entry(class).or_default() += 1;
                     }
+                }
+                if stop_on_failure(fail_fast, sample.wrong, &sample.errors) {
+                    stopped.store(true, Ordering::Relaxed);
+                    break;
                 }
             }
             sample
@@ -315,6 +392,10 @@ pub async fn run(args: Args) -> anyhow::Result<()> {
     if let Some(path) = args.json_out {
         std::fs::write(path, format!("{json}\n"))?;
     }
+    ensure!(
+        !stopped.load(Ordering::Relaxed),
+        "stopped after first query failure"
+    );
     ensure!(report.completed > 0, "no measured queries completed");
     check_answers(report.incorrect_answers, report.warmup_incorrect_answers)?;
     let failed = report.errors.values().sum::<u64>() + report.unstarted_arrivals;
@@ -350,6 +431,58 @@ fn decode_hex(text: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measurement_marker_is_complete_and_replaces_previous_phase() {
+        let root = std::env::temp_dir().join(format!(
+            "enhance-load-marker-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("phase.json");
+        std::fs::write(&path, "{\"phase\":\"warmup\"}").unwrap();
+        write_measurement_marker(&path).unwrap();
+        let marker: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(marker["phase"], "measured");
+        assert_eq!(marker["protocol"], enhance_pir::protocol::PROTOCOL_REVISION);
+        assert!(marker["unix_ms"].as_u64().unwrap() > 0);
+        assert_eq!(std::fs::read_dir(&root).unwrap().count(), 1);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rate_schedules_shared_arrivals_across_workers() {
+        let start = Instant::now();
+        let next = AtomicU64::new(0);
+        // Each worker consumes the same aggregate arrival sequence; adding
+        // workers does not multiply the offered warmup rate.
+        assert_eq!(
+            arrival_time(start, next.fetch_add(1, Ordering::Relaxed), 2.0),
+            start
+        );
+        assert_eq!(
+            arrival_time(start, next.fetch_add(1, Ordering::Relaxed), 2.0),
+            start + Duration::from_millis(500)
+        );
+        assert_eq!(
+            arrival_time(start, 20, 2.0),
+            start + Duration::from_secs(10)
+        );
+    }
+
+    #[test]
+    fn fail_fast_detects_errors_and_wrong_answers_only_when_enabled() {
+        let errors = [("http_503".into(), 1)].into();
+        assert!(stop_on_failure(true, 0, &errors));
+        assert!(stop_on_failure(true, 1, &BTreeMap::new()));
+        assert!(!stop_on_failure(false, 1, &errors));
+        assert!(!stop_on_failure(true, 0, &BTreeMap::new()));
+    }
 
     #[tokio::test]
     async fn warmup_preserves_transient_failures_and_exact_answer_failures() {

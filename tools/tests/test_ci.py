@@ -109,10 +109,18 @@ class ReleaseTests(unittest.TestCase):
             # Native bundles are only assembled on request, from their own target.
             for kind in release.ON_REQUEST:
                 self.assertFalse((root / 'bundles' / f'{kind}.tar.gz').exists())
-                release.assemble(SHA, root / 'target', root / f'bundles-{kind}', kind)
+                target = root / f'target-{kind}'
+                (target / 'release').mkdir(parents=True)
+                for name in release.BINARIES[kind]:
+                    (target / 'release' / name).write_bytes(kind.encode())
+                release.assemble(SHA, target, root / f'bundles-{kind}', kind,
+                                 release.CUDA_BUILD if kind == 'enhance-pir-native-cuda' else None)
             for kind in release.BINARIES:
                 bundles = root / (f'bundles-{kind}' if kind in release.ON_REQUEST else 'bundles')
                 release.extract(bundles / f'{kind}.tar.gz', root / kind, SHA, kind)
+                expected = kind.encode() if kind in release.ON_REQUEST else b'fake binary'
+                for name in release.BINARIES[kind]:
+                    self.assertEqual((root / kind / name).read_bytes(), expected)
             native = json.loads((root / 'enhance-pir-native' / 'candidate.json').read_text())
             self.assertEqual(native['protocol_revision'], 'ironwood-enhance-pir-v9-native-two-mask-m29')
             with self.assertRaises(ValueError):
@@ -124,6 +132,59 @@ class ReleaseTests(unittest.TestCase):
             self.assertTrue((root / 'status-pir' / 'status-pir').stat().st_mode & 0o111)
             with self.assertRaises(ValueError):
                 release.extract(root / 'bundles-status-pir' / 'status-pir.tar.gz', root / 'cross-status', SHA, 'enhance-pir-native')
+
+    def test_cuda_metadata_and_kind_are_required_before_extraction(self):
+        kind = 'enhance-pir-native-cuda'
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'target/release').mkdir(parents=True)
+            for name in release.BINARIES[kind]:
+                (root / 'target/release' / name).write_bytes(b'CUDA binary')
+            with self.assertRaises(ValueError):
+                release.assemble(SHA, root / 'target', root / 'missing-metadata', kind)
+            self.assertFalse((root / 'missing-metadata').exists())
+            release.assemble(SHA, root / 'target', root / 'bundles', kind, release.CUDA_BUILD)
+            archive = root / 'bundles' / f'{kind}.tar.gz'
+            release.extract(archive, root / 'verified', SHA, kind)
+            self.assertEqual(json.loads((root / 'verified/build.json').read_text()), release.CUDA_BUILD)
+            for cpu_kind in ['enhance-pir', 'enhance-pir-native']:
+                with self.assertRaises(ValueError):
+                    release.extract(archive, root / cpu_kind, SHA, cpu_kind)
+            original = {p.name: p.read_bytes() for p in (root / 'verified').iterdir()}
+            mutations = [dict(release.CUDA_BUILD, **{key: value}) for key, value in
+                         [('cuda', False), ('cuda', 1), ('cpu_target', 'native'),
+                          ('os', 'ubuntu-24.04'), ('glibc', '2.39'), ('rust', 'stable'),
+                          ('target', 'aarch64-unknown-linux-gnu')]]
+            mutations += [{}, {**release.CUDA_BUILD, 'qualification': 'passed'}]
+            for index, metadata in enumerate(mutations):
+                with self.subTest(metadata=metadata):
+                    data = dict(original)
+                    data['build.json'] = json.dumps(metadata).encode()
+                    data['SHA256SUMS'] = ''.join(f'{hashlib.sha256(v).hexdigest()}  {k}\n'
+                                                for k, v in data.items() if k != 'SHA256SUMS').encode()
+                    forged_path = root / f'forged-{index}.tar.gz'
+                    with tarfile.open(forged_path, 'w:gz') as forged:
+                        for name, value in data.items():
+                            member = tarfile.TarInfo(name)
+                            member.size = len(value)
+                            forged.addfile(member, io.BytesIO(value))
+                    destination = root / f'forged-{index}'
+                    with self.assertRaises(ValueError):
+                        release.extract(forged_path, destination, SHA, kind)
+                    self.assertFalse(destination.exists())
+            for wrong_sha in ['b' * 40, 'short']:
+                with self.assertRaises(ValueError):
+                    release.extract(archive, root / 'wrong-revision', wrong_sha, kind)
+            # The checksum gate also covers CUDA build metadata.
+            tampered = dict(original)
+            tampered['build.json'] = b'{}'
+            with tarfile.open(root / 'tampered.tar.gz', 'w:gz') as forged:
+                for name, value in tampered.items():
+                    member = tarfile.TarInfo(name)
+                    member.size = len(value)
+                    forged.addfile(member, io.BytesIO(value))
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                release.extract(root / 'tampered.tar.gz', root / 'tampered', SHA, kind)
 
     def test_enhance_candidate_cannot_claim_qualification(self):
         kind = 'enhance-pir'

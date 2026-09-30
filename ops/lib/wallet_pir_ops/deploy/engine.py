@@ -298,6 +298,12 @@ class Deployer:
             document = None
         if isinstance(document, dict) and 'binary_sha256' in document and document['binary_sha256'] != expected:
             return False, 'health reports binary_sha256 %s' % document['binary_sha256']
+        for field, expected_value in verify.get('health_equals', {}).items():
+            value = document
+            for part in field.split('.'):
+                value = value.get(part) if isinstance(value, dict) else None
+            if type(value) is not type(expected_value) or value != expected_value:
+                return False, 'health %s is %r, expected %r' % (field, value, expected_value)
         ready = verify.get('ready')
         if ready:
             value = document.get(ready['field']) if isinstance(document, dict) else None
@@ -331,7 +337,8 @@ class Deployer:
             'changes': [{**change, 'previous_sha256': text_sha256(change['previous']),
                          'new_sha256': text_sha256(change['new'])} for change in plan.changes],
             'verify': {'health': target.url(target.role.health), 'ready': target.role.ready,
-                       'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout},
+                       'ready_url': target.url(target.role.ready_url), 'timeout': target.role.ready_timeout,
+                       'health_equals': target.health_equals},
         }
 
     def stage(self, hosts, sha, binary, journal=None):
@@ -399,7 +406,7 @@ class Deployer:
         if code:
             raise DeployError('exact-answer check failed (exit %d): %s' % (code, output[-1000:]))
 
-    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False):
+    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False, verify_noop=False):
         """Returns the committed journal, or None when every target already matches."""
         check = descriptors.exact_check(self.service, self.inventory)
         if check is None and not skip_exact_check:
@@ -409,11 +416,11 @@ class Deployer:
         with self.lock_factory() as lock:
             self.lock = lock
             try:
-                return self._deploy(sha, binary, source, allow_drift, retire_historical, check)
+                return self._deploy(sha, binary, source, allow_drift, retire_historical, check, verify_noop)
             finally:
                 self.lock = None
 
-    def _deploy(self, sha, binary, source, allow_drift, retire_historical, check):
+    def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
         if latest is not None and latest.status not in FINAL:
             raise DeployError('transaction %s is %s; finish it with rollback before deploying again'
@@ -423,7 +430,7 @@ class Deployer:
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
         restart = [plan for plan in plans if plan.action == 'restart']
-        if not restart:
+        if not restart and not verify_noop:
             self.out('no-op: every target already runs %s with the same effective unit' % sha)
             return None
         baseline = json.loads(self.baseline_path.read_text())

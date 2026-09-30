@@ -46,6 +46,14 @@ struct Args {
     #[arg(long)]
     json_out: Option<PathBuf>,
 
+    /// Atomically write a JSON marker when warmup finishes and measurement begins.
+    #[arg(long)]
+    phase_file: Option<PathBuf>,
+
+    /// Stop issuing queries after the first query error or incorrect answer.
+    #[arg(long)]
+    fail_fast: bool,
+
     /// Fail when the measured error rate exceeds this fraction.
     #[arg(long, default_value_t = 0.01)]
     max_error_rate: f64,

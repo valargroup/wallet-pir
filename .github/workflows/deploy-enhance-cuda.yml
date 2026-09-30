@@ -1,0 +1,108 @@
+name: Deploy Enhance CUDA worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full main-ancestor SHA with successful full CI and native CUDA artifact
+        required: true
+        type: string
+      mode:
+        description: Preflight stages and tests isolated CUDA fixtures without restarting production
+        required: true
+        default: preflight
+        type: choice
+        options: [preflight, deploy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enhance-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Linux, X64, wallet-pir-deploy]
+    environment: production
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Verify main ancestry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]
+          status=$(gh api "repos/$GITHUB_REPOSITORY/compare/main...$SHA" --jq '.status')
+          [[ "$status" == identical || "$status" == behind ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - name: Resolve qualified native CUDA artifact
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ inputs.ref }}
+        run: python3 tools/ci/release.py resolve --sha "$SHA" --kind enhance-pir-native-cuda
+      - uses: actions/download-artifact@v4
+        with:
+          name: enhance-pir-native-cuda-${{ inputs.ref }}
+          path: cuda-artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.release.outputs.run-id }}
+      - name: Prepare ephemeral SSH identity
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.WALLET_PIR_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ vars.WALLET_PIR_CUDA_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          : "${DEPLOY_SSH_KEY:?deployment SSH key missing}"
+          : "${KNOWN_HOSTS:?verified CUDA known-hosts inventory missing}"
+          install -m 0700 -d "$RUNNER_TEMP/cuda-ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/cuda-ssh/key"
+          printf '%s\n' "$KNOWN_HOSTS" > "$RUNNER_TEMP/cuda-ssh/known_hosts"
+          chmod 0600 "$RUNNER_TEMP/cuda-ssh/"*
+      - name: Stage, validate and deploy transactionally
+        env:
+          SHA: ${{ inputs.ref }}
+          MODE: ${{ inputs.mode }}
+          SOURCE_RUN: ${{ steps.release.outputs.run-id }}
+        run: |
+          set -euo pipefail
+          printf '{"source_run":"%s","revision":"%s","deployment_run":"%s"}\n' \
+            "$SOURCE_RUN" "$SHA" "$GITHUB_RUN_ID" > "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json"
+          python3 enhance/ops/scripts/deploy-cuda.py "$MODE" \
+            --inventory /etc/enhance-pir/cuda-deploy-inventory.json \
+            --archive cuda-artifact/enhance-pir-native-cuda.tar.gz --sha "$SHA" \
+            --state-dir /var/lib/wallet-pir-deploy/cuda \
+            --evidence-dir "$RUNNER_TEMP/cuda-evidence-$GITHUB_RUN_ID" \
+            --ssh-key "$RUNNER_TEMP/cuda-ssh/key" \
+            --known-hosts "$RUNNER_TEMP/cuda-ssh/known_hosts"
+      - name: Preserve CI identity
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json" ]]; then
+            mkdir -p "$RUNNER_TEMP/cuda-evidence-$GITHUB_RUN_ID"
+            mv "$RUNNER_TEMP/cuda-ci-$GITHUB_RUN_ID.json" "$RUNNER_TEMP/cuda-evidence-$GITHUB_RUN_ID/ci.json"
+          fi
+      - name: Preserve validation and rollback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: enhance-cuda-deployment-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/cuda-evidence-${{ github.run_id }}/*.json
+            ${{ runner.temp }}/cuda-evidence-${{ github.run_id }}/*.log
+            ${{ runner.temp }}/cuda-evidence-${{ github.run_id }}/SHA256SUMS
+            ${{ runner.temp }}/cuda-evidence-${{ github.run_id }}/revision
+            ${{ runner.temp }}/cuda-evidence-${{ github.run_id }}/public-check/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Remove ephemeral SSH material
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/cuda-ssh"

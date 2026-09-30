@@ -29,7 +29,7 @@
 [services.enhance]
 root = "/opt/enhance-pir"
 binary = "enhance-pir-server"
-artifact_kinds = ["enhance-pir", "enhance-pir-native"]
+artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["worker", "packing-router", "query-ingress", "coordinator"]
