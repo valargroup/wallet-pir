@@ -132,6 +132,12 @@ impl ZakuraClient {
         let raw = hex::decode(raw_hex)?;
         let transaction = Transaction::zcash_deserialize(raw.as_slice())
             .map_err(|error| ZakuraError::Transaction(txid.to_string(), error.to_string()))?;
+        if transaction.hash().to_string() != txid.to_ascii_lowercase() {
+            return Err(ZakuraError::Transaction(
+                txid.to_string(),
+                "returned transaction identity differs".into(),
+            ));
+        }
         Ok(Some(transaction))
     }
 
@@ -210,11 +216,16 @@ impl ZakuraClient {
                 .result
                 .ok_or_else(|| ZakuraError::Batch("batch entry has no result".to_string()))?;
             let raw = hex::decode(raw_hex)?;
-            out[index] = Some(
-                Transaction::zcash_deserialize(raw.as_slice()).map_err(|error| {
-                    ZakuraError::Transaction(txids[index].clone(), error.to_string())
-                })?,
-            );
+            let transaction = Transaction::zcash_deserialize(raw.as_slice()).map_err(|error| {
+                ZakuraError::Transaction(txids[index].clone(), error.to_string())
+            })?;
+            if transaction.hash().to_string() != txids[index].to_ascii_lowercase() {
+                return Err(ZakuraError::Transaction(
+                    txids[index].clone(),
+                    "returned transaction identity differs".into(),
+                ));
+            }
+            out[index] = Some(transaction);
         }
         if seen.iter().any(|seen| !seen) {
             return Err(ZakuraError::Batch(

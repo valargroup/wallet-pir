@@ -421,6 +421,7 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
     all[3].push((
         script(3),
         transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+            metadata: None,
             height: (h + 5) as u32,
             txid: txid(99999),
             transaction_index: 0,
@@ -506,6 +507,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
     changed[1].push((
         script(1),
         transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+            metadata: None,
             height: (fork + 3) as u32,
             txid: txid(88888),
             transaction_index: 0,

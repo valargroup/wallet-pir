@@ -40,7 +40,7 @@ use crate::ingest::BuiltEvents;
 use std::path::{Path, PathBuf};
 use transparent_filter::BlockHash;
 use zakura_chain::parameters::Network;
-use zakura_chain::transparent::OutPoint;
+use zakura_chain::transparent::{OutPoint, Output};
 use zakura_state::{Config, HashOrHeight, ReadStateService, StorageMode, ZakuraDb};
 
 #[derive(Debug, thiserror::Error)]
@@ -198,18 +198,18 @@ struct StatePreviousOutputs<'a> {
 }
 
 impl PreviousOutputs for StatePreviousOutputs<'_> {
-    fn lock_script(
+    fn previous_output(
         &mut self,
         outpoint: &OutPoint,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
         self.lookups += 1;
         let Some((transaction, _height, _time)) = self.db.transaction(outpoint.hash) else {
             return Ok(None);
         };
-        let script = transaction
-            .outputs()
-            .get(outpoint.index as usize)
-            .map(|output| output.lock_script.as_raw_bytes().to_vec());
+        if transaction.hash() != outpoint.hash {
+            return Err("previous transaction identity mismatch".into());
+        }
+        let script = transaction.outputs().get(outpoint.index as usize).cloned();
         if script.is_none() {
             tracing::warn!(
                 outpoint = %outpoint_label(outpoint),

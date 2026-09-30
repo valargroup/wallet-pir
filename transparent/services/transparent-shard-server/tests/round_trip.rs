@@ -68,6 +68,7 @@ fn publish(dir: &Path) -> ShardMap {
                     script(shard_id, tag),
                     transparent_events::TransparentEvent::Receive(
                         transparent_events::ReceiveEvent {
+                            metadata: None,
                             height: (start + u64::from(i) % SPAN) as u32,
                             txid: transparent_events::Txid(txid),
                             transaction_index: 0,

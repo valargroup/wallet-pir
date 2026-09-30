@@ -833,6 +833,7 @@ mod tests {
         (
             script(tag),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: height as u32,
                 txid: Txid(txid),
                 transaction_index: 0,

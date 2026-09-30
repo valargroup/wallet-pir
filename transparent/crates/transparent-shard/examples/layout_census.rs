@@ -78,6 +78,7 @@ fn main() {
                     .entry(script)
                     .or_default()
                     .push(TransparentEvent::Receive(ReceiveEvent {
+                        metadata: None,
                         height: block.height,
                         txid: id,
                         transaction_index: tx.index,
@@ -95,6 +96,7 @@ fn main() {
                     .entry(script)
                     .or_default()
                     .push(TransparentEvent::Spend(SpendEvent {
+                        metadata: None,
                         height: block.height,
                         spending_txid: id,
                         transaction_index: tx.index,

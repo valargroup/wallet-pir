@@ -11,7 +11,7 @@ runs:
       if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: 1.91.0
+        toolchain: 1.97.1
         components: rustfmt, clippy
     - name: Install hosted native dependencies
       if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
@@ -32,18 +32,18 @@ runs:
         # shellcheck disable=SC1091
         source /etc/os-release
         [[ "$ID" == ubuntu && "$VERSION_ID" == 24.04 ]]
-        rustup run 1.91.0 rustc --version
-        rustup run 1.91.0 rustfmt --version
-        rustup run 1.91.0 cargo clippy --version
+        rustup run 1.97.1 rustc --version
+        rustup run 1.97.1 rustfmt --version
+        rustup run 1.97.1 cargo clippy --version
         for tool in clang protoc jq shellcheck; do command -v "$tool" >/dev/null; done
         # Outside checkout, unique to runner slot and compilation inputs. PR
         # runners must be isolated from credentials and trusted release caches.
-        fingerprint=$(printf '%s\n' 'ubuntu24.04-x86_64' '1.91.0' "$RUSTFLAGS" "${CFLAGS:-}" "${CXXFLAGS:-}" | sha256sum | cut -c1-16)
+        fingerprint=$(printf '%s\n' 'ubuntu24.04-x86_64' '1.97.1' "$RUSTFLAGS" "${CFLAGS:-}" "${CXXFLAGS:-}" | sha256sum | cut -c1-16)
         target="$HOME/.cache/wallet-pir/$RUNNER_NAME/$LANE/$fingerprint"
         mkdir -p "$target"
         echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
         echo "WALLET_PIR_BUILD_CACHE_ROOT=$HOME/.cache/wallet-pir/$RUNNER_NAME" >> "$GITHUB_ENV"
-        echo 'RUSTUP_TOOLCHAIN=1.91.0' >> "$GITHUB_ENV"
+        echo 'RUSTUP_TOOLCHAIN=1.97.1' >> "$GITHUB_ENV"
     - name: Select hosted build directory
       if: runner.environment != 'self-hosted'
       shell: bash

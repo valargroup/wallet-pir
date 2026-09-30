@@ -102,6 +102,7 @@ fn events(start: u64, end: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
             (
                 script((height % 8) as u32),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: Txid(txid),
                     transaction_index: 0,

@@ -39,7 +39,7 @@ def main():
         (dropin / 'resources.conf').write_text(
             '[Service]\n'
             f'Environment=PATH=/home/{user}/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'
-            'Environment=RUSTUP_TOOLCHAIN=1.91.0\n'
+            'Environment=RUSTUP_TOOLCHAIN=1.97.1\n'
             'Environment=CARGO_BUILD_JOBS=4\n'
             f'CPUWeight={1000 if fast else 100}\n'
             f'IOWeight={1000 if fast else 100}\n'

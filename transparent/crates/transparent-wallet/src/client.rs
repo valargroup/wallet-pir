@@ -85,6 +85,7 @@ struct SegmentSetup {
 
 /// A client for one table geometry, across every shard.
 pub struct TableClient {
+    schema: String,
     table: Table,
     profile: TableProfile,
     /// Per segment, because the published masks come from each segment's own
@@ -114,14 +115,29 @@ impl TableClient {
         row_bytes: u32,
         served: &NativeScheme,
     ) -> Result<Self, ClientError> {
-        let profile = TableProfile::new(
-            transparent_shard::manifest::SCHEMA,
+        Self::new_with_schema(
+            transparent_shard::SCHEMA,
+            table,
             geometry,
-            table.as_str(),
             rows,
             row_bytes,
+            served,
         )
-        .map_err(ClientError::Pir)?;
+    }
+
+    pub fn new_with_schema(
+        schema: &str,
+        table: Table,
+        geometry: &str,
+        rows: u64,
+        row_bytes: u32,
+        served: &NativeScheme,
+    ) -> Result<Self, ClientError> {
+        if !transparent_shard::manifest::supported_schema(schema) {
+            return Err(ClientError::Session("unsupported schema".into()));
+        }
+        let profile = TableProfile::new(schema, geometry, table.as_str(), rows, row_bytes)
+            .map_err(ClientError::Pir)?;
         if served != &profile.scheme {
             return Err(ClientError::Session(format!(
                 "{} scheme does not match the pinned geometry",
@@ -129,6 +145,7 @@ impl TableClient {
             )));
         }
         Ok(Self {
+            schema: schema.to_string(),
             table,
             profile,
             segments: HashMap::new(),
@@ -192,8 +209,12 @@ impl TableClient {
             return Err(ClientError::Session("row outside table".into()));
         }
         let (secret, upload) = self.profile.prepare(row).map_err(ClientError::Pir)?;
-        let mut body =
-            transparent_shard::manifest::query_binding(revision, self.table.as_str()).to_vec();
+        let mut body = transparent_shard::manifest::query_binding_for_schema(
+            &self.schema,
+            revision,
+            self.table.as_str(),
+        )
+        .to_vec();
         body.extend(upload);
         Ok(PreparedQuery { body, secret })
     }
@@ -210,7 +231,11 @@ impl TableClient {
         query: PreparedQuery,
         response: &[u8],
     ) -> Result<Vec<Vec<u8>>, ClientError> {
-        let binding = transparent_shard::manifest::query_binding(revision, self.table.as_str());
+        let binding = transparent_shard::manifest::query_binding_for_schema(
+            &self.schema,
+            revision,
+            self.table.as_str(),
+        );
         let each = 16 + self.profile.scheme.response_bytes;
         // A fixed length per segment, and a fixed segment count from the
         // published map: a response of any other size is not this shard's.

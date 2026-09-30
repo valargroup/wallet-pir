@@ -149,6 +149,15 @@ impl WalletStore for MemoryStore {
     }
 
     fn commit_shard(&mut self, commit: ShardCommit) -> Result<u64, StoreError> {
+        transparent_events::check_transaction_consistency(
+            self.state
+                .receives
+                .values()
+                .chain(self.state.spends.values())
+                .chain(commit.events.iter())
+                .map(|stored| &stored.event),
+        )
+        .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         // Validate everything against the current state first; only then
         // write, so a refused commit leaves the store exactly as it was.
         let mut new_receives: Vec<(ReceiveKey, StoredEvent)> = Vec::new();

@@ -8,6 +8,7 @@ name = "transparent_wallet_store"
 path = "src/lib.rs"
 
 [dependencies]
+transparent-shard = { path = "../transparent-shard" }
 hex = "0.4"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1"

@@ -20,6 +20,7 @@
 pub mod build;
 pub mod choice;
 pub mod compact;
+pub mod compact_v10;
 pub mod layout;
 pub mod manifest;
 pub mod packing;

@@ -84,6 +84,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 5,
         script(1),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: (FIRST + 5) as u32,
             txid: txid(100),
             transaction_index: 0,
@@ -96,6 +97,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 2 * SPAN + 10,
         script(1),
         TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: (FIRST + 2 * SPAN + 10) as u32,
             spending_txid: txid(200),
             transaction_index: 0,
@@ -110,6 +112,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             *height,
             script(2),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: *height as u32,
                 txid: txid(300 + n as u64),
                 transaction_index: 1,
@@ -127,6 +130,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             height,
             script(3),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: height as u32,
                 txid: txid(1_000 + u64::from(i)),
                 transaction_index: 2,
@@ -144,6 +148,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
                 height,
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: txid(u64::from(tag) * 1_000 + shard),
                     transaction_index: 3,

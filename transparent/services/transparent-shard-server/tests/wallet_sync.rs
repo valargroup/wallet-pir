@@ -77,6 +77,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 5,
         script(1),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: (FIRST + 5) as u32,
             txid: txid(100),
             transaction_index: 0,
@@ -89,6 +90,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 2 * SPAN + 10,
         script(1),
         TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: (FIRST + 2 * SPAN + 10) as u32,
             spending_txid: txid(200),
             transaction_index: 0,
@@ -103,6 +105,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             *height,
             script(2),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: *height as u32,
                 txid: txid(300 + n as u64),
                 transaction_index: 1,
@@ -120,6 +123,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             height,
             script(3),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: height as u32,
                 txid: txid(1_000 + u64::from(i)),
                 transaction_index: 2,
@@ -137,6 +141,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
                 height,
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: txid(u64::from(tag) * 1_000 + shard),
                     transaction_index: 3,
@@ -653,6 +658,7 @@ async fn scripts_sharing_a_row_still_cost_a_fetch_each() {
             events.push((
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: (FIRST + u64::from(i)) as u32,
                     txid: txid(u64::from(tag) * 10 + u64::from(i)),
                     transaction_index: i as u16,
@@ -828,6 +834,7 @@ async fn compact_local_outpoints_and_shared_tails_recover_over_native_pir() {
         events.push((
             script(1),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: (FIRST + i) as u32,
                 transaction_index: 0,
                 txid: received,
@@ -839,6 +846,7 @@ async fn compact_local_outpoints_and_shared_tails_recover_over_native_pir() {
         events.push((
             script(1),
             TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height: (FIRST + i) as u32,
                 transaction_index: 1,
                 spending_txid: txid(20_000 + i),
@@ -852,6 +860,7 @@ async fn compact_local_outpoints_and_shared_tails_recover_over_native_pir() {
         events.push((
             script(2),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: (FIRST + i) as u32,
                 transaction_index: 2,
                 txid: txid(30_000 + i),
@@ -904,6 +913,7 @@ fn oversized_chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             events.push((
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: txid(u64::from(tag) * 1_000 + u64::from(i)),
                     transaction_index: (i % 1_000) as u16,
@@ -1567,6 +1577,7 @@ async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
     before_chain[tail].push((
         script(if filter_race { 999 } else { 2 }),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: height as u32,
             txid: txid(9_999),
             transaction_index: 4,
@@ -2017,6 +2028,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
     before_chain[tail].push((
         script(2),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: height as u32,
             txid: txid(9_998),
             transaction_index: 4,
@@ -2206,6 +2218,7 @@ async fn a_choice_table_costs_one_query_per_script_whatever_the_script() {
             events.push((
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: (FIRST + u64::from(i)) as u32,
                     txid: txid(u64::from(tag) * 10 + u64::from(i)),
                     transaction_index: i as u16,

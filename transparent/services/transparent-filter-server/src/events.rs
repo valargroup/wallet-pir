@@ -28,7 +28,7 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use transparent_events::{EventError, TransparentEvent, EVENT_BYTES};
+use transparent_events::{EventError, TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
 use transparent_filter::{BlockHash, ScriptBytes};
 
 /// Bump when the on-disk layout changes.
@@ -38,7 +38,7 @@ use transparent_filter::{BlockHash, ScriptBytes};
 /// Rebuild into a new directory. A same-version journal whose chain identity
 /// or start height differs is still set aside, because that journal was
 /// written by this codec and can be re-derived.
-const STORE_VERSION: u16 = 2;
+const STORE_VERSION: u16 = 3;
 
 const BLOCK_RECORD_BYTES: usize = 32 + 8 + 8;
 
@@ -100,6 +100,9 @@ fn truncate(path: &Path, len: u64) -> Result<(), EventStoreError> {
 }
 
 impl EventStore {
+    pub fn version(&self) -> u16 {
+        self.meta.version
+    }
     /// Opens or creates the store, discarding anything past the checkpoint.
     ///
     /// An existing store whose chain identity or start height differs, at this
@@ -237,7 +240,7 @@ impl EventStore {
             )));
         }
         let meta: Meta = serde_json::from_slice(&std::fs::read(&meta_path)?)?;
-        if meta.version != STORE_VERSION {
+        if !matches!(meta.version, 2 | STORE_VERSION) {
             return Err(EventStoreError::Invariant(format!(
                 "journal is version {}, this build reads {STORE_VERSION}",
                 meta.version
@@ -345,6 +348,7 @@ impl EventStore {
         }
         let offset = self.events_len;
         let mut buffer = Vec::new();
+        transparent_events::check_transaction_consistency(events.iter().map(|(_, event)| event))?;
         for (script, event) in events {
             let length = u16::try_from(script.as_slice().len()).map_err(|_| {
                 EventStoreError::Invariant(format!(
@@ -354,7 +358,10 @@ impl EventStore {
             })?;
             buffer.extend_from_slice(&length.to_le_bytes());
             buffer.extend_from_slice(script.as_slice());
-            buffer.extend_from_slice(&event.to_bytes());
+            event.validate_metadata()?;
+            let raw = event.to_bytes();
+            buffer.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+            buffer.extend_from_slice(&raw);
         }
 
         let mut file = OpenOptions::new()
@@ -391,7 +398,20 @@ impl EventStore {
             return Ok(None);
         };
         let mut file = File::open(self.dir.join("events.bin"))?;
-        read_event_record(&mut file, entry)
+        let end = self
+            .block_at(height + 1)
+            .map_or(self.events_len, |next| next.offset);
+        let events = read_event_record_version(&mut file, entry, end, self.meta.version)?;
+        if events.as_ref().is_some_and(|events| {
+            events
+                .iter()
+                .any(|(_, event)| u64::from(event.height()) != height)
+        }) {
+            return Err(EventStoreError::Invariant(
+                "event height differs from block extent".into(),
+            ));
+        }
+        Ok(events)
     }
 
     /// Copies a committed suffix while the caller holds the journal lock.
@@ -479,6 +499,7 @@ mod tests {
         (
             script(tag),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height,
                 txid: Txid([tag; 32]),
                 transaction_index: 0,
@@ -493,6 +514,7 @@ mod tests {
         (
             script(tag),
             TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height,
                 spending_txid: Txid([tag + 1; 32]),
                 transaction_index: 1,
@@ -806,9 +828,30 @@ mod durability_tests {
 pub(crate) fn read_event_record(
     file: &mut File,
     entry: BlockEntry,
+    end: u64,
 ) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    read_event_record_version(file, entry, end, STORE_VERSION)
+}
+
+fn read_event_record_version(
+    file: &mut File,
+    entry: BlockEntry,
+    end: u64,
+    version: u16,
+) -> Result<Option<Vec<(ScriptBytes, TransparentEvent)>>, EventStoreError> {
+    if end > file.metadata()?.len() || end < entry.offset {
+        return Err(EventStoreError::Invariant(
+            "invalid committed block extent".into(),
+        ));
+    }
+    let available = end - entry.offset;
+    if entry.event_count > available / (EVENT_BYTES as u64 + 2) {
+        return Err(EventStoreError::Invariant(
+            "event count exceeds journal extent".into(),
+        ));
+    }
     file.seek(SeekFrom::Start(entry.offset))?;
-    let mut reader = std::io::BufReader::new(file);
+    let mut reader = std::io::BufReader::new(file).take(available);
     let mut events = Vec::with_capacity(entry.event_count as usize);
     for _ in 0..entry.event_count {
         let mut length = [0u8; 2];
@@ -821,11 +864,26 @@ pub(crate) fn read_event_record(
         }
         let mut script = vec![0u8; length];
         reader.read_exact(&mut script)?;
-        let mut event = [0u8; EVENT_BYTES];
+        let event_length = if version == STORE_VERSION {
+            let mut length = [0; 2];
+            reader.read_exact(&mut length)?;
+            usize::from(u16::from_le_bytes(length))
+        } else {
+            EVENT_BYTES
+        };
+        if !(EVENT_BYTES..=MAX_EVENT_BYTES).contains(&event_length) {
+            return Err(EventStoreError::Invariant("invalid event length".into()));
+        }
+        let mut event = vec![0u8; event_length];
         reader.read_exact(&mut event)?;
         events.push((
             ScriptBytes::new(script),
             TransparentEvent::from_bytes(&event)?,
+        ));
+    }
+    if reader.limit() != 0 {
+        return Err(EventStoreError::Invariant(
+            "block count differs from its extent".into(),
         ));
     }
     Ok(Some(events))

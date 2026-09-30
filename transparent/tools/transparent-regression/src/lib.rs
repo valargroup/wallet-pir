@@ -273,6 +273,7 @@ mod tests {
     fn reference_keeps_zero_balance_history_and_bounds_spends_by_anchor() {
         let script = hex::decode(format!("a914{}87", "11".repeat(20))).unwrap();
         let receive = TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: 10,
             txid: Txid([1; 32]),
             transaction_index: 0,
@@ -281,6 +282,7 @@ mod tests {
             coinbase: true,
         });
         let spend = TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: 20,
             spending_txid: Txid([2; 32]),
             transaction_index: 0,

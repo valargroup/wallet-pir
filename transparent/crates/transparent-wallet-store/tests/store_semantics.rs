@@ -10,6 +10,65 @@ use transparent_wallet::MemoryStore;
 use transparent_wallet_store::SqliteStore;
 
 #[test]
+fn metadata_survives_reopen_and_cross_script_contradictions_are_atomic() {
+    use transparent_events::{FeeState, TransactionMetadata};
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("metadata.sqlite");
+    let metadata = TransactionMetadata {
+        fee: FeeState::Exact(1000),
+        transparent_input_count: 2,
+        has_shielded_components: true,
+    };
+    let mut event = receive(1, 0, 5000, 10);
+    event.event = event.event.with_metadata(Some(metadata));
+    let mut store = SqliteStore::open(&path).unwrap();
+    store.bind_set(&identity()).unwrap();
+    store
+        .commit_shard(commit(
+            0,
+            "r0",
+            true,
+            (0, 99),
+            vec![event.clone()],
+            vec![script(1)],
+        ))
+        .unwrap();
+    drop(store);
+    let mut store = SqliteStore::open(&path).unwrap();
+    assert_eq!(store.events().unwrap(), vec![event.clone()]);
+    let before = store.last_commit().unwrap();
+    let mut conflict = event.clone();
+    conflict.script = script(2);
+    conflict.event = match conflict.event {
+        transparent_events::TransparentEvent::Receive(mut r) => {
+            r.output_index = 1;
+            transparent_events::TransparentEvent::Receive(r)
+        }
+        _ => unreachable!(),
+    }
+    .with_metadata(Some(TransactionMetadata {
+        fee: FeeState::Exact(1001),
+        ..metadata
+    }));
+    assert!(store
+        .commit_shard(commit(
+            1,
+            "r1",
+            true,
+            (0, 99),
+            vec![conflict],
+            vec![script(2)]
+        ))
+        .is_err());
+    assert_eq!(store.events().unwrap(), vec![event]);
+    assert_eq!(store.last_commit().unwrap(), before);
+    assert!(store.coverage(&script(2)).unwrap().is_empty());
+    let mut incompatible = identity();
+    incompatible.shard_schema = transparent_shard::manifest::LEGACY_SCHEMA.into();
+    assert!(store.bind_set(&incompatible).is_err());
+}
+
+#[test]
 fn the_memory_store_meets_the_contract() {
     suite(|| MemoryStore::with_pending_limit(8));
 }

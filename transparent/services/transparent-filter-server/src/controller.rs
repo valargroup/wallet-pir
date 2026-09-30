@@ -214,7 +214,14 @@ impl Journal for Snapshot {
             .offset
             .checked_sub(self.events_offset)
             .ok_or_else(|| EventStoreError::Invariant("snapshot offset precedes suffix".into()))?;
-        crate::events::read_event_record(&mut self.events.lock().unwrap(), entry)
+        let mut file = self.events.lock().unwrap();
+        let end = self
+            .blocks
+            .get(&(h + 1))
+            .map_or(file.metadata()?.len(), |next| {
+                next.offset - self.events_offset
+            });
+        crate::events::read_event_record(&mut file, entry, end)
     }
 }
 

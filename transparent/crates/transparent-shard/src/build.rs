@@ -795,6 +795,7 @@ mod tests {
         let mut txid = [0u8; 32];
         txid[..4].copy_from_slice(&nonce.to_le_bytes());
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height,
             txid: Txid(txid),
             transaction_index: 0,

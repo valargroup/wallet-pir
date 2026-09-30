@@ -87,6 +87,7 @@ fn decode_v1(bytes: &[u8; V1_EVENT_BYTES]) -> Result<TransparentEvent, String> {
                 return Err("a receive sets the consumed outpoint".into());
             }
             Ok(TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height,
                 txid,
                 transaction_index,
@@ -100,6 +101,7 @@ fn decode_v1(bytes: &[u8; V1_EVENT_BYTES]) -> Result<TransparentEvent, String> {
                 return Err("a spend sets a value or the coinbase flag".into());
             }
             Ok(TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height,
                 spending_txid: txid,
                 transaction_index,
@@ -361,6 +363,7 @@ mod tests {
                 let script = ScriptBytes::new(vec![0x76, 0xa9, height as u8, i as u8]);
                 let event = if i % 2 == 0 {
                     TransparentEvent::Receive(ReceiveEvent {
+                        metadata: None,
                         height,
                         txid: Txid([height as u8 ^ 0x5a; 32]),
                         transaction_index: i as u16,
@@ -370,6 +373,7 @@ mod tests {
                     })
                 } else {
                     TransparentEvent::Spend(SpendEvent {
+                        metadata: None,
                         height,
                         spending_txid: Txid([height as u8; 32]),
                         transaction_index: i as u16,

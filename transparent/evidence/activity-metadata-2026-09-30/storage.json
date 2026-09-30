@@ -1,0 +1,31 @@
+{
+  "schema": "transparent-activity-storage-v1",
+  "observed_date": "2026-09-30",
+  "wallet_pir_base": "22fe04c5f5e6f781dbb697bea24850f2632907b5",
+  "wallet_libraries_base": "908913c7c8ed69ee1a35cc001172a0800d236d3a",
+  "provider": "DigitalOcean",
+  "region": "ams3",
+  "project_id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+  "coordinator_droplet_id": 597174997,
+  "volume_id": "2b66871b-bcf5-11f1-8277-ce9c1f649990",
+  "volume_name": "wallet-pir-transparent-activity",
+  "volume_gib": 250,
+  "filesystem": "xfs",
+  "mount": "/srv/transparent-activity",
+  "filesystem_uuid": "07d8ecec-49d1-458a-8823-2c851bbdaa0d",
+  "provisioning": "Existing production Terraform wrapper, saved targeted plan: three additions, zero changes, zero deletions. Applied under existing coordinator deployment lock.",
+  "service_observation": {
+    "transparent-publish-controller": "active",
+    "transparent-filter-server": "active",
+    "transparent-5qps-continuous": "active",
+    "transparent-quality-rollout-2": "inactive"
+  },
+  "node": {
+    "running_binary": "zakurad 1.5.1+gaf944f5194ef",
+    "source_revision": "af944f5194ef2e9921bc96af017629450375013c",
+    "state_directory": "/srv/zakura/archive/zakura/state/v29",
+    "previous_reader_pin": "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e",
+    "reader_pin_action": "Align transparent chain/state dependencies to the running node; do not open format 29 with the previous format 28 reader."
+  },
+  "limitations": "Provisioned storage only. No v11 candidate publication, canonical deployment or load qualification established by this record."
+}

@@ -5,6 +5,22 @@ authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [S
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
 
+## Activity metadata v3/v11 delivery (2026-09-30)
+
+Owner: this implementation chat. Scope is wallet-pir and zakura-core/wallet-libraries;
+Vizor, sending and distribution remain excluded. [Starting observations](../evidence/activity-metadata-2026-09-30/README.md).
+
+- [x] Isolate both repositories at the recorded source bases.
+- [x] Provision and mount the selected 250 GiB coordinator volume, preserving v10 state.
+- [ ] Finish focused extraction, v11 codec, reference SQLite, contradiction and independent-oracle checks.
+- [ ] Freeze prototype source/artifacts; publish bounded real-chain recent and archive geometry data.
+- [ ] Establish nonempty HTTP SQLite recovery and exact 5 QPS / 20 QPS prototype gates.
+- [ ] Backfill a separate genesis-to-anchor v3 journal and complete v11 publication.
+- [ ] Integrate metadata, source evidence, honest summaries and bounded real HTTP adapter in wallet-libraries.
+- [ ] Verify fat-LTO release artifacts and perform guarded SSH canonical cutover with v10 rollback retained.
+- [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
+- [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

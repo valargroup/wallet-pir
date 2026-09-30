@@ -27,7 +27,11 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v10";
+pub const LEGACY_SCHEMA: &str = "transparent-shard-v10";
+pub const SCHEMA: &str = "transparent-shard-v11";
+pub fn supported_schema(schema: &str) -> bool {
+    schema == SCHEMA || schema == LEGACY_SCHEMA
+}
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -260,8 +264,12 @@ pub fn encode_directory_choice(table: &crate::choice::ChoiceTable) -> String {
 /// re-derive this from data they hold. Fixed width, so it leaks nothing about
 /// the selection.
 pub fn query_binding(manifest_digest: &str, table: &str) -> [u8; 8] {
+    query_binding_for_schema(SCHEMA, manifest_digest, table)
+}
+
+pub fn query_binding_for_schema(schema: &str, manifest_digest: &str, table: &str) -> [u8; 8] {
     let mut hasher = Sha256::new();
-    hasher.update(SCHEMA.as_bytes());
+    hasher.update(schema.as_bytes());
     hasher.update(b"/query-binding\0");
     hasher.update(manifest_digest.as_bytes());
     hasher.update(b"\0");

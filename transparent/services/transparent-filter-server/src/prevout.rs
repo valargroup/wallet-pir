@@ -12,7 +12,7 @@ use crate::extract::{outpoint_label, PreviousOutputs};
 use crate::zakura::ZakuraClient;
 use std::collections::{HashMap, VecDeque};
 use zakura_chain::transaction::Transaction;
-use zakura_chain::transparent::{Input, OutPoint};
+use zakura_chain::transparent::{Input, OutPoint, Output};
 
 /// Previous transactions requested per JSON-RPC batch.
 ///
@@ -55,7 +55,7 @@ pub const DEFAULT_CACHE_OUTPUTS: usize = 8_000_000;
 /// leave outputs that can never be found again — but the budget it enforces is
 /// the output count.
 pub struct OutputCache {
-    scripts: HashMap<OutPoint, Vec<u8>>,
+    scripts: HashMap<OutPoint, Output>,
     /// Transaction ids in insertion order, for eviction.
     order: VecDeque<(zakura_chain::transaction::Hash, u32)>,
     /// Outputs currently held, kept alongside so eviction needs no walk.
@@ -83,7 +83,7 @@ impl OutputCache {
                     hash: txid,
                     index: index as u32,
                 },
-                output.lock_script.as_raw_bytes().to_vec(),
+                output.clone(),
             );
         }
         if !outputs.is_empty() {
@@ -107,7 +107,7 @@ impl OutputCache {
         }
     }
 
-    pub fn get(&self, outpoint: &OutPoint) -> Option<&Vec<u8>> {
+    pub fn get(&self, outpoint: &OutPoint) -> Option<&Output> {
         self.scripts.get(outpoint)
     }
 
@@ -151,10 +151,10 @@ impl<'a> ZakuraPreviousOutputs<'a> {
 }
 
 impl PreviousOutputs for ZakuraPreviousOutputs<'_> {
-    fn lock_script(
+    fn previous_output(
         &mut self,
         outpoint: &OutPoint,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
         if let Some(script) = self.cache.get(outpoint) {
             self.cache_hits += 1;
             return Ok(Some(script.clone()));
@@ -170,13 +170,13 @@ impl PreviousOutputs for ZakuraPreviousOutputs<'_> {
         let Some(transaction) = transaction else {
             return Ok(None);
         };
+        if transaction.hash() != outpoint.hash {
+            return Err("previous transaction identity mismatch".into());
+        }
         // Cache the whole transaction: a block that spends one of its outputs
         // often spends several.
         self.cache.insert_transaction(&transaction);
-        let script = transaction
-            .outputs()
-            .get(outpoint.index as usize)
-            .map(|output| output.lock_script.as_raw_bytes().to_vec());
+        let script = transaction.outputs().get(outpoint.index as usize).cloned();
         if script.is_none() {
             tracing::warn!(
                 outpoint = %outpoint_label(outpoint),

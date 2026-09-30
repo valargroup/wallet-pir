@@ -16,13 +16,17 @@
 //! wallet that does have activity.
 
 use std::sync::Arc;
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use transparent_events::{
+    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
+};
 use transparent_filter::ScriptBytes;
 use zakura_chain::transaction::Transaction;
-use zakura_chain::transparent::{Input, OutPoint};
+use zakura_chain::transparent::{Input, OutPoint, Output, Utxo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractError {
+    #[error("transaction metadata: {0}")]
+    Metadata(String),
     #[error("previous output {0} is unavailable; refusing to build a partial filter")]
     MissingPreviousOutput(String),
     #[error("block has {0} transactions, more than the event encoding can index")]
@@ -43,17 +47,17 @@ pub fn outpoint_label(outpoint: &OutPoint) -> String {
     format!("{}:{}", hex::encode(bytes), outpoint.index)
 }
 
-/// Supplies the locking script of an output created before this block.
+/// Supplies the full value and locking script of an output created before this block.
 pub trait PreviousOutputs {
-    /// Returns the locking script of `outpoint`, or `None` if it is not known.
+    /// Returns the complete `outpoint` output, or `None` if it is not known.
     ///
     /// `None` aborts the block. It must never be treated as an empty script:
     /// that would publish a filter missing a real spend, and a wallet checking
     /// it would be told it had no activity.
-    fn lock_script(
+    fn previous_output(
         &mut self,
         outpoint: &OutPoint,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// One event, paired with the exact raw script it is indexed under.
@@ -86,8 +90,7 @@ pub fn extract_events(
     height: u32,
 ) -> Result<Vec<IndexedEvent>, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
-    let mut created: std::collections::HashMap<OutPoint, Vec<u8>> =
-        std::collections::HashMap::new();
+    let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
         let txid = transaction.hash();
         for (index, output) in transaction.outputs().iter().enumerate() {
@@ -96,7 +99,7 @@ pub fn extract_events(
                     hash: txid,
                     index: index as u32,
                 },
-                output.lock_script.as_raw_bytes().to_vec(),
+                output.clone(),
             );
         }
     }
@@ -115,6 +118,57 @@ pub fn extract_events(
             .iter()
             .any(|input| matches!(input, Input::Coinbase { .. }));
 
+        let mut prevouts = std::collections::HashMap::new();
+        for input in transaction.inputs() {
+            let Input::PrevOut { outpoint, .. } = input else {
+                continue;
+            };
+            let output = match created.get(outpoint) {
+                Some(output) => output.clone(),
+                None => previous
+                    .previous_output(outpoint)
+                    .map_err(|source| ExtractError::Lookup {
+                        outpoint: outpoint_label(outpoint),
+                        source,
+                    })?
+                    .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?,
+            };
+            if prevouts
+                .insert(
+                    *outpoint,
+                    Utxo {
+                        output,
+                        height: zakura_chain::block::Height(height),
+                        from_coinbase: false,
+                    },
+                )
+                .is_some()
+            {
+                return Err(ExtractError::Metadata("duplicate transaction input".into()));
+            }
+        }
+        let transparent_input_count = u32::try_from(prevouts.len())
+            .map_err(|_| ExtractError::Metadata("input count exceeds u32".into()))?;
+        let fee = if coinbase {
+            FeeState::NotApplicable
+        } else {
+            let balance = transaction
+                .value_balance(&prevouts)
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            let fee = balance
+                .remaining_transaction_value()
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            FeeState::Exact(u64::from(fee))
+        };
+        let metadata = TransactionMetadata {
+            fee,
+            transparent_input_count,
+            has_shielded_components: transaction.has_shielded_data(),
+        };
+        metadata
+            .validate(coinbase)
+            .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
         for (output_index, output) in transaction.outputs().iter().enumerate() {
             let script = ScriptBytes::new(output.lock_script.as_raw_bytes().to_vec());
@@ -124,6 +178,7 @@ pub fn extract_events(
             events.push((
                 script,
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: Some(metadata),
                     height,
                     txid,
                     transaction_index,
@@ -140,16 +195,13 @@ pub fn extract_events(
                 Input::Coinbase { .. } => continue,
                 Input::PrevOut { outpoint, .. } => outpoint,
             };
-            let bytes = match created.get(outpoint) {
-                Some(bytes) => bytes.clone(),
-                None => previous
-                    .lock_script(outpoint)
-                    .map_err(|source| ExtractError::Lookup {
-                        outpoint: outpoint_label(outpoint),
-                        source,
-                    })?
-                    .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?,
-            };
+            let bytes = prevouts
+                .get(outpoint)
+                .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?
+                .output
+                .lock_script
+                .as_raw_bytes()
+                .to_vec();
             // A previous output can legitimately have an empty script; it is
             // then not an element. It cannot legitimately be OP_RETURN, since
             // such an output is unspendable, but the same rule is applied
@@ -161,6 +213,7 @@ pub fn extract_events(
             events.push((
                 script,
                 TransparentEvent::Spend(SpendEvent {
+                    metadata: Some(metadata),
                     height,
                     spending_txid: txid,
                     transaction_index,
@@ -210,12 +263,15 @@ pub(crate) mod testing {
     }
 
     impl PreviousOutputs for MapPreviousOutputs {
-        fn lock_script(
+        fn previous_output(
             &mut self,
             outpoint: &OutPoint,
-        ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
             self.lookups += 1;
-            Ok(self.scripts.get(outpoint).cloned())
+            Ok(self.scripts.get(outpoint).map(|bytes| Output {
+                value: zakura_chain::amount::Amount::try_from(100_000_000u64).unwrap(),
+                lock_script: zakura_chain::transparent::Script::new(bytes),
+            }))
         }
     }
 }

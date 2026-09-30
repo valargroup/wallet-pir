@@ -36,6 +36,7 @@ impl Scanner {
             "invalid scanner range"
         );
         store.bind_set(&SetIdentity {
+            shard_schema: transparent_shard::SCHEMA.to_string(),
             network: "benchmark".into(),
             genesis_hash: manifest.genesis_hash.clone(),
             profile: format!("compact-blocks:{}", manifest.id()?),
@@ -123,6 +124,7 @@ impl Scanner {
                             shard_id: start,
                             revision_digest: self.dataset_id.clone(),
                             event: TransparentEvent::Spend(SpendEvent {
+                                metadata: None,
                                 height: u32::try_from(block.height)?,
                                 spending_txid: txid,
                                 transaction_index,
@@ -142,6 +144,7 @@ impl Scanner {
                             shard_id: start,
                             revision_digest: self.dataset_id.clone(),
                             event: TransparentEvent::Receive(ReceiveEvent {
+                                metadata: None,
                                 height: u32::try_from(block.height)?,
                                 txid,
                                 transaction_index,

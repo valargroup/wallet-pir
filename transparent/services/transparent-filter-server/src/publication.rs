@@ -915,6 +915,7 @@ mod tests {
         let events = vec![(
             ScriptBytes::new(vec![0x51, tag]),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: h as u32,
                 txid: transparent_events::Txid([tag; 32]),
                 transaction_index: 0,

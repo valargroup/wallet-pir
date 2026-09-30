@@ -58,8 +58,7 @@ use std::time::Duration;
 use transparent_filter::{BlockHash, FilterLimits, ScriptBytes, ShardKey, ShardMap};
 use transparent_shard::build::candidate_rows;
 use transparent_shard::manifest::ShardManifest;
-use transparent_shard::page_row::decode_page_row;
-use transparent_shard::records::{decode_directory_row, DirectoryEntry};
+use transparent_shard::records::DirectoryEntry;
 
 #[path = "sync_ahead.rs"]
 mod ahead;
@@ -209,6 +208,7 @@ pub struct ServiceGeometry {
 
 /// The prepared clients for one geometry: one per table.
 struct GeometryClients {
+    schema: String,
     directory: TableClient,
     pages: TableClient,
 }
@@ -220,6 +220,7 @@ struct GeometryClients {
 /// clients are reused for every shard naming it — which is the saving that
 /// naming geometries from a closed registry exists to buy.
 struct Clients {
+    schema: String,
     prepared: HashMap<String, GeometryClients>,
 }
 
@@ -259,14 +260,17 @@ impl Clients {
                 )));
             }
             let clients = GeometryClients {
-                directory: TableClient::new(
+                schema: self.schema.clone(),
+                directory: TableClient::new_with_schema(
+                    &self.schema,
                     Table::Directory,
                     name,
                     geometry.directory_rows,
                     geometry.directory_row_bytes as u32,
                     &params.directory_scheme,
                 )?,
-                pages: TableClient::new(
+                pages: TableClient::new_with_schema(
+                    &self.schema,
                     Table::Pages,
                     name,
                     geometry.page_rows,
@@ -490,7 +494,7 @@ pub fn sync_into<S: WalletStore>(
     limits: &WorkLimits,
     target_anchor: &Anchor,
 ) -> Result<SyncReport, SyncError> {
-    if geometry.schema != transparent_shard::SCHEMA {
+    if !transparent_shard::manifest::supported_schema(&geometry.schema) {
         return Err(SyncError::Schema {
             served: geometry.schema.clone(),
             expected: transparent_shard::SCHEMA,
@@ -561,7 +565,7 @@ pub fn sync_into<S: WalletStore>(
 
     // The store is bound to a publication lineage. A map from another
     // lineage is refused before anything is read from it.
-    let identity = SetIdentity::of(map);
+    let identity = SetIdentity::of_schema(map, &geometry.schema);
     store.bind_set(&identity).map_err(|error| match error {
         StoreError::SetMismatch { stored, offered } => SyncError::MapDiverged(format!(
             "the store is bound to set {stored}, this map is {offered}"
@@ -768,6 +772,7 @@ pub fn sync_into<S: WalletStore>(
     store.add_scripts(&scripts.scripts())?;
     let mut scripts_added = 0usize;
     let mut clients = Clients {
+        schema: geometry.schema.clone(),
         prepared: HashMap::new(),
     };
     let mut matched_shards: Vec<u64> = Vec::new();
@@ -1439,7 +1444,15 @@ where
         let verified = match &manifest {
             Some(verified) => verified,
             None => match fetch_manifest(entry, previous_digest, map, transport, charges) {
-                Ok(verified) => manifest.insert(verified),
+                Ok(verified) => {
+                    if verified.schema != geometry.schema {
+                        return Err(SyncError::ManifestMismatch {
+                            shard_id: entry.shard_id,
+                            field: "schema",
+                        });
+                    }
+                    manifest.insert(verified)
+                }
                 Err(SyncError::Client(ClientError::Stale(stale))) => {
                     return Err(SyncError::StaleRevision {
                         shard_id: entry.shard_id,
@@ -1550,7 +1563,7 @@ fn verify_manifest(
     if manifest.digest() != entry.manifest_digest {
         return Err(mismatch("digest"));
     }
-    if manifest.schema != transparent_shard::SCHEMA {
+    if !transparent_shard::manifest::supported_schema(&manifest.schema) {
         return Err(SyncError::Schema {
             served: manifest.schema.clone(),
             expected: transparent_shard::SCHEMA,
@@ -1833,7 +1846,11 @@ fn retrieve_shard_into<S: WalletStore>(
         .set_identity()?
         .map(|identity| identity.digest())
         .unwrap_or_default();
-    let GeometryClients { directory, pages } = clients;
+    let GeometryClients {
+        directory,
+        pages,
+        schema,
+    } = clients;
     open_table(
         store,
         &set_digest,
@@ -1884,7 +1901,9 @@ fn retrieve_shard_into<S: WalletStore>(
                 charges,
             )?;
             for raw in answers {
-                for candidate in decode_directory_row(&raw)? {
+                for candidate in
+                    transparent_shard::records::decode_directory_row_with_schema(&raw, schema)?
+                {
                     // The row is selected by a hash of the raw script. The tag
                     // derived from this manifest's salt is what settles a hit.
                     // A tag from any other salt does not match.
@@ -2107,7 +2126,9 @@ fn finish_pages<S: WalletStore>(
             // fact about other people's history and not this wallet's.
             let mut fragment = None;
             for raw in answers {
-                for candidate in decode_page_row(&raw)? {
+                for candidate in
+                    transparent_shard::page_row::decode_page_row_with_schema(&raw, &clients.schema)?
+                {
                     if candidate.tag != wanted || candidate.ordinal != ordinal {
                         continue;
                     }
@@ -2788,6 +2809,7 @@ mod tests {
     fn compact_boundaries_reject_underfilled_reordered_and_cross_row_reference_shortcuts() {
         use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
         let receive = TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: 100,
             transaction_index: 0,
             txid: Txid([7; 32]),
@@ -2796,6 +2818,7 @@ mod tests {
             coinbase: false,
         });
         let spend = TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: 101,
             transaction_index: 0,
             spending_txid: Txid([8; 32]),

@@ -1,8 +1,8 @@
-//! Schema-v11 row codec with canonical, bounded transaction metadata.
+//! Schema-v10 row codec. The journal and wallet's logical events remain v2/87 bytes.
 //! References are local to one entry: its first event is always self contained.
 
 use crate::records::RecordError;
-use transparent_events::{TransactionMetadata, TransparentEvent, EVENT_BYTES};
+use transparent_events::{TransparentEvent, EVENT_BYTES};
 
 pub const RECEIVE_BYTES: usize = 51;
 pub const SPEND_BYTES: usize = 79;
@@ -16,12 +16,11 @@ fn local(event: &TransparentEvent, previous: Option<&TransparentEvent>) -> bool 
 }
 
 pub fn event_len(event: &TransparentEvent, previous: Option<&TransparentEvent>) -> usize {
-    let base = match event {
+    match event {
         TransparentEvent::Receive(_) => RECEIVE_BYTES,
         TransparentEvent::Spend(_) if local(event, previous) => LOCAL_SPEND_BYTES,
         TransparentEvent::Spend(_) => SPEND_BYTES,
-    };
-    base + event.metadata().map_or(0, TransactionMetadata::encoded_len)
+    }
 }
 
 pub fn encoded_len(events: &[TransparentEvent]) -> usize {
@@ -34,15 +33,13 @@ pub fn encoded_len(events: &[TransparentEvent]) -> usize {
 
 pub fn encode(events: &[TransparentEvent], out: &mut Vec<u8>) -> Result<(), RecordError> {
     for (i, event) in events.iter().enumerate() {
-        event.validate_metadata()?;
         // Avoid the journal encoder's debug assertion on its forbidden sentinel.
         if matches!(event, TransparentEvent::Receive(r) if r.height == 0 && r.transaction_index == 0
             && r.value == 0 && r.txid.0 == [0; 32] && r.output_index == 0 && !r.coinbase)
         {
             return Err(transparent_events::EventError::Empty.into());
         }
-        let mut raw = event.to_legacy_bytes();
-        raw[0] |= event.metadata().map_or(0, TransactionMetadata::flags);
+        let raw = event.to_legacy_bytes();
         let previous = i.checked_sub(1).map(|j| &events[j]);
         match event {
             TransparentEvent::Receive(_) => out.extend_from_slice(&raw[..RECEIVE_BYTES]),
@@ -55,9 +52,6 @@ pub fn encode(events: &[TransparentEvent], out: &mut Vec<u8>) -> Result<(), Reco
                     out.extend_from_slice(&raw[51..]);
                 }
             }
-        }
-        if let Some(metadata) = event.metadata() {
-            metadata.encode(out);
         }
     }
     Ok(())
@@ -75,7 +69,7 @@ pub fn decode(bytes: &[u8], count: usize) -> Result<(Vec<TransparentEvent>, usiz
         let flags = *bytes
             .get(at)
             .ok_or_else(|| RecordError::Malformed("truncated compact event".into()))?;
-        if flags & !63 != 0 || flags & 1 == 0 && flags & LOCAL_OUTPOINT != 0 || flags & 3 == 3 {
+        if flags & !7 != 0 || flags & 1 == 0 && flags & LOCAL_OUTPOINT != 0 || flags & 3 == 3 {
             return Err(transparent_events::EventError::Flags(flags).into());
         }
         let len = if flags & 1 == 0 {
@@ -91,7 +85,6 @@ pub fn decode(bytes: &[u8], count: usize) -> Result<(Vec<TransparentEvent>, usiz
         let mut raw = [0; EVENT_BYTES];
         if flags & 1 == 0 {
             raw[..RECEIVE_BYTES].copy_from_slice(body);
-            raw[0] &= 3;
         } else {
             raw[0] = 1;
             raw[1..7].copy_from_slice(&body[1..7]);
@@ -108,17 +101,14 @@ pub fn decode(bytes: &[u8], count: usize) -> Result<(Vec<TransparentEvent>, usiz
                 raw[51..].copy_from_slice(&body[43..]);
             }
         }
-        let (metadata, metadata_len) =
-            TransactionMetadata::decode(&bytes[at + len..], flags & 56, flags & 2 != 0)?;
-        let event = TransparentEvent::from_legacy_bytes(&raw)?.with_metadata(metadata);
-        event.validate_metadata()?;
-        if event_len(&event, events.last()) != len + metadata_len {
+        let event = TransparentEvent::from_legacy_bytes(&raw)?;
+        if event_len(&event, events.last()) != len {
             return Err(RecordError::Malformed(
                 "noncanonical full outpoint after its receive".into(),
             ));
         }
         events.push(event);
-        at += len + metadata_len;
+        at += len;
     }
     Ok((events, at))
 }
@@ -127,46 +117,6 @@ pub fn decode(bytes: &[u8], count: usize) -> Result<(Vec<TransparentEvent>, usiz
 pub(crate) mod tests {
     use super::*;
     use transparent_events::{ReceiveEvent, SpendEvent, Txid};
-
-    #[test]
-    fn metadata_is_attributed_to_each_event_and_framed_after_local_outpoints() {
-        let [receive, spend] = pair(100, 5);
-        let receive = match receive {
-            TransparentEvent::Receive(mut r) => {
-                r.value = 1000;
-                TransparentEvent::Receive(r)
-            }
-            _ => unreachable!(),
-        }
-        .with_metadata(Some(TransactionMetadata {
-            fee: transparent_events::FeeState::NotApplicable,
-            transparent_input_count: 0,
-            has_shielded_components: true,
-        }));
-        let spend = match spend {
-            TransparentEvent::Spend(mut s) => {
-                s.input_index = 0;
-                TransparentEvent::Spend(s)
-            }
-            _ => unreachable!(),
-        }
-        .with_metadata(Some(TransactionMetadata {
-            fee: transparent_events::FeeState::Exact(500),
-            transparent_input_count: 1,
-            has_shielded_components: false,
-        }));
-        let mut bytes = Vec::new();
-        encode(&[receive, spend], &mut bytes).unwrap();
-        assert_eq!(bytes.len(), 98);
-        assert_eq!(bytes[0], 50);
-        assert_eq!(bytes[51], 0);
-        assert_eq!(bytes[52], 45);
-        assert_eq!(decode(&bytes, 2).unwrap(), (vec![receive, spend], 98));
-        assert!(crate::compact_v10::decode(&bytes, 2).is_err());
-        for end in 0..bytes.len() {
-            assert!(decode(&bytes[..end], 2).is_err());
-        }
-    }
 
     pub(crate) fn pair(height: u32, nonce: u32) -> [TransparentEvent; 2] {
         let mut txid = [0x12; 32];
