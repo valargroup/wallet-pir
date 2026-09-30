@@ -8,6 +8,12 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Shared layers: production checks and fixes](shared-layers-2026-09-30/README.md) —
+  read-only deploy-CLI runs against production, Status control-account
+  hardening, three alert fixes and the APM on a CI-built binary, with no
+  Enhance or Status restart; 696,000/696,000 correct on each product during the
+  changes.
+
 - [Production soak and fixes](prod-soak-2026-09-27/README.md) —
   six-hour joint 20 QPS load; 432,000/432,000 Enhance and 0 incorrect Status
   answers; thirteen findings fixed on `main`, open items listed.

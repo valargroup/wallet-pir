@@ -54,12 +54,37 @@ on that host. Soak batch 83 (21:51:51–22:01:56) covers the reload: Status
   sampled archive-03 at 10.142.0.7 as `transparent-pir-recent-03`. It now builds
   worker targets from the roster every cycle; deployed and verified fresh for all
   seven sources.
-- **Retired incidents** (`70366868`): see below.
+- **Retired incidents** (`70366868`): a retired condition kept its last firing
+  state and stayed in the incident table, so the members removed on 2026-09-29
+  were listed as firing indefinitely. `pir-apm` from full CI `aeaee4b7`
+  (`0d516a79…`, now shipped in the `enhance-pir` bundle) replaced the hand-built
+  `track-a-a5c77d40` at 07:08:37 UTC through one new ExecStart drop-in
+  (`zzzzzzzzzzzzzzzzzzz-apm-aeaee4b7.conf`; removing it rolls back). The incident
+  table went from 274 to 204 rows and only the genuine `scaling_budget` warning
+  remained active. The only Slack events in the window were a `chain_inactive`
+  warning that fired at 07:06:49 (before the restart, a chain tip pause) and
+  recovered at 07:08:42.
 
 ## Load
 
 The continuous joint soak on the coordinator (`prod-soak-continuous-20260929`,
 started 07:54 UTC on 2026-09-29 by another session; 20 QPS Enhance through the
 public URL and 20 QPS Status through the router query tunnel, 600 s batches,
-gate p99 < 2 s and p50 < 700 ms) covers this work. Captured batches and its
-manifest are in [raw](raw/soak-continuous-batches.jsonl).
+gate p99 < 2 s and p50 < 700 ms) covers this work. From 21:31 on 2026-09-29 to
+07:06 on 2026-09-30, the 58 batches spanning every change above returned
+696,000/696,000 correct Enhance answers and 696,000/696,000 correct Status
+answers with no errors, unstarted arrivals or latency-gate failures (Enhance p99
+147–173 ms, Status p99 65–103 ms). All 138 batches since the run started:
+1,656,000/1,656,000 on each product. The APM restart falls after the last
+captured batch; it is not on the query path. Batches:
+[soak-continuous-batches.jsonl](raw/soak-continuous-batches.jsonl), run
+manifest: [soak-continuous-manifest.json](raw/soak-continuous-manifest.json).
+
+## Not done here
+
+- No new Enhance or Status binary was rolled. A worker built from `6360f0d8` or
+  later drains on SIGTERM, so later worker restarts can be lossless, but the
+  first replacement of a current worker stops it without draining, and the
+  router, ingress, coordinator and Status roles are single instances.
+- The control-session supervisor is not installed; replacing the Status tunnels
+  briefly closes the Status query path.
