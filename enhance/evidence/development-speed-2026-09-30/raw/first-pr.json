@@ -1,0 +1,8 @@
+{
+  "start": "2026-09-30T14:10:25.476Z",
+  "first_reviewable_pr_created": "2026-09-30T14:20:19Z",
+  "historical_before_seconds": null,
+  "baseline_status": "Unavailable: report has no comparable task-start/PR-created pair",
+  "workload_comparability": "This follow-up is not the same implementation workload as PR 122; elapsed is an observation, not a speedup.",
+  "observed_after_seconds": 593.524
+}

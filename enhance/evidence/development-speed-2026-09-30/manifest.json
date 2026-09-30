@@ -1,0 +1,52 @@
+{
+  "run_id": "development-speed-2026-09-30",
+  "recorded_at_utc": "2026-09-30T14:30:29.034868+00:00",
+  "comparison": {
+    "command": [
+      "make",
+      "check-package",
+      "PACKAGE=pir-control",
+      "TEST=identity",
+      "OFFLINE=1"
+    ],
+    "population": "20 successful warm executions before and after; fresh-lane compilation excluded via explicit warmups",
+    "host": "Darwin-25.2.0-arm64-arm-64bit-Mach-O",
+    "architecture": "arm64",
+    "cwd": "/Users/roman/.codex/worktrees/97ee/wallet-pir",
+    "before_sha": "a73c85f0ff63376839e75fbd6d582930454c84e0",
+    "after_sha": "4f0c98cdec73fd6132d3e7842d1998889d7f8452",
+    "before_p95_seconds": 1.259,
+    "after_p95_seconds": 1.431,
+    "p95_change_seconds": 0.172,
+    "p95_change_percent": 13.66,
+    "compiler": "rustc 1.91.0 (f8297e351 2025-10-28)\nbinary: rustc\ncommit-hash: f8297e351a40c1439a467bbbb6879088047f50b3\ncommit-date: 2025-10-28\nhost: aarch64-apple-darwin\nrelease: 1.91.0\nLLVM version: 21.1.2",
+    "cargo": "cargo 1.91.0 (ea2d97820 2025-10-10)",
+    "flags": {
+      "RUSTFLAGS": null,
+      "CFLAGS": null,
+      "CXXFLAGS": null
+    },
+    "baseline_cache": "warm explicit target root",
+    "after_cache": "two warmed auto-leased lanes under the same explicit target root; serial runs reuse lane-0",
+    "actions_comparable": false,
+    "first_pr_comparable_baseline": null
+  },
+  "host": {
+    "machdep.cpu.brand_string": "Apple M4 Max",
+    "hw.memsize": "137438953472",
+    "hw.model": "Mac16,6"
+  },
+  "host_region": null,
+  "cpu_sharing": "Local developer machine; competing activity not controlled",
+  "storage": "Local persistent developer storage; SKU and I/O load not measured",
+  "workload": "Focused pir-control library identity test in release-fast, offline pinned dependencies; 20 warm serial samples plus two actual concurrent invocations",
+  "schema": null,
+  "network_genesis": null,
+  "geometry": null,
+  "protocol_hardware_deployment_qualification": "Not applicable to local developer tooling; all existing gates preserved",
+  "failures": {
+    "measured_serial": 0,
+    "warmup_and_concurrent": 0
+  },
+  "baseline_limits": "Historical time-to-first-PR unavailable; Actions workload differs; no artifact or dependency population claim"
+}

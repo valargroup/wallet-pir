@@ -1,0 +1,33 @@
+python3 tools/ci/fast.py --package "pir-control" --test "identity"   --offline
+{
+  "packages": [
+    "pir-control"
+  ],
+  "helpers": [],
+  "groups": [],
+  "reasons": [
+    "explicit package check"
+  ]
+}
+TARGET_LEASE {"target": "/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1", "compatibility": "0be2c833532909a0b337", "owner_pid": 35091}
++ cargo fmt --all --check
+CHECK_STAGE {"stage": "format", "seconds": 0.813, "exit": 0}
++ cargo test --locked --profile release-fast --offline -p pir-control --lib --no-run
+    Blocking waiting for file lock on package cache
+    Finished `release-fast` profile [optimized] target(s) in 0.13s
+  Executable unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1/release-fast/deps/pir_control-bcf82a358a56f3fd)
+CHECK_STAGE {"stage": "compile:pir-control", "seconds": 0.152, "exit": 0}
+    Blocking waiting for file lock on package cache
+    Finished `release-fast` profile [optimized] target(s) in 0.13s
+     Running unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1/release-fast/deps/pir_control-bcf82a358a56f3fd)
++ cargo test --locked --profile release-fast --offline -p pir-control --lib -- identity
+    Blocking waiting for file lock on package cache
+    Finished `release-fast` profile [optimized] target(s) in 0.12s
+     Running unittests src/lib.rs (/Users/roman/.ai-runbook/dev-ux/checks/wallet-pir-122-followup/target/dev-lanes/0be2c833532909a0b337/lane-1/release-fast/deps/pir_control-bcf82a358a56f3fd)
+
+running 1 test
+test tests::identity_is_stable_within_a_process ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+CHECK_STAGE {"stage": "tests:pir-control", "seconds": 0.153, "exit": 0}
