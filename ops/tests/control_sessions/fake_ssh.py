@@ -54,8 +54,11 @@ def serve(listener, reply):
             connection, _ = listener.accept()
         except OSError:
             return
-        connection.sendall(reply)
-        connection.close()
+        with connection:
+            try:
+                connection.sendall(reply)
+            except OSError:
+                pass
 
 
 try:

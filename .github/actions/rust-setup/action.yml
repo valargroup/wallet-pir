@@ -8,15 +8,19 @@ runs:
   using: composite
   steps:
     - name: Install hosted toolchain
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: 1.91.0
         components: rustfmt, clippy
     - name: Install hosted native dependencies
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       shell: bash
       run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
+    - name: Remember hosted prerequisites
+      if: runner.environment != 'self-hosted'
+      shell: bash
+      run: echo 'WALLET_PIR_HOSTED_TOOLS_READY=1' >> "$GITHUB_ENV"
     - name: Select persistent build directory
       if: runner.environment == 'self-hosted'
       shell: bash
@@ -34,16 +38,23 @@ runs:
         for tool in clang protoc jq shellcheck; do command -v "$tool" >/dev/null; done
         # Outside checkout, unique to runner slot and compilation inputs. PR
         # runners must be isolated from credentials and trusted release caches.
-        fingerprint=$(printf '%s\n' '1.91.0' "$RUSTFLAGS" "${CFLAGS:-}" "${CXXFLAGS:-}" | sha256sum | cut -c1-16)
+        fingerprint=$(printf '%s\n' 'ubuntu24.04-x86_64' '1.91.0' "$RUSTFLAGS" "${CFLAGS:-}" "${CXXFLAGS:-}" | sha256sum | cut -c1-16)
         target="$HOME/.cache/wallet-pir/$RUNNER_NAME/$LANE/$fingerprint"
         mkdir -p "$target"
         echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
         echo "WALLET_PIR_BUILD_CACHE_ROOT=$HOME/.cache/wallet-pir/$RUNNER_NAME" >> "$GITHUB_ENV"
         echo 'RUSTUP_TOOLCHAIN=1.91.0' >> "$GITHUB_ENV"
+    - name: Select hosted build directory
+      if: runner.environment != 'self-hosted'
+      shell: bash
+      env:
+        LANE: ${{ inputs.lane }}
+      run: echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target/$LANE" >> "$GITHUB_ENV"
     - name: Restore hosted Cargo cache
       if: runner.environment != 'self-hosted'
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: ${{ inputs.lane }}-v2
+        shared-key: ubuntu24.04-${{ inputs.lane }}-v3
+        workspaces: ". -> target/${{ inputs.lane }}"
         cache-workspace-crates: true
         cache-on-failure: true

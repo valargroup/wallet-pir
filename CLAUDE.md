@@ -9,8 +9,10 @@ crates do not depend on it.
 `transparent/tools/transparent-measure` uses the current shard stack and remains part of the
 backfill workflow; its extrapolated baseline is not a whole-wallet measurement.
 
-Run `make check` before submitting changes. Release mode is required for the
-full-shard cryptographic tests. Preserve Cargo package/binary names when moving tools.
+Follow [AGENTS.md](AGENTS.md) for shared iteration and validation rules. Use
+`make check-fast BASE=<sha>` during iteration; comprehensive checks belong to
+final validation or CI. Optimized `release-fast` runs full-shard tests without
+deployment LTO. Preserve Cargo package/binary names when moving tools.
 
 `demos/legacy-spendability` is a preserved independent workspace, excluded from
 root CI. Do not introduce active dependencies on it. Use `make demo-check` when

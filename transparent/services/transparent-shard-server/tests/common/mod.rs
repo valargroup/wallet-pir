@@ -9,7 +9,8 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
-use transparent_shard::build::build_shard;
+mod prepared;
+use prepared::prepared_shard;
 use transparent_shard::layout::{Geometry, RECENT_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
@@ -185,7 +186,7 @@ pub fn publish_with(
         let geometry = geometry_for(shard_id);
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
-        let built = build_shard(
+        let built = prepared_shard(
             shard_id,
             start,
             end,
@@ -194,8 +195,7 @@ pub fn publish_with(
             transparent_filter::RANGE_PROFILE,
             geometry,
             events,
-        )
-        .expect("build");
+        );
         let is_tail = shard_id + 1 == count && count == SHARDS;
 
         let manifest = ShardManifest {

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -24,6 +25,54 @@ def module(name, file):
 
 deploy = module('cuda_deploy', 'enhance/ops/scripts/deploy-cuda.py')
 verify = module('cuda_verify', 'enhance/ops/scripts/verify-cuda-deployment.py')
+
+
+class CoordinatorPreflight(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.args = SimpleNamespace(ssh_key=self.root/'key', known_hosts=self.root/'hosts',
+                                    inventory=self.root/'inventory', state_dir=self.root/'state')
+        for file in [self.args.ssh_key, self.args.known_hosts, self.args.inventory]:
+            file.write_text('isolated fixture')
+            file.chmod(0o600)
+        self.args.state_dir.mkdir(mode=0o700)
+        original = Path.lstat
+        self.stat = lambda path: SimpleNamespace(st_mode=original(path).st_mode, st_uid=0)
+        self.addCleanup(patch.stopall)
+        patch.object(deploy.shutil, 'which', return_value='/fixture/tool').start()
+
+    def check(self):
+        with patch.object(Path, 'lstat', self.stat):
+            deploy.preflight_inputs(self.args)
+
+    def test_private_inputs_are_accepted_without_writing_evidence(self):
+        before = sorted(self.root.iterdir())
+        self.check()
+        self.assertEqual(sorted(self.root.iterdir()), before)
+
+    def test_broad_key_and_state_permissions_fail(self):
+        for path in [self.args.ssh_key, self.args.state_dir]:
+            path.chmod(0o755)
+            with self.assertRaisesRegex(ValueError, 'permissions|private'):
+                self.check()
+            path.chmod(0o700 if path.is_dir() else 0o600)
+
+    def test_symlink_non_owner_and_missing_capability_fail(self):
+        self.args.ssh_key.unlink()
+        self.args.ssh_key.symlink_to(self.args.inventory)
+        with self.assertRaisesRegex(ValueError, 'regular file'):
+            self.check()
+        self.args.ssh_key.unlink()
+        self.args.ssh_key.write_text('fixture')
+        self.args.ssh_key.chmod(0o600)
+        with patch.object(Path, 'lstat', new=lambda path: SimpleNamespace(st_mode=0o100600, st_uid=1)):
+            with self.assertRaisesRegex(ValueError, 'root-owned'):
+                deploy.preflight_inputs(self.args)
+        with patch.object(deploy.shutil, 'which', return_value=None):
+            with self.assertRaisesRegex(ValueError, 'ssh and scp'):
+                self.check()
 
 
 class CudaFleet(Fleet):

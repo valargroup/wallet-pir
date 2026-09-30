@@ -218,6 +218,7 @@ class TimingTests(unittest.TestCase):
     def test_nearest_rank_p95(self):
         self.assertEqual(timings.percentile95(list(range(1, 21))), 19)
         self.assertIsNone(timings.percentile95([]))
+        self.assertIsNone(timings.percentile95([1, 2, 3]))
 
     def test_queue_and_execution_are_separate(self):
         run = dict(head_sha=SHA, status='completed', created_at='2026-09-14T00:00:00Z')

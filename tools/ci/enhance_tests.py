@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = 'enhance-pir-server'
@@ -42,9 +43,19 @@ def cargo_args(registry, tier):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tier', choices=['fast', 'full'])
+    parser.add_argument('--offline', action='store_true')
     args = parser.parse_args()
-    metadata = json.loads(subprocess.check_output(
-        ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1'], cwd=ROOT))
+    if args.tier:
+        metadata = json.loads(subprocess.check_output(
+            ['cargo', 'metadata', '--locked', '--no-deps', '--format-version', '1', *(['--offline'] if args.offline else [])], cwd=ROOT))
+    else:
+        package_root = ROOT / 'enhance/services/enhance-pir-server'
+        manifest = tomllib.loads((package_root / 'Cargo.toml').read_text())
+        names = {t['name'] for t in manifest.get('test', [])}
+        if manifest['package'].get('autotests', True):
+            names.update(p.stem for p in (package_root / 'tests').glob('*.rs'))
+        metadata = {'packages': [{'name': PACKAGE, 'targets': [
+            {'name': name, 'kind': ['test']} for name in names]}]}
     registry = json.loads((ROOT / 'tools/ci/enhance-tests.json').read_text())
     validate(metadata, registry)
     print('Enhance integration target classification is complete', flush=True)
@@ -52,9 +63,15 @@ def main():
         env = dict(os.environ, RUST_TEST_THREADS='1')
         # Qualification overrides belong to explicit manual runs, not CI defaults.
         env = {key: value for key, value in env.items() if not key.startswith('QUALIFY_')}
-        command = ['bash', str(ROOT / 'tools/ci/full-test.sh'), *cargo_args(registry, args.tier)]
+        command = ['bash', str(ROOT / 'tools/ci/full-test.sh'), *cargo_args(registry, args.tier), *(['--offline'] if args.offline else [])]
         print('+ ' + ' '.join(command), flush=True)
         subprocess.run(command, cwd=ROOT, env=env, check=True)
+        if args.tier == 'full':
+            # Explicit lib/bin/integration selectors do not run library doctests.
+            subprocess.run(['python3', 'tools/ci/stage.py', 'doctests', '--',
+                            'cargo', 'test', '--locked', '--profile', 'release-fast',
+                            '-p', PACKAGE, '--doc', *(['--offline'] if args.offline else [])],
+                           cwd=ROOT, env=env, check=True)
 
 
 if __name__ == '__main__':

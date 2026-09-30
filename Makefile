@@ -16,10 +16,26 @@ TRANSPARENT_LOAD_JSON ?= transparent-load-report.json
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check: check-ops check-docs check-reports check-tools
+check: check-full
+
+.PHONY: check-full check-fast check-package doctor prepare-dev
+check-fast:
+	python3 tools/ci/fast.py $(if $(BASE),--base "$(BASE)") $(if $(filter 1,$(OFFLINE)),--offline)
+
+check-package:
+	@test -n "$(PACKAGE)" || { echo "Set PACKAGE=<workspace package>"; exit 1; }
+	python3 tools/ci/fast.py --package "$(PACKAGE)" $(if $(TEST),--test "$(TEST)") $(if $(TEST_TARGET),--test-target "$(TEST_TARGET)") $(if $(FEATURES),--features "$(FEATURES)") $(if $(filter 1,$(OFFLINE)),--offline)
+
+doctor:
+	python3 tools/ci/doctor.py $(if $(filter 1,$(NETWORK)),--network)
+
+prepare-dev:
+	cargo fetch --locked
+
+check-full: check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
-	cargo test --workspace --release
+	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+	tools/ci/full-test.sh --locked --workspace --profile release-fast
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
@@ -97,8 +113,11 @@ check-ops-elastic:
 # simulator (test_scaler_sim.py) and the exhaustive membership and actuation
 # model (test_membership_model.py).
 check-ops-scaler:
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_scaler_*.py'
-	python3 -m unittest discover -s transparent/ops/tests -p 'test_membership_model.py'
+	python3 tools/ci/scaler_tests.py --tier full
+
+.PHONY: check-ops-scaler-fast
+check-ops-scaler-fast:
+	python3 tools/ci/scaler_tests.py --tier fast
 
 .PHONY: check-reports
 check-reports:
@@ -112,7 +131,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	cargo test --workspace --release
+	tools/ci/full-test.sh --locked --workspace --profile release-fast
 
 run-server:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
@@ -301,6 +320,8 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
+	python3 tools/ci/scaler_tests.py
+	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
 	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'

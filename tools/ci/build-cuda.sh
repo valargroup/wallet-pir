@@ -10,7 +10,7 @@ source /etc/os-release
 export CARGO_TARGET_DIR=target/native-cuda
 export RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq'
 export CFLAGS=-mpclmul CXXFLAGS=-mpclmul
-cargo build --locked --release \
+python3 tools/ci/stage.py compile:cuda -- cargo build --locked --release \
   -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test \
   --bin enhance-pir-server --bin enhance-pir-cli --bin enhance-pir-load-test \
   --features enhance-pir/cli,enhance-pir/native-reinspiring,enhance-pir-server/native-reinspiring,enhance-pir-server/cuda,enhance-pir-load-test/native-reinspiring
