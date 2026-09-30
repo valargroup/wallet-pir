@@ -58,12 +58,17 @@ def main():
         ['cargo', 'test', '--locked', '--profile', 'release-fast',
          '-p', 'transparent-filter-server', '--bin', 'event-spotcheck'],
     ]
+    commands.extend([
+        ['cargo', 'test', '--locked', '--profile', 'release-fast', '-p', 'transparent-filter-server', '--bin', 'journal-convert-v1'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast', '-p', 'transparent-wallet', '--features', 'reqwest', '--lib', 'http::'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast', '-p', 'pir-apm', '--lib'],
+    ])
     stages = []
     failure = None
     with (args.evidence / 'build.log').open('x') as log:
         for command in commands:
             started = time.monotonic()
-            completed = subprocess.run(command, cwd=args.source, env=env, stdout=log, stderr=subprocess.STDOUT)
+            completed = subprocess.run(command, cwd=args.source, env=env, stdout=log, stderr=subprocess.STDOUT, pass_fds=(lane_lock.fileno(),))
             stages.append(dict(command=command, seconds=time.monotonic() - started, exit_code=completed.returncode))
             log.flush()
             if completed.returncode:
@@ -73,7 +78,8 @@ def main():
     if failure is None:
         for name in ['transparent-event-ingest', 'shard-publish', 'event-spotcheck',
                      'shard-verify', 'script-sample', 'transparent-shard-server',
-                     'transparent-filter-server', 'transparent-loadtest', 'transparent-measure']:
+                     'transparent-filter-server', 'transparent-loadtest', 'transparent-measure',
+                     'examples/rate-query', 'examples/native_certificate', 'examples/activity-reopen']:
             path = args.target / 'release-fast' / name
             binaries[name] = dict(path=str(path), sha256=hashlib.file_digest(path.open('rb'), 'sha256').hexdigest())
     compiler = subprocess.check_output(['rustc', '-Vv'], cwd=args.source, env=env, text=True)

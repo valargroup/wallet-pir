@@ -30,5 +30,9 @@ they do not qualify canonical HTTPS or whole-wallet sustained capacity.
 The first [SQLite run](prototype-e47bdf79/wallet-one.json) retained six failures
 caused by a missing store directory. Its [corrected run](prototype-e47bdf79/wallet-one-retry.json)
 completed 17 exact recoveries with no failures. That tool deleted each completed
-database; a retained database/reopen check is still required. No production
-cutover or sustained qualification is claimed.
+database. The [retained 1/4/8-concurrency run](prototype-e47bdf79/wallet-retained-48d08a73.json)
+completed 61 recoveries without failures. [Reopen comparison](prototype-e47bdf79/reopen-check-03c3c754.json)
+independently decoded every retained event, matched fixture digests, and recomputed
+transaction metadata, account movement, unresolved inputs and aggregate payments.
+Older receives outside the bounded publication remain unresolved and partial.
+No production cutover or sustained qualification is claimed.

@@ -1,0 +1,562 @@
+{
+  "status": "passed",
+  "stores": 61,
+  "observations": [
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-0.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "57f4974a626d73a8d3914630a4a560e16749eb873785786e93de9c4f375b75d1"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-1.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "15b8f09ac9d64c30ed88fcbd9ab309d0bed1616ddf8ce2433fbd55a2ef9c7bf3"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-10.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "d74d97556a15dcf634e4f9225a19325e5c0801796eadc4c50b800a7515a2649d"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-11.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 7,
+      "unresolved": 2,
+      "exact_payments": 1,
+      "digest": "c29f5b36c96830b4085dc5229d8b8404f8c123c8f3cd0e711fb19503dfb24185"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-12.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 3,
+      "digest": "e554cd6a9b52aa9b657b698b0d80f246efb81440ae7cf105a198ae405a32f0a4"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-13.sqlite",
+      "profile": "restore-6m",
+      "events": 14,
+      "transactions": 10,
+      "unresolved": 2,
+      "exact_payments": 2,
+      "digest": "0525e5affc19116600b3b6c00b69d61547bddc1b46ffe868d789909ab7491ed2"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-14.sqlite",
+      "profile": "restore-6m",
+      "events": 9,
+      "transactions": 9,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "7eb99be0657503fd0bd6a572596c8a701376ab38ae3c179f736b7c2ade4eef9c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-15.sqlite",
+      "profile": "restore-6m",
+      "events": 11,
+      "transactions": 10,
+      "unresolved": 1,
+      "exact_payments": 1,
+      "digest": "4c91d918092d07298b40e2e3d82534e03bccf1ddb8df50b0d72790edfa9ab5ce"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-16.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 5,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "8171597f9daa2dd41e599f4eb8fe5bbaede6f7aefc3c572da5ae389d308f4d92"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-2.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "10c696fa20d15479225929a864ef1f460d853fe0e181c45816c4f0f2b566d152"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-3.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "ba32918eb06dca0cdae7152e9c3541abb6cb8fe60a665cc2b03bfe62280ecbe5"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-4.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "e208d2bf484098c46c665cfd522ce902add580845f2da1b9e2b3132992b0a9ab"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-5.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "70db65ca04d81813a4964d107232fcf43e5132cc23a721c7bd71872f6d692f1c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-6.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "799e269808f6269e2c926fcfb369e8b7a52f15d774ddd0b8dccd7550e7e2fe98"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-7.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "cbf3aef57b98aa4e12e1c76838ff8d38f8b152d81079f63e60cecc94a5bf7269"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-8.sqlite",
+      "profile": "restore-6m",
+      "events": 10,
+      "transactions": 10,
+      "unresolved": 0,
+      "exact_payments": 2,
+      "digest": "c4992082c2bca9da9b9445ec2242d32d9bd4fdca089bc4d9cff0aaa6299d9f84"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-0/client-9.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 8,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "ab6912b1324c7417c5a2c632098320aeaf4b54ad0f2210df170fe24257c66d8a"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-0.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "57f4974a626d73a8d3914630a4a560e16749eb873785786e93de9c4f375b75d1"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-1.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "15b8f09ac9d64c30ed88fcbd9ab309d0bed1616ddf8ce2433fbd55a2ef9c7bf3"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-10.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "d74d97556a15dcf634e4f9225a19325e5c0801796eadc4c50b800a7515a2649d"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-11.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 7,
+      "unresolved": 2,
+      "exact_payments": 1,
+      "digest": "c29f5b36c96830b4085dc5229d8b8404f8c123c8f3cd0e711fb19503dfb24185"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-12.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 3,
+      "digest": "e554cd6a9b52aa9b657b698b0d80f246efb81440ae7cf105a198ae405a32f0a4"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-13.sqlite",
+      "profile": "restore-6m",
+      "events": 14,
+      "transactions": 10,
+      "unresolved": 2,
+      "exact_payments": 2,
+      "digest": "0525e5affc19116600b3b6c00b69d61547bddc1b46ffe868d789909ab7491ed2"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-14.sqlite",
+      "profile": "restore-6m",
+      "events": 9,
+      "transactions": 9,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "7eb99be0657503fd0bd6a572596c8a701376ab38ae3c179f736b7c2ade4eef9c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-15.sqlite",
+      "profile": "restore-6m",
+      "events": 11,
+      "transactions": 10,
+      "unresolved": 1,
+      "exact_payments": 1,
+      "digest": "4c91d918092d07298b40e2e3d82534e03bccf1ddb8df50b0d72790edfa9ab5ce"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-16.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 5,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "8171597f9daa2dd41e599f4eb8fe5bbaede6f7aefc3c572da5ae389d308f4d92"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-17.sqlite",
+      "profile": "restore-old",
+      "events": 6,
+      "transactions": 6,
+      "unresolved": 0,
+      "exact_payments": 2,
+      "digest": "88db6d00f6a634923738b6a2f4a7e147884a773f07a02f16b068065a654f6036"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-18.sqlite",
+      "profile": "restore-old",
+      "events": 6,
+      "transactions": 6,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "abe4d5bdd8e7f3005a617748aecce025e6388620c2b109ec1f15463e9843d53f"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-19.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 4,
+      "unresolved": 2,
+      "exact_payments": 0,
+      "digest": "ec61da2559fa2091cd380b569d5525612828ecaf0710b75530608263adf829ac"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-2.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "10c696fa20d15479225929a864ef1f460d853fe0e181c45816c4f0f2b566d152"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-3.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "ba32918eb06dca0cdae7152e9c3541abb6cb8fe60a665cc2b03bfe62280ecbe5"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-4.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "e208d2bf484098c46c665cfd522ce902add580845f2da1b9e2b3132992b0a9ab"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-5.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "70db65ca04d81813a4964d107232fcf43e5132cc23a721c7bd71872f6d692f1c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-6.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "799e269808f6269e2c926fcfb369e8b7a52f15d774ddd0b8dccd7550e7e2fe98"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-7.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "cbf3aef57b98aa4e12e1c76838ff8d38f8b152d81079f63e60cecc94a5bf7269"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-8.sqlite",
+      "profile": "restore-6m",
+      "events": 10,
+      "transactions": 10,
+      "unresolved": 0,
+      "exact_payments": 2,
+      "digest": "c4992082c2bca9da9b9445ec2242d32d9bd4fdca089bc4d9cff0aaa6299d9f84"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-1/client-9.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 8,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "ab6912b1324c7417c5a2c632098320aeaf4b54ad0f2210df170fe24257c66d8a"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-0.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "57f4974a626d73a8d3914630a4a560e16749eb873785786e93de9c4f375b75d1"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-1.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "15b8f09ac9d64c30ed88fcbd9ab309d0bed1616ddf8ce2433fbd55a2ef9c7bf3"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-10.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "d74d97556a15dcf634e4f9225a19325e5c0801796eadc4c50b800a7515a2649d"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-11.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 7,
+      "unresolved": 2,
+      "exact_payments": 1,
+      "digest": "c29f5b36c96830b4085dc5229d8b8404f8c123c8f3cd0e711fb19503dfb24185"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-12.sqlite",
+      "profile": "restore-6m",
+      "events": 15,
+      "transactions": 15,
+      "unresolved": 0,
+      "exact_payments": 3,
+      "digest": "e554cd6a9b52aa9b657b698b0d80f246efb81440ae7cf105a198ae405a32f0a4"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-13.sqlite",
+      "profile": "restore-6m",
+      "events": 14,
+      "transactions": 10,
+      "unresolved": 2,
+      "exact_payments": 2,
+      "digest": "0525e5affc19116600b3b6c00b69d61547bddc1b46ffe868d789909ab7491ed2"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-14.sqlite",
+      "profile": "restore-6m",
+      "events": 9,
+      "transactions": 9,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "7eb99be0657503fd0bd6a572596c8a701376ab38ae3c179f736b7c2ade4eef9c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-15.sqlite",
+      "profile": "restore-6m",
+      "events": 11,
+      "transactions": 10,
+      "unresolved": 1,
+      "exact_payments": 1,
+      "digest": "4c91d918092d07298b40e2e3d82534e03bccf1ddb8df50b0d72790edfa9ab5ce"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-16.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 5,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "8171597f9daa2dd41e599f4eb8fe5bbaede6f7aefc3c572da5ae389d308f4d92"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-17.sqlite",
+      "profile": "restore-old",
+      "events": 6,
+      "transactions": 6,
+      "unresolved": 0,
+      "exact_payments": 2,
+      "digest": "88db6d00f6a634923738b6a2f4a7e147884a773f07a02f16b068065a654f6036"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-18.sqlite",
+      "profile": "restore-old",
+      "events": 6,
+      "transactions": 6,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "abe4d5bdd8e7f3005a617748aecce025e6388620c2b109ec1f15463e9843d53f"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-19.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 4,
+      "unresolved": 2,
+      "exact_payments": 0,
+      "digest": "ec61da2559fa2091cd380b569d5525612828ecaf0710b75530608263adf829ac"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-2.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "10c696fa20d15479225929a864ef1f460d853fe0e181c45816c4f0f2b566d152"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-20.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 5,
+      "unresolved": 0,
+      "exact_payments": 1,
+      "digest": "c1f55293bf7eee0da97d3bfbd29d479b6c496ebe537904dfaec7e7cb4531d5b6"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-21.sqlite",
+      "profile": "restore-old",
+      "events": 4,
+      "transactions": 4,
+      "unresolved": 2,
+      "exact_payments": 0,
+      "digest": "cbf5e8b3a6eb4e8b1227eecbb0a16ff68402bcc17b615fb7bc89d3f5a533c643"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-22.sqlite",
+      "profile": "restore-old",
+      "events": 5,
+      "transactions": 5,
+      "unresolved": 0,
+      "exact_payments": 1,
+      "digest": "edb216144e544a86da93d52d753ae2749c7f5c71f3fd0bfec00110330593877d"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-23.sqlite",
+      "profile": "restore-old",
+      "events": 3,
+      "transactions": 3,
+      "unresolved": 2,
+      "exact_payments": 0,
+      "digest": "708f97fd3eb9d34ca8ea76bb406f1bb653cc4ccfe002722de973735636b2e581"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-3.sqlite",
+      "profile": "small-active",
+      "events": 1,
+      "transactions": 1,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "ba32918eb06dca0cdae7152e9c3541abb6cb8fe60a665cc2b03bfe62280ecbe5"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-4.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "e208d2bf484098c46c665cfd522ce902add580845f2da1b9e2b3132992b0a9ab"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-5.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "70db65ca04d81813a4964d107232fcf43e5132cc23a721c7bd71872f6d692f1c"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-6.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "799e269808f6269e2c926fcfb369e8b7a52f15d774ddd0b8dccd7550e7e2fe98"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-7.sqlite",
+      "profile": "small-active",
+      "events": 2,
+      "transactions": 2,
+      "unresolved": 0,
+      "exact_payments": 0,
+      "digest": "cbf3aef57b98aa4e12e1c76838ff8d38f8b152d81079f63e60cecc94a5bf7269"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-8.sqlite",
+      "profile": "restore-6m",
+      "events": 10,
+      "transactions": 10,
+      "unresolved": 0,
+      "exact_payments": 2,
+      "digest": "c4992082c2bca9da9b9445ec2242d32d9bd4fdca089bc4d9cff0aaa6299d9f84"
+    },
+    {
+      "database": "/srv/transparent-activity/prototype/e47bdf79/wallets-retained-48d08a73/step-2/client-9.sqlite",
+      "profile": "restore-6m",
+      "events": 8,
+      "transactions": 8,
+      "unresolved": 1,
+      "exact_payments": 0,
+      "digest": "ab6912b1324c7417c5a2c632098320aeaf4b54ad0f2210df170fe24257c66d8a"
+    }
+  ],
+  "checker_sha256": "40054f30a26e215d4d3518ac44ea9750826b126e050ea7396d921a578f0c2025",
+  "sample_sha256": "bd31c24f453af28414212a4a6cb3f7f3462f824f863435664f1778b599a162ad",
+  "reopened_sha256": "e1e55a7a89fba6513790ed31accd192fce6fb11b7c68e87a88a0c0afb724dce3",
+  "limitations": [
+    "Bounded synthetic public-script wallets; unresolved historical input values remain partial.",
+    "Retrieval fixture equality is separate from the retained independent chain extraction oracle."
+  ]
+}

@@ -6,6 +6,25 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Activity metadata candidate, 2026-09-30
+
+A separate v3/v11 candidate on the coordinator recovered 26,868 events from
+1,000 real blocks, matching the independent block/prevout oracle. Frozen recent
+and archive geometries passed 5 QPS for two minutes and 20 QPS for ten minutes:
+596 and 11,965 exact queries, zero failed attempts, and p99 22 ms and 31 ms.
+All 61 retained SQLite recoveries at concurrency 1/4/8 matched fixture events
+and independently recomputed metadata and summaries after reopen. These brief
+loopback runs establish the prototype milestone, not canonical HTTPS or sustained
+whole-wallet capacity. [Retained evidence](../evidence/activity-metadata-2026-09-30/README.md).
+
+Genesis ingestion is running separately under
+`transparent-activity-full-ingest-e47bdf79`, fixed anchor 3500738, on the new
+250 GiB volume. Canonical origins remain v10. The wallet-libraries metadata and
+summary change is in [draft PR 77](https://github.com/zakura-core/wallet-libraries/pull/77);
+the real-source adapter, complete publication, production release and final
+qualification remain outstanding. The previously paused quality supervisor stays
+inactive and new quality alerts stay in shadow.
+
 ## Recent replicas on `6360f0d8`, 2026-09-30
 
 - 04:46–04:48 UTC: recent-01, recent-02 and the elastic `transparent-pir-recent-08`

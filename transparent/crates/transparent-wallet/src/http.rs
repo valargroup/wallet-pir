@@ -119,6 +119,7 @@ pub type HttpObserver = Arc<dyn Fn(HttpObservation) + Send + Sync>;
 struct RetryPolicy {
     attempts: usize,
     overload: bool,
+    response_limit: usize,
     timeout: Duration,
 }
 
@@ -156,7 +157,14 @@ fn execute(
             .try_clone()
             .ok_or("HTTP request cannot be retried")?
             .timeout(remaining);
-        let result = execute_once(copy, stage, bytes_up, binding, &observed);
+        let result = execute_once(
+            copy,
+            stage,
+            bytes_up,
+            binding,
+            &observed,
+            policy.response_limit,
+        );
         let delay = result.as_ref().err().and_then(|error| {
             if !retry_overload
                 && error
@@ -179,6 +187,9 @@ fn execute(
                         || (retry_overload && error.status == 503)
                 })
             {
+                return Some(transient_backoff(attempt));
+            }
+            if error.downcast_ref::<std::io::Error>().is_some() {
                 return Some(transient_backoff(attempt));
             }
             error.downcast_ref::<reqwest::Error>().and_then(|error| {
@@ -222,17 +233,25 @@ fn transient_backoff(attempt: usize) -> Duration {
     )
 }
 
-fn response_body(response: reqwest::blocking::Response, stage: &str) -> Result<Vec<u8>, BoxError> {
+fn response_body(
+    response: reqwest::blocking::Response,
+    stage: &str,
+    response_limit: usize,
+) -> Result<Vec<u8>, BoxError> {
     let limit = match stage {
         "parent_manifest" => 2 * 1024 * 1024,
         "parent_filters" => transparent_filter::experimental_parent::LIMITS.max_bytes,
-        _ => return Ok(response.bytes()?.to_vec()),
-    };
+        _ => response_limit,
+    }
+    .min(response_limit);
+    if limit == usize::MAX {
+        return Ok(response.bytes()?.to_vec());
+    }
     use std::io::Read;
     let mut bytes = Vec::new();
     response.take(limit as u64 + 1).read_to_end(&mut bytes)?;
     if bytes.len() > limit {
-        return Err("experimental parent response exceeds size limit".into());
+        return Err("HTTP response exceeds size limit".into());
     }
     Ok(bytes)
 }
@@ -243,6 +262,7 @@ fn execute_once(
     bytes_up: u64,
     binding: Option<(u64, &str)>,
     observer: &Option<HttpObserver>,
+    response_limit: usize,
 ) -> Result<Vec<u8>, BoxError> {
     let started = Instant::now();
     let mut status = None;
@@ -257,7 +277,7 @@ fn execute_once(
             .get("retry-after")
             .and_then(|h| h.to_str().ok())
             .map(str::to_owned);
-        let body = response_body(response, stage)?;
+        let body = response_body(response, stage, response_limit)?;
         bytes_down = body.len() as u64;
         if let Some((shard, revision)) = binding {
             if !code.is_success() {
@@ -326,6 +346,13 @@ pub struct HttpResourceClient {
     retry: RetryPolicy,
 }
 impl HttpResourceClient {
+    /// Bound every response before allocating its complete body. Oversized
+    /// replies fail without retry; parent experiment limits remain stricter.
+    pub fn with_response_limit(mut self, bytes: usize) -> Self {
+        self.retry.response_limit = bytes.min(usize::MAX - 1);
+        self
+    }
+
     pub fn new(
         options: &HttpOptions,
         observer: Option<HttpObserver>,
@@ -342,8 +369,10 @@ impl HttpResourceClient {
                 .build()?,
             observer,
             retry: RetryPolicy {
+                response_limit: usize::MAX,
                 attempts: attempts.clamp(1, 3),
                 overload: false,
+
                 timeout: options.timeout,
             },
         })
@@ -381,14 +410,23 @@ pub struct HttpShardTransport {
 pub const SHARD_REQUEST_CONCURRENCY: usize = 4;
 
 impl HttpShardTransport {
+    /// Bound every response before allocating its complete body. Oversized
+    /// replies fail without retry; parent experiment limits remain stricter.
+    pub fn with_response_limit(mut self, bytes: usize) -> Self {
+        self.retry.response_limit = bytes.min(usize::MAX - 1);
+        self
+    }
+
     pub fn new(base_url: impl Into<String>, options: &HttpOptions) -> Result<Self, BoxError> {
         Ok(Self {
             base: base_url.into().trim_end_matches('/').to_string(),
             client: build(options)?,
             observer: None,
             retry: RetryPolicy {
+                response_limit: usize::MAX,
                 attempts: 1,
                 overload: true,
+
                 timeout: options.timeout,
             },
             concurrency: SHARD_REQUEST_CONCURRENCY,
@@ -570,6 +608,13 @@ pub struct HttpFilterSource {
 pub const FILTER_PREFETCH_CONCURRENCY: usize = 8;
 
 impl HttpFilterSource {
+    /// Bound every response before allocating its complete body. Oversized
+    /// replies fail without retry; parent experiment limits remain stricter.
+    pub fn with_response_limit(mut self, bytes: usize) -> Self {
+        self.retry.response_limit = bytes.min(usize::MAX - 1);
+        self
+    }
+
     /// Explicit research opt-in. The geometry prevents archive discovery from
     /// adding any requests to wallets that only need recent history.
     pub fn with_parent_experiment(mut self, manifest_url: String, geometry: String) -> Self {
@@ -585,8 +630,10 @@ impl HttpFilterSource {
             client: build(options)?,
             observer: None,
             retry: RetryPolicy {
+                response_limit: usize::MAX,
                 attempts: 1,
                 overload: true,
+
                 timeout: options.timeout,
             },
             prefetched: std::collections::HashMap::new(),
@@ -755,6 +802,51 @@ mod observation_tests {
             stream.read_exact(&mut byte).unwrap();
             headers.push(byte[0]);
             assert!(headers.len() < 8192);
+        }
+    }
+
+    #[test]
+    fn oversized_success_and_error_bodies_stop_without_retry_or_fallback() {
+        for status in [200, 503] {
+            for chunked in [false, true] {
+                let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+                let address = listener.local_addr().unwrap();
+                let server = std::thread::spawn(move || {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    read_headers(&mut stream);
+                    let framing = if chunked {
+                        "Transfer-Encoding: chunked"
+                    } else {
+                        "Content-Length: 9"
+                    };
+                    write!(
+                        stream,
+                        "HTTP/1.1 {status} Test\r\n{framing}\r\nConnection: close\r\n\r\n"
+                    )
+                    .unwrap();
+                    let body: &[u8] = if chunked {
+                        b"9\r\n123456789\r\n0\r\n\r\n"
+                    } else {
+                        b"123456789"
+                    };
+                    stream.write_all(body).unwrap();
+                });
+                let observed = Arc::new(Mutex::new(Vec::new()));
+                let saved = observed.clone();
+                let mut client =
+                    HttpFilterSource::new(format!("http://{address}"), &HttpOptions::default())
+                        .unwrap()
+                        .with_response_limit(8)
+                        .with_retry_attempts(3)
+                        .with_observer(Arc::new(move |event| saved.lock().unwrap().push(event)));
+                let error = client.shard_map().unwrap_err();
+                assert!(error.to_string().contains("response exceeds size limit"));
+                server.join().unwrap();
+                let observations = observed.lock().unwrap();
+                assert_eq!(observations.len(), 1);
+                assert!(observations[0].failed);
+                assert_eq!(observations[0].status, Some(status));
+            }
         }
     }
 
@@ -1119,8 +1211,10 @@ mod observation_tests {
                         private.then_some((1, "revision")),
                         &observer,
                         RetryPolicy {
+                            response_limit: usize::MAX,
                             attempts,
                             overload: false,
+
                             timeout: Duration::from_secs(30),
                         },
                     );
@@ -1198,8 +1292,10 @@ mod observation_tests {
                 Some((1, "revision")),
                 &Some(observer),
                 RetryPolicy {
+                    response_limit: usize::MAX,
                     attempts: 3,
                     overload: retry_overload,
+
                     timeout: Duration::from_secs(30),
                 },
             );
