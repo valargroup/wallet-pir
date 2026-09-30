@@ -38,12 +38,13 @@ def inspect(network=False):
     add('libclang', any(path and probe(['python3', '-c', 'import ctypes,sys; ctypes.CDLL(sys.argv[1])', path]) for path in candidates),
         'Install libclang (macOS: Xcode Command Line Tools; Linux: libclang-dev) or set LIBCLANG_PATH')
     cargo_home = Path(os.environ.get('CARGO_HOME', Path.home() / '.cargo'))
-    add('dependency cache', (cargo_home / 'registry').is_dir() and (cargo_home / 'git').is_dir(), 'make prepare-dev')
+    add('dependency cache', (cargo_home / 'registry').is_dir() and (cargo_home / 'git').is_dir()
+        and probe(['rustup', 'run', channel, 'cargo', 'metadata', '--locked', '--offline', '--no-deps', '--format-version', '1']), 'make prepare-dev')
     target = Path(os.environ.get('CARGO_TARGET_DIR', ROOT / 'target'))
     parent = target
     while not parent.exists():
         parent = parent.parent
-    add('target writable', os.access(parent, os.W_OK), 'Choose a writable CARGO_TARGET_DIR owned by this development user')
+    add('target writable', parent.is_dir() and os.access(parent, os.W_OK), 'Choose a writable CARGO_TARGET_DIR owned by this development user')
     if network:
         add('GitHub authentication', probe(['gh', 'auth', 'status']), 'gh auth login')
         for repo in ['valargroup/ipir-sp', 'valargroup/spiral-rs', 'zakura-core/zakura', 'zakura-core/wallet-libraries']:

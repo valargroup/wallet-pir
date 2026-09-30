@@ -8,15 +8,19 @@ runs:
   using: composite
   steps:
     - name: Install hosted toolchain
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       uses: dtolnay/rust-toolchain@stable
       with:
         toolchain: 1.91.0
         components: rustfmt, clippy
     - name: Install hosted native dependencies
-      if: runner.environment != 'self-hosted'
+      if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       shell: bash
       run: sudo apt-get update -qq && sudo apt-get install -y -qq libclang-dev protobuf-compiler
+    - name: Remember hosted prerequisites
+      if: runner.environment != 'self-hosted'
+      shell: bash
+      run: echo 'WALLET_PIR_HOSTED_TOOLS_READY=1' >> "$GITHUB_ENV"
     - name: Select persistent build directory
       if: runner.environment == 'self-hosted'
       shell: bash
