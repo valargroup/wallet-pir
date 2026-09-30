@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build an immutable source export in one persistent, externally limited Cargo lane."""
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -20,6 +21,9 @@ def main():
     if len(args.sha) != 40 or any(c not in '0123456789abcdef' for c in args.sha):
         parser.error('a full source SHA is required')
     args.evidence.mkdir(parents=True, exist_ok=True)
+    args.target.mkdir(parents=True, exist_ok=True)
+    lane_lock = (args.target / '.activity-build.lock').open('a+')
+    fcntl.flock(lane_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     result = args.evidence / 'result.json'
     if result.exists():
         parser.error('result already exists; retain it and use a new owner')
@@ -33,10 +37,20 @@ def main():
          '-p', 'transparent-filter-server', '-p', 'transparent-shard-server',
          '-p', 'transparent-loadtest', '-p', 'transparent-measure',
          '-p', 'transparent-regression', '--bins'],
+        ['cargo', 'build', '--locked', '--profile', 'release-fast',
+         '-p', 'transparent-shard-server', '--example', 'rate-query', '--example', 'native_certificate'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast',
+         '-p', 'transparent-events', '--lib'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast',
+         '-p', 'transparent-shard', '--lib', 'compact'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast',
+         '-p', 'transparent-wallet-store', '--lib'],
         ['cargo', 'test', '--locked', '--profile', 'release-fast',
          '-p', 'transparent-filter-server', '--lib', 'extract::'],
         ['cargo', 'test', '--locked', '--profile', 'release-fast',
          '-p', 'transparent-filter-server', '--lib', 'events::'],
+        ['cargo', 'test', '--locked', '--profile', 'release-fast',
+         '-p', 'transparent-filter-server', '--lib', 'publication::'],
         ['cargo', 'test', '--locked', '--profile', 'release-fast',
          '-p', 'transparent-filter-server', '--bin', 'event-spotcheck'],
     ]
