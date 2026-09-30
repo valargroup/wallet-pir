@@ -23,13 +23,15 @@ and real HTTP retry cases run only in full CI;
 runs the integration targets classified as `fast` in
 [`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
-**CI full**, including on PRs. This avoids compiling every integration target just
+**CI full**. PRs select affected product, shared, operations and infrastructure
+families; main qualifies every family. The aggregate completion check fails if a
+selected job fails or is skipped. This avoids compiling every integration target just
 to exclude its tests at runtime. Affected helper
 checks run concurrently with Rust; selected operations suites run in
 four parallel make slots, and failures in any task fail fast CI.
 
 Every Enhance server integration target must be classified exactly once.
-`make check-tools` validates the registry against Cargo metadata, rejecting new
+`make check-tools` validates the registry against manifests and integration source files without invoking Rust, rejecting new
 unclassified targets and stale entries. Full CI runs both tiers serially, including
 the real-crypto `packing_http` path; it clears `QUALIFY_*` overrides so that CI uses
 the bounded default fixture. Existing ignored hardware/GPU cases remain explicit
@@ -38,7 +40,7 @@ the implementation follows every modeled transition.
 
 CI full on main runs both Transparent and Enhance suites and offline deployment
 acceptance checks. After all pass, it builds optimized release binaries and uploads
-four checksummed bundles tied to that SHA. A green fast run is never release
+checksummed q48, native CPU and optional CUDA bundles tied to that SHA. A green fast run is never release
 qualification. Full qualification of an older main commit is not cancelled by a
 newer main push. No tests were marked ignored or removed.
 
@@ -88,8 +90,8 @@ build processes. A build cannot occupy the fast service's queue, but both servic
 share the host CPU and disk, so latency must also be measured under contention.
 The single build slot serializes full-CI jobs. Enhance and Transparent share
 its `full-test` and `full-lint` lanes so common dependencies are compiled once
-per profile instead of once per product. Full tests run two test cases at a time
-(`RUST_TEST_THREADS=2`): the simulation fixtures each start multithreaded services,
+per profile instead of once per product. Transparent full tests run two test cases at a time
+(`RUST_TEST_THREADS=2`), while Enhance tests run serially: the simulation fixtures each start multithreaded services,
 and eight simultaneous fixtures can trigger memory admission overloads inside
 the build service’s 9-GiB limit. Each test retains its internal concurrency. `tools/ci/full-test.sh` compiles
 the suite first, then asks Linux to discard clean file-cache pages for Cargo
@@ -110,7 +112,7 @@ checks the pinned tools and OS instead of reinstalling them each run.
 
 Persistent Cargo output lives outside checkout at
 `~/.cache/wallet-pir/<runner-name>/<lane>/<compiler-flags-hash>/`. Fast, lint, full
-test and release lanes cannot contend for the same Cargo target lock. Cargo
+test, q48 release and native CPU release lanes cannot contend for the same Cargo target lock. Cargo
 tracks source, lockfile, features and profile changes; changes to compilation
 flags also get separate directories. Prune unused lane directories only while
 the runner is idle. Do not share writable caches between trust boundaries.

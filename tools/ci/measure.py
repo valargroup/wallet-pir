@@ -7,6 +7,7 @@ operator; this tool never deletes caches to manufacture a cold sample.
 import argparse
 import json
 import math
+import platform
 from pathlib import Path
 import subprocess
 import time
@@ -32,11 +33,13 @@ def main():
         for _ in range(args.runs):
             start = time.monotonic()
             result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            elapsed = time.monotonic() - start
             current = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
             unchanged = not subprocess.check_output(['git', 'status', '--porcelain'], text=True)
-            rows.append({'seconds': round(time.monotonic() - start, 3), 'exit': result.returncode,
+            rows.append({'seconds': round(elapsed, 3), 'exit': result.returncode,
                          'snapshot_valid': current == sha and unchanged})
-            data = {'sha': sha, 'category': args.category, 'population': args.population, 'runs': rows}
+            data = {'sha': sha, 'category': args.category, 'population': args.population, 'platform': platform.platform(),
+                    'architecture': platform.machine(), 'runs': rows}
             successes = sorted(r['seconds'] for r in rows if r['exit'] == 0 and r['snapshot_valid'])
             data['successful_runs'] = len(successes)
             data['p95_seconds'] = successes[math.ceil(len(successes)*.95)-1] if len(successes) >= 20 else None

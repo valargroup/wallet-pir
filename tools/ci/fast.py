@@ -140,10 +140,14 @@ def plan(packages, paths, *, all_checks=False):
         else:
             helpers.update(HELPERS); groups.update(FULL_GROUPS)
             reasons.append(f'{path}: unknown/build configuration; complete coverage')
+    coverage = json.loads((ROOT / 'tools/ci/full-packages.json').read_text())
     for package in selected:
-        if package.startswith('transparent-'):
+        family = next((group for group, names in coverage.items() if package in names), None)
+        if family is None:
+            groups.update(FULL_GROUPS)
+        elif family == 'transparent':
             groups.add('transparent')
-        elif package in {'pir-native', 'pir-control', 'pir-observability'}:
+        elif family == 'shared':
             groups.update({'shared', 'enhance', 'transparent'})
         else:
             groups.add('enhance')
@@ -204,9 +208,9 @@ def rust_checks(selected, *, features='', test='', offline=False):
             raise ValueError(f'{name}: stale slow-test classification: {sorted(stale)}')
         if test and not any(test in name for name in discovered):
             raise ValueError(f'{name}: test filter matched no unit tests: {test}')
-        args = ['--', *([test] if test else []), *sum((['--skip', n] for n in slow), [])]
+        args = ['--', *([test] if test else []), *sum((['--skip', n] for n in slow if not test), [])]
         run([*command, *args], env=dict(os.environ, RUST_TEST_THREADS='1'), stage=f'tests:{name}')
-    if 'enhance-pir-server' in selected and not test:
+    if 'enhance-pir-server' in selected and not test and not features:
         command = ['python3', 'tools/ci/enhance_tests.py', '--tier', 'fast']
         if offline:
             command.append('--offline')

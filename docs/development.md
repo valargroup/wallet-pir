@@ -26,7 +26,10 @@ fixed explicitly, not by interactive repair in a test command.
 Fast Rust checks run library and binary unit tests in `release-fast`, plus the
 classified Enhance fast integration targets. Package-qualified slow names are
 validated against executable test discovery before skips apply; removed/renamed
-entries fail. Full tests retain these cases. Real HTTP, crypto, fault injection,
+entries fail. Full tests retain these cases. An explicit TEST filter can run a slow case; custom
+FEATURES select unit targets with those features and do not add default-feature
+integration targets. Full package families are validated against every workspace
+member in `tools/ci/full-packages.json`; new or stale assignments fail. Real HTTP, crypto, fault injection,
 restart and deployment qualification remain distinct from short model tests.
 
 Full PR jobs select affected product/shared/operations/infrastructure families.

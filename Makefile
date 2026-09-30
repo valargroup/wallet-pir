@@ -317,6 +317,7 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
+	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
 	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'

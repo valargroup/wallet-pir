@@ -74,13 +74,7 @@ jobs:
           node --test transparent/tools/transparent-loadtest/tests/apm.test.cjs
           python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
           python3 transparent/tools/transparent-loadtest/tests/test_compare.py
-      - run: >-
-          cargo clippy --locked --all-targets --all-features
-          -p transparent-native -p transparent-events -p transparent-filter -p transparent-shard
-          -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
-          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
-          -p transparent-measure -p transparent-regression
-          -- -D warnings
+      - run: python3 tools/ci/full_packages.py --group transparent --lint
 
   transparent-test:
     needs: select
@@ -101,12 +95,7 @@ jobs:
       # release-fast: the full-shard cryptographic tests need optimized code,
       # not the fat-LTO single-codegen-unit link the deploy profile pays for,
       # which on a two-vCPU runner is most of the wall time.
-      - run: >-
-          tools/ci/full-test.sh --locked --profile release-fast
-          -p transparent-native -p transparent-events -p transparent-filter -p transparent-shard
-          -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
-          -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
-          -p transparent-measure -p transparent-regression
+      - run: python3 tools/ci/full_packages.py --group transparent
 
   validate-enhance-infra:
     needs: select
@@ -251,11 +240,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
-      - run: >-
-          cargo clippy --locked --all-targets --all-features
-          -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
-          -p pir-apm -p pir-monitor
-          -- -D warnings
+      - run: python3 tools/ci/full_packages.py --group enhance --lint
 
   enhance-test:
     needs: select
@@ -280,9 +265,7 @@ jobs:
           # Full-size embedded/topology fixtures exceed the CI runner's memory
           # on shared runners. Hardware qualification is a separate exact-release
           # deployment gate; keep artifact CI bounded to correctness coverage.
-          tools/ci/full-test.sh --locked --profile release-fast \
-            -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
-          python3 tools/ci/enhance_tests.py --tier full
+          python3 tools/ci/full_packages.py --group enhance
 
       - name: Check tagged native distributed integration
         env:
@@ -315,8 +298,8 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
-      - run: cargo clippy --locked --all-targets --all-features -p pir-control -p pir-observability -p pir-native -- -D warnings
-      - run: tools/ci/full-test.sh --locked --profile release-fast -p pir-control -p pir-observability -p pir-native
+      - run: python3 tools/ci/full_packages.py --group shared --lint
+      - run: python3 tools/ci/full_packages.py --group shared
 
   complete:
     name: Full checks complete

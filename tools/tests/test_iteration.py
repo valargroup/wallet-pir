@@ -19,6 +19,9 @@ def load(name):
 
 
 fast, timings, snapshot = load('fast'), load('timings'), load('snapshot_check')
+import sys
+sys.path.insert(0, str(ROOT / 'tools/ci'))
+full = load('full_packages')
 
 
 class PlannerTests(unittest.TestCase):
@@ -79,6 +82,7 @@ class PlannerTests(unittest.TestCase):
             self.assertEqual(set(fast.changed_paths(base, root=root)), {'committed', 'deleted', 'staged', 'unstaged', 'untracked'})
             self.assertEqual(fast.changed_paths(base, local=False, root=root), ['committed'])
 
+    @unittest.skipUnless(os.environ.get("WALLET_PIR_CARGO_METADATA_TEST") == "1", "opt-in Rust dependency-graph comparison")
     def test_manifest_selection_matches_cargo_dependency_graph(self):
         # Offline metadata is cheap; it does not fetch or compile dependencies.
         metadata = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--offline', '--no-deps', '--format-version', '1'], cwd=ROOT))
@@ -89,10 +93,31 @@ class PlannerTests(unittest.TestCase):
     def test_main_selects_every_family_and_explicit_shared_coverage(self):
         self.assertEqual(set(fast.plan(self.packages, [], all_checks=True)['groups']), fast.FULL_GROUPS)
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        groups = full.inventory()
+        for group in groups:
+            self.assertIn('--group ' + group, workflow)
         for name in ['pir-control', 'pir-observability', 'pir-monitor', 'transparent-native']:
-            self.assertIn('-p ' + name, workflow)
+            command = next(command for group in groups for command in full.commands(group, groups) if '-p' in command and name in command)
+            self.assertIn('tools/ci/full-test.sh', command)
         self.assertIn('needs: [complete]', workflow)
         self.assertIn('validate-transparent-elastic-infra', workflow)
+
+    def test_full_coverage_rejects_unclassified_or_duplicate_packages(self):
+        groups = full.inventory()
+        with self.assertRaisesRegex(ValueError, 'unclassified'):
+            full.inventory([*self.packages, {'name': 'new-package'}], groups)
+        groups['shared'].append('pir-apm')
+        with self.assertRaisesRegex(ValueError, 'duplicate'):
+            full.inventory(self.packages, groups)
+
+    def test_explicit_slow_unit_filter_runs_without_skipping(self):
+        metadata = {'packages': [{'name': 'pir-apm', 'targets': [{'kind': ['bin']}]}]}
+        calls = []
+        with patch.object(fast.subprocess, 'check_output', side_effect=[json.dumps(metadata).encode(), 'fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples: test\npacking_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample: test\n']), \
+             patch.object(fast, 'run', side_effect=lambda command, **kw: calls.append(command)):
+            fast.rust_checks(['pir-apm'], test='failed_and_slow')
+        self.assertIn('failed_and_slow', calls[-1])
+        self.assertNotIn('--skip', calls[-1])
 
 
 class IntegrityTests(unittest.TestCase):

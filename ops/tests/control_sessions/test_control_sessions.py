@@ -57,8 +57,8 @@ def accept_forever(listener, reply):
     while True:
         try:
             connection, _ = listener.accept()
-            connection.sendall(reply)
-            connection.close()
+            with connection:
+                connection.sendall(reply)
         except OSError:
             if listener.fileno() == -1:
                 return
@@ -309,6 +309,38 @@ class SupervisorTest(unittest.TestCase):
 
     def invocations(self):
         return [json.loads(l) for l in self.log.read_text().splitlines()] if self.log.exists() else []
+
+    def test_concurrent_fake_starts_count_every_refused_connection(self):
+        count = 32
+        os.environ['FAKE_SSH_FAILURES'] = str(count)
+        processes = [subprocess.Popen([sys.executable, str(FAKE_SSH),
+                                      f'-oControlPath={self.directory}/unused', 'fixture@127.0.0.1'],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                     for _ in range(count)]
+        self.addCleanup(lambda: [process.kill() for process in processes if process.poll() is None])
+        self.assertEqual([process.wait(timeout=10) for process in processes], [255] * count)
+        self.assertEqual(int((self.directory / 'starts').read_text()), count)
+
+    def test_injected_clock_exercises_supervisor_backoff_without_sleep(self):
+        elapsed, waits = [0.0], []
+        lifetimes = iter([0, 0, 0, 0, 30, 29])
+        supervisor = cs.Supervisor(self.config(), log=io.StringIO(),
+                                   clock=lambda: elapsed[0], monotonic=lambda: elapsed[0])
+        class Stop:
+            def is_set(self):
+                return len(waits) == 6
+            def wait(self, delay):
+                waits.append(delay)
+                elapsed[0] += delay
+                return self.is_set()
+        supervisor.stop = Stop()
+        def attempt(session):
+            elapsed[0] += next(lifetimes)
+            return 'backoff', 255, 'fixture'
+        from unittest.mock import patch
+        with patch.object(supervisor, '_attempt', side_effect=attempt), patch.object(supervisor, '_update'):
+            supervisor._supervise(supervisor.config.sessions[0])
+        self.assertEqual(waits, [0.05, 0.1, 0.2, 0.2, 0.05, 0.1])
 
     def test_restart_backoff_status_file_and_check(self):
         os.environ['FAKE_SSH_FAILURES'] = '3'

@@ -45,6 +45,22 @@ def validate_inventory(inventory, service):
     return target
 
 
+def preflight_inputs(args):
+    # Check coordinator prerequisites before extracting/staging any artifact.
+    for path, private in [(args.ssh_key, True), (args.known_hosts, False), (args.inventory, False)]:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0:
+            raise ValueError('deployment input must be a root-owned regular file')
+        if info.st_mode & (0o077 if private else 0o022):
+            raise ValueError('deployment input permissions are too broad')
+    if args.state_dir.exists() or args.state_dir.is_symlink():
+        info = args.state_dir.lstat()
+        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
+            raise ValueError('deployment state directory must be private and root-owned')
+    if not shutil.which('ssh') or not shutil.which('scp'):
+        raise ValueError('deployment runner requires ssh and scp')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('mode', choices=['preflight', 'deploy'])
@@ -58,19 +74,10 @@ def main():
     args = parser.parse_args()
     if os.geteuid() != 0:
         parser.error('run on the root coordinator deployment runner')
-    # Check coordinator prerequisites before extracting/staging any artifact.
-    for path, private in [(args.ssh_key, True), (args.known_hosts, False), (args.inventory, False)]:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0:
-            parser.error('deployment input must be a root-owned regular file')
-        if info.st_mode & (0o077 if private else 0o022):
-            parser.error('deployment input permissions are too broad')
-    if args.state_dir.exists():
-        info = args.state_dir.lstat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o077:
-            parser.error('deployment state directory must be private and root-owned')
-    if not shutil.which('ssh') or not shutil.which('scp'):
-        parser.error('deployment runner requires ssh and scp')
+    try:
+        preflight_inputs(args)
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
     args.evidence_dir = args.evidence_dir.resolve()
     args.evidence_dir.mkdir(parents=True, exist_ok=False)
     spec = importlib.util.spec_from_file_location('release', ROOT / 'tools/ci/release.py')
