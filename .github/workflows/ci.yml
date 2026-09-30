@@ -46,7 +46,7 @@ jobs:
         id: affected
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci/fast.py --base "$BASE" --select-only --github-output
+        run: python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
       - uses: ./.github/actions/rust-setup
         if: steps.affected.outputs.rust == 'true'
         with:
@@ -54,7 +54,7 @@ jobs:
       - name: Run affected fast checks
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: python3 tools/ci/fast.py --base "$BASE"
+        run: python3 tools/ci/fast.py --committed-only --base "$BASE"
 
       - name: Report queue and stage timings
         if: always()

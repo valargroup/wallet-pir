@@ -15,18 +15,17 @@ configuration, dependency manifests and unknown paths select the whole workspace
 Documentation-only changes run documentation checks without installing Rust.
 Operations-only changes run helper checks without compiling Rust.
 
-Rust feedback runs library unit tests serially in `release-fast`, so independent
+Rust feedback runs library and binary unit tests serially in `release-fast`, so independent
 service fixtures share the fast runner’s 6-GiB ceiling without overlapping their
-crypto allocations. Six full-geometry/cache, RPC publication
-and real HTTP retry tests embedded in library targets run only in full CI;
-`tools/ci/slow-tests.json` records the exact names and reasons. Packages with only
-binaries get `cargo check --bins`. When the Enhance server is selected, fast CI also
+crypto allocations. The package-qualified full-geometry/cache, multi-unit preparation, RPC publication
+and real HTTP retry cases run only in full CI;
+`tools/ci/slow-tests.json` records the exact names and reasons. Binary unit tests run as well as library targets. When the Enhance server is selected, fast CI also
 runs the integration targets classified as `fast` in
 [`tools/ci/enhance-tests.json`](../tools/ci/enhance-tests.json). The remaining
 integration targets, doctests, binary unit tests and all-feature lint run in
 **CI full**, including on PRs. This avoids compiling every integration target just
-to exclude its tests at runtime. Helper
-checks run concurrently with Rust; independent operations suites also run in
+to exclude its tests at runtime. Affected helper
+checks run concurrently with Rust; selected operations suites run in
 four parallel make slots, and failures in any task fail fast CI.
 
 Every Enhance server integration target must be classified exactly once.
@@ -49,7 +48,9 @@ To reproduce selection without running tests:
 python3 tools/ci/fast.py --base <base-sha> --select-only
 ```
 
-To run the fast gate locally, omit `--select-only`. Omit `--base` for all packages.
+To run the fast gate locally, omit `--select-only`. Local checks include working
+changes and untracked files; `--all` selects every package. CI passes
+`--committed-only`. See [development workflow](development.md).
 The workflow fetches only the current checkout and comparison commit, rather than
 all historical evidence and build artifacts in repository history.
 
@@ -157,6 +158,8 @@ python3 tools/ci/timings.py --workflow ci.yml --limit 20
 python3 tools/ci/timings.py --workflow deploy-transparent-shard.yml --limit 20
 ```
 
+Reused jobs in partial reruns have a null current-attempt queue time and an
+explicit reuse flag. Total workflow and current-attempt elapsed times are separate.
 The history command reports nearest-rank p95 for successful runs and retains
 individual results. Separate warm/cold populations and deployment modes before
 using this aggregate as an SLO. Failed runs remain visible in Actions and must

@@ -1,8 +1,23 @@
 {
-  "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": "Exercises full deployed PIR geometries; release qualification owns this integration case.",
-  "runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory": "Builds real PIR runtime/cache snapshots and verifies serving during blocked persistence.",
-  "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery.",
-  "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": "Exercises real HTTP retry/backoff waits across multiple responses.",
-  "http::observation_tests::retries_established_connection_failures_with_bounded_attempts": "Exercises real connection failures and bounded retry/backoff waits.",
-  "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end."
+  "transparent-shard-server": {
+    "runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries": "Exercises full deployed PIR geometries; release qualification owns this integration case.",
+    "runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory": "Builds real PIR runtime/cache snapshots and verifies serving during blocked persistence.",
+    "runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget": "Builds/restores real runtime snapshots and corrupts cache files to verify recovery."
+  },
+  "transparent-wallet": {
+    "http::observation_tests::opt_in_retries_are_bounded_and_account_for_every_response": "Exercises real HTTP retry/backoff waits across multiple responses.",
+    "http::observation_tests::retries_established_connection_failures_with_bounded_attempts": "Exercises real connection failures and bounded retry/backoff waits."
+  },
+  "transparent-filter-server": {
+    "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end."
+  },
+  "enhance-pir-server": {
+    "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
+    "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test."
+  },
+  "pir-apm": {
+    "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",
+    "packing_fleet::tests::discovery_pages_and_failed_scrapes_preserve_last_valid_sample": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage."
+  }
 }

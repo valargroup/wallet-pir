@@ -25,7 +25,35 @@ env:
   RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
 
 jobs:
+  select:
+    name: Select full checks
+    runs-on: ubuntu-24.04
+    outputs:
+      enhance: ${{ steps.affected.outputs.enhance }}
+      transparent: ${{ steps.affected.outputs.transparent }}
+      shared: ${{ steps.affected.outputs.shared }}
+      ops: ${{ steps.affected.outputs.ops }}
+      enhance_infra: ${{ steps.affected.outputs.enhance_infra }}
+      transparent_infra: ${{ steps.affected.outputs.transparent_infra }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select affected full suites
+        id: affected
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            [[ "$BASE" =~ ^[0-9a-f]{40}$ ]]
+            git fetch --no-tags --depth=1 origin "$BASE"
+            python3 tools/ci/fast.py --committed-only --base "$BASE" --select-only --github-output
+          else
+            python3 tools/ci/fast.py --all --select-only --github-output
+          fi
+
   transparent-lint:
+    needs: select
+    if: needs.select.outputs.transparent == 'true'
     name: Transparent lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -48,13 +76,15 @@ jobs:
           python3 transparent/tools/transparent-loadtest/tests/test_compare.py
       - run: >-
           cargo clippy --locked --all-targets --all-features
-          -p transparent-events -p transparent-filter -p transparent-shard
+          -p transparent-native -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
           -p transparent-measure -p transparent-regression
           -- -D warnings
 
   transparent-test:
+    needs: select
+    if: needs.select.outputs.transparent == 'true'
     name: Transparent tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -73,12 +103,14 @@ jobs:
       # which on a two-vCPU runner is most of the wall time.
       - run: >-
           tools/ci/full-test.sh --locked --profile release-fast
-          -p transparent-events -p transparent-filter -p transparent-shard
+          -p transparent-native -p transparent-events -p transparent-filter -p transparent-shard
           -p transparent-wallet -p transparent-wallet-store -p transparent-blocks -p transparent-block-server
           -p transparent-filter-server -p transparent-shard-server -p transparent-loadtest
           -p transparent-measure -p transparent-regression
 
   validate-enhance-infra:
+    needs: select
+    if: needs.select.outputs.enhance_infra == 'true'
     name: Validate Enhance infrastructure
     runs-on: ubuntu-24.04
     steps:
@@ -96,6 +128,8 @@ jobs:
           terraform test -no-color
 
   validate-transparent-elastic-infra:
+    needs: select
+    if: needs.select.outputs.transparent_infra == 'true'
     name: Validate transparent elastic infrastructure
     runs-on: ubuntu-24.04
     steps:
@@ -113,6 +147,8 @@ jobs:
           terraform test -no-color
 
   validate-ops:
+    needs: select
+    if: needs.select.outputs.ops == 'true'
     name: Validate Enhance operations
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
@@ -127,7 +163,7 @@ jobs:
       - name: Check documentation and development utilities
         run: make check-docs check-tools
       - name: Check all operations and report helpers
-        run: make check-ops check-reports
+        run: make -j4 check-ops check-reports
       - name: Validate transparent filter inputs
         env:
           TRANSPARENT_FILTER_HOST: coordinator.example.net
@@ -202,6 +238,8 @@ jobs:
           refuses "second ExecStart"
 
   enhance-lint:
+    needs: select
+    if: needs.select.outputs.enhance == 'true'
     name: Enhance lint
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -216,10 +254,12 @@ jobs:
       - run: >-
           cargo clippy --locked --all-targets --all-features
           -p enhance-pir -p enhance-pir-load-test -p enhance-pir-server
-          -p pir-apm
+          -p pir-apm -p pir-monitor
           -- -D warnings
 
   enhance-test:
+    needs: select
+    if: needs.select.outputs.enhance == 'true'
     name: Enhance tests
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
@@ -241,7 +281,7 @@ jobs:
           # on shared runners. Hardware qualification is a separate exact-release
           # deployment gate; keep artifact CI bounded to correctness coverage.
           tools/ci/full-test.sh --locked --profile release-fast \
-            -p enhance-pir -p enhance-pir-load-test -p pir-apm
+            -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
           python3 tools/ci/enhance_tests.py --tier full
 
       - name: Check tagged native distributed integration
@@ -262,10 +302,51 @@ jobs:
           cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
           cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
 
+  shared-test:
+    name: Shared lint and tests
+    needs: select
+    if: needs.select.outputs.shared == 'true'
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    timeout-minutes: 60
+    env:
+      RUST_TEST_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: full-test
+      - run: cargo clippy --locked --all-targets --all-features -p pir-control -p pir-observability -p pir-native -- -D warnings
+      - run: tools/ci/full-test.sh --locked --profile release-fast -p pir-control -p pir-observability -p pir-native
+
+  complete:
+    name: Full checks complete
+    if: always()
+    needs: [select, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Verify selected checks completed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYCHECK'
+          import json, os
+          results = json.loads(os.environ['RESULTS'])
+          if results['select']['result'] != 'success':
+              raise SystemExit('selection failed')
+          groups = {'transparent-lint': 'transparent', 'transparent-test': 'transparent',
+                    'enhance-lint': 'enhance', 'enhance-test': 'enhance', 'shared-test': 'shared',
+                    'validate-ops': 'ops', 'validate-enhance-infra': 'enhance_infra',
+                    'validate-transparent-elastic-infra': 'transparent_infra'}
+          for job, group in groups.items():
+              expected = 'success' if results['select']['outputs'][group] == 'true' else 'skipped'
+              if results[job]['result'] != expected:
+                  raise SystemExit(f'{job}: {results[job]["result"]}, expected {expected}')
+          PYCHECK
+
   release:
     name: Prepare qualified release artifacts
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [transparent-lint, transparent-test, enhance-lint, enhance-test, validate-ops, validate-enhance-infra]
+    needs: [complete]
     runs-on: ${{ fromJSON(vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     permissions:
@@ -282,7 +363,7 @@ jobs:
       - name: Build optimized release binaries once
         run: >-
           cargo build --locked --release
-          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm
+          -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
           -p transparent-filter-server -p transparent-shard-server
           --bin enhance-pir-server --bin enhance-pir-load-test
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
@@ -294,9 +375,10 @@ jobs:
         run: python3 tools/ci/release.py assemble --sha "$SHA" --output release-bundles
       # The native profile serves an incompatible protocol; build it in its own
       # target directory so feature unification never leaks into the q48 bundle.
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: release-native
       - name: Build native Enhance binaries
-        env:
-          CARGO_TARGET_DIR: target-native
         run: >-
           cargo build --locked --release
           -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test
@@ -305,12 +387,12 @@ jobs:
       - name: Assemble native Enhance bundle
         env:
           SHA: ${{ github.sha }}
-        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target target-native --output release-bundles-native
+        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind enhance-pir-native --target "$CARGO_TARGET_DIR" --output release-bundles-native
       # Status roles and controller come from the same native build.
       - name: Assemble Status bundle
         env:
           SHA: ${{ github.sha }}
-        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target target-native --output release-bundles-status
+        run: python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target "$CARGO_TARGET_DIR" --output release-bundles-status
       - uses: actions/upload-artifact@v4
         with:
           name: status-pir-${{ github.sha }}
@@ -363,7 +445,7 @@ jobs:
   release-cuda:
     name: Prepare native CUDA release artifact (Ubuntu 22.04)
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: [transparent-lint, transparent-test, enhance-lint, enhance-test, validate-ops, validate-enhance-infra]
+    needs: [complete]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     # Pin the build ABI independently of the existing Ubuntu 24.04 CPU lane.
@@ -383,6 +465,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.91.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: native-cuda-ubuntu22.04-rust1.91-v3-pclmul-v1
+          workspaces: ". -> target/native-cuda"
+          cache-workspace-crates: true
+          cache-on-failure: true
       - name: Build isolated native CUDA binaries and record ABI
         run: tools/ci/build-cuda.sh
       - name: Assemble checksummed native CUDA bundle
