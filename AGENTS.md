@@ -31,6 +31,20 @@ independent. Preserve existing Cargo package and binary names.
   concurrent work use separate worktrees/target lanes; reuse each lane across
   edits. Do not create a new cold target per command or weaken trust boundaries.
 
+## Branches and production changes
+
+- Commit and push directly to `main` unless Roman asks for a PR; when he does,
+  open one against `main`. Work in the primary checkout or a visible worktree,
+  not a hidden per-task isolation copy.
+- Main CI runs after the push. Before pushing, run only the focused
+  `make check-fast` scope for the change; watch main CI in the background and
+  fix or revert promptly if the push turns it red.
+- Production changes go through `ops/scripts/wallet-pir-deploy.py`
+  (`plan`/`preflight` first), which holds the production lock. Do not mutate
+  production hosts by hand (`systemctl`, signals, `scp` of binaries) or while
+  another session holds the lock, and never during a monitoring-only task.
+  Report `status` and the rollback command after each deploy.
+
 ## Documentation and operations
 
 Start with `docs/README.md` and the product index. Never infer live deployment
