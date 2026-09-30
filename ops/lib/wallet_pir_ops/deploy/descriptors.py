@@ -72,6 +72,7 @@ class Target:
     host: str
     unit: str
     vars: dict = field(default_factory=dict)
+    health_equals: dict = field(default_factory=dict)
 
     @property
     def key(self):
@@ -143,6 +144,12 @@ def load_inventory(path):
         require({'key', 'known_hosts', 'known_hosts_sha256'} <= set(ssh)
                 and all(isinstance(entry, dict) and entry.get('address') for entry in hosts.values()),
                 'inventory: pinned SSH needs ssh.key, known_hosts, known_hosts_sha256 and an address per host')
+    for name, entry in hosts.items():
+        require(isinstance(entry, dict), 'inventory: host entry must be an object')
+        require(not entry.get('jump') or (entry['jump'] in hosts and entry['jump'] != name
+                and not hosts[entry['jump']].get('jump')), 'inventory: jump must name a direct host')
+        require(isinstance(entry.get('sudo', False), bool), 'inventory: sudo must be boolean')
+        require(PLAIN_NAME.fullmatch(entry.get('user', ssh.get('user', 'root'))), 'inventory: invalid SSH user')
     return Inventory(hosts, ssh, lock, document.get('services', {}))
 
 
@@ -181,7 +188,12 @@ def targets(service, inventory):
             values = {**spec.get('vars', {}), **entry.get('vars', {})}
             missing = (placeholders(role.health) | placeholders(role.ready_url)) - set(values)
             require(not missing, '%s.%s@%s: inventory vars missing %s' % (service.name, role_name, host, sorted(missing)))
-            result.append(Target(role, host, unit, values))
+            expected = entry.get('health_equals', {})
+            require(isinstance(expected, dict) and all(
+                isinstance(key, str) and re.fullmatch(r'[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*', key)
+                and isinstance(value, (str, int, bool)) for key, value in expected.items()),
+                'inventory: health_equals maps dotted fields to scalar expectations')
+            result.append(Target(role, host, unit, values, expected))
     require(result, 'inventory lists no %s hosts' % service.name)
     return result
 

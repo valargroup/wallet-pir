@@ -359,3 +359,44 @@ jobs:
           compression-level: 0
           if-no-files-found: error
           retention-days: 14
+
+  release-cuda:
+    name: Prepare native CUDA release artifact (Ubuntu 22.04)
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [transparent-lint, transparent-test, enhance-lint, enhance-test, validate-ops, validate-enhance-infra]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    # Pin the build ABI independently of the existing Ubuntu 24.04 CPU lane.
+    container:
+      image: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install Ubuntu 22.04 build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq build-essential ca-certificates curl git libclang-dev protobuf-compiler python3 pkg-config libssl-dev
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+      - name: Build isolated native CUDA binaries and record ABI
+        run: tools/ci/build-cuda.sh
+      - name: Assemble checksummed native CUDA bundle
+        env:
+          SHA: ${{ github.sha }}
+        run: >-
+          python3 tools/ci/release.py assemble --sha "$SHA"
+          --kind enhance-pir-native-cuda --target target/native-cuda
+          --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda
+      - uses: actions/upload-artifact@v4
+        with:
+          name: enhance-pir-native-cuda-${{ github.sha }}
+          path: release-bundles-native-cuda/enhance-pir-native-cuda.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14

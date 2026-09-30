@@ -109,14 +109,19 @@ class SSHExecutor(Executor):
         if host not in self.pinned:
             self.pinned[host] = pinned_ssh.PinnedSSH(entry['address'], Path(ssh['key']).expanduser(),
                                                      Path(ssh['known_hosts']).expanduser(),
-                                                     ssh['known_hosts_sha256'], ssh.get('user', 'root'))
+                                                     ssh['known_hosts_sha256'], entry.get('user', ssh.get('user', 'root')))
         client = self.pinned[host]
         client.check_host_keys()
-        return ['ssh', *client.options, client.user + '@' + client.host]
+        options = list(client.options)
+        if entry.get('jump'):
+            jump = self.transport(entry['jump'])
+            options += ['-o', 'ProxyCommand=' + shlex.join(jump[:-1] + ['-W', '%h:%p', jump[-1]])]
+        return ['ssh', *options, client.user + '@' + client.host]
 
     def call(self, host, op, stdin=b'', deadline=120, **arguments):
         """Run one helper operation; `deadline` bounds the whole SSH call."""
-        command = shlex.join(['python3', '-c', HELPER, json.dumps({'op': op, **arguments})])
+        prefix = ['sudo', '-n', '--'] if self.inventory and self.inventory.hosts[host].get('sudo') else []
+        command = shlex.join([*prefix, 'python3', '-c', HELPER, json.dumps({'op': op, **arguments})])
         argv = self.transport(host) + [command]
         if isinstance(stdin, Path):
             with open(stdin, 'rb') as handle:
