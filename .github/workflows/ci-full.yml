@@ -388,6 +388,11 @@ jobs:
       - name: Assemble checksummed native CUDA bundle
         env:
           SHA: ${{ github.sha }}
+          # Checkout's temporary HOME differs from this container shell's HOME.
+          # Trust only this exact Actions checkout for Git provenance checks.
+          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_KEY_0: safe.directory
+          GIT_CONFIG_VALUE_0: ${{ github.workspace }}
         run: >-
           python3 tools/ci/release.py assemble --sha "$SHA"
           --kind enhance-pir-native-cuda --target target/native-cuda
