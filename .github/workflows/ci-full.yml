@@ -33,6 +33,7 @@ jobs:
       transparent: ${{ steps.affected.outputs.transparent }}
       shared: ${{ steps.affected.outputs.shared }}
       ops: ${{ steps.affected.outputs.ops }}
+      helpers: ${{ steps.affected.outputs.helpers }}
       enhance_infra: ${{ steps.affected.outputs.enhance_infra }}
       transparent_infra: ${{ steps.affected.outputs.transparent_infra }}
     steps:
@@ -138,7 +139,7 @@ jobs:
   validate-ops:
     needs: select
     if: needs.select.outputs.ops == 'true'
-    name: Validate Enhance operations
+    name: Validate selected helper checks
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
@@ -149,11 +150,12 @@ jobs:
       # `validate` invocations below cannot: they reach only the three programs
       # that read shards.json, and neither of the two bugs that shipped on
       # 2026-09-07 was in those three.
-      - name: Check documentation and development utilities
-        run: make check-docs check-tools
-      - name: Check all operations and report helpers
-        run: make -j4 check-ops check-reports
+      - name: Run selected full helper suites
+        env:
+          HELPERS: ${{ needs.select.outputs.helpers }}
+        run: python3 tools/ci/helpers.py --full --targets "$HELPERS"
       - name: Validate transparent filter inputs
+        if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
         env:
           TRANSPARENT_FILTER_HOST: coordinator.example.net
           WALLET_PIR_DEPLOY_USER: deploy
@@ -164,6 +166,7 @@ jobs:
         run: transparent/ops/scripts/deploy-transparent-filter.sh validate
 
       - name: Validate transparent shard inputs
+        if: contains(needs.select.outputs.helpers, 'check-ops-contracts') || contains(needs.select.outputs.helpers, 'check-ops-deploy')
         env:
           TRANSPARENT_WORKER_HOST: transparent-worker-01.example.net
           WALLET_PIR_DEPLOY_USER: deploy

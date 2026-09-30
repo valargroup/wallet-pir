@@ -39,7 +39,10 @@ in full operations qualification; their module registry rejects missing or
 renamed assignments. No production clocks or thresholds change.
 
 Full PR jobs select affected product/shared/operations/infrastructure families.
-Shared library changes expand through reverse dependencies, while unknown paths
+The same helper selection is used for full PR checks: documentation runs only
+link validation, and operations run their affected consumers. Main selects every
+helper and restores exhaustive scaler tiers. Shared library changes expand
+through reverse dependencies, while unknown paths
 request complete coverage. `Full checks complete` verifies that every selected
 job succeeded and unrelated jobs were skipped. On main, every family must pass
 before release preparation can publish artifacts. Test builds use `release-fast`;

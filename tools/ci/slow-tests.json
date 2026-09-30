@@ -16,7 +16,11 @@
     "runtime::tests::tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::unequal_units_match_monolithic_preprocessing_and_evaluation": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",
     "runtime::tests::encrypted_bootstrap_round_trip_and_cached_restart": "Measured 5.45s locally: real encrypted bootstrap, independent CPU evaluation and durable runtime restart; full CI retains all assertions.",
-    "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence."
+    "worker::tests::restart_rebuilds_lost_cache_only_from_verified_durable_rows": "Measured 4.91s locally: real runtime preparation and corrupt/missing-cache recovery; full CI retains the complete HTTP/runtime evidence.",
+    "coordinator::admission_tests::full_queue_and_expired_wait_return_retryable_429": "Measured 2.02s locally: real queue expiry and HTTP timeout coverage; full CI retains real elapsed-time assertions.",
+    "status::incremental_tests::sparse_hint_matches_full_reconstruction_for_signed_negacyclic_boundaries": "Measured 1.99s locally: independent full cryptographic reconstruction oracle; full CI retains the comparison.",
+    "status::source::tests::live_rpc_candidate_revalidates_before_durable_publication": "Measured 1.40s locally: real RPC candidate revalidation and durable publication; full CI retains the complete test.",
+    "worker::tests::backend_evaluation_failure_over_http_releases_permit_and_recovers": "Measured 2.28s locally: real cryptographic evaluation, malformed-query rejection, injected backend failure and HTTP recovery; full CI retains all assertions."
   },
   "pir-apm": {
     "fleet::integration_tests::failed_and_slow_workers_do_not_block_pages_or_good_samples": "Real HTTP stalled-worker timeout and scrape isolation; full CI retains real-time integration coverage.",

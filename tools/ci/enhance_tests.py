@@ -66,6 +66,12 @@ def main():
         command = ['bash', str(ROOT / 'tools/ci/full-test.sh'), *cargo_args(registry, args.tier), *(['--offline'] if args.offline else [])]
         print('+ ' + ' '.join(command), flush=True)
         subprocess.run(command, cwd=ROOT, env=env, check=True)
+        if args.tier == 'full':
+            # Explicit lib/bin/integration selectors do not run library doctests.
+            subprocess.run(['python3', 'tools/ci/stage.py', 'doctests', '--',
+                            'cargo', 'test', '--locked', '--profile', 'release-fast',
+                            '-p', PACKAGE, '--doc', *(['--offline'] if args.offline else [])],
+                           cwd=ROOT, env=env, check=True)
 
 
 if __name__ == '__main__':

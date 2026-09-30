@@ -23,6 +23,7 @@ import sys
 sys.path.insert(0, str(ROOT / 'tools/ci'))
 full = load('full_packages')
 scaler = load('scaler_tests')
+helpers = load('helpers')
 
 
 class PlannerTests(unittest.TestCase):
@@ -54,6 +55,7 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result['helpers'], [])
         result = fast.plan(self.packages, ['enhance/services/enhance-pir-server/tests/fixtures/README.md'])
         self.assertIn('enhance-pir-server', result['packages'])
+        self.assertIn('check-docs', result['helpers'])
 
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
         result = fast.plan(self.packages, ['shared/pir-control/src/lib.rs'])
@@ -143,6 +145,15 @@ class PlannerTests(unittest.TestCase):
         registry['fast'][0] = 'renamed'
         with self.assertRaisesRegex(ValueError, 'classification mismatch'):
             scaler.validate(registry)
+
+
+    def test_full_helper_dispatch_keeps_docs_precise_and_restores_models(self):
+        self.assertEqual(helpers.targets(['check-docs'], full=True), ['check-docs'])
+        self.assertEqual(helpers.targets(['check-ops-scaler-fast'], full=True), ['check-ops-scaler'])
+        self.assertEqual(set(helpers.targets(list(fast.HELPERS), full=True)),
+                         (fast.HELPERS - {'check-ops-scaler-fast'}) | {'check-ops-scaler'})
+        with self.assertRaisesRegex(ValueError, 'unknown helper'):
+            helpers.targets(['check-docs; unsafe'])
 
 
 

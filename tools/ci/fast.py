@@ -55,6 +55,8 @@ def owner(packages, path):
 
 def route(path):
     """Return helper targets/full groups, or None for an unknown path."""
+    if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
+        return {'check-docs', 'check-tools'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
@@ -129,6 +131,8 @@ def plan(packages, paths, *, all_checks=False):
         package = owner(packages, path)
         routed = route(path)
         if package:
+            if path.endswith('.md'):
+                helpers.add('check-docs'); groups.add('ops')
             if path.startswith('transparent/tools/transparent-loadtest/'):
                 helpers.add('check-reports')
             # Serialized payloads are consumed by jq/deploy scripts.
@@ -237,6 +241,7 @@ def main():
     if args.github_output:
         with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
             out.write(f'rust={str(bool(selected["packages"])).lower()}\n')
+            out.write('helpers=' + json.dumps(selected['helpers']) + '\n')
             for group in FULL_GROUPS:
                 out.write(f'{group}={str(group in selected["groups"]).lower()}\n')
     if args.select_only:
