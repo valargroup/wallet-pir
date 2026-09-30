@@ -1,0 +1,293 @@
+{
+  "active_accounts": 0,
+  "birthday": 3499739,
+  "fixture_scripts": [
+    "76a914080e88ac60bfdd17abe291276e73c67ceb81a54388ac",
+    "76a9140b0a1eaa1c5171bac112cc7af1de37905815f91688ac",
+    "76a9140cfffd860152079605a09bb9dfc0970ee967973988ac",
+    "76a9140d47b045465d765020f50b0d670b91fc5650763d88ac",
+    "76a9141150cfdba3780e84c07dfb10ef32aea0e32770fd88ac",
+    "76a914121e97932b238bbc0156e77a8aa3bed13949b79b88ac",
+    "76a91420d01fc2d3205eb039d4377794431e8dbed65ff588ac",
+    "76a9142404f2afb38072f4e3e1918baf76e4a612403c2d88ac"
+  ],
+  "independent_headers": 1001,
+  "limitation": "Public scripts stand in for ownership; shielded scan is a controlled empty-block fixture. No account promotion or financial authority.",
+  "passes": [
+    {
+      "completion": "Complete",
+      "covered_through": 3500738,
+      "pass": 0,
+      "receives": 9,
+      "spends": 7,
+      "window_grew": false
+    }
+  ],
+  "pending_pages": 0,
+  "qualified_revisions": 0,
+  "reader_version": 7,
+  "receives": [
+    {
+      "coinbase": false,
+      "height": 3500727,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 540000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 13,
+      "script": "76a9140b0a1eaa1c5171bac112cc7af1de37905815f91688ac",
+      "txid": "12710c32387da7bbddcb822db349e87189a8c907f5805afb82dfadf088a53d08",
+      "value": 10000000000
+    },
+    {
+      "coinbase": false,
+      "height": 3500673,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 18009
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a914080e88ac60bfdd17abe291276e73c67ceb81a54388ac",
+      "txid": "3e00b38f31e8823bbce0a164cd8d07b21a59d8b316dae0a58e3387f234caa838",
+      "value": 16067736
+    },
+    {
+      "coinbase": false,
+      "height": 3500670,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 12031
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a914080e88ac60bfdd17abe291276e73c67ceb81a54388ac",
+      "txid": "f87e512cace237c168fc76af844f8b3ea7ca4cc8cf588c9bf5276898c72dda4a",
+      "value": 450000
+    },
+    {
+      "coinbase": false,
+      "height": 3500068,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 15000
+        },
+        "input_count": 0,
+        "shielded": true
+      },
+      "output_index": 0,
+      "script": "76a9141150cfdba3780e84c07dfb10ef32aea0e32770fd88ac",
+      "txid": "5397f1159a6ade7f9a951bc799626c60884d5ef1492b0c769842655371ecad5e",
+      "value": 662010000
+    },
+    {
+      "coinbase": false,
+      "height": 3500162,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 670000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 34,
+      "script": "76a91420d01fc2d3205eb039d4377794431e8dbed65ff588ac",
+      "txid": "42f400b9ce8756d26110c3e1f6a272cc558aeff3cbb07af40d75f0d6ceb56760",
+      "value": 10000000000
+    },
+    {
+      "coinbase": false,
+      "height": 3499784,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 160000
+        },
+        "input_count": 12,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a9140d47b045465d765020f50b0d670b91fc5650763d88ac",
+      "txid": "09dfc1118d6acee17aa18b547c0a72c8cb410c3f850b53b2802e7f6d6d2b6a77",
+      "value": 23346920
+    },
+    {
+      "coinbase": false,
+      "height": 3500562,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 10000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a914121e97932b238bbc0156e77a8aa3bed13949b79b88ac",
+      "txid": "ddb51504f91345c70efdb90e8c849316280b47437217d227bdfeca88f5f63590",
+      "value": 26438499
+    },
+    {
+      "coinbase": false,
+      "height": 3500134,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 18700
+        },
+        "input_count": 2,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a9142404f2afb38072f4e3e1918baf76e4a612403c2d88ac",
+      "txid": "b741deeaaa3065cedaba78f085b7849d4a4a26b25771a339f847939f8d55339f",
+      "value": 73719298
+    },
+    {
+      "coinbase": false,
+      "height": 3499791,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 10000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "output_index": 0,
+      "script": "76a9140cfffd860152079605a09bb9dfc0970ee967973988ac",
+      "txid": "bb16e1a8febda12f0af86c03ca1c98b34590fa916b125ccc9c6040f23423f8e1",
+      "value": 6802163
+    }
+  ],
+  "reopened_equal": true,
+  "schema": "activity-library-shadow-recovery-v1",
+  "spends": [
+    {
+      "height": 3500194,
+      "input_index": 10,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 170000
+        },
+        "input_count": 13,
+        "shielded": false
+      },
+      "prevout_index": 34,
+      "prevout_txid": "42f400b9ce8756d26110c3e1f6a272cc558aeff3cbb07af40d75f0d6ceb56760",
+      "script": "76a91420d01fc2d3205eb039d4377794431e8dbed65ff588ac",
+      "txid": "4b04614244521c659ea23106c4205aa7b928b5155d8da6bfc79f332e6e860329"
+    },
+    {
+      "height": 3500145,
+      "input_index": 0,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 20000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "prevout_index": 0,
+      "prevout_txid": "b741deeaaa3065cedaba78f085b7849d4a4a26b25771a339f847939f8d55339f",
+      "script": "76a9142404f2afb38072f4e3e1918baf76e4a612403c2d88ac",
+      "txid": "42838cbe752a36af8d75bf034770e7a95b718cd03d013632c63835c2cae0e934"
+    },
+    {
+      "height": 3500576,
+      "input_index": 0,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 44600
+        },
+        "input_count": 4,
+        "shielded": false
+      },
+      "prevout_index": 0,
+      "prevout_txid": "ddb51504f91345c70efdb90e8c849316280b47437217d227bdfeca88f5f63590",
+      "script": "76a914121e97932b238bbc0156e77a8aa3bed13949b79b88ac",
+      "txid": "11ad1952ab250ed805ad3d60d399192dbc5319a4861ab3aa02b5dcb8040bc639"
+    },
+    {
+      "height": 3499794,
+      "input_index": 0,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 50000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "prevout_index": 0,
+      "prevout_txid": "09dfc1118d6acee17aa18b547c0a72c8cb410c3f850b53b2802e7f6d6d2b6a77",
+      "script": "76a9140d47b045465d765020f50b0d670b91fc5650763d88ac",
+      "txid": "6eaa3d70dbcaf42bf8cf30872cd5a1113f3403eff71fe4a87d586e25c6acec46"
+    },
+    {
+      "height": 3500068,
+      "input_index": 0,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 10000
+        },
+        "input_count": 1,
+        "shielded": false
+      },
+      "prevout_index": 0,
+      "prevout_txid": "5397f1159a6ade7f9a951bc799626c60884d5ef1492b0c769842655371ecad5e",
+      "script": "76a9141150cfdba3780e84c07dfb10ef32aea0e32770fd88ac",
+      "txid": "cbca94e96b6d6c18eb15adc23e64e746aeb8b8778cf0686f13e7d770bc82e249"
+    },
+    {
+      "height": 3500068,
+      "input_index": 172,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 2435003
+        },
+        "input_count": 487,
+        "shielded": false
+      },
+      "prevout_index": 0,
+      "prevout_txid": "bb16e1a8febda12f0af86c03ca1c98b34590fa916b125ccc9c6040f23423f8e1",
+      "script": "76a9140cfffd860152079605a09bb9dfc0970ee967973988ac",
+      "txid": "e049555e146f793eeb928b266c59155f0b1fbb6e701254c9d58e6f713b5f20a5"
+    },
+    {
+      "height": 3500733,
+      "input_index": 12,
+      "metadata": {
+        "fee": {
+          "state": "exact",
+          "value": 170000
+        },
+        "input_count": 13,
+        "shielded": false
+      },
+      "prevout_index": 13,
+      "prevout_txid": "12710c32387da7bbddcb822db349e87189a8c907f5805afb82dfadf088a53d08",
+      "script": "76a9140b0a1eaa1c5171bac112cc7af1de37905815f91688ac",
+      "txid": "7fa1d132311fbaa00e1e009a48c182c1ccb7be72ea5e087667b777a5593867a6"
+    }
+  ],
+  "through": 3500738,
+  "unresolved_spends": 0
+}

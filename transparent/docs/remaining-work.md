@@ -16,7 +16,7 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [x] Freeze prototype source/artifacts; publish bounded real-chain recent and archive geometry data.
 - [x] Establish nonempty HTTP SQLite recovery and exact 5 QPS / 20 QPS prototype gates.
 - [ ] Backfill a separate genesis-to-anchor v3 journal and complete v11 publication.
-  Ingest owner: `transparent-activity-full-ingest-e47bdf79` on the coordinator;
+  Ingest owner: `transparent-activity-full-ingest-release-3cfbc484` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency
   1/4/8 matched fixtures and independently recomputed metadata and summaries
@@ -24,9 +24,18 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [ ] Integrate metadata, source evidence, honest summaries and bounded real HTTP adapter in wallet-libraries.
   Draft [library PR 77](https://github.com/zakura-core/wallet-libraries/pull/77)
   includes the bounded adapter and real HTTP shadow SQLite harness. Five adapter
-  tests and the candidate metadata/reopen/authority test passed at `53af85202`.
-  Live harness delivery and retained raw RPC inputs remain open.
+  tests, 28 history tests and the candidate metadata/reopen/authority test passed
+  at `53af85202`. Live HTTP recovered 9 receives and 7 spends; a separate raw
+  block/prevout checker matched every event and its persisted metadata. All 17
+  wallet HTTP requests used filter/PIR routes. The account remained inactive.
+  CI found one obsolete provenance-fence test constant, corrected at `deac2aed4`;
+  its focused check passed and full CI is pending. This fixture does not prove
+  financial ownership, shielded scanning or final lifecycle qualification.
 - [ ] Verify fat-LTO release artifacts and perform guarded SSH canonical cutover with v10 rollback retained.
+  The 16-artifact `3cfbc484` fat-LTO build passed. Full-publication verification,
+  native certificates and worker transfer/cutover remain open. Candidate load
+  owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
+  does not count toward the canonical publication/300-block qualification gate.
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 

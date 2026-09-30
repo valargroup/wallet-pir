@@ -36,3 +36,30 @@ independently decoded every retained event, matched fixture digests, and recompu
 transaction metadata, account movement, unresolved inputs and aggregate payments.
 Older receives outside the bounded publication remain unresolved and partial.
 No production cutover or sustained qualification is claimed.
+
+The [library HTTP harness](prototype-e47bdf79/library-http-53af85202.json)
+recovered 9 receives and 7 spends through real HTTP into library SQLite candidate
+commits. Reopen preserved every fact, reader version 7 was enforced, and no
+revision or account was qualified or activated. The [independent check](prototype-e47bdf79/library-independent-53af85202.json)
+matched every event and its persisted metadata against retained raw block and
+prevout RPC inputs, including shared funding and shielded presence. The harness
+uses public-script ownership fixtures and empty shielded scan blocks; it proves
+transparent delivery, not financial ownership or shielded recovery.
+
+[Raw retention](prototype-e47bdf79/raw-retention-e24a25db.json) identifies the
+226 MB immutable input bundle, retained read-only in this evidence directory and
+on the coordinator. Its size exceeds GitHub's file limit, so this clone's local
+`info/exclude` keeps the bundle out of Git. Preserve it before archiving the
+worktree. The committed manifest pins its SHA-256 and remote recovery path.
+Every RPC attempt is retained, including two global batch-size refusals that the
+oracle retried. All 17 wallet HTTP attempts used filter or private PIR routes;
+there was no lookup fallback, transport failure, header capture or PIR body
+retention. The [raw-input oracle rerun](prototype-e47bdf79/oracle-raw-e24a25db.json)
+again matched all 1,000 blocks and 26,868 journal events.
+
+[One-hour candidate observation](prototype-e47bdf79/observe-5qps-3cfbc484.json)
+completed 17,920 exact queries at 4.978 QPS with no failures, p50 5 ms and p99
+33 ms. The [fat-LTO artifact build](release-3cfbc484.json) retained hashes for
+all 16 required binaries/examples. [Backfill handoff](ingest-handoff-release-3cfbc484.json)
+records checkpoint 269000 and the controlled move from two release-fast workers
+to four fat-LTO workers. The full publication and production cutover remain open.
