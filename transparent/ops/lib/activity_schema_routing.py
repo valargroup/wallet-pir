@@ -183,6 +183,21 @@ class Routing:
         require(H.checksum(value['path']) == value['sha256'], 'fleet configuration changed')
         return self.fleet_factory(Path(value['path']), read_only=read_only)
 
+    def partial_guard(self, host):
+        """Prove the owned public withdrawal without reopening an incomplete capture."""
+        require(host.role=='coordinator' and str(host.root)==self.plan['coordinator_baseline'] and
+                not (host.root/'complete.json').exists(), 'partial routing requires owning coordinator capture')
+        index=next(i for i,item in enumerate(host.plan['baseline']['files']) if item['path']=='/etc/caddy/Caddyfile')
+        saved=host.root/'files'/str(index)
+        original=saved.read_bytes()
+        require(hashlib.sha256(original).hexdigest()==self.plan['original_coordinator_sha256'],
+                'partial captured original routing identity changed')
+        current=Path('/etc/caddy/Caddyfile')
+        expected=(U.guard_coordinator(original.decode())+relay(self.plan['private_router'])).encode()
+        require(current.read_bytes()==expected and all(self.commands.metadata_status(url)==503 for url in H.PUBLIC_METADATA),
+                'partial public routing is not exact owned withdrawal')
+        return {'captured':H.B.entries(saved),'guarded':H.B.entries(current)}
+
     def original(self):
         baseline = Path(self.plan['coordinator_baseline'])
         if not (baseline/'complete.json').exists():

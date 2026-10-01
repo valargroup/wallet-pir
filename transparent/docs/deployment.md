@@ -1389,3 +1389,10 @@ from one withdrawal counter increment and an empty-route timestamp. Both newer
 audit files are retained with intent/completion outside the immutable partial
 baseline before restoring its original bytes. Unrelated drift and prior repair
 intents refuse; capture and canonical recovery remain separate gates.
+
+The same failed-preserve repair keeps the installed public withdrawal in place
+while completing capture. It derives exact guard bytes from the independently
+copied Caddy file and checksum-bound private router, requires both origins still
+503, and records both captured and guarded file identities. Only that fixed
+Caddy transition may differ from the copied baseline; it never substitutes
+guarded bytes for the captured original or reopens routing during capture.

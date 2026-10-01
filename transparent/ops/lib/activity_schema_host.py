@@ -403,7 +403,7 @@ class Host:
                 require(len(starts) == 1 and str(ROOT/'v11/fleet.json') in shlex.split(starts[0][10:]),
                         'fleet service still refers to old controller configuration')
 
-    def reconcile_partial_guard(self):
+    def reconcile_partial_guard(self, *, owned_guard=None):
         """Retain and undo only the owned failed withdrawal's two audit writes."""
         require(self.role == 'coordinator' and not (self.root/'complete.json').exists(),
                 'guard bookkeeping reconciliation requires partial coordinator capture')
@@ -427,6 +427,8 @@ class Host:
             if live==candidate:
                 require(b is not None and a is not None and a.keys()==b.keys() and
                         all(a[k]==b[k] for k in b if k not in names), 'partial copied candidate differs')
+            elif item['path']=='/etc/caddy/Caddyfile' and owned_guard is not None:
+                require(b==owned_guard['captured'] and a==owned_guard['guarded'], 'partial public guard differs')
             else:require(a==b and (b is not None or not item['required']), 'partial copied baseline differs')
         for name in names:
             require(B.describe(saved/name)==old[name] and old[name]['kind']==current[name]['kind']=='file' and
@@ -449,6 +451,7 @@ class Host:
         receipt.mkdir(mode=0o700)
         value={'status':'intent','plan_sha256':state['plan_sha256'],'captured':{n:old[n] for n in names},
                'displaced':{n:current[n] for n in names}}
+        if owned_guard is not None:value['public_guard']=owned_guard
         B.atomic(receipt/'intent.json',encode(value))
         for name in sorted(names):
             live=candidate/name;copy=saved/name
@@ -458,7 +461,9 @@ class Host:
         require(candidate_inventory(candidate)==old, 'partial guard restored inventory differs')
         B.atomic(receipt/'complete.json',encode(dict(value,status='complete')))
 
-    def capture(self, *, repair_token=None):
+    def capture(self, *, repair_token=None, owned_guard=None):
+        require(owned_guard is None or repair_token is not None and self.role=='coordinator',
+                'owned partial guard requires coordinator repair')
         if repair_token is not None:
             # Only the owning failed-preserve recovery calls this after the
             # original locked full preflight, before any install/activation.
@@ -473,7 +478,7 @@ class Host:
                 require(state.get('candidate')=={str(p):candidate_inventory(p) for p in candidate_paths(self.role)},
                         'partial captured candidate inventory changed')
                 self.quiet(WRITERS[self.role])
-                return B.reconcile_capture(self.root,self.plan['baseline'])['plan_sha256']
+                return B.reconcile_capture(self.root,self.plan['baseline'],owned_guard=owned_guard)['plan_sha256']
         else:
             self.preflight()
         require(not self.root.exists(), 'baseline already exists; verify/reconcile instead of recapturing')

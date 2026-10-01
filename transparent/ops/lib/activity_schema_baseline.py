@@ -20,6 +20,7 @@ EXCLUDED = {'ssh', '__pycache__'}
 HEX = re.compile(r'^[0-9a-f]{64}$')
 WORKER_ACTIVE_RECORD = '/opt/transparent-publisher/active.json'
 CANDIDATE_ACTIVE_RECORD = '/srv/transparent-activity/full-v11/publications/active.json'
+COORDINATOR_ROUTING_FILE = '/etc/caddy/Caddyfile'
 
 
 def require(ok, message):
@@ -466,7 +467,7 @@ def capture(root, plan):
     return verify(root)
 
 
-def reconcile_capture(root, plan):
+def reconcile_capture(root, plan, *, owned_guard=None):
     """Complete only an unchanged, fully copied partial capture; never recopy."""
     root=Path(root);validate_plan(plan,root)
     require(root.is_dir() and not root.is_symlink() and not (root/'complete.json').exists(),
@@ -479,7 +480,11 @@ def reconcile_capture(root, plan):
         source=Path(item['path']);saved=root/'files'/str(index)
         live=entries(source) if source.exists() or source.is_symlink() else None
         copy=entries(saved) if saved.exists() or saved.is_symlink() else None
-        require(live==copy and (live is not None or not item['required']),
+        guarded = owned_guard is not None and item['path']==COORDINATOR_ROUTING_FILE
+        if guarded:
+            require(set(owned_guard)=={'captured','guarded'} and copy==owned_guard['captured'] and
+                    live==owned_guard['guarded'], 'owned partial guard transition changed')
+        require((live==copy or guarded) and (live is not None or not item['required']),
                 'partial capture bytes differ from stopped live state')
         trees[item['path']]=copy
         if copy:
@@ -497,6 +502,7 @@ def reconcile_capture(root, plan):
         current=item if Path(item['sentinel']).exists() or protected is None else dict(item,sentinel=str(Path(protected['protected'])/'publication/shards.json'))
         retained.append(retained_identity(current))
     record={'version':1,'plan':plan,'plan_sha256':plan_sha,'files':trees,'retained':retained,'protected_publications':protections}
+    if owned_guard is not None:record['owned_partial_guard']=owned_guard
     active=captured_publications(root,record,live=True)
     additional=[item for item in active if item not in plan['retained']]
     if additional:protections.extend(protect_publications(dict(plan,retained=additional),plan_sha))

@@ -78,6 +78,23 @@ class Fleet:
 
 
 class RoutingTests(unittest.IsolatedAsyncioTestCase):
+    def test_partial_guard_binds_copied_original_and_keeps_both_origins_closed(self):
+        from unittest.mock import Mock
+        baseline=self.root/'partial';(baseline/'files').mkdir(parents=True)
+        (baseline/'files/0').write_bytes(self.original)
+        current=self.root/'guard';current.write_bytes(self.current)
+        host=Mock(role='coordinator',root=baseline,plan={'baseline':{'files':[{'path':'/etc/caddy/Caddyfile'}]}})
+        self.routing.plan['coordinator_baseline']=str(baseline)
+        original_path=M.Path
+        with patch.object(M,'Path',side_effect=lambda p:current if str(p)=='/etc/caddy/Caddyfile' else original_path(p)):
+            value=self.routing.partial_guard(host)
+            self.assertEqual(value['captured'],M.H.B.entries(baseline/'files/0'))
+            self.assertEqual(current.read_bytes(),self.current)
+            current.write_bytes(self.current+b'foreign')
+            with self.assertRaisesRegex(ValueError,'exact owned'):self.routing.partial_guard(host)
+            current.write_bytes(self.current);(baseline/'files/0').write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError,'original routing'):self.routing.partial_guard(host)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)
