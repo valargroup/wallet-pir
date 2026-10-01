@@ -67,6 +67,11 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   supplied through stdin. Client archive-size admission and future receipt
   PID capture then passed 31 combined tests. Complete the actual recipe and
   phase programs before the schema transaction.
+  The bounded private baseline dependency and deployment-descendant lock
+  propagation now have focused recovery/process coverage. Complete reviewed
+  per-host target/retention plans, service quiescence, origin withdrawal and
+  canonical restore/reopen orchestration remain open; no live baseline or
+  schema transaction has been performed by these fixture checks.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

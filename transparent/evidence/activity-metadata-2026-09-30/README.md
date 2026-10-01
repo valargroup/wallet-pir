@@ -170,3 +170,14 @@ narrowed generic operation checks to parent filters. A delimited-token match
 restores deployment/publication consumer coverage and retains narrow parent
 checks. The direct schema/staging and shared deployment tests remain independently
 recorded; earlier affected checks alone did not cover every operation consumer.
+
+
+[Schema baseline dependency evidence](schema-baseline-focused.json) records the
+red/green publisher subprocess descriptor regression and 19 focused real-file
+and process tests. Independent private copies, partial/corrupt/changed-retention
+refusal, coherent active-record/configuration restoration, deferred routing,
+ownership/modes and a surviving-grandchild lock are covered. These are fixtures;
+actual reviewed host plans, service orchestration, SSH-descendant qualification
+and the complete production cutover remain pending. The
+[superseded CI cancellation record](superseded-ci-9212afee.json) confirms final
+cancellation of the owned queued 56/f43 runs; cancellation is not passing evidence.

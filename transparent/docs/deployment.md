@@ -790,3 +790,43 @@ sources and receipts as rollback material.
 Invoke the staged wrapper with `/usr/bin/python3 -B` so imports do not alter its
 verified file set. Schema phase subprocesses also receive
 `PYTHONDONTWRITEBYTECODE=1`; their descendant programs must preserve it.
+
+
+### Schema baseline dependencies
+
+The trusted phase programs can invoke the checksum-bound
+`transparent/ops/scripts/transparent-activity-baseline.py` dependency through the
+schema runner. Its `capture` and `restore` actions require the inherited local
+production-lock descriptor to name `/run/lock/wallet-pir-production.lock` and
+require root. `verify` reads the retained private receipt. Do not invoke mutation
+outside the wrapper or treat this file utility as the complete schema transaction.
+The owner must quiesce every writer before capture/restore and bind the explicit
+host plans and all imported program files in the reviewed recipe.
+
+The private baseline copies mutable files independently, including executable,
+unit/drop-in, controller/filter configuration and active-record/state targets
+selected by the reviewed host plan. It preserves modes and ownership, records
+optional missing targets, bounds copies to 1 GiB and 65,536 entries per host,
+and checks that copying retains at least 20% disk headroom. SSH sockets, Python
+bytecode and flock files are excluded. A completion receipt is fsynced only after
+all selected bytes match their source. Partial, corrupted, extra-file and changed
+retention snapshots fail closed. Large v10 journal/publication/cache trees must
+remain outside candidate collection namespaces; identity and sentinel checks
+fence these retained paths rather than copying or linking mutable state.
+
+Restoration verifies the entire snapshot before changing any target and preserves
+displaced candidate state alongside its original target on the live filesystem.
+Routing, scaler and load files can be deferred until the canonical verifier passes.
+An interrupted temporary restore or a second conflicting displaced state requires
+explicit reconciliation. No file-level restore starts services or reopens origins.
+Recovery must separately verify every advertised revision's accepted chain anchor,
+binary/publication identity and exact private retrieval before restoring routing.
+The actual complete host plans, service orchestration and reviewed cutover recipe
+remain open; no production baseline has been captured with this dependency yet.
+
+The publisher, fleet subprocesses and shared SSH executor now pass inherited
+production-lock descriptors and `PYTHONDONTWRITEBYTECODE=1` to children. A real
+local grandchild fixture retained the lock after its parent and original owner
+exited. This is local process evidence; qualification must also exercise the
+actual SSH/remote phase boundary and reconcile surviving remote descendants
+before explicit recovery after timeout or interruption.

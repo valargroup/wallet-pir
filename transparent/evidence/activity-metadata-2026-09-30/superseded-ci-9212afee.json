@@ -1,0 +1,119 @@
+{
+  "observed_utc": "2026-10-01T00:49:15.238060+00:00",
+  "replacement_run": 36797707889,
+  "replacement_sha": "9212afee9aa0e2dfab0966ab187f24bbd6af72f6",
+  "cancelled_owned_queued": [
+    {
+      "run_id": 36796328150,
+      "source_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+      "status_before": "queued",
+      "jobs_before": [
+        {
+          "name": "Select full checks",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Transparent lint",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate selected helper checks",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate transparent elastic infrastructure",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Transparent tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Shared lint and tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Enhance lint",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Enhance tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate Enhance infrastructure",
+          "status": "completed",
+          "conclusion": "success"
+        }
+      ],
+      "cancel_requested": true,
+      "status_after": "completed",
+      "conclusion_after": "cancelled"
+    },
+    {
+      "run_id": 36797376133,
+      "source_sha": "f43a03e1052f9b95961b1ed336be387d845c9303",
+      "status_before": "queued",
+      "jobs_before": [
+        {
+          "name": "Select full checks",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Transparent tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate selected helper checks",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate transparent elastic infrastructure",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Shared lint and tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Enhance tests",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Validate Enhance infrastructure",
+          "status": "completed",
+          "conclusion": "success"
+        },
+        {
+          "name": "Enhance lint",
+          "status": "queued",
+          "conclusion": null
+        },
+        {
+          "name": "Transparent lint",
+          "status": "queued",
+          "conclusion": null
+        }
+      ],
+      "cancel_requested": true,
+      "status_after": "completed",
+      "conclusion_after": "cancelled"
+    }
+  ],
+  "retained_active_run": 36795213620,
+  "qualification": "Cancellation is not a passing result. Older aa16 Transparent tests were active and were not interrupted."
+}

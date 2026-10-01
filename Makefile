@@ -62,6 +62,7 @@ check-ops-control-sessions:
 check-ops-deploy:
 	python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'
 	python3 transparent/ops/tests/test_activity_schema_operation.py
+	python3 transparent/ops/tests/test_activity_schema_baseline.py
 
 check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh

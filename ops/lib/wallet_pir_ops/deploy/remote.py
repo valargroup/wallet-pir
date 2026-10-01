@@ -10,7 +10,7 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from .. import hostlock, pinned_ssh
+from .. import hostlock, inherited_lock, pinned_ssh
 from . import host_helper
 from .descriptors import LOCK_PATH
 
@@ -125,9 +125,9 @@ class SSHExecutor(Executor):
         argv = self.transport(host) + [command]
         if isinstance(stdin, Path):
             with open(stdin, 'rb') as handle:
-                result = subprocess.run(argv, stdin=handle, capture_output=True, timeout=deadline)
+                result = subprocess.run(argv, stdin=handle, capture_output=True, timeout=deadline, **inherited_lock.options())
         else:
-            result = subprocess.run(argv, input=stdin, capture_output=True, timeout=deadline)
+            result = subprocess.run(argv, input=stdin, capture_output=True, timeout=deadline, **inherited_lock.options())
         if result.returncode:
             raise RemoteError('%s: %s failed (exit %d): %s' % (host, op, result.returncode,
                                                                result.stderr.decode(errors='replace').strip()[-2000:]))
@@ -187,7 +187,7 @@ class SSHExecutor(Executor):
         # releases it. `verify` notices a lost session before each side effect.
         command = shlex.join(['flock', '-n', path, 'sh', '-c', 'echo locked; exec cat >/dev/null'])
         process = subprocess.Popen(self.transport(host) + [command], stdin=subprocess.PIPE,
-                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                   stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **inherited_lock.options())
         try:
             if process.stdout.readline() != b'locked\n':
                 raise LockHeld('%s is held on %s (or the host refused the session)' % (path, host))

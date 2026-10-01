@@ -8,6 +8,19 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+October 1 follow-up: the rollback dependency now copies private mutable baseline
+bytes independently, preserves ownership/modes and rejects partial or corrupted
+snapshots before restoration. Deployment subprocesses preserve inherited lock
+FDs; a red/green descriptor regression and 19 recovery/process tests passed,
+including a surviving-grandchild lock test. This is fixture evidence, with no
+production baseline capture or schema transaction. Complete trusted service
+phases and host plans remain open. At 01:02 UTC the owned backfill reached
+1,470,000 blocks and 271,661,352 events; the guard reported 88% available memory,
+76% candidate-volume disk, 23% chain disk, 30% root disk and zero restarts.
+Current main comprehensive run 36797707889 remains queued; it is not passing
+evidence. Native artifacts remain frozen at `12ce1291` and canonical service v10.
+
+
 A separate v3/v11 candidate on the coordinator recovered 26,868 events from
 1,000 real blocks, matching the independent block/prevout oracle. Frozen recent
 and archive geometries passed 5 QPS for two minutes and 20 QPS for ten minutes:

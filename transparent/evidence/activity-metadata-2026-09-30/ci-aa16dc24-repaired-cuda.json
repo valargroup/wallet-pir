@@ -1,0 +1,69 @@
+{
+  "head": "aa16dc24c4fa7f702b9de9236174bb66a717f584",
+  "run_id": 36795213620,
+  "status": "queued",
+  "conclusion": "",
+  "jobs": [
+    {
+      "name": "Select full checks",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Enhance lint",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Transparent tests",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Validate selected helper checks",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Validate transparent elastic infrastructure",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Validate Enhance infrastructure",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Enhance tests",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Transparent lint",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Shared lint and tests",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Full checks complete",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "Prepare qualified release artifacts",
+      "status": "queued",
+      "conclusion": ""
+    },
+    {
+      "name": "Prepare native CUDA release artifact (Ubuntu 22.04)",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "scope": "all comprehensive checks and repaired CUDA artifact passed; CPU artifact queued, aggregate pending"
+}

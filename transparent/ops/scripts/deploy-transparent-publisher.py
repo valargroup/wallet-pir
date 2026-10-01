@@ -30,7 +30,7 @@ ROOT = Path('/opt/transparent-publisher')
 LIB = str(SCRIPT.parents[2]/'ops/lib')
 if LIB not in sys.path:
     sys.path.insert(0, LIB)
-from wallet_pir_ops import transparent_unit  # noqa: E402
+from wallet_pir_ops import inherited_lock, transparent_unit  # noqa: E402
 
 
 
@@ -58,7 +58,7 @@ def publisher_service(data_dir, publication_root, initial_publication):
 
 
 def execute(args, **kwargs):
-    subprocess.run(list(map(str,args)),check=True,**kwargs)
+    subprocess.run(list(map(str,args)),check=True,**inherited_lock.options(),**kwargs)
 
 
 def read_json(url):
@@ -285,8 +285,8 @@ systemctl restart transparent-shard-server
 
 
 async def rollback(fleet, saved):
-    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
+    subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
     # A binary rollback must never resurrect an orphaned publication. Validate
     # the static predecessor against the node before changing routing or units.
     initial=Path(json.loads((saved/'controller.json').read_text())['initial_publication'])
@@ -400,14 +400,14 @@ async def main():
         saved.mkdir(parents=True,exist_ok=True)
         if 'controller.json' in previous_files and not (saved/'controller.previous.json').exists():
             atomic_bytes(saved/'controller.previous.json',previous_files['controller.json'])
-        subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
         try:
             align_filter_origin(args.initial_publication)
             await save_baseline(fleet,saved)
         except Exception:
             # No worker has changed yet: resume the previous controller.
             restore_previous()
-            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False)
+            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False,**inherited_lock.options())
             raise
         for name in ['transparent-publish-controller','shard-assign']:
             shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')

@@ -20,6 +20,18 @@ import time
 import uuid
 
 
+def inherited_options():
+    # Standalone daemons predate the checkout library. Only wrapper descendants
+    # need it; operations sources retain ops/lib alongside this script.
+    if not os.environ.get('WALLET_PIR_PRODUCTION_LOCK_FDS'):
+        return {}
+    library = str(Path(__file__).resolve().parent.parents[2]/'ops/lib')
+    if library not in sys.path:
+        sys.path.insert(0, library)
+    from wallet_pir_ops import inherited_lock
+    return inherited_lock.options()
+
+
 # Worker-pool health checking, the same text `shard-assign` renders
 # (`router::HEALTH` in transparent-shard-server; the ops tests compare them).
 # One proxy error must not eject a saturated worker: Caddy's default
@@ -74,7 +86,7 @@ async def run(args, data=None, timeout=25, file_output=False):
         stdout = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
         stderr = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
         proc = await asyncio.create_subprocess_exec(*map(str, args), stdin=asyncio.subprocess.PIPE,
-                                                  stdout=stdout, stderr=stderr)
+                                                  stdout=stdout, stderr=stderr, **inherited_options())
         try:
             out, err = await asyncio.wait_for(proc.communicate(data), timeout)
         except BaseException:
@@ -339,7 +351,7 @@ class Fleet:
             # No -f and no command-owned pipes: the supervisor owns this process
             # until shutdown. Cancelling a client only closes its own channel.
             process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
-                        stdout=asyncio.subprocess.DEVNULL)
+                        stdout=asyncio.subprocess.DEVNULL, **inherited_options())
             print(json.dumps({'event':'control_session_started','worker':worker['id'],
                               'pid':process.pid}), file=sys.stderr)
             try:
