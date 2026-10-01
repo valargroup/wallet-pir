@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "gate": "focused-private-relay-and-guarded-preparation",
+  "base_sha": "ef6f7d599273c18b9ff3aa23c3f47eb543cbd220",
+  "owner": "876976d32f754b33b1dca8e0471f2e5a",
+  "seconds": 21.228005375014618,
+  "log_sha256": "3c190fcb13732fc73a3730ed1cf6a4f3520b6fa666aeec1ec5ca027d233b05c4",
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "3645f652bcfd8a9541632013e41d98e21467906fb6a8d382efe89c9e95ec4818",
+    "transparent/ops/lib/activity_schema_operation.py": "2bacb0d7e78654f99fbd0deb373ba1acae6307b16240a8d20128cdb6c7acefda",
+    "transparent/ops/lib/activity_schema_product.py": "fe31973fe2510e81ed6d6137b144f84cc30714af616e3269aa2ed35deaf4de02",
+    "transparent/ops/lib/activity_schema_reconcile.py": "b0750fec9586900e77528e1dabe6360841454aa90e4a77dced95957f58789893",
+    "transparent/ops/lib/activity_schema_routing.py": "a0c82b22afe8ef03251cc51551db517ca1f7847f6a90fca046101c511a103023",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "94eb8f7591a91ca6516f7ae4a2b82239f52eb3dec79f060413dcf8322ee9a667"
+  },
+  "checks": "make check-fast; thirteen reconciliation tests, twenty-one routing tests, affected schema and helper checks",
+  "limits": "No production recovery or v11 installation accepted. Current operations full CI remains separate; user explicitly waived waiting. Original rollback/deadline and failed private proof remain failed."
+}

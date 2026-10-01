@@ -14,6 +14,7 @@ import re
 import subprocess
 import tempfile
 import time
+from contextlib import contextmanager
 
 from wallet_pir_ops import durable, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock
@@ -129,6 +130,18 @@ def run_command(command, log, pass_fds):
                             env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
                                      WALLET_PIR_PRODUCTION_LOCK_FDS=','.join(map(str, pass_fds))))
     return result.returncode
+
+
+@contextmanager
+def inherited_scope(lock):
+    key = 'WALLET_PIR_PRODUCTION_LOCK_FDS'
+    previous = os.environ.get(key)
+    os.environ[key] = ','.join(map(str,lock.descriptors()))
+    try:
+        yield
+    finally:
+        if previous is None: os.environ.pop(key,None)
+        else: os.environ[key] = previous
 
 
 class Runner:
@@ -348,7 +361,7 @@ class Runner:
     def reconcile(self, action, identifier, expected, target, plan_sha=None):
         """Plan and recover one complete newer v10 activation, preserving failure."""
         self.coordinator()
-        with self.lock_factory() as lock:
+        with self.lock_factory() as lock, inherited_scope(lock):
             lock.verify()
             record = self.load(identifier)
             require(record is not None and self.load()['id'] == identifier and
@@ -356,6 +369,9 @@ class Runner:
                     'reconciliation requires the latest failed original recipe')
             schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
             resume = action.startswith('resume-')
+            preparation = action.startswith('resume-prepare-')
+            require(action == 'resume-prepare-reconcile' or not any(p.get('status') == 'running' for p in record.get('v10_reconciliation',{}).get('preparations',[])),
+                    'unfinished resume preparation requires explicit reconciliation')
             require(resume or 'v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
             verify_inputs(record['recipe']['rollback_inputs'])
             source = Path(__file__).resolve().parents[3]
@@ -383,14 +399,24 @@ class Runner:
             if resume:
                 require(record.get('v10_reconciliation',{}).get('plan_sha256') == target,
                         'resume differs from reviewed original adoption')
-                plan = reconciliation.inspect_resume(product,record)
+                if action == 'resume-prepare-reconcile':
+                    reconciliation.reconcile_preparation(product,record,self.save)
+                    return record
+                plan = reconciliation.inspect_resume(product,record, prepare=True) if preparation else reconciliation.inspect_resume(product,record)
             else:
                 plan = reconciliation.inspect(product, record, target)
             plan['recovery_source'] = {'source_sha':repair['source_sha'], 'archive_sha256':repair['archive_sha256']}
             self.out(json.dumps({'plan':plan,'plan_sha256':digest(plan)}, sort_keys=True))
-            if action not in ('deploy','resume-deploy'):
+            if action not in ('deploy','resume-deploy','resume-prepare-deploy'):
                 return plan
             require(plan_sha == digest(plan), 'adoption differs from reviewed preflight plan')
+            if preparation:
+                record['v10_reconciliation'].setdefault('preparations',[]).append({'plan':plan,
+                    'plan_sha256':digest(plan),'status':'running','pid':os.getpid(),'started':time.time()})
+                self.save(record)
+                reconciliation.prepare_resume(product,record,self.save)
+                self.out('guarded predecessor prepared; client acceptance remains pending')
+                return record
             self.repair_program = repair
             self.reconcile_v10 = True
             record.setdefault('recovery_programs', []).append(repair)

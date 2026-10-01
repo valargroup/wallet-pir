@@ -26,6 +26,19 @@ anchor. It executes only the final private proof, reopen, and public proof
 phases, without replaying restoration. Partial installation, uncertain remote
 outcomes, and failures in other phases refuse this path.
 
+If private proof stopped predecessor authority, use the closed
+`schema-reconcile-resume-prepare-plan` / `schema-reconcile-resume-prepare-preflight`
+/ `schema-reconcile-resume-prepare-deploy` path first. It checks the retained
+current publication, manifests, every pinned warm worker and canonical anchor
+without requiring the stopped authority HTTP endpoint. It derives the private
+relay from the checksum-bound captured fleet's internal listener and requires
+the same captured router IP. Only captured predecessor filter and authority
+units may start; public origins remain guarded. Preparation is recorded
+separately and is not client acceptance. Then run the ordinary closed resume
+proof. An uncertain preparation refuses further actions until
+`schema-reconcile-resume-prepare-reconcile` observes its owner gone and either
+its exact completion receipt or complete coordinator quiescence.
+
 ## Target configuration
 
 | Parameter | Recent | Archive |

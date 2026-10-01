@@ -1,0 +1,31 @@
+{
+  "status": "failed",
+  "source_sha": "ef6f7d599273c18b9ff3aa23c3f47eb543cbd220",
+  "owner": "defcc12d9f94441491a0f4df211bfab6",
+  "transaction": "transparent-schema-20261001T112410Z-15d5de8189d2-c99edc",
+  "phase": "verify-rollback",
+  "phase_seconds": 54.72750673210248,
+  "native_exit_code": 0,
+  "native_stop_reason": "error rate 1.000 above 0",
+  "attempts": 2,
+  "completed": 0,
+  "exact": 0,
+  "http_503": 10,
+  "incomplete_by_reason": {
+    "overloaded:83": 2
+  },
+  "raw_hashes": {
+    "native.json": "7bb7fe0ddbac883482612de0c4b6b3f244c9b977c01614d9159c7c0f27043d56",
+    "native.log": "bfe28fede99838aabdde0a9d86fca4d3fd52b76a506b0ba61944f60aa2736544",
+    "owner.json": "b0966f3d082c2e702867a6448cd2aeefbdfcb60ef71d22e0d66009c6cf72524d",
+    "result.json": "157aeb89118f6e8347ce900dba25a9c8be2a2aa42e15b4acb97e6a9dcefecd32",
+    "stores/step-0/client-0.sqlite": "4ef6231039eba320fea828c9fe66996b4bcff13a736e11b9c9ae016d4f427041",
+    "stores/step-0/client-1.sqlite": "4ef6231039eba320fea828c9fe66996b4bcff13a736e11b9c9ae016d4f427041"
+  },
+  "cause": "Original routing specification uses private router port8093; actual captured fleet internal_listen is10.142.0.11:8080. Direct native setup and private8080 setup returned200; erroneous loopback relay returned502.",
+  "limitations": [
+    "Both public metadata origins remain guarded. Wrapper stopped coordinator writers on failed verification.",
+    "Native report failed qualification despite process exit0; no reopened complete client proof passed.",
+    "No v11 units/binaries installed. Original rollback and15-minute recovery acceptance remain failed."
+  ]
+}

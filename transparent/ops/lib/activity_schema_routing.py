@@ -58,7 +58,7 @@ def warm_active(status, digest, *, continuous=False):
 
 
 def relay(router):
-    require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:8093', router), 'invalid private verification router')
+    require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:(?:8080|8093)', router), 'invalid private verification router')
     require(ipaddress.ip_address(router.rsplit(':', 1)[0]) in ipaddress.ip_network('10.142.0.0/16'),
             'verification router is outside the reviewed private network')
     return '''\nhttp://127.0.0.1:18193 {
@@ -196,11 +196,27 @@ class Routing:
         require(hashlib.sha256(original).hexdigest() == self.plan['original_coordinator_sha256'], 'original routing identity changed')
         return original
 
-    def guarded(self):
-        return (U.guard_coordinator(self.original().decode())+relay(self.plan['private_router'])).encode()
+    def private_router(self):
+        value = self.plan['old_fleet']
+        require(H.checksum(value['path']) == value['sha256'], 'fleet configuration changed')
+        config = H.load(value['path'])
+        endpoint = config.get('internal_listen')
+        relay(endpoint)
+        require(endpoint.rsplit(':',1)[0] == self.plan['private_router'].rsplit(':',1)[0] ==
+                config.get('router_host'), 'captured private router identity changed')
+        return endpoint
 
-    def check_guard(self):
-        require(Path('/etc/caddy/Caddyfile').read_bytes() == self.guarded(), 'coordinator routing differs from owned maintenance state')
+    def guarded(self, original_endpoint=False):
+        endpoint = self.plan['private_router']
+        if getattr(self,'predecessor_continuous',False) and not original_endpoint:
+            endpoint = self.private_router()
+        return (U.guard_coordinator(self.original().decode())+relay(endpoint)).encode()
+
+    def check_guard(self, allow_original=False):
+        allowed = [self.guarded()]
+        if allow_original and getattr(self,'predecessor_continuous',False):
+            allowed.append(self.guarded(original_endpoint=True))
+        require(Path('/etc/caddy/Caddyfile').read_bytes() in allowed, 'coordinator routing differs from owned maintenance state')
         require(all(self.commands.metadata_status(url) == 503 for url in H.PUBLIC_METADATA), 'both public metadata origins must remain withdrawn')
 
     async def withdraw(self, kind):
@@ -230,8 +246,12 @@ class Routing:
             await fleet.route(workers, assignment)
         self.check_guard()
 
-    async def live(self, kind, fleet):
-        mapping = self.fetch('http://127.0.0.1:8094/v1/shards')
+    async def live(self, kind, fleet, retained=False):
+        require(not retained or kind == 'v10' and getattr(self,'predecessor_continuous',False),
+                'retained proof is only for explicit predecessor preparation')
+        target = fleet.reconciliation_target() if retained else None
+        require(not retained or target is not None, 'retained fleet activation record is absent')
+        mapping = H.load(Path(target[1]['directory'])/'shards.json') if retained else self.fetch('http://127.0.0.1:8094/v1/shards')
         require(mapping.get('start_height') == 0 and mapping.get('shards'), 'authority is not a complete genesis publication')
         fleet.canonical.clear()
         require(await fleet.canonical_hash(0) == mapping.get('genesis_hash'), 'authority genesis differs from accepted node')
@@ -294,7 +314,13 @@ class Routing:
                     'authority publication ranges are malformed or discontinuous')
             digest = entry['manifest_digest']
             require(isinstance(digest, str) and H.HEX.fullmatch(digest), 'invalid manifest digest')
-            manifest = self.fetch('http://127.0.0.1:8094/v1/shards/'+str(entry['shard_id'])+'/revisions/'+digest+'/manifest', digest)
+            if retained:
+                path = Path(request['directory'])/digest/'manifest.json'
+                require(path.is_file() and not path.is_symlink() and H.checksum(path) == digest,
+                        'retained manifest identity changed')
+                manifest = H.load(path)
+            else:
+                manifest = self.fetch('http://127.0.0.1:8094/v1/shards/'+str(entry['shard_id'])+'/revisions/'+digest+'/manifest', digest)
             require(manifest.get('schema') == 'transparent-shard-'+kind and not manifest.get('txid_display') and
                     all(manifest.get(k) == entry[k] for k in ('shard_id','start_height','end_height','geometry',
                                                              'parent_block_hash','terminal_block_hash','revision','sealed')) and

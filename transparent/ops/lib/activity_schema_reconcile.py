@@ -151,7 +151,7 @@ def install(product, record):
     B.atomic(directory/'complete.json', json.dumps({'map_sha256':target,'status':'installed'},sort_keys=True).encode())
 
 
-def inspect_resume(product, record):
+def inspect_resume(product, record, prepare=False):
     """Only resume proof after a complete adoption and an ordinary proof failure."""
     require = H.require
     adoption = record.get('v10_reconciliation')
@@ -161,9 +161,9 @@ def inspect_resume(product, record):
             'resume requires an ordinary post-adoption verification failure')
     product.bound(record['id'])
     product.local.identity()
-    product.local.saved()
+    baseline, _ = product.local.saved()
     product.routing.predecessor_continuous = True
-    product.routing.check_guard()
+    product.routing.check_guard(allow_original=prepare)
     root = product.root/'reconciliation-before'
     require(root.is_dir() and not root.is_symlink() and root.stat().st_uid == os.geteuid() and
             root.stat().st_mode & 0o077 == 0, 'resume requires private owned adoption receipts')
@@ -177,7 +177,21 @@ def inspect_resume(product, record):
                 'resume preserved predecessor bytes changed')
     product.routing.pins('v10')
     fleet = product.routing.fleet('v10', read_only=True)
-    live = asyncio.run(product.routing.live('v10',fleet))
+    if prepare:
+        product.local.quiet(H.WRITERS['coordinator'])
+        controller = H.ROOT/'controller.json'
+        index = next(i for i,e in enumerate(baseline['plan']['files']) if e['path'] == str(controller))
+        require(controller.is_file() and not controller.is_symlink() and
+                controller.read_bytes() == (product.local.root/'files'/str(index)).read_bytes(),
+                'preparation controller differs from captured predecessor')
+        target = fleet.reconciliation_target()
+        require(target is not None, 'preparation activation is absent')
+        publication_root = H.B.safe_path(H.load(controller)['publication_root'])
+        directory = H.B.safe_path(target[1]['directory'])
+        require(publication_root.resolve() in directory.resolve().parents and not directory.is_symlink() and
+                any(Path(e['path']).resolve() == publication_root.resolve() for e in baseline['plan']['retained']),
+                'preparation publication escaped captured namespace')
+    live = asyncio.run(product.routing.live('v10',fleet, retained=True)) if prepare else asyncio.run(product.routing.live('v10',fleet))
     active, request = fleet.reconciliation_target()
     publication = H.load(Path(request['directory'])/'shards.json')
     retained = adoption['plan']['files']['native-active']
@@ -188,10 +202,81 @@ def inspect_resume(product, record):
     require(publication['shards'][-1]['end_height'] >= original['height'] and
             asyncio.run(fleet.canonical_hash(original['height'])) == original['hash'],
             'resume lost the independently accepted adoption anchor')
+    native = H.load(Path(H.load(H.ROOT/'controller.json')['publication_root'])/'active.json')
+    require(native['map_sha256'] == live['map_sha256'] and native['directory'] == request['directory'] and
+            native['height'] == publication['shards'][-1]['end_height'] and
+            native['hash'] == publication['shards'][-1]['terminal_block_hash'], 'resume native activation changed')
     require(H.transparent_map.served_sha256(publication) == live['map_sha256'], 'resume authority changed')
     return {'transaction':record['id'], 'recipe_sha256':record['recipe_sha256'],
             'adoption_plan_sha256':adoption['plan_sha256'],'map_sha256':live['map_sha256'],
             'assignment_sha256':live['assignment_sha256'],
             'workers':[{'id':w['id'],'binary_sha256':w['binary_sha256']} for w in live['workers']],
             'activation_sha256':H.checksum(fleet.root/'active.json'),
-            'adoption_receipt_sha256':H.checksum(root/'complete.json')}
+            'adoption_receipt_sha256':H.checksum(root/'complete.json'),
+            'private_router':product.routing.private_router(),
+            'fleet_sha256':product.routing.plan['old_fleet']['sha256']}
+
+
+def prepare_resume(product, record, save):
+    # Correct only the captured relay and predecessor units.
+    product.local.quiet(H.WRITERS['coordinator'])
+    product.routing.check_guard(allow_original=True)
+    entry = record['v10_reconciliation']['preparations'][-1]
+    before = product.root/('resume-prepare-'+str(len(record['v10_reconciliation']['preparations'])))
+    before.mkdir(mode=0o700)
+    current = Path('/etc/caddy/Caddyfile').read_bytes()
+    H.B.atomic(before/'Caddyfile',current)
+    H.B.atomic(before/'intent.json',json.dumps(entry,sort_keys=True).encode())
+    try:
+        guarded = product.routing.guarded()
+        candidate = Path('/etc/caddy/Caddyfile.maintenance-next')
+        H.B.atomic(candidate,guarded)
+        product.local.commands.run(['caddy','validate','--config',str(candidate),'--adapter','caddyfile'],timeout=20)
+        H.B.atomic(Path('/etc/caddy/Caddyfile'),guarded)
+        product.local.commands.run(['systemctl','reload','caddy'],timeout=20)
+        product.routing.check_guard()
+        _, units = product.local.saved()
+        active = [unit for unit in (H.FILTER,*H.AUTHORITY) if units['units'][unit]['ActiveState'] == 'active']
+        product.local.commands.unit('start',*active)
+        import time
+        deadline = time.monotonic()+60
+        while product.local.commands.metadata_status('http://127.0.0.1:8094/v1/shards') != 200:
+            H.require(time.monotonic() < deadline, 'guarded predecessor authority did not become ready')
+            time.sleep(1)
+        product.routing.check_guard()
+        H.B.atomic(before/'complete.json',json.dumps({'status':'prepared','plan_sha256':entry['plan_sha256']},sort_keys=True).encode())
+        entry['status'] = 'passed'
+    except BaseException:
+        product.local.commands.unit('stop',*H.WRITERS['coordinator'])
+        product.local.quiet(H.WRITERS['coordinator'])
+        entry['status'] = 'failed'
+        save(record)
+        raise
+    save(record)
+
+
+def reconcile_preparation(product, record, save):
+    entry = record.get('v10_reconciliation',{}).get('preparations',[])
+    H.require(entry and entry[-1]['status'] == 'running', 'no uncertain preparation to reconcile')
+    pending = entry[-1]
+    try:
+        os.kill(pending['pid'],0)
+    except ProcessLookupError:
+        pass
+    else:
+        raise ValueError('preparation owner is still present')
+    product.bound(record['id'])
+    product.local.identity(); product.local.saved()
+    product.routing.predecessor_continuous = True
+    product.routing.check_guard(allow_original=True)
+    root = product.root/('resume-prepare-'+str(len(entry)))
+    complete = root/'complete.json'
+    if complete.exists():
+        H.require(H.load(complete) == {'status':'prepared','plan_sha256':pending['plan_sha256']},
+                  'preparation completion differs from durable intent')
+        product.routing.check_guard()
+        pending['status'] = 'passed'
+    else:
+        product.local.quiet(H.WRITERS['coordinator'])
+        pending['status'] = 'failed'
+    save(record)

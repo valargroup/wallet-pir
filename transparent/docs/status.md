@@ -26,8 +26,18 @@ passed focused checks. The [actual repaired attempt](../evidence/activity-metada
 passed withdrawal but refused restoration because the captured publication was
 collected on all three workers. All remote owners exited. The workers are warm
 on one newer v10 publication and its coordinator activation bytes remain in
-preserved displacements; canonical/client reconciliation is still pending. This is
-not a completed v11 deployment.
+preserved displacements. Guarded adoption of the newer activation completed,
+but client reconciliation remains failed. The readiness URL and continuous
+current-map verification defects were fixed with focused evidence. The latest
+[real client attempt](../evidence/activity-metadata-2026-09-30/private-recovery-port-failure-ef6f7d59.json)
+made two incomplete syncs with ten HTTP 503 responses; it did not pass despite
+native process exit 0. The recovery relay incorrectly names private router port
+8093 while the retained fleet listens on 8080. Direct worker and private 8080
+setup requests returned 200; the relay returned 502. Both public origins remain
+503 and coordinator writers are stopped. The original failed recipe/baselines
+remain immutable; a reviewed relay correction and guarded predecessor authority
+restart must precede the full HTTP/SQLite/HTTPS proof. This is not a completed
+v11 deployment or a passing rollback timing qualification.
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its
 independent ingestion guard passed. The v11 publication then completed at

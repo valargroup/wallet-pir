@@ -115,5 +115,52 @@ class AdoptionTests(unittest.TestCase):
         for field, value in [('warm',False),('invalidated',True),('active',{'map_sha256':'b'*64})]:
             self.assertFalse(routing.warm_active(dict(status,**{field:value}),'a'*64,continuous=True))
 
+    def test_private_endpoint_is_derived_from_pinned_producer_config(self):
+        spec=importlib.util.spec_from_file_location('endpoint_routing',ROOT/'transparent/ops/lib/activity_schema_routing.py')
+        routing=importlib.util.module_from_spec(spec);spec.loader.exec_module(routing)
+        config=self.root/'fleet.json'
+        config.write_text(json.dumps({'internal_listen':'10.142.0.11:8080','router_host':'10.142.0.11'}))
+        fake=SimpleNamespace(plan={'old_fleet':{'path':str(config),'sha256':routing.H.checksum(config)},
+                                   'private_router':'10.142.0.11:8093'})
+        self.assertEqual(routing.Routing.private_router(fake),'10.142.0.11:8080')
+        for endpoint in ('10.142.0.12:8080','127.0.0.1:8080','10.142.0.11:22','example.com:8080'):
+            config.write_text(json.dumps({'internal_listen':endpoint,'router_host':'10.142.0.11'}))
+            fake.plan['old_fleet']['sha256']=routing.H.checksum(config)
+            with self.assertRaises(ValueError):routing.Routing.private_router(fake)
+        config.write_text(json.dumps({'internal_listen':'10.142.0.11:8080','router_host':'10.142.0.11'}))
+        with self.assertRaisesRegex(ValueError,'configuration changed'):routing.Routing.private_router(fake)
+
+    def test_prepare_refuses_unowned_proof_failure(self):
+        for name,code in [('restore-v10',1),('verify-rollback',75)]:
+            record={'v10_reconciliation':{'status':'running'},'events':[{'name':name,'status':'failed','exit_code':code}]}
+            with self.assertRaisesRegex(ValueError,'ordinary post-adoption'):M.inspect_resume(None,record,prepare=True)
+
+    def test_preparation_starts_only_captured_authority_and_retains_guard(self):
+        caddy=self.root/'Caddyfile'; caddy.write_bytes(b'old guard')
+        actions=[]
+        commands=SimpleNamespace(run=lambda argv,**kw:actions.append((argv,kw)),
+            unit=lambda action,*units:actions.append((action,units)),metadata_status=lambda _:200)
+        self.product.local.commands=commands
+        self.product.local.saved=lambda:(None,{'units':{u:{'ActiveState':'active'} for u in (M.H.FILTER,*M.H.AUTHORITY)}})
+        self.product.routing=SimpleNamespace(check_guard=lambda **_:None,guarded=lambda:b'correct guard')
+        self.record['v10_reconciliation']['preparations']=[{'status':'running','plan_sha256':'c'*64}]
+        real=Path
+        def mapped(value):
+            if str(value).startswith('/etc/caddy/'):
+                return self.root/real(value).name
+            return real(value)
+        with patch.object(M,'Path',side_effect=mapped):M.prepare_resume(self.product,self.record,lambda _:None)
+        self.assertEqual(caddy.read_bytes(),b'correct guard')
+        self.assertEqual(actions[-1],('start',(M.H.FILTER,*M.H.AUTHORITY)))
+        self.assertEqual(self.record['v10_reconciliation']['preparations'][-1]['status'],'passed')
+        self.assertEqual((self.product.root/'resume-prepare-1/Caddyfile').read_bytes(),b'old guard')
+        self.assertNotIn(M.H.LOAD,actions[-1][1]);self.assertNotIn(M.H.SCALER,actions[-1][1])
+        self.assertNotIn(M.H.QUALITY,actions[-1][1])
+
+    def test_reconciliation_refuses_running_preparation_owner(self):
+        record={'v10_reconciliation':{'preparations':[{'status':'running','pid':1}]}}
+        with patch.object(M.os,'kill',return_value=None):
+            with self.assertRaisesRegex(ValueError,'owner is still present'):M.reconcile_preparation(None,record,lambda _:None)
+
 
 if __name__ == '__main__': unittest.main()

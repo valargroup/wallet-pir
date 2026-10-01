@@ -156,6 +156,8 @@ class Product:
         source=self.spec['source_sha']
         receipt=H.load(Path('/srv/transparent-activity/ops/staging')/(source+'.json'))
         D.S.verify_receipt(receipt, Path('/srv/transparent-activity/ops/sources')/source, source, receipt['archive_sha256'])
+        H.require(self.routing.private_router() == self.spec['routing']['private_router'],
+                  'private recovery relay differs from captured fleet internal listener')
         map_path = PUBLICATION/'shards.json'
         H.require(map_path.is_file() and not map_path.is_symlink() and H.checksum(map_path) == self.spec['publication_sha256'],
                   'full publication identity changed')
