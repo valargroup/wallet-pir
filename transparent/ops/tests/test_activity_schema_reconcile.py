@@ -106,5 +106,14 @@ class AdoptionTests(unittest.TestCase):
             asyncio.run(product.Product.wait_restored_workers(fake))
         read.assert_called_once_with('http://10.142.0.10:8093/v1/ready')
 
+    def test_continuous_future_preparation_keeps_current_proof_strict(self):
+        spec=importlib.util.spec_from_file_location('adopt_routing',ROOT/'transparent/ops/lib/activity_schema_routing.py')
+        routing=importlib.util.module_from_spec(spec);spec.loader.exec_module(routing)
+        status={'warm':True,'invalidated':False,'active':{'map_sha256':'a'*64},'preparing':{'map_sha256':'b'*64}}
+        self.assertFalse(routing.warm_active(status,'a'*64))
+        self.assertTrue(routing.warm_active(status,'a'*64,continuous=True))
+        for field, value in [('warm',False),('invalidated',True),('active',{'map_sha256':'b'*64})]:
+            self.assertFalse(routing.warm_active(dict(status,**{field:value}),'a'*64,continuous=True))
+
 
 if __name__ == '__main__': unittest.main()

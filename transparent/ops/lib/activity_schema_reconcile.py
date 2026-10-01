@@ -162,6 +162,7 @@ def inspect_resume(product, record):
     product.bound(record['id'])
     product.local.identity()
     product.local.saved()
+    product.routing.predecessor_continuous = True
     product.routing.check_guard()
     root = product.root/'reconciliation-before'
     require(root.is_dir() and not root.is_symlink() and root.stat().st_uid == os.geteuid() and
@@ -190,6 +191,7 @@ def inspect_resume(product, record):
     require(H.transparent_map.served_sha256(publication) == live['map_sha256'], 'resume authority changed')
     return {'transaction':record['id'], 'recipe_sha256':record['recipe_sha256'],
             'adoption_plan_sha256':adoption['plan_sha256'],'map_sha256':live['map_sha256'],
-            'assignment_sha256':live['assignment_sha256'], 'workers':live['workers'],
+            'assignment_sha256':live['assignment_sha256'],
+            'workers':[{'id':w['id'],'binary_sha256':w['binary_sha256']} for w in live['workers']],
             'activation_sha256':H.checksum(fleet.root/'active.json'),
             'adoption_receipt_sha256':H.checksum(root/'complete.json')}

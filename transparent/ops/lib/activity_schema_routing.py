@@ -50,6 +50,13 @@ def read_json(url, expected_digest=None):
     return json.loads(data, object_pairs_hook=H.unique)
 
 
+def warm_active(status, digest, *, continuous=False):
+    """Future preparation does not invalidate an attested current warm map."""
+    return (status.get('warm') is True and status.get('invalidated') is False and
+            status.get('active',{}).get('map_sha256') == digest and
+            (continuous or status.get('candidate') is None and status.get('preparing') is None))
+
+
 def relay(router):
     require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:8093', router), 'invalid private verification router')
     require(ipaddress.ip_address(router.rsplit(':', 1)[0]) in ipaddress.ip_network('10.142.0.0/16'),
@@ -253,9 +260,8 @@ class Routing:
         manifests = set()
         for worker in workers:
             status = await fleet.control(worker, {'operation':'status'})
-            require(status.get('warm') is True and status.get('invalidated') is False and
-                    status.get('candidate') is None and status.get('preparing') is None and
-                    status.get('active', {}).get('map_sha256') == active['map_sha256'], 'worker does not attest the complete warm publication')
+            require(warm_active(status, active['map_sha256'], continuous=kind == 'v10' and
+                    getattr(self,'predecessor_continuous',False)), 'worker does not attest the complete warm publication')
             ready = self.fetch('http://'+worker['upstream']+'/v1/ready')
             require(ready.get('ready') is True and ready.get('mode') == 'warm' and ready.get('map_sha256') == active['map_sha256'],
                     'HTTP readiness does not agree with native control')

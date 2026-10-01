@@ -377,6 +377,8 @@ class Product:
             H.require(record['events'][-1]['group'] == 'rollback', 'repair cannot substitute forward phases')
             self.recovery_program = record['recovery_programs'][-1]
         self.bound(transaction)
+        if record.get('v10_reconciliation'):
+            self.routing.predecessor_continuous = True
         if getattr(self,'recovery_program',None):
             self.local.repair_retained = True
         self.local.identity(mutation=True)
