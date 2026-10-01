@@ -45,8 +45,8 @@ PREPARED = P.ROOT/'full-v11/inputs'
 CHUNK = 1 << 20
 HEX = re.compile('[0-9a-f]{64}')
 ID = re.compile('[a-zA-Z0-9-]{1,64}')
-INPUTS = {'.inputs/transparent-shard-server':0o755, '.inputs/shard-control':0o755,
-          '.inputs/transparent-shard-server.service':0o644}
+INPUTS = {'.input-transparent-shard-server':0o755, '.input-shard-control':0o755,
+          '.input-transparent-shard-server.service':0o644}
 
 # Qualified main CI 36819961986; native Rust/Cargo/toolchain inputs equal the
 # retained 12ce publication tools. Select portable worker bytes explicitly:
@@ -217,14 +217,14 @@ class Receiver:
         return {'status':'preflight-passed','request_sha256':self.identifier}
 
     def native(self, lock):
-        argv = [str(self.partial/'.inputs/transparent-shard-server'), '--shard-dir', str(self.partial),
+        argv = [str(self.partial/'.input-transparent-shard-server'), '--shard-dir', str(self.partial),
                 '--assignment', str(self.partial/'assignment.json'), '--worker-id', self.request['worker_id'],
                 '--cache-bytes', str(self.request['cache_bytes']), '--verify-only']
         with (self.owners/(self.identifier+'.native.log')).open('xb') as log:
             os.fchmod(log.fileno(),0o600)
             process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT, **inherited_lock.options())
             durable.atomic_json(self.owners/(self.identifier+'.native.owner.json'), {'pid':process.pid,'started_unix':time.time(),
-                'binary_sha256':P.checksum(self.partial/'.inputs/transparent-shard-server'),'request_sha256':self.identifier}, mode=0o600)
+                'binary_sha256':P.checksum(self.partial/'.input-transparent-shard-server'),'request_sha256':self.identifier}, mode=0o600)
             try:
                 deadline = time.monotonic()+300
                 while process.poll() is None:
@@ -416,7 +416,7 @@ class Client:
     def checked_sources(self):
         by_name={i['path']:i for i in self.request['files']}
         rendered=build(self.inventory,self.host,self.request['source_sha'],by_name['assignment.json']['source'],
-                       by_name['.inputs/transparent-shard-server.service']['source'],self.request['release_result_sha256'],
+                       by_name['.input-transparent-shard-server.service']['source'],self.request['release_result_sha256'],
                        self.request['cache_bytes'],self.request['attempt'],worker_id=self.request['worker_id'])
         require(rendered == self.request, 'input request is not the native-assigned complete publication inventory')
 
@@ -436,7 +436,7 @@ class Client:
                     require(not record_path.exists(), 'coordinator input owner already exists; inspect retained result')
                     self.checked_sources()
                     for name in ('transparent-shard-server','shard-control'):
-                        item=next(i for i in self.request['files'] if i['path'] == '.inputs/'+name)
+                        item=next(i for i in self.request['files'] if i['path'] == '.input-'+name)
                         require(item['source'] == str(worker_binary(name)) and item['sha256'] == WORKER_HASHES[name],
                                 'input binary is not the qualified portable worker release')
                     OWNERS.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -508,16 +508,16 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
         else:
             safe(name); sources[name]=P.OUTPUT/name
         require(len(sources) <= MAX_FILES, 'native file inventory exceeds bound')
-    require('assignment.json' not in sources and not any(name.startswith('.inputs/') for name in sources),'native inventory collides with staging inputs')
-    sources.update({'assignment.json':assignment,'.inputs/transparent-shard-server':worker_binary('transparent-shard-server'),
-        '.inputs/shard-control':worker_binary('shard-control'),'.inputs/transparent-shard-server.service':unit})
+    require('assignment.json' not in sources and not any(name.startswith('.input-') for name in sources),'native inventory collides with staging inputs')
+    sources.update({'assignment.json':assignment,'.input-transparent-shard-server':worker_binary('transparent-shard-server'),
+        '.input-shard-control':worker_binary('shard-control'),'.input-transparent-shard-server.service':unit})
     for name,path in sorted(sources.items()):
         safe(name); no_links(path)
         files.append({'source':str(path),'path':name,'size':path.stat().st_size,'sha256':P.checksum(path),'mode':INPUTS.get(name,0o600)})
     # The full retained release was verified above, including the native file
     # lister. Receiver native verification independently checks assignment scope.
     for name in WORKER_HASHES:
-        require(WORKER_HASHES[name] == next(f['sha256'] for f in files if f['path'] == '.inputs/'+name),
+        require(WORKER_HASHES[name] == next(f['sha256'] for f in files if f['path'] == '.input-'+name),
                 'portable worker changed during inventory')
     return validate({'version':1,'source_sha':source_sha,'machine_id':inventory.hosts[host]['machine_id'],'worker_id':worker_id,
         'map_sha256':result['map_sha256'],'assignment_sha256':P.checksum(assignment),'release_result_sha256':release_sha256,

@@ -895,7 +895,7 @@ counts and the native verifier's PID/log/result are retained privately.
 
 Each complete candidate is renamed on its original filesystem into
 `/srv/transparent-pir/v11/publications/<map SHA>`. Prepared binaries and unit are
-inside its `.inputs/` directory, for the later reviewed host install plan. Native
+as flat `.input-*` files, for the later reviewed host install plan. Native
 `--verify-only` checks the assignment and requested cache budget before the
 completed receipt; later product preflight checks the actual reviewed unit
 configuration again. This changes no live executable, unit, controller active
@@ -1139,3 +1139,13 @@ actual recent worker before starting the archive copy. The original release
 receipt still binds publication/assignment tools; worker file records bind the
 separately compiled portable artifacts. Never rewrite the old build receipt or
 claim that reusing CI artifacts establishes fleet or load qualification.
+
+Candidate preparation executables and unit text are flat `.input-*` files beside
+`shards.json`. The native server inspects every immediate child directory as a
+shard, so an auxiliary `.inputs` directory is invalid. The first portable
+verification exposed that error after the earlier SIGILL was fixed. Reconcile
+that failed request through its retained source, preserve the partial copy and
+use a new request/attempt; never weaken native shard discovery or bypass it.
+The generic `shard-control --help` staging check returns a JSON EOF error because
+this executable uses stdin JSON and a socket argument; retain that failed check.
+Its actual read-only status protocol must be checked before service cutover.

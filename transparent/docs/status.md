@@ -32,7 +32,10 @@ routing remain v10. A separately checksummed portable worker pair from successfu
 comprehensive CI 36819961986 replaces candidate server/control selection; native
 source inputs match the retained publication tools. See
 [portable artifact evidence](../evidence/activity-metadata-2026-09-30/portable-worker-release.json).
-Actual recent-worker native verification is the next gate.
+The portable server ran on the recent worker; verification then refused the
+auxiliary `.inputs` directory as a shard without a manifest. Both failed owners
+were reconciled preserving partial data. The corrected flat candidate layout
+requires fresh native verification.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained

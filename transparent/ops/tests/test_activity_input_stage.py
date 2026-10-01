@@ -32,8 +32,8 @@ class Inputs(unittest.TestCase):
         self.root=Path(self.temp.name).resolve(); self.sources=self.root/'source';self.sources.mkdir()
         self.mapping=b'{}'; self.assignment=b'assignment'
         self.names={'shards.json':self.mapping,'assignment.json':self.assignment,
-                    '.inputs/transparent-shard-server':b'bin','.inputs/shard-control':b'control',
-                    '.inputs/transparent-shard-server.service':b'unit','a'*64+'/manifest.json':b'manifest',
+                    '.input-transparent-shard-server':b'bin','.input-shard-control':b'control',
+                    '.input-transparent-shard-server.service':b'unit','a'*64+'/manifest.json':b'manifest',
                     'a'*64+'/pages-0.bin':b'page\x00data'}
         files=[]
         for name,data in sorted(self.names.items()):
@@ -195,8 +195,8 @@ class Inputs(unittest.TestCase):
     def test_uncertain_remote_reply_keeps_coordinator_fence_until_verified_reconcile(self):
         client=self.client();owners=self.root/'client-owners'
         with patch.object(M,'OWNERS',owners),patch.object(M,'ProductionLock',return_value=self.lock), \
-             patch.object(client,'checked_sources'),patch.object(M,'worker_binary',side_effect=lambda name:self.sources/('.inputs/'+name)), \
-             patch.dict(M.WORKER_HASHES,{Path(i['path']).name:i['sha256'] for i in self.request['files'] if i['path'] in M.INPUTS},clear=True), \
+             patch.object(client,'checked_sources'),patch.object(M,'worker_binary',side_effect=lambda name:self.sources/('.input-'+name)), \
+             patch.dict(M.WORKER_HASHES,{i['path'].removeprefix('.input-'):i['sha256'] for i in self.request['files'] if i['path'] in M.INPUTS},clear=True), \
              patch.object(client,'call',side_effect=[{'status':'preflight-passed'},subprocess.TimeoutExpired('ssh',1)]):
             with self.assertRaises(subprocess.TimeoutExpired):client.run('stage')
         identifier=M.digest(self.request);path=owners/(identifier+'.json')
@@ -239,10 +239,26 @@ class Inputs(unittest.TestCase):
             client.run('stage','b'*40,M.P.checksum(archive),archive)
         self.assertEqual(len(calls),2)
 
+    def test_streamed_native_discovery_sees_only_shard_directories(self):
+        # ShardSet opens manifest.json in every direct child directory. Run an
+        # independent child through the real stream/verify path to reproduce
+        # that boundary, rather than mocking native verification away.
+        name='.input-transparent-shard-server'
+        self.names[name]=('#!'+sys.executable+'\nimport pathlib,sys\nroot=pathlib.Path(sys.argv[sys.argv.index("--shard-dir")+1])\nfor child in root.iterdir():\n if child.is_dir(): assert (child/"manifest.json").is_file(), str(child)\nprint("native directory discovery passed")\n').encode()
+        for item in self.request['files']:
+            if item['path']==name:
+                item['size']=len(self.names[name]);item['sha256']=hashlib.sha256(self.names[name]).hexdigest()
+        receiver=M.Receiver(self.request,root=self.root/'flat-pub',owners=self.root/'flat-owner',lock_factory=lambda:self.lock)
+        reply=receiver.stage(io.BytesIO(self.body()))
+        self.assertEqual(reply['status'],'staged')
+        self.assertEqual({p.name for p in receiver.target.iterdir() if p.is_dir()},{'a'*64})
+        native=json.loads((receiver.owners/(receiver.identifier+'.native.result.json')).read_text())
+        self.assertEqual(native['exit_code'],0)
+
     def test_native_child_keeps_remote_lock_and_retains_exact_verification_result(self):
         # Exercise the actual subprocess boundary using an isolated executable.
-        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.inputs/transparent-shard-server'
-        binary.parent.mkdir();binary.write_text('#!'+sys.executable+'\nimport os,sys\nassert os.environ["WALLET_PIR_PRODUCTION_LOCK_FDS"]\nprint("verified")\n')
+        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.input-transparent-shard-server'
+        binary.parent.mkdir(exist_ok=True);binary.write_text('#!'+sys.executable+'\nimport os,sys\nassert os.environ["WALLET_PIR_PRODUCTION_LOCK_FDS"]\nprint("verified")\n')
         binary.chmod(0o755);self.receiver.owners.mkdir()
         with self.lock,patch.dict(os.environ,{M.inherited_lock.VARIABLE:str(self.lock.fd),'PYTHONDONTWRITEBYTECODE':'1'}):
             M.Receiver.native(self.receiver,self.lock)
@@ -251,8 +267,8 @@ class Inputs(unittest.TestCase):
         self.assertEqual(result['log_sha256'],M.P.checksum(self.receiver.owners/(self.receiver.identifier+'.native.log')))
 
     def test_failed_native_verification_retains_exit_and_log_in_denominator(self):
-        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.inputs/transparent-shard-server'
-        binary.parent.mkdir();binary.write_text('#!'+sys.executable+'\nimport sys\nprint("failure")\nsys.exit(3)\n');binary.chmod(0o755)
+        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.input-transparent-shard-server'
+        binary.parent.mkdir(exist_ok=True);binary.write_text('#!'+sys.executable+'\nimport sys\nprint("failure")\nsys.exit(3)\n');binary.chmod(0o755)
         self.receiver.owners.mkdir()
         with self.lock,patch.dict(os.environ,{M.inherited_lock.VARIABLE:str(self.lock.fd)}),self.assertRaisesRegex(ValueError,'native candidate'):
             M.Receiver.native(self.receiver,self.lock)
