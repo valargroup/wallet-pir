@@ -222,6 +222,15 @@ class IntegrityTests(unittest.TestCase):
         self.assertNotIn('CARGO_TARGET_DIR: target-native', workflow)
         self.assertIn('native-cuda-ubuntu22.04-rust1.91-v3-pclmul', workflow)
 
+    def test_cuda_toolchain_overrides_the_checkout_toolchain(self):
+        # Installing 1.91 alone does not select it: rust-toolchain.toml wins
+        # over rustup's default. Every command and the cache must share the
+        # compiler recorded in the CUDA ABI manifest.
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        cuda_job = workflow.split('\n  release-cuda:\n', 1)[1]
+        metadata = load('release').CUDA_BUILD
+        self.assertIn('    env:\n      RUSTUP_TOOLCHAIN: ' + metadata['rust'], cuda_job)
+
 
 if __name__ == '__main__':
     unittest.main()

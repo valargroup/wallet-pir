@@ -40,8 +40,27 @@ Full CI passed at `cc6656f23`; PR 77 merged to main as `9dabaa68` at
 `a65c618e`; fast CI and the 16-artifact fat-LTO build passed. Comprehensive CI
 found two additional shard-cache sort lints. The complete transparent package
 group then passed strict all-target/all-feature Clippy after equivalent filter
-and test-only corrections; the affected check passed in 39.55 seconds. Exact
-repaired-source CI and release artifacts remain open before deployment acceptance.
+and test-only corrections; the affected check passed in 39.55 seconds. The
+final `12ce1291` fat-LTO build subsequently passed in 329.79 seconds with all
+18 retained artifact hashes verified. A read-only worker plan/preflight through
+the deployment wrapper passed for all three workers; none has the release
+staged. Current worker disk headroom was 94%, 94% and 66%. At 00:09 UTC
+on October 1 all comprehensive check jobs passed at `12ce1291`, while CUDA
+artifact preparation failed on a toolchain-selection guard and CPU artifact
+preparation was still active. The CUDA job now explicitly selects its recorded
+Rust 1.91 compiler; its regression failed before the repair and passed after it.
+The aggregate run is not passing evidence. Complete publication and the locked
+schema cutover remain open.
+
+The wrapper now implements a journaled coordinator-only schema recipe boundary,
+with input hashes, inherited production lock descriptors, durable phase intent
+and bounded recovery. Seventeen failure/recovery tests and 45 existing shared
+deployment tests passed. Actual production phase programs, a reviewed recipe
+and wrapper-mediated source staging remain incomplete; no production change was
+made. At 00:09 UTC backfill reached 840000. At 00:12 its guard observed 89%
+available host memory, 79% candidate-volume disk, 23% chain-disk and 30% root-disk
+headroom with zero ingest restarts. The three owned jobs stayed active and the
+quality supervisor stayed inactive.
 
 A one-hour candidate 5 QPS observation passed 17,920 exact queries with no
 failures, p50 5 ms and p99 33 ms. The next bounded observation runs under

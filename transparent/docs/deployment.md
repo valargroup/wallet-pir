@@ -717,3 +717,45 @@ Preserve the final six-hour/300-block freshness window, three sustained 60-minut
 runs at each of 8/20/40 wallets, every failed or incomplete attempt, lifecycle faults,
 and rollback/redeploy gates in the approved activity metadata plan. Supported
 completed-sync demand is at most 50% of measured sustainable throughput.
+
+### Guarded schema operation API
+
+All production changes, including source staging, binary transfers and unit
+changes, run through `ops/scripts/wallet-pir-deploy.py`. The wrapper's
+`schema-plan`, `schema-preflight`, `schema-deploy`, `schema-status` and
+`schema-rollback` commands coordinate a checksum-bound recipe on the inventory's
+pinned root coordinator under `/run/lock/wallet-pir-production.lock`.
+Use the same `--inventory` and private `--state-dir` for every command. Plan and
+preflight precede deployment; `schema-deploy --recipe FILE
+--expect-recipe-sha256 HASH` requires the digest printed by the reviewed plan.
+Status reports the durable journal state, and must be paired with live canonical
+checks. After deployment the CLI prints status and a complete rollback command.
+
+Recipe version 1 pins the native source SHA, publication SHA-256, forward inputs
+and separately retained rollback inputs. Each input is an absolute regular file
+with a SHA-256 checksum. Commands invoke those bound executables or bound scripts
+through Python/Bash, without inline interpreter programs. Recipes contain no
+credentials; phase programs read runtime credentials without printing them.
+Preflight commands and verification phases must be read-only.
+
+The forward phases are `preserve-v10`, `maintenance`, `stage-v11`,
+`activate-prewarm`, `align-origins`, `verify-canonical`, `resume-load` and
+`verify-service`. The recovery phases are `withdraw-origins`, `restore-v10`,
+`verify-rollback`, `reopen-v10` and `verify-service`, with a combined deadline of
+at most 900 seconds. Programs must be idempotent after partial execution,
+including a partially completed predecessor backup. They must reject an
+incomplete backup before withdrawal and preserve separate v10 data and caches.
+Verification must fail before reopening when the restored service is incoherent.
+
+The wrapper records phase intent before side effects, rechecks input hashes and
+the lock between phases, and retains private journals and phase logs. Child
+programs receive the lock descriptors through `pass_fds` and
+`WALLET_PIR_PRODUCTION_LOCK_FDS`; they must preserve them in any descendant that
+can mutate production. A nonzero phase exit triggers coherent recovery while
+the lock is held. Timeout, interruption or lock loss require reconciliation and
+explicit recovery, so a possibly live descendant cannot race an automatic
+rollback. An unfinished transaction blocks a new deployment.
+
+This API is an implemented coordination boundary. The actual production recipe,
+trusted phase programs, wrapper-mediated source staging, complete publication
+and live acceptance checks must be prepared and verified before deployment.

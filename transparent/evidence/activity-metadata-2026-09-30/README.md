@@ -126,3 +126,25 @@ complete publication before activation. The build driver now retains the two
 deployment helpers as well, making an 18-artifact release bundle. Prior
 16-artifact build reports remain valid build observations, not complete
 deployment bundles. Library post-merge main CI run 36787992346 also passed.
+
+[Final 18-artifact release build](release-12ce1291.json) passed in 329.79 seconds
+with all retained hashes independently verified. The preceding
+[16-artifact build](release-0abce392.json) is retained separately.
+[Wrapper worker preflight](wrapper-workers-preflight-12ce1291.json) passed with
+an in-memory baseline of the three current units, without staging or service
+changes. It records current worker disk headroom and explicitly excludes the
+complete schema transaction. Recapture a durable baseline before deployment.
+The replacement operating rule requires all production changes through
+`ops/scripts/wallet-pir-deploy.py`, plan/preflight first, under its production
+lock. The complete controller/filter/schema orchestration and coherent rollback
+remain deployment gates; the earlier manual SSH procedure cannot bypass this rule.
+
+[Schema operation focused evidence](schema-operation-focused.json) records 17
+failure/recovery tests, real inherited-lock fixture coverage and 45 shared
+deployment tests. The runner is a coordination foundation; production phase
+programs, the recipe and wrapper-mediated source staging remain incomplete.
+[Candidate comprehensive CI snapshot](ci-12ce1291-cuda-toolchain.json) records all
+comprehensive check jobs passing, a failed CUDA artifact compiler guard and
+pending CPU artifact preparation. The CUDA selection regression reproduced the
+configuration gap and passed after explicitly pinning the recorded compiler.
+This snapshot is not aggregate passing CI or deployment evidence.

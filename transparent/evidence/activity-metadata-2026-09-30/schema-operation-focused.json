@@ -1,0 +1,60 @@
+{
+  "observed_utc": "2026-10-01T00:13:22.216769+00:00",
+  "base_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "250b4bf66d849aefded01f9a09540bd0741234bdeb953c471ebc2b7fbecaa9fb",
+    "transparent/ops/lib/activity_schema_operation.py": "3f907b98ef4295eba033263c5be9f2bcfc293d5a6d93bd18e9b1fe9b35945645",
+    "transparent/ops/tests/test_activity_schema_operation.py": "114ca5fcab4a345dbe2c76ae4fb2f830cc7fe0c84ebe670351624d434720f33c",
+    ".github/workflows/ci-full.yml": "02169c7b248e3965e7ac716ec2d41435fe4ee7503a3b1b40484d27b3d4d73966",
+    "tools/tests/test_iteration.py": "2e79cb5323cead38268949804893fd85884fd8818665fc694d1afbfdab6fd189",
+    "Makefile": "862b61ae1b9a868dc4cce063f97d6c4c2f30de0dd87c7019cb59e6ba8efc0ee0"
+  },
+  "checks": [
+    {
+      "command": "python3 transparent/ops/tests/test_activity_schema_operation.py",
+      "tests": 17,
+      "exit": 0,
+      "seconds": 0.603
+    },
+    {
+      "command": "python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'",
+      "tests": 45,
+      "exit": 0,
+      "seconds": 1.67
+    },
+    {
+      "command": "python3 tools/tests/test_iteration.py IntegrityTests.test_cuda_toolchain_overrides_the_checkout_toolchain",
+      "tests": 1,
+      "red_before_fix": true,
+      "exit_after_fix": 0
+    }
+  ],
+  "coverage": [
+    "intent before effects",
+    "real inherited lock descriptor",
+    "coherent fixture rollback",
+    "rollback failure blocks reopening",
+    "timeout and interruption require explicit recovery",
+    "lost lock stops mutation",
+    "hashes rechecked between phases",
+    "independent retained rollback inputs",
+    "duplicate and bounded recipe parsing",
+    "recipe tamper and identifier traversal rejection",
+    "read-only wrapper CLI plan"
+  ],
+  "limitations": [
+    "No production mutation occurred.",
+    "Actual cutover recipe and trusted phase programs remain incomplete.",
+    "Wrapper-mediated source staging remains to be completed.",
+    "Fixture rollback does not establish fleet recovery or acceptance.",
+    "Native production artifacts remain frozen at 12ce12918446eaa56e2d766ec2f43d82c531abb9; operations source is separately identified by the next commit."
+  ],
+  "affected_check": {
+    "command": "make check-fast BASE=12ce12918446eaa56e2d766ec2f43d82c531abb9",
+    "owner_id": "7baea097abe043ad98f52da9555fab5b",
+    "base_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+    "exit": 0,
+    "seconds": 53.61657020798884,
+    "accepted": "source inputs unchanged during check; report-only addition afterward"
+  }
+}

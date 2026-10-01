@@ -4,6 +4,8 @@ import importlib.util
 import os
 from pathlib import Path
 import re
+import subprocess
+import shlex
 import sys
 import tempfile
 
@@ -18,6 +20,7 @@ SHA256 = re.compile('^[0-9a-f]{64}$')
 
 USAGE = """\
 Transactional deploys of Enhance PIR and Status PIR over SSH.
+Transparent schema recipes run on the pinned coordinator under the same lock.
 
   plan SERVICE (--binary F | --archive F --sha REV | --sha256 H)
       Read-only: per-target action, drop-in handling and unit drift.
@@ -30,6 +33,14 @@ Transactional deploys of Enhance PIR and Status PIR over SSH.
       Restores the touched targets of the latest (or named) transaction.
   status SERVICE
   capture-baseline SERVICE [--output FILE]
+
+  schema-plan --recipe FILE
+  schema-preflight --recipe FILE
+  schema-deploy --recipe FILE --expect-recipe-sha256 HASH
+  schema-status [--transaction ID]
+  schema-rollback [--transaction ID]
+      Journaled Transparent cutover phases, verified inputs and bounded rollback.
+      Recipes contain no credentials. Deployment requires the reviewed plan hash.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
@@ -76,6 +87,14 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
+        command = commands.add_parser(name, help='Transparent multi-component schema transaction')
+        command.add_argument('--recipe', required=True, help='reviewed coordinator-only cutover recipe; no credentials')
+        if name == 'schema-deploy':
+            command.add_argument('--expect-recipe-sha256', required=True)
+    for name in ('schema-rollback', 'schema-status'):
+        command = commands.add_parser(name)
+        command.add_argument('--transaction')
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -113,6 +132,34 @@ def main(argv=None, executor=None, out=print, **options):
     try:
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-'):
+            spec = importlib.util.spec_from_file_location('activity_schema_operation',
+                ROOT/'transparent/ops/lib/activity_schema_operation.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            inventory = descriptors.load_inventory(args.inventory)
+            runner = module.Runner(inventory, args.state_dir, out=out)
+            if args.command == 'schema-status':
+                runner.status(args.transaction)
+            elif args.command == 'schema-rollback':
+                runner.rollback(args.transaction)
+            else:
+                recipe = module.load_recipe(args.recipe)
+                if args.command == 'schema-plan':
+                    runner.plan(recipe)
+                elif args.command == 'schema-preflight':
+                    runner.preflight(recipe)
+                else:
+                    try:
+                        runner.deploy(recipe, args.expect_recipe_sha256)
+                    finally:
+                        if runner.active_id:
+                            runner.status(runner.active_id)
+                            command = [sys.executable, str(ROOT/'ops/scripts/wallet-pir-deploy.py'),
+                                '--inventory', args.inventory, '--state-dir', args.state_dir,
+                                'schema-rollback', '--transaction', runner.active_id]
+                            out('rollback: '+shlex.join(command))
+            return 0
         services = descriptors.load_descriptors(args.descriptors)
         if args.service not in services:
             raise DeployError('unknown service %r; known: %s' % (args.service, sorted(services)))
@@ -163,7 +210,10 @@ def main(argv=None, executor=None, out=print, **options):
                 return 1
             out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
                                                            sum(p.action == 'skip' for p in plans)))
-    except (DeployError, RemoteError, LockHeld, descriptors.DescriptorError, FileNotFoundError, ValueError) as error:
+    except subprocess.TimeoutExpired:
+        out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
+        return 1
+    except (DeployError, RemoteError, LockHeld, descriptors.DescriptorError, OSError, ValueError) as error:
         out('error: %s' % error)
         return 1
     return 0

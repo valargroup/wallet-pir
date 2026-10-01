@@ -1,0 +1,32 @@
+{
+  "observed_at": 1790810768.6241944,
+  "source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "candidate_binary_sha256": "b2e3a8d7980fadf37c4efde5f91bc248a3767a84e50dd7fbdf98ad52ac573b3b",
+  "descriptor": "[services.transparent]\nroot = \"/opt/transparent-pir\"\nbinary = \"transparent-shard-server\"\nself_check = [\"--help\"]\nmin_free_bytes = 1073741824\norder = [\"archive-owner\", \"recent-replica\"]\n[services.transparent.roles.archive-owner]\nunit = \"transparent-shard-server.service\"\nmode = \"exec-drop-in\"\nhealth = \"http://{listen}/v1/ready\"\nready = { field = \"ready\", equals = true }\nready_timeout = 1800\n[services.transparent.roles.recent-replica]\nunit = \"transparent-shard-server.service\"\nmode = \"exec-drop-in\"\nhealth = \"http://{listen}/v1/ready\"\nready = { field = \"ready\", equals = true }\nready_timeout = 1800\n",
+  "baseline_sha256": "d85db54defdf510205ffe52f15888b6e98b2d87165fe08531dd89242e7bb2895",
+  "baseline_scope": "in-memory snapshot of current units; recapture durable baseline before deployment",
+  "preflight_exit": 0,
+  "preflight_stdout": "transparent: target sha256 b2e3a8d7980fadf37c4efde5f91bc248a3767a84e50dd7fbdf98ad52ac573b3b\narchive-owner@transparent-pir-archive-03 transparent-shard-server.service: restart\n  running 4e3f8d9d8eb881bd3b3dc1450be52a1f9cf7a63987ae7e05986a2feebd64e81c from /usr/local/bin/transparent-shard-server\n  write /etc/systemd/system/transparent-shard-server.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf\nrecent-replica@transparent-pir-recent-01 transparent-shard-server.service: restart\n  running 291cd5043e3549e587b48d01f14009040422a1fec4e6c2aa9c2fd814f2ec1652 from /usr/local/bin/transparent-shard-server\n  write /etc/systemd/system/transparent-shard-server.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf\nrecent-replica@transparent-pir-recent-02 transparent-shard-server.service: restart\n  running 291cd5043e3549e587b48d01f14009040422a1fec4e6c2aa9c2fd814f2ec1652 from /usr/local/bin/transparent-shard-server\n  write /etc/systemd/system/transparent-shard-server.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf\ntransparent-pir-archive-03: release not staged yet; deploy uploads it\ntransparent-pir-recent-01: release not staged yet; deploy uploads it\ntransparent-pir-recent-02: release not staged yet; deploy uploads it\n3 target(s) to restart, 0 unchanged\n",
+  "preflight_stderr": "",
+  "headroom": {
+    "transparent-pir-recent-01": {
+      "total": 165295407104,
+      "free": 154665799680,
+      "fraction": 0.9356932681298755
+    },
+    "transparent-pir-recent-02": {
+      "total": 165295407104,
+      "free": 155454758912,
+      "fraction": 0.940466293864968
+    },
+    "transparent-pir-archive-03": {
+      "total": 206900281344,
+      "free": 137383522304,
+      "fraction": 0.6640083880581154
+    }
+  },
+  "limits": [
+    "Read-only worker binary preflight only; no files staged and no services changed",
+    "Full v11 publication, controller/filter/schema transaction, exact public recovery and guarded rollback remain required"
+  ]
+}

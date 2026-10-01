@@ -42,11 +42,23 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Its full CI found two further shard-cache sort lints. Equivalent corrections,
   plus filter and test-only lints exposed by the complete transparent group,
   passed strict all-target/all-feature Clippy and the 39.55-second affected check.
-  Exact repaired-source CI and release artifacts remain required. The publisher
+  The final `12ce1291` fat-LTO build passed with all 18 retained artifact
+  checksums verified. Comprehensive check jobs passed at `12ce1291`; CUDA
+  artifact preparation failed because the checkout selected a different compiler
+  from the recorded CUDA ABI. Its explicit toolchain selection regression now
+  passes; the repaired aggregate CI run remains required. The publisher
   now accepts the new publication root and renders sandbox mounts; 31 focused
   tests, ops contracts and a coordinator hard-link probe passed. Repeat the
   probe under the installed unit. Release bundles now retain all 18 artifacts,
   including the two deployment helpers missing from earlier retention lists.
+  Read-only worker plan/preflight through `ops/scripts/wallet-pir-deploy.py`
+  passed against the current three-worker fleet; releases remain unstaged.
+  Complete schema coordination and coherent rollback through that wrapper,
+  with plan/preflight and its production lock, before any production change.
+  No manual production unit changes or binary transfers are permitted.
+  The wrapper now has a journaled schema recipe runner: 17 failure/recovery tests
+  and 45 existing deployment tests passed. Actual trusted phase programs,
+  reviewed production recipe and wrapper-mediated source staging remain open.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

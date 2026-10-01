@@ -61,6 +61,7 @@ check-ops-control-sessions:
 # an in-memory fleet, plus its host helper run locally.
 check-ops-deploy:
 	python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+	python3 transparent/ops/tests/test_activity_schema_operation.py
 
 check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh
