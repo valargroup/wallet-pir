@@ -35,6 +35,23 @@ def worker_plan():
 
 
 class PlanTests(unittest.TestCase):
+    def test_coordinator_captures_optional_local_control_helper_absence(self):
+        plan=worker_plan();plan.update(role='coordinator',worker=None)
+        files=[{'path':p,'required':True} for p in M.required_files('coordinator')]
+        files += [{'path':p+'.d','required':False} for p in M.unit_paths(M.UNITS['coordinator'])]
+        files += [{'path':'/usr/local/bin/shard-control','required':False},
+                  {'path':'/opt/transparent-5qps-predecessor','required':True}]
+        plan['baseline']['files']=files
+        plan['installs']=[{'source':'/staged/'+n,'target':'/usr/local/bin/'+n,'sha256':'c'*64,'mode':0o755}
+                          for n in M.BINARIES['coordinator']]
+        plan['installs'] += [{'source':'/staged/'+n,'target':'/etc/systemd/system/'+n,'sha256':'c'*64,'mode':0o644}
+                            for n in M.UNITS['coordinator']]
+        plan['installs'] += [{'source':'/staged/'+n,'target':'/opt/transparent-publisher/v11/'+n,'sha256':'c'*64,'mode':0o600}
+                            for n in ('controller.json','fleet.json','roster.json')]
+        M.validate(plan)
+        plan['baseline']['files']=[i for i in files if i['path']!='/usr/local/bin/shard-control']
+        with self.assertRaisesRegex(ValueError,'presence/absence'):M.validate(plan)
+
     def test_router_binds_packaged_fragment_and_absent_override_without_guessing(self):
         plan=worker_plan();plan.update(role='router',installs=[],worker=None)
         vendor='/usr/lib/systemd/system/caddy.service'

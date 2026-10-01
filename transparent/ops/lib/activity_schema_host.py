@@ -81,6 +81,9 @@ def unit_paths(units):
 def required_files(role):
     result = unit_paths(UNITS[role]) | {'/usr/local/bin/'+b for b in BINARIES[role]}
     if role == 'coordinator':
+        # The predecessor may invoke shard-control only on remote workers. The
+        # newly installed local helper must roll back to its recorded absence.
+        result.discard('/usr/local/bin/shard-control')
         result |= {str(ROOT/p) for p in ('controller.json', 'fleet.json', 'roster.json', 'state',
                                         'credentials', 'scaler')}
         result |= {'/etc/caddy/Caddyfile', '/etc/pir-quality/qualified-workers.json'}
@@ -139,6 +142,7 @@ def validate(plan):
     if role == 'coordinator':
         # Load executable, supervisor, permit and fixture must be captured as a
         # complete tree, rather than guessing one historical supervisor name.
+        require('/usr/local/bin/shard-control' in names, 'baseline omits local control helper presence/absence')
         require(any(p.startswith('/opt/transparent-5qps-') and p.count('/') == 2 for p in declared),
                 'baseline omits continuous-load tree')
     require(isinstance(plan['installs'], list) and len(plan['installs']) <= 32, 'invalid installs')

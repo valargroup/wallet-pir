@@ -1,0 +1,11 @@
+{
+  "duration_seconds": 16.476553332991898,
+  "inputs": {
+    "transparent/ops/lib/activity_schema_host.py": "814d9cd55616ae8a4d407f498cff0d13f0247772d24b2100ff5265c1f8588a89",
+    "transparent/ops/tests/test_activity_schema_host.py": "e93b3aaef0c30332632bb102af4f12d742d4dd92eb13aa5fa17c78db33f0a0a4"
+  },
+  "owner": "5db8902f2e4849519dcf94a80603c237",
+  "scope": "Record the actually absent predecessor coordinator shard-control helper, preserving absence for rollback. Required presence/absence declaration tested; no live install or baseline capture.",
+  "source_base_sha": "62624bb1e34dfe43d31dd70a50405039d0891142",
+  "status": "passed"
+}
