@@ -489,6 +489,11 @@ class Product:
                 H.require(getattr(self,'recovery_program',None) is not None and len(forward)==1 and
                           forward[0]['name']=='preserve-v10' and forward[0]['status']=='failed',
                           'partial capture repair requires failed preserve before any forward effects')
+                state=H.load(self.local.root.with_suffix('.units.json'))
+                if state.get('candidate')!={str(p):H.candidate_inventory(p) for p in H.candidate_paths('coordinator')}:
+                    H.require(any(e['group']=='rollback' and e['name']=='withdraw-origins' and e['status']=='failed'
+                                  for e in record['events']), 'partial guard repair lacks failed owned withdrawal')
+                    self.local.reconcile_partial_guard()
                 self.local.capture(repair_token=transaction)
                 self.remote(self.router,'repair-capture',attempt)
                 await self.all_workers('repair-capture',attempt)

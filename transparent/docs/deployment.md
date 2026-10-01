@@ -1381,3 +1381,11 @@ capture the unchanged remote predecessors without repeating the already passed
 native preflight. Complete warm binary/assignment/canonical-anchor coherence is
 then proved before withdrawal. All remote locks, durable owners and ordinary
 rollback budgets remain in force; partial drift or unknown descendants refuse.
+
+An explicit failed-preserve repair may reconcile the two inactive candidate
+routing audit files only after an owned withdrawal failed. The complete partial
+copies, private capture intent and entire candidate inventory must match apart
+from one withdrawal counter increment and an empty-route timestamp. Both newer
+audit files are retained with intent/completion outside the immutable partial
+baseline before restoring its original bytes. Unrelated drift and prior repair
+intents refuse; capture and canonical recovery remain separate gates.

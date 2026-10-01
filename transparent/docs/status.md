@@ -14,7 +14,12 @@ v10 predecessor generation. Coordinator writers stopped; no remote capture or
 new candidate staging was reached. The new transaction is `rollback-failed`
 because withdrawal required a complete baseline. The reviewed partial-capture
 repair verifies unchanged copies and stopped live state before completion;
-actual guarded recovery is pending. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
+actual guarded recovery is pending. The `16f806df` repair refused two changed
+v11 routing audit files written by the earlier owned withdrawal. Its
+[failure](../evidence/activity-metadata-2026-09-30/partial-guard-drift-failure-16f806df.json)
+remains failed. A closed reconciliation retains those withdrawn audit bytes and
+restores only the independently captured originals before completing capture;
+unrelated drift refuses. No new recovery has passed. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
 remains recorded.
 
 The [owned warm v10 recovery](../evidence/activity-metadata-2026-09-30/paired-origin-coherent-recovery-a8e6b63b.json)

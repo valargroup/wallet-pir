@@ -403,6 +403,61 @@ class Host:
                 require(len(starts) == 1 and str(ROOT/'v11/fleet.json') in shlex.split(starts[0][10:]),
                         'fleet service still refers to old controller configuration')
 
+    def reconcile_partial_guard(self):
+        """Retain and undo only the owned failed withdrawal's two audit writes."""
+        require(self.role == 'coordinator' and not (self.root/'complete.json').exists(),
+                'guard bookkeeping reconciliation requires partial coordinator capture')
+        intent=self.root.with_suffix('.units.json')
+        require(intent.is_file() and not intent.is_symlink() and intent.stat().st_uid==os.geteuid() and
+                intent.stat().st_mode & 0o077 == 0, 'partial capture intent must be private and owned')
+        state=load(intent)
+        require(state['plan_sha256']==hashlib.sha256(encode(self.plan)).hexdigest(), 'partial capture intent differs')
+        candidate=ROOT/'v11';old=state['candidate'][str(candidate)]
+        current=candidate_inventory(candidate)
+        names={'state/routing-availability.json','state/rendered.json'}
+        require(old is not None and current is not None and old.keys()==current.keys() and
+                {k for k in old if old[k]!=current[k]}==names,
+                'partial guard repair refuses unrelated candidate drift')
+        index=next(i for i,p in enumerate(self.plan['baseline']['files']) if p['path']==str(candidate))
+        saved=self.root/'files'/str(index)
+        for i,item in enumerate(self.plan['baseline']['files']):
+            live=Path(item['path']);copy=self.root/'files'/str(i)
+            a=B.entries(live) if live.exists() or live.is_symlink() else None
+            b=B.entries(copy) if copy.exists() or copy.is_symlink() else None
+            if live==candidate:
+                require(b is not None and a is not None and a.keys()==b.keys() and
+                        all(a[k]==b[k] for k in b if k not in names), 'partial copied candidate differs')
+            else:require(a==b and (b is not None or not item['required']), 'partial copied baseline differs')
+        for name in names:
+            require(B.describe(saved/name)==old[name] and old[name]['kind']==current[name]['kind']=='file' and
+                    all(old[name][k]==current[name][k] for k in ('mode','uid','gid')),
+                    'partial guard file identity changed')
+        before=load(saved/'state/routing-availability.json');after=load(candidate/'state/routing-availability.json')
+        require(set(before)==set(after)=={'schema','epoch','unavailable_events','available'} and
+                before['schema']==after['schema']==1 and isinstance(before['epoch'],str) and
+                __import__('re').fullmatch('[0-9a-f]{32}',before['epoch']) and before['epoch']==after['epoch'] and
+                type(before['unavailable_events']) is int and before['unavailable_events']>=0 and
+                type(after['unavailable_events']) is int and after['unavailable_events']==before['unavailable_events']+1 and
+                type(before['available']) is bool and after['available'] is False,
+                'partial guard audit is not one owned withdrawal')
+        prior=load(saved/'state/rendered.json');rendered=load(candidate/'state/rendered.json')
+        require(set(prior)==set(rendered)=={'workers','unix'} and prior['workers']==rendered['workers']==[] and
+                type(prior['unix']) in (int,float) and type(rendered['unix']) in (int,float) and
+                0<=prior['unix']<=rendered['unix']<=time.time(), 'partial guard rendering is not withdrawn')
+        receipt=self.root.with_name(self.root.name+'.partial-guard')
+        require(not receipt.exists() and not receipt.is_symlink(), 'partial guard repair intent exists; reconcile before retry')
+        receipt.mkdir(mode=0o700)
+        value={'status':'intent','plan_sha256':state['plan_sha256'],'captured':{n:old[n] for n in names},
+               'displaced':{n:current[n] for n in names}}
+        B.atomic(receipt/'intent.json',encode(value))
+        for name in sorted(names):
+            live=candidate/name;copy=saved/name
+            require(B.describe(live)==current[name] and B.describe(copy)==old[name], 'partial guard changed after intent')
+            os.rename(live,receipt/live.name);B.sync_dir(live.parent);B.sync_dir(receipt)
+            B.atomic(live,copy.read_bytes(),old[name]['mode']);os.chown(live,old[name]['uid'],old[name]['gid'])
+        require(candidate_inventory(candidate)==old, 'partial guard restored inventory differs')
+        B.atomic(receipt/'complete.json',encode(dict(value,status='complete')))
+
     def capture(self, *, repair_token=None):
         if repair_token is not None:
             # Only the owning failed-preserve recovery calls this after the

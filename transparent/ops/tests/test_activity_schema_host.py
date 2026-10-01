@@ -35,6 +35,50 @@ def worker_plan():
 
 
 class RepairReuseTests(unittest.TestCase):
+    def partial_guard(self, directory):
+        root=Path(directory).resolve();candidate=root/'v11';(candidate/'state').mkdir(parents=True)
+        audit=candidate/'state/routing-availability.json';render=candidate/'state/rendered.json'
+        audit.write_text(json.dumps(dict(schema=1,epoch='a'*32,unavailable_events=6,available=False)))
+        render.write_text(json.dumps(dict(workers=[],unix=1)))
+        host=M.Host.__new__(M.Host);host.role='coordinator';host.root=root/'backup'
+        host.plan={'baseline':{'files':[{'path':str(candidate),'required':True}]}}
+        old=M.candidate_inventory(candidate)
+        import shutil
+        (host.root/'files').mkdir(parents=True);shutil.copytree(candidate,host.root/'files/0')
+        M.B.atomic(host.root.with_suffix('.units.json'),M.encode({'plan_sha256':M.hashlib.sha256(M.encode(host.plan)).hexdigest(),
+                     'candidate':{str(candidate):old}}))
+        audit.write_text(json.dumps(dict(schema=1,epoch='a'*32,unavailable_events=7,available=False)))
+        render.write_text(json.dumps(dict(workers=[],unix=2)))
+        return host,candidate,old
+
+    def test_partial_guard_reconciliation_preserves_both_byte_sets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            host,candidate,old=self.partial_guard(directory)
+            copied=host.root/'files/0/state/rendered.json';inode=copied.stat().st_ino
+            with patch.object(M,'ROOT',candidate.parent):host.reconcile_partial_guard()
+            self.assertEqual(M.candidate_inventory(candidate),old)
+            self.assertEqual(copied.stat().st_ino,inode)
+            receipt=host.root.with_name(host.root.name+'.partial-guard')
+            self.assertEqual(M.load(receipt/'routing-availability.json')['unavailable_events'],7)
+            self.assertEqual(M.load(receipt/'rendered.json')['unix'],2)
+            self.assertEqual(M.load(receipt/'complete.json')['status'],'complete')
+
+    def test_partial_guard_refuses_extra_drift_and_arbitrary_audit(self):
+        for defect in ('extra','epoch','available','counter','worker','copy','prior'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host,candidate,old=self.partial_guard(directory)
+                audit=candidate/'state/routing-availability.json';value=M.load(audit)
+                if defect=='extra':(candidate/'foreign').write_text('unowned')
+                elif defect=='copy':(host.root/'files/0/state/rendered.json').write_text('{}')
+                elif defect=='prior':host.root.with_name(host.root.name+'.partial-guard').mkdir()
+                elif defect=='worker':(candidate/'state/rendered.json').write_text(json.dumps(dict(workers=['foreign'],unix=2)))
+                else:
+                    value.update({'epoch':'b'*32} if defect=='epoch' else {'available':True} if defect=='available' else {'unavailable_events':8})
+                    audit.write_text(json.dumps(value))
+                before=M.candidate_inventory(candidate)
+                with patch.object(M,'ROOT',candidate.parent),self.assertRaises(ValueError):host.reconcile_partial_guard()
+                self.assertEqual(M.candidate_inventory(candidate),before)
+
     def test_only_reviewed_repair_reuses_exact_warm_restored_worker(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'captured-unit';path.write_text('v10')
