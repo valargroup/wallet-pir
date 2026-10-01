@@ -25,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location('dispatch_source_receipt', Path(__
 S = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(S)
 ROOT = Path('/srv/transparent-activity/ops/host-actions')
-ACTIONS = ('preflight', 'capture', 'stage', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker')
+ACTIONS = ('preflight', 'capture', 'stage', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker', 'repair-restore')
 READ_ONLY = ('preflight', 'verify-worker', 'verify-rollback-worker')
 MAX_REQUEST = 256*1024
 
@@ -35,7 +35,13 @@ def digest(value):
 
 
 def validate(request):
-    H.require(isinstance(request, dict) and set(request) == {'version', 'request_id', 'action', 'plan', 'plan_sha256'}, 'invalid host request')
+    fields = {'version', 'request_id', 'action', 'plan', 'plan_sha256'}
+    H.require(isinstance(request, dict) and set(request) in (fields, fields|{'recovery_source_sha'}), 'invalid host request')
+    if 'recovery_source_sha' in request:
+        H.require(request.get('action') in ('repair-restore','verify-rollback-worker','restore-routing') and
+                  isinstance(request['recovery_source_sha'],str) and re.fullmatch('[0-9a-f]{40}',request['recovery_source_sha']),
+                  'repair source cannot authorize a forward host phase')
+    H.require(request.get('action') != 'repair-restore' or 'recovery_source_sha' in request, 'repair restore needs a bound repair program')
     H.require(type(request['version']) is int and request['version'] == 1 and request['action'] in ACTIONS, 'unsupported host action')
     H.require(isinstance(request['request_id'], str) and re.fullmatch('[a-z0-9-]{1,64}', request['request_id']), 'invalid host request identifier')
     H.validate(request['plan'])
@@ -58,6 +64,8 @@ class Actor:
         self.plan = request['plan']
         self.root = Path(root)
         self.host = host_factory(self.plan)
+        if 'recovery_source_sha' in request:
+            self.host.repair_retained = True
         self.lock_factory = lock_factory or (lambda: ProductionLock({'type':'pinned_host', 'machine_id':self.plan['machine_id']}))
         self.path = self.root/self.plan['transaction']/(request['request_id']+'.json')
         self.pointer = self.root/'latest.json'
@@ -65,11 +73,15 @@ class Actor:
     def identity(self):
         self.host.identity()
         H.require(self.plan['role'] != 'coordinator', 'coordinator phases must run in the owning schema transaction')
-        H.require(Path(__file__).resolve().parents[3] == Path('/srv/transparent-activity/ops/sources')/self.plan['source_sha'],
+        source = self.request.get('recovery_source_sha',self.plan['source_sha'])
+        H.require(Path(__file__).resolve().parents[3] == Path('/srv/transparent-activity/ops/sources')/source,
                   'remote action requires its immutable reviewed operation source')
-        source = self.plan['source_sha']
         receipt = H.load(Path('/srv/transparent-activity/ops/staging')/(source+'.json'))
         S.verify_receipt(receipt, Path('/srv/transparent-activity/ops/sources')/source, source, receipt['archive_sha256'])
+        if source != self.plan['source_sha']:
+            original = self.plan['source_sha']
+            old = H.load(Path('/srv/transparent-activity/ops/staging')/(original+'.json'))
+            S.verify_receipt(old,Path('/srv/transparent-activity/ops/sources')/original,original,old['archive_sha256'])
 
     def status(self):
         if not self.path.exists():
@@ -150,6 +162,8 @@ class Actor:
 
     def execute(self):
         action = self.request['action']
+        if action == 'repair-restore':
+            return self.host.restore(repair_token=self.request['request_id'])
         if action.startswith('verify-'):
             deadline = time.monotonic()+60
             while True:
@@ -180,7 +194,7 @@ class Dispatch:
         H.require(entry.get('machine_id') == request['plan']['machine_id'], 'remote machine differs from reviewed host plan')
         H.require(entry.get('user', self.inventory.ssh.get('user', 'root')) == 'root' or entry.get('sudo'), 'host actor needs root identity')
         inherited_lock.descriptors(required=mode in ('run', 'reconcile') and request['action'] not in READ_ONLY, path=H.LOCK)
-        source = Path('/srv/transparent-activity/ops/sources')/request['plan']['source_sha']
+        source = Path('/srv/transparent-activity/ops/sources')/request.get('recovery_source_sha',request['plan']['source_sha'])
         argv = (['sudo', '-n', '--'] if entry.get('sudo') else []) + ['/usr/bin/python3', '-B', str(source/'ops/scripts/wallet-pir-deploy.py'),
                 'schema-host-'+mode, '--request-sha256', digest(request)]
         # No persistent SSH masters: their lifetime would retain global FDs.

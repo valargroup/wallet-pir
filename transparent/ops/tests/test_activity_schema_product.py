@@ -156,6 +156,28 @@ class Actors(unittest.TestCase):
 
 
 class Fences(unittest.TestCase):
+    def test_source_repair_binds_failed_recipe_and_keeps_other_owner_fences(self):
+        root=Path('/fixture');identifier='transparent-schema-owner';recipe={'pinned':'original'}
+        digest=M.O.digest(recipe);recovery={'transaction':identifier,'recipe_sha256':digest}
+        record={'id':identifier,'journal_version':1,'status':'rollback-failed','recipe':recipe,'recipe_sha256':digest,'events':[{'status':'failed'}]}
+        files={str(root/schema_fence.SCHEMA_POINTER):json.dumps({'id':identifier}),str(root/(identifier+'.json')):json.dumps(record)}
+        schema_fence.schema_mutation_fence(files.get,root,recovery=recovery)
+        for changed in ({'transaction':'transparent-schema-other','recipe_sha256':digest},{'transaction':identifier,'recipe_sha256':'f'*64}):
+            with self.assertRaises(ValueError):schema_fence.schema_mutation_fence(files.get,root,recovery=changed)
+        for status in ('applying','rolling-back','committed'):
+            record['status']=status;files[str(root/(identifier+'.json'))]=json.dumps(record)
+            with self.assertRaises(ValueError):schema_fence.schema_mutation_fence(files.get,root,recovery=recovery)
+        record['status']='rollback-failed';record['events']=[{'status':'running'}];files[str(root/(identifier+'.json'))]=json.dumps(record)
+        with self.assertRaises(ValueError):schema_fence.schema_mutation_fence(files.get,root,recovery=recovery)
+        with self.assertRaises(ValueError):schema_fence.schema_mutation_fence(lambda _:None,root,recovery=recovery)
+
+    def test_repair_actor_cannot_run_forward_programs(self):
+        for action in ('capture','stage','activate','restore'):
+            req=request(action);req['recovery_source_sha']='b'*40
+            with self.assertRaisesRegex(ValueError,'forward'):D.validate(req)
+        req=request('repair-restore')
+        with self.assertRaises(ValueError):D.validate(req)
+        req['recovery_source_sha']='b'*40;D.validate(req)
     def test_unfinished_schema_blocks_other_services_and_corrupt_pointer_refuses(self):
         root=Path('/fixture');identifier='transparent-schema-owner'
         files={str(root/schema_fence.SCHEMA_POINTER):json.dumps({'id':identifier}),
@@ -314,7 +336,9 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.product.local.identity=lambda **_:None
         self.product.local.quiet=lambda _:None
         self.product.local.commands=SimpleNamespace(unit=lambda action,*units:self.events.append((action,units)))
-        self.product.local.saved=lambda:(None,{'units':{u:{'ActiveState':'active'} for u in (M.H.LOAD,M.H.SCALER)}})
+        self.product.local.saved=lambda:(None,{'units':{u:{'ActiveState':'active'} for u in (M.H.LOAD,M.H.SCALER,*M.H.AUTHORITY)}})
+        async def warm():self.events.append('restored-workers-warm')
+        self.product.wait_restored_workers=warm
         owner=self
         class Routing:
             def identity(self,**_):pass
@@ -377,6 +401,10 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.events.index('a1-restore'),self.events.index('verify-v10'))
         self.assertIn('router-restore-routing',self.events)
         self.assertIn('public-v10',self.events)
+        self.assertLess(self.events.index('local-restore'),self.events.index(('stop',M.H.WRITERS['coordinator'])))
+        self.assertLess(self.events.index(('stop',M.H.WRITERS['coordinator'])),self.events.index('a1-restore'))
+        self.assertLess(self.events.index('restored-workers-warm'),self.events.index('a1-verify-rollback-worker'))
+        self.assertLess(self.events.index('reopen-v10'),self.events.index(('start',M.H.AUTHORITY)))
 
 
 if __name__=='__main__':unittest.main()

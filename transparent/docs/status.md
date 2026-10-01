@@ -8,6 +8,18 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
+started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10
+baselines were captured, but the coordinator timed out waiting for the archive
+capture's repeated native verification. Remote owners subsequently completed and
+exited. Recovery restored v10 bytes and services, then failed warm verification:
+authority had restarted publication before workers were proved. Public origins
+remain guarded; the transaction is `rollback-failed`. The 15-minute recovery
+acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
+preserves original recipe/baseline bytes and all failures. Its focused check
+passed; source staging and actual repaired recovery are still pending. This is
+not a completed v11 deployment.
+
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its
 independent ingestion guard passed. The v11 publication then completed at
 05:14 UTC under the original PID 1876447, staged operations `6e8337fa` and frozen

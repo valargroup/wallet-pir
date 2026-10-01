@@ -20,8 +20,9 @@ MAX_COMPRESSED = 64 << 20  # v1 bound shared with the transmitted root helper.
 
 
 class SourceStage:
-    def __init__(self, inventory, out=print, target=None):
+    def __init__(self, inventory, out=print, target=None, recovery=None):
         self.inventory, self.out = inventory, out
+        self.recovery = recovery
         lock = inventory.lock
         self.target = target
         if target is None:
@@ -45,7 +46,10 @@ class SourceStage:
     def request(self, mode, source, checksum):
         if not re.fullmatch('[0-9a-f]{40}', source) or not re.fullmatch('[0-9a-f]{64}', checksum):
             raise ValueError('source bootstrap requires exact source SHA and archive SHA-256')
-        return {'mode': mode, 'source_sha': source, 'sha256': checksum, 'machine_id': self.machine}
+        request = {'mode': mode, 'source_sha': source, 'sha256': checksum, 'machine_id': self.machine}
+        if self.recovery is not None and self.target is None:
+            request['recovery'] = self.recovery
+        return request
 
     def call(self, request, archive=None):
         entry = self.inventory.hosts[self.host]
@@ -89,7 +93,7 @@ class SourceStage:
             return
         if mode == 'stage' and self.target is not None:
             with ProductionLock(self.inventory.lock) as lock:
-                lock.verify(); schema_fence.local_schema_fence()
+                lock.verify(); schema_fence.local_schema_fence(recovery=self.recovery)
                 old = os.environ.get(inherited_lock.VARIABLE)
                 os.environ[inherited_lock.VARIABLE] = ','.join(map(str,lock.descriptors()))
                 try:

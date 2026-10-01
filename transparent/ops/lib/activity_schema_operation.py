@@ -6,6 +6,7 @@ Recipes contain paths and public identities, never credentials. Run through
 ops/scripts/wallet-pir-deploy.py on the inventory's pinned coordinator.
 """
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -191,6 +192,15 @@ class Runner:
             lock.verify()
             verify_inputs(entries)
             command = dict(original)
+            repair = getattr(self, 'repair_program', None)
+            if repair is not None:
+                require(group == 'rollback', 'repair cannot change forward programs')
+                self.verify_repair_program(repair)
+                old = str(Path('/srv/transparent-activity/ops/sources')/record['recipe']['source_sha']/'ops/scripts/wallet-pir-deploy.py')
+                require(command['argv'][:2] == ['/usr/bin/python3', old] and
+                        'schema-product-phase' in command['argv'], 'repair only supports the closed product rollback')
+                command['argv'] = [command['argv'][0], repair['wrapper'], *command['argv'][2:]]
+                command['timeout'] = repair['timeouts'][command['name']]
             command['argv'] = [a.replace('{transaction}', record['id']).replace(
                 '{journal}', str(self.state_dir/(record['id']+'.json'))) for a in command['argv']]
             if group == 'rollback':
@@ -284,6 +294,41 @@ class Runner:
             if record['status'] != 'rolled-back':
                 self.recover(record, lock)
             self.out('rolled-back '+record['id'])
+            return record
+
+    def verify_repair_program(self, repair):
+        source = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
+        spec = importlib.util.spec_from_file_location('recovery_source_receipt', source/'transparent/ops/lib/activity_source_stage_host.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json')).read_text())
+        require(receipt['archive_sha256'] == repair['archive_sha256'], 'recovery source receipt changed')
+        module.verify_receipt(receipt, source, repair['source_sha'], repair['archive_sha256'])
+
+    def repair_rollback(self, identifier, expected):
+        """Retain the original recipe; substitute only a fully verified repair wrapper."""
+        self.coordinator()
+        with self.lock_factory() as lock:
+            lock.verify()
+            record = self.load(identifier)
+            require(record is not None and self.load()['id'] == identifier and
+                    record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
+                    'repair must bind the latest failed transaction')
+            schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
+            source = Path(__file__).resolve().parents[3]
+            require(source.parent == Path('/srv/transparent-activity/ops/sources') and
+                    re.fullmatch('[0-9a-f]{40}', source.name), 'repair requires an immutable staged source')
+            receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(source.name+'.json')).read_text())
+            repair = {'source_sha':source.name,'archive_sha256':receipt['archive_sha256'],
+                      'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py'),
+                      'timeouts':dict(zip(ROLLBACK,(60,140,300,100,140)))}
+            self.verify_repair_program(repair)
+            require(sum(repair['timeouts'].values()) <= sum(c['timeout'] for c in record['recipe']['rollback']),
+                    'repair cannot enlarge the approved rollback budget')
+            self.repair_program = repair
+            record.setdefault('recovery_programs', []).append(repair)
+            self.save(record)
+            self.recover(record, lock)
+            self.out('rolled-back '+identifier)
             return record
 
     def status(self, identifier=None):

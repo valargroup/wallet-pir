@@ -18,6 +18,7 @@ MAX_BYTES = 1024 * 1024 * 1024
 MAX_FILES = 65536
 EXCLUDED = {'ssh', '__pycache__'}
 HEX = re.compile(r'^[0-9a-f]{64}$')
+WORKER_ACTIVE_RECORD = '/opt/transparent-publisher/active.json'
 
 
 def require(ok, message):
@@ -142,7 +143,7 @@ def retained_identity(item):
     return {'device': info.st_dev, 'inode': info.st_ino, 'resolved': str(path.resolve())}
 
 
-def verify(root):
+def verify(root, *, repair_retained=False):
     """Validate the entire snapshot before the first restoring side effect."""
     root = safe_path(str(root))
     require(root.is_dir() and not root.is_symlink(), 'baseline directory is missing or a symlink')
@@ -176,8 +177,31 @@ def verify(root):
             if path.is_file() or path.is_symlink():
                 require(str(path.relative_to(root)) in expected, 'unexpected baseline payload')
     require(len(record['retained']) == len(plan['retained']), 'incomplete retained identities')
+    repaired = []
     for item, identity in zip(plan['retained'], record['retained']):
-        require(retained_identity(item) == identity, 'retained rollback namespace changed')
+        current = item
+        if repair_retained and not Path(item['sentinel']).exists():
+            # Only the exact worker active record copied into this complete
+            # baseline may replace a collected, older publication sentinel.
+            from wallet_pir_ops import transparent_map
+            name = WORKER_ACTIVE_RECORD
+            index = next((n for n,i in enumerate(plan['files']) if i['path']==name),None)
+            require(index is not None and record['files'][name] is not None and
+                    record['files'][name]['.']['kind']=='file', 'retained recovery lacks a captured active record')
+            active = json.loads((root/'files'/str(index)).read_text())
+            require(set(active)=={'directory','assignment','map_sha256'} and HEX.fullmatch(active['map_sha256']),
+                    'retained recovery active identity is invalid')
+            directory = safe_path(active['directory']);sentinel=directory/'shards.json'
+            require(Path(item['path']).resolve() in directory.resolve().parents and sentinel.is_file() and
+                    not sentinel.is_symlink() and sentinel.stat().st_size<=256*1024,
+                    'captured active publication is not retained')
+            require(transparent_map.served_sha256(json.loads(sentinel.read_text()))==active['map_sha256'],
+                    'captured active publication protocol identity changed')
+            current = dict(item,sentinel=str(sentinel),sha256=checksum(sentinel))
+            repaired.append({'original':item,'captured_active':current,'active_record_sha256':checksum(root/'files'/str(index))})
+        require(retained_identity(current) == identity, 'retained rollback namespace changed')
+    if repaired:
+        record['retention_recovery'] = repaired
     return record
 
 
@@ -233,7 +257,35 @@ def capture(root, plan):
     return verify(root)
 
 
-def restore(root, include=None):
+def reconcile_displacements(root, include, token, *, repair_retained=False):
+    """Explicit failed-recovery acknowledgement; preserve every prior displacement."""
+    record = verify(root,repair_retained=repair_retained)
+    require(isinstance(token, str) and __import__('re').fullmatch('[a-z0-9-]{1,64}', token), 'invalid recovery reconciliation identity')
+    root = Path(root)
+    log = root.with_name(root.name+'.repair-'+token+'.json')
+    require(not log.exists(), 'recovery reconciliation intent already exists; inspect it before retrying')
+    moves = []
+    for item in record['plan']['files']:
+        if item['path'] not in include:
+            continue
+        target = Path(item['path'])
+        temporary = target.with_name(target.name+'.schema-restore-next')
+        require(not temporary.exists() and not temporary.is_symlink(), 'unfinished temporary restore requires separate reconciliation')
+        displaced = target.with_name(target.name+'.schema-displaced-'+record['plan_sha256'][:12])
+        if displaced.exists() or displaced.is_symlink():
+            retained = displaced.with_name(displaced.name+'.repair-'+token)
+            require(not retained.exists() and not retained.is_symlink(), 'recovery displacement destination exists')
+            moves.append({'source':str(displaced),'retained':str(retained),'identity':entries(displaced)})
+    proof=record.get('retention_recovery',[])
+    atomic(log, json.dumps({'status':'intent','moves':moves,'retention_recovery':proof},sort_keys=True).encode())
+    for move in moves:
+        require(entries(Path(move['source'])) == move['identity'], 'recovery displacement changed after intent')
+        os.rename(move['source'], move['retained'])
+        sync_dir(Path(move['retained']).parent)
+    atomic(log, json.dumps({'status':'complete','moves':moves,'retention_recovery':proof},sort_keys=True).encode())
+
+
+def restore(root, include=None, *, repair_retained=False):
     """Restore only reviewed targets; retain displaced candidate state for audit.
 
     Routing files are deliberately restored separately by reopen-v10, after its
@@ -241,7 +293,7 @@ def restore(root, include=None):
     Repeating a restore compares matching bytes and is safe after a partial run.
     """
     root = Path(root)
-    record = verify(root)
+    record = verify(root,repair_retained=repair_retained)
     allowed = {item['path'] for item in record['plan']['files']}
     require(include is None or set(include) <= allowed, 'restore targets were not captured')
     for index, item in enumerate(record['plan']['files']):

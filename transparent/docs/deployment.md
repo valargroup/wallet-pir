@@ -1229,3 +1229,27 @@ use a new request/attempt; never weaken native shard discovery or bypass it.
 The generic `shard-control --help` staging check returns a JSON EOF error because
 this executable uses stdin JSON and a socket argument; retain that failed check.
 Its actual read-only status protocol must be checked before service cutover.
+
+### Failed-transaction source repair
+
+For an interrupted or failed rollback, immutable source staging may bind
+`--recovery-transaction` and `--recovery-recipe-sha256` to the exact latest failed
+journal. This exception stages source only; running phases, different recipes,
+remote unfinished owners and unfinished input owners still refuse. Run ordinary
+source plan/preflight before stage, preserving every earlier source receipt.
+
+`schema-repair-rollback --transaction ID --expect-recipe-sha256 SHA` retains the
+original recipe and input hashes and records a separately verified repair source
+receipt. It substitutes only the closed rollback wrapper, never a forward
+program, and retains the original 740-second total budget. It quiesces restored
+authority before restoring workers, permits bounded cold-cache warming before
+exact identity/recovery proof, and resumes authority after guarded reopening.
+
+Explicit repair preserves prior restore displacements on their original
+filesystem with private intent/completion receipts; temporary interrupted restore
+files refuse. If a publisher collected an older retention sentinel, the only
+accepted replacement is the protocol map named by the independently copied
+worker active record in the complete baseline, with unchanged retained namespace
+identity. Missing or changed active publication bytes refuse. Original baseline
+receipts are never rewritten. Repair startup and focused tests are not live
+recovery acceptance.

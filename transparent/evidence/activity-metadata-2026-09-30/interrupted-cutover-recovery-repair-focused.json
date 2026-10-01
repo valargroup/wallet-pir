@@ -1,0 +1,38 @@
+{
+  "status": "source-and-focused-check-passed",
+  "scope": "Recovery repair implementation. Live repair not yet executed; original cutover and recovery failed acceptance.",
+  "base_source_sha": "8ee467779465223692606a8a9a6a45b7a2b5f61f",
+  "focused_owner": "8f77b0402d144f3bada9b829827bc6cf",
+  "seconds": 21.237022208981216,
+  "implementation_sha256": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "603dc5d5c037ab0382a7ea8ec2c2b3f0e908cde96fc59ccb67d1bd7de9511209",
+    "ops/lib/wallet_pir_ops/schema_fence.py": "d0751a064afe017f83fcf6c2251fe36c22eb8a4d5e390c935da852da265543be",
+    "transparent/ops/lib/activity_schema_baseline.py": "994f26ab64df05cfc2fb0c82515911e02605b93862392dba1306125068d7ccc4",
+    "transparent/ops/lib/activity_schema_dispatch.py": "4337198928792b990f2761cd03ac8f31ecf002d4d7b29ada850fe90d9a236daa",
+    "transparent/ops/lib/activity_schema_host.py": "6f36a87bf4c253e9d70805fee4053c2c980865f8e6008bf0000a68cb4e66ff3d",
+    "transparent/ops/lib/activity_schema_operation.py": "f7ba69da3221dcd29aa5e53ebd3ffaf849acbf057491544dd0f7286c780f34a4",
+    "transparent/ops/lib/activity_schema_product.py": "6b6a5fa707dfd29a09966bea9f9322a16f06e325325e935f6ce8efe15e1b342c",
+    "transparent/ops/lib/activity_source_stage.py": "12832a353b2f4ebd84f80623f291996be81521b388d72f4cca945ef311316f0e",
+    "transparent/ops/lib/activity_source_stage_host.py": "6fa4a29328ba9d7e7a01ecfeab77572d8306f3b9b88d0bb73b56a5d4045619f1",
+    "transparent/ops/tests/test_activity_input_stage.py": "7a5f4c05bf73995130671e50e60b68401a5d7798ba73bcf5df98f70557e4e29c",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "d865ec217e2c9c42d670445eeca5a8a719eab4b61389c615f0a488724f63a5fc",
+    "transparent/ops/tests/test_activity_schema_product.py": "ab7d1dff87565990bb2a6179451211ab9f0efe56e07a41334fbf100b0a4dd1c8"
+  },
+  "transaction": "transparent-schema-20261001T112410Z-15d5de8189d2-c99edc",
+  "recipe_sha256": "15d5de8189d241fe41523b274deb5fe5e8de827929bfb483b51fbaddf316d276",
+  "live_status": "rollback-failed; public origins guarded",
+  "failures_retained": [
+    "archive capture exceeded original 90 second SSH budget; remote capture subsequently completed",
+    "old authority restarted preparation before rollback warm proof",
+    "archive cold-cache warm exceeded actor sixty second check",
+    "original retained publication sentinel collected after authority restart",
+    "15 minute recovery acceptance missed",
+    "first focused repair check fixture omitted new recovery attribute; final check passed"
+  ],
+  "native_inputs_unchanged": true,
+  "limitations": [
+    "New source must be staged through checksum-bound failed-transaction-only wrapper path",
+    "Repair must preserve original recipe and validate old plus new source receipts",
+    "All final live v11 qualification remains open"
+  ]
+}

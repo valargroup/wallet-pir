@@ -57,6 +57,33 @@ class BaselineTests(unittest.TestCase):
     def capture(self):
         return B.capture(self.backup, self.plan)
 
+    def test_explicit_repair_preserves_both_prior_and_new_displaced_state(self):
+        record=self.capture();self.file.write_text('first candidate')
+        B.restore(self.backup);self.file.write_text('restarted old writer state')
+        with self.assertRaisesRegex(ValueError,'reconciliation'):B.restore(self.backup)
+        B.reconcile_displacements(self.backup,[str(self.file)],'repair-1')
+        B.restore(self.backup)
+        self.assertEqual(self.file.read_text(),'v10')
+        displaced=self.file.with_name(self.file.name+'.schema-displaced-'+record['plan_sha256'][:12])
+        self.assertEqual(displaced.read_text(),'restarted old writer state')
+        self.assertEqual(displaced.with_name(displaced.name+'.repair-repair-1').read_text(),'first candidate')
+        B.verify(self.backup)
+        with self.assertRaisesRegex(ValueError,'intent'):B.reconcile_displacements(self.backup,[str(self.file)],'repair-1')
+
+    def test_collected_sentinel_repair_requires_the_captured_active_protocol_map(self):
+        from wallet_pir_ops import transparent_map
+        mapping={'genesis_hash':'a'*64,'network':'Main','profile':'fixture','range_envelope_version':1,'start_height':0,'seal':{},'shards':[]}
+        digest=transparent_map.served_sha256(mapping);directory=self.retained/digest;directory.mkdir()
+        sentinel=directory/'shards.json';sentinel.write_text(json.dumps(mapping))
+        self.file.write_text(json.dumps({'directory':str(directory),'assignment':str(directory/'assignment.json'),'map_sha256':digest}))
+        with patch.object(B,'WORKER_ACTIVE_RECORD',str(self.file)):
+            self.capture();(self.retained/'shards.json').unlink()
+            with self.assertRaises(ValueError):B.verify(self.backup)
+            record=B.verify(self.backup,repair_retained=True)
+            self.assertEqual(record['retention_recovery'][0]['captured_active']['sentinel'],str(sentinel))
+            mapping['start_height']=1;sentinel.write_text(json.dumps(mapping))
+            with self.assertRaisesRegex(ValueError,'protocol identity'):B.verify(self.backup,repair_retained=True)
+
     def test_publication_control_records_restore_without_copying_retained_tables(self):
         active=self.retained/'active.json';active.write_text('v10 active')
         self.plan['files'].append({'path':str(active),'required':True})

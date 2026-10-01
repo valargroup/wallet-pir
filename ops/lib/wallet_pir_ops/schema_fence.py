@@ -6,6 +6,7 @@ once their coordinator has died. Only schema recovery may use an unfinished ID.
 The module is stdlib-only so source bootstrap can carry the exact same check.
 """
 import json
+import hashlib
 from pathlib import Path
 import re
 
@@ -15,7 +16,7 @@ HOST_ACTIONS = Path('/srv/transparent-activity/ops/host-actions')
 INPUT_STAGING = Path('/srv/transparent-activity/ops/input-staging')
 
 
-def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None):
+def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None, recovery=None):
     raw = read(str(Path(state)/SCHEMA_POINTER))
     if raw is not None:
         pointer = json.loads(raw)
@@ -26,9 +27,20 @@ def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None):
         if raw is None:
             raise ValueError('missing schema ownership record; reconcile before mutation')
         record = json.loads(raw)
+        recovering = (isinstance(recovery, dict) and set(recovery) == {'transaction', 'recipe_sha256'} and
+                      recovery['transaction'] == identifier and
+                      record.get('recipe_sha256') == recovery['recipe_sha256'] and
+                      isinstance(record.get('recipe'), dict) and
+                      hashlib.sha256(json.dumps(record['recipe'], sort_keys=True, separators=(',', ':')).encode()).hexdigest() == recovery['recipe_sha256'] and
+                      record.get('status') in ('interrupted', 'rollback-failed') and
+                      not any(e.get('status') == 'running' for e in record.get('events', [])))
+        if recovery is not None and not recovering:
+            raise ValueError('recovery source request differs from the failed transaction')
         if (record.get('journal_version') != 1 or record.get('id') != identifier or
-                record.get('status') not in ('committed', 'rolled-back')):
+                record.get('status') not in ('committed', 'rolled-back') and not recovering):
             raise ValueError('unfinished schema transaction; reconcile its remote owners and recover before mutation')
+    elif recovery is not None:
+        raise ValueError('recovery source staging requires an existing transaction')
     raw = read(str(HOST_ACTIONS/'latest.json'))
     if raw is not None:
         pointer = json.loads(raw)
@@ -56,7 +68,7 @@ def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None):
             raise ValueError('unfinished input staging owner; reconcile before mutation')
 
 
-def local_schema_fence(state=SCHEMA_STATE, *, skip_input=None):
+def local_schema_fence(state=SCHEMA_STATE, *, skip_input=None, recovery=None):
     def read(path):
         target = Path(path)
         if target.is_symlink():
@@ -66,4 +78,4 @@ def local_schema_fence(state=SCHEMA_STATE, *, skip_input=None):
         if target.stat().st_size > 1024*1024:
             raise ValueError('schema ownership record exceeds bound')
         return target.read_text()
-    schema_mutation_fence(read, state, skip_input=skip_input)
+    schema_mutation_fence(read, state, skip_input=skip_input, recovery=recovery)

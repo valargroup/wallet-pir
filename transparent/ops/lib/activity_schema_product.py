@@ -10,6 +10,7 @@ import asyncio
 import base64
 import hashlib
 import importlib.util
+import time
 from pathlib import Path
 
 from wallet_pir_ops import inherited_lock
@@ -117,7 +118,9 @@ class Product:
     def remote(self, entry, action, attempt):
         request = {'version':1, 'request_id':str(attempt)+'-'+action, 'action':action,
                    'plan':entry['plan'], 'plan_sha256':D.digest(entry['plan'])}
-        return self.dispatch.call(entry['host'], request, timeout=330 if action in ('preflight','stage') else 90)
+        if getattr(self,'recovery_program',None) is not None:
+            request['recovery_source_sha'] = self.recovery_program['source_sha']
+        return self.dispatch.call(entry['host'], request, timeout=330 if action in ('preflight','stage','capture') else 90)
 
     async def all_workers(self, action, attempt):
         # Distinct pinned hosts own distinct locks/results. Always join every
@@ -128,6 +131,24 @@ class Product:
         failure = next((r for r in replies if isinstance(r, BaseException)), None)
         if failure: raise failure
         return replies
+
+    async def wait_restored_workers(self):
+        """Cold old caches may outlive the actor's short final identity check."""
+        assignment = H.load(checked(self.spec['assignment']))
+        targets = {row['id']:row['upstream'] for row in assignment['workers']}
+        deadline = time.monotonic()+250
+        pending = {e['plan']['worker']['id'] for e in self.workers}
+        while pending:
+            for name in list(pending):
+                try:
+                    ready = await asyncio.to_thread(R.read_json, targets[name].rstrip('/')+'/v1/ready')
+                except (OSError, ValueError):
+                    ready = {}
+                if ready.get('ready') is True and ready.get('mode') == 'warm':
+                    pending.remove(name)
+            H.require(time.monotonic() < deadline or not pending, 'restored worker warm deadline exceeded')
+            if pending:
+                await asyncio.sleep(2)
 
     def inputs(self):
         source=self.spec['source_sha']
@@ -333,7 +354,11 @@ class Product:
 
     async def phase(self, transaction, phase, journal):
         record = self.owned(transaction, phase, journal)
+        if record.get('recovery_programs'):
+            self.recovery_program = record['recovery_programs'][-1]
         self.bound(transaction)
+        if getattr(self,'recovery_program',None):
+            self.local.repair_retained = True
         self.local.identity(mutation=True)
         self.routing.identity(mutate=True)
         # Rollback must retain and verify operation code even if native
@@ -368,21 +393,29 @@ class Product:
             await self.routing.reopen('v11')
             self.local.commands.unit('start', H.SCALER, H.LOAD)
         elif phase == 'withdraw-origins':
-            self.local.commands.unit('stop', H.SCALER, H.LOAD, *H.AUTHORITY)
+            self.local.commands.unit('stop', *H.WRITERS['coordinator'])
             self.local.quiet(H.WRITERS['coordinator'])
             await self.routing.withdraw('v11' if (H.ROOT/'v11/fleet.json').exists() else 'v10')
         elif phase == 'restore-v10':
             # Captured-but-untouched hosts still have a full baseline. A host
             # without a complete capture refuses rather than guessing state.
-            await self.all_workers('restore', attempt)
-            self.local.restore()
+            repair = getattr(self,'recovery_program',None)
+            self.local.restore(**({'repair_token':str(attempt)+'-repair-restore'} if repair else {}))
+            # Restored authority units must not prepare or activate publications
+            # while worker recovery is bound to the captured exact assignment.
+            self.local.commands.unit('stop', *H.WRITERS['coordinator'])
+            self.local.quiet(H.WRITERS['coordinator'])
+            await self.all_workers('repair-restore' if repair else 'restore', attempt)
+            self.local.commands.unit('start', H.FILTER)
         elif phase == 'verify-rollback':
+            await self.wait_restored_workers()
             await self.all_workers('verify-rollback-worker', attempt)
             await self.routing.route_private('v10')
             await self.routing.verify('v10')
         elif phase == 'reopen-v10':
             await self.routing.reopen('v10', restore_router=lambda:self.remote(self.router, 'restore-routing', attempt))
             _, state = self.local.saved()
+            self.local.commands.unit('start', *[u for u in H.AUTHORITY if state['units'][u]['ActiveState']=='active'])
             # The predecessor load tree and scaler were never overwritten.
             self.local.commands.unit('start', *[u for u in (H.LOAD,H.SCALER) if state['units'][u]['ActiveState']=='active'])
         elif phase == 'verify-service':

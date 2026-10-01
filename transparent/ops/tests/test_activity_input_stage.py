@@ -224,6 +224,7 @@ class Inputs(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('input_source_target',M.HERE/'activity_source_stage.py')
         source=importlib.util.module_from_spec(spec);spec.loader.exec_module(source)
         client=object.__new__(source.SourceStage)
+        client.recovery=None
         client.target='worker';client.host='worker';client.machine='c'*32;client.out=lambda _:None
         client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32},hosts={'worker':{}},ssh={'mode':'config'})
         client.executor=SimpleNamespace(transport=lambda host:['ssh','worker'])

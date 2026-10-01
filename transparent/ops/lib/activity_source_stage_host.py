@@ -217,7 +217,8 @@ def stage(request, lock, incoming, root=STAGE_ROOT):
 def main():
     request = json.loads(sys.argv[1])
     try:
-        require(set(request) == {'mode', 'source_sha', 'sha256', 'machine_id'}, 'invalid source stage request')
+        require(set(request) in ({'mode', 'source_sha', 'sha256', 'machine_id'},
+                                {'mode', 'source_sha', 'sha256', 'machine_id', 'recovery'}), 'invalid source stage request')
         require(request['mode'] in ('preflight', 'stage', 'status'), 'invalid source stage mode')
         import re
         for field, size in [('source_sha', 40), ('sha256', 64), ('machine_id', 32)]:
@@ -228,12 +229,14 @@ def main():
         lock = PinnedHostLock(config, path=LOCK_PATH)
         if request['mode'] == 'stage':
             with lock:
-                local_schema_fence()  # Exact shared source is prefixed by the wrapper.
+                local_schema_fence(recovery=request.get('recovery'))  # Only checksum-bound failed-transaction source repair.
                 result = stage(request, lock, sys.stdin.buffer)
         else:
             require(os.geteuid() == 0 and lock.MACHINE_ID.read_text().strip() == request['machine_id'],
                     'source staging is not on the pinned root coordinator')
             # Read-only preflight/status must not even create a lock file.
+            if request.get('recovery') is not None:
+                local_schema_fence(recovery=request['recovery'])
             result = stage(request, PinnedHostLock(None), sys.stdin.buffer)
         print(json.dumps({'ok': True, 'result': result}))
     except Exception as error:

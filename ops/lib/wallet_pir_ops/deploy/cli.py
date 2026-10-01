@@ -158,6 +158,8 @@ def parser():
         command.add_argument('--source-sha', required=True)
         command.add_argument('--sha256', required=True)
         command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
+        command.add_argument('--recovery-transaction', help='inert source repair for this failed transaction only')
+        command.add_argument('--recovery-recipe-sha256')
         if name != 'status':
             command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
@@ -168,6 +170,9 @@ def parser():
     for name in ('schema-rollback', 'schema-status'):
         command = commands.add_parser(name)
         command.add_argument('--transaction')
+    command = commands.add_parser('schema-repair-rollback', help='reviewed source repair of a failed product rollback')
+    command.add_argument('--transaction', required=True)
+    command.add_argument('--expect-recipe-sha256', required=True)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -314,7 +319,11 @@ def main(argv=None, executor=None, out=print, **options):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             inventory = descriptors.load_inventory(args.inventory)
-            module.SourceStage(inventory, out, target=args.host).run(args.command.removeprefix('schema-source-'),
+            if bool(args.recovery_transaction) != bool(args.recovery_recipe_sha256):
+                raise ValueError('recovery source staging needs both transaction and recipe identity')
+            recovery = ({'transaction':args.recovery_transaction,'recipe_sha256':args.recovery_recipe_sha256}
+                        if args.recovery_transaction else None)
+            module.SourceStage(inventory, out, target=args.host, recovery=recovery).run(args.command.removeprefix('schema-source-'),
                 args.source_sha, args.sha256, getattr(args, 'archive', None))
             return 0
         if args.command.startswith('schema-'):
@@ -328,6 +337,8 @@ def main(argv=None, executor=None, out=print, **options):
                 runner.status(args.transaction)
             elif args.command == 'schema-rollback':
                 runner.rollback(args.transaction)
+            elif args.command == 'schema-repair-rollback':
+                runner.repair_rollback(args.transaction, args.expect_recipe_sha256)
             else:
                 recipe = module.load_recipe(args.recipe)
                 if args.command == 'schema-plan':

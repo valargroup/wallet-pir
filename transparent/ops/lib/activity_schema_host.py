@@ -403,7 +403,7 @@ class Host:
         return receipt['plan_sha256']
 
     def saved(self):
-        record = B.verify(self.root)
+        record = B.verify(self.root,repair_retained=getattr(self,'repair_retained',False))
         state_path = self.root.with_suffix('.units.json')
         require(state_path.is_file() and not state_path.is_symlink() and state_path.stat().st_uid == os.geteuid() and
                 state_path.stat().st_mode & 0o077 == 0, 'baseline unit state must be a private owned file')
@@ -458,14 +458,16 @@ class Host:
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
 
-    def restore(self):
+    def restore(self, *, repair_token=None):
         self.withdrawn()
         _, state = self.saved()  # Validate all rollback bytes before stopping.
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)
         include = [i['path'] for i in self.plan['baseline']['files'] if not deferred(self.role, i['path'])]
-        B.restore(self.root, include)
+        if repair_token is not None:
+            B.reconcile_displacements(self.root, include, repair_token,repair_retained=getattr(self,'repair_retained',False))
+        B.restore(self.root, include,repair_retained=getattr(self,'repair_retained',False))
         if self.role == 'coordinator':
             # Restoring the old fleet state may restore maintenance=false. Fence
             # controller/reconciler route retries before restarting either one.
