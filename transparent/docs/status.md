@@ -20,7 +20,9 @@ preserves original recipe/baseline bytes and all failures. Its focused check
 passed. The repair source was staged on all five hosts, but its first actual
 rollback refused at the CLI source identity check before service effects. The
 [entrypoint correction](../evidence/activity-metadata-2026-09-30/repair-entrypoint-focused.json)
-passed focused checks; actual repaired recovery remains pending. This is
+passed focused checks. Its actual retry also refused at routing source identity
+before service effects; the [routing repair binding](../evidence/activity-metadata-2026-09-30/repair-routing-focused.json)
+passed focused checks. Actual repaired recovery remains pending. This is
 not a completed v11 deployment.
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its

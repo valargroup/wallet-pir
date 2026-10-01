@@ -19,6 +19,27 @@ SPEC.loader.exec_module(M)
 BINARY = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
 
 
+class RepairIdentity(unittest.TestCase):
+    def test_repair_routing_requires_owning_journal_and_checksum_bound_source(self):
+        p=object.__new__(M.Routing);p.plan={'source_sha':'a'*40,'transaction':'tx'}
+        p.root=Path('/srv/transparent-activity/ops/schema/tx/routing')
+        source=Path('/srv/transparent-activity/ops/sources')/('b'*40)
+        repair={'source_sha':'b'*40,'archive_sha256':'c'*64,'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py')}
+        p.recovery_program=repair
+        record={'status':'rolling-back','id':'tx','recipe':{'source_sha':'a'*40},'recovery_programs':[repair],
+                'events':[{'group':'rollback','status':'running'}]}
+        from types import SimpleNamespace
+        seen=[]
+        stage=SimpleNamespace(verify_receipt=lambda *args:seen.append(args))
+        with patch.object(M.inherited_lock,'descriptors'),patch.object(M.H,'load',side_effect=lambda path:
+                record if str(path).endswith('/tx.json') else {'archive_sha256':'c'*64}),patch.object(M,'module',return_value=stage):
+            p.source_identity(source);self.assertEqual(len(seen),1)
+            record['status']='applying'
+            with self.assertRaisesRegex(ValueError,'rollback repair intent'):p.source_identity(source)
+            record['status']='rolling-back';repair['wrapper']='wrong'
+            with self.assertRaisesRegex(ValueError,'source differs'):p.source_identity(source)
+
+
 class Fleet:
     def __init__(self, root, mapping):
         self.root=root

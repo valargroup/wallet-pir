@@ -135,10 +135,31 @@ class Routing:
 
     def identity(self, mutate=False):
         require(os.geteuid() == 0 and Path('/etc/machine-id').read_text().strip() == self.plan['machine_id'], 'routing requires pinned root coordinator')
-        require(Path(__file__).resolve().parents[3] == Path('/srv/transparent-activity/ops/sources')/self.plan['source_sha'],
-                'routing requires the immutable reviewed operations source')
+        self.source_identity(Path(__file__).resolve().parents[3])
         if mutate:
             inherited_lock.descriptors(required=True, path=H.LOCK)
+
+    def source_identity(self, source):
+        original = Path('/srv/transparent-activity/ops/sources')/self.plan['source_sha']
+        if source == original:
+            return
+        inherited_lock.descriptors(required=True, path=H.LOCK)
+        repair = getattr(self, 'recovery_program', None)
+        record = H.load(self.root.parent.with_suffix('.json'))
+        require(repair is not None and record.get('status') == 'rolling-back' and
+                record.get('id') == self.plan['transaction'] and
+                record.get('recipe', {}).get('source_sha') == self.plan['source_sha'] and
+                record.get('recovery_programs', [])[-1:] == [repair] and
+                record.get('events') and record['events'][-1].get('group') == 'rollback' and
+                record['events'][-1].get('status') == 'running',
+                'routing requires current rollback repair intent')
+        expected = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
+        require(source == expected and repair['wrapper'] == str(expected/'ops/scripts/wallet-pir-deploy.py'),
+                'routing repair source differs')
+        receipt = H.load(Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json'))
+        require(receipt['archive_sha256'] == repair['archive_sha256'], 'routing repair receipt differs')
+        stage = module('routing_repair_source', HERE/'lib/activity_source_stage_host.py')
+        stage.verify_receipt(receipt, source, repair['source_sha'], repair['archive_sha256'])
 
     @staticmethod
     def direct_fleet(path, read_only=False):

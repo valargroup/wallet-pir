@@ -113,6 +113,8 @@ class Product:
         self.workers = [e for e in self.hosts if e['plan']['role'] == 'worker']
         self.local = self.host_factory(self.coordinator['plan'])
         self.routing = self.routing_factory(T.bind(self.spec['routing'], 'routing', transaction))
+        if getattr(self, 'recovery_program', None) is not None:
+            self.routing.recovery_program = self.recovery_program
         self.root = STATE/transaction/'product'
 
     def remote(self, entry, action, attempt):
