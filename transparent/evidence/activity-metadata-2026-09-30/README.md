@@ -163,3 +163,10 @@ The original whole-tree archive was retained locally without transfer.
 64 MiB guard before client hashing/SSH and adds PID capture to future receipts;
 31 combined tests passed. Canonical service remains v10 and no schema transaction
 has been applied.
+
+[Affected-check routing follow-up](affected-routing-followup.json) records a
+red/green regression: `parent` inside the product name `transparent` wrongly
+narrowed generic operation checks to parent filters. A delimited-token match
+restores deployment/publication consumer coverage and retains narrow parent
+checks. The direct schema/staging and shared deployment tests remain independently
+recorded; earlier affected checks alone did not cover every operation consumer.

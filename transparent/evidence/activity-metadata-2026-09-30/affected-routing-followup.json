@@ -1,0 +1,30 @@
+{
+  "observed_utc": "2026-10-01T00:43:17.501979+00:00",
+  "base_sha": "f43a03e1052f9b95961b1ed336be387d845c9303",
+  "inputs": {
+    "tools/ci/fast.py": "4781fc6d83a52c8d4b3862fd24c2f639e65eb93adb6d629a002f8e90b66fb75a",
+    "tools/tests/test_iteration.py": "14b8c1592396a300148c0868d7d882a7e31f67178bb83c87c91842fa451b3919"
+  },
+  "finding": "The substring parent occurs inside transparent, so generic Transparent operation changes selected parent-filter checks instead of deployment/publication consumers.",
+  "regression": {
+    "command": "python3 tools/tests/test_iteration.py PlannerTests.test_transparent_schema_helpers_are_not_misclassified_as_parent_filters",
+    "exit_before_fix": 1,
+    "exit_after_fix": 0,
+    "seconds_after_fix": 0.004
+  },
+  "fix": "Match parent or parents as a delimited path token; preserve the dedicated parent-filter route.",
+  "coverage": "Source staging, schema tests and publisher deployment select deployment/publication helpers; actual parent staging remains narrowly routed.",
+  "prior_evidence": "Direct 31 schema/staging tests and 45 shared deployment tests passed. Earlier make check-fast passing results alone did not cover every affected operation consumer.",
+  "limitations": [
+    "No production change or native binary input changed.",
+    "Comprehensive CI and complete publication/cutover remain open."
+  ],
+  "affected_check": {
+    "owner_id": "e1e7543cabe34432926072492f60d5e6",
+    "command": "make check-fast BASE=f43a03e1052f9b95961b1ed336be387d845c9303",
+    "base_sha": "f43a03e1052f9b95961b1ed336be387d845c9303",
+    "seconds": 46.98851429193746,
+    "exit": 0,
+    "accepted": "Final source inputs unchanged during check. Result metadata added afterward."
+  }
+}

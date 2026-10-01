@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tomllib
@@ -83,7 +84,7 @@ def route(path):
             targets = {'check-ops-elastic'}
         elif 'burst' in path:
             targets = {'check-ops-burst'}
-        elif 'parent' in path:
+        elif re.search(r'(?:^|[-_/])parents?(?:[-_/.]|$)', path):
             targets = {'check-ops-parents'}
         elif 'regression' in path:
             targets = {'check-ops-regression-recut', 'check-ops-regression-fixtures'}

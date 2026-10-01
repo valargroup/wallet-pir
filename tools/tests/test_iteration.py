@@ -48,6 +48,17 @@ class PlannerTests(unittest.TestCase):
         result = fast.plan(self.packages, ['ops/lib/wallet_pir_ops/control_sessions.py'])
         self.assertTrue(fast.OPS <= set(result['helpers']))
 
+    def test_transparent_schema_helpers_are_not_misclassified_as_parent_filters(self):
+        for path in ['transparent/ops/lib/activity_source_stage.py',
+                     'transparent/ops/tests/test_activity_schema_operation.py',
+                     'transparent/ops/scripts/deploy-transparent-publisher.py']:
+            result = fast.plan(self.packages, [path])
+            self.assertIn('check-ops-deploy', result['helpers'], path)
+            self.assertIn('check-ops-publication', result['helpers'], path)
+            self.assertEqual(result['packages'], [])
+        result = fast.plan(self.packages, ['transparent/ops/scripts/stage-transparent-parents.py'])
+        self.assertEqual(set(result['helpers']), {'check-ops-contracts', 'check-ops-parents'})
+
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
         result = fast.plan(self.packages, ['enhance/services/pir-apm/src/dashboard.rs'])
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
