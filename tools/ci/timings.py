@@ -63,7 +63,14 @@ def job_log(repo, job_id):
                 headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'})
             with urllib.request.build_opener(_DropAuthOnRedirect).open(request, timeout=60) as response:
                 return response.read().decode(errors='replace')
-        return subprocess.check_output(['gh', 'api', path], text=True, stderr=subprocess.DEVNULL)
+        # Colored Cargo output contains escape sequences, which newer gh refuses
+        # to print without this flag; older gh lacks the flag.
+        for flags in (['--allow-escape-sequences'], []):
+            try:
+                return subprocess.check_output(['gh', 'api', *flags, path], text=True, stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                if not flags:
+                    raise
     except (urllib.error.URLError, subprocess.CalledProcessError, OSError):
         return None
 

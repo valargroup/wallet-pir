@@ -259,6 +259,20 @@ class TimingTests(unittest.TestCase):
         redirected = handler.redirect_request(request, None, 302, 'Found', {}, 'https://storage.example/log')
         self.assertFalse(redirected.has_header('Authorization'))
 
+    def test_gh_log_fallback_allows_colored_output(self):
+        import subprocess
+        calls = []
+
+        def gh(command, **kwargs):
+            calls.append(command)
+            if '--allow-escape-sequences' in command:
+                raise subprocess.CalledProcessError(1, command)
+            return 'log'
+        with patch.dict(timings.os.environ, {}, clear=True), patch.object(timings.subprocess, 'check_output', side_effect=gh):
+            self.assertEqual(timings.job_log('org/repo', 5), 'log')
+        self.assertEqual(calls, [['gh', 'api', '--allow-escape-sequences', 'repos/org/repo/actions/jobs/5/logs'],
+                                 ['gh', 'api', 'repos/org/repo/actions/jobs/5/logs']])
+
     def test_rerun_uses_current_attempt_instead_of_original_creation(self):
         run = dict(head_sha=SHA, status='completed', run_attempt=2,
                    created_at='2026-09-14T00:00:00Z', run_started_at='2026-09-15T00:38:14Z')
