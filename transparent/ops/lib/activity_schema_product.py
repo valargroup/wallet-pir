@@ -7,6 +7,8 @@ restart-safe v11 activation state, and keeps rollback within the outer budget.
 It does not replace publication/oracle/certificate or capacity qualification.
 """
 import asyncio
+import base64
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -179,6 +181,56 @@ class Product:
         H.require(policy.get('mode') == 'observe', 'schema switch requires observe-only scaler policy')
         self.mapping, self.assignment, self.rows = mapping, assignment, rows
 
+    def verify_setups(self):
+        """Bind every installed assigned setup to its measured table certificate."""
+        self.inputs()
+        report = H.load(checked(self.spec['gates']['native-certificates']))
+        bindings = report.get('setup_bindings')
+        H.require(isinstance(bindings, list) and bindings, 'native certificates omit measured setup bindings')
+        measured = {}
+        for b in bindings:
+            key = (b['shard_id'], b['manifest_digest'], b['table'], b['segment'])
+            H.require(key not in measured and H.HEX.fullmatch(b['public_sha256']), 'duplicate/invalid measured setup binding')
+            measured[key] = b
+        expected, counts = set(), {}
+        for entry in self.mapping['shards']:
+            digest = entry['manifest_digest']
+            path = PUBLICATION/digest/'manifest.json'
+            H.require(H.checksum(path) == digest, 'setup manifest identity changed')
+            manifest = H.load(path)
+            for table, field in (('directory', 'directory_segments'), ('pages', 'page_segments')):
+                counts[(entry['shard_id'], table)] = len(manifest[field])
+                for segment, geometry in enumerate(manifest[field]):
+                    key = (entry['shard_id'], digest, table, segment)
+                    expected.add(key)
+                    b = measured.get(key)
+                    H.require(b is not None and b['table_sha256'] == geometry['sha256'] and
+                              b['geometry'] == entry['geometry'], 'certificate omits/changes a published table')
+        H.require(set(measured) == expected, 'measured setup bindings do not cover the exact publication')
+        H.require({s for row in self.rows for s in row['shards']} == {k[0] for k in expected},
+                  'setup assignment does not cover the publication')
+        proofs = []
+        for row in self.rows:
+            for key in sorted(expected):
+                shard, digest, table, segment = key
+                if shard not in row['shards']:
+                    continue
+                b = measured[key]
+                reply = self.routing.fetch('http://'+row['upstream']+'/v1/shards/'+str(shard)+
+                                           '/revisions/'+digest+'/setup/'+table+'/'+str(segment))
+                H.require(all(reply.get(k) == v for k, v in
+                              [('shard_id',shard),('manifest_digest',digest),('geometry',b['geometry']),
+                               ('table',table),('segment',segment),('segments',counts[(shard, table)]),
+                               ('public_params_sha256',b['public_sha256'])]),
+                          'installed setup identity differs from measured certificate')
+                public = base64.b64decode(reply['public_params'], validate=True)
+                H.require(hashlib.sha256(public).hexdigest() == b['public_sha256'],
+                          'installed public setup bytes disagree with measured certificate')
+                proofs.append({'worker_id':row['id'], 'shard_id':shard, 'table':table,
+                               'segment':segment, 'public_sha256':b['public_sha256']})
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        H.B.atomic(self.root/'installed-setups.json', H.encode({'status':'passed','setups':proofs}))
+
     def preflight(self):
         self.bound(T.VALIDATION_ID)
         self.local.identity()
@@ -186,6 +238,16 @@ class Product:
         for entry in self.hosts:
             H.require(self.inventory.hosts[entry['host']].get('machine_id') == entry['plan']['machine_id'], 'host inventory pin changed')
         self.inputs()
+        names = {e['plan']['worker']['id'] for e in self.workers}
+        candidate_pins = {e['plan']['worker']['id']:e['plan']['worker']['binary_sha256'] for e in self.workers}
+        for kind in ('v10', 'v11'):
+            sample = H.load(checked({'path':self.spec['routing']['recovery'][kind]['sample'],
+                                     'sha256':self.spec['routing']['recovery'][kind]['sample_sha256']}))
+            pins = sample.get('cutover_worker_pins')
+            H.require(isinstance(pins, dict) and set(pins) == names and
+                      all(isinstance(v,str) and H.HEX.fullmatch(v) for v in pins.values()),
+                      'recovery sample omits exact worker binary pins')
+            H.require(kind != 'v11' or pins == candidate_pins, 'candidate recovery pins differ from installed plan')
         self.units()
         self.local.preflight()
         for entry in [self.router, *self.workers]: self.remote(entry, 'preflight', 0)
@@ -294,6 +356,7 @@ class Product:
         elif phase == 'activate-prewarm':
             await self.all_workers('activate', attempt)
             await self.all_workers('verify-worker', attempt)
+            self.verify_setups()
             self.local.activate()
         elif phase == 'align-origins':
             await self.routing.route_private('v11')

@@ -79,12 +79,21 @@ CI. The prepared proof retains successful full CI at `801d7a62` with its actual
 head and all 12 jobs, explicitly records the current candidate CI as pending,
 and verifies unchanged native inputs. The five-host specification and complete
 740-second rollback recipe were staged. Service preflight refused before any
-baseline or maintenance because a plain Python recipe invocation wrote bytecode
-inside immutable operation sources. The deployment entry point now disables
+baseline or maintenance; its detailed error was discarded. A subsequent plain
+Python diagnostic invocation exposed bytecode writes inside immutable operation
+sources; that diagnostic failure does not establish the original failure cause. The deployment entry point now disables
 bytecode before imports; a real subprocess regression reproduces 14 cache files
 before the fix and zero afterward. The failed source is retained and a fresh
 source export is required. See the [failed preflight and correction](../evidence/activity-metadata-2026-09-30/accelerated-cutover-preflight-ccbfd35f.json).
-Canonical service remains v10; preflight, guarded deployment and all final
+A later corrected five-host preflight passed, including native verification on
+all three workers, after refreshing collected active-map sentinels and retaining
+the two recent workers' actual static assignment files. The followup now binds
+all 180 measured setup hashes and refuses authority startup until every assigned
+installed setup's bytes and identity agree, including both recent replicas.
+Recovery samples also require complete predecessor/candidate executable pins.
+The [focused evidence](../evidence/activity-metadata-2026-09-30/installed-setup-binding-focused.json)
+is source evidence; installed agreement and the rebound live recipe still need
+execution. Canonical service remains v10; guarded deployment and all final
 qualification remain open.
 
 October 1 input preparation review found and reproduced a raw-file/protocol

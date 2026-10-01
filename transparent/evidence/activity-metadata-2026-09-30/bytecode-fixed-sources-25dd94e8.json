@@ -1,0 +1,16 @@
+{
+  "status": "staged",
+  "source_sha": "25dd94e8a8fef6dfa7b7c46ab2320790235b2ebf",
+  "source_archive_sha256": "9d2c5b5581d7b7911565c2ca08084c0c6b1c2c9d46f9c02d0d869207f6193841",
+  "source_stage_owner": "b4944bd7e1df46c080995be10dbb821e",
+  "source_stage_seconds": 52.54273941705469,
+  "hosts": [
+    "coordinator",
+    "worker-1",
+    "worker-2",
+    "worker-3",
+    "router"
+  ],
+  "scope": "Fresh immutable source; no service cutover. Plain Python wrapper disables bytecode.",
+  "pending_operations_ci_user_authorized": true
+}

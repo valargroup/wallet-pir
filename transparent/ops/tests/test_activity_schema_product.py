@@ -1,5 +1,7 @@
 """Product ordering, remote ownership, interpolation and uncertain SSH failures."""
 import asyncio
+import base64
+import hashlib
 import copy
 import importlib.util
 import json
@@ -236,6 +238,71 @@ class ProductSeed(unittest.TestCase):
         self.assertEqual(list((self.publisher/'v11/state').iterdir()),[])
 
 
+class RecoveryPinPreflight(unittest.TestCase):
+    def test_missing_or_changed_candidate_pins_refuse_before_host_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);paths={kind:root/(kind+'.json') for kind in ('v10','v11')}
+            for p in paths.values():p.write_text('{}')
+            product=object.__new__(M.Product);product.bound=lambda _:None;product.inputs=lambda:None
+            effects=[];product.local=SimpleNamespace(identity=lambda:None,preflight=lambda:effects.append('host'))
+            product.coordinator={'host':'coordinator','plan':{'machine_id':'a'*32}}
+            product.workers=[{'host':'w','plan':{'worker':{'id':'w','binary_sha256':'b'*64}}}]
+            product.hosts=[product.coordinator]
+            product.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'a'*32},hosts={'coordinator':{'machine_id':'a'*32}})
+            product.spec={'routing':{'recovery':{kind:{'sample':str(path),'sample_sha256':'a'*64} for kind,path in paths.items()}}}
+            with patch.object(M,'checked',side_effect=lambda e:Path(e['path'])):
+                with self.assertRaisesRegex(ValueError,'pins'):product.preflight()
+                for p in paths.values():p.write_text(json.dumps({'cutover_worker_pins':{'w':'c'*64}}))
+                with self.assertRaisesRegex(ValueError,'candidate recovery pins'):product.preflight()
+            self.assertFalse(effects)
+
+
+class InstalledSetups(unittest.TestCase):
+    def setUp(self):
+        tmp=tempfile.TemporaryDirectory();self.addCleanup(tmp.cleanup);self.root=Path(tmp.name)
+        public=b'measured setup bytes';self.public=public;self.sha=hashlib.sha256(public).hexdigest()
+        manifest={'directory_segments':[{'sha256':'d'*64}], 'page_segments':[{'sha256':'e'*64}]}
+        raw=json.dumps(manifest).encode();self.digest=hashlib.sha256(raw).hexdigest()
+        (self.root/self.digest).mkdir();(self.root/self.digest/'manifest.json').write_bytes(raw)
+        self.bindings=[{'shard_id':0,'manifest_digest':self.digest,'geometry':'archive-wide','table':t,
+                       'segment':0,'table_sha256':h,'public_sha256':self.sha} for t,h in [('directory','d'*64),('pages','e'*64)]]
+        self.report=self.root/'report.json';self.save()
+        self.product=object.__new__(M.Product);self.product.root=self.root/'proof'
+        self.product.spec={'gates':{'native-certificates':{'path':str(self.report),'sha256':M.H.checksum(self.report)}}}
+        self.product.inputs=lambda:None;self.product.mapping={'shards':[{'shard_id':0,'manifest_digest':self.digest,'geometry':'archive-wide'}]}
+        self.product.rows=[{'id':'w1','upstream':'127.0.0.1:8080','shards':[0]}, {'id':'w2','upstream':'127.0.0.1:8081','shards':[0]}]
+        self.replies=[];self.change=lambda reply:None
+        def fetch(url):
+            self.replies.append(url);table=url.split('/')[-2]
+            reply={'shard_id':0,'manifest_digest':self.digest,'geometry':'archive-wide','table':table,
+                   'segment':0,'segments':1,'public_params_sha256':self.sha,'public_params':base64.b64encode(public).decode()}
+            self.change(reply);return reply
+        self.product.routing=SimpleNamespace(fetch=fetch)
+        patches=[patch.object(M,'PUBLICATION',self.root),patch.object(M,'checked',side_effect=lambda e:Path(e['path']))]
+        for p in patches:p.start();self.addCleanup(p.stop)
+
+    def save(self):self.report.write_text(json.dumps({'setup_bindings':self.bindings}))
+
+    def test_every_segment_on_every_assigned_replica_matches_actual_public_bytes(self):
+        self.product.verify_setups()
+        self.assertEqual(len(self.replies),4)
+        proof=json.loads((self.product.root/'installed-setups.json').read_text())
+        self.assertEqual(proof['status'],'passed');self.assertEqual(len(proof['setups']),4)
+
+    def test_missing_and_duplicate_certificate_segments_refuse_before_http(self):
+        original=copy.deepcopy(self.bindings)
+        for bindings in (original[:-1],original+[original[0]]):
+            self.bindings=bindings;self.save()
+            with self.assertRaises(ValueError):self.product.verify_setups()
+            self.assertFalse(self.replies)
+
+    def test_advertised_hash_cannot_hide_changed_bytes_or_response_scope(self):
+        for key,value in [('public_params',base64.b64encode(b'changed').decode()),('manifest_digest','f'*64),('segments',2)]:
+            self.change=lambda reply,key=key,value=value:reply.update({key:value})
+            with self.assertRaises(ValueError):self.product.verify_setups()
+            self.assertFalse((self.product.root/'installed-setups.json').exists())
+
+
 class ProductPhases(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.events=[];self.failed=None
@@ -265,6 +332,7 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.product.owned=lambda _,phase,__:{'events':[{'group':self.group}]}
         self.product.remote=lambda entry,action,attempt:self.events.append(entry['host']+'-'+action)
         self.product.seed=lambda:self.events.append('seed-complete-state')
+        self.product.verify_setups=lambda:self.events.append('measured-installed-setups')
         self.product.sandbox=lambda:self.events.append('installed-sandbox')
         self.group='steps'
         source=patch.object(M.D.S,'verify_receipt',return_value=None);source.start();self.addCleanup(source.stop)
@@ -277,9 +345,16 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.events.index('local-capture'),self.events.index('router-capture'))
         self.assertLess(self.events.index('a1-capture'),self.events.index('withdraw-v10'))
         self.assertLess(self.events.index('a1-stage'),self.events.index('seed-complete-state'))
-        self.assertLess(self.events.index('a1-verify-worker'),self.events.index('local-activate'))
+        self.assertLess(self.events.index('a1-verify-worker'),self.events.index('measured-installed-setups'))
+        self.assertLess(self.events.index('measured-installed-setups'),self.events.index('local-activate'))
         self.assertLess(self.events.index('installed-sandbox'),self.events.index('verify-v11'))
         self.assertLess(self.events.index('reopen-v11'),self.events.index(('start',(M.H.SCALER,M.H.LOAD))))
+
+    async def test_failed_setup_binding_never_starts_authority(self):
+        def fail():raise ValueError('setup certificate mismatch')
+        self.product.verify_setups=fail
+        with self.assertRaises(ValueError):await self.phase('activate-prewarm')
+        self.assertNotIn('local-activate',self.events)
 
     async def test_failed_public_recovery_never_resumes_load(self):
         self.failed='reopen'

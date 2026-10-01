@@ -812,7 +812,14 @@ captures router and warm workers before withdrawing both metadata origins.
 It stages all workers, installs the coordinator and seeds separate v11 worker
 active records, controller activation, native assignment/request/desired/active
 fleet records and `maintenance=true` before any restart. All workers must warm
-and prove identity before authority startup. The filter, controller, fleet,
+and prove identity before authority startup. The measured certificate report retains each table's exact public-setup hash.
+After every worker is warm, the coordinator reads every assigned setup on every
+replica, checks its shard/revision/table/segment/count identity, decodes its bytes
+and compares their SHA-256 with those measured bindings. Missing, duplicate or
+changed certificate coverage refuses authority startup; private receipts retain
+all comparisons. Both recovery samples must bind every worker executable, and
+candidate pins must equal the reviewed host plans before maintenance.
+The filter, controller, fleet,
 scaler and load units must refer to the reviewed v11 paths. The scaler uses an
 observe-only policy; load uses the retained fat-LTO rate client, exact worker
 pins and a fixture covering all four recent/archive directory/page groups.
