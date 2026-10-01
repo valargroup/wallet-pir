@@ -149,3 +149,47 @@ def install(product, record):
         os.chown(path, info['uid'], info['gid'])
     B.atomic(ROOT/'state/maintenance.json', b'{"enabled":true}')
     B.atomic(directory/'complete.json', json.dumps({'map_sha256':target,'status':'installed'},sort_keys=True).encode())
+
+
+def inspect_resume(product, record):
+    """Only resume proof after a complete adoption and an ordinary proof failure."""
+    require = H.require
+    adoption = record.get('v10_reconciliation')
+    require(isinstance(adoption,dict) and adoption.get('status') == 'running' and
+            record['events'][-1].get('name') == 'verify-rollback' and
+            record['events'][-1].get('status') == 'failed' and record['events'][-1].get('exit_code') == 1,
+            'resume requires an ordinary post-adoption verification failure')
+    product.bound(record['id'])
+    product.local.identity()
+    product.local.saved()
+    product.routing.check_guard()
+    root = product.root/'reconciliation-before'
+    require(root.is_dir() and not root.is_symlink() and root.stat().st_uid == os.geteuid() and
+            root.stat().st_mode & 0o077 == 0, 'resume requires private owned adoption receipts')
+    complete, intent = H.load(root/'complete.json'), H.load(root/'intent.json')
+    require(complete == {'map_sha256':adoption['plan']['map_sha256'],'status':'installed'} and
+            intent['plan'] == adoption['plan'], 'resume adoption completion differs from intent')
+    for name, entry in intent['destinations'].items():
+        path = root/name
+        require((not path.exists() if entry['previous_sha256'] is None else
+                 path.is_file() and not path.is_symlink() and H.checksum(path) == entry['previous_sha256']),
+                'resume preserved predecessor bytes changed')
+    product.routing.pins('v10')
+    fleet = product.routing.fleet('v10', read_only=True)
+    live = asyncio.run(product.routing.live('v10',fleet))
+    active, request = fleet.reconciliation_target()
+    publication = H.load(Path(request['directory'])/'shards.json')
+    retained = adoption['plan']['files']['native-active']
+    path = Path(retained['path'])
+    require(path.is_file() and not path.is_symlink() and H.checksum(path) == retained['sha256'],
+            'resume retained adoption anchor changed')
+    original = H.load(path)
+    require(publication['shards'][-1]['end_height'] >= original['height'] and
+            asyncio.run(fleet.canonical_hash(original['height'])) == original['hash'],
+            'resume lost the independently accepted adoption anchor')
+    require(H.transparent_map.served_sha256(publication) == live['map_sha256'], 'resume authority changed')
+    return {'transaction':record['id'], 'recipe_sha256':record['recipe_sha256'],
+            'adoption_plan_sha256':adoption['plan_sha256'],'map_sha256':live['map_sha256'],
+            'assignment_sha256':live['assignment_sha256'], 'workers':live['workers'],
+            'activation_sha256':H.checksum(fleet.root/'active.json'),
+            'adoption_receipt_sha256':H.checksum(root/'complete.json')}

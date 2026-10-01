@@ -27,12 +27,19 @@ def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None, recovery
         if raw is None:
             raise ValueError('missing schema ownership record; reconcile before mutation')
         record = json.loads(raw)
+        adoption = record.get('v10_reconciliation', {})
+        resumes = adoption.get('resumes', [])
+        proof_names = ['verify-rollback','reopen-v10','verify-service'] if resumes else ['withdraw-origins','restore-v10','verify-rollback','reopen-v10','verify-service']
+        proof_events = record.get('events', [])[-len(proof_names):]
+        resumed = (not resumes or isinstance(resumes[-1],dict) and
+                   resumes[-1].get('event_index') == len(record.get('events',[]))-3 and
+                   isinstance(resumes[-1].get('plan'),dict) and
+                   resumes[-1]['plan'].get('adoption_plan_sha256') == adoption.get('plan_sha256'))
         reconciled = (record.get('status') == 'reconciled-v10' and
                       record.get('v10_reconciliation', {}).get('status') == 'passed' and
-                      record.get('events') and len(record['events']) >= 5 and
-                      [e.get('name') for e in record['events'][-5:]] ==
-                      ['withdraw-origins','restore-v10','verify-rollback','reopen-v10','verify-service'] and
-                      all(e.get('group') == 'rollback' and e.get('status') == 'passed' for e in record['events'][-5:]))
+                      resumed and len(proof_events) == len(proof_names) and
+                      [e.get('name') for e in proof_events] == proof_names and
+                      all(e.get('group') == 'rollback' and e.get('status') == 'passed' for e in proof_events))
         recovering = (isinstance(recovery, dict) and set(recovery) == {'transaction', 'recipe_sha256'} and
                       recovery['transaction'] == identifier and
                       record.get('recipe_sha256') == recovery['recipe_sha256'] and

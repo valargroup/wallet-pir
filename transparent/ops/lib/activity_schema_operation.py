@@ -189,6 +189,9 @@ class Runner:
         started = time.monotonic()
         budget = sum(c['timeout'] for c in record['recipe'][group])
         for index, original in enumerate(record['recipe'][group]):
+            if index < getattr(self,'resume_at',0):
+                require(group == 'rollback', 'resume cannot skip forward phases')
+                continue
             lock.verify()
             verify_inputs(entries)
             command = dict(original)
@@ -352,7 +355,8 @@ class Runner:
                     record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
                     'reconciliation requires the latest failed original recipe')
             schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
-            require('v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
+            resume = action.startswith('resume-')
+            require(resume or 'v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
             verify_inputs(record['recipe']['rollback_inputs'])
             source = Path(__file__).resolve().parents[3]
             require(source.parent == Path('/srv/transparent-activity/ops/sources') and
@@ -375,18 +379,29 @@ class Runner:
             path, sha = argv[argv.index('--spec')+1], argv[argv.index('--spec-sha256')+1]
             require(file_hash(path) == sha, 'original product specification changed')
             product = product_module.Product(product_module.H.load(path), spec_sha256=sha)
-            plan = module('activity_schema_reconcile').inspect(product, record, target)
+            reconciliation = module('activity_schema_reconcile')
+            if resume:
+                require(record.get('v10_reconciliation',{}).get('plan_sha256') == target,
+                        'resume differs from reviewed original adoption')
+                plan = reconciliation.inspect_resume(product,record)
+            else:
+                plan = reconciliation.inspect(product, record, target)
             plan['recovery_source'] = {'source_sha':repair['source_sha'], 'archive_sha256':repair['archive_sha256']}
             self.out(json.dumps({'plan':plan,'plan_sha256':digest(plan)}, sort_keys=True))
-            if action != 'deploy':
+            if action not in ('deploy','resume-deploy'):
                 return plan
             require(plan_sha == digest(plan), 'adoption differs from reviewed preflight plan')
             self.repair_program = repair
             self.reconcile_v10 = True
             record.setdefault('recovery_programs', []).append(repair)
-            record['v10_reconciliation'] = {'status':'running','plan':plan,'plan_sha256':digest(plan),
-                    'original_outcome':record['status'], 'started':time.time()}
+            if resume:
+                self.resume_at = 2
+                record['v10_reconciliation'].setdefault('resumes',[]).append({'plan':plan,'plan_sha256':digest(plan),
+                    'started':time.time(),'event_index':len(record['events'])})
+            else:
+                record['v10_reconciliation'] = {'status':'running','plan':plan,'plan_sha256':digest(plan),
+                        'original_outcome':record['status'], 'started':time.time()}
             self.save(record)
             self.recover(record, lock)
-            self.out('reconciled at newer v10 revision '+target+'; original rollback acceptance remains failed')
+            self.out('reconciled at newer v10 revision '+plan['map_sha256']+'; original rollback acceptance remains failed')
             return record

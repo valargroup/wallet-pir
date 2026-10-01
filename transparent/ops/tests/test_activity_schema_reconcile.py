@@ -6,6 +6,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import asyncio
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -88,6 +89,22 @@ class AdoptionTests(unittest.TestCase):
             return None
         with self.assertRaisesRegex(ValueError,'unfinished schema'):
             schema_fence.schema_mutation_fence(read)
+
+    def test_resume_refuses_restore_failure_or_unknown_descendant(self):
+        for name, code in [('restore-v10',1),('verify-rollback',75)]:
+            record={'v10_reconciliation':{'status':'running'}, 'events':[{'name':name,'status':'failed','exit_code':code}]}
+            with self.assertRaisesRegex(ValueError,'ordinary post-adoption'):
+                M.inspect_resume(None,record)
+
+    def test_bare_assignment_upstreams_use_real_http_urls(self):
+        spec=importlib.util.spec_from_file_location('adopt_product',ROOT/'transparent/ops/lib/activity_schema_product.py')
+        product=importlib.util.module_from_spec(spec);spec.loader.exec_module(product)
+        fake=SimpleNamespace(spec={'assignment':{}},workers=[{'plan':{'worker':{'id':'w'}}}])
+        with patch.object(product,'checked',return_value=self.root/'unused'), \
+             patch.object(product.H,'load',return_value={'workers':[{'id':'w','upstream':'10.142.0.10:8093'}]}), \
+             patch.object(product.R,'read_json',return_value={'ready':True,'mode':'warm'}) as read:
+            asyncio.run(product.Product.wait_restored_workers(fake))
+        read.assert_called_once_with('http://10.142.0.10:8093/v1/ready')
 
 
 if __name__ == '__main__': unittest.main()

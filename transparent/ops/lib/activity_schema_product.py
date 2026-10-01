@@ -143,7 +143,7 @@ class Product:
         while pending:
             for name in list(pending):
                 try:
-                    ready = await asyncio.to_thread(R.read_json, targets[name].rstrip('/')+'/v1/ready')
+                    ready = await asyncio.to_thread(R.read_json, 'http://'+targets[name].rstrip('/')+'/v1/ready')
                 except (OSError, ValueError):
                     ready = {}
                 if ready.get('ready') is True and ready.get('mode') == 'warm':
@@ -447,10 +447,10 @@ class Product:
             await self.all_workers('repair-restore' if repair else 'restore', attempt)
             self.local.commands.unit('start', H.FILTER)
         elif phase == 'verify-rollback':
-            await self.wait_restored_workers()
-            if not record.get('v10_reconciliation'):
-                await self.all_workers('verify-rollback-worker', attempt)
             try:
+                await self.wait_restored_workers()
+                if not record.get('v10_reconciliation'):
+                    await self.all_workers('verify-rollback-worker', attempt)
                 await self.routing.route_private('v10')
                 await self.routing.verify('v10')
             except BaseException:
@@ -466,7 +466,14 @@ class Product:
             self.local.commands.unit('start', *[u for u in (H.LOAD,H.SCALER) if state['units'][u]['ActiveState']=='active'])
         elif phase == 'verify-service':
             kind = 'v10' if group == 'rollback' else 'v11'
-            await self.routing.public(kind)
+            try:
+                await self.routing.public(kind)
+            except BaseException:
+                if record.get('v10_reconciliation'):
+                    await self.routing.withdraw('v10')
+                    self.local.commands.unit('stop', *H.WRITERS['coordinator'])
+                    self.local.quiet(H.WRITERS['coordinator'])
+                raise
             self.local.quiet((H.QUALITY,))
         else:
             raise ValueError('unsupported product phase')

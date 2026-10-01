@@ -16,6 +16,16 @@ rollback and any missed recovery deadline. It does not satisfy rollback timing
 acceptance; a fresh coherent baseline and actual rollback rehearsal remain
 required before final qualification.
 
+After a completed adoption, an ordinary `verify-rollback` failure may use
+`schema-reconcile-resume-plan` / `schema-reconcile-resume-preflight` /
+`schema-reconcile-resume-deploy`. The `--map-sha256` argument binds the original
+adoption plan digest in this mode; deploy additionally binds the new preflight
+digest. Resume verifies retained adoption completion, preserved prior bytes,
+the complete current canonical predecessor fleet and the accepted adoption
+anchor. It executes only the final private proof, reopen, and public proof
+phases, without replaying restoration. Partial installation, uncertain remote
+outcomes, and failures in other phases refuse this path.
+
 ## Target configuration
 
 | Parameter | Recent | Archive |

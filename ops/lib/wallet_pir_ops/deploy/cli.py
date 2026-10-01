@@ -173,12 +173,12 @@ def parser():
     command = commands.add_parser('schema-repair-rollback', help='reviewed source repair of a failed product rollback')
     command.add_argument('--transaction', required=True)
     command.add_argument('--expect-recipe-sha256', required=True)
-    for name in ('plan','preflight','deploy'):
+    for name in ('plan','preflight','deploy','resume-plan','resume-preflight','resume-deploy'):
         command = commands.add_parser('schema-reconcile-'+name, help='recover a retained newer v10 activation after an unstaged cutover')
         command.add_argument('--transaction', required=True)
         command.add_argument('--expect-recipe-sha256', required=True)
-        command.add_argument('--map-sha256', required=True)
-        if name == 'deploy':
+        command.add_argument('--map-sha256', required=True, help='map digest, or original adoption plan digest for resume')
+        if name in ('deploy','resume-deploy'):
             command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
