@@ -166,11 +166,25 @@ class Inputs(unittest.TestCase):
         result=SimpleNamespace(stdout=(digest+'/\n'+digest+'/manifest.json\nshards.json\n').encode())
         pins={'binaries':{'transparent-shard-server':{'sha256':M.P.checksum(release/'artifacts/transparent-shard-server')}}}
         with patch.object(M.P,'OUTPUT',output),patch.object(M.P,'RELEASE',release),patch.object(M.P,'EVIDENCE',evidence), \
-             patch.object(M.P,'verify_release',return_value=pins),patch.object(M.transparent_map,'served_sha256',return_value='e'*64),patch.object(M.subprocess,'run',return_value=result):
+             patch.object(M.P,'verify_release',return_value=pins),patch.object(M,'worker_binary',side_effect=lambda name: release/'artifacts'/name), \
+             patch.dict(M.WORKER_HASHES,{name:M.P.checksum(release/'artifacts'/name) for name in ('transparent-shard-server','shard-control')},clear=True),patch.object(M.transparent_map,'served_sha256',return_value='e'*64),patch.object(M.subprocess,'run',return_value=result):
             request=M.build(inventory,'ssh-alias','b'*40,assignment,unit,'d'*64,1<<30,1,worker_id='native-worker')
         self.assertEqual(len(request['files']),8)
         self.assertIn(digest+'/page-0.bin',{f['path'] for f in request['files']})
         self.assertEqual(request['worker_id'],'native-worker')
+
+    def test_portable_worker_refuses_native_or_changed_artifacts_and_modes(self):
+        name='transparent-shard-server'; data=b'portable'; expected=hashlib.sha256(data).hexdigest()
+        with patch.object(M,'WORKER_ROOT',self.root/'portable'),patch.dict(M.WORKER_HASHES,{name:expected},clear=True):
+            path=M.WORKER_ROOT/expected/name; path.parent.mkdir(parents=True); path.write_bytes(data); path.chmod(0o755)
+            self.assertEqual(M.worker_binary(name),path)
+            path.write_bytes(b'native-avx512')
+            with self.assertRaisesRegex(ValueError,'identity/mode'):M.worker_binary(name)
+            path.write_bytes(data); path.chmod(0o700)
+            with self.assertRaisesRegex(ValueError,'identity/mode'):M.worker_binary(name)
+            path.chmod(0o755);path.unlink();path.symlink_to(self.sources/'shards.json')
+            with self.assertRaisesRegex(ValueError,'symlink'):M.worker_binary(name)
+            with self.assertRaisesRegex(ValueError,'unsupported'):M.worker_binary('publisher')
 
     def client(self):
         client=object.__new__(M.Client)
@@ -181,7 +195,8 @@ class Inputs(unittest.TestCase):
     def test_uncertain_remote_reply_keeps_coordinator_fence_until_verified_reconcile(self):
         client=self.client();owners=self.root/'client-owners'
         with patch.object(M,'OWNERS',owners),patch.object(M,'ProductionLock',return_value=self.lock), \
-             patch.object(client,'checked_sources'),patch.object(M.P,'checksum',side_effect=lambda p:next(i['sha256'] for i in self.request['files'] if i['path']=='.inputs/'+Path(p).name)), \
+             patch.object(client,'checked_sources'),patch.object(M,'worker_binary',side_effect=lambda name:self.sources/('.inputs/'+name)), \
+             patch.dict(M.WORKER_HASHES,{Path(i['path']).name:i['sha256'] for i in self.request['files'] if i['path'] in M.INPUTS},clear=True), \
              patch.object(client,'call',side_effect=[{'status':'preflight-passed'},subprocess.TimeoutExpired('ssh',1)]):
             with self.assertRaises(subprocess.TimeoutExpired):client.run('stage')
         identifier=M.digest(self.request);path=owners/(identifier+'.json')

@@ -26,7 +26,9 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [ ] Complete native correctness certificates and independent raw-chain metadata comparisons for the full publication.
 - [ ] Render reviewed live host plans, stage immutable operations/native/unit/publication inputs through the wrapper, and qualify actual SSH descendant locking.
   The new input wrapper has local streaming, interruption and reconciliation
-  tests. No worker candidate input transfer or live service transition occurred.
+  tests. The first worker copy failed native verification with SIGILL and was
+  reconciled preserving abandoned bytes. Portable CI artifacts are selected for
+  the replacement; no live service transition occurred.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency

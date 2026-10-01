@@ -26,6 +26,7 @@ def module(name, path):
 T = module('product_templates', HERE/'activity_schema_templates.py')
 D = module('product_dispatch', HERE/'activity_schema_dispatch.py')
 O = module('product_operation', HERE/'activity_schema_operation.py')
+I = module('product_inputs', HERE/'activity_input_stage.py')
 H, R = T.H, T.R
 NATIVE = '12ce12918446eaa56e2d766ec2f43d82c531abb9'
 STATE = Path('/srv/transparent-activity/ops/schema')
@@ -161,7 +162,9 @@ class Product:
         for entry in self.hosts:
             for install in entry['plan']['installs']:
                 if install['target'].startswith('/usr/local/bin/'):
-                    H.require(H.checksum(release/Path(install['target']).name) == install['sha256'], 'host native binary is not the frozen release')
+                    name = Path(install['target']).name
+                    binary = I.worker_binary(name) if entry['plan']['role'] == 'worker' and name in I.WORKER_HASHES else release/name
+                    H.require(H.checksum(binary) == install['sha256'], 'host native binary is not the selected release')
         policy = H.load(self.spec['load']['policy']['path'])
         H.require(policy.get('mode') == 'observe', 'schema switch requires observe-only scaler policy')
         self.mapping, self.assignment, self.rows = mapping, assignment, rows

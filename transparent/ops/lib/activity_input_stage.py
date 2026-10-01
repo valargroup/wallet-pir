@@ -48,6 +48,25 @@ ID = re.compile('[a-zA-Z0-9-]{1,64}')
 INPUTS = {'.inputs/transparent-shard-server':0o755, '.inputs/shard-control':0o755,
           '.inputs/transparent-shard-server.service':0o644}
 
+# Qualified main CI 36819961986; native Rust/Cargo/toolchain inputs equal the
+# retained 12ce publication tools. Select portable worker bytes explicitly:
+# the coordinator's target-cpu=native build SIGILLs on AVX2-only recent hosts.
+WORKER_COMPILED_SHA = '80c94f32d7d8cde6615226d41b9cdd7627cc774b'
+WORKER_ROOT = Path('/srv/transparent-activity/portable-workers/releases')
+WORKER_HASHES = {
+    'transparent-shard-server':'6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430',
+    'shard-control':'6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170',
+}
+
+
+def worker_binary(name):
+    require(name in WORKER_HASHES, 'unsupported portable worker executable')
+    path = WORKER_ROOT/WORKER_HASHES[name]/name
+    no_links(path)
+    require(path.is_file() and path.stat().st_mode & 0o777 == 0o755 and
+            P.checksum(path) == WORKER_HASHES[name], 'portable worker artifact identity/mode differs')
+    return path
+
 
 def require(ok, message):
     if not ok:
@@ -418,7 +437,8 @@ class Client:
                     self.checked_sources()
                     for name in ('transparent-shard-server','shard-control'):
                         item=next(i for i in self.request['files'] if i['path'] == '.inputs/'+name)
-                        require(item['sha256'] == P.checksum(P.RELEASE/'artifacts'/name), 'input binary is not frozen release')
+                        require(item['source'] == str(worker_binary(name)) and item['sha256'] == WORKER_HASHES[name],
+                                'input binary is not the qualified portable worker release')
                     OWNERS.mkdir(parents=True,exist_ok=True,mode=0o700)
                     durable.atomic_json(OWNERS/(identifier+'.request.json'),self.request,mode=0o400)
                     record={'version':1,'request_sha256':identifier,'status':'running','pid':os.getpid(),'started_unix':time.time()}
@@ -460,7 +480,7 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
     """Render exact native-assigned files after the owned full publication passes."""
     result=json.loads((P.EVIDENCE/'result.json').read_text())
     require(result['status'] == 'passed' and result['map_sha256'] == P.checksum(P.OUTPUT/'shards.json'), 'full publication is not verified complete')
-    release=P.verify_release(release_sha256)
+    P.verify_release(release_sha256)
     assignment=Path(assignment); unit=Path(unit)
     require(unit.stat().st_size <= 65536, 'worker unit exceeds bound')
     value=json.loads(assignment.read_text(),object_pairs_hook=unique)
@@ -489,15 +509,16 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
             safe(name); sources[name]=P.OUTPUT/name
         require(len(sources) <= MAX_FILES, 'native file inventory exceeds bound')
     require('assignment.json' not in sources and not any(name.startswith('.inputs/') for name in sources),'native inventory collides with staging inputs')
-    sources.update({'assignment.json':assignment,'.inputs/transparent-shard-server':P.RELEASE/'artifacts/transparent-shard-server',
-        '.inputs/shard-control':P.RELEASE/'artifacts/shard-control','.inputs/transparent-shard-server.service':unit})
+    sources.update({'assignment.json':assignment,'.inputs/transparent-shard-server':worker_binary('transparent-shard-server'),
+        '.inputs/shard-control':worker_binary('shard-control'),'.inputs/transparent-shard-server.service':unit})
     for name,path in sorted(sources.items()):
         safe(name); no_links(path)
         files.append({'source':str(path),'path':name,'size':path.stat().st_size,'sha256':P.checksum(path),'mode':INPUTS.get(name,0o600)})
     # The full retained release was verified above, including the native file
     # lister. Receiver native verification independently checks assignment scope.
-    require(release['binaries']['transparent-shard-server']['sha256'] == next(f['sha256'] for f in files if f['path'] == '.inputs/transparent-shard-server'),
-            'native worker changed during inventory')
+    for name in WORKER_HASHES:
+        require(WORKER_HASHES[name] == next(f['sha256'] for f in files if f['path'] == '.inputs/'+name),
+                'portable worker changed during inventory')
     return validate({'version':1,'source_sha':source_sha,'machine_id':inventory.hosts[host]['machine_id'],'worker_id':worker_id,
         'map_sha256':result['map_sha256'],'assignment_sha256':P.checksum(assignment),'release_result_sha256':release_sha256,
         'attempt':attempt,'cache_bytes':cache_bytes,'files':files})

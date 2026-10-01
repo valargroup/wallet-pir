@@ -304,3 +304,5 @@ privately with their raw hash. Preparation owners retain native stage PID,
 executable hash, logs and results, including failures. This evidence does not
 establish a live input bundle, service transition, independent extraction
 oracle, snapshot certificate or capacity qualification.
+
+- [Portable worker release](portable-worker-release.json): qualified CI selection after actual recent-worker SIGILL; preserved failure and remaining live gates.

@@ -1,0 +1,36 @@
+{
+  "status": "prepared",
+  "scope": "portable-worker-artifact-selection",
+  "compiled_source_sha": "80c94f32d7d8cde6615226d41b9cdd7627cc774b",
+  "native_inputs_equivalent_to": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "comprehensive_run": 36819961986,
+  "comprehensive_conclusion": "success",
+  "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "profile": "release",
+  "lto": "fat",
+  "codegen_units": 1,
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "worker_hashes": {
+    "transparent-shard-server": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430",
+    "shard-control": "6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170"
+  },
+  "archive_sha256": "e3fa6062e4e0db6d230cd3444915a2cad783ba542e570aafb518e66c2ec2170a",
+  "raw_inputs": [
+    {
+      "path": "/Users/roman/.ai-runbook/dev-ux/activity-portable-release/ci-run.json",
+      "sha256": "6a75595a579db053604894a0561df63b865ef28564a24d9184d3cb73dee2bb90"
+    },
+    {
+      "path": "/Users/roman/.ai-runbook/dev-ux/activity-portable-release/ci-build.log",
+      "sha256": "bfe7336617af1906c355bbff875783b0942d19c5716757c9176d7e87d995281c"
+    }
+  ],
+  "failed_candidate_request": "3da33b79ffd46f4196897fa4c1cdb750858534d9a1c9695ec8b93da11e0d363b",
+  "failure": "SIGILL native verification exit -4 on AVX2 recent worker; failed owner reconciled preserving abandoned bytes",
+  "limitations": [
+    "Portable workers still require actual recent-host native verification",
+    "No canonical service transition",
+    "Native full-publication certificates and raw-chain oracle remain open",
+    "All canonical sustained capacity/freshness/lifecycle gates remain open"
+  ]
+}

@@ -1117,3 +1117,25 @@ reopens its stores. Origin disagreement, router failure or public recovery
 failure withdraws both origins again. Rollback restoration writes the old
 fleet's maintenance fence before starting the restored authority; load and
 scaler stay stopped until the outer approved phases restore them.
+
+### Portable activity worker executables
+
+The full-chain journal, publication tools and reference reader retain the 12ce
+fat-LTO release identity. Worker server/control instead use the checksummed
+`transparent-publisher` bundle from successful comprehensive main CI 36819961986
+at `80c94f32d7d8cde6615226d41b9cdd7627cc774b`. Native Rust, Cargo and toolchain
+inputs match 12ce; the CPU flags explicitly select `x86-64-v3` plus `pclmulqdq`.
+The coordinator native-CPU build required instructions unavailable on the recent
+workers and failed candidate verification with SIGILL. Preserve that failed
+owner, native result and abandoned bytes after locked reconciliation.
+
+Stage the two portable executables through wrapper plan/preflight and
+`preflight --stage` into checksum-named releases under
+`/srv/transparent-activity/portable-workers`. This only prepares candidate files.
+The input builder and product preflight pin both exact executable hashes, modes
+and source paths; they refuse the coordinator-native worker bytes. Use a fresh
+input request/attempt after reconciliation. Prove native verification on an
+actual recent worker before starting the archive copy. The original release
+receipt still binds publication/assignment tools; worker file records bind the
+separately compiled portable artifacts. Never rewrite the old build receipt or
+claim that reusing CI artifacts establishes fleet or load qualification.

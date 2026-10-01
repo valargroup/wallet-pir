@@ -23,13 +23,16 @@ Last health: 81.88% available memory, 60.24% candidate disk, 22.91% chain disk a
 30.14% root disk. Native certificates and independent raw-chain comparisons
 remain open; no schema cutover occurred.
 
-Immutable worker input staging now streams a native-selected subset through
-pinned root owners and retains partial-copy/reconciliation evidence. Generic
-and schema mutations fence uncertain input owners even before a schema journal
-exists. Receiver hashes, modes, bounds and native verification precede its
-atomic candidate rename. Source exports are retained for coordinator-to-worker
-bootstrap. These are local implementation tests; no worker bytes, live unit or
-routing have been changed.
+Actual immutable input preparation produced the complete native assignment and
+reviewed units on the coordinator. The first recent-worker copy received all
+candidate bytes but native verification failed with SIGILL: the coordinator's
+native-CPU build uses instructions absent on the AVX2 recent hosts. The wrapper
+reconciled both failed owners and retained abandoned bytes. Live units and
+routing remain v10. A separately checksummed portable worker pair from successful
+comprehensive CI 36819961986 replaces candidate server/control selection; native
+source inputs match the retained publication tools. See
+[portable artifact evidence](../evidence/activity-metadata-2026-09-30/portable-worker-release.json).
+Actual recent-worker native verification is the next gate.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained
