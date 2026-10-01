@@ -290,17 +290,32 @@ TOOLS = {
     'cargo': 'cargo 1.97.1', 'os': 'ubuntu 24.04', 'libc': 'glibc 2.39', 'machine': 'x86_64',
     'native': {'cc': 'cc (Ubuntu 13.3.0) 13.3.0', 'cxx': 'c++ 13.3.0', 'clang': 'clang 18.1.3', 'protoc': 'libprotoc 3.21.12'},
 }
+PROFILE_MANIFEST = """[workspace]
+members = ["a"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+"""
 ENV = {'HOME': '/nonexistent', 'RUSTFLAGS': '-Dwarnings -C target-cpu=x86-64-v3', 'CFLAGS': '-mpclmul', 'CXXFLAGS': '-mpclmul'}
 
 
 class CacheIdentityTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
-        (self.root / '.cargo').mkdir()
+        # A checkout below a parent directory, as on runners and dev hosts.
+        self.parent = Path(self.tmp.name) / 'work'
+        self.root = self.parent / 'repo'
+        (self.root / '.cargo').mkdir(parents=True)
         (self.root / '.cargo/config.toml').write_text('[alias]\nck = ["check"]\n')
         (self.root / 'rust-toolchain.toml').write_text('[toolchain]\nchannel = "1.97.1"\n')
         (self.root / 'Cargo.lock').write_text('version = 4\n')
+        (self.root / 'Cargo.toml').write_text(PROFILE_MANIFEST)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -355,6 +370,51 @@ class CacheIdentityTests(unittest.TestCase):
         (self.root / '.cargo/config.toml').write_text('[build]\nrustflags = ["-C", "target-cpu=native"]\n')
         self.assertNotEqual(self.ids()[0], toolchain)
 
+    def test_effective_profile_definitions_change_the_full_identity(self):
+        toolchain, identity = self.ids()
+        # Workspace membership or package metadata is not a profile input.
+        (self.root / 'Cargo.toml').write_text(PROFILE_MANIFEST.replace('members = ["a"]', 'members = ["a", "b"]'))
+        self.assertEqual(self.ids(), (toolchain, identity))
+        for old, new in {'lto = false': 'lto = "fat"', 'codegen-units = 16': 'codegen-units = 1'}.items():
+            with self.subTest(change=new):
+                (self.root / 'Cargo.toml').write_text(PROFILE_MANIFEST.replace(old, new))
+                changed_toolchain, changed = self.ids()
+                self.assertNotEqual(changed, identity)
+                self.assertEqual(changed_toolchain, toolchain)
+
+    def test_consumed_cargo_config_hierarchy_and_includes_change_the_identity(self):
+        toolchain, identity = self.ids()
+        ancestor = self.parent / '.cargo'
+        ancestor.mkdir()
+        (ancestor / 'config.toml').write_text('[build]\nrustflags = ["-C", "target-cpu=x86-64-v3"]\n')
+        with_ancestor = self.ids()
+        self.assertNotEqual(with_ancestor[0], toolchain)
+        (ancestor / 'config.toml').write_text('[build]\nrustflags = ["-C", "target-cpu=native"]\n')
+        self.assertNotEqual(self.ids(), with_ancestor)
+        (ancestor / 'config.toml').unlink()
+        self.assertEqual(self.ids(), (toolchain, identity))
+        # Files named by `include` count, relative to the including file.
+        (self.root / '.cargo/config.toml').write_text('include = ["extra.toml"]\n')
+        (self.root / '.cargo/extra.toml').write_text('[profile.release-fast]\ncodegen-units = 4\n')
+        first = self.ids()
+        (self.root / '.cargo/extra.toml').write_text('[profile.release-fast]\ncodegen-units = 8\n')
+        self.assertNotEqual(self.ids()[0], first[0])
+        # CARGO_HOME configuration counts too.
+        home = Path(self.tmp.name) / 'cargo-home'
+        home.mkdir()
+        (home / 'config.toml').write_text('[target.x86_64-unknown-linux-gnu]\nlinker = "clang"\n')
+        self.assertNotEqual(self.ids(env=dict(ENV, CARGO_HOME=str(home)))[0], self.ids()[0])
+
+    def test_compiler_and_wrapper_programs_come_from_env_or_config(self):
+        programs = cargo_cache.tool_programs([{'build': {'rustc-wrapper': 'sccache'}}], {})
+        self.assertEqual(programs, {'rustc': 'rustc', 'rustc-wrapper': 'sccache', 'rustc-workspace-wrapper': None})
+        programs = cargo_cache.tool_programs([{'build': {'rustc': 'cfg-rustc'}}], {'RUSTC': '/opt/rustc'})
+        self.assertEqual(programs['rustc'], '/opt/rustc')
+        toolchain, identity = self.ids()
+        wrapped = self.ids(tools=dict(TOOLS, wrappers={'rustc-wrapper': 'sccache 0.8.1'}))
+        self.assertNotEqual(wrapped[0], toolchain)
+        self.assertNotEqual(self.ids(tools=dict(TOOLS, wrappers={'rustc-wrapper': 'sccache 0.9.0'}))[0], wrapped[0])
+
     def test_unclassified_scope_or_missing_compiler_fails_closed(self):
         with self.assertRaisesRegex(ValueError, 'unclassified'):
             self.ids(scope='everything')
@@ -367,7 +427,9 @@ class CacheIdentityTests(unittest.TestCase):
         text = json.dumps(cargo_cache.sanitized(toolchain, full))
         self.assertNotIn(secret, text)
         self.assertNotIn(str(self.root), text)
+        self.assertNotIn(self.tmp.name, text)
         self.assertIn('CARGO_BUILD_RUSTC_WRAPPER', text)
+        self.assertIn('.cargo/config.toml', text)
 
     def test_restore_status_names_the_source_and_accepts_missing_cache(self):
         status = cargo_cache.restore_status
@@ -383,25 +445,91 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertEqual(status('persistent', '', None, 'refs/heads/main', existed=False), 'persistent-new')
         self.assertEqual(status('persistent', '', None, 'refs/heads/main', existed=True), 'persistent-existing')
 
-    def test_fingerprints_classify_reused_rebuilt_and_new_units(self):
+    def test_fingerprint_inventory_compares_content_not_mtime(self):
         target = self.root / 'target'
         def unit(name, content):
             directory = target / 'release-fast/.fingerprint' / name
             directory.mkdir(parents=True, exist_ok=True)
             (directory / 'lib').write_text(content)
-        unit('serde-0123456789abcdef', 'a')
-        unit('rocksdb-0123456789abcdef', 'a')
+            return directory / 'lib'
+        serde = unit('serde-0123456789abcdef', 'a')
+        rocksdb = unit('rocksdb-0123456789abcdef', 'a')
         unit('enhance-pir-0123456789abcdef', 'a')
         before = cargo_cache.snapshot(target)
-        os.utime(target / 'release-fast/.fingerprint/enhance-pir-0123456789abcdef/lib', ns=(1, 1))
-        unit('pir-control-fedcba9876543210', 'b')
+        # Timestamp-only touch: unchanged. Content change with preserved mtime: changed.
+        os.utime(serde, ns=(1, 1))
+        stat = rocksdb.stat()
+        rocksdb.write_text('b')
+        os.utime(rocksdb, ns=(stat.st_atime_ns, stat.st_mtime_ns))
         unit('tokio-fedcba9876543210', 'b')
-        result = cargo_cache.classify(before, cargo_cache.snapshot(target), {'enhance-pir', 'pir-control'})
-        self.assertEqual(result['units'], {'restored': 3, 'reused': 2, 'rebuilt': 1, 'new': 2, 'missing_at_end': 0})
-        self.assertEqual(result['third_party'], {'rebuilt': 0, 'new': 1})
-        self.assertEqual(result['workspace_names'], {'rebuilt': ['enhance-pir'], 'new': ['pir-control']})
-        empty = cargo_cache.classify({}, {}, set())
-        self.assertEqual(empty['units']['restored'], 0)
+        result = cargo_cache.inventory(before, cargo_cache.snapshot(target))
+        self.assertEqual(result, {'restored': 3, 'present_at_end': 4, 'unchanged': 2, 'changed': 1,
+                                  'added': 1, 'missing_at_end': 0})
+
+    def test_artifacts_come_from_cargo_fresh_flags(self):
+        def message(package, fresh, target='lib', profile=None):
+            return {'reason': 'compiler-artifact', 'package_id': package, 'fresh': fresh,
+                    'target': {'name': target, 'kind': ['lib']}, 'profile': profile or {'opt_level': '3'},
+                    'features': [], 'filenames': ['/home/runner/work/target/x.rlib']}
+        serde = 'registry+https://github.com/rust-lang/crates.io-index#serde@1.0.219'
+        local = 'path+file:///home/runner/work/wallet-pir/enhance/crates/enhance-pir#0.1.0'
+        git = 'git+https://github.com/zakura-core/zakura.git?rev=af94#zakura-chain@4.0.0'
+        unit = cargo_cache.artifact_unit(message(local, False))
+        self.assertEqual((unit['package'], unit['version'], unit['source']), ('enhance-pir', '0.1.0', 'path'))
+        self.assertNotIn('/home/runner', json.dumps(unit))
+        self.assertIsNone(cargo_cache.artifact_unit({'reason': 'build-finished'}))
+        records = [dict(cargo_cache.artifact_unit(m), command=c) for c, m in [
+            ('a', message(serde, True)), ('a', message(git, False)), ('a', message(local, False)),
+            # A later command finding the same unit fresh does not hide the compile.
+            ('b', message(local, True)), ('b', message(serde, True)),
+            # Same package with another profile is a separate unit.
+            ('b', message(serde, False, profile={'opt_level': '1'}))]]
+        result = cargo_cache.artifacts(records)
+        self.assertEqual((result['commands'], result['units'], result['fresh'], result['compiled']), (2, 4, 1, 3))
+        self.assertEqual(result['third_party'], {'fresh': 1, 'compiled': 2})
+        self.assertEqual(result['workspace'], {'fresh': 0, 'compiled': 1})
+        self.assertEqual(result['compiled_workspace_packages'], ['enhance-pir'])
+        # Restored units no command needed are not counted at all.
+        self.assertEqual(cargo_cache.artifacts([])['units'], 0)
+
+    def test_stage_adds_cargo_messages_and_relays_output(self):
+        add = stage.with_messages
+        self.assertEqual(add(['cargo', 'test', '--locked', '-p', 'x', '--', '--list']),
+                         ['cargo', 'test', '--message-format=json-diagnostic-rendered-ansi', '--locked', '-p', 'x', '--', '--list'])
+        self.assertEqual(add(['cargo', 'clippy', '-p', 'x', '--', '-D', 'warnings'])[2],
+                         '--message-format=json-diagnostic-rendered-ansi')
+        for command in (['cargo', 'fmt', '--check'], ['cargo', 'metadata'], ['python3', 'x.py', 'test'],
+                        ['cargo', 'build', '--message-format=short']):
+            self.assertIsNone(add(command))
+        tools = self.root / 'bin'
+        tools.mkdir()
+        cargo = tools / 'cargo'
+        artifact = {'reason': 'compiler-artifact', 'package_id': 'registry+https://x#serde@1.0.0', 'fresh': False,
+                    'target': {'name': 'serde', 'kind': ['lib']}, 'profile': {}, 'features': []}
+        diagnostic = {'reason': 'compiler-message', 'message': {'rendered': 'warning: rendered\n'}}
+        cargo.write_text('#!/usr/bin/env python3\nimport pathlib, sys\n'
+                         f'print({json.dumps(json.dumps(artifact))})\n'
+                         f'print({json.dumps(json.dumps(diagnostic))})\n'
+                         "print('running 1 test')\n"
+                         "pathlib.Path(sys.argv[0]).with_name('args').write_text(' '.join(sys.argv[1:3]))\n")
+        cargo.chmod(0o755)
+        log = self.root / 'artifacts.jsonl'
+        output, errors = io.StringIO(), io.StringIO()
+        from contextlib import redirect_stderr
+        with patch.dict('os.environ', {'WALLET_PIR_ARTIFACT_LOG': str(log)}), \
+                redirect_stdout(output), redirect_stderr(errors):
+            stage.run([str(cargo), 'test', '--locked'], stage='compile:x')
+        self.assertIn('running 1 test', output.getvalue())
+        self.assertNotIn('compiler-artifact', output.getvalue())
+        self.assertEqual(errors.getvalue(), 'warning: rendered\n')
+        self.assertEqual((tools / 'args').read_text().split(), ['test', '--message-format=json-diagnostic-rendered-ansi'])
+        [record] = [json.loads(line) for line in log.read_text().splitlines()]
+        self.assertEqual((record['package'], record['fresh'], record['stage']), ('serde', False, 'compile:x'))
+        # Without the CI log, commands run unchanged.
+        with patch.dict('os.environ', {}, clear=False), redirect_stdout(io.StringIO()):
+            os.environ.pop('WALLET_PIR_ARTIFACT_LOG', None)
+            stage.run([str(cargo), 'test'], stage='compile:y')
+        self.assertEqual((tools / 'args').read_text().split(), ['test'])
 
     def test_nested_stages_are_counted_once(self):
         records = [{'stage': 'integration:enhance-fast', 'seconds': 10, 'exit': 0, 'id': 'a', 'parent': None},
@@ -409,8 +537,10 @@ class CacheIdentityTests(unittest.TestCase):
                    {'stage': 'tests', 'seconds': 3, 'exit': 1, 'id': 'c', 'parent': 'a'},
                    {'stage': 'lint:enhance', 'seconds': 4, 'exit': 0, 'id': 'd', 'parent': None}]
         result = cargo_cache.phases(records)
-        self.assertEqual((result['compilation_seconds'], result['execution_seconds']), (10, 3))
+        self.assertEqual((result['compile_stage_seconds'], result['execution_stage_seconds']), (10, 3))
+        self.assertIsNone(result['other_stage_seconds'])
         self.assertEqual(result['failed_stages'], ['tests'])
+        self.assertIsNone(cargo_cache.phases([])['compile_stage_seconds'])
 
     def test_stage_log_records_parentage(self):
         log = self.root / 'stages.jsonl'
