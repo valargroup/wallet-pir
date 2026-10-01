@@ -1,0 +1,93 @@
+"""Concrete adoption preserves prior bytes and refuses changed/partial inputs."""
+import importlib.util
+import json
+from pathlib import Path
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT/'ops/lib'))
+from wallet_pir_ops import schema_fence
+spec = importlib.util.spec_from_file_location('adopt', ROOT/'transparent/ops/lib/activity_schema_reconcile.py')
+M = importlib.util.module_from_spec(spec); spec.loader.exec_module(M)
+
+
+class AdoptionTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.publisher = self.root/'publisher'; (self.publisher/'state').mkdir(parents=True)
+        self.source = self.root/'displaced'; self.source.mkdir()
+        self.baseline = self.root/'baseline'; self.baseline.mkdir()
+        (self.baseline/'complete.json').write_text('independently captured')
+        self.publication = self.root/'publication'; self.publication.mkdir()
+        (self.publication/'shards.json').write_text('retained immutable map')
+        self.native = self.root/'native'; self.native.mkdir()
+        self.target = 'a'*64
+        files = {}
+        for name in ('active.json', self.target+'.request.json', self.target+'.assignment.json',
+                     self.target+'.prepared.json', self.target+'.roster.json','native-active'):
+            path = (self.native/'active.json.schema-displaced-fixture') if name == 'native-active' else self.source/name
+            path.write_bytes(('retained '+name).encode())
+            s = path.stat()
+            files[name] = {'path':str(path),'sha256':M.H.checksum(path),'mode':s.st_mode & 0o777,'uid':s.st_uid,'gid':s.st_gid}
+        self.plan = {'transaction':'fixture', 'recipe_sha256':'b'*64,'map_sha256':self.target,
+                     'baseline_sha256':M.H.checksum(self.baseline/'complete.json'), 'files':files,
+                     'publication':{'path':str(self.publication),'sha256':M.H.checksum(self.publication/'shards.json')}}
+        self.record = {'id':'fixture','recipe_sha256':'b'*64,'v10_reconciliation':{'plan':self.plan}}
+        self.product = SimpleNamespace(root=self.root/'product', local=SimpleNamespace(root=self.baseline,
+            quiet=lambda units:None, withdrawn=lambda:None, saved=lambda:None))
+        self.product.root.mkdir()
+        self.addCleanup(patch.stopall)
+        patch.object(M.H,'ROOT',self.publisher).start()
+
+    def test_exact_adoption_preserves_prior_and_uses_request_for_desired(self):
+        current = self.publisher/'state/active.json'; current.write_bytes(b'old missing map')
+        (self.publisher/'state/desired.json').write_bytes(b'pending future map')
+        M.install(self.product,self.record)
+        self.assertEqual(current.read_bytes(), (self.source/'active.json').read_bytes())
+        self.assertEqual((self.publisher/'state/desired.json').read_bytes(),
+                         (self.source/(self.target+'.request.json')).read_bytes())
+        before = self.product.root/'reconciliation-before'
+        self.assertEqual((before/'active.json').read_bytes(),b'old missing map')
+        self.assertEqual((before/'desired.json').read_bytes(),b'pending future map')
+        self.assertEqual(json.loads((before/'complete.json').read_text())['map_sha256'],self.target)
+        with self.assertRaisesRegex(ValueError,'partial adoption'):
+            M.install(self.product,self.record)
+
+    def test_changed_source_refuses_before_destination_effects(self):
+        (self.source/'active.json').write_text('changed')
+        with self.assertRaisesRegex(ValueError,'retained record changed'):
+            M.install(self.product,self.record)
+        self.assertFalse((self.product.root/'reconciliation-before').exists())
+        self.assertEqual(list((self.publisher/'state').iterdir()),[])
+
+    def test_symlink_source_refuses_even_with_same_bytes(self):
+        path=self.source/'active.json'; raw=path.read_bytes(); path.unlink()
+        other=self.source/'other'; other.write_bytes(raw); path.symlink_to(other)
+        with self.assertRaisesRegex(ValueError,'retained record changed'):
+            M.install(self.product,self.record)
+
+    def test_lost_publication_refuses_before_any_write(self):
+        (self.publication/'shards.json').unlink()
+        with self.assertRaises(FileNotFoundError): M.install(self.product,self.record)
+        self.assertFalse((self.product.root/'reconciliation-before').exists())
+
+    def test_forward_effects_disallow_adoption(self):
+        with self.assertRaisesRegex(ValueError,'unstaged cutover'):
+            M.inspect(None,{'events':[{'group':'steps','name':'stage-v11','status':'failed'}]},'a'*64)
+
+    def test_unproved_reconciled_label_does_not_release_fence(self):
+        record={'journal_version':1,'id':'transparent-schema-fixture','status':'reconciled-v10'}
+        def read(path):
+            if path.endswith(schema_fence.SCHEMA_POINTER): return json.dumps({'id':record['id']})
+            if path.endswith(record['id']+'.json'): return json.dumps(record)
+            return None
+        with self.assertRaisesRegex(ValueError,'unfinished schema'):
+            schema_fence.schema_mutation_fence(read)
+
+
+if __name__ == '__main__': unittest.main()

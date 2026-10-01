@@ -2,6 +2,20 @@
 
 Accepted target: 2026-09-07. Implement and validate through [remaining work](remaining-work.md). Live state is recorded only in [status](status.md). This supersedes the nine-small-archive-worker plan and the single-global-geometry proposals.
 
+If an unstaged cutover loses its captured publication to predecessor collection,
+`schema-reconcile-plan` and `schema-reconcile-preflight` can bind one newer,
+already warm v10 map on every original worker to the original transaction and
+recipe digest. `schema-reconcile-deploy --expect-plan-sha256 <reviewed-digest>`
+retains the displaced coordinator activation records and prior destination
+bytes, then runs guarded private HTTP, reopened SQLite, and both canonical HTTPS
+proofs before resuming predecessor load. It accepts only the original captured
+namespace and complete pinned predecessor fleet; it cannot install v11 or choose
+arbitrary source files. A partial adoption refuses replay. Successful newer
+revision recovery is recorded as `reconciled-v10`, preserving the original failed
+rollback and any missed recovery deadline. It does not satisfy rollback timing
+acceptance; a fresh coherent baseline and actual rollback rehearsal remain
+required before final qualification.
+
 ## Target configuration
 
 | Parameter | Recent | Archive |

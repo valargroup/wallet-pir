@@ -417,6 +417,25 @@ class Product:
             self.local.quiet(H.WRITERS['coordinator'])
             await self.routing.withdraw('v11' if (H.ROOT/'v11/fleet.json').exists() else 'v10')
         elif phase == 'restore-v10':
+            if record.get('v10_reconciliation'):
+                adoption = module('product_reconcile', HERE/'activity_schema_reconcile.py')
+                adoption.install(self, record)
+                _, state = self.local.saved()
+                self.local.commands.unit('start', H.FILTER,
+                    *[u for u in H.AUTHORITY if state['units'][u]['ActiveState']=='active'])
+                deadline = time.monotonic()+60
+                while True:
+                    try:
+                        mapping = self.routing.fetch('http://127.0.0.1:8094/v1/shards')
+                        H.require(mapping.get('start_height') == 0 and mapping.get('shards'), 'authority is not ready')
+                        break
+                    except (OSError, ValueError):
+                        if time.monotonic() >= deadline:
+                            self.local.commands.unit('stop', *H.WRITERS['coordinator'])
+                            self.local.quiet(H.WRITERS['coordinator'])
+                            raise
+                        await asyncio.sleep(2)
+                return {'phase':phase, 'transaction':transaction, 'status':'passed', 'recovered_at_newer_revision':True}
             # Captured-but-untouched hosts still have a full baseline. A host
             # without a complete capture refuses rather than guessing state.
             repair = getattr(self,'recovery_program',None)
@@ -429,9 +448,16 @@ class Product:
             self.local.commands.unit('start', H.FILTER)
         elif phase == 'verify-rollback':
             await self.wait_restored_workers()
-            await self.all_workers('verify-rollback-worker', attempt)
-            await self.routing.route_private('v10')
-            await self.routing.verify('v10')
+            if not record.get('v10_reconciliation'):
+                await self.all_workers('verify-rollback-worker', attempt)
+            try:
+                await self.routing.route_private('v10')
+                await self.routing.verify('v10')
+            except BaseException:
+                if record.get('v10_reconciliation'):
+                    self.local.commands.unit('stop', *H.WRITERS['coordinator'])
+                    self.local.quiet(H.WRITERS['coordinator'])
+                raise
         elif phase == 'reopen-v10':
             await self.routing.reopen('v10', restore_router=lambda:self.remote(self.router, 'restore-routing', attempt))
             _, state = self.local.saved()

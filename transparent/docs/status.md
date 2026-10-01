@@ -22,7 +22,11 @@ rollback refused at the CLI source identity check before service effects. The
 [entrypoint correction](../evidence/activity-metadata-2026-09-30/repair-entrypoint-focused.json)
 passed focused checks. Its actual retry also refused at routing source identity
 before service effects; the [routing repair binding](../evidence/activity-metadata-2026-09-30/repair-routing-focused.json)
-passed focused checks. Actual repaired recovery remains pending. This is
+passed focused checks. The [actual repaired attempt](../evidence/activity-metadata-2026-09-30/repair-retention-failure-16f2077d.json)
+passed withdrawal but refused restoration because the captured publication was
+collected on all three workers. All remote owners exited. The workers are warm
+on one newer v10 publication and its coordinator activation bytes remain in
+preserved displacements; canonical/client reconciliation is still pending. This is
 not a completed v11 deployment.
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its

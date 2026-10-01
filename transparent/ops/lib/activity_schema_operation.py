@@ -239,7 +239,10 @@ class Runner:
             record['status'] = 'rollback-failed'
             self.save(record)
             raise
-        record['status'] = 'rolled-back'
+        record['status'] = 'reconciled-v10' if getattr(self, 'reconcile_v10', False) else 'rolled-back'
+        if getattr(self, 'reconcile_v10', False):
+            record['v10_reconciliation']['status'] = 'passed'
+            record['v10_reconciliation']['completed'] = time.time()
         self.save(record)
 
     def deploy(self, recipe, expected):
@@ -249,7 +252,7 @@ class Runner:
             lock.verify()
             schema_fence.local_schema_fence()
             previous = self.load()
-            require(previous is None or previous['status'] in ('committed', 'rolled-back'),
+            require(previous is None or previous['status'] in ('committed', 'rolled-back', 'reconciled-v10'),
                     'unfinished schema transaction; recover it before deploying')
             self.preflight(recipe, lock)
             identifier = new_id(SERVICE, expected)
@@ -289,8 +292,10 @@ class Runner:
             lock.verify()
             record = self.load(identifier)
             require(record is not None, 'no schema transaction recorded')
+            require('v10_reconciliation' not in record, 'adoption recovery cannot replay the original rollback')
             latest = self.load()
             require(latest['id'] == record['id'], 'recover the latest schema transaction first')
+            require(record['status'] != 'reconciled-v10', 'newer revision recovery is terminal; original rollback remains failed')
             if record['status'] != 'rolled-back':
                 self.recover(record, lock)
             self.out('rolled-back '+record['id'])
@@ -313,6 +318,7 @@ class Runner:
             require(record is not None and self.load()['id'] == identifier and
                     record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
                     'repair must bind the latest failed transaction')
+            require('v10_reconciliation' not in record, 'adoption recovery requires its own reconciliation')
             schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
             source = Path(__file__).resolve().parents[3]
             require(source.parent == Path('/srv/transparent-activity/ops/sources') and
@@ -335,3 +341,52 @@ class Runner:
         record = self.load(identifier)
         self.out('no schema transaction recorded' if record is None else record['id']+': '+record['status'])
         self.out('status is the journal state; live canonical checks remain required')
+
+    def reconcile(self, action, identifier, expected, target, plan_sha=None):
+        """Plan and recover one complete newer v10 activation, preserving failure."""
+        self.coordinator()
+        with self.lock_factory() as lock:
+            lock.verify()
+            record = self.load(identifier)
+            require(record is not None and self.load()['id'] == identifier and
+                    record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
+                    'reconciliation requires the latest failed original recipe')
+            schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
+            require('v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
+            verify_inputs(record['recipe']['rollback_inputs'])
+            source = Path(__file__).resolve().parents[3]
+            require(source.parent == Path('/srv/transparent-activity/ops/sources') and
+                    re.fullmatch('[0-9a-f]{40}', source.name), 'reconciliation requires an immutable staged source')
+            receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(source.name+'.json')).read_text())
+            repair = {'source_sha':source.name,'archive_sha256':receipt['archive_sha256'],
+                      'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py'),
+                      'timeouts':dict(zip(ROLLBACK,(60,140,300,100,140)))}
+            self.verify_repair_program(repair)
+            require(sum(repair['timeouts'].values()) <= sum(c['timeout'] for c in record['recipe']['rollback']),
+                    'reconciliation cannot enlarge recovery budget')
+            def module(name):
+                spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name+'.py'))
+                result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
+                return result
+            product_module = module('activity_schema_product')
+            argv = record['recipe']['rollback'][2]['argv']
+            require('schema-product-phase' in argv and '--spec' in argv and '--spec-sha256' in argv,
+                    'reconciliation requires the closed product recipe')
+            path, sha = argv[argv.index('--spec')+1], argv[argv.index('--spec-sha256')+1]
+            require(file_hash(path) == sha, 'original product specification changed')
+            product = product_module.Product(product_module.H.load(path), spec_sha256=sha)
+            plan = module('activity_schema_reconcile').inspect(product, record, target)
+            plan['recovery_source'] = {'source_sha':repair['source_sha'], 'archive_sha256':repair['archive_sha256']}
+            self.out(json.dumps({'plan':plan,'plan_sha256':digest(plan)}, sort_keys=True))
+            if action != 'deploy':
+                return plan
+            require(plan_sha == digest(plan), 'adoption differs from reviewed preflight plan')
+            self.repair_program = repair
+            self.reconcile_v10 = True
+            record.setdefault('recovery_programs', []).append(repair)
+            record['v10_reconciliation'] = {'status':'running','plan':plan,'plan_sha256':digest(plan),
+                    'original_outcome':record['status'], 'started':time.time()}
+            self.save(record)
+            self.recover(record, lock)
+            self.out('reconciled at newer v10 revision '+target+'; original rollback acceptance remains failed')
+            return record

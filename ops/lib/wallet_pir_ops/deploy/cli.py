@@ -173,6 +173,13 @@ def parser():
     command = commands.add_parser('schema-repair-rollback', help='reviewed source repair of a failed product rollback')
     command.add_argument('--transaction', required=True)
     command.add_argument('--expect-recipe-sha256', required=True)
+    for name in ('plan','preflight','deploy'):
+        command = commands.add_parser('schema-reconcile-'+name, help='recover a retained newer v10 activation after an unstaged cutover')
+        command.add_argument('--transaction', required=True)
+        command.add_argument('--expect-recipe-sha256', required=True)
+        command.add_argument('--map-sha256', required=True)
+        if name == 'deploy':
+            command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -340,6 +347,9 @@ def main(argv=None, executor=None, out=print, **options):
                 runner.rollback(args.transaction)
             elif args.command == 'schema-repair-rollback':
                 runner.repair_rollback(args.transaction, args.expect_recipe_sha256)
+            elif args.command.startswith('schema-reconcile-'):
+                runner.reconcile(args.command.removeprefix('schema-reconcile-'), args.transaction,
+                                 args.expect_recipe_sha256, args.map_sha256, getattr(args,'expect_plan_sha256',None))
             else:
                 recipe = module.load_recipe(args.recipe)
                 if args.command == 'schema-plan':
