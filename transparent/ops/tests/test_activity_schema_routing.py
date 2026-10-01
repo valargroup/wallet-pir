@@ -102,7 +102,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
             'private_router':'10.142.0.11:8093','recovery':{'v10':copy.deepcopy(inp),'v11':inp}}
         self.current=(M.U.guard_coordinator(self.original.decode())+M.relay(self.plan['private_router'])).encode()
         self.schema='transparent-shard-v11';self.bad_binary=False;self.other_origin=False;self.bad_assignment=False
-        commands=type('Commands',(),{'metadata_status':lambda _,url:503 if self.current!=self.original else 200})()
+        commands=type('Commands',(),{'metadata_status':lambda _,url:503 if b'transparent fleet maintenance' in self.current else 200})()
         def proof(*args):
             output=Path(args[7]);output.mkdir(parents=True)
             result={'status':'passed','observations':[{'events':1}]}
@@ -134,6 +134,48 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         if self.other_origin and url==M.H.PUBLIC_METADATA[1]:result['profile']='foreign'
         return result
 
+    def test_canonical_queries_bind_only_transparent_revision_paths(self):
+        original=self.original+b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }\n'
+        self.routing.original=lambda:original
+        result=self.routing.canonical()
+        self.assertIn(b'/revisions/[0-9a-f]{64}/(setup|query)/',result)
+        self.assertIn(b'header_up Host {upstream_hostport}',result)
+        self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
+        self.routing.original=lambda:result
+        self.assertEqual(self.routing.canonical(),result)
+        guarded=M.U.guard_coordinator(result.decode())
+        self.assertNotIn('reverse_proxy '+self.plan['private_router'],guarded)
+        self.routing.original=lambda:result.replace(b'10.142.0.11:8093',b'10.142.0.12:8093')
+        with self.assertRaisesRegex(ValueError,'bound router'):self.routing.canonical()
+        self.routing.original=lambda:original;self.plan['private_router']='127.0.0.1:8080'
+        with self.assertRaises(ValueError):self.routing.canonical()
+
+    def test_canonical_queries_refuse_missing_or_duplicate_owned_handler(self):
+        for original in (b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',
+                         self.original+self.original):
+            self.routing.original=lambda:original
+            with self.assertRaisesRegex(ValueError,'one owned transparent handler'):
+                self.routing.canonical()
+
+    def test_canonical_queries_preserve_site_and_existing_producer_handlers(self):
+        original=(b'enhance-pir.valargroup.dev {\n'
+                  b' @transparent_publication path /v1/shards /v1/shards/*/manifest\n'
+                  b' handle @transparent_publication { reverse_proxy 127.0.0.1:8094 }\n'
+                  b' @legacy_transparent_filters path /v1/transparent/filters/*\n'
+                  b' handle @legacy_transparent_filters { reverse_proxy 127.0.0.1:8090 }\n'
+                  b' handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }\n'
+                  b' handle { reverse_proxy 127.0.0.1:8080 }\n}\n')
+        self.routing.original=lambda:original;self.plan['private_router']='10.142.0.11:8080'
+        result=self.routing.canonical()
+        self.assertEqual(result.count(b'reverse_proxy 10.142.0.11:8080'),1)
+        self.assertTrue(result.startswith(b'enhance-pir.valargroup.dev {'))
+        self.assertTrue(result.endswith(b' handle { reverse_proxy 127.0.0.1:8080 }\n}\n'))
+        self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
+        self.assertIn(b'handle @transparent_publication { reverse_proxy 127.0.0.1:8094 }',result)
+        guarded=M.U.guard_coordinator(result.decode())
+        self.assertNotIn('reverse_proxy 10.142.0.11:8080',guarded)
+        self.assertIn('handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',guarded)
+
     async def test_withdraw_guard_authority_then_router_and_keep_private_relay(self):
         self.current=self.original
         await self.routing.withdraw('v11')
@@ -151,7 +193,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         await self.routing.verify('v11')
         self.assertNotEqual(self.current,self.original)
         await self.routing.reopen('v11')
-        self.assertEqual(self.current,self.original)
+        self.assertEqual(self.current,self.routing.canonical())
         self.assertEqual(self.fleet.actions,[['recent1','recent2','archive1']])
         self.assertFalse(json.loads((self.root/'maintenance.json').read_text())['enabled'])
         self.assertTrue((self.routing.root/'verified-public-v11.json').exists())
@@ -327,7 +369,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         tail.update(end_height=11,revision=1)
         self.publish()
         await self.routing.reopen('v11')
-        self.assertEqual(self.current,self.original)
+        self.assertEqual(self.current,self.routing.canonical())
 
     async def test_recovery_rewrite_does_not_create_passing_proof(self):
         original=self.routing.proof

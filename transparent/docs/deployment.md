@@ -1327,3 +1327,11 @@ receipts are never rewritten. Repair startup and focused tests are not live
 recovery acceptance.
 
 A reviewed failed-rollback source repair may reuse an already warm restored worker only when every captured file still matches byte/hash/mode/owner inventory and the live executable, active publication and assignment prove the captured predecessor. Ordinary restore still stops and restores workers. Candidate cold-start verification has a bounded 300-second wait and 330-second transport; the approved rollback budget and readiness gates are unchanged.
+
+Canonical reopen binds transparent revision setup/query routes on the captured
+Enhance site to the same checksum-bound private shard router used for recovery.
+The owned transparent handler must occur exactly once; an existing query handler
+must match that exact router or the operation refuses. Other handlers, including
+`/v1/enhance/query`, retain their captured bytes. Maintenance guards the added
+transparent query handler too. Each canonical query origin requires its own fresh
+native report and reopened SQLite proof; process exit zero alone is insufficient.

@@ -58,7 +58,7 @@ def validate_gate(result, binary, script, config, roster, headless_helper=None, 
 def guard_coordinator(text):
     """Replace only the known transparent handlers, preserving other services."""
     required = ['handle @transparent_publication {', 'handle @legacy_transparent_filters {']
-    optional = ['handle_path /v1/filters/parents/* {']
+    optional = ['handle_path /v1/filters/parents/* {', 'handle @transparent_queries {']
     for marker in required + optional:
         count = text.count(marker)
         if count == 0 and marker in optional:

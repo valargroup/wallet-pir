@@ -8,14 +8,28 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Latest actual cutover `c28901b4` captured protected coherent baselines on all
+five hosts and passed maintenance and v11 staging, then failed candidate warm
+verification. Automatic rollback restored v10 but missed its cold archive
+readiness deadline. The reviewed `4b474d21` repair subsequently passed exact
+restoration and the private native/reopened SQLite proof. The Transparent-origin
+native proof also passed, but the Enhance-origin proof failed: transparent
+revision setup requests reached its default backend and returned HTTP 404.
+Both origins were re-guarded. The [paired-origin failure](../evidence/activity-metadata-2026-09-30/paired-origin-recovery-failure-4b474d21.json)
+retains the failed native report, logs and SQLite archive hashes. A closed
+checksum-bound routing correction now sends only transparent revision setup/query
+paths to the captured private shard router, preserving the Enhance query handler.
+Focused validation and actual guarded recovery must precede reopening. No v11
+cutover or rollback timing acceptance has passed.
+
 Latest observed recovery on 2026-10-01: the reviewed `09a9f140` relay correction
 completed [coherent recovery at a newer v10 revision](../evidence/activity-metadata-2026-09-30/coherent-newer-v10-recovery-09a9f140.json).
 The journal is `reconciled-v10`; private verification, reopen and service
 verification passed. The owned preparation/resume took 120.465 seconds. Each
 of its three native reference reports completed one exact sync with no failures
 and no stop reason, with reopened SQLite stores. Both canonical metadata origins
-returned HTTP 200, genesis through height 3502677, with 86 shards. This restores
-predecessor service; v11 is not installed. The public client proof currently
+returned HTTP 200, genesis through height 3502677, with 86 shards. This restored
+predecessor service at that earlier observation. The public client proof currently
 queries Transparent while fetching filters from Enhance. Separate encrypted
 query proofs through each canonical origin remain required. The original
 rollback and missed 15-minute acceptance remain failed; a fresh protected

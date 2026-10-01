@@ -206,6 +206,24 @@ class Routing:
                 config.get('router_host'), 'captured private router identity changed')
         return endpoint
 
+    def canonical(self):
+        # The captured Enhance site already serves transparent metadata, but
+        # its default backend is not the transparent shard router. Bind only
+        # revision setup/query paths to the same captured private router.
+        text = self.original().decode()
+        endpoint = self.private_router() if getattr(self,'predecessor_continuous',False) else self.plan['private_router']
+        relay(endpoint)  # Closed private endpoint validation; no arbitrary proxy.
+        marker = 'handle @transparent_publication {'
+        require(text.count(marker)==1, 'canonical query routing lacks one owned transparent handler')
+        block = ('@transparent_queries path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{64}/(setup|query)/\n'
+                 '\thandle @transparent_queries {\n\t\treverse_proxy '+endpoint+
+                 ' {\n\t\t\theader_up Host {upstream_hostport}\n\t\t}\n\t}\n\t')
+        if '@transparent_queries' in text:
+            require(text.count(block)==1 and text.count('handle @transparent_queries {')==1,
+                    'captured transparent query handler differs from the bound router')
+            return text.encode()
+        return text.replace(marker,block+marker,1).encode()
+
     def guarded(self, original_endpoint=False, legacy_header=False):
         endpoint = self.plan['private_router']
         if getattr(self,'predecessor_continuous',False) and not original_endpoint:
@@ -224,7 +242,7 @@ class Routing:
         fleet = self.fleet(kind)
         original, guarded = self.original(), self.guarded()
         current = Path('/etc/caddy/Caddyfile').read_bytes()
-        require(current in (original, guarded), 'unrelated coordinator routing update requires reconciliation')
+        require(current in (original, guarded, self.canonical()), 'unrelated coordinator routing update requires reconciliation')
         # Guard the authority first. A router reload cannot expose metadata
         # until the only metadata authority has passed independent verification.
         U.apply_coordinator(guarded)
@@ -405,7 +423,7 @@ class Routing:
                     require(kind == 'v10', 'original router restoration is rollback-only')
                     restore_router()
                 # Keep the authority guarded through the router handoff.
-                U.apply_coordinator(self.original())
+                U.apply_coordinator(self.canonical())
                 await self.public(kind, fleet)
             except BaseException:
                 U.apply_coordinator(self.guarded())
