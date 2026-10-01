@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "gate": "focused-captured-caddy-mode-preparation",
+  "owner": "9a725efeec7d48709e725ddc2722e87c",
+  "base_sha": "9900ed23e08da24e0b9e1034ad9436587ad967c6",
+  "duration_seconds": 19.14356408303138,
+  "inputs": {
+    "transparent/ops/lib/activity_schema_operation.py": "d932f8531000970da9aac58732e0fbd98a9341a481121903ecd3e139df21afb0",
+    "transparent/ops/lib/activity_schema_reconcile.py": "08f7ca889de6a0f59f406605c98b3d5b57a95e069512761328872d2ddc2e3a38",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "d821d5e001393db809838b0412518d6df48cccbc906c06996d4a3033f866d766"
+  },
+  "log_sha256": "0c2bb2149406298907e1268fb476fb8a8e9e16cb30b9c705067b3feb1e144ea1",
+  "limits": "Focused source qualification only; failed actual preparation retained; current operations CI not claimed passed."
+}

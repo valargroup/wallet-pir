@@ -370,7 +370,7 @@ class Runner:
             schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
             resume = action.startswith('resume-')
             preparation = action.startswith('resume-prepare-')
-            require(action == 'resume-prepare-reconcile' or not any(p.get('status') == 'running' for p in record.get('v10_reconciliation',{}).get('preparations',[])),
+            require(action == 'resume-prepare-reconcile' or not any(p.get('status') in ('running','interrupted') for p in record.get('v10_reconciliation',{}).get('preparations',[])),
                     'unfinished resume preparation requires explicit reconciliation')
             require(resume or 'v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
             verify_inputs(record['recipe']['rollback_inputs'])

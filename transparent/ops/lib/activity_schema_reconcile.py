@@ -232,7 +232,12 @@ def prepare_resume(product, record, save):
         candidate = Path('/etc/caddy/Caddyfile.maintenance-next')
         H.B.atomic(candidate,guarded)
         product.local.commands.run(['caddy','validate','--config',str(candidate),'--adapter','caddyfile'],timeout=20)
-        H.B.atomic(Path('/etc/caddy/Caddyfile'),guarded)
+        baseline, _ = product.local.saved()
+        # The packaged Caddy service reads as its captured service identity.
+        captured = baseline['files']['/etc/caddy/Caddyfile']['.']
+        H.require(captured['kind'] == 'file', 'captured Caddy configuration is not regular')
+        H.B.atomic(Path('/etc/caddy/Caddyfile'),guarded, captured['mode'])
+        os.chown(Path('/etc/caddy/Caddyfile'),captured['uid'],captured['gid'])
         product.local.commands.run(['systemctl','reload','caddy'],timeout=20)
         product.routing.check_guard()
         _, units = product.local.saved()
@@ -246,10 +251,13 @@ def prepare_resume(product, record, save):
         product.routing.check_guard()
         H.B.atomic(before/'complete.json',json.dumps({'status':'prepared','plan_sha256':entry['plan_sha256']},sort_keys=True).encode())
         entry['status'] = 'passed'
-    except BaseException:
+    except BaseException as error:
+        import subprocess
+        uncertain = isinstance(error, (subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit))
+        entry['status'] = 'interrupted' if uncertain else 'failed'
+        save(record)
         product.local.commands.unit('stop',*H.WRITERS['coordinator'])
         product.local.quiet(H.WRITERS['coordinator'])
-        entry['status'] = 'failed'
         save(record)
         raise
     save(record)
@@ -257,7 +265,7 @@ def prepare_resume(product, record, save):
 
 def reconcile_preparation(product, record, save):
     entry = record.get('v10_reconciliation',{}).get('preparations',[])
-    H.require(entry and entry[-1]['status'] == 'running', 'no uncertain preparation to reconcile')
+    H.require(entry and entry[-1]['status'] in ('running','interrupted'), 'no uncertain preparation to reconcile')
     pending = entry[-1]
     try:
         os.kill(pending['pid'],0)

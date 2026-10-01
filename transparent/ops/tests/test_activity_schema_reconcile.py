@@ -141,7 +141,7 @@ class AdoptionTests(unittest.TestCase):
         commands=SimpleNamespace(run=lambda argv,**kw:actions.append((argv,kw)),
             unit=lambda action,*units:actions.append((action,units)),metadata_status=lambda _:200)
         self.product.local.commands=commands
-        self.product.local.saved=lambda:(None,{'units':{u:{'ActiveState':'active'} for u in (M.H.FILTER,*M.H.AUTHORITY)}})
+        self.product.local.saved=lambda:({'files':{'/etc/caddy/Caddyfile':{'.':{'kind':'file','mode':0o644,'uid':caddy.stat().st_uid,'gid':caddy.stat().st_gid}}}}, {'units':{u:{'ActiveState':'active'} for u in (M.H.FILTER,*M.H.AUTHORITY)}})
         self.product.routing=SimpleNamespace(check_guard=lambda **_:None,guarded=lambda:b'correct guard')
         self.record['v10_reconciliation']['preparations']=[{'status':'running','plan_sha256':'c'*64}]
         real=Path
@@ -151,6 +151,7 @@ class AdoptionTests(unittest.TestCase):
             return real(value)
         with patch.object(M,'Path',side_effect=mapped):M.prepare_resume(self.product,self.record,lambda _:None)
         self.assertEqual(caddy.read_bytes(),b'correct guard')
+        self.assertEqual(caddy.stat().st_mode & 0o777,0o644)
         self.assertEqual(actions[-1],('start',(M.H.FILTER,*M.H.AUTHORITY)))
         self.assertEqual(self.record['v10_reconciliation']['preparations'][-1]['status'],'passed')
         self.assertEqual((self.product.root/'resume-prepare-1/Caddyfile').read_bytes(),b'old guard')

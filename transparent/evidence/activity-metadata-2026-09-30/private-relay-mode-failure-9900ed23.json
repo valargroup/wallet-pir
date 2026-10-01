@@ -1,0 +1,23 @@
+{
+  "status": "failed",
+  "source_sha": "9900ed23e08da24e0b9e1034ad9436587ad967c6",
+  "owner": "1c9e1f322c5b45788dd3810478d15ee8",
+  "duration_seconds": 36.80039795895573,
+  "prepare_plan": "passed",
+  "prepare_preflight": "passed",
+  "prepare_deploy": "failed",
+  "cause": "New guarded configuration was written with private default0600 instead of captured Caddy mode; packaged Caddy reload refused permission denied. Validation as root had passed. Predecessor authority was not started; catch stopped coordinator writers.",
+  "raw_sha256": {
+    "prepare-deploy.log": "3fe14135e529690134bc5214b45b12942aff15718d636d27347d2a405f08e549",
+    "caddy-journal.raw": "7edcfa838e6004beb57039569fbb756f93b4a695f07eeff90b69de08c3ccbb83",
+    "prepare-deploy.stderr": "ad5551a40cbb9140ad0e838f881f87e61e8d48f761c63988d8f542a60b683598",
+    "prepare-preflight.log": "3fe14135e529690134bc5214b45b12942aff15718d636d27347d2a405f08e549",
+    "preparation-observed.json": "af71e454163e060373053b74f7f637f71f5f9f60319eb7d321b31a8a0140abd9",
+    "prepare-preflight.stderr": "0323e18a6bdf43168a182f7e86701beff7050af8752ae2ac6e845f5a9a06f1a0",
+    "caddy-unit.raw": "098fd2de87c61c0ba4cd4ba049daae091d57825e33230a70ca952ca605bd5158",
+    "prepare-plan.stderr": "2ab9159090ba85a29fae23c0068d178a1a7a53de6525418df5eb72649158f17b",
+    "prepare-plan.log": "3fe14135e529690134bc5214b45b12942aff15718d636d27347d2a405f08e549"
+  },
+  "original_rollback_and_deadline": "failed-not-relabelled",
+  "acceptance": "No recovery or v11 qualification accepted"
+}
