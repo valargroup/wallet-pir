@@ -107,7 +107,7 @@ private home directory.
 
 Runner prerequisites: Ubuntu 24.04 x86-64 with x86-64-v3 CPU support, Git, Python
 3.11+, Node, make, jq, shellcheck, Clang/libclang-dev, protobuf-compiler, standard
-native build tools, and Rust **1.91.0** with rustfmt and clippy. The setup action
+native build tools, and Rust **1.97.1** with rustfmt and clippy. The setup action
 checks the pinned tools and OS instead of reinstalling them each run.
 
 ## Cargo cache identity and reuse
@@ -119,7 +119,11 @@ clang and protoc versions, compile-affecting environment (`RUSTFLAGS`, `CFLAGS`,
 `CARGO_PROFILE_*`, `CARGO_BUILD_*` and similar), the version of any `rustc`
 wrapper, toolchain files, and every Cargo configuration file Cargo reads: the
 checkout's and each ancestor directory's `.cargo/config(.toml)`, `CARGO_HOME`'s,
-and files they `include`, recorded by relative position. The full identity
+and files they `include`, recorded by relative position. The compiler and
+wrapper are probed as Cargo selects them: environment first, then `[build]`
+settings by Cargo's precedence (deeper directory over ancestor over `CARGO_HOME`;
+an including file over its includes; a later include over an earlier one), with
+config-relative paths resolved as Cargo does. The full identity
 also covers the lane, its package/feature scope and profile, the root manifest's
 `[profile.*]` definitions, and `Cargo.lock`. Without Python's `tomllib` (the
 Ubuntu 22.04 CUDA container), the whole `Cargo.toml` is hashed instead and
@@ -210,8 +214,10 @@ restore, and setup and restore seconds (null when not recorded).
 adds `--message-format=json-diagnostic-rendered-ansi` to every Cargo
 build/check/clippy/test command it runs, prints diagnostics and other output as
 before, and logs each `compiler-artifact` message's package name, version,
-source kind and `fresh` flag. A unit is compiled if any command reported it not
-fresh. Units no command needed are not counted. Cargo commands outside
+source kind and `fresh` flag. A unit is a package target with its profile,
+features and output file names (basenames only), so `cargo check` (`.rmeta`) and
+`cargo build` (`.rlib`) of one target are separate units. A unit is compiled if
+any command reported it not fresh. Units no command needed are not counted. Cargo commands outside
 `stage.py` (for example `make` helper targets) are not attributed.
 `fingerprint_inventory` in `CI_CACHE_REPORT` compares fingerprint directories at
 restore and job end by content; it is an inventory, not attribution.

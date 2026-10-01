@@ -97,12 +97,14 @@ def load_toml(path):
 
 
 def cargo_configs(root, env):
-    """Return ([label, digest] for every config file Cargo reads, parsed configs).
+    """Return ([label, digest] per config file, [(parsed, path)]), highest precedence first.
 
-    Cargo merges .cargo/config(.toml) from the working directory and every
-    ancestor, then CARGO_HOME, plus files named by `include`, in that order.
-    Labels are relative (`../` per ancestor level) so records hold no absolute
-    paths. Parsed configs are listed highest precedence first.
+    Cargo reads .cargo/config(.toml) in the working directory and every
+    ancestor (deeper wins), then CARGO_HOME. A file's `include` entries are
+    merged in order before the file itself, so the including file beats its
+    includes and a later include beats an earlier one. Include paths are
+    relative to the including file. Labels are relative (`../` per ancestor
+    level) so records hold no absolute paths.
     """
     home = Path(env.get('CARGO_HOME') or Path(env.get('HOME', '~')).expanduser() / '.cargo')
     candidates = [('../' * depth + '.cargo/' + name, directory / '.cargo' / name)
@@ -124,9 +126,10 @@ def cargo_configs(root, env):
         config = load_toml(path)
         if config is None:
             return
-        parsed.append(config)
+        parsed.append((config, path))
         includes = config.get('include', [])
-        for index, entry in enumerate([includes] if isinstance(includes, (str, dict)) else includes):
+        includes = [includes] if isinstance(includes, (str, dict)) else includes
+        for index, entry in reversed(list(enumerate(includes))):
             name = entry.get('path') if isinstance(entry, dict) else entry
             if isinstance(name, str):
                 add(f'{label} include {index}', path.parent / name, depth + 1)
@@ -137,15 +140,27 @@ def cargo_configs(root, env):
     return files, parsed
 
 
+def config_program(value, path):
+    """Cargo's config-relative program rule: a value with a slash is relative to
+    the directory above the config's `.cargo` directory; a bare name uses PATH."""
+    if '/' not in value or Path(value).is_absolute():
+        return value
+    return str(path.parent.parent / value)
+
+
 def tool_programs(configs, env):
-    """Compiler and wrappers Cargo will run; the environment overrides configuration."""
+    """Compiler and wrappers Cargo will run; the environment overrides configuration.
+
+    `configs` is cargo_configs()'s parsed list, highest precedence first.
+    """
     programs = {}
     for name, variables in TOOLS.items():
         value = next((env[key] for key in variables if env.get(key)), None)
-        for config in configs:
-            if value is None and isinstance(config.get('build'), dict):
-                value = config['build'].get(name)
-        programs[name] = value if isinstance(value, str) and value else ('rustc' if name == 'rustc' else None)
+        for config, path in configs:
+            build = config.get('build')
+            if value is None and isinstance(build, dict) and isinstance(build.get(name), str) and build[name]:
+                value = config_program(build[name], path)
+        programs[name] = value or ('rustc' if name == 'rustc' else None)
     return programs
 
 
@@ -348,8 +363,12 @@ def artifact_unit(message):
     profile = message.get('profile') or {}
     return {'package': name, 'version': version, 'source': source if fragment else 'unknown',
             'target': target.get('name'), 'kind': sorted(target.get('kind') or []),
+            # Output names separate modes of one target, e.g. `check` (.rmeta)
+            # and `build` (.rlib); only basenames are hashed.
             'unit': digest([package, target.get('name'), target.get('kind'), profile,
-                            sorted(message.get('features') or [])], 16),
+                            sorted(message.get('features') or []),
+                            sorted(Path(name).name for name in message.get('filenames') or []),
+                            Path(message['executable']).name if message.get('executable') else None], 16),
             'fresh': bool(message.get('fresh'))}
 
 

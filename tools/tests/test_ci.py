@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import tarfile
 import tempfile
 import unittest
@@ -406,10 +407,26 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertNotEqual(self.ids(env=dict(ENV, CARGO_HOME=str(home)))[0], self.ids()[0])
 
     def test_compiler_and_wrapper_programs_come_from_env_or_config(self):
-        programs = cargo_cache.tool_programs([{'build': {'rustc-wrapper': 'sccache'}}], {})
+        config = self.root / '.cargo/config.toml'
+        programs = cargo_cache.tool_programs([({'build': {'rustc-wrapper': 'sccache'}}, config)], {})
         self.assertEqual(programs, {'rustc': 'rustc', 'rustc-wrapper': 'sccache', 'rustc-workspace-wrapper': None})
-        programs = cargo_cache.tool_programs([{'build': {'rustc': 'cfg-rustc'}}], {'RUSTC': '/opt/rustc'})
+        programs = cargo_cache.tool_programs([({'build': {'rustc': 'cfg-rustc'}}, config)], {'RUSTC': '/opt/rustc'})
         self.assertEqual(programs['rustc'], '/opt/rustc')
+        # A config value with a slash is relative to the directory above `.cargo`.
+        programs = cargo_cache.tool_programs([({'build': {'rustc': 'bin/rustc'}}, config)], {})
+        self.assertEqual(programs['rustc'], str(self.root / 'bin/rustc'))
+
+    def test_later_include_and_including_file_take_precedence(self):
+        (self.root / '.cargo/config.toml').write_text('include = ["one.toml", "two.toml"]\n')
+        (self.root / '.cargo/one.toml').write_text('[build]\nrustc = "/one/rustc"\nrustc-wrapper = "/one/wrap"\n')
+        (self.root / '.cargo/two.toml').write_text('[build]\nrustc = "/two/rustc"\n')
+        files, parsed = cargo_cache.cargo_configs(self.root, ENV)
+        self.assertEqual([label for label, _ in files],
+                         ['.cargo/config.toml', '.cargo/config.toml include 1', '.cargo/config.toml include 0'])
+        programs = cargo_cache.tool_programs(parsed, {})
+        self.assertEqual((programs['rustc'], programs['rustc-wrapper']), ('/two/rustc', '/one/wrap'))
+        (self.root / '.cargo/config.toml').write_text('include = ["one.toml", "two.toml"]\n[build]\nrustc = "/own/rustc"\n')
+        self.assertEqual(cargo_cache.tool_programs(cargo_cache.cargo_configs(self.root, ENV)[1], {})['rustc'], '/own/rustc')
         toolchain, identity = self.ids()
         wrapped = self.ids(tools=dict(TOOLS, wrappers={'rustc-wrapper': 'sccache 0.8.1'}))
         self.assertNotEqual(wrapped[0], toolchain)
@@ -550,6 +567,62 @@ class CacheIdentityTests(unittest.TestCase):
         child, parent = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertEqual(child['parent'], parent['id'])
         self.assertEqual((child['stage'], parent['stage']), ('tests', 'integration'))
+
+
+@unittest.skipUnless(shutil.which('cargo') and shutil.which('rustc'), 'needs a Rust toolchain')
+class RealCargoOracleTests(unittest.TestCase):
+    """Check the model against what Cargo itself does on a tiny dependency-free crate."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name) / 'crate'
+        (self.root / 'src').mkdir(parents=True)
+        (self.root / 'Cargo.toml').write_text('[package]\nname = "oracle"\nversion = "0.1.0"\nedition = "2021"\n')
+        (self.root / 'src/lib.rs').write_text('pub fn one() -> u8 { 1 }\n')
+        self.env = {key: value for key, value in os.environ.items()
+                    if key not in {'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC',
+                                   'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
+                                   'WALLET_PIR_DEV_LEASE_FD'}}
+        self.env['CARGO_TARGET_DIR'] = str(Path(self.tmp.name) / 'target')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def cargo(self, *args):
+        import subprocess
+        result = subprocess.run(['cargo', *args, '--offline', '--message-format=json'], cwd=self.root, env=self.env,
+                                capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        return [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+
+    def test_check_then_build_are_two_compiled_units(self):
+        records = []
+        for command in ('check', 'build', 'build'):
+            records += [dict(unit, command=command + str(len(records)))
+                        for unit in map(cargo_cache.artifact_unit, self.cargo(command)) if unit]
+        result = cargo_cache.artifacts(records)
+        self.assertEqual((result['units'], result['compiled'], result['fresh']), (2, 2, 0))
+        self.assertEqual(result['compiled_workspace_packages'], ['oracle'])
+        # The repeated build reported the .rlib unit fresh, but it was compiled earlier in the job.
+        self.assertTrue(records[-1]['fresh'])
+
+    def test_identity_names_the_compiler_cargo_runs_from_later_include(self):
+        real = shutil.which('rustc')
+        tools = Path(self.tmp.name) / 'tools'
+        tools.mkdir()
+        for name in ('one', 'two'):
+            script = tools / f'rustc-{name}'
+            script.write_text(f'#!/bin/sh\necho {name} >> "{tools}/used"\nexec "{real}" "$@"\n')
+            script.chmod(0o755)
+        (self.root / '.cargo').mkdir()
+        (self.root / '.cargo/config.toml').write_text('include = ["one.toml", "two.toml"]\n')
+        for name in ('one', 'two'):
+            (self.root / f'.cargo/{name}.toml').write_text(f'[build]\nrustc = "{tools}/rustc-{name}"\n')
+        self.cargo('check')
+        used = set((tools / 'used').read_text().split())
+        self.assertEqual(used, {'two'})
+        programs = cargo_cache.tool_programs(cargo_cache.cargo_configs(self.root, self.env)[1], self.env)
+        self.assertEqual(programs['rustc'], f'{tools}/rustc-two')
 
 
 class CacheWorkflowTests(unittest.TestCase):
