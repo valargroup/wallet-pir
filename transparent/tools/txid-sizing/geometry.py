@@ -46,10 +46,10 @@ def report():
     return {"schema":"txid-sizing-geometry-projections-v1","qualification":"UNQUALIFIED",
         "assumptions":{"population":17000000,"population_note":"illustrative scale only; history event-bearing count is not display census",
         "transaction_workload":"uniform distinct txid opens; no cache hits, no setup downloads, no retries",
-        "mean_inline_payload":80,"mean_overflow_payload":8000,"mean_overflow_requests":3,
+        "mean_inline_payload":80,"mean_overflow_payload":8500,"mean_overflow_requests":3,
         "density":.75,"bucket_load":"balanced means; hash concentration/tail not qualified",
         "query_cost":"full encoded-database scan bytes proxy, not CPU/latency; segment responses 5632+16 bytes each"},
-        "scenarios":[scenario(17000000,c,80,8000,l,o,dr,pr,cover=cover)
+        "scenarios":[scenario(17000000,c,80,8500,l,o,dr,pr,cover=cover)
         for c in (.85,.90,.95,.99) for l in (1,4,16,64) for o in (1,4,16)
         for dr,pr in ((4096,4096),(8192,32768),(32768,65536)) for cover in (0,3)]}
 

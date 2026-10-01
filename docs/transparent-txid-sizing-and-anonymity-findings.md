@@ -245,7 +245,7 @@ behavior; a separately routed thin tail defeats otherwise broad lookup routing.
 
 [Geometry projections](../transparent/evidence/txid-sizing/geometry-projections.json)
 illustrate the tradeoff. They assume 17 million eligible records solely as a
-scale example, mean inline payload 80 bytes, mean overflow payload 8000 bytes,
+scale example, mean inline payload 80 bytes, mean overflow payload 8500 bytes,
 three overflow requests per overflow transaction, 75% target occupancy, uniform
 uncached openings and balanced buckets. Those means are **not fitted population
 estimates**; holding them fixed at different coverage levels is a sensitivity
@@ -256,10 +256,10 @@ overflow segments:
 
 | Assumed coverage | Lookup / overflow segments per bucket | Reservation GiB | Requests/open without cover | Scan GiB proxy without cover | Scan GiB proxy with three-row cover for every open |
 |---|---:|---:|---:|---:|---:|
-| 85% | 20 / 206 | 46.138 | 2.45 | 12.838 | 78.500 |
-| 90% | 21 / 138 | 33.760 | 2.30 | 6.487 | 53.062 |
-| 95% | 21 / 69 | 20.819 | 2.15 | 2.606 | 27.188 |
-| 99% | 22 / 14 | 10.880 | 2.03 | 1.428 | 6.625 |
+| 85% | 20 / 219 | 48.576 | 2.45 | 13.569 | 83.375 |
+| 90% | 21 / 146 | 35.260 | 2.30 | 6.787 | 56.062 |
+| 95% | 21 / 73 | 21.569 | 2.15 | 2.681 | 28.688 |
+| 99% | 22 / 15 | 11.067 | 2.03 | 1.431 | 7.000 |
 
 Three-row cover makes five encrypted requests/open in every case, with a much
 larger work cost. Independent broad overflow buckets reduce scan work but also
