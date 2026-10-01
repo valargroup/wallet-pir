@@ -1335,3 +1335,9 @@ must match that exact router or the operation refuses. Other handlers, including
 `/v1/enhance/query`, retain their captured bytes. Maintenance guards the added
 transparent query handler too. Each canonical query origin requires its own fresh
 native report and reopened SQLite proof; process exit zero alone is insufficient.
+
+Protected predecessor continuation is re-established from the complete validated
+baseline in each separate rollback reopen/service process. Future preparation may
+coexist with the exact warm current map; current map, binary, assignment, HTTP
+readiness and independently canonical anchors remain mandatory. Forward and
+unprotected rollback phases retain static preparation checks.

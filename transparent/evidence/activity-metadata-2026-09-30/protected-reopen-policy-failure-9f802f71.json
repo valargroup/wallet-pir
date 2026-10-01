@@ -1,0 +1,17 @@
+{
+  "status": "failed",
+  "source_sha": "9f802f71625e80337afc710f98e5dd62ee7cdf83",
+  "owner": "36c2f7cfe5904f4eba6f74ccc47bd5db",
+  "duration_seconds": 83.52257737505715,
+  "restore_seconds": 20.351706076879054,
+  "private_verify_seconds": 34.62745133880526,
+  "reopen_failure_seconds": 15.399410549085587,
+  "error": "worker does not attest the complete warm publication",
+  "raw_log_sha256": "0ad63505e17764134016eb173bf0036a9e706045b1ca004d3ee03bd4e52781e7",
+  "finding": "Protected predecessor continuation enabled only within private phase; fresh reopen process lost policy",
+  "limitations": [
+    "Separate canonical query qualification did not complete",
+    "Earlier cold-start deadline remains failed",
+    "Current warm binary/assignment/map/canonical-anchor checks stay mandatory"
+  ]
+}

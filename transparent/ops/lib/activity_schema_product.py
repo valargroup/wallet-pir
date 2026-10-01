@@ -412,6 +412,13 @@ class Product:
         self.bound(transaction)
         if record.get('v10_reconciliation'):
             self.routing.predecessor_continuous = True
+        elif record['events'][-1]['group'] == 'rollback' and phase in ('reopen-v10','verify-service'):
+            # Each phase is a fresh process. Carry the verified protected
+            # predecessor policy into reopen/service proof too: normal future
+            # preparation may coexist with an exactly attested warm current map.
+            baseline, _ = self.local.saved()
+            if baseline and baseline.get('protected_publications'):
+                self.routing.predecessor_continuous = True
         if getattr(self,'recovery_program',None):
             self.local.repair_retained = True
         self.local.identity(mutation=True)

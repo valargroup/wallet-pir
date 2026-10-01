@@ -486,6 +486,21 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.events),{'w1','w2','a1'})
         self.assertNotIn('local-stage',self.events)
 
+    async def test_fresh_reopen_process_retains_protected_predecessor_policy(self):
+        self.group='rollback'
+        original_saved=self.product.local.saved
+        self.product.local.saved=lambda:({'protected_publications':[{'item':'bound'}]},original_saved()[1])
+        for phase in ('reopen-v10','verify-service'):
+            self.product.routing.predecessor_continuous=False
+            await self.phase(phase)
+            self.assertTrue(self.product.routing.predecessor_continuous)
+        self.group='steps';self.product.routing.predecessor_continuous=False
+        await self.phase('verify-service')
+        self.assertFalse(self.product.routing.predecessor_continuous)
+        self.group='rollback';self.product.local.saved=original_saved
+        await self.phase('reopen-v10')
+        self.assertFalse(self.product.routing.predecessor_continuous)
+
     async def test_rollback_restores_original_router_and_uses_compatible_old_proof(self):
         self.group='rollback'
         for phase in ('restore-v10','verify-rollback','reopen-v10','verify-service'):await self.phase(phase)

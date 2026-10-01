@@ -8,6 +8,16 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Latest `9f802f71` warm repair passed restoration and private native/SQLite
+verification, then refused reopening at worker attestation. Protected predecessor
+continuation was enabled in private verification but lost in the separate reopen
+process. The [failed attempt](../evidence/activity-metadata-2026-09-30/protected-reopen-policy-failure-9f802f71.json)
+is retained. The reviewed correction re-establishes that policy from the complete
+protected baseline in later rollback phases; current warm identity and canonical
+anchors remain mandatory. The preceding cold-start [deadline failure](../evidence/activity-metadata-2026-09-30/paired-origin-cold-deadline-9f802f71.json)
+is separately preserved. Both canonical origins remain guarded; actual paired
+recovery and all v11 acceptance gates remain open.
+
 Latest actual cutover `c28901b4` captured protected coherent baselines on all
 five hosts and passed maintenance and v11 staging, then failed candidate warm
 verification. Automatic rollback restored v10 but missed its cold archive
