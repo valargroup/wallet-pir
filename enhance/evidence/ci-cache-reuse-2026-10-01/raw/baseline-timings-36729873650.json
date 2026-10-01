@@ -1,0 +1,532 @@
+{
+  "run": "36729873650",
+  "attempt": 1,
+  "definitions": {
+    "dispatch_to_job_start_seconds": "current attempt start to job start; includes needs, concurrency and environment waits, not only runner queue",
+    "phases.setup_seconds": "job setup, checkout, comparison fetch, selection and Rust setup including hosted cache restore",
+    "phases.work_seconds": "remaining steps (compilation and execution; see cache_records for the split)",
+    "phases.post_seconds": "post steps, including hosted cache save",
+    "phases.report_seconds": "reporting steps"
+  },
+  "timing_start": "2026-09-30T14:32:23Z",
+  "sha": "55ab7b1af888f332232db4f4f399a9fd0226d166",
+  "status": "completed",
+  "jobs": [
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Select full checks",
+      "runner": "GitHub Actions 1000166906",
+      "dispatch_to_job_start_seconds": 81.0,
+      "job_seconds": 7.0,
+      "phases": {
+        "setup_seconds": 4.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Select affected full suites",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Transparent lint",
+      "runner": "GitHub Actions 1000166909",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 677.0,
+      "phases": {
+        "setup_seconds": 98.0,
+        "work_seconds": 577.0,
+        "post_seconds": 1.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 94.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run cargo fmt --all --check",
+          "seconds": 2.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Test simulation report helpers",
+          "seconds": 11.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group transparent --lint",
+          "seconds": 564.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate transparent elastic infrastructure",
+      "runner": "GitHub Actions 1000166908",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 10.0,
+      "phases": {
+        "setup_seconds": 6.0,
+        "work_seconds": 1.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run hashicorp/setup-terraform@v3",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate provider schema and mock member plans",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Enhance lint",
+      "runner": "GitHub Actions 1000166911",
+      "dispatch_to_job_start_seconds": 90.0,
+      "job_seconds": 144.0,
+      "phases": {
+        "setup_seconds": 128.0,
+        "work_seconds": 13.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 124.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group enhance --lint",
+          "seconds": 13.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Enhance tests",
+      "runner": "GitHub Actions 1000166910",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 1735.0,
+      "phases": {
+        "setup_seconds": 71.0,
+        "work_seconds": 1660.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 67.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run Enhance release tests",
+          "seconds": 1127.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Check tagged native distributed integration",
+          "seconds": 400.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Check optional CUDA worker without a GPU",
+          "seconds": 133.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Shared lint and tests",
+      "runner": "GitHub Actions 1000166907",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 96.0,
+      "phases": {
+        "setup_seconds": 84.0,
+        "work_seconds": 9.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 5.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 78.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group shared --lint",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group shared",
+          "seconds": 8.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate Enhance infrastructure",
+      "runner": "GitHub Actions 1000166913",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 11.0,
+      "phases": {
+        "setup_seconds": 5.0,
+        "work_seconds": 2.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run hashicorp/setup-terraform@v3",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate provider schema and mock fleet plans",
+          "seconds": 2.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Transparent tests",
+      "runner": "GitHub Actions 1000166912",
+      "dispatch_to_job_start_seconds": 91.0,
+      "job_seconds": 1466.0,
+      "phases": {
+        "setup_seconds": 65.0,
+        "work_seconds": 1375.0,
+        "post_seconds": 23.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 61.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group transparent",
+          "seconds": 1375.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 23.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate selected helper checks",
+      "runner": "GitHub Actions 1000166914",
+      "dispatch_to_job_start_seconds": 93.0,
+      "job_seconds": 62.0,
+      "phases": {
+        "setup_seconds": 4.0,
+        "work_seconds": 53.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run selected full helper suites",
+          "seconds": 53.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate transparent filter inputs",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate transparent shard inputs",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Full checks complete",
+      "runner": "GitHub Actions 1000166917",
+      "dispatch_to_job_start_seconds": 1829.0,
+      "job_seconds": 2.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 1.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Verify selected checks completed",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Prepare qualified release artifacts",
+      "runner": null,
+      "dispatch_to_job_start_seconds": 1832.0,
+      "job_seconds": 0.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Prepare native CUDA release artifact (Ubuntu 22.04)",
+      "runner": null,
+      "dispatch_to_job_start_seconds": 1832.0,
+      "job_seconds": 0.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": []
+    }
+  ],
+  "dispatch_seconds": 1832.0,
+  "total_dispatch_seconds": 1832.0,
+  "complete": true
+}

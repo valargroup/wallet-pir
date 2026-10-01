@@ -1,0 +1,30 @@
+{
+  "evidence": "ci-cache-reuse-2026-10-01",
+  "finding": "p0mvn/ai-runbook PR #30 finding 4a4fd347a4012a81e5b3d13d",
+  "status": "validated on task branch; not integrated; not addressed",
+  "repository": "valargroup/wallet-pir",
+  "branch": "ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+  "base": "2d245476c6a969a86830e26e2ef63e75ebbe74b0",
+  "source_commits": {
+    "implementation": "856a419aac03d3531d3e19380df95146e1b18281",
+    "log_reader_fix": "3fb732d2e56d7be6f79f52923a7688f1ece06718",
+    "env_only_probe": "4167c3cef840e63a088be9e86f00d339a31506e6",
+    "probe_revert": "ba8ad735b39101dd94e6f5559b7a196a27e7fcd2"
+  },
+  "collection_command": "python3 tools/ci/timings.py --run <run> --cache-records",
+  "runs": [
+    {"run": 36834774107, "workflow": "ci.yml", "sha": "856a419a", "case": "persistent first build", "gate": "Fast checks", "conclusion": "success"},
+    {"run": 36834777102, "workflow": "ci-full.yml", "sha": "856a419a", "case": "cold / missing cache", "gate": "Full checks complete", "conclusion": "success"},
+    {"run": 36837792640, "workflow": "ci.yml", "sha": "3fb732d2", "case": "persistent restore", "gate": "Fast checks", "conclusion": "success"},
+    {"run": 36837789214, "workflow": "ci-full.yml", "sha": "3fb732d2", "case": "hosted restore", "gate": "Full checks complete", "conclusion": "success"},
+    {"run": 36837847229, "workflow": "ci-full.yml", "sha": "4167c3ce", "case": "workflow text and runtime-only env change", "gate": "Full checks complete", "conclusion": "success"}
+  ],
+  "event": "workflow_dispatch on the task branch",
+  "hosted_runner": "ubuntu-24.04 (GitHub-hosted)",
+  "persistent_runner": "wallet-pir-ci-fast",
+  "toolchain": "Rust 1.97.1, cargo 1.97.1, Ubuntu 24.04, glibc 2.39, x86_64-unknown-linux-gnu",
+  "profiles": {"full-test": "release-fast", "full-lint": "clippy --all-targets --all-features"},
+  "baseline_inputs": ["raw/baseline-restore.json", "raw/baseline-caches.json", "raw/baseline-timings-36728359128.json", "raw/baseline-timings-36729873650.json"],
+  "savings_claimed": false,
+  "pending": ["primed main cache comparison after integration", "self-hosted old directory pruning"]
+}

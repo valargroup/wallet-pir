@@ -1,0 +1,138 @@
+{
+  "captured": "2026-10-01T08:00Z (before this change)",
+  "total_count": 22,
+  "entries": [
+    {
+      "key": "v0-rust-native-cuda-ubuntu22.04-rust1.91-v3-pclmul-v1-Linux-x64-7b8f4ca5-0aae22f1",
+      "ref": "refs/heads/main",
+      "size_in_bytes": 502833277,
+      "created_at": "2026-10-01T01:10:10.604787Z"
+    },
+    {
+      "key": "v0-rust-native-cuda-ubuntu22.04-rust1.91-v3-pclmul-v1-Linux-x64-d14ee85e-0aae22f1",
+      "ref": "refs/heads/main",
+      "size_in_bytes": 211397660,
+      "created_at": "2026-10-01T00:07:47.444630Z"
+    },
+    {
+      "key": "v0-rust-native-cuda-ubuntu22.04-rust1.91-v3-pclmul-v1-Linux-x64-7ecca4f7-ec7f9ab3",
+      "ref": "refs/heads/main",
+      "size_in_bytes": 480097539,
+      "created_at": "2026-09-30T15:15:43.533378Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f-ec7f9ab3",
+      "ref": "refs/pull/123/merge",
+      "size_in_bytes": 572483418,
+      "created_at": "2026-09-30T14:58:18.479304Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3",
+      "ref": "refs/pull/123/merge",
+      "size_in_bytes": 364771434,
+      "created_at": "2026-09-30T14:24:28.733200Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3",
+      "ref": "refs/pull/123/merge",
+      "size_in_bytes": 324571056,
+      "created_at": "2026-09-30T14:23:48.419560Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3",
+      "ref": "refs/pull/122/merge",
+      "size_in_bytes": 364752428,
+      "created_at": "2026-09-30T13:35:24.870351Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3",
+      "ref": "refs/pull/122/merge",
+      "size_in_bytes": 324340429,
+      "created_at": "2026-09-30T13:34:24.930856Z"
+    },
+    {
+      "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f-ec7f9ab3",
+      "ref": "refs/pull/122/merge",
+      "size_in_bytes": 526987029,
+      "created_at": "2026-09-30T13:39:53.849185Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-bc481eca-ec7f9ab3",
+      "ref": "refs/pull/121/merge",
+      "size_in_bytes": 794098822,
+      "created_at": "2026-09-30T12:25:14.007190Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-10297654-ec7f9ab3",
+      "ref": "refs/pull/121/merge",
+      "size_in_bytes": 571476218,
+      "created_at": "2026-09-30T12:17:41.789215Z"
+    },
+    {
+      "key": "v0-rust-full-lint-v2-Linux-x64-86b15ca7-ec7f9ab3",
+      "ref": "refs/pull/121/merge",
+      "size_in_bytes": 364571231,
+      "created_at": "2026-09-30T11:57:54.506297Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-10297654-ec7f9ab3",
+      "ref": "refs/pull/120/merge",
+      "size_in_bytes": 529621643,
+      "created_at": "2026-09-30T11:21:43.248925Z"
+    },
+    {
+      "key": "v0-rust-full-lint-v2-Linux-x64-86b15ca7-ec7f9ab3",
+      "ref": "refs/pull/120/merge",
+      "size_in_bytes": 364749803,
+      "created_at": "2026-09-30T11:14:31.524786Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-bc481eca-ec7f9ab3",
+      "ref": "refs/pull/120/merge",
+      "size_in_bytes": 507613699,
+      "created_at": "2026-09-30T11:21:35.422397Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-bc481eca-ec7f9ab3",
+      "ref": "refs/pull/119/merge",
+      "size_in_bytes": 794267012,
+      "created_at": "2026-09-30T10:55:00.000641Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-10297654-ec7f9ab3",
+      "ref": "refs/pull/119/merge",
+      "size_in_bytes": 571425779,
+      "created_at": "2026-09-30T10:50:52.415425Z"
+    },
+    {
+      "key": "v0-rust-full-lint-v2-Linux-x64-86b15ca7-ec7f9ab3",
+      "ref": "refs/pull/119/merge",
+      "size_in_bytes": 364745657,
+      "created_at": "2026-09-30T10:29:41.162083Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-10297654-ec7f9ab3",
+      "ref": "refs/pull/118/merge",
+      "size_in_bytes": 554829681,
+      "created_at": "2026-09-30T09:06:13.021964Z"
+    },
+    {
+      "key": "v0-rust-full-lint-v2-Linux-x64-86b15ca7-ec7f9ab3",
+      "ref": "refs/pull/118/merge",
+      "size_in_bytes": 364684292,
+      "created_at": "2026-09-30T08:59:49.654320Z"
+    },
+    {
+      "key": "v0-rust-full-test-v2-Linux-x64-bc481eca-ec7f9ab3",
+      "ref": "refs/pull/118/merge",
+      "size_in_bytes": 507739434,
+      "created_at": "2026-09-30T09:06:12.381653Z"
+    },
+    {
+      "key": "v0-rust-full-lint-v2-Linux-x64-86b15ca7-312ca298",
+      "ref": "refs/pull/117/merge",
+      "size_in_bytes": 364996551,
+      "created_at": "2026-09-28T11:32:32.198033Z"
+    }
+  ]
+}
