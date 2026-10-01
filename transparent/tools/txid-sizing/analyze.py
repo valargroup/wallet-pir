@@ -217,6 +217,8 @@ def classes(rows, fields):
     """Intersection: count distinct real txids only, never rows/fragments."""
     groups = defaultdict(set)
     for row in rows:
+        if not row.get("real", True):
+            continue
         groups[tuple(row[f] for f in fields)].add(row["txid"])
     populations = [len(ids) for ids in groups.values()]
     tx_weighted = [len(ids) for ids in groups.values() for _ in ids]
@@ -261,9 +263,18 @@ def negative_controls():
     fixed = classes(padded,fields)
     refresh = [dict(r,revision=int(r["txid"])>=20000) for r in padded]
     timed = [dict(r,timing=int(r["txid"])>=20000) for r in padded]
+    segmented = [dict(r,segments=2 if int(r["txid"])>=20000 else 1) for r in padded]
+    dummy_rows = rows + [dict(rows[-1],txid="dummy-"+str(i),real=False) for i in range(10000)]
+    # Each marginal route has 10000 real txids, while two intersections have 5.
+    independent = [dict(rows[0],txid=str(i),lookup=int(i>=10000),
+        overflow=int(5<=i<10000 or i>=19995)) for i in range(20000)]
     return {"qualification":"synthetic negative controls only","global_overflow_narrow_lookup":unpadded,
         "repeated_fragments":repeated,"global_lookup_count_cover":fixed,
-        "new_revision_tail":classes(refresh,fields),"timing_tail":classes(timed,fields)}
+        "new_revision_tail":classes(refresh,fields),"timing_tail":classes(timed,fields),
+        "segment_tail":classes(segmented,fields),"dummy_and_empty_rows":classes(dummy_rows,fields),
+        "independent_routes_joint":classes(independent,fields),
+        "independent_routes_lookup_marginal":classes(independent,("lookup",)),
+        "independent_routes_overflow_marginal":classes(independent,("overflow",))}
 
 
 def analyze(data):

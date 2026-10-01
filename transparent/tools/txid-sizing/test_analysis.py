@@ -56,10 +56,13 @@ class AnalysisTests(unittest.TestCase):
 
     def test_five_candidate_intersection_refresh_timing_controls(self):
         c=a.negative_controls()
-        for label in ("global_overflow_narrow_lookup","repeated_fragments","new_revision_tail","timing_tail"):
+        for label in ("global_overflow_narrow_lookup","repeated_fragments","new_revision_tail","timing_tail","segment_tail","dummy_and_empty_rows"):
             self.assertEqual(c[label]["class_weighted"]["min"],5)
             self.assertEqual(c[label]["classes_below_policy"],{"1000":1,"10000":1})
         self.assertEqual(c["global_lookup_count_cover"]["class_weighted"]["min"],20005)
+        self.assertEqual(c["independent_routes_joint"]["class_weighted"]["min"],5)
+        for label in ("independent_routes_lookup_marginal","independent_routes_overflow_marginal"):
+            self.assertEqual(c[label]["class_weighted"]["min"],10000)
 
     def test_retained_canonical_codec_and_implemented_packer(self):
         data=json.loads((EVIDENCE/"canonical-sample.json").read_bytes())

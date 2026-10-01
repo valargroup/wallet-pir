@@ -292,10 +292,10 @@ The synthetic negative control contains 20,000 ordinary transactions and **five*
 large tail transactions in a different lookup range. All overflow is global.
 The five tail transactions have three overflow requests; their intersection
 population is exactly five. Both 1000 and 10000 policy floors reject that class.
-Repeating each tail fragment twenty times leaves five candidates. Broadening the
+Repeating each tail fragment twenty times or adding 10,000 non-real dummy/empty entries leaves five candidates. Broadening the
 lookup AND covering all openings to the same query schedule yields 20,005
 candidates under a frozen common revision/no-timing model. A new tail revision
-or modeled tail timing splits it back to five. These are reproducible controls,
+or modeled tail timing/segment fan-out splits it back to five. A separate independent-route control gives 10,000 real candidates in every lookup and overflow marginal, but only five in two joint intersections; checking either marginal alone incorrectly accepts a 10,000 policy. These are reproducible controls,
 **not a claim that a live public-chain class has been measured to contain five**.
 
 The sample routing experiment uses a 50,000-height stand-in for inherited
