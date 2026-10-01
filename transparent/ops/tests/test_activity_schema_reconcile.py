@@ -138,8 +138,14 @@ class AdoptionTests(unittest.TestCase):
     def test_preparation_starts_only_captured_authority_and_retains_guard(self):
         caddy=self.root/'Caddyfile'; caddy.write_bytes(b'old guard')
         actions=[]
+        import urllib.error
+        probes=[urllib.error.URLError(ConnectionRefusedError()),200]
+        def readiness(_):
+            result=probes.pop(0)
+            if isinstance(result,Exception):raise result
+            return result
         commands=SimpleNamespace(run=lambda argv,**kw:actions.append((argv,kw)),
-            unit=lambda action,*units:actions.append((action,units)),metadata_status=lambda _:200)
+            unit=lambda action,*units:actions.append((action,units)),metadata_status=readiness)
         self.product.local.commands=commands
         self.product.local.saved=lambda:({'files':{'/etc/caddy/Caddyfile':{'.':{'kind':'file','mode':0o644,'uid':caddy.stat().st_uid,'gid':caddy.stat().st_gid}}}}, {'units':{u:{'ActiveState':'active'} for u in (M.H.FILTER,*M.H.AUTHORITY)}})
         self.product.routing=SimpleNamespace(check_guard=lambda **_:None,guarded=lambda:b'correct guard')
@@ -155,6 +161,8 @@ class AdoptionTests(unittest.TestCase):
         self.assertEqual(actions[-1],('start',(M.H.FILTER,*M.H.AUTHORITY)))
         self.assertEqual(self.record['v10_reconciliation']['preparations'][-1]['status'],'passed')
         self.assertEqual((self.product.root/'resume-prepare-1/Caddyfile').read_bytes(),b'old guard')
+        attempts=json.loads((self.product.root/'resume-prepare-1/readiness-attempts.json').read_text())
+        self.assertEqual(attempts,[{'status':None,'error_type':'ConnectionRefusedError'},{'status':200}])
         self.assertNotIn(M.H.LOAD,actions[-1][1]);self.assertNotIn(M.H.SCALER,actions[-1][1])
         self.assertNotIn(M.H.QUALITY,actions[-1][1])
 

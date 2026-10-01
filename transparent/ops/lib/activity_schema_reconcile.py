@@ -245,7 +245,18 @@ def prepare_resume(product, record, save):
         product.local.commands.unit('start',*active)
         import time
         deadline = time.monotonic()+60
-        while product.local.commands.metadata_status('http://127.0.0.1:8094/v1/shards') != 200:
+        attempts = []
+        import urllib.error
+        while True:
+            try:
+                status = product.local.commands.metadata_status('http://127.0.0.1:8094/v1/shards')
+                attempts.append({'status':status})
+            except urllib.error.URLError as error:
+                status = None
+                attempts.append({'status':None,'error_type':type(error.reason).__name__})
+            H.B.atomic(before/'readiness-attempts.json',json.dumps(attempts,sort_keys=True).encode())
+            if status == 200:
+                break
             H.require(time.monotonic() < deadline, 'guarded predecessor authority did not become ready')
             time.sleep(1)
         product.routing.check_guard()
