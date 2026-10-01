@@ -57,11 +57,16 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   with plan/preflight and its production lock, before any production change.
   No manual production unit changes or binary transfers are permitted.
   The wrapper now has a journaled schema recipe runner: 17 failure/recovery tests
-  and 45 existing deployment tests passed. Actual trusted phase programs,
+  and 45 existing deployment tests passed. Actual trusted phase programs and the
   reviewed production recipe remain open. Wrapper-mediated immutable source
   staging is implemented, including exact archive and Git identities, private
   receipts and a lock held by the process performing the transfer/extraction.
-  All 30 schema/staging tests passed; no production source has yet been staged.
+  All 30 schema/staging tests passed. The reviewed operations-only source
+  export at `56b67ba0` is now staged on the coordinator; all 269 files were
+  reverified, and the root wrapper ran successfully with a pinned inventory
+  supplied through stdin. Client archive-size admission and future receipt
+  PID capture then passed 31 combined tests. Complete the actual recipe and
+  phase programs before the schema transaction.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

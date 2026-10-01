@@ -55,14 +55,19 @@ schema cutover remain open.
 The wrapper now implements a journaled coordinator-only schema recipe boundary,
 with input hashes, inherited production lock descriptors, durable phase intent
 and bounded recovery. Seventeen failure/recovery tests and 45 existing shared
-deployment tests passed. Actual production phase programs, a reviewed recipe
+deployment tests passed. Actual production phase programs and a reviewed recipe
 remain incomplete. Wrapper-mediated immutable source staging now has exact
 archive/commit checks, bounded extraction and a single root process holding the
 production lock throughout receipt and extraction. All 30 schema/staging tests
-passed, including a real lock-contention fixture. No production source was
-staged and no production change was
-made. At 00:09 UTC backfill reached 840000. At 00:12 its guard observed 89%
-available host memory, 79% candidate-volume disk, 23% chain-disk and 30% root-disk
+passed, including a real lock-contention fixture. Those focused tests made no
+production changes. Subsequently the wrapper staged the 536659-byte reviewed
+operations export at `56b67ba0` in 4.52 seconds. A second status check verified
+all 269 retained files, and the staged wrapper ran on the coordinator with a
+pinned inventory supplied through `/dev/stdin`. No schema transaction exists.
+The client now rejects oversized archives before hashing or SSH, and future
+root staging receipts capture the process PID; 31 combined tests passed. At 00:38 UTC backfill reached 1210000.
+At 00:39 its guard observed 88%
+available host memory, 77% candidate-volume disk, 23% chain-disk and 30% root-disk
 headroom with zero ingest restarts. The three owned jobs stayed active and the
 quality supervisor stayed inactive.
 

@@ -767,7 +767,12 @@ The wrapper's `schema-source-plan`, `schema-source-preflight`,
 operation sources on the coordinator. They require a remote-lock inventory with
 the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
 `--sha256` identities, and `--archive FILE` except for status. Create the archive
-with `git archive --format=tar.gz` from that exact commit. Run plan and preflight
+with `git archive --format=tar.gz` from that exact commit, exporting `ops`,
+`transparent/ops`, `enhance/ops`, `tools/ci` and `shared/dev`. This contains the
+operation dependencies without historical evidence bundles. The reviewed
+operations export at `56b67ba0` was 536659 bytes; its whole-tree archive was
+81439424 bytes and exceeded the 64 MiB transfer limit. The client now rejects
+an oversized archive before hashing or making an SSH request. Run plan and preflight
 before stage; stage also repeats preflight. The helper receives the archive and
 performs every write in the same root process holding the production lock.
 It does not depend on a separate SSH lock process surviving the transfer.

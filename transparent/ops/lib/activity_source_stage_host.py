@@ -154,7 +154,7 @@ def stage(request, lock, incoming, root=STAGE_ROOT):
     (root/'sources').mkdir(parents=True, exist_ok=True, mode=0o700)
     (root/'staging').mkdir(parents=True, exist_ok=True, mode=0o700)
     receipt = {'version': 1, 'status': 'receiving', 'source_sha': source,
-               'archive_sha256': checksum, 'started_unix': time.time()}
+               'archive_sha256': checksum, 'started_unix': time.time(), 'pid': os.getpid()}
     atomic_json(receipt_path, receipt)  # Intent before receiving or extracting.
     temporary = Path(tempfile.mkdtemp(dir=root, prefix='.source-'))
     try:

@@ -154,3 +154,12 @@ immutable SSH bootstrap boundary and 30 combined schema/staging tests. Transfer,
 extraction and receipt writes share one root lock owner. No production source
 was staged by these fixture tests; the actual recipe, phase programs and live
 cutover gates remain open.
+
+[Coordinator source staging](source-stage-coordinator-56b67ba0.json) records the
+536659-byte operations export, guarded SSH staging, all 269 retained file hashes
+reverified and the staged root wrapper successfully reading journal status.
+The original whole-tree archive was retained locally without transfer.
+[Archive admission follow-up](source-staging-admission-followup.json) moves the
+64 MiB guard before client hashing/SSH and adds PID capture to future receipts;
+31 combined tests passed. Canonical service remains v10 and no schema transaction
+has been applied.

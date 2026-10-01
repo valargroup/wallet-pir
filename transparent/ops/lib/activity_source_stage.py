@@ -15,6 +15,7 @@ from wallet_pir_ops.deploy.remote import SSHExecutor
 
 HELPER_PATH = Path(__file__).with_name('activity_source_stage_host.py')
 HELPER = Path(hostlock.__file__).read_text()+'\n'+HELPER_PATH.read_text()
+MAX_COMPRESSED = 64 << 20  # v1 bound shared with the transmitted root helper.
 
 
 class SourceStage:
@@ -64,6 +65,8 @@ class SourceStage:
                 raise ValueError('pass the git archive for source staging')
             if not Path(archive).is_file() or Path(archive).is_symlink():
                 raise ValueError('source archive must be a regular file, not a symlink')
+            if Path(archive).stat().st_size > MAX_COMPRESSED:
+                raise ValueError('source archive exceeds the received-archive bound; export only operation sources')
             # Stream without buffering or exporting file contents to logs.
             with Path(archive).open('rb') as stream:
                 actual = hashlib.file_digest(stream, 'sha256').hexdigest()

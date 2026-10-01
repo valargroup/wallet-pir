@@ -348,6 +348,7 @@ class SourceStageTests(unittest.TestCase):
         # A retry verifies the retained set and does not consume replacement bytes.
         self.assertEqual(self.stage(b'not a second upload'), result)
         receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
+        self.assertEqual(receipt['pid'], os.getpid())
         self.assertEqual(receipt['compressed_bytes'], len(data))
         self.assertEqual(set(receipt['files']), set(self.files))
         self.assertEqual((self.root/'ops/staging'/('a'*40+'.json')).stat().st_mode & 0o777, 0o600)
@@ -462,6 +463,19 @@ class SourceStageTests(unittest.TestCase):
         self.assertEqual(cli.main(argv, out=lambda x: None), 0)
         archive.write_bytes(b'changed')
         self.assertEqual(cli.main(argv, out=lambda x: None), 1)
+
+    def test_source_plan_rejects_oversize_before_hash_or_remote_access(self):
+        from unittest.mock import patch
+        self.assertEqual(source_stage.MAX_COMPRESSED, source_host.MAX_COMPRESSED)
+        archive = self.root/'oversized.tar.gz'
+        with archive.open('wb') as stream:
+            stream.truncate(source_stage.MAX_COMPRESSED+1)
+        inventory = SimpleNamespace(hosts={'coordinator': {'machine_id': 'b'*32}},
+            ssh={'mode': 'config'}, lock={'type': 'remote', 'host': 'coordinator'})
+        client = source_stage.SourceStage(inventory, out=lambda x: None)
+        with patch.object(source_stage.hashlib, 'file_digest', side_effect=AssertionError('no hash of oversized archive')):
+            with self.assertRaisesRegex(ValueError, 'received-archive bound'):
+                client.run('plan', 'a'*40, 'c'*64, archive)
 
     def test_real_helper_owns_lock_during_receipt_and_extraction(self):
         data = self.archive()
