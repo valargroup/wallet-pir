@@ -116,3 +116,31 @@ geometries using the survey estimates, separately for implemented display-v1 and
 compact proposals. It does not claim a full-chain packing replay or native RSS/
 latency. The old bounded vector reports remain retained as conformance oracles;
 they are never pooled into probability-population estimates.
+
+
+## Full-chain census continuation
+
+`fullchain.py` is the full-chain acquisition path. Its raw preflight verifies
+retained inputs and measures one persistent SSH session with height-string
+`getblock(["height", 0])`, a 200-request window and a paced 45 requests/s limit.
+This single-call form was verified by the controller and replaces the
+latency-bound two-call preflight. The fixed anchor remains height 3,502,662,
+`0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f`.
+Raw binary bundles, per-block checksums, SQLite state and checkpoints live in
+`/home/ai-dev/.cache/wallet-pir-census/`; only sanitized receipts belong in Git.
+
+The Rust exporter's `--census DATABASE` mode checks canonical raw parsing,
+height/parent continuity, mainnet genesis and coinbase placement. It resolves
+inputs sequentially from disk, deletes spent outputs, preserves exact output
+bytes and checks every transaction identity, including shielded-only exclusions.
+The canonical genesis output is included in display records and excluded from
+spendable state, following the pinned state implementation. Missing prevouts
+retain eligible display records with shared unknown fees; exact zero and
+coinbase non-applicable fees stay distinct. Normal extraction uses the existing
+extractor and shared value-balance fee logic. Compact codec sizes remain
+analysis proposals, separate from implemented display-v1.
+
+The retained raw preflight reached 44.51 blocks/s; this is acquisition throughput,
+not full-chain completion. The initial 7,812 parsed blocks are an incomplete
+prefix. Full coverage and anonymity conclusions remain unqualified until the
+anchored scan and final aggregate/replay validation finish.

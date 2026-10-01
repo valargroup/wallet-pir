@@ -124,7 +124,7 @@ class Gateway:
         with os.fdopen(fd,"w") as f:f.write(key if key.endswith("\n") else key+"\n")
         try:
             self.process=subprocess.Popen(["ssh","-i",self.key_path,"-o","IdentitiesOnly=yes",
-                "-o","StrictHostKeyChecking=accept-new","-o","ConnectTimeout=20",
+                "-o","StrictHostKeyChecking=accept-new","-o","ConnectTimeout=20","-o","ServerAliveInterval=15","-o","ServerAliveCountMax=4",
                 "pir-census@167.99.42.60"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,text=True,bufsize=1)
         except BaseException:
