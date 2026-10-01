@@ -22,6 +22,9 @@ impl extract::PreviousOutputs for Previous {
 mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--pack-stream") {
+        return stream::packing();
+    }
     if args.get(1).map(String::as_str) == Some("--stream") {
         return stream::run();
     }

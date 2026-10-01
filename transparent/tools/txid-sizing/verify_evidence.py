@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import analyze
 import geometry
+import survey
 
 
 def main():
@@ -25,7 +26,19 @@ def main():
     for name,digest in pins["source_files"].items():
         if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
             raise ValueError("pinned source changed: "+name)
-    print("checksums, source pins, analysis and geometry regenerate exactly; qualification remains UNQUALIFIED")
+    current=evidence/"archive-survey-statistics.json"
+    if current.exists():
+        new_report=survey.report(json.loads(current.read_bytes()))
+        new_report["input_sha256"]=hashlib.sha256(current.read_bytes()).hexdigest()
+        if new_report!=json.loads((evidence/"archive-survey-analysis.json").read_bytes()):
+            raise ValueError("survey regeneration mismatch")
+        if geometry.survey_projection(new_report)!=json.loads((evidence/"archive-survey-geometry.json").read_bytes()):
+            raise ValueError("survey geometry regeneration mismatch")
+        new_pins=json.loads((evidence/"archive-survey-sources.json").read_bytes())
+        for name,digest in new_pins["source_files"].items():
+            if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+                raise ValueError("survey source changed: "+name)
+    print("checksums, source pins and deterministic reports verified; historical vector and new probability-sample qualification limits remain explicit")
 
 
 if __name__=="__main__": main()

@@ -77,7 +77,9 @@ def sufficient(checkpoint):
                 for key,count in counts.items():
                     pair=moments[name][key][s["name"]];pair[0]+=count;pair[1]+=count*count
             blocks.append(b)
-    return dict(schema="txid-sizing-survey-sufficient-statistics-v2",design=receipt["design"],blocks=blocks,route_moments=moments)
+    node=json.loads((checkpoint/"node-info.json").read_text())
+    eras=[dict(name="Sprout",height=0)]+sorted([dict(name=u["name"],height=u["activationheight"]) for u in node["upgrades"].values() if u["activationheight"]<=design["anchor_height"]],key=lambda u:u["height"])
+    return dict(schema="txid-sizing-survey-sufficient-statistics-v2",design=receipt["design"],era_boundaries=eras,blocks=blocks,route_moments=moments)
 
 
 def frontier_intervals(groups,design,codec,category="all"):
@@ -115,10 +117,11 @@ def frontier_intervals(groups,design,codec,category="all"):
     return frontiers
 
 
-def block_summary(frame, extracted):
+def block_summary(frame, extracted, thresholds=a.THRESHOLDS):
     if extracted["hash"]!=frame["hash"] or extracted["height"]!=frame["height"]:raise ValueError("canonical extraction pin mismatch")
     block=frame["rpc_block"]
     if extracted["transactions"]!=block["nTx"]:raise ValueError("raw/decoded transaction inventory mismatch")
+    if block.get("previousblockhash") is not None and extracted.get("previousblockhash")!=block["previousblockhash"]:raise ValueError("raw/decoded previous block hash mismatch")
     records=extracted["records"]
     if len({r["txid_internal"] for r in records})!=len(records):raise ValueError("duplicate real txid")
     rpc_eligible=[t for t in block["tx"] if t["vin"] or t["vout"]]
@@ -161,7 +164,7 @@ def block_summary(frame, extracted):
         h=r["height"];txid=r["txid_internal"]
         lh=int.from_bytes(hashlib.sha256(b"txid-sizing/lookup/"+bytes.fromhex(txid)).digest()[:8],"little")
         oh=int.from_bytes(hashlib.sha256(b"txid-sizing/overflow/"+bytes.fromhex(txid)).digest()[:8],"little")
-        for threshold in (128,192,256,384,512,768,1024):
+        for threshold in thresholds:
             count=len(a.fragments(size)) if size>threshold else 0
             for lookup,overflow,lb,ob in (("temporal","global",1,1),("coarse","global",1,1),("hash","global",4,1),("global","global",1,1),("hash","broad",4,1),("hash","hash",4,4),("hash","global",16,1),("hash","hash",16,16),("hash","global",64,1)):
                 l=h//50000 if lookup=="temporal" else (h//1000000 if lookup=="coarse" else (lh%lb if lookup=="hash" else 0))
@@ -222,6 +225,53 @@ def extract(checkpoint,binary,status=None,follow=False):
     finally:
         identities.close()
         if process.poll() is None:process.terminate();process.wait()
+
+
+def finalize(checkpoint,binary):
+    """Exact final-source raw replay plus routing at observed weighted frontiers."""
+    checkpoint=Path(checkpoint)
+    design=json.loads((checkpoint/"plan.json").read_text())
+    weighted=Counter()
+    for s in design["strata"]:
+        for h in s["heights"]:
+            b=json.loads((checkpoint/"summaries"/f"{h}.json").read_text())
+            for size,n in b["hist"]["display-v1"]["all"]:weighted[size]+=n*s["N"]/s["n"]
+    thresholds=sorted(set(a.THRESHOLDS)|{t for p in (.8,.85,.9,.95,.99) if (t:=hist_quantile(weighted,p,strict=p==.8))<=4044})
+    process=subprocess.Popen([str(binary),"--stream"],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,bufsize=1)
+    count=0;eligible=0
+    try:
+        for s in design["strata"]:
+            for h in s["heights"]:
+                path=checkpoint/"blocks"/f"{h}.json";frame=json.loads(path.read_text())
+                previous=json.loads((checkpoint/"summaries"/f"{h}.json").read_text())
+                if census.digest(path)!=previous["source_sha256"]:raise ValueError("raw source changed before replay")
+                canonical={k:frame[k] for k in ("height","hash","raw_block")}
+                canonical["parents"]=[dict(txid=p["txid"],hex=p["hex"]) for p in frame["parents"]]
+                process.stdin.write(json.dumps(canonical,separators=(",",":"))+"\n");process.stdin.flush()
+                line=process.stdout.readline()
+                if not line:raise RuntimeError("final canonical replay stopped")
+                extracted=json.loads(line)
+                record_path=checkpoint/"records"/f"{h}.json"
+                if census.digest(record_path)!=previous["canonical_records_sha256"]:raise ValueError("canonical checkpoint changed")
+                if extracted!=json.loads(record_path.read_text()):raise ValueError("final-source canonical replay mismatch")
+                summary=block_summary(frame,extracted,thresholds)
+                for k,v in summary.items():
+                    if k!="routes" and v!=previous[k]:raise ValueError("final summary replay mismatch: "+k)
+                summary["source_sha256"]=previous["source_sha256"]
+                summary["canonical_records_sha256"]=previous["canonical_records_sha256"]
+                census.atomic_json(checkpoint/"summaries"/f"{h}.json",summary)
+                count+=1;eligible+=len(extracted["records"])
+        process.stdin.close()
+        if process.wait():raise RuntimeError("final-source canonical replay failed")
+    finally:
+        if process.poll() is None:process.terminate();process.wait()
+    db=sqlite3.connect(checkpoint/"identities.sqlite")
+    distinct=db.execute("SELECT COUNT(*) FROM txids").fetchone()[0];db.close()
+    if eligible!=distinct:raise ValueError("global distinct transaction reconciliation failed")
+    result=dict(blocks_replayed=count,distinct_eligible_txids=distinct,routing_thresholds=thresholds,
+        canonical_replay="all retained raw frames reproduced identical canonical record inventories with final source and release-fast binary")
+    census.atomic_json(checkpoint/"final-replay.json",result)
+    return result
 
 
 def group_blocks(blocks,design):
@@ -306,6 +356,22 @@ def report(data):
             hist=Counter()
             for b in groups[s["name"]]:hist.update(dict(b["hist"][c]["all"]))
             result["strata"][s["name"]]["frontiers"][c]={str(p):hist_quantile(hist,p,strict=p==.8) for p in (.5,.8,.85,.9,.95,.99)}
+    result["era_domains"]={}
+    eras=data["era_boundaries"]
+    for i,era in enumerate(eras):
+        lo=era["height"];hi=eras[i+1]["height"] if i+1<len(eras) else design["anchor_height"]+1
+        inside=lambda b:lo<=b["height"]<hi
+        selected=[b for b in data["blocks"] if inside(b)]
+        weighted_hist={c:Counter() for c in a.CODECS}
+        for s in design["strata"]:
+            for b in groups[s["name"]]:
+                if inside(b):
+                    for c in a.CODECS:
+                        for size,n in b["hist"][c]["all"]:weighted_hist[c][size]+=n*s["N"]/s["n"]
+        result["era_domains"][era["name"]]=dict(lo=lo,hi_exclusive=hi,canonical_blocks=hi-lo,sampled_blocks=len(selected),
+            totals={k:estimate(vals(lambda b,k=k:b["totals"].get(k,0) if inside(b) else 0),design) for k in ("eligible","outputs","coinbase","input_only","raw_escape_outputs")},
+            weighted_frontiers={c:{str(p):hist_quantile(hist,p,strict=p==.8) for p in (.5,.8,.85,.9,.95,.99)} for c,hist in weighted_hist.items()},
+            basis="domain estimation with original stratum inclusion probabilities; later NU6 domains are not separate randomized strata")
     return result
 
 if __name__=="__main__":
