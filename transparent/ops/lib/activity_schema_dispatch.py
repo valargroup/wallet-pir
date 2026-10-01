@@ -165,7 +165,7 @@ class Actor:
         if action == 'repair-restore':
             return self.host.restore(repair_token=self.request['request_id'])
         if action.startswith('verify-'):
-            deadline = time.monotonic()+60
+            deadline = time.monotonic()+(300 if action == 'verify-worker' else 60)
             while True:
                 try:
                     status = self.host.commands.control()

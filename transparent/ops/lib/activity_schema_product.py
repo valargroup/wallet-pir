@@ -124,7 +124,7 @@ class Product:
                    'plan':entry['plan'], 'plan_sha256':D.digest(entry['plan'])}
         if getattr(self,'recovery_program',None) is not None:
             request['recovery_source_sha'] = self.recovery_program['source_sha']
-        return self.dispatch.call(entry['host'], request, timeout=330 if action in ('preflight','stage','capture') else 90)
+        return self.dispatch.call(entry['host'], request, timeout=330 if action in ('preflight','stage','capture','verify-worker') else 90)
 
     async def all_workers(self, action, attempt):
         # Distinct pinned hosts own distinct locks/results. Always join every

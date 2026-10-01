@@ -473,7 +473,18 @@ class Host:
 
     def restore(self, *, repair_token=None):
         self.withdrawn()
-        _, state = self.saved()  # Validate all rollback bytes before stopping.
+        record, state = self.saved()  # Validate all rollback bytes before stopping.
+        if repair_token is not None and self.role == 'worker':
+            # A failed cold-start deadline may leave the exact restored worker
+            # warm later. Never reset that cache in a reviewed repair when every
+            # captured file and the live binary/assignment still prove v10.
+            current = {item['path']: B.entries(Path(item['path']))
+                       if Path(item['path']).exists() or Path(item['path']).is_symlink() else None
+                       for item in record['plan']['files']}
+            if current == record['files'] and self.commands.control().get('warm') is True:
+                self.effective_units()
+                proof = self.verify_worker(rollback=True)
+                return {'status':'already-restored', 'worker':proof}
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)

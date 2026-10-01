@@ -1325,3 +1325,5 @@ worker active record in the complete baseline, with unchanged retained namespace
 identity. Missing or changed active publication bytes refuse. Original baseline
 receipts are never rewritten. Repair startup and focused tests are not live
 recovery acceptance.
+
+A reviewed failed-rollback source repair may reuse an already warm restored worker only when every captured file still matches byte/hash/mode/owner inventory and the live executable, active publication and assignment prove the captured predecessor. Ordinary restore still stops and restores workers. Candidate cold-start verification has a bounded 300-second wait and 330-second transport; the approved rollback budget and readiness gates are unchanged.

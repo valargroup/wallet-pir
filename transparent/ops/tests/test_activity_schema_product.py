@@ -201,6 +201,27 @@ class Actors(unittest.TestCase):
         with self.assertRaises(ValueError):D.Actor(bad,root=self.actor.root)
         self.assertFalse(self.actor.root.exists());self.assertEqual(self.events,[])
 
+    def test_candidate_cold_start_can_exceed_one_minute_but_rollback_probe_cannot(self):
+        from unittest.mock import Mock
+        for action in ('verify-worker','verify-rollback-worker'):
+            actor=D.Actor.__new__(D.Actor);actor.request={'action':action}
+            actor.host=Mock();actor.host.commands.control.side_effect=[
+                {'warm':False,'invalidated':False,'candidate':None,'preparing':None}, {'warm':True,'invalidated':False,'candidate':None,'preparing':None}]
+            actor.host.verify_worker.return_value='verified'
+            with patch.object(D.time,'monotonic',side_effect=[0,70]),patch.object(D.time,'sleep'):
+                if action=='verify-worker':self.assertEqual(actor.execute(),'verified')
+                else:
+                    with self.assertRaisesRegex(ValueError,'warm deadline'):actor.execute()
+
+    def test_candidate_transport_outlives_its_three_hundred_second_warm_bound(self):
+        from unittest.mock import Mock
+        product=M.Product.__new__(M.Product);product.dispatch=Mock()
+        entry={'host':'worker','plan':request()['plan']}
+        product.remote(entry,'verify-worker',1)
+        self.assertEqual(product.dispatch.call.call_args.kwargs['timeout'],330)
+        product.remote(entry,'verify-rollback-worker',2)
+        self.assertEqual(product.dispatch.call.call_args.kwargs['timeout'],90)
+
     def test_read_only_preflight_creates_neither_lock_nor_owner(self):
         actor=D.Actor(request('preflight'),root=self.actor.root,host_factory=self.host_factory,lock_factory=lambda:self.lock)
         self.assertIsNone(actor.run());self.assertFalse(self.lock.path.exists());self.assertFalse(actor.root.exists())

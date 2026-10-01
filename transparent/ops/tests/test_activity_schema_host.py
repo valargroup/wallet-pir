@@ -34,6 +34,30 @@ def worker_plan():
                    'map_sha256': 'e'*64, 'map_file_sha256':'f'*64, 'binary_sha256': 'd'*64, 'assignment_sha256': 'd'*64}}
 
 
+class RepairReuseTests(unittest.TestCase):
+    def test_only_reviewed_repair_reuses_exact_warm_restored_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'captured-unit';path.write_text('v10')
+            record={'plan':{'files':[{'path':str(path),'required':True}]},
+                    'files':{str(path):M.B.entries(path)}}
+            host=M.Host.__new__(M.Host);host.role='worker'
+            from unittest.mock import Mock
+            host.commands=Mock();host.commands.control.return_value={'warm':True}
+            host.saved=Mock(return_value=(record,{}));host.withdrawn=Mock()
+            host.effective_units=Mock();host.verify_worker=Mock(return_value={'worker_id':'exact'})
+            self.assertEqual(host.restore(repair_token='reviewed')['status'],'already-restored')
+            host.commands.unit.assert_not_called();host.verify_worker.assert_called_once_with(rollback=True)
+            host.verify_worker.side_effect=ValueError('binary differs')
+            with self.assertRaisesRegex(ValueError,'binary differs'):host.restore(repair_token='reviewed')
+            host.commands.unit.assert_not_called()
+            path.write_text('changed')
+            host.commands.unit.side_effect=RuntimeError('normal restore stops first')
+            with self.assertRaisesRegex(RuntimeError,'normal restore'):host.restore(repair_token='reviewed')
+            path.write_text('v10');host.commands.unit.reset_mock()
+            with self.assertRaisesRegex(RuntimeError,'normal restore'):host.restore()
+            host.commands.unit.assert_called_once()
+
+
 class PlanTests(unittest.TestCase):
     def test_coordinator_captures_optional_local_control_helper_absence(self):
         plan=worker_plan();plan.update(role='coordinator',worker=None)
