@@ -202,3 +202,24 @@ constructor-fixture failure and a cancelled overly broad local selection remain
 retained; neither is counted as passing evidence. Registering preparation through
 the existing schema suite avoids a central Makefile change selecting all Rust
 packages. Native inputs remain unchanged at `12ce1291`.
+
+[Third coordinator source staging](source-stage-coordinator-6e8337fa.json) records
+wrapper plan/preflight/stage/status for the 554361-byte operations export,
+receipt PID 1827147 and all 275 retained hashes reverified. Read-only publication
+planning succeeded; preflight correctly refused the unfinished ingest owner.
+No publication job, binary/fleet stage or schema transaction was started.
+
+[Product host transition evidence](schema-host-transitions-focused.json) records
+concrete writer quiescence, private
+baseline capture, atomic product installation, displaced stale unit drop-ins,
+separate v11 config/control/cache/assignment binding and warm v10 recovery with
+routing/load/scaler deferred. Twenty new host tests and 59 combined
+schema/staging/preparation/host tests passed. Actual reviewed host plans, pinned
+remote ownership, SSH descendant qualification, complete coordinated withdrawal,
+prewarm/alignment/verification/reopen and qualification remain open. Fixture
+success cannot authorize public reopening or establish a production baseline.
+The final affected check passed in 13.257 seconds. A red/green ordering
+regression and the initial fixture isolation failure are retained. The earlier
+13.189-second passing check predates the corrections and is not accepted for the
+final inputs. Capture preserves original router routes and warm worker state;
+staging stops all replaced services, including the filter, before activation.

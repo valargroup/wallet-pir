@@ -8,6 +8,25 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+
+October 1 host-transition follow-up: concrete product host programs now stop
+writer units, require empty cgroups, capture complete v10 mutable state, install
+separate v11 unit/config/cache namespaces and restore warm predecessor state
+while routing, load and scaler remain deferred. Twenty new focused tests passed;
+59 combined schema/staging/preparation/host tests passed. This is fixture evidence.
+Reviewed host plans, pinned remote owners/descendant qualification and the
+complete coordinated cutover/reopen recipe remain unfinished; no live baseline,
+worker binary stage or service transition was applied.
+
+At 02:25 UTC the owned v3 backfill reached 2,300,000 blocks and 322,428,603 events.
+Its guard at 02:38 UTC reported 87.56% available memory, 73.84% candidate-volume
+disk, 22.91% chain disk and 30.16% root disk, with zero restarts. Ingestion, its
+independent guard and the frozen prototype observation retain their original
+PIDs and remain active. The quality supervisor remains stopped (failed state,
+MainPID 0). Exact-head comprehensive CI 36804203576 at `6e8337fa` remains queued;
+no aggregate pass is inferred. Canonical publication and load remain v10.
+
+
 October 1 follow-up: the rollback dependency now copies private mutable baseline
 bytes independently, preserves ownership/modes and rejects partial or corrupted
 snapshots before restoration. Deployment subprocesses preserve inherited lock
@@ -33,8 +52,8 @@ with a fixed job that refuses unfinished ingestion or any existing owner/output,
 rechecks fat-LTO identities, retains stage attempts and enforces 20% resource
 floors. Publisher config/state and worker persistence support separate v11 paths;
 worker transfers verify both retained binary hashes before loading. Focused
-fixture checks passed. This job has not started, operation sources for these
-changes have not yet been staged, and the complete trusted cutover/recovery
+fixture checks passed. This job has not started, the operations-only source at `6e8337fa` has been staged and all 275 retained
+files reverified, and the complete trusted cutover/recovery
 phases and reviewed recipe remain open.
 
 

@@ -522,6 +522,7 @@ def load_tests(loader, tests, _pattern):
     # The wrapper's fixed preparation job shares this existing CI entry point;
     # registering it here avoids central Makefile churn selecting every Rust package.
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_publication_job.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_host.py'))
     return tests
 
 

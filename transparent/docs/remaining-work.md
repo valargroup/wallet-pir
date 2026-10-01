@@ -79,6 +79,13 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Publisher configuration/state and worker active/cache/publication paths now
   support explicit separate v11 namespaces. Complete trusted cutover/recovery
   orchestration and installed sandbox/SSH descendant checks remain required.
+  Concrete host transitions now capture quiesced complete mutable state,
+  install bounded checksum-bound product files into v11 namespaces and restore
+  prior authority/worker state while deferring routing/load/scaler. Twenty
+  focused host tests passed, including surviving-child refusal, namespace/active
+  assignment fences and corruption/startup failure recovery. Complete reviewed
+  host plans, remote owners/locks, withdrawal/alignment/reopen orchestration,
+  independent retrieval and updated load configuration still gate live use.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

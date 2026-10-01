@@ -864,3 +864,57 @@ local grandchild fixture retained the lock after its parent and original owner
 exited. This is local process evidence; qualification must also exercise the
 actual SSH/remote phase boundary and reconcile surviving remote descendants
 before explicit recovery after timeout or interruption.
+
+### Product host transitions for the v11 recipe
+
+The checksum-bound `transparent/ops/scripts/transparent-activity-host.py` now
+implements host `preflight`, `capture`, `stage`, `activate`, `restore` and warm
+worker identity checks. Run it only as a dependency of the schema wrapper recipe,
+from its pinned immutable operations source on the reviewed machine. Mutations
+require the inherited host production-lock descriptor. The coordinator must keep
+its own production lock while invoking pinned SSH descendants; remote owners and
+locks must be qualified before any live use.
+
+A closed host plan binds role, machine ID, operations SHA, transaction ID, private
+baseline plan and each install's source hash, target and mode. Coordinator
+coverage includes binaries/units/drop-ins, controller/fleet/roster/credentials,
+fleet and scaler state, both controller activation records and the entire load
+tree and worker pins. Worker coverage includes both binaries, unit/drop-ins,
+active/invalidation records and prestart helpers. The installed predecessor's
+static publication, active publication, assignments and cache must be retained or
+copied as applicable. Large journals/publications/caches keep their namespace
+and sentinel fences. Units loaded from uncaptured vendor fragments or external
+drop-ins are refused.
+
+Capture first stops coordinator publication/reconciliation/control, scaler and
+load writers and checks zero main PIDs **and empty cgroups**. The recipe then
+captures the original router routing and quiescent warm worker state, before
+public withdrawal. Workers must have no pending prepare/candidate operation and
+match their durable active record; their bytes remain independently checked
+against the saved copies while the services stay warm. It records prior unit
+states privately beside the baseline, binding them to the host plan. The coordinator owner must keep all authority writers stopped throughout this
+cross-host capture. Stage requires both origins withdrawn, verifies candidate publication
+bytes with the native worker's `--verify-only`, stops and verifies empty cgroups
+for every replaced product service (including the filter), then atomically installs retained
+executables/configuration/units and displaces old unit drop-ins on their existing
+filesystem. Worker units must agree on the separate v11 static publication,
+assignment, active record, control socket and disk cache. Controller and fleet
+services must use the separate v11 configuration/state/publication paths.
+
+Recovery verifies the entire baseline before stopping services or restoring any
+byte. It restores controller/filter/worker state and starts only previously
+active authority units. Caddy, continuous load and scaler state remain deferred;
+load and scaler remain stopped. Warm worker checks compare the **running**
+executable hash, complete active publication identity, no preparing/candidate
+state and every advertised revision anchor. Their output is input to the
+coordinator's independent canonical-anchor and exact-query/SQLite verification;
+it cannot authorize reopening. The quality supervisor is never started.
+
+These are concrete host transition dependencies, **not a complete reviewed
+fleet cutover**. Coordinated withdrawal/reopen, scaler observe policy, initial
+fleet/controller activation records, all-worker prewarm, filter alignment,
+installed-sandbox hard-link verification, independent canonical retrieval,
+updated load fixtures, complete host plans/recipe and actual SSH descendant
+qualification still gate production use. The full publication preparation and
+native certificates/oracle gates precede maintenance. No host baseline or service
+transition has been applied by these fixture checks.
