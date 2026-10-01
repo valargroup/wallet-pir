@@ -57,7 +57,7 @@ def warm_active(status, digest, *, continuous=False):
             (continuous or status.get('candidate') is None and status.get('preparing') is None))
 
 
-def relay(router):
+def relay(router, *, rewrite_host=True):
     require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:(?:8080|8093)', router), 'invalid private verification router')
     require(ipaddress.ip_address(router.rsplit(':', 1)[0]) in ipaddress.ip_network('10.142.0.0/16'),
             'verification router is outside the reviewed private network')
@@ -67,7 +67,7 @@ def relay(router):
         reverse_proxy 127.0.0.1:8094
     }
     handle {
-        reverse_proxy '''+router+'''
+        reverse_proxy '''+router+(' {\n            header_up Host {upstream_hostport}\n        }' if rewrite_host else '')+'''
     }
 }\n'''
 
@@ -206,16 +206,17 @@ class Routing:
                 config.get('router_host'), 'captured private router identity changed')
         return endpoint
 
-    def guarded(self, original_endpoint=False):
+    def guarded(self, original_endpoint=False, legacy_header=False):
         endpoint = self.plan['private_router']
         if getattr(self,'predecessor_continuous',False) and not original_endpoint:
             endpoint = self.private_router()
-        return (U.guard_coordinator(self.original().decode())+relay(endpoint)).encode()
+        return (U.guard_coordinator(self.original().decode())+relay(endpoint,rewrite_host=not legacy_header)).encode()
 
     def check_guard(self, allow_original=False):
         allowed = [self.guarded()]
         if allow_original and getattr(self,'predecessor_continuous',False):
-            allowed.append(self.guarded(original_endpoint=True))
+            allowed.extend([self.guarded(original_endpoint=True),self.guarded(legacy_header=True),
+                            self.guarded(original_endpoint=True,legacy_header=True)])
         require(Path('/etc/caddy/Caddyfile').read_bytes() in allowed, 'coordinator routing differs from owned maintenance state')
         require(all(self.commands.metadata_status(url) == 503 for url in H.PUBLIC_METADATA), 'both public metadata origins must remain withdrawn')
 

@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "gate": "focused-private-relay-host-binding",
+  "owner": "7adaaaedfb5a4d9f992bd52aab9218e5",
+  "base_sha": "98d9dc97b8669c8763a410a9d98ac603af48bd0a",
+  "seconds": 20.17054125003051,
+  "inputs": {
+    "transparent/ops/lib/activity_schema_routing.py": "16a36db9b71a99ec2645189762c0bceeb304f8f3d72e28541715a2edc082ef3b",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "69d1ad3cce3d6ecd8f33c2015b08b1f942f45e2d07e53f8d9618a477a2d85872"
+  },
+  "log_sha256": "c530afe7851f0aa878ad9061be37ac14ba7635e07255978276632f8bf0b31eeb",
+  "limits": "Actual private HTTP/SQLite/BOTHHTTPS proof still required; failed native EOF proof retained; no current CI pass claimed"
+}

@@ -123,6 +123,8 @@ class AdoptionTests(unittest.TestCase):
         fake=SimpleNamespace(plan={'old_fleet':{'path':str(config),'sha256':routing.H.checksum(config)},
                                    'private_router':'10.142.0.11:8093'})
         self.assertEqual(routing.Routing.private_router(fake),'10.142.0.11:8080')
+        self.assertIn('header_up Host {upstream_hostport}',routing.relay('10.142.0.11:8080'))
+        self.assertNotIn('header_up',routing.relay('10.142.0.11:8080',rewrite_host=False))
         for endpoint in ('10.142.0.12:8080','127.0.0.1:8080','10.142.0.11:22','example.com:8080'):
             config.write_text(json.dumps({'internal_listen':endpoint,'router_host':'10.142.0.11'}))
             fake.plan['old_fleet']['sha256']=routing.H.checksum(config)
