@@ -799,7 +799,7 @@ class ServicePreparation(Preparation):
         mapping = json.loads((P.OUTPUT/'shards.json').read_text(), object_pairs_hook=unique)
         require(controller.get('recent_from') == next(s['start_height'] for s in mapping['shards'] if s['geometry'] == 'recent-4k-8k') and
                 controller.get('recent_geometry') == 'recent-4k-8k' and controller.get('archive_geometry') == 'archive-wide' and
-                controller.get('directory_choice') == 'all' and controller.get('range_profile') == 'v2',
+                controller.get('directory_choice') == 'all' and controller.get('range_profile') == P.GEOMETRIES['range_profile'],
                 'controller profile/cutoff differs from the approved publication')
         entries = {s['shard_id']: s for s in mapping['shards']}
         fixture = configs['fixture.json']

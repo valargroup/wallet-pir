@@ -8,15 +8,28 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Attempt 9 completed the remote v11 cutover and exact private/both canonical
+query proofs, but continuous publication failed: operations inputs used `v2`
+instead of the native profile name `zcash-transparent-range-v2`. Load remained
+paused with zero completed queries. Explicit ordinary cold rollback passed in
+377.309 seconds; private and both canonical queries and reopened SQLite stores
+passed, and all remote owners exited. The forward SSH reset and subsequent local
+rollback transport timeout remain failures, separately reconciled against the
+remote journal. The service-input guard now binds the canonical profile from the
+reviewed publication geometry and rejects shorthand/foreign names. Corrected
+redeployment and every final sustained/freshness/capacity/lifecycle gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
+
 Attempt 8 failed archive cache preparation at its unchanged 1,200-second bound.
 Automatic rollback then refused eight unexpected Python bytecode files created
 by a read-only diagnostic that omitted `-B`; all retained source payload hashes
-are unchanged. All production owners exited, but the transaction remains
-`rollback-failed` and recovery is required. The first fresh-source repair also refused the original source inventory before
+are unchanged. The original automatic rollback failed before restoration; a subsequent
+closed repair completed cold recovery in 382.237 seconds, with exact private and
+both canonical query/SQLite proofs and all remote owners exited. The first fresh-source repair also refused the original source inventory before
 withdrawal; that failure remains recorded. A closed rollback repair now retains
 only bounded compiler-proved import caches outside the source tree with private
-intent/completion, then requires the original strict source check. Actual recovery
-remains pending. [Focused evidence](../evidence/activity-metadata-2026-09-30/closed-bytecode-retention-focused.json).
+intent/completion, then requires the original strict source check. The retained attempt-8 recovery evidence records this separately from the
+failed forward deadline. [Focused evidence](../evidence/activity-metadata-2026-09-30/closed-bytecode-retention-focused.json).
 Diagnostics must use `python3 -B` before importing retained libraries. Source
 file refusal now reports unexpected and missing file counts without exposing
 paths. The exact guard remains intact; prior source receipts are preserved.

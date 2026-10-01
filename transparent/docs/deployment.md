@@ -1441,3 +1441,8 @@ cache bytes and inodes outside the source tree. The original source receipt is
 unchanged and strict verification must pass after retention. Ordinary source
 verification never permits extra files. Read-only diagnostics must use Python
 `-B` before importing retained operations libraries.
+
+The activity service-input controller uses the full native range profile name
+`zcash-transparent-range-v2`, bound to the reviewed publication geometry.
+Shorthand `v2` and foreign names refuse before service staging. A committed
+cutover and brief canonical proof do not accept continuous-publication freshness.

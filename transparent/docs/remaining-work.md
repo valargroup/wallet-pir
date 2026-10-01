@@ -1,5 +1,18 @@
 # Remaining work for the transparent PIR recovery beta
 
+Attempt 9 completed the remote v11 cutover and exact private/both canonical
+query proofs, but continuous publication failed: operations inputs used `v2`
+instead of the native profile name `zcash-transparent-range-v2`. Load remained
+paused with zero completed queries. Explicit ordinary cold rollback passed in
+377.309 seconds; private and both canonical queries and reopened SQLite stores
+passed, and all remote owners exited. The forward SSH reset and subsequent local
+rollback transport timeout remain failures, separately reconciled against the
+remote journal. The service-input guard now binds the canonical profile from the
+reviewed publication geometry and rejects shorthand/foreign names. Corrected
+redeployment and every final sustained/freshness/capacity/lifecycle gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
+
+
 Updated 2026-09-28. This owns milestone definitions, execution order and the
 authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [Status](status.md) summarizes accepted
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate

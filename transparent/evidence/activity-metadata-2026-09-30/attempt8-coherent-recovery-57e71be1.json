@@ -1,0 +1,28 @@
+{
+  "source_sha": "57e71be15dd78a732497af7995851dddbd0500a4",
+  "transaction": "transparent-schema-20261001T204118Z-4122409a2ff5-3d4ab2",
+  "recipe_sha256": "4122409a2ff579498a808c30f21e5481aa0b96b0cae53ea0c9d214dc8d8794b4",
+  "status": "rolled-back",
+  "recovery_seconds": 382.2374170133844,
+  "owner": "b060bbe92ba4465cbda20dabd9c677d6",
+  "full_pipeline_seconds": 438.0745097080944,
+  "native_proofs": 5,
+  "each_proof": {
+    "syncs": 1,
+    "completed": 1,
+    "exact": 1,
+    "failed": 0,
+    "stop_reason": null,
+    "http_503_rate": 0,
+    "reopened_sqlite_events": 2,
+    "reopened_sqlite_transactions": 2
+  },
+  "proof_archive_sha256": "8d7f0609f3ca97994b321fa1692aec77fe8c19a4cb6266c2ac4b965c8171e18b",
+  "public_metadata": {
+    "both_http": 200,
+    "start_height": 0,
+    "shards": 86,
+    "raw_sha256": "70e74d5619bf4d5a7bde4872e2c7ecd1aa3efd746b6be815491404e1c7953e0a"
+  },
+  "scope": "Distinct cold recovery passed; original forward/cache deadline and earlier failed rollback attempts remain failed. No v11/sustained/capacity/lifecycle acceptance."
+}

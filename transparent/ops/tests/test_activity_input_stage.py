@@ -370,7 +370,7 @@ class ServiceInputs(unittest.TestCase):
             'controller.json':json.dumps({'data_dir':str(M.P.JOURNAL),'publication_root':str(self.output.parent),
                 'initial_publication':str(self.output),'fleet_config':'/opt/transparent-publisher/v11/fleet.json',
                 'source_sha':M.P.RELEASE_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
-                'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'v2',
+                'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'zcash-transparent-range-v2',
                 'fleet_command':str(M.SOURCE/source/'transparent/ops/scripts/transparent-live-fleet.py')}),
             'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
                 'worker_schema':'transparent-shard-v11','worker_active_record':'/opt/transparent-publisher/v11/active.json',
@@ -403,6 +403,8 @@ class ServiceInputs(unittest.TestCase):
     def test_namespace_scaler_pin_and_traffic_group_rejections(self):
         cases=[('controller.json','shadow',True),('controller.json','data_dir','/old/journal'),
                ('controller.json','recent_from',999),('controller.json','range_profile','v1'),
+               ('controller.json','range_profile','v2'),
+               ('controller.json','range_profile','zcash-transparent-range-v99'),
                ('controller.json','fleet_command','/old/live-fleet.py'),
                ('fleet.json','state_dir','/opt/transparent-publisher/state'),('policy.json','mode','active'),
                ('pins.json','worker-0','0'*64)]
