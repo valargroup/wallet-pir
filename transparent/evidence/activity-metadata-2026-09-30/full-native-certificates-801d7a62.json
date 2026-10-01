@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "gate": "native-certificates",
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "publication_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+  "operations_source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "owner": "ccc08a720745492abfcf21b1f0228c72",
+  "duration_seconds": 1274.969962958945,
+  "segments": 180,
+  "result_sha256": "9f6cc3e260e738b19ff536fb7f03d2183732c547eb3e97c581263d0daaec3068",
+  "binary_sha256": "b13eaffc2a990596ab12003af2f7487bb21996fe1a835f68404cdd90f5af4b0e",
+  "certifier_sha256": "8fcffe86ce1cc631439026f9cce65cd503440637bea2f4ea7e8fff8d13a8a4f7",
+  "ipir_source_sha": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+  "floors": {
+    "archive-wide-pages": 83,
+    "otherwise": 128
+  },
+  "minimum_measured_failure_bits": 95,
+  "limitation": "Actual immutable segment certificates; installed setup/public hashes still require agreement during warm service verification. Not query, wallet, lifecycle or freshness qualification."
+}

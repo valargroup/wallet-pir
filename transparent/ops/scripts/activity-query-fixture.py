@@ -4,13 +4,14 @@ import argparse
 import datetime
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--shard-dir', type=Path, required=True)
-    parser.add_argument('--out', type=Path, required=True)
+    parser.add_argument('--out', type=Path, required=True, help='Immutable output file, or - for stdout')
     parser.add_argument('--include-provisional', action='store_true',
                         help='Only for a frozen disposable candidate, never moving-tail load')
     args = parser.parse_args()
@@ -61,10 +62,15 @@ def main():
                   source_map_sha256=hashlib.sha256(raw).hexdigest(), tables=tables,
                   oracle='Exact row hashes from independently verified published plaintext; extraction correctness is a separate chain oracle gate',
                   provisional_frozen=args.include_provisional)
-    with args.out.open('x') as file:
-        json.dump(result, file, separators=(',', ':'))
-        file.write('\n')
-    print(json.dumps(dict(tables=len(tables), sha256=hashlib.sha256(args.out.read_bytes()).hexdigest())))
+    encoded = (json.dumps(result, separators=(',', ':'))+'\n').encode()
+    if args.out == Path('-'):
+        sys.stdout.buffer.write(encoded)
+        sys.stdout.buffer.flush()
+    else:
+        with args.out.open('xb') as file:
+            file.write(encoded)
+    print(json.dumps(dict(tables=len(tables), sha256=hashlib.sha256(encoded).hexdigest())),
+          file=sys.stderr if args.out == Path('-') else sys.stdout)
 
 
 if __name__ == '__main__':

@@ -23,12 +23,23 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   all artifacts and four journal rebuilds passed, with 90 shards and measured
   allocation retained in [terminal evidence](../evidence/activity-metadata-2026-09-30/full-publication-terminal.json).
   Preserve `/srv/transparent-activity/full-v11/preparation`; do not rebuild it.
-- [ ] Complete native correctness certificates and independent raw-chain metadata comparisons for the full publication.
+- [x] Complete actual full-publication native correctness certificates at the approved security floors.
+  All 180 distinct table segments passed; [terminal evidence](../evidence/activity-metadata-2026-09-30/full-native-certificates-801d7a62.json)
+  retains the exact result and source/table pins. Installed setup/public hash agreement remains a cutover gate.
+- [x] Complete independent sampled raw-chain metadata comparisons for the full publication.
+  Seventeen blocks, including the three densest and the fixed anchor, matched
+  all 52,550 journal events. [Evidence](../evidence/activity-metadata-2026-09-30/full-chain-oracle-801d7a62.json)
+  retains raw calls and four adaptive batch-size refusals. Sampled real-chain
+  coverage includes Sprout, Sapling and Ironwood; Orchard fixture coverage and
+  canonical wallet recovery remain separate gates.
 - [ ] Render reviewed live host plans, stage immutable operations/native/unit/publication inputs through the wrapper, and qualify actual SSH descendant locking.
   The new input wrapper has local streaming, interruption and reconciliation
   tests. The first worker copy failed native verification with SIGILL and was
   reconciled preserving abandoned bytes. Portable CI artifacts are selected for
-  the replacement; no live service transition occurred.
+  the replacement. All three candidates now passed transfer, native verification
+  and final receipt revalidation. Actual worker host templates bind refreshed
+  live rollback state and candidate inputs. Coordinator/router plans, complete
+  recovery samples and the full reviewed recipe remain open; no live service transition occurred.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency

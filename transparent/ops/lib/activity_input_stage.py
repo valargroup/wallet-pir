@@ -724,3 +724,113 @@ class Preparation:
             finally:
                 record['finished_unix']=time.time();durable.atomic_json(self.owner,record)
                 self.retained_native=None
+
+
+class ServicePreparation(Preparation):
+    """Retain reviewed coordinator configuration bytes, without installing them.
+
+    Reuse the assignment preparation's lock, ownership, partial-output and
+    reconciliation discipline. These files are inert inputs: only the separately
+    reviewed product recipe can install/start them. No live configuration or
+    credentials are rewritten while staging.
+    """
+    UNITS = ('transparent-publish-controller', 'transparent-replica-reconciler',
+             'transparent-control-sessions', 'transparent-filter-server',
+             'transparent-5qps-continuous', 'transparent-fleet-scaler')
+    FILES = {'controller.json', 'fleet.json', 'roster.json', 'fixture.json',
+             'pins.json', 'policy.json'} | {name+'.service' for name in UNITS}
+
+    def __init__(self, inventory, request, expected):
+        require(isinstance(request, dict) and set(request) == {'version', 'source_sha',
+                'release_result_sha256', 'attempt', 'files'} and
+                type(request['version']) is int and request['version'] == 1,
+                'invalid service preparation request')
+        require(isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
+                isinstance(request['release_result_sha256'], str) and HEX.fullmatch(request['release_result_sha256']) and
+                type(request['attempt']) is int and 1 <= request['attempt'] <= 100 and
+                isinstance(request['files'], dict) and set(request['files']) == self.FILES and
+                all(isinstance(v, str) and '\x00' not in v and
+                    len(v.encode()) <= (2*1024*1024 if name == 'fixture.json' else 256*1024)
+                    for name, v in request['files'].items()) and
+                len(durable.canonical(request)) <= MAX_REQUEST and digest(request) == expected,
+                'service preparation identity/file bounds disagree')
+        self.inventory, self.request, self.identifier = inventory, request, expected
+        self.target = PREPARED/expected
+        self.partial = PREPARED/(expected+'.preparing')
+        self.owner = OWNERS/(expected+'.json')
+        self.executor = SSHExecutor(inventory)
+        self.retained_native = None
+
+    def render(self):
+        P.verify_release(self.request['release_result_sha256'])
+        result = json.loads((P.EVIDENCE/'result.json').read_text())
+        require(result['status'] == 'passed' and result['map_sha256'] == P.checksum(P.OUTPUT/'shards.json'),
+                'service inputs require completed exact publication')
+        files = {name: raw.encode() for name, raw in self.request['files'].items()}
+        configs = {name: json.loads(files[name], object_pairs_hook=unique)
+                   for name in ('controller.json', 'fleet.json', 'roster.json', 'fixture.json', 'pins.json', 'policy.json')}
+        require(all(isinstance(value, dict) for name, value in configs.items() if name != 'roster.json'),
+                'service configurations must be objects')
+        controller, fleet = configs['controller.json'], configs['fleet.json']
+        require(controller.get('data_dir') == str(P.JOURNAL) and
+                controller.get('publication_root') == str(P.OUTPUT.parent) and
+                controller.get('initial_publication') == str(P.OUTPUT) and
+                controller.get('fleet_config') == '/opt/transparent-publisher/v11/fleet.json' and
+                controller.get('fleet_command') == str(SOURCE/self.request['source_sha']/'transparent/ops/scripts/transparent-live-fleet.py') and
+                controller.get('source_sha') == P.RELEASE_SHA and
+                controller.get('shadow') is False, 'controller inputs are not the frozen v11 namespace')
+        require(fleet.get('state_dir') == '/opt/transparent-publisher/v11/state' and
+                fleet.get('roster') == '/opt/transparent-publisher/v11/roster.json' and
+                fleet.get('worker_schema') == 'transparent-shard-v11' and
+                fleet.get('worker_active_record') == '/opt/transparent-publisher/v11/active.json' and
+                fleet.get('worker_runtime_cache_dir') == '/srv/transparent-pir/v11/runtime-cache' and
+                fleet.get('worker_root') == '/srv/transparent-pir/v11/publications',
+                'fleet inputs reuse predecessor namespaces')
+        require(configs['policy.json'].get('mode') == 'observe', 'scaler must remain observe-only')
+        roster = configs['roster.json']
+        require(isinstance(roster, list) and len(roster) >= 3 and
+                len({w['id'] for w in roster}) == len(roster) and
+                configs['pins.json'] == {w['id']: WORKER_HASHES['transparent-shard-server'] for w in roster},
+                'load pins omit/change prepared workers')
+        mapping = json.loads((P.OUTPUT/'shards.json').read_text(), object_pairs_hook=unique)
+        require(controller.get('recent_from') == next(s['start_height'] for s in mapping['shards'] if s['geometry'] == 'recent-4k-8k') and
+                controller.get('recent_geometry') == 'recent-4k-8k' and controller.get('archive_geometry') == 'archive-wide' and
+                controller.get('directory_choice') == 'all' and controller.get('range_profile') == 'v2',
+                'controller profile/cutoff differs from the approved publication')
+        entries = {s['shard_id']: s for s in mapping['shards']}
+        fixture = configs['fixture.json']
+        require(fixture.get('schema') == 'transparent-shard-v11' and isinstance(fixture.get('tables'), list),
+                'load fixture is not v11')
+        groups = set()
+        for target in fixture['tables']:
+            entry = entries.get(target.get('shard_id'))
+            require(entry and target.get('revision') == entry['manifest_digest'] and
+                    target.get('geometry') == entry['geometry'], 'fixture references another publication')
+            groups.add((target['geometry'], target.get('table')))
+        require(groups == {(g, t) for g in ('recent-4k-8k', 'archive-wide') for t in ('directory', 'pages')},
+                'fixture omits a required traffic group')
+        for unit in self.UNITS:
+            args = transparent_unit.exec_args(self.request['files'][unit+'.service'])
+            require(args, 'empty candidate service command')
+            if unit == 'transparent-publish-controller':
+                require(args == ['/usr/local/bin/transparent-publish-controller', '--config',
+                                 '/opt/transparent-publisher/v11/controller.json'], 'publisher unit uses predecessor config')
+            elif unit == 'transparent-filter-server':
+                require(args[0] == '/usr/local/bin/transparent-filter-server' and args.count('--shard-dir') == 1 and
+                        args[args.index('--shard-dir')+1] == str(P.OUTPUT), 'filter unit uses predecessor publication')
+            else:
+                require(args[:3] == ['/usr/bin/python3', '-B', str(SOURCE/self.request['source_sha']/'transparent/ops/scripts'/
+                        ('transparent-quality-load.py' if unit == 'transparent-5qps-continuous' else
+                         'transparent-fleet-scaler.py' if unit == 'transparent-fleet-scaler' else 'transparent-live-fleet.py'))],
+                        'service unit is not the reviewed immutable operation source')
+                require(not any('/opt/transparent-publisher/' in a and '/opt/transparent-publisher/v11/' not in a
+                                for a in args[3:]), 'service unit uses predecessor state')
+        return files
+
+    def preflight(self):
+        result = self.plan()
+        for path in (self.target, self.partial, self.owner):
+            no_links(path)
+            require(not path.exists(), 'service preparation already owned; inspect status or reconcile')
+        resources(PREPARED)
+        return result

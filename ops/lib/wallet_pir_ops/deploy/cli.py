@@ -99,6 +99,11 @@ def parser():
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
     for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-input-service-'+name, help='retain reviewed v11 coordinator configuration inputs without installation')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
         command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -226,12 +231,13 @@ def main(argv=None, executor=None, out=print, **options):
             spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
             inventory = descriptors.load_inventory(args.inventory)
-            if args.command.startswith('schema-input-prepare-'):
+            if args.command.startswith(('schema-input-prepare-', 'schema-input-service-')):
                 with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
                 if len(raw)>module.MAX_REQUEST: raise ValueError('preparation request exceeds bound')
                 request=json.loads(raw,object_pairs_hook=module.unique)
-                result=module.Preparation(inventory,request,args.request_sha256).run(
-                    args.command.removeprefix('schema-input-prepare-'),getattr(args,'expect_plan_sha256',None))
+                service = args.command.startswith('schema-input-service-')
+                result=(module.ServicePreparation if service else module.Preparation)(inventory,request,args.request_sha256).run(
+                    args.command.removeprefix('schema-input-service-' if service else 'schema-input-prepare-'),getattr(args,'expect_plan_sha256',None))
             elif args.command == 'schema-input-build':
                 result = module.build(inventory,args.host,args.source_sha,args.assignment,args.unit,
                                       args.release_result_sha256,args.cache_bytes,args.attempt,worker_id=args.worker_id)

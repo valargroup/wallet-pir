@@ -283,4 +283,117 @@ class Inputs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'pinned root'):source.SourceStage(inventory,target='worker')
 
 
+class ServiceInputs(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.output = self.root/'publications/initial'; self.output.mkdir(parents=True)
+        self.evidence = self.root/'preparation'; self.evidence.mkdir()
+        mapping = {'shards': [{'shard_id':i, 'manifest_digest':str(i)*64, 'geometry':g, 'start_height':i}
+                    for i,g in enumerate(('archive-wide','recent-4k-8k'))]}
+        (self.output/'shards.json').write_text(json.dumps(mapping))
+        (self.evidence/'result.json').write_text(json.dumps({'status':'passed','map_sha256':M.P.checksum(self.output/'shards.json')}))
+        for name,value in (('OUTPUT',self.output),('EVIDENCE',self.evidence),('JOURNAL',self.root/'journal'),('verify_release',lambda _:None)):
+            p=patch.object(M.P,name,value);p.start();self.addCleanup(p.stop)
+        self.inventory=SimpleNamespace(hosts={},ssh={'mode':'config'})
+        source='a'*40
+        files={
+            'controller.json':json.dumps({'data_dir':str(M.P.JOURNAL),'publication_root':str(self.output.parent),
+                'initial_publication':str(self.output),'fleet_config':'/opt/transparent-publisher/v11/fleet.json',
+                'source_sha':M.P.RELEASE_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
+                'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'v2',
+                'fleet_command':str(M.SOURCE/source/'transparent/ops/scripts/transparent-live-fleet.py')}),
+            'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
+                'worker_schema':'transparent-shard-v11','worker_active_record':'/opt/transparent-publisher/v11/active.json',
+                'worker_runtime_cache_dir':'/srv/transparent-pir/v11/runtime-cache','worker_root':'/srv/transparent-pir/v11/publications'}),
+            'roster.json':json.dumps([{'id':'worker-'+str(i)} for i in range(3)]),
+            'pins.json':json.dumps({'worker-'+str(i):M.WORKER_HASHES['transparent-shard-server'] for i in range(3)}),
+            'policy.json':json.dumps({'mode':'observe'}),
+            'fixture.json':json.dumps({'schema':'transparent-shard-v11','tables':[{'shard_id':s['shard_id'],
+                'geometry':s['geometry'],'revision':s['manifest_digest'],'table':t} for s in mapping['shards'] for t in ('directory','pages')]})}
+        for unit in M.ServicePreparation.UNITS:
+            if unit=='transparent-publish-controller':args=['/usr/local/bin/transparent-publish-controller','--config','/opt/transparent-publisher/v11/controller.json']
+            elif unit=='transparent-filter-server':args=['/usr/local/bin/transparent-filter-server','--shard-dir',str(self.output)]
+            else:
+                script='transparent-quality-load.py' if unit=='transparent-5qps-continuous' else 'transparent-fleet-scaler.py' if unit=='transparent-fleet-scaler' else 'transparent-live-fleet.py'
+                args=['/usr/bin/python3','-B',str(M.SOURCE/source/'transparent/ops/scripts'/script),'/opt/transparent-publisher/v11/fleet.json']
+            files[unit+'.service']='[Service]\nExecStart='+M.shlex.join(args)+'\n'
+        self.request={'version':1,'source_sha':source,'release_result_sha256':'b'*64,'attempt':1,'files':files}
+
+    def preparation(self,request=None):
+        request=request or self.request
+        return M.ServicePreparation(self.inventory,request,M.digest(request))
+
+    def test_plan_binds_every_reviewed_byte_without_output_or_service_effects(self):
+        prep=self.preparation();files=prep.render();plan=prep.plan()
+        self.assertEqual(set(files),M.ServicePreparation.FILES)
+        self.assertEqual(plan['files'],{n:hashlib.sha256(b).hexdigest() for n,b in files.items()})
+        self.assertFalse(prep.target.exists());self.assertFalse(prep.owner.exists())
+        self.assertIs(M.ServicePreparation.run,M.Preparation.run)
+
+    def test_namespace_scaler_pin_and_traffic_group_rejections(self):
+        cases=[('controller.json','shadow',True),('controller.json','data_dir','/old/journal'),
+               ('controller.json','recent_from',999),('controller.json','range_profile','v1'),
+               ('controller.json','fleet_command','/old/live-fleet.py'),
+               ('fleet.json','state_dir','/opt/transparent-publisher/state'),('policy.json','mode','active'),
+               ('pins.json','worker-0','0'*64)]
+        for name,key,value in cases:
+            with self.subTest(name=name,key=key):
+                r=copy.deepcopy(self.request);v=json.loads(r['files'][name]);v[key]=value;r['files'][name]=json.dumps(v)
+                with self.assertRaises(ValueError):self.preparation(r).render()
+        r=copy.deepcopy(self.request);v=json.loads(r['files']['fixture.json']);v['tables'].pop();r['files']['fixture.json']=json.dumps(v)
+        with self.assertRaisesRegex(ValueError,'traffic group'):self.preparation(r).render()
+
+    def test_closed_files_digest_bounds_and_duplicate_configuration_keys(self):
+        for name in ('../../Caddyfile','credentials','unknown.json'):
+            r=copy.deepcopy(self.request);r['files'][name]='x'
+            with self.assertRaises(ValueError):self.preparation(r)
+        r=copy.deepcopy(self.request);r['files']['policy.json']='x'*(256*1024+1)
+        with self.assertRaises(ValueError):self.preparation(r)
+        with self.assertRaises(ValueError):M.ServicePreparation(self.inventory,self.request,'0'*64)
+        r=copy.deepcopy(self.request);r['files']['policy.json']='{"mode":"observe","mode":"active"}'
+        with self.assertRaisesRegex(ValueError,'duplicate'):self.preparation(r).render()
+
+    def test_units_cannot_execute_other_source_or_use_predecessor_filter(self):
+        for unit in M.ServicePreparation.UNITS:
+            r=copy.deepcopy(self.request)
+            r['files'][unit+'.service']='[Service]\nExecStart=/bin/true\n'
+            with self.subTest(unit=unit),self.assertRaises(ValueError):self.preparation(r).render()
+
+    def test_real_fixture_stdout_does_not_create_output_file(self):
+        table=b'\x01'+b'\x00'*4095
+        shard=self.output/('c'*64);shard.mkdir()
+        for name in ('directory','pages'):(shard/(name+'.0.bin')).write_bytes(table)
+        segment={'rows':1,'row_bytes':4096,'sha256':hashlib.sha256(table).hexdigest()}
+        (shard/'manifest.json').write_text(json.dumps({'schema':'transparent-shard-v11',
+            'directory_segments':[segment],'page_segments':[segment]}))
+        (self.output/'shards.json').write_text(json.dumps({'shards':[{'shard_id':0,'manifest_digest':'c'*64,
+            'geometry':'archive-wide','sealed':True}]}))
+        script=Path(__file__).parents[1]/'scripts/activity-query-fixture.py'
+        result=subprocess.run([sys.executable,str(script),'--shard-dir',str(self.output),'--out','-'],
+                              cwd=self.root,capture_output=True,check=True)
+        fixture=json.loads(result.stdout);summary=json.loads(result.stderr)
+        self.assertEqual(len(fixture['tables']),2)
+        self.assertEqual(summary['sha256'],hashlib.sha256(result.stdout).hexdigest())
+        self.assertFalse((self.root/'-').exists())
+
+    def test_service_configuration_agrees_with_actual_host_namespace_validator(self):
+        spec=importlib.util.spec_from_file_location('service_host_contract',M.HERE/'activity_schema_host.py')
+        host=importlib.util.module_from_spec(spec);spec.loader.exec_module(host)
+        files=copy.deepcopy(self.request['files'])
+        controller=json.loads(files['controller.json']);controller.update(
+            data_dir='/srv/transparent-activity/full-v3/journal',publication_root='/srv/transparent-activity/full-v11/publications',
+            initial_publication='/srv/transparent-activity/full-v11/publications/initial')
+        files['controller.json']=json.dumps(controller)
+        files['transparent-publish-controller.service']='[Service]\nExecStart=/usr/local/bin/transparent-publish-controller --config "/opt/transparent-publisher/v11/controller.json"\n'
+        actor=host.Host.__new__(host.Host);actor.role='coordinator'
+        installs=[]
+        for name in ('controller.json','fleet.json',*host.AUTHORITY):
+            path=self.root/name;path.write_text(files[name])
+            target='/etc/systemd/system/'+name if name.endswith('.service') else '/opt/transparent-publisher/v11/'+name
+            installs.append({'target':target,'source':str(path)})
+        actor.plan={'installs':installs}
+        actor.validate_units()
+
+
 if __name__ == '__main__': unittest.main()

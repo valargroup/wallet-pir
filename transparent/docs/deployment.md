@@ -765,6 +765,28 @@ prepared and verified before deployment.
 
 ### Coordinated product service phases
 
+`schema-input-service-{plan,preflight,stage,status,reconcile}` retains the twelve
+reviewed coordinator inputs before preparing a product recipe: controller,
+fleet, roster, fixture, worker pins, observe policy and the six product units.
+The checksum-bound request contains `version=1`, `source_sha`,
+`release_result_sha256`, `attempt` and a closed `files` object of UTF-8 bytes.
+Run plan/preflight first; stage requires `--expect-plan-sha256`. It uses the
+same coordinator production lock, ownership fence, atomic private bundle and
+explicit partial-output reconciliation as assignment preparation. All output
+remains under `/srv/transparent-activity/full-v11/inputs/<requestSHA>`; no unit,
+configuration, credential, active record or routing is installed at this step.
+
+The receiver checks the completed publication/release identities, its actual
+cutoff/profile, separate v11 controller/fleet/control/cache paths, portable
+worker pins, observe policy, all four traffic groups and immutable script
+commands. Requests are bounded to 8 MiB, with 2 MiB reserved per fixture and
+256 KiB per other file. Full product preflight still verifies actual host
+inputs, recovery samples and all independent release reports before maintenance.
+`activity-query-fixture.py --out -` exports the exact sealed-table row fixture
+to stdout, keeping read-only preparation free of host output files; its digest
+summary goes to stderr. Include provisional rows only for frozen disposable
+prototype workloads.
+
 `schema-product-recipe --spec FILE --spec-sha256 HASH` constructs the complete
 ordered forward/recovery recipe from a reviewed private product specification.
 Retain its exact JSON, then run `schema-plan`, `schema-preflight` and

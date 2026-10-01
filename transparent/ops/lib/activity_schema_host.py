@@ -344,7 +344,7 @@ class Host:
                     controller.get('initial_publication') == '/srv/transparent-activity/full-v11/publications/initial' and
                     controller.get('fleet_config') == str(ROOT/'v11/fleet.json'), 'controller namespace is not v11')
             fleet = load(candidates[str(ROOT/'v11/fleet.json')])
-            expected = {'state_dir': str(ROOT/'v11/state'), 'worker_schema': 11,
+            expected = {'state_dir': str(ROOT/'v11/state'), 'worker_schema': 'transparent-shard-v11',
                         'worker_active_record': str(ROOT/'v11/active.json'),
                         'worker_runtime_cache_dir': '/srv/transparent-pir/v11/runtime-cache',
                         'worker_root': '/srv/transparent-pir/v11/publications'}

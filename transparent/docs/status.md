@@ -20,8 +20,16 @@ binds every raw report. The process exited with zero restarts and an empty
 cgroup; RemainAfterExit keeps the unit active and the older immutable owner
 record still says running. Those are retained observations, not an active job.
 Last health: 81.88% available memory, 60.24% candidate disk, 22.91% chain disk and
-30.14% root disk. Native certificates and independent raw-chain comparisons
-remain open; no schema cutover occurred.
+30.14% root disk. All 180 actual table-segment certificates subsequently passed
+the approved floors (83 bits for archive pages, 128 otherwise); the minimum
+measured result was 95 bits. The [certificate evidence](../evidence/activity-metadata-2026-09-30/full-native-certificates-801d7a62.json)
+binds the terminal owner and raw report. Agreement with installed setup/public
+hashes remains open. The independent chain oracle then matched all 52,550 events
+across 17 sampled blocks, including the three densest, genesis and the fixed
+anchor. Raw verbose transactions covered Sprout, Sapling and Ironwood; no
+Orchard component appeared in this sample. Four batch-too-large refusals were
+retained before exact smaller retries. The [chain evidence](../evidence/activity-metadata-2026-09-30/full-chain-oracle-801d7a62.json)
+records sampling limits and raw provenance. No schema cutover occurred.
 
 Actual immutable input preparation produced the complete native assignment and
 reviewed units on the coordinator. The first recent-worker copy received all
@@ -35,7 +43,16 @@ source inputs match the retained publication tools. See
 The portable server ran on the recent worker; verification then refused the
 auxiliary `.inputs` directory as a shard without a manifest. Both failed owners
 were reconciled preserving partial data. The corrected flat candidate layout
-requires fresh native verification.
+passed fresh native verification on both recent workers and the archive owner.
+The [recent](../evidence/activity-metadata-2026-09-30/recent-worker-inputs-801d7a62.json)
+and [archive](../evidence/activity-metadata-2026-09-30/archive-worker-inputs-801d7a62.json)
+receipts retain every command, source and input identity. These are candidate
+files; live binaries, units and routing remain v10. All three current workers
+were independently observed warm, without preparation, candidates or invalidation.
+Three actual checksum-bound worker host templates now bind refreshed machine,
+old active/map/cache sentinels and staged flat inputs. Coordinator/router plans,
+complete recovery samples, SSH descendant qualification and the complete reviewed
+product recipe still precede service maintenance.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained
@@ -46,7 +63,7 @@ native assignments and separate v11 worker units through the wrapper. Read-only
 fleet inspection found three active workers with no fragment drop-ins and
 existing cache budgets 5/5/48 GiB. The reviewed prepared bundle and worker transfer
 still require plan/preflight and staged exact operations sources. Production stays
-v10; full certificates, raw-chain oracle and qualification remain open.
+v10; installed certificate agreement, canonical recovery and qualification remain open.
 
 October 1 routing follow-up: concrete withdrawal/private relay/reopen programs
 now require all workers and independently accepted anchors, checksum-bound
