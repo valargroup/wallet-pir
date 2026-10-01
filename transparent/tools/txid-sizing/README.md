@@ -68,3 +68,51 @@ The helpers load a bounded JSON dataset in memory. They are not yet a streaming
 17-million-record census pipeline. Complete-data export, chain continuity,
 large-scale packing and observed request workload are next gates in
 [remaining work](../../docs/remaining-work.md#txid-display-sizing-and-independent-routing).
+
+
+## Anchored probability sample and streaming stage
+
+`census.py` pins the canonical archive anchor and a reproducible, disjoint
+nine-stratum SRSWOR block plan (256 blocks per stratum). It owns one persistent
+SSH gateway, executes only allowed read methods sequentially with a 40/s ceiling,
+resolves full external parent transactions into an on-disk SQLite cache, writes
+atomic per-block public raw checkpoints **outside the repository**, and rechecks
+all sampled block hashes plus the anchor after acquisition. It never reconnects
+a refused/unreachable session. The required credential environment variable is
+used only for a mode-0600 temporary file in `/tmp`, erased when the session closes.
+Never include the value in arguments, logs, evidence or a repository file.
+
+```bash
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/census.py \
+  /outside/repository/census --status /outside/repository/status.json
+../../tool-exec --repo wallet-pir -- cargo build --locked --offline --profile release-fast \
+  --manifest-path transparent/tools/txid-sizing/export/Cargo.toml
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/survey.py extract \
+  /outside/repository/census /assigned/target/release-fast/txid-sizing-export
+```
+
+The exporter `--stream` protocol takes one block-bounded JSON frame per line:
+`height`, `hash`, `raw_block` hex and `parents` containing requested `txid` and raw
+`hex`. Each frame is capped at 256 MiB. It validates canonical block/parent hashes,
+rejects trailing bytes and missing prevouts, uses the shared extractor/encoder,
+and emits one complete canonical record inventory per block. Python independently
+cross-checks RPC transaction identities, exact amounts/scripts and eligibility,
+Rust/Python display bytes and transparent-only fee arithmetic. Global sampled
+transaction deduplication and raw checksums are checkpointed on disk.
+
+`survey.sufficient(checkpoint)` compacts verified per-block histograms and
+per-stratum routing moments; `survey.report(data)` deterministically derives HT
+population totals, linearized ratios with finite-population correction, weighted
+frontiers and approximate inverted pointwise CDF intervals. Confidence units are
+blocks, not transactions. Sparse/extreme-tail normal intervals are limited;
+zero-observed tails do not establish absence. Aggregate route counts intersect
+all modeled transcript fields and deduplicate real txids before estimation.
+Sampled minima and estimated observed-class counts **cannot qualify the true
+minimum** or classes absent from the sample. Frozen segments, refresh/timing
+cohorts and uniform openings remain explicit analytical assumptions.
+
+`geometry.survey_projection(report)` budgets independent lookup/overflow
+geometries using the survey estimates, separately for implemented display-v1 and
+compact proposals. It does not claim a full-chain packing replay or native RSS/
+latency. The old bounded vector reports remain retained as conformance oracles;
+they are never pooled into probability-population estimates.

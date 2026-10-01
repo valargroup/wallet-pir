@@ -58,3 +58,38 @@ if __name__ == "__main__":
     import argparse
     parser=argparse.ArgumentParser(description=__doc__); parser.add_argument("output",type=Path)
     args=parser.parse_args(); args.output.write_text(json.dumps(report(),sort_keys=True,separators=(",",":"))+"\n")
+
+
+def survey_projection(measured):
+    """Independent geometry budgets using survey point estimates, not a layout replay."""
+    population=measured["totals"]["eligible"]["estimate"]
+    scenarios=[]
+    for codec,analysis in measured["codecs"].items():
+        selected={128,192,256,384,512,768,1024}
+        selected.update(analysis["weighted_frontiers_bytes"].values())
+        for t in sorted(selected):
+            if t>4044:continue
+            row=analysis["thresholds"][str(t)]
+            db=row["directory_entry_bytes_max"]["estimate"]
+            pb=row["overflow_entry_bytes"]["estimate"]
+            for lb in (1,4,16,64):
+                for ob in (1,4,16):
+                    for dr,pr in ((4096,4096),(8192,32768),(32768,65536)):
+                        ds=max(1,math.ceil(db/lb/.75/(dr*(ROW-4))))
+                        ps=max(1,math.ceil(pb/ob/.75/(pr*(ROW-4))))
+                        allocated=lb*ds*dr*ROW+ob*ps*pr*ROW
+                        for cover in (0,3):
+                            extra=row["cover3_requests" if cover else "fragments"]["estimate"]/population
+                            evaluations=2*ds+extra*ps
+                            scenarios.append(dict(codec=codec,threshold=t,lookup_buckets=lb,overflow_buckets=ob,
+                                lookup_rows=dr,overflow_rows=pr,cover=cover,directory_segments_per_bucket=ds,
+                                overflow_segments_per_bucket=ps,encoded_allocation_bytes=allocated,
+                                occupied_entry_bytes=db+pb,allocation_minus_entries_bytes=allocated-db-pb,
+                                native_preprocessing_reservation_bytes=lb*reservation(dr,ds)+ob*reservation(pr,ps),
+                                encrypted_requests_per_open_budget=2+extra,segment_evaluations_per_open_budget=evaluations,
+                                response_bytes_per_open_budget=evaluations*(5632+16),
+                                scan_bytes_proxy_per_open=2*ds*dr*ROW+extra*ps*pr*ROW,
+                                mean_lookup_candidates=population/lb,
+                                mean_lookup_overflow_intersection_candidates=row["overflow"]["estimate"]/lb/ob,
+                                qualified_minimum_population=None,latency_seconds=None,rss_bytes=None))
+    return dict(schema="txid-sizing-survey-geometry-v2",assumptions="Survey point estimates, balanced buckets, 75% entry density, conservative compact locator bound and two lookup requests/open; uniform uncached distinct txid opens. Allocations/segments/slack/reservations are budgets, not packed full-chain measurements. Responses/scans are source-based cost proxies, not native latency/RSS.",scenarios=scenarios)

@@ -19,8 +19,12 @@ impl extract::PreviousOutputs for Previous {
         Ok(self.0.get(point).cloned())
     }
 }
+mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--stream") {
+        return stream::run();
+    }
     if args.len() != 3 {
         return Err("usage: txid-sizing-export VECTOR_DIR OUTPUT.json".into());
     }
