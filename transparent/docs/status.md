@@ -739,3 +739,12 @@ A sub-ten-minute compatible fleet update and failed-batch rollback still need
 separate timing/recovery evidence. The optional
 [parent-filter artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md)
 passed a bounded canary; its heavy-wallet performance comparison did not finish.
+
+On 2026-10-01, the attempt5 transaction `transparent-schema-20261001T184408Z-a3a74bbb161e-491857`
+passed coherent capture, maintenance and staging, then failed candidate prewarm
+at 303.431 seconds. Automatic restoration passed, but its 250.862-second cold
+readiness check failed. A distinct exact warm-restored repair passed in 81.087
+seconds, including private and separate canonical encrypted-query proofs with
+reopened SQLite stores. Those cold failures remain failed; this brief repair
+does not qualify v11, capacity or cold recovery. The bounded startup allocation
+fix has focused evidence; a fresh actual cutover and all final gates remain open.

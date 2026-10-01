@@ -221,6 +221,9 @@ class Actors(unittest.TestCase):
         self.assertEqual(product.dispatch.call.call_args.kwargs['timeout'],330)
         product.remote(entry,'verify-rollback-worker',2)
         self.assertEqual(product.dispatch.call.call_args.kwargs['timeout'],90)
+        for action in ('activate','restore','repair-restore'):
+            product.remote(entry,action,3)
+            self.assertEqual(product.dispatch.call.call_args.kwargs['timeout'],130)
 
     def test_read_only_preflight_creates_neither_lock_nor_owner(self):
         actor=D.Actor(request('preflight'),root=self.actor.root,host_factory=self.host_factory,lock_factory=lambda:self.lock)

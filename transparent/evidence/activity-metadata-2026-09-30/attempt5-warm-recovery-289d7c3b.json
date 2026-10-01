@@ -1,0 +1,57 @@
+{
+  "source_sha": "289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "owner": "bce14a16a53643d0a8bdadac76783b72",
+  "transaction": "transparent-schema-20261001T184408Z-a3a74bbb161e-491857",
+  "recipe_sha256": "a3a74bbb161e5713b3d2b4dd5aa319f107d1c987d441a86675b6492070cdbf2c",
+  "status": "passed",
+  "duration_seconds": 81.0874420410255,
+  "native_reports": [
+    {
+      "query_origin": "http://127.0.0.1:18193",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0
+    },
+    {
+      "query_origin": "https://transparent-pir.valargroup.dev",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0
+    },
+    {
+      "query_origin": "https://enhance-pir.valargroup.dev",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0
+    },
+    {
+      "query_origin": "https://transparent-pir.valargroup.dev",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0
+    },
+    {
+      "query_origin": "https://enhance-pir.valargroup.dev",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0
+    }
+  ],
+  "private_raw_sha256": "a2d63e5f58c3f86d637d4459ed992b0fc2df142a7a33b5b4df017e4ffa5f2bca",
+  "scope": "Distinct exact warm-restored v10 repair; private and each canonical encrypted-query proof and reopened schema4 SQLite verified by wrapper. NOT passing prior cold deadlines, v11 acceptance, sustained load or capacity."
+}

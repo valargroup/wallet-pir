@@ -1405,3 +1405,11 @@ its entire baseline and captured Caddy hash under a checksum-bound remote owner.
 Only this attested case keeps the regenerated predecessor routing instead of
 restoring a snapshot already withdrawn. Original snapshots remain unchanged;
 private and both canonical encrypted-query/SQLite proofs still gate recovery.
+
+Worker activation and restoration retain up to 100 seconds of startup
+observations before their separate warm proof. The remote owner transport allows
+130 seconds for those actions, within the existing 140-second restore phase.
+This accounts for archive native loading before cache prewarm. An observation is
+not qualification: candidate warm verification remains 300 seconds, restored
+worker waiting remains 250 seconds, and the total rollback budget remains 740
+seconds. Cold recovery and actual cutover must still pass their original gates.

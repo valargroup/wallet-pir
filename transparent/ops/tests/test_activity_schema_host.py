@@ -35,6 +35,17 @@ def worker_plan():
 
 
 class RepairReuseTests(unittest.TestCase):
+    def test_candidate_activation_observes_startup_before_separate_warm_proof(self):
+        from unittest.mock import Mock
+        host=M.Host.__new__(M.Host);host.role='worker';host.plan={'installs':[]}
+        host.saved=Mock();host.withdrawn=Mock();host.quiet=Mock();host.commands=Mock()
+        host.settle_restored_worker=Mock(return_value={'qualification':'startup only'})
+        value=host.activate()
+        host.commands.unit.assert_called_once_with('start',*M.START['worker'])
+        host.settle_restored_worker.assert_called_once_with()
+        self.assertNotEqual(value.get('status'),'passed')
+        self.assertEqual(value['startup']['qualification'],'startup only')
+
     def test_captured_router_guard_attestation_preserves_snapshot_and_refuses_foreign_bytes(self):
         from unittest.mock import Mock
         with tempfile.TemporaryDirectory() as directory:
@@ -393,7 +404,7 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(result['observations'][0]['error_type'],'ValueError')
         self.assertIn('exact worker proof remains mandatory',result['qualification'])
         self.host.commands.control=Mock(return_value={'warm':False})
-        ticks=iter([0,0,41,41,41])
+        ticks=iter([0,0,101,101,101])
         with patch.object(M.time,'monotonic',side_effect=lambda:next(ticks)),patch.object(M.time,'sleep'):
             result=self.host.settle_restored_worker()
         self.assertFalse(result['observations'][-1]['warm'])

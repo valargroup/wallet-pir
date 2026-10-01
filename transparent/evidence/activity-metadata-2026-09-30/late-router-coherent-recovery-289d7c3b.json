@@ -1,0 +1,54 @@
+{
+  "status": "passed",
+  "scope": "Distinct warm predecessor recovery only",
+  "owner": "56d22c2725df4cafb199723d0af47039",
+  "source_sha": "289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "duration_seconds": 97.93526108295191,
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "terminal_status": "rolled-back",
+  "proof_archive_sha256": "f3d3efdd0441fdee251aa2faf2096ad36215fac42abb54ce67f3c18aecbaab0b",
+  "proofs": [
+    {
+      "query_origin": "http://127.0.0.1:18193",
+      "result_status": "passed",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0,
+      "native_report_sha256": "3c2ec90f6ccec42056fe85f7834aab57bfa0c1af4a5a7ac60e39496e3cd1e0fc"
+    },
+    {
+      "query_origin": "https://transparent-pir.valargroup.dev",
+      "result_status": "passed",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0,
+      "native_report_sha256": "040c9881529c4c87a27e1e83c83c6d78a16fb5270d97dbb8abaef33edc407a78"
+    },
+    {
+      "query_origin": "https://enhance-pir.valargroup.dev",
+      "result_status": "passed",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "http_503_rate": 0,
+      "native_report_sha256": "3bb46489c3b818ecaafa6cb6ab897550ab65cfd838a13dd04c58a02d260bd93a"
+    }
+  ],
+  "fresh_public_metadata": {
+    "http_status_both": 200,
+    "start_height": 0,
+    "shards": 86,
+    "covered_height": 3502874,
+    "raw_sha256_both": "495977e076c7952528e6b15bca5e37ac8e5a85a20f81b9086066cb392a51344c"
+  },
+  "limitations": "One wallet/two events, reopened schema4 SQLite. Cold archive deadline and original failures remain failed; not sustained/cold-fault/v11/full qualification."
+}

@@ -617,12 +617,15 @@ class Host:
         self.commands.unit('start', *START[self.role])
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
+        if self.role == 'worker':
+            return {'startup':self.settle_restored_worker()}
 
     def settle_restored_worker(self):
-        # Use part of the existing 140-second restore phase for startup. The
-        # outer 250-second wait and complete verification remain unchanged.
+        # Allocate startup observation before the independent warm proof. Native
+        # archive loading precedes cache prewarm. The restore phase still has
+        # its approved 140-second budget; warm gates and total 740 stay fixed.
         started=time.monotonic();observations=[]
-        while time.monotonic()-started < 40:
+        while time.monotonic()-started < 100:
             try:
                 status=self.commands.control()
                 observation={'warm':status.get('warm'),'map_sha256':status.get('active',{}).get('map_sha256')}
@@ -631,7 +634,7 @@ class Host:
             observations.append(observation)
             if observation.get('warm') is True:
                 break
-            remaining=40-(time.monotonic()-started)
+            remaining=100-(time.monotonic()-started)
             if remaining>0:time.sleep(min(2,remaining))
         return {'seconds':time.monotonic()-started,'observations':observations,
                 'qualification':'startup observations only; exact worker proof remains mandatory'}
