@@ -35,6 +35,19 @@ def worker_plan():
 
 
 class RepairReuseTests(unittest.TestCase):
+    def test_captured_router_guard_attestation_preserves_snapshot_and_refuses_foreign_bytes(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            host=M.Host.__new__(M.Host);host.root=Path(directory);host.role='router'
+            (host.root/'files').mkdir();saved=host.root/'files/0';saved.write_bytes(b'withdrawn exact configuration')
+            host.saved=Mock(return_value=({'plan_sha256':'a'*64,'plan':{'files':[{'path':'/etc/caddy/Caddyfile'}]}},{}))
+            host.withdrawn=Mock();inode=saved.stat().st_ino
+            value=host.attest_captured_router_guard(M.checksum(saved))
+            self.assertEqual(value['status'],'passed');self.assertEqual(saved.stat().st_ino,inode)
+            with self.assertRaisesRegex(ValueError,'exact owned'):host.attest_captured_router_guard('b'*64)
+            host.role='worker'
+            with self.assertRaises(ValueError):host.attest_captured_router_guard(M.checksum(saved))
+
     def partial_guard(self, directory):
         root=Path(directory).resolve();candidate=root/'v11';(candidate/'state').mkdir(parents=True)
         audit=candidate/'state/routing-availability.json';render=candidate/'state/rendered.json'

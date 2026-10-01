@@ -715,6 +715,14 @@ class Host:
         return {'worker_id': self.plan['worker']['id'], 'active': active, 'binary_sha256': binary_hash,
                 'assignment_sha256':assignment_hash, 'revisions': revisions, 'checked_unix': time.time()}
 
+    def attest_captured_router_guard(self, expected):
+        require(self.role=='router' and isinstance(expected,str) and HEX.fullmatch(expected), 'invalid captured router guard request')
+        self.withdrawn()
+        record,_=self.saved()
+        index=next(i for i,item in enumerate(record['plan']['files']) if item['path']=='/etc/caddy/Caddyfile')
+        require(checksum(self.root/'files'/str(index))==expected, 'late captured router is not the exact owned guard')
+        return {'status':'passed','captured_router_sha256':expected,'baseline_plan_sha256':record['plan_sha256']}
+
     def restore_routing(self):
         require(self.role == 'router', 'original routing restore requires the router plan')
         self.withdrawn()  # Coordinator guard must still cover both origins.

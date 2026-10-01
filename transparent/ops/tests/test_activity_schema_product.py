@@ -265,6 +265,18 @@ class Fences(unittest.TestCase):
         req=request('repair-restore')
         with self.assertRaises(ValueError):D.validate(req)
         req['recovery_source_sha']='b'*40;D.validate(req)
+
+    def test_captured_router_attestation_requires_repair_and_bound_digest(self):
+        req=request('attest-captured-router-guard');req['plan']['role']='router'
+        # Use an already validated router plan shape from the existing actor fixture.
+        with patch.object(D.H,'validate',return_value=None):
+            req['plan_sha256']=D.digest(req['plan'])
+            with self.assertRaises(ValueError):D.validate(req)
+            req.update(recovery_source_sha='b'*40,guard_sha256='c'*64);D.validate(req)
+            req['guard_sha256']='foreign'
+            with self.assertRaises(ValueError):D.validate(req)
+            req['guard_sha256']='c'*64;req['action']='restore-routing'
+            with self.assertRaises(ValueError):D.validate(req)
     def test_unfinished_schema_blocks_other_services_and_corrupt_pointer_refuses(self):
         root=Path('/fixture');identifier='transparent-schema-owner'
         files={str(root/schema_fence.SCHEMA_POINTER):json.dumps({'id':identifier}),
@@ -438,6 +450,39 @@ class InstalledSetups(unittest.TestCase):
 
 
 class ProductPhases(unittest.IsolatedAsyncioTestCase):
+    async def test_late_partial_capture_attests_guard_and_keeps_regenerated_routes(self):
+        self.group='rollback';self.product.root=Path(tempfile.mkdtemp());self.addCleanup(__import__('shutil').rmtree,self.product.root)
+        self.product.local.saved=lambda:({'owned_partial_guard':{'captured':{},'guarded':{}},'plan_sha256':'a'*64},
+            {'units':{u:{'ActiveState':'active'} for u in (M.H.LOAD,M.H.SCALER,*M.H.AUTHORITY)}})
+        self.product.owned=lambda *_:{'events':[{'group':'steps','name':'preserve-v10','status':'failed'},
+                    {'group':'rollback','name':'reopen-v10','status':'running'}],
+                    'recovery_programs':[{'source_sha':'c'*40}]}
+        self.product.routing.plan={'old_fleet':{'path':'/captured/fleet','sha256':'d'*64}}
+        config={'public_host':'transparent-pir.valargroup.dev','internal_listen':'10.142.0.11:8080','archive_sha256':'e'*64}
+        expected=hashlib.sha256(M.R.L.withdrawn_router(config).encode()).hexdigest()
+        def remote(entry,action,attempt,**kwargs):
+            self.assertEqual(action,'attest-captured-router-guard');self.assertEqual(kwargs['guard_sha256'],expected)
+            self.events.append('attested-late-guard')
+            return {'status':'passed','result':{'status':'passed','captured_router_sha256':expected,'baseline_plan_sha256':'b'*64}}
+        self.product.remote=remote
+        with patch.object(M.H,'checksum',return_value='d'*64),patch.object(M.H,'load',return_value=config):
+            await self.phase('reopen-v10')
+        self.assertIn('attested-late-guard',self.events)
+        self.assertNotIn('router-restore-routing',self.events)
+        self.assertTrue(any(self.product.root.glob('late-router-guard-*.json')))
+
+    async def test_empty_route_attestation_matches_real_producer(self):
+        from unittest.mock import AsyncMock
+        for guarded in (False,True):
+            with tempfile.TemporaryDirectory() as directory:
+                fleet=object.__new__(M.R.L.Fleet);fleet.root=Path(directory)
+                fleet.c={'public_host':'transparent-pir.valargroup.dev','internal_listen':'10.142.0.11:8080',
+                         'authority_upstream':'10.142.0.6:8094','router_host':'10.142.0.11'}
+                (fleet.root/'maintenance.json').write_text(json.dumps({'enabled':guarded}))
+                fleet.ssh=AsyncMock();await fleet._route([])
+                self.assertEqual(fleet.ssh.call_args.args[2],M.R.L.withdrawn_router(fleet.c,guarded).encode())
+        with self.assertRaises(ValueError):M.R.L.withdrawn_router({'public_host':'bad;host'})
+
     def setUp(self):
         self.events=[];self.failed=None
         self.product=object.__new__(M.Product)
@@ -460,7 +505,7 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
             async def run(self,action,kind,**kwargs):
                 owner.events.append(action+'-'+kind)
                 if owner.failed==action:raise ValueError('injected proof failure')
-                if 'restore_router' in kwargs:kwargs['restore_router']()
+                if kwargs.get('restore_router'):kwargs['restore_router']()
             async def withdraw(self,kind):await self.run('withdraw',kind)
             async def route_private(self,kind):await self.run('private',kind)
             async def verify(self,kind):await self.run('verify',kind)

@@ -1,0 +1,37 @@
+{
+  "status": "failed",
+  "source_sha": "9abd23818c5156f8d454247ac09ce9a4df397520",
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "owner": "d7285e37c0774da99f9266a4fae0cee3",
+  "repair_seconds": 81.68341720791068,
+  "stdout_sha256": "7a19429496e63c101ac7d7085bc0e238878a37f5d1c7374e9491fd46d5315273",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "phases": {
+    "withdraw-origins": {
+      "status": "passed",
+      "seconds": 27.791062011849135
+    },
+    "restore-v10": {
+      "status": "passed",
+      "seconds": 15.49908149568364
+    },
+    "verify-rollback": {
+      "status": "passed",
+      "seconds": 18.658537063747644
+    },
+    "reopen-v10": {
+      "status": "failed",
+      "seconds": 17.85639972332865
+    }
+  },
+  "failure": "Canonical metadata HTTP503 after reopen restored a router snapshot captured after prior withdrawal",
+  "captured_router": {
+    "sha256": "ecd9ca8f46bfa9c9e5a56606553355fb72b8ecc96e5047b019aadff2f9710506",
+    "guarded_publication": true,
+    "guarded_maintenance": true,
+    "proxy_count": 0,
+    "respond503": 2
+  },
+  "limitations": "Full canonical recovery unaccepted; original cold/partial deadline failures remain failed; v11 qualification open"
+}

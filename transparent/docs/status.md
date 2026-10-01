@@ -22,7 +22,13 @@ restores only the independently captured originals before completing capture;
 unrelated drift refuses. No new recovery has passed. The next repair also refused the owned public
 Caddy guard against the copied original. Its [failure](../evidence/activity-metadata-2026-09-30/partial-public-guard-failure-0dcc7d02.json)
 is retained; exact captured guard derivation now permits completing capture
-while both origins remain closed, with the original copied bytes unchanged. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
+while both origins remain closed, with the original copied bytes unchanged.
+Actual `9abd2381` recovery then completed capture/withdrawal, restoration and
+private verification, but canonical reopen failed HTTP 503. The late router
+capture already contained withdrawn handlers; restoring it overwrote the
+regenerated healthy routing. The [failure](../evidence/activity-metadata-2026-09-30/late-router-capture-reopen-failure-9abd2381.json)
+is retained. Separate exact captured-guard handling and actual paired canonical
+proof remain required. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
 remains recorded.
 
 The [owned warm v10 recovery](../evidence/activity-metadata-2026-09-30/paired-origin-coherent-recovery-a8e6b63b.json)

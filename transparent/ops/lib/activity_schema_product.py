@@ -119,11 +119,12 @@ class Product:
             self.routing.recovery_program = self.recovery_program
         self.root = STATE/transaction/'product'
 
-    def remote(self, entry, action, attempt):
+    def remote(self, entry, action, attempt, *, guard_sha256=None):
         request = {'version':1, 'request_id':str(attempt)+'-'+action, 'action':action,
                    'plan':entry['plan'], 'plan_sha256':D.digest(entry['plan'])}
         if getattr(self,'recovery_program',None) is not None:
             request['recovery_source_sha'] = self.recovery_program['source_sha']
+        if guard_sha256 is not None:request['guard_sha256']=guard_sha256
         return self.dispatch.call(entry['host'], request, timeout=330 if action in ('preflight','stage','capture','verify-worker') else 90)
 
     async def all_workers(self, action, attempt):
@@ -561,7 +562,26 @@ class Product:
                     self.local.quiet(H.WRITERS['coordinator'])
                 raise
         elif phase == 'reopen-v10':
-            await self.routing.reopen('v10', restore_router=lambda:self.remote(self.router, 'restore-routing', attempt))
+            baseline,_=self.local.saved()
+            restore_router=lambda:self.remote(self.router, 'restore-routing', attempt)
+            if baseline and baseline.get('owned_partial_guard'):
+                forward=[e for e in record['events'] if e['group']=='steps']
+                H.require(getattr(self,'recovery_program',None) is not None and len(forward)==1 and
+                          forward[0]['name']=='preserve-v10' and forward[0]['status']=='failed',
+                          'late router reconciliation requires failed preserve and bound repair')
+                value=self.routing.plan['old_fleet']
+                H.require(H.checksum(value['path'])==value['sha256'],'captured predecessor fleet changed')
+                expected=hashlib.sha256(R.L.withdrawn_router(H.load(value['path'])).encode()).hexdigest()
+                reply=self.remote(self.router,'attest-captured-router-guard',attempt,guard_sha256=expected)
+                proof=reply.get('result',{})
+                H.require(proof.get('status')=='passed' and proof.get('captured_router_sha256')==expected,
+                          'late captured router guard is not attested')
+                H.B.atomic(self.root/('late-router-guard-'+str(attempt)+'.json'),H.encode({
+                    'source_sha':self.recovery_program['source_sha'],'transaction':transaction,
+                    'coordinator_baseline_sha256':baseline['plan_sha256'],'captured_router':proof,
+                    'decision':'retain regenerated verified predecessor routing'}))
+                restore_router=None
+            await self.routing.reopen('v10', restore_router=restore_router)
             _, state = self.local.saved()
             self.local.commands.unit('start', *[u for u in H.AUTHORITY if state['units'][u]['ActiveState']=='active'])
             # The predecessor load tree and scaler were never overwritten.

@@ -1396,3 +1396,12 @@ copied Caddy file and checksum-bound private router, requires both origins still
 503, and records both captured and guarded file identities. Only that fixed
 Caddy transition may differ from the copied baseline; it never substitutes
 guarded bytes for the captured original or reopens routing during capture.
+
+If the sole forward phase was a failed preserve and the complete coordinator
+baseline records its owned partial-capture guard, explicit repair attests the
+late router snapshot against exact withdrawn bytes from the captured predecessor
+fleet config and the shared native routing producer. The pinned router verifies
+its entire baseline and captured Caddy hash under a checksum-bound remote owner.
+Only this attested case keeps the regenerated predecessor routing instead of
+restoring a snapshot already withdrawn. Original snapshots remain unchanged;
+private and both canonical encrypted-query/SQLite proofs still gate recovery.
