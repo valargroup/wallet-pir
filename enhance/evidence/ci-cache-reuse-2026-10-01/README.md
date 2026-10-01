@@ -1,92 +1,165 @@
 # CI Cargo cache identity and reuse — October 1, 2026
 
-Validation of the change that keys hosted Cargo caches by compatibility identity
-([`tools/ci/cargo_cache.py`](../../../tools/ci/cargo_cache.py), described in
+This note validates the change that keys hosted Cargo caches by compatibility
+identity ([`tools/ci/cargo_cache.py`](../../../tools/ci/cargo_cache.py), described in
 [CI performance](../../../docs/ci-performance.md#cargo-cache-identity-and-reuse)).
-This is development tooling evidence, separate from qualification. Status:
-**validated on the task branch, not integrated**. The finding is not addressed
-until the change is on `main` and the primed-main comparison below has run.
+It is development tooling evidence, separate from qualification.
+
+Status: **validated on the task branch, not integrated**. The finding is not
+addressed until the change is on `main` and the primed-main comparison below
+has run.
+
+There are two rounds. Round 1 tested the first implementation. Review then found
+two identity gaps and an attribution defect. Round 2 tests the corrected code and
+is the acceptance evidence. Round 1 raw files are retained unchanged.
 
 ## Original report
 
-The finding (p0mvn/ai-runbook PR #30, finding `4a4fd347a4012a81e5b3d13d`) was
-based on these runs, captured before the change in `raw/baseline-*`:
+The finding is p0mvn/ai-runbook PR #30, finding `4a4fd347a4012a81e5b3d13d`. It
+was based on the runs below, captured before the change in `raw/baseline-*`:
 
 - `baseline-restore.json`: rust-cache configuration and restore lines from PR 122
-  run 36723820479 and PR 123 runs 36728359128 and 36729873650. Keys used rust-cache's
-  environment hash, which included every installed toolchain (1.91.0 and 1.98.1)
-  and runtime-only `RUST_TEST_THREADS`. Enhance tests and Shared tests shared one
-  key with different package sets. PR 123's first full run restored nothing.
+  run 36723820479 and PR 123 runs 36728359128 and 36729873650.
+  - Keys used rust-cache's environment hash. That hash included every installed
+    toolchain (1.91.0 and 1.98.1) and the runtime-only `RUST_TEST_THREADS`.
+  - Enhance tests and Shared tests shared one key despite different package sets.
+  - PR 123's first full run restored nothing.
 - `baseline-caches.json`: the 22 cache entries before the change. Main never saved
   hosted full-lane entries because main CI full runs on the persistent pool.
-- `baseline-timings-*.json`: step timings for PR 123 runs.
+- `baseline-timings-*.json`: step timings for the PR 123 runs.
 
-## Runs (valargroup/wallet-pir, GitHub-hosted `ubuntu-24.04` for full jobs)
+## Round 2: acceptance runs
 
-All runs were `workflow_dispatch` on branch `ai-dev/t-76147dba2c4c47d1/a1/wallet-pir`,
-so hosted entries are scoped to that branch ref. The release and CUDA jobs are main-only
-and were skipped. Fast checks ran on the persistent fast runner.
+All runs were `workflow_dispatch` on branch `ai-dev/t-76147dba2c4c47d1/a1/wallet-pir`.
+Hosted full jobs ran on GitHub-hosted `ubuntu-24.04`, so their entries are scoped
+to that branch ref. Fast checks ran on the persistent fast runner. The release and
+CUDA jobs are main-only and were skipped.
 
-| Run | Workflow | Head | Purpose | Gate |
+| Run | Workflow | Head | Case | Gate |
 | --- | --- | --- | --- | --- |
-| 36834774107 | CI | 856a419a | first build in new persistent toolchain directory | Fast checks: success |
-| 36834777102 | CI full | 856a419a | cold: no `v1` entries existed | Full checks complete: success |
-| 36837792640 | CI | 3fb732d2 | persistent restore | Fast checks: success |
-| 36837789214 | CI full | 3fb732d2 | restore (only Python tooling changed since 856a419a) | Full checks complete: success |
-| 36837847229 | CI full | 4167c3ce | probe: workflow comment plus runtime-only `RUST_BACKTRACE`; reverted in ba8ad735 | Full checks complete: success |
+| 36845912455 | CI full | e56d818f | cold: no entry for the new identities | Full checks complete: success |
+| 36845915560 | CI | e56d818f | first build in the new persistent toolchain directory | Fast checks: success |
+| 36848898795 | CI full | f826bf42 | probe: workflow comment plus runtime-only `RUST_BACKTRACE` | Full checks complete: success |
+| 36848927411 | CI full | fc84e9b8 | restore; probe reverted, tree identical to e56d818f | Full checks complete: success |
+| 36848930204 | CI | fc84e9b8 | persistent restore | Fast checks: success |
 
-`raw/timings-<run>.json` is `python3 tools/ci/timings.py --run <run> --cache-records`
-output. `raw/v1-caches.json` lists the resulting entries, all on the branch ref.
+`raw/timings-<run>.json` is the output of
+`python3 tools/ci/timings.py --run <run> --cache-records`. `raw/v1-caches-round2.json`
+lists the resulting hosted entries; all ten are on the branch ref.
 
-## Results
+### Attribution from Cargo
 
-Per job: restore status, then Cargo units at job end (reused / rebuilt / new;
-third-party rebuilt), leaf compilation and execution stage seconds.
+Each cell is **units fresh / compiled** from Cargo's `compiler-artifact` messages
+(`CI_CARGO_ARTIFACTS`), with the third-party split in parentheses. These cover
+only the commands each job ran, so restored units a job never needed are not
+counted.
 
-| Job | Cold 856a419a | Restore 3fb732d2 | Env-only probe 4167c3ce |
+| Job | Cold e56d818f | Restore fc84e9b8 | Workflow/env probe f826bf42 |
 | --- | --- | --- | --- |
-| Transparent lint | miss; 0/0/627; comp 727.5 | hit-current-ref; 513/114/0 (tp 0); comp 13.5 | hit-current-ref; 513/114/0 (tp 0); comp 15.7 |
-| Transparent tests | miss; 0/0/628; comp 840.9, exec 668.2 | hit-current-ref; 516/112/0 (tp 0); comp 221.0, exec 665.9 | hit-current-ref; same counts; comp 220.9, exec 654.1 |
-| Enhance lint | miss; 0/0/461; comp 211.4 | hit-current-ref; 422/39/0 (tp 0); comp 12.3 | hit-current-ref; same counts; comp 11.1 |
-| Enhance tests | miss; 0/0/1057; comp 447.6, exec 752.2 | hit-current-ref; 977/80/0 (tp 0); comp 277.9, exec 800.9 | hit-current-ref; same counts; comp 274.5, exec 800.2 |
-| Shared lint and tests | miss; 0/0/320; comp 107.7, exec 3.1 | hit-current-ref; 306/14/0 (tp 0); comp 4.0, exec 7.5 | hit-current-ref; same counts; comp 4.1, exec 3.9 |
-| Fast checks (persistent) | persistent-new; 0/0/1013; comp 1326.8, exec 67.9 | persistent-existing; 1011/2/0; comp 13.5, exec 66.5 | not run |
+| Transparent lint | 0 / 572 (third-party 0 / 460) | 460 / 112 (460 / 0) | 460 / 112 (460 / 0) |
+| Transparent tests | 0 / 570 (0 / 460) | 460 / 110 (460 / 0) | 460 / 110 (460 / 0) |
+| Enhance lint | 0 / 419 (0 / 380) | 380 / 39 (380 / 0) | 380 / 39 (380 / 0) |
+| Enhance tests | 0 / 870 (0 / 793) | 793 / 77 (793 / 0) | 793 / 77 (793 / 0) |
+| Shared lint and tests | 0 / 282 (0 / 268) | 268 / 14 (268 / 0) | 268 / 14 (268 / 0) |
+| Fast checks (persistent) | 0 / 655 (0 / 577) | 654 / 1 (577 / 0) | not run |
 
 - **Cold/restore:** every hosted key missed on the cold run and hit exactly on
-  the restore run. No third-party unit rebuilt after a restore. Workspace crates
-  rebuild because a fresh checkout makes their sources newer than the cached output.
+  the restore run (`hit-current-ref`). After a restore, Cargo reported every
+  third-party unit fresh. On hosted runners every workspace unit compiled
+  because a fresh checkout makes its sources newer than the cached output. On the
+  persistent fast runner, one workspace unit compiled.
 - **Workflow/env-only change:** the probe changed workflow text and added a
-  runtime-only variable. Every identity and key was unchanged, and every job hit.
+  runtime-only variable. All five identities and keys were unchanged, every job
+  hit, and the fresh/compiled counts equal the restore run's.
 - **Missing cache:** the cold run is the missing-cache case; all gates passed.
-- **Incompatible inputs:** lanes and scopes received distinct keys in the same run
-  (five keys for five lint/test jobs). Changes to compiler, flags, target, OS/glibc,
-  native tools, features, profile, Cargo configuration and `Cargo.lock` are covered
-  by `CacheIdentityTests` in `tools/tests/test_ci.py`, not by remote runs.
-- **Restore cost:** hosted restore took 5–26 s per job, and Rust setup took 21–35 s
-  including identity computation.
+- **Incompatible inputs:** the five lint/test jobs received five distinct keys in
+  the same run. `CacheIdentityTests` in `tools/tests/test_ci.py` covers changes
+  to the following, using a temporary directory rather than remote runs:
+  - compiler, Cargo-relevant environment flags, target, OS/glibc and native tools;
+  - wrapper versions and features/scope;
+  - root-manifest profile settings, such as `lto` and `codegen-units` for `release-fast`;
+  - ancestor-directory, checkout, `CARGO_HOME` and included Cargo configuration;
+  - `Cargo.lock`.
 
-The cold and restore rows are one paired measurement of the same Rust tree. The
-setup and Cargo inputs are identical; only Python CI tooling changed. With n=1 per
-side, they show which work the cache removes, not a typical saving. No PR
-population or before/after p95 was measured, so this note claims no savings. Test
-execution time is unaffected by the cache.
+  Both review counterexamples were also reproduced against this checkout. A
+  `release-fast` edit to `lto` and `codegen-units` changes the identity. So does
+  an ancestor `.cargo/config.toml`. Removing either edit restores the original
+  identity.
+
+### Timing on the same Rust tree (n=1 per side)
+
+Times are leaf stage wall time in seconds (`CI_STAGE_REPORT`). The compile stage
+covers whole Cargo compile/lint commands, including resolution, downloads, build
+scripts and linking. Execution stages may also compile units that no compile
+stage needed. In the Enhance tests job, the five inline test commands are now
+timed as execution stages.
+
+| Job | Cold compile / execution | Restore compile / execution |
+| --- | --- | --- |
+| Transparent lint | 708.2 / none | 12.6 / none |
+| Transparent tests | 801.2 / 663.0 | 219.4 / 667.7 |
+| Enhance lint | 165.7 / none | 12.8 / none |
+| Enhance tests | 532.0 / 1040.0 | 262.3 / 979.4 |
+| Shared lint and tests | 84.3 / 3.2 | 4.2 / 3.9 |
+| Fast checks (persistent) | 1419.8 / 76.0 | 13.4 / 70.8 |
+
+Hosted Rust setup took 20.4–35.4 s per job, including identity computation and
+the cache-ref lookup. Hosted restore took 4.4–29.7 s on hits and 0.4–2.2 s on
+misses. Each comparison is one paired run on the same tree with the same inputs.
+The rows show which work the cache removes, not a typical saving. No PR population
+or before/after p95 was measured, so this note claims no savings.
+
+## Round 1: first implementation (superseded attribution)
+
+Round 1 used runs 36834774107 and 36834777102 (cold, 856a419a), 36837792640 and
+36837789214 (restore, 3fb732d2), and 36837847229 (probe, 4167c3ce, reverted in
+ba8ad735). All gates passed. Their `raw/timings-*.json` files and
+`raw/v1-caches.json` are retained unchanged.
+
+That code used keys that did not cover profile definitions or ancestor Cargo
+configuration. Its unit counts compared fingerprint mtimes, not Cargo's own
+`fresh` flags:
+
+- "reused" included restored units the job never needed, and units whose
+  fingerprint bytes changed while their mtime was preserved;
+- a timestamp-only touch counted as "rebuilt".
+
+The round 1 counts therefore do not establish which units Cargo compiled. Two
+statements in this note's earlier version were overclaims:
+
+- "No third-party unit rebuilt after a restore" rested on those mtime counts.
+- "Rust setup took 21–35 s" omitted the cold Transparent lint job's 45.1 s; the
+  measured range was 20.9–45.1 s.
+
+Round 2 supersedes both statements.
 
 ## Not demonstrated here
 
 - **Equivalent PR/main against a primed main cache.** The main-only
-  `Prime hosted Cargo caches` workflow can save entries only after integration. After the
-  change reaches `main`, wait for that workflow on the integrated SHA, then run
-  CI full on a PR or branch whose Rust tree equals `main`. Expect `restore: hit-main`
-  and `refs_before_restore: ["refs/heads/main"]`; record the result with `--cache-records`.
-- **No cross-ref reuse between PR merge refs or branches.** Each scope used only its
-  own ref and main. The branch entries above are not readable by other branches.
-- **Release and CUDA jobs** are main-only. The release jobs still build their own
-  release binaries in separate lanes (`release`, `release-native`, `native-cuda`).
-  They do not reuse test or PR output, and their caches are written only from
-  main. The CUDA identity is unit-tested only.
-- **Self-hosted persistent directories** are now named by toolchain identity, so each
-  lane builds cold once after integration, as Fast run 36834774107 did. Old directories
-  remain until pruned while runners are idle.
+  `Prime hosted Cargo caches` workflow can save entries only from `main`, so this
+  needs reviewed integration first. Then:
+  1. Wait for that workflow to finish on the integrated SHA.
+  2. Run CI full on a PR or branch whose Rust tree equals `main`.
+  3. Expect `restore: hit-main`, `refs_before_restore: ["refs/heads/main"]` and
+     third-party units fresh in `CI_CARGO_ARTIFACTS`.
+  4. Record the result with `--cache-records`.
+
+  The trust boundaries (PRs may read main entries, and main never reads PR entries)
+  also follow from GitHub's cache scoping and the main-only priming and release
+  jobs. They are covered by workflow tests, not by a remote cross-ref run.
+- **No cross-ref reuse between branches or PR merge refs.** The branch entries
+  above can be read by no other branch or PR.
+- **Release and CUDA jobs** are main-only. They still build their own release
+  binaries in separate lanes (`release`, `release-native`, `native-cuda`). They do
+  not reuse test or PR output, and their caches are written only from main.
+  - The CUDA container has Python 3.10, which lacks `tomllib`. Its identity hashes
+    the whole `Cargo.toml` and does not follow config `include` or `[build]` tool
+    settings.
+- **Unattributed Cargo commands:** commands outside `tools/ci/stage.py`, such as
+  `make` helper targets, are not in `CI_CARGO_ARTIFACTS`.
+- **Self-hosted persistent directories** are named by toolchain identity. Each lane
+  builds cold once after integration, and these branch runs created extra fast-lane
+  directories. Old directories remain until pruned while the runners are idle.
 - Fork-PR fast lane and native/CUDA feature checks are not primed.
 
 `manifest.json` records the source, commands and run identities. `SHA256SUMS`

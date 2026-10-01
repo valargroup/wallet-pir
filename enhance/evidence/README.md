@@ -13,8 +13,8 @@ release and must not be read as current source paths.
   checks and comparable warm feedback measurements; separate from qualification.
 - [CI Cargo cache identity and reuse](ci-cache-reuse-2026-10-01/README.md) —
   cold, restore and workflow/env-only CI runs with sanitized restore status and
-  reused/rebuilt Cargo units; primed-main comparison pending integration; no
-  savings claimed.
+  Cargo's own fresh/compiled unit counts; primed-main comparison pending
+  integration; no savings claimed.
 
 ## Current protocol and release inputs
 
