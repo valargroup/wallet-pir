@@ -40,6 +40,15 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   and final receipt revalidation. Actual worker host templates bind refreshed
   live rollback state and candidate inputs. Coordinator/router plans, complete
   recovery samples and the full reviewed recipe remain open; no live service transition occurred.
+  Subsequent bounded SSH qualification passed on both recent workers, archive
+  and router at `ccbfd35f`, after reproducing and correcting OpenSSH's closing
+  of inherited descriptors. The keeper retained coordinator locks across parent
+  exit; every remote lock and interruption fence passed before reconciliation.
+  [Evidence](../evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
+  is scoped to this boundary. Complete nonempty samples and coordinator inputs
+  are ready. The user authorized proceeding with pending operations CI while retaining
+  passing native CI and exact provenance; finish fresh source staging and actual
+  recipe/preflight after the reproduced bytecode integrity defect, then cut over.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency

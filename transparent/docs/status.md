@@ -69,7 +69,23 @@ process tests cover remote-parent and relay survival. Actual SSH qualification
 reproduced that OpenSSH closes inherited descriptors, losing the coordinator
 lock after the relay exited. Both failed owners were explicitly reconciled;
 no service changed. A separate timeout-safe transport keeper now retains the
-lock outside SSH. The corrected real gate is required before cutover.
+lock outside SSH. The corrected real gate then passed on both recent workers,
+the archive worker and the router at `ccbfd35f`, including both lock refusals,
+interrupted-owner fences and reconciliation. [Retained evidence](../evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
+binds each actual process and request. Matching immutable coordinator inputs are
+also [staged and reverified](../evidence/activity-metadata-2026-09-30/ready-coordinator-inputs-ccbfd35f.json).
+The user subsequently authorized proceeding without waiting for queued operations
+CI. The prepared proof retains successful full CI at `801d7a62` with its actual
+head and all 12 jobs, explicitly records the current candidate CI as pending,
+and verifies unchanged native inputs. The five-host specification and complete
+740-second rollback recipe were staged. Service preflight refused before any
+baseline or maintenance because a plain Python recipe invocation wrote bytecode
+inside immutable operation sources. The deployment entry point now disables
+bytecode before imports; a real subprocess regression reproduces 14 cache files
+before the fix and zero afterward. The failed source is retained and a fresh
+source export is required. See the [failed preflight and correction](../evidence/activity-metadata-2026-09-30/accelerated-cutover-preflight-ccbfd35f.json).
+Canonical service remains v10; preflight, guarded deployment and all final
+qualification remain open.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained
