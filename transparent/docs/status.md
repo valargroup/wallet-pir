@@ -12,7 +12,12 @@ Attempt 8 failed archive cache preparation at its unchanged 1,200-second bound.
 Automatic rollback then refused eight unexpected Python bytecode files created
 by a read-only diagnostic that omitted `-B`; all retained source payload hashes
 are unchanged. All production owners exited, but the transaction remains
-`rollback-failed` and recovery is required. Diagnostics must use `python3 -B` before importing retained libraries. Source
+`rollback-failed` and recovery is required. The first fresh-source repair also refused the original source inventory before
+withdrawal; that failure remains recorded. A closed rollback repair now retains
+only bounded compiler-proved import caches outside the source tree with private
+intent/completion, then requires the original strict source check. Actual recovery
+remains pending. [Focused evidence](../evidence/activity-metadata-2026-09-30/closed-bytecode-retention-focused.json).
+Diagnostics must use `python3 -B` before importing retained libraries. Source
 file refusal now reports unexpected and missing file counts without exposing
 paths. The exact guard remains intact; prior source receipts are preserved.
 [Failure evidence](../evidence/activity-metadata-2026-09-30/attempt8-cache-deadline-source-drift-139a54f3.json).

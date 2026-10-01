@@ -1427,3 +1427,17 @@ This accounts for archive native loading before cache prewarm. An observation is
 not qualification: candidate warm verification remains 300 seconds, restored
 worker waiting remains 250 seconds, and the total rollback budget remains 740
 seconds. Cold recovery and actual cutover must still pass their original gates.
+
+### Retaining diagnostic import bytecode during rollback repair
+
+A current checksum-bound rollback repair may retain at most 16 unexpected import
+cache files from the original operations source in a private sibling on the same
+filesystem. Every original payload hash must still match. Each cache must use
+the running interpreter tag and magic and contain exactly the code compiled from
+its reviewed source file. Foreign entries, payload drift, aliases, hardlinks and
+unfinished retention refuse. Private intent/completion binds the failed
+transaction, immutable recipe and reviewed repair source; rename preserves the
+cache bytes and inodes outside the source tree. The original source receipt is
+unchanged and strict verification must pass after retention. Ordinary source
+verification never permits extra files. Read-only diagnostics must use Python
+`-B` before importing retained operations libraries.

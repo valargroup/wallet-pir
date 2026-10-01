@@ -4,8 +4,12 @@ Only the deployment wrapper transmits/runs this helper. It has no standalone
 entry point without that prefix. Root controls all paths and is trusted.
 """
 import hashlib
+import importlib.util
 import json
+import marshal
 import os
+import re
+import stat
 from pathlib import Path, PurePosixPath
 import shutil
 import sys
@@ -126,6 +130,85 @@ def verify_receipt(receipt, target, source, checksum):
         path = target/name
         require(not path.is_symlink() and path.is_file() and sha256(path) == checksum,
                 'retained source file checksum changed')
+
+
+def retain_diagnostic_bytecode(receipt, target, source, checksum, recovery, verify_lock):
+    """Retain compiler-proved import caches outside a failed recipe's source.
+
+    The caller must first prove its current, checksum-bound rollback repair
+    intent. Payload files and the original source receipt are never rewritten.
+    Unfinished retention refuses; ordinary source verification remains strict.
+    """
+    verify_lock()
+    require(set(recovery) == {'transaction', 'recipe_sha256', 'repair_source_sha'} and
+            re.fullmatch(r'transparent-schema-[A-Za-z0-9-]+', recovery['transaction']) and
+            re.fullmatch('[0-9a-f]{64}', recovery['recipe_sha256']) and
+            re.fullmatch('[0-9a-f]{40}', recovery['repair_source_sha']) and
+            recovery['repair_source_sha'] != source, 'invalid bytecode retention repair binding')
+    target = Path(target)
+    require(target.name == source and re.fullmatch('[0-9a-f]{40}', source) and
+            not target.is_symlink() and target.resolve() == target, 'invalid original source namespace')
+    retained = target.parent.parent/'diagnostic-bytecode'/(recovery['transaction']+'-'+source)
+    context = {**recovery, 'source_sha': source, 'archive_sha256': checksum}
+    if retained.exists():
+        require(not retained.is_symlink() and (retained/'complete.json').is_file(),
+                'unfinished bytecode retention requires reconciliation')
+        done = json.loads((retained/'complete.json').read_bytes())
+        require(done['context'] == context, 'bytecode retention owner differs')
+        for name, item in done['files'].items():
+            require(sha256(retained/'files'/name) == item['sha256'], 'retained bytecode changed')
+        verify_receipt(receipt, target, source, checksum)
+        return done
+    expected = receipt['files']
+    paths = list(target.rglob('*'))
+    require(not any(p.is_symlink() for p in paths), 'retained source contains a symlink')
+    actual = {str(p.relative_to(target)) for p in paths if not p.is_dir()}
+    extra = sorted(actual-set(expected))
+    if not extra:
+        verify_receipt(receipt, target, source, checksum)
+        return None
+    require(1 <= len(extra) <= 16 and set(expected) <= actual, 'source drift is not bounded import bytecode')
+    files = {}
+    for name in extra:
+        p = target/name
+        info = p.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 1 << 20,
+                'unexpected source entry is not bounded regular bytecode')
+        relative = PurePosixPath(name)
+        require(relative.parent.name == '__pycache__', 'unexpected source entry is not import bytecode')
+        match = re.fullmatch(r'([A-Za-z_][A-Za-z0-9_]*)\.'+re.escape(sys.implementation.cache_tag)+r'\.pyc', relative.name)
+        require(match is not None, 'unexpected bytecode interpreter or optimization')
+        original = str(relative.parent.parent/(match.group(1)+'.py'))
+        require(original in expected, 'bytecode has no reviewed source payload')
+        raw = p.read_bytes()
+        require(len(raw) >= 16 and raw[:4] == importlib.util.MAGIC_NUMBER and
+                marshal.loads(raw[16:]) == compile((target/original).read_bytes(), str(target/original),
+                                                   'exec', dont_inherit=True, optimize=0),
+                'bytecode does not compile the reviewed source')
+        files[name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'size': info.st_size,
+                       'mode': stat.S_IMODE(info.st_mode), 'uid': info.st_uid, 'gid': info.st_gid,
+                       'device': info.st_dev, 'inode': info.st_ino, 'mtime_ns': info.st_mtime_ns}
+    # Verify every payload and reject all other entries before any relocation.
+    verify_receipt({**receipt, 'files': {**expected, **{n:i['sha256'] for n,i in files.items()}}},
+                   target, source, checksum)
+    retained.parent.mkdir(mode=0o700, exist_ok=True)
+    require(not retained.parent.is_symlink() and retained.parent.stat().st_dev == target.stat().st_dev,
+            'bytecode retention must use the original filesystem')
+    retained.mkdir(mode=0o700)
+    intent = {'context': context, 'files': files}
+    atomic_json(retained/'intent.json', intent)
+    for name, item in files.items():
+        verify_lock()
+        p = target/name
+        require(sha256(p) == item['sha256'] and p.stat().st_ino == item['inode'],
+                'bytecode changed during retention')
+        destination = retained/'files'/name
+        destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.rename(p, destination)
+    verify_receipt(receipt, target, source, checksum)
+    verify_lock()
+    atomic_json(retained/'complete.json', intent)
+    return intent
 
 
 def stage(request, lock, incoming, root=STAGE_ROOT):

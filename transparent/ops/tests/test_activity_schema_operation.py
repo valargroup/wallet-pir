@@ -316,6 +316,54 @@ STAGE_SPEC.loader.exec_module(source_stage)
 
 
 class SourceStageTests(unittest.TestCase):
+    def test_repair_retains_only_exact_compiler_proved_bytecode(self):
+        import py_compile
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        before = cache.stat()
+        raw = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        with self.lock:
+            result = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+            again = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertEqual(result, again)
+        retained = target.parent.parent/'diagnostic-bytecode'/('transparent-schema-test-'+self.request['source_sha'])
+        saved = retained/'files'/cache.relative_to(target)
+        self.assertEqual(saved.read_bytes(), raw)
+        self.assertEqual(saved.stat().st_ino, before.st_ino)
+        self.assertEqual(payload.read_bytes(), self.files['ops/lib/probe.py'])
+        self.assertFalse(cache.exists())
+        source_host.verify_receipt(receipt, target, self.request['source_sha'], self.request['sha256'])
+
+    def test_bytecode_retention_refuses_foreign_code_and_payload_drift(self):
+        import py_compile
+        import marshal
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        original = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        cache.write_bytes(original[:16]+marshal.dumps(compile('value = 99', str(payload), 'exec')))
+        with self.lock, self.assertRaisesRegex(ValueError, 'does not compile'):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+        cache.write_bytes(original)
+        payload.write_bytes(b'value = 99\n')
+        with self.lock, self.assertRaises(ValueError):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

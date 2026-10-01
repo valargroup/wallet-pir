@@ -455,6 +455,12 @@ class Product:
         # publication qualification has failed; never rerun forward gates here.
         source=self.spec['source_sha']
         receipt=H.load(Path('/srv/transparent-activity/ops/staging')/(source+'.json'))
+        if getattr(self, 'recovery_program', None) and phase == 'withdraw-origins':
+            D.S.retain_diagnostic_bytecode(receipt, Path('/srv/transparent-activity/ops/sources')/source,
+                source, receipt['archive_sha256'],
+                {'transaction': transaction, 'recipe_sha256': record['recipe_sha256'],
+                 'repair_source_sha': self.recovery_program['source_sha']},
+                lambda: inherited_lock.descriptors(required=True, path=H.LOCK))
         D.S.verify_receipt(receipt, Path('/srv/transparent-activity/ops/sources')/source, source, receipt['archive_sha256'])
         attempt = len(record['events'])
         group = record['events'][-1]['group']
