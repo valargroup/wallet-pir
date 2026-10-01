@@ -137,6 +137,24 @@ time.sleep(2)
                 self.assertLess(time.monotonic(),deadline)
                 time.sleep(.025)
 
+    def test_keeper_delivers_stdin_eof_and_large_stdout(self):
+        self.machine.write_text('c'*32)
+        ssh = self.root/'ssh'
+        ssh.write_text(f'''#!{sys.executable}
+import sys
+count = len(sys.stdin.buffer.read())
+sys.stdout.buffer.write(b'x'*200000 + b'got:%d' % count)
+''')
+        ssh.chmod(0o755)
+        owner = Q.Owner(self.request)
+        with owner.lock() as lock:
+            with patch.dict(os.environ, {Q.inherited_lock.VARIABLE: str(lock.fd)}):
+                command = Q.inherited_lock.transport_command([str(ssh)])
+                completed = subprocess.run(command, input=b'abcdef', capture_output=True, timeout=3,
+                                           **Q.inherited_lock.options())
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual(completed.stdout, b'x'*200000 + b'got:6')
+
     def test_unfinished_owner_blocks_reconciliation_of_other_owner(self):
         owner=Q.Owner(self.request,remote=True)
         with owner.lock(): owner.begin()
