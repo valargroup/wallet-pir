@@ -296,15 +296,15 @@ jobs:
         run: |
           python3 tools/ci/stage.py compile:native-cuda-check -- cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
           tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --test packing_http --test status_wallet --test enhance_wallet_native
-          cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
-          cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib status::
-          cargo test --locked --profile release-fast -p pir-native
+          python3 tools/ci/stage.py tests:native-lib -- cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
+          python3 tools/ci/stage.py tests:native-status -- cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib status::
+          python3 tools/ci/stage.py tests:pir-native -- cargo test --locked --profile release-fast -p pir-native
 
       - name: Check optional CUDA worker without a GPU
         run: |
           python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-pir-server --all-targets --features cuda
-          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
-          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
+          python3 tools/ci/stage.py tests:cuda-config -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
+          python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
       - name: Report Cargo cache reuse
         if: always()
         continue-on-error: true

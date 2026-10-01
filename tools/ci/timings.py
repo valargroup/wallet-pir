@@ -8,8 +8,11 @@ before claiming the fast/routine latency targets.
 dispatch_to_job_start is not runner queue time: it includes waiting for `needs`
 jobs, concurrency groups and environments. Step phases come from the jobs API;
 the Rust setup step includes hosted cache restore. --cache-records reads each
-job's log for the sanitized CI_CACHE_* records, which split setup, restore,
-compilation and execution and count fresh/rebuilt Cargo units.
+job's log for the sanitized records: CI_CACHE_IDENTITY/RESTORE/REPORT (identity,
+restore status, setup and restore seconds, fingerprint inventory),
+CI_CARGO_ARTIFACTS (fresh and compiled units from Cargo's own JSON messages
+for the commands the job executed) and CI_STAGE_REPORT (compile, execution and
+other stage seconds; null when no such stage ran).
 """
 import argparse
 from datetime import datetime, timezone
@@ -26,6 +29,9 @@ DEFINITIONS = {
     'phases.work_seconds': 'remaining steps (compilation and execution; see cache_records for the split)',
     'phases.post_seconds': 'post steps, including hosted cache save',
     'phases.report_seconds': 'reporting steps',
+    'cache_records.CI_CARGO_ARTIFACTS': 'units in compiler-artifact messages of executed Cargo build/check/clippy/test commands; compiled if any reported fresh=false',
+    'cache_records.CI_CACHE_REPORT.fingerprint_inventory': 'fingerprint directories at restore vs job end by content; inventory only, not what Cargo compiled',
+    'cache_records.CI_STAGE_REPORT.compile_stage_seconds': 'whole compile/lint Cargo commands, including resolution, downloads, build scripts and linking; null if none ran',
 }
 SETUP = ('Set up job', 'Run actions/checkout', 'Run ./.github/actions/rust-setup', 'Run dtolnay/',
          'Run Swatinem/', 'Fetch comparison revision', 'Select affected', 'Install ', 'Identify ', 'Restore ',
@@ -76,10 +82,10 @@ def job_log(repo, job_id):
 
 
 def cache_records(log):
-    """Sanitized CI_CACHE_* and CI_STAGE_REPORT records from a job log."""
+    """Sanitized CI_CACHE_*, CI_CARGO_ARTIFACTS and CI_STAGE_REPORT records from a job log."""
     records = []
     for line in (log or '').splitlines():
-        for tag in ('CI_CACHE_IDENTITY', 'CI_CACHE_RESTORE', 'CI_CACHE_REPORT', 'CI_STAGE_REPORT'):
+        for tag in ('CI_CACHE_IDENTITY', 'CI_CACHE_RESTORE', 'CI_CACHE_REPORT', 'CI_CARGO_ARTIFACTS', 'CI_STAGE_REPORT'):
             marker = line.find(tag + ' {')
             if marker >= 0:
                 try:
