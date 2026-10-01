@@ -98,6 +98,9 @@ class SSHExecutor(Executor):
         self.pinned = {}
 
     def transport(self, host):
+        return inherited_lock.transport_command(self.raw_transport(host))
+
+    def raw_transport(self, host):
         ssh = self.inventory.ssh
         entry = self.inventory.hosts[host]
         if ssh['mode'] == 'config':
@@ -114,7 +117,7 @@ class SSHExecutor(Executor):
         client.check_host_keys()
         options = list(client.options)
         if entry.get('jump'):
-            jump = self.transport(entry['jump'])
+            jump = self.raw_transport(entry['jump'])
             options += ['-o', 'ProxyCommand=' + shlex.join(jump[:-1] + ['-W', '%h:%p', jump[-1]])]
         return ['ssh', *options, client.user + '@' + client.host]
 

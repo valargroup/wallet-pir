@@ -10,6 +10,7 @@ import ipaddress
 from pathlib import Path
 import shlex
 import subprocess
+from . import inherited_lock
 
 
 def sha256(data):
@@ -52,15 +53,15 @@ class PinnedSSH:
     def command(self, arguments, timeout=120):
         """Run `arguments` remotely, quoted as one shell word each; return stdout."""
         self.check_host_keys()
-        result = subprocess.run(['ssh', *self.options, self.user + '@' + self.host, shlex.join(arguments)],
-                                capture_output=True, timeout=timeout)
+        result = subprocess.run(inherited_lock.transport_command(['ssh', *self.options, self.user + '@' + self.host, shlex.join(arguments)]),
+                                capture_output=True, timeout=timeout, **inherited_lock.options())
         if result.returncode:
             raise RuntimeError('remote bootstrap command failed')
         return result.stdout
 
     def copy(self, paths, destination):
         self.check_host_keys()
-        result = subprocess.run(['scp', *self.options, *[str(p) for p in paths], self.user + '@' + self.host + ':' + destination],
-                                capture_output=True, timeout=300)
+        result = subprocess.run(inherited_lock.transport_command(['scp', *self.options, *[str(p) for p in paths], self.user + '@' + self.host + ':' + destination]),
+                                capture_output=True, timeout=300, **inherited_lock.options())
         if result.returncode:
             raise RuntimeError('candidate transfer failed')

@@ -101,6 +101,42 @@ with owner.lock() as lock:
                 self.assertLess(time.monotonic(),deadline)
                 time.sleep(.025)
 
+    def test_keeper_survives_killed_launcher_and_transport_fd_close(self):
+        self.machine.write_text('c'*32)
+        ready=self.root/'ready'
+        ssh=self.root/'ssh'
+        ssh.write_text(f'''#!{sys.executable}
+import os,time
+from pathlib import Path
+for fd in range(3,256):
+    try: os.close(fd)
+    except OSError: pass
+assert 'WALLET_PIR_PRODUCTION_LOCK_FDS' not in os.environ
+Path({str(ready)!r}).write_text('closed')
+time.sleep(2)
+''')
+        ssh.chmod(0o755)
+        owner=Q.Owner(self.request)
+        with owner.lock() as lock:
+            with patch.dict(os.environ,{Q.inherited_lock.VARIABLE:str(lock.fd)}):
+                command=Q.inherited_lock.transport_command([str(ssh)])
+                process=subprocess.Popen(command,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**Q.inherited_lock.options())
+            deadline=time.monotonic()+3
+            while not ready.exists():
+                self.assertLess(time.monotonic(),deadline)
+                time.sleep(.025)
+            process.kill();process.wait(timeout=3)
+        with self.assertRaises(BlockingIOError):
+            with owner.lock(): pass
+        deadline=time.monotonic()+4
+        while True:
+            try:
+                with owner.lock(): pass
+                break
+            except BlockingIOError:
+                self.assertLess(time.monotonic(),deadline)
+                time.sleep(.025)
+
     def test_unfinished_owner_blocks_reconciliation_of_other_owner(self):
         owner=Q.Owner(self.request,remote=True)
         with owner.lock(): owner.begin()

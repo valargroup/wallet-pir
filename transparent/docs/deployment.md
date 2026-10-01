@@ -1022,7 +1022,7 @@ the retained coordinator input file, rather than stdin, because the bounded
 relay rereads it. `schema-lock-qualify` requires `--expect-plan-sha256`, the
 canonical digest of the plan. No service, routing or executable is changed.
 
-The relay exits while real SSH retains the coordinator descriptor. The remote
+The relay exits while a keeper retains the coordinator descriptor for real SSH. The remote
 wrapper acquires its own host lock and exits while a child retains that lock
 for fifteen seconds. Competing lock acquisitions must refuse on both machines;
 the remote interrupted owner must also fence unrelated wrapper operations.
@@ -1033,6 +1033,14 @@ on both hosts. `schema-lock-status` reports the retained coordinator owner;
 coordinator locks can both be acquired. Never replay an owned attempt or infer
 remote assurance from the local process tests. Reconcile failures before any
 source staging or deployment; the shared input-owner fence remains in force.
+
+OpenSSH closes inherited nonstandard descriptors at startup. Guarded transport
+commands therefore run under a separate keeper which holds the descriptor until
+SSH exits. A forked keeper survives termination or timeout of its launcher; the
+transport receives normal signal handling and no descriptor environment claim.
+The first real qualification reproduced the missing coordinator lock and was
+reconciled on both hosts before this correction. Passing local keeper tests does
+not replace rerunning the real SSH gate with the corrected staged source.
 
 Restoration verifies the entire snapshot before changing any target and preserves
 displaced candidate state alongside its original target on the live filesystem.

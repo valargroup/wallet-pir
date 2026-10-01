@@ -32,6 +32,14 @@ def inherited_options():
     return inherited_lock.options()
 
 
+def inherited_command(args):
+    if not os.environ.get('WALLET_PIR_PRODUCTION_LOCK_FDS'):
+        return list(map(str,args))
+    inherited_options()
+    from wallet_pir_ops import inherited_lock
+    return inherited_lock.transport_command(args)
+
+
 # Worker-pool health checking, the same text `shard-assign` renders
 # (`router::HEALTH` in transparent-shard-server; the ops tests compare them).
 # One proxy error must not eject a saturated worker: Caddy's default
@@ -85,7 +93,7 @@ async def run(args, data=None, timeout=25, file_output=False):
     with ExitStack() as files:
         stdout = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
         stderr = files.enter_context(tempfile.TemporaryFile()) if file_output else asyncio.subprocess.PIPE
-        proc = await asyncio.create_subprocess_exec(*map(str, args), stdin=asyncio.subprocess.PIPE,
+        proc = await asyncio.create_subprocess_exec(*inherited_command(args), stdin=asyncio.subprocess.PIPE,
                                                   stdout=stdout, stderr=stderr, **inherited_options())
         try:
             out, err = await asyncio.wait_for(proc.communicate(data), timeout)
@@ -357,7 +365,7 @@ class Fleet:
                               '-L', str(forward) + ':' + remote]
             # No -f and no command-owned pipes: the supervisor owns this process
             # until shutdown. Cancelling a client only closes its own channel.
-            process = await asyncio.create_subprocess_exec(*args, stdin=asyncio.subprocess.DEVNULL,
+            process = await asyncio.create_subprocess_exec(*inherited_command(args), stdin=asyncio.subprocess.DEVNULL,
                         stdout=asyncio.subprocess.DEVNULL, **inherited_options())
             print(json.dumps({'event':'control_session_started','worker':worker['id'],
                               'pid':process.pid}), file=sys.stderr)

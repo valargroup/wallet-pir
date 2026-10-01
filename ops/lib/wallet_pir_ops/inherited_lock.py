@@ -8,6 +8,7 @@ before spawning anything.
 import os
 import re
 import stat
+import sys
 from pathlib import Path
 
 VARIABLE = 'WALLET_PIR_PRODUCTION_LOCK_FDS'
@@ -43,3 +44,11 @@ def options():
     if not fds:
         return {}
     return {'pass_fds': fds, 'env': dict(os.environ, PYTHONDONTWRITEBYTECODE='1')}
+
+
+def transport_command(argv):
+    """SSH closes extra FDs; retain them in a surviving, timeout-safe keeper."""
+    argv = list(map(str,argv))
+    if descriptors() and argv and Path(argv[0]).name in ('ssh','scp','rsync'):
+        return [sys.executable,'-B',str(Path(__file__).with_name('ssh_lock_keeper.py')),*argv]
+    return argv
