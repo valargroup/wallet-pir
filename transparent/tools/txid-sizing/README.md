@@ -72,6 +72,20 @@ large-scale packing and observed request workload are next gates in
 
 ## Anchored probability sample and streaming stage
 
+The full-chain continuation must not use this probability sample as completion.
+`throughput.py` measures the required sequential hash/raw-block acquisition
+path using one persistent gateway session, retaining raw bytes plus checksum
+inventory under `/home/ai-dev/.cache/wallet-pir-census/`. It verifies cached raw
+checksums before resuming and verifies the fixed anchor before and after the
+measurement. It does not parse blocks or establish continuity/eligibility.
+Its optimistic projection excludes UTXO, parser and aggregate work. A projection
+over 72 hours sets `needs_you` and stops; the 2026-10-01 measurement triggered
+that gate. Do not rerun acquisition until Roman resolves the recorded blocker.
+The [receipt](../../evidence/txid-sizing/full-chain-throughput.json) retains
+exact tool/checkpoint checksums and limitations. A full-chain runner with local
+sequential transparent UTXO state remains required; `census.py` below is the
+historical sample acquisition tool, not that runner.
+
 `census.py` pins the canonical archive anchor and a reproducible, disjoint
 nine-stratum SRSWOR block plan (256 blocks per stratum). It owns one persistent
 SSH gateway, executes only allowed read methods sequentially with a 40/s ceiling,

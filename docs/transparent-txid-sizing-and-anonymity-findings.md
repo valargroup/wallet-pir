@@ -2,6 +2,24 @@
 
 ## Decision and qualification
 
+The 2026-10-01 full-chain continuation is **blocked at the explicit 72-hour
+throughput gate**, not completed by a sample. The sanctioned read-only archive
+gateway verified anchor height **3,502,662**, hash
+`0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f`,
+before and after acquisition. Sequential `getblockhash` then raw `getblock(0)`
+fetched 612 blocks (heights 0–611) in 180.171 seconds: **3.397 blocks/s**,
+projecting **286.4 hours remaining**, excluding parsing, UTXO and aggregation.
+The [throughput receipt](../transparent/evidence/txid-sizing/full-chain-throughput.json)
+pins the measurement, code and retained raw manifest checksums. No canonical
+blocks have been scanned in this continuation; eligibility, continuity, node
+source revision and population counts remain unverified. The gateway session
+closed and its temporary key was removed. Raw inputs remain outside Git at
+`/home/ai-dev/.cache/wallet-pir-census/`. Roman must authorize a longer duration
+or an approved faster acquisition method before resumption. This sequential
+measurement does not establish the maximum throughput of the gateway or of
+pipelined requests within one session. PR #124 remains open; a superseding
+findings PR requires the completed full-chain census.
+
 **The requested boundary means MORE THAN 80% of eligible confirmed display
 records fit inline; the remainder require overflow pages.** Eligible means any
 transparent input or output, including coinbase. Shielded-only transactions with

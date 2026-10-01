@@ -10,6 +10,7 @@ measured sample bytes, synthetic routing controls, and geometry projections.
 - [Analysis](analysis.json): every codec/threshold, era/coinbase distributions, missingness bounds, routing intersections, policy counts and five-candidate negative controls.
 - [Geometry projections](geometry-projections.json): explicit assumed workload and independent table-placement sweeps. No measured minimum or latency.
 - [Checksums](SHA256SUMS): immutable compact data inputs/outputs. Regenerate with the offline verifier.
+- [Full-chain throughput preflight](full-chain-throughput.json): verified anchor 3,502,662/hash, 612 raw blocks retained outside Git, 3.397 blocks/s and optimistic 286.4-hour remaining acquisition. Stopped at the explicit 72-hour ceiling; zero canonical blocks scanned. This receipt adds no population or anonymity findings.
 
 The 354,315 decoded raw block bytes remain in the pinned public upstream commit
 and the existing hub source cache; `fetch_vectors.py` verifies all 41 originals.

@@ -6,6 +6,7 @@ from pathlib import Path
 import analyze
 import geometry
 import survey
+import throughput
 
 
 def main():
@@ -26,6 +27,17 @@ def main():
     for name,digest in pins["source_files"].items():
         if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
             raise ValueError("pinned source changed: "+name)
+    preflight=evidence/"full-chain-throughput.json"
+    if preflight.exists():
+        measured=json.loads(preflight.read_bytes())
+        for name,digest in measured["source_files"].items():
+            if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+                raise ValueError("throughput source changed: "+name)
+        projected=throughput.projection(measured["measured_blocks"],measured["seconds"],measured["remaining_blocks"])
+        if any(measured[k]!=v for k,v in projected.items()):
+            raise ValueError("throughput projection mismatch")
+        if measured["canonical_scanned_blocks"]!=0 or measured["fetched_blocks"]+measured["remaining_blocks"]!=measured["anchor_height"]+1:
+            raise ValueError("throughput inventory or qualification mismatch")
     current=evidence/"archive-survey-statistics.json"
     if current.exists():
         new_report=survey.report(json.loads(current.read_bytes()))
