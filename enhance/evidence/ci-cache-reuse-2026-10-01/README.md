@@ -9,9 +9,19 @@ Status: **validated on the task branch, not integrated**. The finding is not
 addressed until the change is on `main` and the primed-main comparison below
 has run.
 
-There are two rounds. Round 1 tested the first implementation. Review then found
-two identity gaps and an attribution defect. Round 2 tests the corrected code and
-is the acceptance evidence. Round 1 raw files are retained unchanged.
+There are three rounds:
+
+- **Round 1** tested the first implementation. Review found two identity gaps
+  and an attribution defect.
+- **Round 2** tested the corrected code (e56d818f) with cold, restore and
+  workflow/env-only runs. Review then found two measurement defects:
+  - a `check` and a `build` of one target were counted as one unit;
+  - with several config `include`s, the identity probed a compiler Cargo did
+    not run.
+- **Round 3** runs the final code (8d6d613a). Its unit counts are the current
+  attribution.
+
+Raw files from every round are retained unchanged.
 
 ## Original report
 
@@ -28,7 +38,49 @@ was based on the runs below, captured before the change in `raw/baseline-*`:
   hosted full-lane entries because main CI full runs on the persistent pool.
 - `baseline-timings-*.json`: step timings for the PR 123 runs.
 
-## Round 2: acceptance runs
+## Round 3: final code (8d6d613a)
+
+The fix changes only include ordering, config-relative program paths and the
+artifact unit key. This repository has no config `include`, so every hosted key
+and the persistent toolchain directory are unchanged. Both round 3 runs
+therefore restored round 2's entries.
+
+| Run | Workflow | Case | Gate |
+| --- | --- | --- | --- |
+| 36854240061 | CI full | restore (`hit-current-ref` for all five keys) | Full checks complete: success |
+| 36854242979 | CI | persistent restore | Fast checks: success |
+
+Fresh / compiled units from Cargo's `compiler-artifact` messages, with the
+third-party split in parentheses:
+
+| Job | Units | Fresh / compiled | Compile / execution stage s |
+| --- | --- | --- | --- |
+| Transparent lint | 572 | 460 / 112 (third-party 460 / 0) | 14.9 / none |
+| Transparent tests | 570 | 460 / 110 (460 / 0) | 225.9 / 671.5 |
+| Enhance lint | 419 | 380 / 39 (380 / 0) | 10.2 / none |
+| Enhance tests | 967 | 887 / 80 (887 / 0) | 265.7 / 1006.7 |
+| Shared lint and tests | 282 | 268 / 14 (268 / 0) | 3.0 / 5.6 |
+| Fast checks (persistent) | 925 | 924 / 1 (805 / 0) | 12.6 / 64.2 |
+
+Enhance tests and Fast checks now report more units than in round 2: 967 vs 870,
+and 925 vs 655. Their `cargo check` units (`.rmeta`) are no longer merged with
+`build`/`test` units of the same target. Round 2's totals for those two jobs are
+undercounts. Its zero-fresh cold result and all-third-party-fresh restore result
+still hold, because a merged unit was fresh only if every occurrence was fresh.
+The other jobs run a single mode per target, and their counts are identical in
+rounds 2 and 3. A cold run with the final unit key was not repeated. The cache
+keys did not change, so there was no missing-cache state to observe without
+deleting entries.
+
+Both review counterexamples are now real-Cargo oracle tests in
+`RealCargoOracleTests` (`tools/tests/test_ci.py`), and both fail on e56d818f's code:
+
+- `check` then `build` of one dependency-free crate counts two compiled units;
+- `include = ["one.toml", "two.toml"]`, with each file naming a different
+  `rustc`, makes Cargo run the second, and the identity probes that same
+  program.
+
+## Round 2: acceptance runs (e56d818f)
 
 All runs were `workflow_dispatch` on branch `ai-dev/t-76147dba2c4c47d1/a1/wallet-pir`.
 Hosted full jobs ran on GitHub-hosted `ubuntu-24.04`, so their entries are scoped
@@ -48,6 +100,10 @@ CUDA jobs are main-only and were skipped.
 lists the resulting hosted entries; all ten are on the branch ref.
 
 ### Attribution from Cargo
+
+Units were keyed by package, target, profile and features. Round 3 found that
+this merged `check` and `build` units of one target, so the Enhance tests and
+Fast checks totals below are undercounts.
 
 Each cell is **units fresh / compiled** from Cargo's `compiler-artifact` messages
 (`CI_CARGO_ARTIFACTS`), with the third-party split in parentheses. These cover
