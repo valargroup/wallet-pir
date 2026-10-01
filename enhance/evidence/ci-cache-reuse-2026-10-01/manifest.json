@@ -1,7 +1,7 @@
 {
   "evidence": "ci-cache-reuse-2026-10-01",
   "finding": "p0mvn/ai-runbook PR #30 finding 4a4fd347a4012a81e5b3d13d",
-  "status": "round 2 validated on task branch; not integrated; not addressed",
+  "status": "round 3 (final code) validated on task branch; not integrated; not addressed",
   "repository": "valargroup/wallet-pir",
   "branch": "ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
   "base": "2d245476c6a969a86830e26e2ef63e75ebbe74b0",
@@ -16,6 +16,9 @@
       "implementation_fix": "e56d818ff29699f5afa2ab39aa9e237e0de4129b",
       "env_only_probe": "f826bf42305d31010d47a1a086c89b432c8a2ef1",
       "probe_revert": "fc84e9b8ec2bd0c3af5906fe5608e854ccf8f9f7"
+    },
+    "round3": {
+      "final_code": "8d6d613a4ac853bae81a99754bdbe1f2a3349809"
     }
   },
   "collection_command": "python3 tools/ci/timings.py --run <run> --cache-records",
@@ -109,6 +112,24 @@
       "case": "persistent restore",
       "gate": "Fast checks",
       "conclusion": "success"
+    },
+    {
+      "round": 3,
+      "run": 36854240061,
+      "workflow": "ci-full.yml",
+      "sha": "8d6d613a",
+      "case": "hosted restore with final unit key",
+      "gate": "Full checks complete",
+      "conclusion": "success"
+    },
+    {
+      "round": 3,
+      "run": 36854242979,
+      "workflow": "ci.yml",
+      "sha": "8d6d613a",
+      "case": "persistent restore with final unit key",
+      "gate": "Fast checks",
+      "conclusion": "success"
     }
   ],
   "event": "workflow_dispatch on the task branch",
@@ -132,7 +153,8 @@
   ],
   "attribution": {
     "round1": "fingerprint mtime comparison; superseded, not Cargo attribution",
-    "round2": "CI_CARGO_ARTIFACTS from Cargo compiler-artifact fresh flags of commands run through tools/ci/stage.py"
+    "round2": "CI_CARGO_ARTIFACTS from Cargo compiler-artifact fresh flags of commands run through tools/ci/stage.py; unit key merged check and build of one target (Enhance tests and Fast checks totals undercount)",
+    "round3": "as round 2 with output basenames in the unit key; current"
   },
   "cache_lists": {
     "round1": "raw/v1-caches.json",
