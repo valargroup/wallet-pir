@@ -8,6 +8,15 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Attempt 8 failed archive cache preparation at its unchanged 1,200-second bound.
+Automatic rollback then refused eight unexpected Python bytecode files created
+by a read-only diagnostic that omitted `-B`; all retained source payload hashes
+are unchanged. All production owners exited, but the transaction remains
+`rollback-failed` and recovery is required. Diagnostics must use `python3 -B` before importing retained libraries. Source
+file refusal now reports unexpected and missing file counts without exposing
+paths. The exact guard remains intact; prior source receipts are preserved.
+[Failure evidence](../evidence/activity-metadata-2026-09-30/attempt8-cache-deadline-source-drift-139a54f3.json).
+
 Attempt 7 at `762e81f3` failed guarded candidate cache preparation. The new
 reader expected bare Prometheus metric names, while the native exporter attaches
 worker labels. Host owners retained `ValueError` without exception text; that

@@ -424,9 +424,13 @@ class SourceStageTests(unittest.TestCase):
             self.stage(data)
         path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
         (target/'unreviewed.py').write_bytes(b'extra')
-        with self.assertRaisesRegex(ValueError, 'file set changed'):
+        with self.assertRaisesRegex(ValueError, r'file set changed \(1 unexpected, 0 missing\)'):
             self.stage(data)
         (target/'unreviewed.py').unlink()
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, r'file set changed \(0 unexpected, 1 missing\)'):
+            self.stage(data)
+        path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
         (target/'outside').symlink_to(self.root, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, 'symlink'):
             self.stage(data)

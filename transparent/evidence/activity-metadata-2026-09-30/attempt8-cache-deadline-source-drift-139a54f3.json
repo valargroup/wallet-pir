@@ -1,0 +1,28 @@
+{
+  "source_sha": "139a54f3d4b9ee5687dbec25c293296d1628177c",
+  "transaction": "transparent-schema-20261001T204118Z-4122409a2ff5-3d4ab2",
+  "recipe_sha256": "4122409a2ff579498a808c30f21e5481aa0b96b0cae53ea0c9d214dc8d8794b4",
+  "status": "rollback-failed",
+  "stage_seconds": 1429.3656988120638,
+  "archive_failure": "candidate cache preparation deadline exceeded",
+  "rollback_withdraw_failure": "retained source file set changed",
+  "source_expected_files_changed": 0,
+  "unexpected_bytecode_files": 8,
+  "diagnostic_cause": "Read-only SSH diagnostic omitted Python -B and imported retained operations libraries; resulting bytecode files blocked the exact source-file guard.",
+  "owners": "Local pipeline terminal; all four latest host owner PIDs exited; coordinator wrapper owners absent.",
+  "qualification": "No v11 activation, recovery, sustained or capacity acceptance for this transaction.",
+  "raw": [
+    {
+      "name": "attempt8-journal-1790889441911145000.private.json",
+      "sha256": "07f77f91b58dc103d8868d5d2d248c68fe09beeb995bf58087ab548dd6889cb2"
+    },
+    {
+      "name": "attempt8-host-owners-1790889478909423000.private.jsonl",
+      "sha256": "6c9caefa704c92d1688960d7a82da1c56252630fa147f876b569a8d2f74024b7"
+    },
+    {
+      "name": "attempt8-source-drift-1790889506497603000.private.json",
+      "sha256": "969939e48807c3d650a62a486a1b5286cb4267ad4c96829065b01f4b6f8e4959"
+    }
+  ]
+}

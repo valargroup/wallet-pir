@@ -120,7 +120,8 @@ def verify_receipt(receipt, target, source, checksum):
     paths = list(target.rglob('*'))
     require(not any(p.is_symlink() for p in paths), 'retained source contains a symlink')
     actual = {str(p.relative_to(target)) for p in paths if not p.is_dir()}
-    require(actual == set(expected), 'retained source file set changed')
+    require(actual == set(expected), 'retained source file set changed ('+
+            str(len(actual-set(expected)))+' unexpected, '+str(len(set(expected)-actual))+' missing)')
     for name, checksum in expected.items():
         path = target/name
         require(not path.is_symlink() and path.is_file() and sha256(path) == checksum,
