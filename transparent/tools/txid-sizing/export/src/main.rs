@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 #[path = "../../../../services/transparent-filter-server/src/extract.rs"]
 mod extract;
+mod stream;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, error::Error, fs, path::Path, sync::Arc};
@@ -21,6 +22,9 @@ impl extract::PreviousOutputs for Previous {
 }
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--stream") {
+        return stream::run();
+    }
     if args.len() != 3 {
         return Err("usage: txid-sizing-export VECTOR_DIR OUTPUT.json".into());
     }
