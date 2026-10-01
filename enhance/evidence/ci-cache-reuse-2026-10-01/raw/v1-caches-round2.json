@@ -1,0 +1,66 @@
+{
+  "captured": "2026-10-01T10:47Z (after round-2 cold, restore and probe runs; before integration)",
+  "note": "v1-wallet-pir entries only",
+  "entries": [
+    {
+      "key": "v1-wallet-pir-full-lint-transparent-79256bfdffd4daa0-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 926794621,
+      "created_at": "2026-10-01T10:09:15.165444Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-enhance-e0d6d90598ef44b0-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 813386004,
+      "created_at": "2026-10-01T10:23:30.743987Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-lint-enhance-9b2f31c45d6f053f-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 384986807,
+      "created_at": "2026-10-01T09:59:52.190165Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-transparent-779fbb00c7417fab-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 601270468,
+      "created_at": "2026-10-01T10:21:31.936844Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-shared-b71b2b38f9f82766-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 345690143,
+      "created_at": "2026-10-01T09:58:28.337809Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-lint-transparent-8109d207376799c7-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 926814636,
+      "created_at": "2026-10-01T08:25:09.845463Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-enhance-8fa029be50b0f32e-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 813468010,
+      "created_at": "2026-10-01T08:35:11.048973Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-transparent-38610f7c803781bd-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 601324674,
+      "created_at": "2026-10-01T08:37:30.983036Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-test-shared-806158661ae05ac6-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 345668215,
+      "created_at": "2026-10-01T08:14:10.580088Z"
+    },
+    {
+      "key": "v1-wallet-pir-full-lint-enhance-6296b909bb887855-Linux-x64",
+      "ref": "refs/heads/ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+      "size_in_bytes": 384855568,
+      "created_at": "2026-10-01T08:16:13.182827Z"
+    }
+  ]
+}
