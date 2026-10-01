@@ -255,23 +255,21 @@ class Commands:
         with response:
             data = response.read(256*1024+1)
         require(len(data) <= 256*1024, 'cache readiness exceeds bound')
-        ready = json.loads(data)
+        ready = json.loads(data, object_pairs_hook=unique)
         require(isinstance(ready,dict), 'invalid cache readiness')
+        # Readiness reports these persistence counters from the same pinned
+        # native snapshot. Prometheus also exports them, but adds worker labels;
+        # naked-name matching silently misses the actual fleet exposition.
+        cache = ready.get('runtime_cache')
+        require(isinstance(cache,dict), 'worker omitted runtime cache observations')
+        metrics = {}
+        for field, name in (('pending_saves','transparent_shard_disk_save_pending'),
+                            ('write_failures','transparent_shard_disk_write_failures_total')):
+            value = cache.get(field)
+            require(type(value) is int and value >= 0, 'worker omitted or malformed cache persistence counter')
+            metrics[name] = value
         ready = {k:ready.get(k) for k in ('ready','mode','map_sha256','binary_sha256','warm_runtimes',
                                         'target_runtimes','prewarm_failed','prewarm_finished')}
-        with urllib.request.urlopen('http://127.0.0.1:8093/metrics', timeout=5) as response:
-            data = response.read(1024*1024+1)
-        require(len(data) <= 1024*1024, 'cache metrics exceed bound')
-        wanted = ('transparent_shard_disk_save_pending', 'transparent_shard_disk_write_failures_total')
-        metrics = {}
-        for line in data.decode().splitlines():
-            fields = line.split()
-            if len(fields) == 2 and fields[0] in wanted:
-                require(fields[0] not in metrics, 'duplicate cache metric')
-                value = float(fields[1])
-                require(value >= 0 and value.is_integer(), 'invalid cache metric')
-                metrics[fields[0]] = int(value)
-        require(set(metrics) == set(wanted), 'worker omitted cache persistence metrics')
         return {'ready':ready, 'metrics':metrics}
 
     def cache_resources(self):

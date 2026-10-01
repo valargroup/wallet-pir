@@ -152,7 +152,8 @@ class Actor:
                 record['status'] = 'passed'
             except BaseException as error:
                 record.update(status='interrupted' if isinstance(error, (subprocess.TimeoutExpired, KeyboardInterrupt, SystemExit)) else 'failed',
-                              error_type=type(error).__name__)
+                              error_type=type(error).__name__,
+                              error_detail=str(error)[:2048] if isinstance(error,ValueError) else None)
                 raise
             finally:
                 if old is None:

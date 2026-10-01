@@ -7,13 +7,14 @@ numbers are reconciled below rather than retained as a second release checklist.
 
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
-Attempt 6 failed archive candidate prewarming, then the surviving locked wrapper
-completed actual automatic cold rollback in 376.247 seconds. The transaction is
+Attempt 7 failed the candidate cache reader, then the locked wrapper completed
+actual automatic cold rollback in 376.654 seconds. Correct native readiness
+persistence counters before the next guarded preparation attempt. The transaction is
 `rolled-back`; private and each canonical encrypted-query/reopened SQLite proofs
 passed. Earlier cold failures remain failed. Complete bounded locked candidate
 runtime-cache preparation before another independent activation attempt; a
 successful v11 redeployment and every sustained/lifecycle acceptance gate remain
-open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt6-cold-rollback-721dac6a.json).
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json).
 
 Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
 started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10

@@ -53,18 +53,36 @@ class CachePreparationTests(unittest.TestCase):
             'transparent_shard_disk_save_pending':0,'transparent_shard_disk_write_failures_total':0}}
         return host
 
-    def test_warming_503_retains_progress_and_requires_persistence_metrics(self):
+    def test_native_readiness_cache_shape_reports_warming_and_persistence(self):
         import io
-        body=json.dumps({'ready':False,'prewarm_failed':0,'warm_runtimes':11,'target_runtimes':164}).encode()
-        error=M.urllib.error.HTTPError('fixed-ready',503,'warming',{},io.BytesIO(body))
-        metrics=b'transparent_shard_disk_save_pending 1\ntransparent_shard_disk_write_failures_total 0\n'
-        with patch.object(M.urllib.request,'urlopen',side_effect=[error,io.BytesIO(metrics)]):
+        # The native DiskCache status object contains counters, not Prometheus
+        # sample names. Extra census fields remain native observations.
+        ready={'ready':False,'prewarm_failed':0,'warm_runtimes':11,'target_runtimes':164,
+               'runtime_cache':{'bytes':7206197840,'limit_bytes':52613349376,'hits':11,'misses':4,
+                                'write_failures':0,'pending_saves':1,'restore_slots':4}}
+        error=M.urllib.error.HTTPError('fixed-ready',503,'warming',{},io.BytesIO(json.dumps(ready).encode()))
+        with patch.object(M.urllib.request,'urlopen',return_value=error) as fetch:
             value=M.Commands().cache_observation()
+        self.assertEqual(fetch.call_count,1)
         self.assertEqual(value['ready']['warm_runtimes'],11)
         self.assertEqual(value['metrics']['transparent_shard_disk_save_pending'],1)
-        for data in (b'',metrics+metrics,b'transparent_shard_disk_save_pending nan\n'):
-            with patch.object(M.urllib.request,'urlopen',side_effect=[io.BytesIO(body),io.BytesIO(data)]),self.assertRaises(ValueError):
+        self.assertEqual(value['metrics']['transparent_shard_disk_write_failures_total'],0)
+        ready['ready']=True;ready['runtime_cache']['pending_saves']=0
+        with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(json.dumps(ready).encode())):
+            self.assertEqual(M.Commands().cache_observation()['metrics']['transparent_shard_disk_save_pending'],0)
+
+    def test_missing_unavailable_negative_and_noninteger_cache_counters_refuse(self):
+        import io
+        for cache in (None,{}, {'status':'unavailable: the cache directory was slow to list'},
+                      {'pending_saves':0}, {'pending_saves':-1,'write_failures':0},
+                      {'pending_saves':True,'write_failures':0}, {'pending_saves':1.0,'write_failures':0},
+                      {'pending_saves':0,'write_failures':'0'}):
+            with self.subTest(cache=cache),patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(
+                    json.dumps({'runtime_cache':cache}).encode())),self.assertRaises(ValueError):
                 M.Commands().cache_observation()
+        duplicate=b'{"runtime_cache":{"pending_saves":1,"pending_saves":0,"write_failures":0}}'
+        with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(duplicate)),self.assertRaisesRegex(ValueError,'duplicate'):
+            M.Commands().cache_observation()
 
     def test_preparation_waits_for_persistence_then_stops_before_independent_activation(self):
         with tempfile.TemporaryDirectory() as directory:

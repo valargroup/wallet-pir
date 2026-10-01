@@ -186,6 +186,16 @@ class Actors(unittest.TestCase):
         self.assertIsNone(self.lock.fd)
         with self.assertRaisesRegex(ValueError,'already exists'):self.actor.run()
 
+    def test_validation_failure_keeps_bounded_detail_in_private_owner(self):
+        self.error=ValueError('missing persistence counter '+('x'*3000))
+        with self.assertRaises(ValueError):self.actor.run()
+        record=self.actor.status()
+        self.assertEqual(record['status'],'failed')
+        self.assertEqual(record['error_type'],'ValueError')
+        self.assertEqual(len(record['error_detail']),2048)
+        self.assertTrue(record['error_detail'].startswith('missing persistence counter'))
+        self.assertEqual(self.actor.path.stat().st_mode&0o777,0o600)
+
     def test_timeout_blocks_new_action_until_explicit_locked_reconciliation(self):
         self.error=subprocess.TimeoutExpired('fixture',1)
         with self.assertRaises(subprocess.TimeoutExpired):self.actor.run()

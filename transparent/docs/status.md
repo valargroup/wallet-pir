@@ -8,6 +8,25 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Attempt 7 at `762e81f3` failed guarded candidate cache preparation. The new
+reader expected bare Prometheus metric names, while the native exporter attaches
+worker labels. Host owners retained `ValueError` without exception text; that
+exact exception is not inferred. Automatic cold rollback passed all phases in
+376.654 seconds and the transaction is `rolled-back`. Private and each canonical
+encrypted-query/reopened SQLite proofs passed; both independently observed
+metadata responses were HTTP 200. All remote host owners exited and quality
+remains failed with PID 0. [Evidence](../evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json)
+preserves the failed forward gate separately from passing recovery.
+
+The corrected reader uses persistence counters from the native readiness
+`runtime_cache` object, with bounded JSON, duplicate-field rejection and strict
+nonnegative integer counters. Missing/unavailable observations refuse progress.
+Private host owners now retain bounded validation failure details for diagnosis;
+public replies retain their existing minimal shape. Actual candidate preparation,
+independent activation, successful v11 redeployment and all sustained/lifecycle
+gates remain open. All earlier failures below remain historical failures.
+
+
 Attempt 6 at `721dac6a` failed candidate archive prewarming after 402.587
 seconds. Its local SSH transport failed separately, while the locked remote
 wrapper survived and completed automatic cold rollback. Transaction
