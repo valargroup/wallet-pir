@@ -67,6 +67,21 @@ class SurveyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"eligibility"):
             survey.block_summary(frame,bad)
 
+
+    def test_transparent_fee_oracle_is_independent_of_encoder(self):
+        r=dict(txid_internal="11"*32,height=1,transaction_index=0,coinbase=False,input_count=1,
+            shielded_components=False,fee=5,outputs=[dict(value=15,script="00")])
+        r["display_v1_hex"]=a.payload(r).hex()
+        tx=dict(txid="11"*32,vin=[dict(txid="22"*32,vout=0)],vout=[dict(valueZat=15,value=.00000015,scriptPubKey=dict(hex="00"))])
+        parent=dict(txid="22"*32,vout=[dict(valueZat=20,value=.00000020)])
+        frame=dict(height=1,hash="block",stratum="a",parents=[parent],rpc_block=dict(nTx=1,tx=[tx]))
+        extracted=dict(height=1,hash="block",transactions=1,shielded_only=0,records=[r])
+        self.assertEqual(survey.block_summary(frame,extracted)["totals"]["transparent_fee_oracles"],1)
+        bad=copy.deepcopy(extracted);bad["records"][0]["fee"]=6
+        bad["records"][0]["display_v1_hex"]=a.payload(bad["records"][0]).hex()
+        with self.assertRaisesRegex(ValueError,"fee oracle"):
+            survey.block_summary(frame,bad)
+
     def test_atomic_checkpoint_and_membership_rejection(self):
         with tempfile.TemporaryDirectory() as temp:
             p=Path(temp)/"receipt.json";census.atomic_json(p,{"public":1})
