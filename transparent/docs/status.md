@@ -17,7 +17,10 @@ authority had restarted publication before workers were proved. Public origins
 remain guarded; the transaction is `rollback-failed`. The 15-minute recovery
 acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
 preserves original recipe/baseline bytes and all failures. Its focused check
-passed; source staging and actual repaired recovery are still pending. This is
+passed. The repair source was staged on all five hosts, but its first actual
+rollback refused at the CLI source identity check before service effects. The
+[entrypoint correction](../evidence/activity-metadata-2026-09-30/repair-entrypoint-focused.json)
+passed focused checks; actual repaired recovery remains pending. This is
 not a completed v11 deployment.
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its

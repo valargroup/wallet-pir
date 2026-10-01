@@ -285,12 +285,13 @@ def main(argv=None, executor=None, out=print, **options):
             spec.loader.exec_module(module)
             path = module.checked({'path':args.spec, 'sha256':args.spec_sha256})
             specification = module.validate(module.H.load(path))
-            if ROOT != Path('/srv/transparent-activity/ops/sources')/specification['source_sha']:
-                raise ValueError('product phases require the pinned immutable operations source')
+            product = module.Product(specification, spec_sha256=args.spec_sha256)
+            product.source_identity(ROOT, args.transaction if args.command == 'schema-product-phase' else None,
+                                    args.phase if args.command == 'schema-product-phase' else None,
+                                    args.journal if args.command == 'schema-product-phase' else None)
             if args.command == 'schema-product-recipe':
                 out(json.dumps(module.recipe(path, args.spec_sha256), sort_keys=True))
                 return 0
-            product = module.Product(specification, spec_sha256=args.spec_sha256)
             if args.command == 'schema-product-preflight':
                 result = product.preflight()
             else:

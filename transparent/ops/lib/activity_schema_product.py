@@ -352,9 +352,27 @@ class Product:
                   'product spec is not bound by the owning recipe')
         return record
 
+    def source_identity(self, root, transaction=None, phase=None, journal=None):
+        """Accept a different source only for the current checksum-bound repair intent."""
+        original = Path('/srv/transparent-activity/ops/sources')/self.spec['source_sha']
+        if root == original:
+            return
+        H.require(transaction is not None and phase in O.ROLLBACK, 'product phases require the pinned immutable operations source')
+        record = self.owned(transaction, phase, journal)
+        H.require(record['events'][-1]['group'] == 'rollback' and record.get('recovery_programs'),
+                  'source substitution requires a rollback repair intent')
+        repair = record['recovery_programs'][-1]
+        source = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
+        H.require(root == source and repair['wrapper'] == str(source/'ops/scripts/wallet-pir-deploy.py'),
+                  'repair source does not match the owning journal')
+        receipt = H.load(Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json'))
+        H.require(receipt['archive_sha256'] == repair['archive_sha256'], 'repair archive receipt differs')
+        D.S.verify_receipt(receipt, source, repair['source_sha'], repair['archive_sha256'])
+
     async def phase(self, transaction, phase, journal):
         record = self.owned(transaction, phase, journal)
         if record.get('recovery_programs'):
+            H.require(record['events'][-1]['group'] == 'rollback', 'repair cannot substitute forward phases')
             self.recovery_program = record['recovery_programs'][-1]
         self.bound(transaction)
         if getattr(self,'recovery_program',None):

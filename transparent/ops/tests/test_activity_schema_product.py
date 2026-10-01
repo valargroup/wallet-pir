@@ -38,6 +38,28 @@ def request(action='capture'):
 
 
 class Templates(unittest.TestCase):
+    def test_repair_source_requires_current_rollback_intent_and_retained_receipt(self):
+        p=object.__new__(M.Product);p.spec={'source_sha':'a'*40}
+        root=Path('/srv/transparent-activity/ops/sources')/('b'*40)
+        repair={'source_sha':'b'*40,'archive_sha256':'c'*64,'wrapper':str(root/'ops/scripts/wallet-pir-deploy.py')}
+        record={'events':[{'group':'rollback'}],'recovery_programs':[repair]}
+        p.owned=lambda *args:record
+        with self.assertRaisesRegex(ValueError,'pinned immutable'):
+            p.source_identity(root)
+        with patch.object(M.H,'load',return_value={'archive_sha256':'c'*64}),patch.object(M.D.S,'verify_receipt') as verify:
+            p.source_identity(root,'tx','withdraw-origins','journal');verify.assert_called_once()
+            record['events'][-1]['group']='forward'
+            with self.assertRaisesRegex(ValueError,'rollback repair'):
+                p.source_identity(root,'tx','withdraw-origins','journal')
+            record['events'][-1]['group']='rollback'
+            repair['wrapper']='wrong'
+            with self.assertRaisesRegex(ValueError,'owning journal'):
+                p.source_identity(root,'tx','withdraw-origins','journal')
+        repair['wrapper']=str(root/'ops/scripts/wallet-pir-deploy.py')
+        with patch.object(M.H,'load',return_value={'archive_sha256':'d'*64}):
+            with self.assertRaisesRegex(ValueError,'receipt differs'):
+                p.source_identity(root,'tx','withdraw-origins','journal')
+
     def test_full_publication_fixture_exceeds_plan_bound_but_keeps_its_own_bound(self):
         with tempfile.TemporaryDirectory() as directory:
             path=Path(directory)/'fixture.json'
