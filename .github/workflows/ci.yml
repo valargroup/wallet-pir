@@ -51,10 +51,15 @@ jobs:
         if: steps.affected.outputs.rust == 'true'
         with:
           lane: fast
+          scope: affected
       - name: Run affected fast checks
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: python3 tools/ci/fast.py --committed-only --base "$BASE"
+      - name: Report Cargo cache reuse
+        if: always() && steps.affected.outputs.rust == 'true'
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
       - name: Report queue and stage timings
         if: always()

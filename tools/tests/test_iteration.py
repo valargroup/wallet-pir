@@ -231,7 +231,7 @@ class IntegrityTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         self.assertIn('lane: release-native', workflow)
         self.assertNotIn('CARGO_TARGET_DIR: target-native', workflow)
-        self.assertIn('native-cuda-ubuntu22.04-rust1.91-v3-pclmul', workflow)
+        self.assertIn('--lane native-cuda --scope cuda', workflow)
 
     def test_cuda_toolchain_overrides_the_checkout_toolchain(self):
         # Installing 1.91 alone does not select it: rust-toolchain.toml wins

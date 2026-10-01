@@ -24,9 +24,8 @@ def inherited_fds(env=None):
     return {'pass_fds': (fd,)}
 
 
-def compatibility(root, env):
-    """Cargo handles feature/profile/dependency changes within a compatible lane."""
-    compiler = subprocess.check_output(['rustc', '-vV'], cwd=root, env=env)
+def build_flags(env):
+    """Environment that changes compiler output; runtime-only variables are excluded."""
     flags = {key: value for key, value in env.items()
              if key in {'RUSTFLAGS', 'CARGO_ENCODED_RUSTFLAGS', 'RUSTDOCFLAGS',
                         'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER',
@@ -35,6 +34,13 @@ def compatibility(root, env):
              or key.startswith(('CARGO_PROFILE_', 'CARGO_BUILD_', 'CARGO_TARGET_',
                                 'CC_', 'CXX_', 'CFLAGS_', 'CXXFLAGS_', 'CUDA_'))}
     flags.pop('CARGO_TARGET_DIR', None)
+    return flags
+
+
+def compatibility(root, env):
+    """Cargo handles feature/profile/dependency changes within a compatible lane."""
+    compiler = subprocess.check_output(['rustc', '-vV'], cwd=root, env=env)
+    flags = build_flags(env)
     configs = [parent / '.cargo' / name for parent in (root, *root.parents)
                for name in ('config', 'config.toml')]
     configs += [Path(env.get('CARGO_HOME', Path.home() / '.cargo')) / name

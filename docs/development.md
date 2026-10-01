@@ -65,7 +65,8 @@ deleted to force reuse. `TARGET_LEASE` output identifies the chosen directory.
 Raw Cargo commands and other make targets still require separately owned targets;
 they do not participate in these wrapper leases. Registry/download locks are
 shared across lanes; `OFFLINE=1` avoids downloads but does not eliminate every
-registry-cache lock. GitHub Actions keeps its existing owned target/cache lanes.
+registry-cache lock. GitHub Actions keeps its own target/cache lanes; see
+[Cargo cache identity and reuse](ci-performance.md#cargo-cache-identity-and-reuse).
 Trusted CI release-native and q48 targets are separate lanes.
 CUDA caches are separate by the Ubuntu 22.04 ABI, pinned compiler and CPU flags.
 Caches cannot cross from PR code into trusted release users.

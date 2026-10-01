@@ -1,12 +1,26 @@
 name: Rust build environment
-description: Preinstalled tools and persistent targets on isolated runners; hosted fallback.
+description: Preinstalled tools and persistent targets on isolated runners; hosted cache fallback.
 inputs:
   lane:
-    description: Separate fast, full-test, lint and release build state
+    description: Separate fast, full-test, lint, release and native build state
     required: true
+  scope:
+    description: Package and feature set this job compiles (see tools/ci/cargo_cache.py)
+    required: true
+  lookup-only:
+    description: Check for an exact hosted entry without downloading it (main cache priming)
+    required: false
+    default: 'false'
+outputs:
+  cache-hit:
+    description: An exact hosted entry exists for this compatibility identity
+    value: ${{ steps.restore.outputs.cache-hit }}
 runs:
   using: composite
   steps:
+    - name: Record setup start
+      shell: bash
+      run: echo "WALLET_PIR_SETUP_STARTED=$(date +%s.%N)" >> "$GITHUB_ENV"
     - name: Install hosted toolchain
       if: runner.environment != 'self-hosted' && env.WALLET_PIR_HOSTED_TOOLS_READY != '1'
       uses: dtolnay/rust-toolchain@stable
@@ -26,6 +40,7 @@ runs:
       shell: bash
       env:
         LANE: ${{ inputs.lane }}
+        SCOPE: ${{ inputs.scope }}
       run: |
         set -euo pipefail
         # Match the production ABI (Ubuntu 24.04), including hosted fallback.
@@ -36,25 +51,44 @@ runs:
         rustup run 1.97.1 rustfmt --version
         rustup run 1.97.1 cargo clippy --version
         for tool in clang protoc jq shellcheck; do command -v "$tool" >/dev/null; done
-        # Outside checkout, unique to runner slot and compilation inputs. PR
-        # runners must be isolated from credentials and trusted release caches.
-        fingerprint=$(printf '%s\n' 'ubuntu24.04-x86_64' '1.97.1' "$RUSTFLAGS" "${CFLAGS:-}" "${CXXFLAGS:-}" | sha256sum | cut -c1-16)
-        target="$HOME/.cache/wallet-pir/$RUNNER_NAME/$LANE/$fingerprint"
-        mkdir -p "$target"
-        echo "CARGO_TARGET_DIR=$target" >> "$GITHUB_ENV"
-        echo "WALLET_PIR_BUILD_CACHE_ROOT=$HOME/.cache/wallet-pir/$RUNNER_NAME" >> "$GITHUB_ENV"
         echo 'RUSTUP_TOOLCHAIN=1.97.1' >> "$GITHUB_ENV"
-    - name: Select hosted build directory
+        # Outside checkout, unique to runner slot, lane and toolchain identity
+        # (actual compiler, OS/ABI, target, flags, Cargo configuration). PR
+        # runners must be isolated from credentials and trusted release caches.
+        RUSTUP_TOOLCHAIN=1.97.1 python3 tools/ci/cargo_cache.py prepare --lane "$LANE" --scope "$SCOPE" \
+          --persistent-root "$HOME/.cache/wallet-pir/$RUNNER_NAME"
+    - name: Identify hosted Cargo cache
+      id: identity
       if: runner.environment != 'self-hosted'
       shell: bash
       env:
         LANE: ${{ inputs.lane }}
-      run: echo "CARGO_TARGET_DIR=$GITHUB_WORKSPACE/target/$LANE" >> "$GITHUB_ENV"
+        SCOPE: ${{ inputs.scope }}
+        LOOKUP_ONLY: ${{ inputs.lookup-only }}
+        # Read-only lookup of which refs already hold the key; never printed.
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        args=(--lane "$LANE" --scope "$SCOPE" --target-dir "target/$LANE")
+        [[ "$LOOKUP_ONLY" != true ]] || args+=(--lookup-only)
+        python3 tools/ci/cargo_cache.py prepare "${args[@]}"
+    # The key is only the compatibility identity: no checkout SHA, workflow
+    # text or runtime-only variables. PR saves stay in the merge ref.
     - name: Restore hosted Cargo cache
+      id: restore
       if: runner.environment != 'self-hosted'
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: ubuntu24.04-${{ inputs.lane }}-v3
+        prefix-key: v1-wallet-pir
+        shared-key: ${{ steps.identity.outputs.shared-key }}
+        add-rust-environment-hash-key: 'false'
         workspaces: ". -> target/${{ inputs.lane }}"
         cache-workspace-crates: true
         cache-on-failure: true
+        lookup-only: ${{ inputs.lookup-only }}
+    - name: Record restored Cargo state
+      shell: bash
+      env:
+        LANE: ${{ inputs.lane }}
+        CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: python3 tools/ci/cargo_cache.py restored --lane "$LANE" --cache-hit "$CACHE_HIT"
