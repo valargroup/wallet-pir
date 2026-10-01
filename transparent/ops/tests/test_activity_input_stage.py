@@ -333,6 +333,24 @@ class CutoverInputs(unittest.TestCase):
         self.request['files']={'product.json':json.dumps({'shell':'execute unreviewed command'})}
         with self.assertRaisesRegex(ValueError,'specification'):self.preparation().render()
 
+    def test_product_preparation_pins_coordinator_and_all_workers_without_service_actions(self):
+        self.request['files']={'product.json':'{}'}
+        prep=self.preparation();actions=[]
+        async def workers(action,attempt):
+            actions.append((action,attempt))
+        product=SimpleNamespace(bound=lambda tx:actions.append(('bound',tx)),
+            local=SimpleNamespace(protect_publications=lambda:actions.append(('coordinator-pin',))),
+            all_workers=workers)
+        module=SimpleNamespace(Product=lambda _:product,T=SimpleNamespace(VALIDATION_ID='reviewed-inputs'))
+        with patch.object(M,'module',return_value=module):
+            prep.prepare_payload({'product.json':b'{}'})
+        self.assertEqual(actions,[('bound','reviewed-inputs'),('coordinator-pin',),
+                                  ('protect-publications',prep.identifier[:16])])
+        async def unknown(*_):raise subprocess.TimeoutExpired('owned SSH',90)
+        product.all_workers=unknown
+        with patch.object(M,'module',return_value=module),self.assertRaises(subprocess.TimeoutExpired):
+            prep.prepare_payload({'product.json':b'{}'})
+
 
 class ServiceInputs(unittest.TestCase):
     def setUp(self):

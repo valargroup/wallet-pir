@@ -710,6 +710,7 @@ class Preparation:
             try:
                 self.retained_native=OWNERS/(self.identifier+'.native')
                 files=self.render();require({n:hashlib.sha256(v).hexdigest() for n,v in files.items()}==plan['files'],'prepared rendering changed')
+                self.prepare_payload(files)
                 self.partial.mkdir(mode=0o700)
                 for name,raw in files.items():
                     path=self.partial/name
@@ -724,6 +725,9 @@ class Preparation:
             finally:
                 record['finished_unix']=time.time();durable.atomic_json(self.owner,record)
                 self.retained_native=None
+
+    def prepare_payload(self, files):
+        pass
 
 
 class ServicePreparation(Preparation):
@@ -887,3 +891,16 @@ class CutoverPreparation(ServicePreparation):
                             isinstance(c.get('expected_digest'), str) and HEX.fullmatch(c['expected_digest'])
                             for c in sample['clients']), 'empty or incompatible recovery sample')
         return files
+
+    def prepare_payload(self, files):
+        if self.FILES != {'product.json'}:
+            return
+        product = module('protected_prepared_product', HERE/'activity_schema_product.py')
+        prepared = product.Product(json.loads(files['product.json'],object_pairs_hook=unique))
+        prepared.bound(product.T.VALIDATION_ID)
+        # Input preparation owns the global lock and durable intent. Each
+        # worker acquires its pinned remote lock and retains its own result.
+        # These links must exist before the expensive native deploy preflight.
+        prepared.local.protect_publications()
+        import asyncio
+        asyncio.run(prepared.all_workers('protect-publications',self.identifier[:16]))

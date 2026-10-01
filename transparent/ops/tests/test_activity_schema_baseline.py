@@ -126,12 +126,36 @@ class BaselineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'protocol identity'):B.verify(self.backup,repair_retained=True)
 
     def test_publication_control_records_restore_without_copying_retained_tables(self):
-        active=self.retained/'active.json';active.write_text('v10 active')
+        child=self.collected_publication()
+        active=self.retained/'active.json';original=json.dumps({'directory':str(child)})
+        active.write_text(original)
         self.plan['files'].append({'path':str(active),'required':True})
         self.capture();active.write_text('v11 active')
         B.restore(self.backup)
-        self.assertEqual(active.read_text(),'v10 active')
+        self.assertEqual(active.read_text(),original)
         self.assertEqual((self.retained/'shards.json').read_text(),'v10 map')
+
+    def test_preflight_pin_survives_gc_and_capture_protects_new_actual_active(self):
+        old=self.collected_publication()
+        active=self.retained/'active.json';active.write_text(json.dumps({'directory':str(old)}))
+        self.plan['files'].append({'path':str(active),'required':True})
+        sha=__import__('hashlib').sha256(json.dumps(self.plan,sort_keys=True).encode()).hexdigest()
+        B.protect_publications(self.plan,sha)
+        shutil.rmtree(old)
+        newer=self.retained/('b'*64);newer.mkdir()
+        (newer/'shards.json').write_text('new accepted map')
+        (newer/'table').write_bytes(b'new immutable table')
+        active.write_text(json.dumps({'directory':str(newer)}))
+        record=self.capture()
+        self.assertEqual(record['captured_publications'][0]['sentinel'],str(newer/'shards.json'))
+        shutil.rmtree(newer)
+        B.restore_publications(self.backup)
+        self.assertEqual((newer/'table').read_bytes(),b'new immutable table')
+        tampered=json.loads((self.backup/'complete.json').read_text())
+        tampered['captured_publications']=[]
+        (self.backup/'complete.json').write_text(json.dumps(tampered))
+        with self.assertRaisesRegex(ValueError,'captured activation'):
+            B.verify(self.backup)
 
     def test_only_regular_direct_publication_control_records_may_overlap_retention(self):
         for relative in ('shards.json','nested/active.json','active.json'):

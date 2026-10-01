@@ -188,8 +188,17 @@ def protect_publications(plan, plan_sha):
         if paths is None:
             continue
         source, protected = paths
-        require(not protected.exists() and not protected.is_symlink(),
-                'publication protection already exists; inspect unfinished capture')
+        space = os.statvfs(source.parent)
+        require(space.f_bavail / max(space.f_blocks,1) >= 0.20, 'publication protection disk floor is below twenty percent')
+        if protected.exists() or protected.is_symlink():
+            require(not protected.is_symlink() and (protected/'complete.json').is_file(),
+                    'unfinished publication protection requires reconciliation')
+            record = json.loads((protected/'complete.json').read_text())
+            require(record['item'] == item and record['source'] == str(source) and record['protected'] == str(protected),
+                    'existing publication protection identity differs')
+            verify_protections({'plan':plan,'plan_sha256':plan_sha,'protected_publications':[record]})
+            protections.append(record)
+            continue
         tree = publication_tree(source)
         require(source.stat().st_dev == protected.parent.stat().st_dev, 'publication protection crosses filesystems')
         protected.mkdir(mode=0o700)
@@ -206,7 +215,9 @@ def protect_publications(plan, plan_sha):
                 'publication changed while protecting rollback')
         for current, _, _ in os.walk(payload,topdown=False):
             sync_dir(current)
-        record = {'item':item, 'source':str(source), 'protected':str(protected), 'tree':tree}
+        namespace = source.parent.stat()
+        record = {'item':item, 'source':str(source), 'protected':str(protected), 'tree':tree,
+                  'namespace':{'device':namespace.st_dev,'inode':namespace.st_ino,'resolved':str(source.parent)}}
         atomic(protected/'complete.json',json.dumps(record,sort_keys=True).encode())
         sync_dir(protected.parent)
         protections.append(record)
@@ -216,7 +227,8 @@ def protect_publications(plan, plan_sha):
 def verify_protections(record):
     for protected in record.get('protected_publications', []):
         item = protected['item']
-        require(item in record['plan']['retained'], 'protection is not a retained publication')
+        allowed = record['plan']['retained'] + record.get('captured_publications',[])
+        require(item in allowed, 'protection is not a retained publication')
         paths = protection_paths(item, record['plan_sha256'])
         require(paths and tuple(map(str,paths)) == (protected['source'],protected['protected']),
                 'publication protection path changed')
@@ -226,9 +238,43 @@ def verify_protections(record):
         require(json.loads((root/'complete.json').read_text()) == protected and
                 publication_tree(root/'publication') == protected['tree'], 'protected publication changed')
         require(checksum(root/'publication'/'shards.json') == item['sha256'], 'protected publication map changed')
+        namespace = Path(protected['source']).parent
+        info = namespace.stat()
+        require(protected['namespace'] == {'device':info.st_dev,'inode':info.st_ino,'resolved':str(namespace)},
+                'protected publication namespace changed')
         source = Path(protected['source'])
         if source.exists() or source.is_symlink():
             require(publication_tree(source) == protected['tree'], 'retained publication changed')
+
+
+def captured_publications(root, record, *, live=False):
+    """Derive active generations exclusively from independently copied records."""
+    publications = []
+    for index, item in enumerate(record['plan']['files']):
+        tree = record['files'][item['path']]
+        if Path(item['path']).name != 'active.json' or tree is None or tree['.']['kind'] != 'file':
+            continue
+        active = json.loads((Path(root)/'files'/str(index)).read_text())
+        if not isinstance(active,dict) or not isinstance(active.get('directory'),str):
+            continue
+        source = safe_path(active['directory'])
+        namespace = next((i['path'] for i in record['plan']['retained']
+                          if Path(i['path']).resolve() == source.parent.resolve()),None)
+        require(namespace is not None, 'captured active publication is outside retained namespaces')
+        sentinel = source/'shards.json'
+        if live:
+            digest = checksum(sentinel)
+        else:
+            protected = next((p for p in record.get('protected_publications',[])
+                              if Path(p['source']) == source.resolve()),None)
+            require(protected is not None, 'captured active publication is not protected')
+            digest = protected['item']['sha256']
+        publication = {'path':namespace,'sentinel':str(sentinel),'sha256':digest}
+        require(protection_paths(publication, record['plan_sha256']) is not None,
+                'captured active publication is not collector-owned')
+        if publication not in publications:
+            publications.append(publication)
+    return publications
 
 
 def restore_publications(root):
@@ -290,6 +336,9 @@ def verify(root, *, repair_retained=False):
             if path.is_file() or path.is_symlink():
                 require(str(path.relative_to(root)) in expected, 'unexpected baseline payload')
     require(len(record['retained']) == len(plan['retained']), 'incomplete retained identities')
+    if 'captured_publications' in record:
+        require(record['captured_publications'] == captured_publications(root,record),
+                'protected active publication differs from captured activation records')
     verify_protections(record)
     repaired = []
     for item, identity in zip(plan['retained'], record['retained']):
@@ -334,7 +383,14 @@ def capture(root, plan):
     os.chmod(root, 0o700)
     (root/'files').mkdir(mode=0o700)
     sync_dir(root.parent)
-    retained = [retained_identity(item) for item in plan['retained']]
+    plan_sha = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+    protections = protect_publications(plan,plan_sha)
+    retained = []
+    for item in plan['retained']:
+        protected = next((p for p in protections if p['item']==item),None)
+        current = item if Path(item['sentinel']).exists() or protected is None else dict(
+            item,sentinel=str(Path(protected['protected'])/'publication'/'shards.json'))
+        retained.append(retained_identity(current))
     trees, total, count = {}, 0, 0
     for index, item in enumerate(plan['files']):
         source, saved = Path(item['path']), root/'files'/str(index)
@@ -369,10 +425,13 @@ def capture(root, plan):
         for current, _, _ in os.walk(saved if saved.is_dir() and not saved.is_symlink() else saved.parent, topdown=False):
             sync_dir(current)
         trees[item['path']] = tree
-    plan_sha = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
-    protections = protect_publications(plan,plan_sha)
     record = {'version': 1, 'plan': plan, 'plan_sha256': plan_sha,
               'files': trees, 'retained': retained, 'protected_publications':protections}
+    active = captured_publications(root,record,live=True)
+    additional = [item for item in active if item not in plan['retained']]
+    if additional:
+        protections.extend(protect_publications(dict(plan,retained=additional),plan_sha))
+    record['captured_publications'] = active
     atomic(root/'complete.json', json.dumps(record, sort_keys=True).encode())
     return verify(root)
 

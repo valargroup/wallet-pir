@@ -398,9 +398,23 @@ class Host:
             self.commands.unit('stop', *WRITERS[self.role])
             self.quiet(WRITERS[self.role])
         receipt = B.capture(self.root, self.plan['baseline'])
+        if proof is not None:
+            require(any(Path(p['source']) == Path(proof['active']['directory']).resolve()
+                        for p in receipt['protected_publications']), 'captured warm worker publication is not protected')
         # State is outside the baseline payload inventory; never add unrecorded
         # files to a baseline whose complete.json is the final copy receipt.
         return receipt['plan_sha256']
+
+    def protect_publications(self):
+        """Pin only reviewed immutable publication children; no service effects."""
+        self.identity(mutation=True)
+        require(self.role in ('coordinator','worker'), 'router has no publication to pin')
+        plan = self.plan['baseline']
+        sha = hashlib.sha256(__import__('json').dumps(plan,sort_keys=True).encode()).hexdigest()
+        protections = B.protect_publications(plan,sha)
+        require(protections, 'reviewed host plan does not name a collector-owned publication')
+        return {'status':'protected','baseline_plan_sha256':sha,
+                'sources':[p['source'] for p in protections]}
 
     def saved(self):
         record = B.verify(self.root,repair_retained=getattr(self,'repair_retained',False))

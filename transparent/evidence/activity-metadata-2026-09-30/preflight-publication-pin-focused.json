@@ -1,0 +1,31 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "8ff45573a3a90d7e907e61197af0319b24316ebd",
+  "owner": "f9eab0ad2ec34850b20ad55941d1c2b5",
+  "duration_seconds": 17.704610000015236,
+  "command": "make check-fast BASE=8ff45573a3a90d7e907e61197af0319b24316ebd",
+  "result_sha256": "3d7ecb5ad2ba4a514c79df9ba287b48d8041e7e3d8ca64710707449812abce7c",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_baseline.py": "cfc975663845b7f150a9bbe017c9463370b535c1810518bac42482e0b9db095e",
+    "transparent/ops/lib/activity_schema_host.py": "160d789062d6d026075c0d89f0ff5157cfeaf6cdc33adedc06d21be0ae31a2b9",
+    "transparent/ops/lib/activity_schema_dispatch.py": "c3f3df217389d9f1038721143716def0ce0060f1e19a2693f68dbd7387c96174",
+    "transparent/ops/lib/activity_input_stage.py": "2c9b509b509c3001fdb717984be41410925bde69c4df09f6d66c0249f8f9e577",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "fd3a423722b08b02eb433cfb9d76ea51d06b2eb9b0581cf9390967bcc1c17ae4",
+    "transparent/ops/tests/test_activity_schema_host.py": "2b4ef6b7b4b1cb362a787a268a72c9f6e1aeef6ce44e534082f5a34ccde3d907",
+    "transparent/ops/tests/test_activity_input_stage.py": "604fcb9f76200814fa340369ed85e2b6fc08bf8f7e7b0097ec4f813f1fbba149"
+  },
+  "observations": [
+    "Closed product staging pins coordinator and every worker before long preflight under durable global/remote ownership",
+    "Pin reuse requires exact complete identity; unfinished pins refuse",
+    "Capture protects actual active revision derived from independently copied records, even after reviewed predecessor was collected",
+    "Active protection mismatch, namespace changes, partial reconstruction and table drift refuse",
+    "Remote timeout propagates rather than permitting product staging success"
+  ],
+  "limitations": [
+    "No production early pins/capture/rollback or v11 service transition yet",
+    "Native table verification remains separate from immutable inode/stat inventory",
+    "Original rollback and recovery deadline remain failed; actual acceptance must rerun",
+    "Candidate CI is separately pending/waived; no manufactured pass"
+  ]
+}

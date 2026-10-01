@@ -27,6 +27,16 @@ restore directories refuse recovery. Coordinator authority remains stopped until
 every restored worker proves the captured exact assignment, then private proof
 waits for the guarded predecessor authority endpoint.
 
+Product input staging pins the reviewed generations before the long native
+preflight, using the input-preparation owner and each worker's remote owner and
+lock. This changes only private retention links. Capture then derives the actual
+active generation from the independently copied activation records after writers
+are quiet, and protects that generation as well if publication advanced during
+preflight. The complete baseline binds those additional generations to the copied
+records. An older protected child alone cannot satisfy a worker's captured active
+identity. Unfinished pins refuse reuse; unknown remote outcomes require owner
+observation and explicit reconciliation before another staging attempt.
+
 Public recovery now runs two independent native client proofs with separate
 reopened SQLite stores, using each canonical origin as the encrypted query
 origin in turn. A successful metadata request or filter request alone does not

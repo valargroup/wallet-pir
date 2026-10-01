@@ -356,9 +356,11 @@ class HostFilesTests(unittest.TestCase):
         old_root.mkdir()
         assignment = self.cache/'assignment.json'
         assignment.write_text('old assignment')
-        active = {'directory': str(self.cache), 'assignment': str(assignment), 'map_sha256': 'a'*64}
+        publication=self.cache/('a'*64);publication.mkdir();(publication/'shards.json').write_text('{}')
+        active = {'directory': str(publication), 'assignment': str(assignment), 'map_sha256': 'a'*64}
         self.host.plan['worker'] = dict(active)
         (old_root/'active.json').write_text(json.dumps(active))
+        self.host.plan['baseline']['files'].append({'path':str(old_root/'active.json'),'required':True})
         self.host.commands.control = lambda: {'active': active, 'warm': True, 'candidate': None,
                                              'preparing': None, 'invalidated': False}
         with patch.object(M, 'ROOT', old_root), patch.object(M, 'CACHE', self.dir/'v11-cache'):
