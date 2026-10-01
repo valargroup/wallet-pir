@@ -47,6 +47,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--tier', choices=['fast', 'full'])
     parser.add_argument('--offline', action='store_true')
+    parser.add_argument('--compile-only', action='store_true', help='build the tier for cache priming; runs no tests')
     args = parser.parse_args()
     if args.tier:
         metadata = json.loads(subprocess.check_output(
@@ -66,6 +67,11 @@ def main():
         env = dict(os.environ, RUST_TEST_THREADS='1')
         # Qualification overrides belong to explicit manual runs, not CI defaults.
         env = {key: value for key, value in env.items() if not key.startswith('QUALIFY_')}
+        if args.compile_only:
+            command = ['python3', str(ROOT / 'tools/ci/stage.py'), 'compile', '--', 'cargo', 'test', '--no-run',
+                       *cargo_args(registry, args.tier), *(['--offline'] if args.offline else [])]
+            subprocess.run(command, cwd=ROOT, env=env, check=True, **inherited_fds(env))
+            return
         command = ['bash', str(ROOT / 'tools/ci/full-test.sh'), *cargo_args(registry, args.tier), *(['--offline'] if args.offline else [])]
         print('+ ' + ' '.join(command), flush=True)
         subprocess.run(command, cwd=ROOT, env=env, check=True, **inherited_fds(env))
