@@ -125,7 +125,7 @@ class Product:
         if getattr(self,'recovery_program',None) is not None:
             request['recovery_source_sha'] = self.recovery_program['source_sha']
         if guard_sha256 is not None:request['guard_sha256']=guard_sha256
-        return self.dispatch.call(entry['host'], request, timeout=(330 if action in ('preflight','stage','capture','verify-worker') else
+        return self.dispatch.call(entry['host'], request, timeout=(1320 if action == 'prepare-worker-cache' else 330 if action in ('preflight','stage','capture','verify-worker') else
                            130 if action in ('activate','restore','repair-restore') else 90))
 
     async def all_workers(self, action, attempt):
@@ -469,6 +469,7 @@ class Product:
             await self.all_workers('stage', attempt)
             self.local.stage()
             self.seed()
+            await self.all_workers('prepare-worker-cache', attempt)
         elif phase == 'activate-prewarm':
             await self.all_workers('activate', attempt)
             await self.all_workers('verify-worker', attempt)

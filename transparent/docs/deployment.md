@@ -45,6 +45,19 @@ before v11 staging. Rollback allocates 60/140/300/100/140 seconds to withdrawal,
 restore, cold-cache/private verification, reopen and public verification,
 respectively: 740 seconds total, within the 900-second recovery ceiling.
 
+Candidate worker runtime caches are prepared within the guarded staging phase,
+using only the installed checksum-bound worker unit and reviewed active map,
+assignment and binary. The predecessor worker is stopped first. Preparation
+has a 1200-second bound within the existing 1800-second staging phase, checks
+host memory and disk availability at or above 20 percent, rejects OOM/restarts,
+and waits for native warm completion with zero cache-write failures and pending
+writes. It then stops the candidate under the same remote owner and lock,
+retaining disk caches. Missing observations, foreign identity or interrupted
+owners refuse progress. Preparation never reopens routes or qualifies serving;
+subsequent activation still performs its independent 300-second exact warm proof,
+installed setup checks and private/both canonical encrypted-query proofs.
+Rollback deadlines and resource floors are unchanged.
+
 Public recovery now runs two independent native client proofs with separate
 reopened SQLite stores, using each canonical origin as the encrypted query
 origin in turn. A successful metadata request or filter request alone does not

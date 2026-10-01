@@ -25,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location('dispatch_source_receipt', Path(__
 S = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(S)
 ROOT = Path('/srv/transparent-activity/ops/host-actions')
-ACTIONS = ('preflight', 'protect-publications', 'capture', 'stage', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker', 'repair-restore','repair-capture','attest-captured-router-guard')
+ACTIONS = ('preflight', 'protect-publications', 'capture', 'stage', 'prepare-worker-cache', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker', 'repair-restore','repair-capture','attest-captured-router-guard')
 READ_ONLY = ('preflight', 'verify-worker', 'verify-rollback-worker','attest-captured-router-guard')
 MAX_REQUEST = 256*1024
 

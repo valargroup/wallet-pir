@@ -533,6 +533,8 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.events.index('a1-capture'),self.events.index('withdraw-v10'))
         self.assertLess(self.events.index('coherent-v10-baseline'),self.events.index('withdraw-v10'))
         self.assertLess(self.events.index('a1-stage'),self.events.index('seed-complete-state'))
+        self.assertLess(self.events.index('seed-complete-state'),self.events.index('a1-prepare-worker-cache'))
+        self.assertLess(self.events.index('a1-prepare-worker-cache'),self.events.index('a1-activate'))
         self.assertLess(self.events.index('a1-verify-worker'),self.events.index('measured-installed-setups'))
         self.assertLess(self.events.index('measured-installed-setups'),self.events.index('local-activate'))
         self.assertLess(self.events.index('installed-sandbox'),self.events.index('verify-v11'))

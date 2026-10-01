@@ -34,6 +34,85 @@ def worker_plan():
                    'map_sha256': 'e'*64, 'map_file_sha256':'f'*64, 'binary_sha256': 'd'*64, 'assignment_sha256': 'd'*64}}
 
 
+class CachePreparationTests(unittest.TestCase):
+    def fixture(self, directory):
+        from unittest.mock import Mock
+        root=Path(directory);(root/'v11').mkdir()
+        host=M.Host.__new__(M.Host);host.role='worker';host.root=root/'saved'
+        host.plan=worker_plan();host.plan['installs']=[]
+        expected={k:host.plan['worker'][k] for k in ('directory','assignment','map_sha256')}
+        (root/'v11/active.json').write_text(json.dumps(expected))
+        host.saved=Mock();host.withdrawn=Mock();host.quiet=Mock();host.effective_units=Mock()
+        host.verify_worker=Mock(return_value={'active':expected})
+        host.commands=Mock();host.commands.state.return_value={'DropInPaths':''}
+        host.commands.cache_resources.return_value={'memory_available':80,'memory_total':100,
+            'disk_available':80,'disk_total':100,'oom':0,'oom_kill':0,'restarts':'0','pid':'42'}
+        host.commands.cache_observation.return_value={'ready':{'ready':True,'mode':'warm',
+            'map_sha256':expected['map_sha256'],'binary_sha256':host.plan['worker']['binary_sha256'],
+            'prewarm_failed':0,'prewarm_finished':True},'metrics':{
+            'transparent_shard_disk_save_pending':0,'transparent_shard_disk_write_failures_total':0}}
+        return host
+
+    def test_warming_503_retains_progress_and_requires_persistence_metrics(self):
+        import io
+        body=json.dumps({'ready':False,'prewarm_failed':0,'warm_runtimes':11,'target_runtimes':164}).encode()
+        error=M.urllib.error.HTTPError('fixed-ready',503,'warming',{},io.BytesIO(body))
+        metrics=b'transparent_shard_disk_save_pending 1\ntransparent_shard_disk_write_failures_total 0\n'
+        with patch.object(M.urllib.request,'urlopen',side_effect=[error,io.BytesIO(metrics)]):
+            value=M.Commands().cache_observation()
+        self.assertEqual(value['ready']['warm_runtimes'],11)
+        self.assertEqual(value['metrics']['transparent_shard_disk_save_pending'],1)
+        for data in (b'',metrics+metrics,b'transparent_shard_disk_save_pending nan\n'):
+            with patch.object(M.urllib.request,'urlopen',side_effect=[io.BytesIO(body),io.BytesIO(data)]),self.assertRaises(ValueError):
+                M.Commands().cache_observation()
+
+    def test_preparation_waits_for_persistence_then_stops_before_independent_activation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            host=self.fixture(directory)
+            pending=copy.deepcopy(host.commands.cache_observation.return_value)
+            pending['metrics']['transparent_shard_disk_save_pending']=1
+            host.commands.cache_observation.side_effect=[pending,host.commands.cache_observation.return_value]
+            with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value='d'*64),patch.object(M.time,'sleep'):
+                result=host.prepare_worker_cache()
+            self.assertEqual([c.args for c in host.commands.unit.call_args_list],[('start',M.WORKER),('stop',M.WORKER)])
+            host.verify_worker.assert_called_once_with()
+            self.assertEqual(len(result['observations']),2)
+            self.assertEqual(result['status'],'prepared');self.assertIn('independent activation',result['qualification'])
+
+    def test_foreign_candidate_or_unguarded_origin_never_starts_worker(self):
+        for defect in ('role','map','assignment','guard','dropin'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host=self.fixture(directory)
+                if defect=='role':host.role='router'
+                if defect=='map':(Path(directory)/'v11/active.json').write_text('{}')
+                if defect=='guard':host.withdrawn.side_effect=ValueError('origin open')
+                if defect=='dropin':host.commands.state.return_value={'DropInPaths':'/foreign/drop.conf'}
+                digest='f'*64 if defect=='assignment' else 'd'*64
+                with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value=digest),self.assertRaises(ValueError):
+                    host.prepare_worker_cache()
+                host.commands.unit.assert_not_called()
+
+    def test_resource_native_persistence_and_live_identity_failures_stop_owned_unit(self):
+        for defect in ('memory','disk','oom','restart','exit','map','binary','prewarm','write','deadline'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host=self.fixture(directory)
+                initial=copy.deepcopy(host.commands.cache_resources.return_value);bad=copy.deepcopy(initial)
+                field={'memory':'memory_available','disk':'disk_available','oom':'oom','restart':'restarts','exit':'pid'}.get(defect)
+                if field:bad[field]={'memory':19,'disk':19,'oom':1,'restart':'1','exit':'0'}[defect]
+                host.commands.cache_resources.side_effect=[initial,bad]
+                ready=host.commands.cache_observation.return_value['ready'];metrics=host.commands.cache_observation.return_value['metrics']
+                if defect in ('map','binary'):ready['map_sha256' if defect=='map' else 'binary_sha256']='f'*64
+                if defect=='prewarm':ready['prewarm_failed']=1
+                if defect=='write':metrics['transparent_shard_disk_write_failures_total']=1
+                if defect=='deadline':ready['ready']=False
+                clock=M.time.monotonic
+                with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value='d'*64), \
+                     patch.object(M.time,'monotonic',side_effect=[0,1201,1201] if defect=='deadline' else clock),self.assertRaises(ValueError):
+                    host.prepare_worker_cache()
+                self.assertEqual([c.args for c in host.commands.unit.call_args_list],[('start',M.WORKER),('stop',M.WORKER)])
+                host.verify_worker.assert_not_called()
+
+
 class RepairReuseTests(unittest.TestCase):
     def test_candidate_activation_observes_startup_before_separate_warm_proof(self):
         from unittest.mock import Mock

@@ -8,6 +8,28 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Attempt 6 at `721dac6a` failed candidate archive prewarming after 402.587
+seconds. Its local SSH transport failed separately, while the locked remote
+wrapper survived and completed automatic cold rollback. Transaction
+`transparent-schema-20261001T191953Z-73028c5af3dd-c36dd1` is `rolled-back`;
+all rollback phases passed in 376.247 seconds, within the 15-minute ceiling.
+The private and each canonical origin's encrypted-query/reopened SQLite proofs
+completed exact syncs with zero failures. Fresh metadata returned HTTP 200 on
+both origins. All remote host owners exited; quality remains failed with PID 0.
+[Retained evidence](../evidence/activity-metadata-2026-09-30/attempt6-cold-rollback-721dac6a.json)
+preserves the failed forward gate and separate local transport outcome.
+This cold rollback result does not accept v11, successful redeployment, sustained
+capacity, freshness or the remaining lifecycle faults. Earlier failures below
+remain failed history.
+
+Archive candidate runtime-cache preparation was incomplete. The next reviewed
+wrapper prepares missing runtimes only after staging while both origins are
+withdrawn and the predecessor is stopped, then stops the candidate after cache
+writes finish. Its bounded preparation is separate from the unchanged
+300-second independent activation warm gate. Actual preparation and v11 cutover
+remain pending.
+
+
 Latest attempt `7401ac97` passed locked preflight, then failed coordinator
 baseline capture: the retained v11 activation pointer was misclassified as a
 v10 predecessor generation. Coordinator writers stopped; no remote capture or

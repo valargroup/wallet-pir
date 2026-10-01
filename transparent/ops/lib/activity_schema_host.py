@@ -245,6 +245,63 @@ class Commands:
         return reply['result']
 
 
+    def cache_observation(self):
+        # Fixed installed worker endpoint, never an operator-selected URL.
+        try:
+            response = urllib.request.urlopen('http://127.0.0.1:8093/v1/ready', timeout=5)
+        except urllib.error.HTTPError as error:
+            require(error.code == 503, 'unexpected cache readiness HTTP status')
+            response = error
+        with response:
+            data = response.read(256*1024+1)
+        require(len(data) <= 256*1024, 'cache readiness exceeds bound')
+        ready = json.loads(data)
+        require(isinstance(ready,dict), 'invalid cache readiness')
+        ready = {k:ready.get(k) for k in ('ready','mode','map_sha256','binary_sha256','warm_runtimes',
+                                        'target_runtimes','prewarm_failed','prewarm_finished')}
+        with urllib.request.urlopen('http://127.0.0.1:8093/metrics', timeout=5) as response:
+            data = response.read(1024*1024+1)
+        require(len(data) <= 1024*1024, 'cache metrics exceed bound')
+        wanted = ('transparent_shard_disk_save_pending', 'transparent_shard_disk_write_failures_total')
+        metrics = {}
+        for line in data.decode().splitlines():
+            fields = line.split()
+            if len(fields) == 2 and fields[0] in wanted:
+                require(fields[0] not in metrics, 'duplicate cache metric')
+                value = float(fields[1])
+                require(value >= 0 and value.is_integer(), 'invalid cache metric')
+                metrics[fields[0]] = int(value)
+        require(set(metrics) == set(wanted), 'worker omitted cache persistence metrics')
+        return {'ready':ready, 'metrics':metrics}
+
+    def cache_resources(self):
+        memory = {line.split(':',1)[0]:int(line.split()[1])*1024
+                  for line in Path('/proc/meminfo').read_text().splitlines()
+                  if line.startswith(('MemTotal:', 'MemAvailable:'))}
+        require(set(memory) == {'MemTotal','MemAvailable'} and memory['MemTotal'] > 0,
+                'memory floor observation unavailable')
+        require(CACHE.is_dir() and not CACHE.is_symlink() and CACHE.parent.resolve() == CACHE.parent,
+                'cache resource namespace is aliased')
+        disk = os.statvfs(CACHE)
+        require(disk.f_blocks > 0, 'disk floor observation unavailable')
+        state = self.state(WORKER)
+        group = state.get('ControlGroup','')
+        events = {}
+        if group:
+            require(group.startswith('/') and '..' not in Path(group).parts, 'unsafe worker cgroup')
+            path = Path('/sys/fs/cgroup')/group.lstrip('/')/'memory.events'
+            if state.get('MainPID') not in (None,'0'):
+                require(path.is_file(), 'worker OOM observation unavailable')
+            if path.exists():
+                events = {k:int(v) for k,v in (line.split() for line in path.read_text().splitlines())}
+        if state.get('MainPID') not in (None,'0'):
+            require(group and {'oom','oom_kill'} <= set(events), 'worker OOM observation incomplete')
+        return {'memory_available':memory['MemAvailable'], 'memory_total':memory['MemTotal'],
+                'disk_available':disk.f_bavail*disk.f_frsize, 'disk_total':disk.f_blocks*disk.f_frsize,
+                'oom':events.get('oom',0), 'oom_kill':events.get('oom_kill',0),
+                'restarts':state.get('NRestarts'), 'pid':state.get('MainPID')}
+
+
 class Host:
     def __init__(self, plan, commands=None):
         self.plan = validate(plan)
@@ -606,6 +663,74 @@ class Host:
                     'candidate worker activation state already exists; reconcile before staging')
             B.atomic(active, encode({k:self.plan['worker'][k] for k in ('directory', 'assignment', 'map_sha256')}))
         self.commands.run(['systemctl', 'daemon-reload'])
+
+    def prepare_worker_cache(self):
+        """Prepare pinned public runtimes while guarded; activation still proves warm."""
+        require(self.role == 'worker', 'cache preparation requires a worker plan')
+        self.saved()
+        self.withdrawn()
+        self.quiet((WORKER,))
+        self.effective_units()
+        unit = self.commands.state(WORKER)
+        require(not shlex.split(unit.get('DropInPaths','')), 'candidate cache unit has unexpected drop-ins')
+        for item in self.plan['installs']:
+            path = Path(item['target'])
+            require(path.is_file() and not path.is_symlink() and checksum(path) == item['sha256'],
+                    'installed cache candidate changed')
+        expected = {k:self.plan['worker'][k] for k in ('directory','assignment','map_sha256')}
+        require(load(ROOT/'v11/active.json') == expected and not (ROOT/'v11/active.invalid.json').exists(),
+                'cache preparation candidate activation differs')
+        require(checksum(expected['assignment']) == self.plan['worker']['assignment_sha256'],
+                'cache preparation assignment changed')
+        started = time.monotonic()
+        observations = []
+        initial = self.commands.cache_resources()
+        def floors(value):
+            require(value['memory_available']*5 >= value['memory_total'] and
+                    value['disk_available']*5 >= value['disk_total'], 'cache preparation resource floor failed')
+            require(value['oom'] == 0 and value['oom_kill'] == 0 and
+                    value['restarts'] == initial['restarts'], 'cache preparation OOM or unexpected restart')
+        floors(initial)
+        # This action owns the staged unit under the remote production lock.
+        # No predecessor and candidate process coexist. Even failed startup must
+        # be stopped before releasing this owner, or remain fenced as interrupted.
+        try:
+            self.commands.unit('start', WORKER)
+            while True:
+                require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                self.withdrawn()
+                resources = self.commands.cache_resources()
+                floors(resources)
+                require(resources['pid'] not in (None,'0'), 'cache preparation worker exited')
+                try:
+                    observation = self.commands.cache_observation()
+                except (OSError, subprocess.SubprocessError) as error:
+                    observation = {'error_type':type(error).__name__}
+                observation['resources'] = resources
+                observation['elapsed_seconds'] = time.monotonic()-started
+                observations.append(observation)
+                ready = observation.get('ready',{})
+                if ready:
+                    require(ready.get('map_sha256') == expected['map_sha256'] and
+                            ready.get('binary_sha256') == self.plan['worker']['binary_sha256'],
+                            'cache preparation live candidate differs')
+                    require(ready.get('prewarm_failed') == 0, 'cache preparation native runtime failed')
+                    require(observation['metrics']['transparent_shard_disk_write_failures_total'] == 0,
+                            'cache preparation persistence failed')
+                    if (ready.get('ready') is True and ready.get('prewarm_finished') is True and
+                            ready.get('mode') == 'warm' and
+                            observation['metrics']['transparent_shard_disk_save_pending'] == 0):
+                        proof = self.verify_worker()
+                        require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                        break
+                require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                time.sleep(min(5, max(0,1200-(time.monotonic()-started))))
+        finally:
+            self.commands.unit('stop', WORKER)
+            self.quiet((WORKER,))
+        return {'status':'prepared', 'qualification':'cache preparation only; independent activation and query proofs required',
+                'source_sha':self.plan['source_sha'], 'plan_sha256':hashlib.sha256(encode(self.plan)).hexdigest(),
+                'worker':proof, 'observations':observations, 'seconds':time.monotonic()-started}
 
     def activate(self):
         self.saved()

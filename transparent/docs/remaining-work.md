@@ -7,11 +7,13 @@ numbers are reconciled below rather than retained as a second release checklist.
 
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
-The latest warm repair passed private and separate encrypted-query/reopened SQLite
-proofs through both canonical origins; the new transaction is `rolled-back`.
-Reconcile captured stale v11 candidate namespaces through the locked host stage,
-then perform a fresh reviewed v11 redeploy. All cold timing failures remain failed
-and require actual fault reruns. All sustained acceptance gates remain open.
+Attempt 6 failed archive candidate prewarming, then the surviving locked wrapper
+completed actual automatic cold rollback in 376.247 seconds. The transaction is
+`rolled-back`; private and each canonical encrypted-query/reopened SQLite proofs
+passed. Earlier cold failures remain failed. Complete bounded locked candidate
+runtime-cache preparation before another independent activation attempt; a
+successful v11 redeployment and every sustained/lifecycle acceptance gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt6-cold-rollback-721dac6a.json).
 
 Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
 started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10

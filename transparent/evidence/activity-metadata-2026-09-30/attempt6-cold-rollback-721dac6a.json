@@ -1,0 +1,215 @@
+{
+  "source_sha": "721dac6a9388771277d6e37d820c2f4a0c915655",
+  "transaction": "transparent-schema-20261001T191953Z-73028c5af3dd-c36dd1",
+  "recipe_sha256": "73028c5af3dda42502c6165edc3bbf43bab3256877206b6c5bb5693468dabe9c",
+  "remote_status": "rolled-back",
+  "root_pid_exists": false,
+  "local_transport_outcome": "failed-ssh-exit-255; remote owner survived and completed rollback",
+  "events": [
+    {
+      "group": "steps",
+      "name": "preserve-v10",
+      "status": "passed",
+      "seconds": 232.18729186290875
+    },
+    {
+      "group": "steps",
+      "name": "maintenance",
+      "status": "passed",
+      "seconds": 10.537240345031023
+    },
+    {
+      "group": "steps",
+      "name": "stage-v11",
+      "status": "passed",
+      "seconds": 225.49382937513292
+    },
+    {
+      "group": "steps",
+      "name": "activate-prewarm",
+      "status": "failed",
+      "seconds": 402.5866212178953
+    },
+    {
+      "group": "rollback",
+      "name": "withdraw-origins",
+      "status": "passed",
+      "seconds": 10.13437608582899
+    },
+    {
+      "group": "rollback",
+      "name": "restore-v10",
+      "status": "passed",
+      "seconds": 114.68139111297205
+    },
+    {
+      "group": "rollback",
+      "name": "verify-rollback",
+      "status": "passed",
+      "seconds": 223.9460983988829
+    },
+    {
+      "group": "rollback",
+      "name": "reopen-v10",
+      "status": "passed",
+      "seconds": 21.857043411117047
+    },
+    {
+      "group": "rollback",
+      "name": "verify-service",
+      "status": "passed",
+      "seconds": 5.627903992310166
+    }
+  ],
+  "metadata": [
+    {
+      "origin": "transparent",
+      "http_status": 200,
+      "raw_sha256": "a693a6ec0a3c9b76bfa4d3981cb4eef33ef26f4715a9bc4c4a761f290cfb14a0",
+      "shards": 86,
+      "metadata": {
+        "start_height": 0
+      }
+    },
+    {
+      "origin": "enhance",
+      "http_status": 200,
+      "raw_sha256": "a693a6ec0a3c9b76bfa4d3981cb4eef33ef26f4715a9bc4c4a761f290cfb14a0",
+      "shards": 86,
+      "metadata": {
+        "start_height": 0
+      }
+    }
+  ],
+  "native_proofs": [
+    {
+      "report": "routing/v10-public-recovery-0-1790883631160794750/native.json",
+      "sha256": "a3982c255dd34a975dbd382fbcff239a4964a8d7ea45b48c01cab1502efbbc0f",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-0-1790883639119091922/native.json",
+      "sha256": "f570dcd7fa99a2b62d81beda74c4127392791279aed7b6410625308efe3c87aa",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-1-1790883631357652489/native.json",
+      "sha256": "ce7b1f696bf68b6701d79fc7445b82d73f38971c581fbc06f637c2c06d6363a6",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-1-1790883639313093447/native.json",
+      "sha256": "e3a8e4eb3ab3b00ab08c971f3090183f8e90dafc1dd21c005f95cb486097dda1",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-recovery-1790883609315542255/native.json",
+      "sha256": "b23a19986fd9213f6da112b9078e8f6bd5cf7e0be514447a015c94543e350e5f",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    }
+  ],
+  "archive_sha256": "8c1e742494e11ae733c5414d44d5516e9263e958b0c64e7388026b969d3ce113",
+  "scope": "Failed v11 prewarm; subsequent actual automatic cold v10 rollback passed. All earlier failures preserved; no v11 or sustained qualification.",
+  "cold_rollback_seconds": 376.24681300111115,
+  "sqlite_results": [
+    {
+      "result": "routing/v10-public-recovery-0-1790883631160794750/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "a3982c255dd34a975dbd382fbcff239a4964a8d7ea45b48c01cab1502efbbc0f"
+    },
+    {
+      "result": "routing/v10-public-recovery-0-1790883639119091922/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "f570dcd7fa99a2b62d81beda74c4127392791279aed7b6410625308efe3c87aa"
+    },
+    {
+      "result": "routing/v10-public-recovery-1-1790883631357652489/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "ce7b1f696bf68b6701d79fc7445b82d73f38971c581fbc06f637c2c06d6363a6"
+    },
+    {
+      "result": "routing/v10-public-recovery-1-1790883639313093447/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "e3a8e4eb3ab3b00ab08c971f3090183f8e90dafc1dd21c005f95cb486097dda1"
+    },
+    {
+      "result": "routing/v10-recovery-1790883609315542255/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "b23a19986fd9213f6da112b9078e8f6bd5cf7e0be514447a015c94543e350e5f"
+    }
+  ],
+  "candidate_cache_inventory": {
+    "raw_sha256": "a87b381f43d95125a7d8d6bbda1ae6f523ef17e3d114a36c090554c849e700cb",
+    "workers": [
+      {
+        "worker": "worker-1",
+        "runtime_files": 16,
+        "partial_files": 0,
+        "bytes": 940287872
+      },
+      {
+        "worker": "worker-2",
+        "runtime_files": 16,
+        "partial_files": 0,
+        "bytes": 940287872
+      },
+      {
+        "worker": "worker-3",
+        "runtime_files": 30,
+        "partial_files": 1,
+        "bytes": 7206197840
+      }
+    ],
+    "scope": "File counts and sizes only; cache validity is checked by native loading, not inferred from inventory."
+  }
+}
