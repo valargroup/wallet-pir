@@ -126,6 +126,15 @@ def parser():
     command = commands.add_parser('schema-input-receive', help=argparse.SUPPRESS)
     command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
     command.add_argument('--request-sha256', required=True)
+    for name in ('plan','preflight','qualify','status','reconcile','relay'):
+        command = commands.add_parser('schema-lock-'+name, help='bounded SSH descendant lock qualification' if name != 'relay' else argparse.SUPPRESS)
+        command.add_argument('--source-sha', required=True)
+        command.add_argument('--host', required=True)
+        command.add_argument('--attempt', type=int, default=1)
+        if name == 'qualify': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-lock-remote', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('preflight','parent','child','status','probe','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
     for name in ('run', 'status', 'reconcile'):
         command = commands.add_parser('schema-host-'+name, help='pinned remote host owner; invoked by the coordinator schema recipe')
         command.add_argument('--request-sha256', required=True)
@@ -194,6 +203,21 @@ def main(argv=None, executor=None, out=print, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     try:
+        if args.command.startswith('schema-lock-'):
+            spec = importlib.util.spec_from_file_location('activity_lock_qualification', ROOT/'transparent/ops/lib/activity_lock_qualification.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            if args.command == 'schema-lock-remote':
+                data = sys.stdin.buffer.read(8193)
+                if len(data) > 8192: raise ValueError('qualification request exceeds bound')
+                request = module.validate(json.loads(data))
+                if module.durable.digest(request) != args.request_sha256: raise ValueError('qualification request checksum differs')
+                result = module.remote_run(request,args.action)
+            else:
+                if not args.inventory: raise ValueError('qualification requires retained coordinator inventory')
+                result = module.Client(descriptors.load_inventory(args.inventory),args.source_sha,args.host,args.attempt,args.inventory).run(
+                    args.command.removeprefix('schema-lock-'),getattr(args,'expect_plan_sha256',None))
+            out(json.dumps(result,sort_keys=True))
+            return 0
         if args.command == 'schema-input-receive':
             spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

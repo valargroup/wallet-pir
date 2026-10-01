@@ -1013,6 +1013,27 @@ derived from retained results; a document shaped like a passing report supplies
 no independent evidence. The full load fixture has a separate 2 MiB reader bound;
 host plans and specifications keep their 256 KiB bound.
 
+### SSH descendant lock qualification
+
+Before the first service transaction, use `schema-lock-plan` and
+`schema-lock-preflight` on the pinned root coordinator with the staged
+`--source-sha`, reviewed `--host` and a new `--attempt`. The inventory must be
+the retained coordinator input file, rather than stdin, because the bounded
+relay rereads it. `schema-lock-qualify` requires `--expect-plan-sha256`, the
+canonical digest of the plan. No service, routing or executable is changed.
+
+The relay exits while real SSH retains the coordinator descriptor. The remote
+wrapper acquires its own host lock and exits while a child retains that lock
+for fifteen seconds. Competing lock acquisitions must refuse on both machines;
+the remote interrupted owner must also fence unrelated wrapper operations.
+Private receipts and the SSH log live under the existing input-staging owner
+namespace. Success requires child completion, released locks and reconciliation
+on both hosts. `schema-lock-status` reports the retained coordinator owner;
+`schema-lock-reconcile` resolves an interrupted test only after the remote and
+coordinator locks can both be acquired. Never replay an owned attempt or infer
+remote assurance from the local process tests. Reconcile failures before any
+source staging or deployment; the shared input-owner fence remains in force.
+
 Restoration verifies the entire snapshot before changing any target and preserves
 displaced candidate state alongside its original target on the live filesystem.
 Routing, scaler and load files can be deferred until the canonical verifier passes.

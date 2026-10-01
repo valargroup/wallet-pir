@@ -63,6 +63,11 @@ also cover a closed proof/specification input staging path. SSH descendant
 qualification, full reviewed recipe/preflight and live transition still precede
 production validation. No coherent baseline has been captured.
 
+A bounded wrapper qualification now exercises parent exit, inherited descriptors
+and interrupted-owner reconciliation without touching live services. Its local
+process tests cover remote-parent and relay survival. Actual SSH qualification
+is still required before cutover; local fixtures are not that evidence.
+
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained
 native verifier's actual full-map digest (`fd4dcadb...`), separate from the
