@@ -424,11 +424,16 @@ class Routing:
         sample = H.load(input_['sample'])
         require(await fleet.canonical_hash(sample['anchor_height']) == sample['anchor_hash'], 'public recovery anchor changed')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        output = self.root/(kind+'-public-recovery-'+str(time.time_ns()))
-        recovery = self.proof(input_['binary'], input_['binary_sha256'], input_['sample'], input_['sample_sha256'],
-                              'transparent-shard-'+kind, 'https://transparent-pir.valargroup.dev',
-                              'https://enhance-pir.valargroup.dev', output, self.plan['source_sha'])
-        require(recovery.get('status') == 'passed' and recovery.get('observations'), 'public HTTP recovery did not reopen nonempty stores')
+        recoveries = []
+        origins = ('https://transparent-pir.valargroup.dev', 'https://enhance-pir.valargroup.dev')
+        for index, origin in enumerate(origins):
+            output = self.root/(kind+'-public-recovery-'+str(index)+'-'+str(time.time_ns()))
+            recovery = self.proof(input_['binary'], input_['binary_sha256'], input_['sample'], input_['sample_sha256'],
+                                  'transparent-shard-'+kind, origin, origins[1-index], output, self.plan['source_sha'])
+            require(recovery.get('status') == 'passed' and recovery.get('observations'),
+                    'public HTTP recovery did not reopen nonempty stores through '+origin)
+            recoveries.append({'query_origin':origin, 'filter_origin':origins[1-index],
+                               'result':str(output/'result.json'), 'sha256':H.checksum(output/'result.json')})
         after = await self.live(kind, fleet)
         continuation(live, after)
         checked_map = {**after['lineage'], 'shards':after['history']}
@@ -437,7 +442,7 @@ class Routing:
                 self.fetch('http://127.0.0.1:8094/v1/shards') == checked_map,
                 'canonical origins or accepted anchor changed during public recovery')
         record = {'source_sha':self.plan['source_sha'], 'transaction':self.plan['transaction'], 'kind':kind,
-                  'verified_unix':time.time(), 'live':after, 'recovery_result':str(output/'result.json'),
-                  'recovery_sha256':H.checksum(output/'result.json'), 'sample_sha256':input_['sample_sha256']}
+                  'verified_unix':time.time(), 'live':after, 'recoveries':recoveries,
+                  'sample_sha256':input_['sample_sha256']}
         H.B.atomic(self.root/('verified-public-'+kind+'.json'), H.encode(record))
         return record

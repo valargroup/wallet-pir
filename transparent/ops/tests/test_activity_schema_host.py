@@ -266,7 +266,7 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(json.loads((M.ROOT/'state/maintenance.json').read_text()), {'enabled':True})
         self.assertEqual((self.cache/'sentinel').read_text(), 'retained warm bytes')
         starts = [e for e in self.host.commands.events if e[0] == 'start']
-        self.assertEqual(starts, [('start', M.START['coordinator'])])
+        self.assertEqual(starts, [('start', (M.FILTER,))])
         self.assertNotIn(M.LOAD, starts[0][1])
         self.assertNotIn(M.SCALER, starts[0][1])
         self.host.restore()  # Same restored bytes can be verified/restored again.

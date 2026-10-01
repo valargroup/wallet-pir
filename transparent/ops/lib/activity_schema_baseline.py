@@ -48,6 +48,7 @@ def atomic(path, data, mode=0o600):
     temporary = path.with_name(path.name+'.next')
     fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode)
     try:
+        os.fchmod(fd,mode)
         with os.fdopen(fd, 'wb') as out:
             out.write(data)
             out.flush()
@@ -143,6 +144,118 @@ def retained_identity(item):
     return {'device': info.st_dev, 'inode': info.st_ino, 'resolved': str(path.resolve())}
 
 
+def publication_tree(path):
+    """Bind immutable publication inodes without re-reading multi-GiB tables.
+
+    Native verification remains responsible for table contents. This inventory
+    protects against unlink collection and detects replacement/in-place writes.
+    Mutable activation records and runtime cache files never enter this tree.
+    """
+    result = {}
+    for current, directories, files in os.walk(path, followlinks=False):
+        for name in ['.'] + sorted(directories + files):
+            entry = Path(current) if name == '.' else Path(current)/name
+            info = entry.lstat()
+            require(stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode),
+                    'publication protection refuses links or special files')
+            result[str(entry.relative_to(path))] = {
+                'directory':stat.S_ISDIR(info.st_mode), 'mode':stat.S_IMODE(info.st_mode),
+                'uid':info.st_uid, 'gid':info.st_gid,
+                **({} if stat.S_ISDIR(info.st_mode) else
+                   {'device':info.st_dev, 'inode':info.st_ino, 'size':info.st_size, 'mtime_ns':info.st_mtime_ns})}
+            require(len(result) <= MAX_FILES, 'publication protection exceeds file bound')
+    require(result and result['.']['directory'], 'publication protection requires a directory')
+    return result
+
+
+def protection_paths(item, plan_sha):
+    namespace = Path(item['path']).resolve()
+    source = Path(item['sentinel']).parent
+    # Only collector-owned, direct publication generations are eligible.
+    if Path(item['sentinel']).name != 'shards.json' or source.parent.resolve() != namespace:
+        return None
+    if not (HEX.fullmatch(source.name) or re.fullmatch(r'candidate-[a-zA-Z0-9-]+', source.name)):
+        return None
+    source = namespace/source.name
+    protected = namespace.parent/('.schema-protected-'+plan_sha+'-'+source.name)
+    return source, protected
+
+
+def protect_publications(plan, plan_sha):
+    protections = []
+    for item in plan['retained']:
+        paths = protection_paths(item, plan_sha)
+        if paths is None:
+            continue
+        source, protected = paths
+        require(not protected.exists() and not protected.is_symlink(),
+                'publication protection already exists; inspect unfinished capture')
+        tree = publication_tree(source)
+        require(source.stat().st_dev == protected.parent.stat().st_dev, 'publication protection crosses filesystems')
+        protected.mkdir(mode=0o700)
+        atomic(protected/'intent.json', json.dumps({'source':str(source), 'tree':tree},sort_keys=True).encode())
+        payload = protected/'publication'
+        for relative, info in sorted(tree.items(), key=lambda entry:len(Path(entry[0]).parts)):
+            src, dst = source/relative, payload/relative
+            if info['directory']:
+                dst.mkdir(mode=info['mode'])
+                os.chown(dst,info['uid'],info['gid']);os.chmod(dst,info['mode'])
+            else:
+                os.link(src,dst,follow_symlinks=False)
+        require(publication_tree(source) == tree == publication_tree(payload),
+                'publication changed while protecting rollback')
+        for current, _, _ in os.walk(payload,topdown=False):
+            sync_dir(current)
+        record = {'item':item, 'source':str(source), 'protected':str(protected), 'tree':tree}
+        atomic(protected/'complete.json',json.dumps(record,sort_keys=True).encode())
+        sync_dir(protected.parent)
+        protections.append(record)
+    return protections
+
+
+def verify_protections(record):
+    for protected in record.get('protected_publications', []):
+        item = protected['item']
+        require(item in record['plan']['retained'], 'protection is not a retained publication')
+        paths = protection_paths(item, record['plan_sha256'])
+        require(paths and tuple(map(str,paths)) == (protected['source'],protected['protected']),
+                'publication protection path changed')
+        root = Path(protected['protected'])
+        require(root.is_dir() and not root.is_symlink() and root.stat().st_uid == os.geteuid() and
+                root.stat().st_mode & 0o077 == 0, 'publication protection is not private and owned')
+        require(json.loads((root/'complete.json').read_text()) == protected and
+                publication_tree(root/'publication') == protected['tree'], 'protected publication changed')
+        require(checksum(root/'publication'/'shards.json') == item['sha256'], 'protected publication map changed')
+        source = Path(protected['source'])
+        if source.exists() or source.is_symlink():
+            require(publication_tree(source) == protected['tree'], 'retained publication changed')
+
+
+def restore_publications(root):
+    """Reconstruct only missing collector-owned generations from a complete baseline."""
+    record = verify(root)
+    for protected in record.get('protected_publications', []):
+        source = Path(protected['source'])
+        if source.exists() or source.is_symlink():
+            require(publication_tree(source) == protected['tree'], 'retained publication was changed rather than collected')
+            continue
+        temporary = source.with_name(source.name+'.schema-restore-next')
+        require(not temporary.exists() and not temporary.is_symlink(), 'unfinished publication restore requires reconciliation')
+        payload = Path(protected['protected'])/'publication'
+        for relative, info in sorted(protected['tree'].items(),key=lambda entry:len(Path(entry[0]).parts)):
+            dst = temporary/relative
+            if info['directory']:
+                dst.mkdir(mode=info['mode'])
+                os.chown(dst,info['uid'],info['gid']);os.chmod(dst,info['mode'])
+            else:
+                os.link(payload/relative,dst,follow_symlinks=False)
+        require(publication_tree(temporary) == protected['tree'], 'restored publication differs from protection')
+        for current, _, _ in os.walk(temporary,topdown=False):
+            sync_dir(current)
+        os.rename(temporary,source);sync_dir(source.parent)
+    return verify(root)
+
+
 def verify(root, *, repair_retained=False):
     """Validate the entire snapshot before the first restoring side effect."""
     root = safe_path(str(root))
@@ -177,10 +290,15 @@ def verify(root, *, repair_retained=False):
             if path.is_file() or path.is_symlink():
                 require(str(path.relative_to(root)) in expected, 'unexpected baseline payload')
     require(len(record['retained']) == len(plan['retained']), 'incomplete retained identities')
+    verify_protections(record)
     repaired = []
     for item, identity in zip(plan['retained'], record['retained']):
         current = item
-        if repair_retained and not Path(item['sentinel']).exists():
+        protection = next((p for p in record.get('protected_publications',[]) if p['item']==item),None)
+        if protection and not Path(item['sentinel']).exists():
+            # The complete protection has already verified the original map.
+            current = dict(item,sentinel=str(Path(protection['protected'])/'publication'/'shards.json'))
+        elif repair_retained and not Path(item['sentinel']).exists():
             # Only the exact worker active record copied into this complete
             # baseline may replace a collected, older publication sentinel.
             from wallet_pir_ops import transparent_map
@@ -251,8 +369,10 @@ def capture(root, plan):
         for current, _, _ in os.walk(saved if saved.is_dir() and not saved.is_symlink() else saved.parent, topdown=False):
             sync_dir(current)
         trees[item['path']] = tree
-    record = {'version': 1, 'plan': plan, 'plan_sha256': hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest(),
-              'files': trees, 'retained': retained}
+    plan_sha = hashlib.sha256(json.dumps(plan, sort_keys=True).encode()).hexdigest()
+    protections = protect_publications(plan,plan_sha)
+    record = {'version': 1, 'plan': plan, 'plan_sha256': plan_sha,
+              'files': trees, 'retained': retained, 'protected_publications':protections}
     atomic(root/'complete.json', json.dumps(record, sort_keys=True).encode())
     return verify(root)
 

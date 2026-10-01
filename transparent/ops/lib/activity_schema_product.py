@@ -455,6 +455,24 @@ class Product:
                 await self.wait_restored_workers()
                 if not record.get('v10_reconciliation'):
                     await self.all_workers('verify-rollback-worker', attempt)
+                    baseline, state = self.local.saved()
+                    if baseline and baseline.get('protected_publications'):
+                        # Captured publication bytes survive subsequent native
+                        # collection. The exact restored worker proof above
+                        # precedes any normal predecessor publication advance.
+                        self.routing.predecessor_continuous = True
+                    self.local.commands.unit('start',
+                        *[u for u in H.AUTHORITY if state['units'][u]['ActiveState']=='active'])
+                    deadline = time.monotonic()+60
+                    while True:
+                        try:
+                            mapping = self.routing.fetch('http://127.0.0.1:8094/v1/shards')
+                            H.require(mapping.get('start_height') == 0 and mapping.get('shards'), 'restored authority is not ready')
+                            break
+                        except (OSError, ValueError):
+                            if time.monotonic() >= deadline:
+                                raise
+                            await asyncio.sleep(2)
                 await self.routing.route_private('v10')
                 await self.routing.verify('v10')
             except BaseException:

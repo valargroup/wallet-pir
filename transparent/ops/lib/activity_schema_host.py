@@ -464,6 +464,7 @@ class Host:
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)
+        B.restore_publications(self.root)
         include = [i['path'] for i in self.plan['baseline']['files'] if not deferred(self.role, i['path'])]
         if repair_token is not None:
             B.reconcile_displacements(self.root, include, repair_token,repair_retained=getattr(self,'repair_retained',False))
@@ -476,7 +477,11 @@ class Host:
         self.commands.run(['systemctl', 'daemon-reload'])
         # Restore only previously active product units. Load/scaler/Caddy remain
         # governed by the outer verify/reopen phases and the total 900s budget.
-        start = [u for u in START[self.role] if state['units'][u].get('ActiveState') == 'active']
+        # Authority remains paused until every restored worker proves the
+        # captured exact assignment. Starting it here can publish and collect
+        # generations while other hosts are still restoring.
+        eligible = (FILTER,) if self.role == 'coordinator' else START[self.role]
+        start = [u for u in eligible if state['units'][u].get('ActiveState') == 'active']
         self.commands.unit('start', *start)
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))

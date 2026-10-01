@@ -8,13 +8,27 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Latest observed recovery on 2026-10-01: the reviewed `09a9f140` relay correction
+completed [coherent recovery at a newer v10 revision](../evidence/activity-metadata-2026-09-30/coherent-newer-v10-recovery-09a9f140.json).
+The journal is `reconciled-v10`; private verification, reopen and service
+verification passed. The owned preparation/resume took 120.465 seconds. Each
+of its three native reference reports completed one exact sync with no failures
+and no stop reason, with reopened SQLite stores. Both canonical metadata origins
+returned HTTP 200, genesis through height 3502677, with 86 shards. This restores
+predecessor service; v11 is not installed. The public client proof currently
+queries Transparent while fetching filters from Enhance. Separate encrypted
+query proofs through each canonical origin remain required. The original
+rollback and missed 15-minute acceptance remain failed; a fresh protected
+baseline and actual rollback/redeploy rehearsal remain mandatory. The failures
+below are retained history, not the latest service state.
+
 Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
 started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10
 baselines were captured, but the coordinator timed out waiting for the archive
 capture's repeated native verification. Remote owners subsequently completed and
 exited. Recovery restored v10 bytes and services, then failed warm verification:
 authority had restarted publication before workers were proved. Public origins
-remain guarded; the transaction is `rollback-failed`. The 15-minute recovery
+remained guarded at that failed attempt; the transaction was `rollback-failed`. The 15-minute recovery
 acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
 preserves original recipe/baseline bytes and all failures. Its focused check
 passed. The repair source was staged on all five hosts, but its first actual
@@ -27,14 +41,14 @@ passed withdrawal but refused restoration because the captured publication was
 collected on all three workers. All remote owners exited. The workers are warm
 on one newer v10 publication and its coordinator activation bytes remain in
 preserved displacements. Guarded adoption of the newer activation completed,
-but client reconciliation remains failed. The readiness URL and continuous
-current-map verification defects were fixed with focused evidence. The latest
+but client reconciliation initially failed. The readiness URL and continuous
+current-map verification defects were fixed with focused evidence. The earlier
 [real client attempt](../evidence/activity-metadata-2026-09-30/private-recovery-port-failure-ef6f7d59.json)
 made two incomplete syncs with ten HTTP 503 responses; it did not pass despite
 native process exit 0. The recovery relay incorrectly names private router port
 8093 while the retained fleet listens on 8080. Direct worker and private 8080
-setup requests returned 200; the relay returned 502. Both public origins remain
-503 and coordinator writers are stopped. The original failed recipe/baselines
+setup requests returned 200; the relay returned 502. Both public origins were then
+503 and coordinator writers were stopped. The original failed recipe/baselines
 remain immutable; a reviewed relay correction and guarded predecessor authority
 restart must precede the full HTTP/SQLite/HTTPS proof. This is not a completed
 v11 deployment or a passing rollback timing qualification.

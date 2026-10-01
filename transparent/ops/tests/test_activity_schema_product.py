@@ -364,6 +364,7 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         owner=self
         class Routing:
             def identity(self,**_):pass
+            def fetch(self,_):return {'start_height':0,'shards':[{}]}
             async def run(self,action,kind,**kwargs):
                 owner.events.append(action+'-'+kind)
                 if owner.failed==action:raise ValueError('injected proof failure')
@@ -426,7 +427,8 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.assertLess(self.events.index('local-restore'),self.events.index(('stop',M.H.WRITERS['coordinator'])))
         self.assertLess(self.events.index(('stop',M.H.WRITERS['coordinator'])),self.events.index('a1-restore'))
         self.assertLess(self.events.index('restored-workers-warm'),self.events.index('a1-verify-rollback-worker'))
-        self.assertLess(self.events.index('reopen-v10'),self.events.index(('start',M.H.AUTHORITY)))
+        self.assertLess(self.events.index('a1-verify-rollback-worker'),self.events.index(('start',M.H.AUTHORITY)))
+        self.assertLess(self.events.index(('start',M.H.AUTHORITY)),self.events.index('verify-v10'))
 
 
 if __name__=='__main__':unittest.main()

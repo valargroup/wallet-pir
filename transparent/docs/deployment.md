@@ -16,6 +16,23 @@ rollback and any missed recovery deadline. It does not satisfy rollback timing
 acceptance; a fresh coherent baseline and actual rollback rehearsal remain
 required before final qualification.
 
+Fresh schema captures protect each named collector-owned publication generation
+with hard links in a private sibling outside the controller and worker collection
+roots, on the original filesystem. Completion binds the captured map checksum
+and full file inode/size/mode/ownership/mtime inventory. This protects immutable
+tables against unlink collection; native table verification remains required.
+Rollback validates the entire baseline and protection before reconstructing a
+missing generation. Changed generations, links, special files and unfinished
+restore directories refuse recovery. Coordinator authority remains stopped until
+every restored worker proves the captured exact assignment, then private proof
+waits for the guarded predecessor authority endpoint.
+
+Public recovery now runs two independent native client proofs with separate
+reopened SQLite stores, using each canonical origin as the encrypted query
+origin in turn. A successful metadata request or filter request alone does not
+qualify that origin's setup and query path. Both client results must pass before
+the public proof receipt is recorded; either failure withdraws both origins.
+
 After a completed adoption, an ordinary `verify-rollback` failure may use
 `schema-reconcile-resume-plan` / `schema-reconcile-resume-preflight` /
 `schema-reconcile-resume-deploy`. The `--map-sha256` argument binds the original

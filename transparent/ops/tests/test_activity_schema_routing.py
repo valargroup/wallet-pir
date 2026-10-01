@@ -205,6 +205,35 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.routing.check_guard();self.assertEqual(self.fleet.actions[-1],[])
         self.assertFalse((self.routing.root/'verified-public-v11.json').exists())
 
+    async def test_each_public_origin_queries_and_reopens_its_own_store(self):
+        calls=[]
+        proof=self.routing.proof
+        def track(*args):
+            calls.append((args[5],args[6],args[7]))
+            return proof(*args)
+        self.routing.proof=track
+        record=await self.routing.public('v11')
+        self.assertEqual([c[:2] for c in calls],[
+            ('https://transparent-pir.valargroup.dev','https://enhance-pir.valargroup.dev'),
+            ('https://enhance-pir.valargroup.dev','https://transparent-pir.valargroup.dev')])
+        self.assertNotEqual(calls[0][2],calls[1][2])
+        self.assertEqual(len(record['recoveries']),2)
+        for result in record['recoveries']:
+            self.assertEqual(M.H.checksum(result['result']),result['sha256'])
+
+    async def test_second_public_query_failure_rewithdraws_even_if_first_passed(self):
+        await self.routing.verify('v11')
+        proof=self.routing.proof
+        def fail_second(*args):
+            if args[5]=='https://enhance-pir.valargroup.dev':
+                raise ValueError('second encrypted query origin failed')
+            return proof(*args)
+        self.routing.proof=fail_second
+        with self.assertRaisesRegex(ValueError,'second encrypted'):
+            await self.routing.reopen('v11')
+        self.routing.check_guard()
+        self.assertFalse((self.routing.root/'verified-public-v11.json').exists())
+
     async def test_failed_new_verification_cannot_reuse_previous_passing_proof(self):
         await self.routing.verify('v11')
         self.fleet.bad_worker='recent2'

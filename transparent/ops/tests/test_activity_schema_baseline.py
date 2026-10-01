@@ -4,6 +4,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -56,6 +57,46 @@ class BaselineTests(unittest.TestCase):
 
     def capture(self):
         return B.capture(self.backup, self.plan)
+
+    def collected_publication(self):
+        child=self.retained/('a'*64);child.mkdir()
+        (child/'shards.json').write_text('captured map')
+        (child/'0').mkdir();(child/'0/table.bin').write_bytes(b'immutable table')
+        self.plan['retained'][0].update(sentinel=str(child/'shards.json'),sha256=B.checksum(child/'shards.json'))
+        return child
+
+    def test_collector_unlink_cannot_destroy_captured_publication(self):
+        child=self.collected_publication()
+        record=self.capture()
+        protected=Path(record['protected_publications'][0]['protected'])/'publication'
+        self.assertEqual((child/'0/table.bin').stat().st_ino,(protected/'0/table.bin').stat().st_ino)
+        self.assertNotEqual(protected.parent.parent,self.retained)
+        shutil.rmtree(child)
+        B.verify(self.backup)
+        B.restore_publications(self.backup)
+        self.assertEqual((child/'0/table.bin').read_bytes(),b'immutable table')
+        self.assertEqual(B.publication_tree(child),B.publication_tree(protected))
+        B.restore_publications(self.backup)
+
+    def test_protected_publication_changes_and_partial_restore_refuse(self):
+        child=self.collected_publication();record=self.capture()
+        protected=Path(record['protected_publications'][0]['protected'])/'publication'
+        shutil.rmtree(child)
+        temporary=child.with_name(child.name+'.schema-restore-next');temporary.mkdir()
+        with self.assertRaisesRegex(ValueError,'unfinished publication'):
+            B.restore_publications(self.backup)
+        temporary.rmdir()
+        (protected/'0/table.bin').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'protected publication changed'):
+            B.restore_publications(self.backup)
+        self.assertFalse(child.exists())
+
+    def test_publication_symlink_is_not_followed_or_protected(self):
+        child=self.collected_publication()
+        (child/'linked-table').symlink_to(self.file)
+        with self.assertRaisesRegex(ValueError,'refuses links'):
+            self.capture()
+        self.assertFalse((self.backup/'complete.json').exists())
 
     def test_explicit_repair_preserves_both_prior_and_new_displaced_state(self):
         record=self.capture();self.file.write_text('first candidate')
