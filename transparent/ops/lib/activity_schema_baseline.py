@@ -91,7 +91,13 @@ def validate_plan(plan, root):
         require(physical != physical_root and physical_root not in physical.parents and physical not in physical_root.parents,
                 'retention overlaps backup')
         require(path.resolve() in sentinel.resolve().parents, 'retention sentinel must be inside retained tree')
-        require(all(physical != p and physical not in p.parents and p not in physical.parents for p in paths),
+        # Publisher activation records live at the root of the retained
+        # publication namespace. Snapshot these small mutable files separately
+        # while retaining the large tables in place; never copy table trees.
+        controls = {'active.json', 'withdrawn.json', 'activation.json'}
+        require(all((p.parent == physical and p.name in controls and not p.is_symlink() and
+                     (not p.exists() or p.is_file())) or
+                    (physical != p and physical not in p.parents and p not in physical.parents) for p in paths),
                 'large retained trees cannot be copied as mutable state')
     return plan
 

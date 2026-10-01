@@ -57,6 +57,25 @@ class BaselineTests(unittest.TestCase):
     def capture(self):
         return B.capture(self.backup, self.plan)
 
+    def test_publication_control_records_restore_without_copying_retained_tables(self):
+        active=self.retained/'active.json';active.write_text('v10 active')
+        self.plan['files'].append({'path':str(active),'required':True})
+        self.capture();active.write_text('v11 active')
+        B.restore(self.backup)
+        self.assertEqual(active.read_text(),'v10 active')
+        self.assertEqual((self.retained/'shards.json').read_text(),'v10 map')
+
+    def test_only_regular_direct_publication_control_records_may_overlap_retention(self):
+        for relative in ('shards.json','nested/active.json','active.json'):
+            path=self.retained/relative
+            if relative=='active.json':path.mkdir()
+            self.plan['files'].append({'path':str(path),'required':False})
+            with self.assertRaises(ValueError):B.validate_plan(self.plan,self.backup)
+            self.plan['files'].pop()
+        path.rmdir();path.symlink_to(self.root/'missing-target')
+        self.plan['files'].append({'path':str(path),'required':False})
+        with self.assertRaises(ValueError):B.validate_plan(self.plan,self.backup)
+
     def test_complete_snapshot_is_private_independent_and_idempotent(self):
         record = self.capture()
         self.assertEqual(B.verify(self.backup), record)

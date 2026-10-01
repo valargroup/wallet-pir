@@ -50,9 +50,18 @@ receipts retain every command, source and input identity. These are candidate
 files; live binaries, units and routing remain v10. All three current workers
 were independently observed warm, without preparation, candidates or invalidation.
 Three actual checksum-bound worker host templates now bind refreshed machine,
-old active/map/cache sentinels and staged flat inputs. Coordinator/router plans,
-complete recovery samples, SSH descendant qualification and the complete reviewed
-product recipe still precede service maintenance.
+old active/map/cache sentinels and staged flat inputs. Refreshed plans retain the
+whole predecessor publication namespace and recent static sets. The twelve
+[coordinator inputs](../evidence/activity-metadata-2026-09-30/coordinator-service-inputs-1d3372ee.json)
+are staged and reverified. The
+[candidate/predecessor samples](../evidence/activity-metadata-2026-09-30/cutover-recovery-samples-1d3372ee.json)
+are nonempty journal-derived fixtures; real HTTP/SQLite completeness remains open.
+Actual plan rendering exposed and fixed the full fixture reader bound, publication
+control-record backup, filter quiescence and packaged router unit capture. The
+[focused checks](../evidence/activity-metadata-2026-09-30/ready-cutover-inputs-focused.json)
+also cover a closed proof/specification input staging path. SSH descendant
+qualification, full reviewed recipe/preflight and live transition still precede
+production validation. No coherent baseline has been captured.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained

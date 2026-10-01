@@ -48,6 +48,15 @@ def checked(value):
     return Path(value['path'])
 
 
+def read_fixture(path):
+    # A complete publication has hundreds of query terms per table. Keep the
+    # reviewed preparation's 2 MiB fixture bound separate from 256 KiB plans.
+    with Path(path).open('rb') as stream:
+        raw = stream.read(2 * 1024 * 1024 + 1)
+    H.require(len(raw) <= 2 * 1024 * 1024, 'load fixture exceeds bound')
+    return H.json.loads(raw, object_pairs_hook=H.unique)
+
+
 def validate(spec):
     H.require(isinstance(spec, dict) and set(spec) == {'version', 'source_sha', 'inventory', 'publication_sha256',
               'assignment', 'recent_from', 'hosts', 'routing', 'load', 'gates'}, 'invalid product specification')
@@ -147,7 +156,7 @@ class Product:
         for entry in self.spec['load'].values(): checked(entry)
         pins = H.load(self.spec['load']['pins']['path'])
         H.require(pins == {e['plan']['worker']['id']:e['plan']['worker']['binary_sha256'] for e in self.workers}, 'load pins omit/change a worker')
-        fixture = H.load(self.spec['load']['fixture']['path'])
+        fixture = read_fixture(self.spec['load']['fixture']['path'])
         H.require(fixture.get('schema') == 'transparent-shard-v11' and isinstance(fixture.get('tables'),list) and fixture['tables'],
                   'continuous load fixture is not v11')
         entries = {entry['shard_id']:entry for entry in mapping['shards']}

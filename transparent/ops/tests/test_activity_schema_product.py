@@ -36,6 +36,19 @@ def request(action='capture'):
 
 
 class Templates(unittest.TestCase):
+    def test_full_publication_fixture_exceeds_plan_bound_but_keeps_its_own_bound(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'fixture.json'
+            fixture={'schema':'transparent-shard-v11','tables':[{'query': 'a'*4096} for _ in range(180)]}
+            path.write_text(json.dumps(fixture))
+            self.assertGreater(path.stat().st_size,256*1024)
+            self.assertEqual(M.read_fixture(path),fixture)
+            with self.assertRaisesRegex(ValueError,'bound'):
+                M.H.load(path)
+            path.write_text(json.dumps({'tables':['a'*(2*1024*1024)]}))
+            with self.assertRaisesRegex(ValueError,'bound'):
+                M.read_fixture(path)
+
     def test_load_executable_path_matches_the_frozen_release_receipt(self):
         receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
         self.assertEqual(str(M.LOAD_BINARY),receipt['binaries']['examples/rate-query']['retained_path'])

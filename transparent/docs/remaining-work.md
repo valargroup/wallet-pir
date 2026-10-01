@@ -133,8 +133,14 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Coordinator preparation now renders native assignment and worker units in an
   immutable inputs directory through plan/preflight/stage. A reproduced raw-map
   versus served-map mismatch is fixed across native assignment, activation and
-  routing proofs; worker plans bind both digests. Actual prepared bundle and
-  worker transfer remain open until reviewed plan/source staging succeeds.
+  routing proofs; worker plans bind both digests. All three portable worker
+  subsets and the twelve coordinator service inputs are now staged and
+  native/checksum verified. Nonempty predecessor and candidate recovery samples
+  are retained; prove complete effects through HTTP and reopened SQLite. Finish
+  the actual coordinator/router plans, checksum-bound proof/specification bundles,
+  full recipe/preflight and remote surviving-descendant qualification before
+  maintenance. Capture the coherent predecessor baseline after quiescing every
+  writer, including the filter, and retain whole old publication namespaces.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

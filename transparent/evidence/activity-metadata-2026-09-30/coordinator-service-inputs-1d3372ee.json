@@ -1,0 +1,49 @@
+{
+  "files": 12,
+  "phase_results": {
+    "plan": {
+      "action": "plan",
+      "duration_seconds": 3.1497349579585716,
+      "exit_code": 0,
+      "request_sha256": "8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7",
+      "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "0ac25b27357763080d34728131fd626a89b554fe99baa25773bd0c75b2ca73ff"
+    },
+    "preflight": {
+      "action": "preflight",
+      "duration_seconds": 2.766967166098766,
+      "exit_code": 0,
+      "request_sha256": "8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7",
+      "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "0ac25b27357763080d34728131fd626a89b554fe99baa25773bd0c75b2ca73ff"
+    },
+    "stage": {
+      "action": "stage",
+      "duration_seconds": 2.92587287502829,
+      "exit_code": 0,
+      "request_sha256": "8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7",
+      "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "9adb16ecf9cf19786acf711c0de2e1a51cdb022d8e374185dc8cd7e41fd0e18c"
+    },
+    "status": {
+      "action": "status",
+      "duration_seconds": 2.4420396669302136,
+      "exit_code": 0,
+      "request_sha256": "8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7",
+      "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "9adb16ecf9cf19786acf711c0de2e1a51cdb022d8e374185dc8cd7e41fd0e18c"
+    }
+  },
+  "pid": 2062540,
+  "plan_sha256": "04de78a633e20d266b8164e4f0fa1e134da4a7720c7959668f2fbf7a4ef00a6a",
+  "raw_status_sha256": "9adb16ecf9cf19786acf711c0de2e1a51cdb022d8e374185dc8cd7e41fd0e18c",
+  "request_sha256": "8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7",
+  "scope": "Immutable coordinator candidate inputs only. No live units, config, binary, routing or baseline change.",
+  "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+  "status": "staged",
+  "target": "/srv/transparent-activity/full-v11/inputs/8ef5bb1e3c1130553b33499bc028e2dc8c34b01c4c01a6393bf8bcac0862e4c7"
+}

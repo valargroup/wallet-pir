@@ -990,6 +990,28 @@ all selected bytes match their source. Partial, corrupted, extra-file and change
 retention snapshots fail closed. Large v10 journal/publication/cache trees must
 remain outside candidate collection namespaces; identity and sentinel checks
 fence these retained paths rather than copying or linking mutable state.
+The direct `active.json`, `withdrawn.json` and `activation.json` files at a
+retained publication root are copied independently; this exception permits only
+regular files, including explicitly absent optional records. Nested paths,
+symlinks, directories and table files cannot use it. Coordinator capture also
+stops the filter writer before copying its store. Router baselines bind Caddy's
+actual `/etc`, `/usr/lib` or `/lib` unit fragment, the absent `/etc` override and
+both applicable drop-in directories; runtime fragment drift refuses preflight.
+
+The `schema-input-cutover-{plan,preflight,stage,status,reconcile}` commands retain
+two closed input bundles through the same locked immutable preparation path.
+First supply `inventory.json`, nonempty `v10-sample.json` and `v11-sample.json`,
+and the four actual passed gate reports named `artifact-verification.json`,
+`native-certificates.json`, `independent-chain-oracle.json` and
+`comprehensive-ci.json`. The inventory must equal the pinned staging inventory;
+pending or mismatched reports refuse. Then supply only `product.json`, referring
+to that retained bundle. Its complete product identities, inputs and service
+units are checked before retention. Both requests use the service preparation's
+source/release/attempt/files envelope, request digest and expected plan digest.
+Neither stage captures a baseline or invokes a service phase. Reports must be
+derived from retained results; a document shaped like a passing report supplies
+no independent evidence. The full load fixture has a separate 2 MiB reader bound;
+host plans and specifications keep their 256 KiB bound.
 
 Restoration verifies the entire snapshot before changing any target and preserves
 displaced candidate state alongside its original target on the live filesystem.

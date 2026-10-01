@@ -37,7 +37,7 @@ FILTER = 'transparent-filter-server.service'
 WORKER = 'transparent-shard-server.service'
 CACHE = Path('/srv/transparent-pir/v11/runtime-cache')
 UNITS = {'coordinator': (*AUTHORITY, FILTER, LOAD, SCALER), 'worker': (WORKER,), 'router': ('caddy.service',)}
-WRITERS = {'coordinator': (SCALER, LOAD, *AUTHORITY), 'worker': (WORKER,), 'router': ()}
+WRITERS = {'coordinator': (SCALER, LOAD, *AUTHORITY, FILTER), 'worker': (WORKER,), 'router': ()}
 START = {'coordinator': (FILTER, *AUTHORITY), 'worker': (WORKER,), 'router': ()}
 BINARIES = {'coordinator': ('transparent-publish-controller', 'transparent-filter-server', 'shard-assign', 'shard-control'),
             'worker': ('transparent-shard-server', 'shard-control'), 'router': ()}
@@ -87,7 +87,7 @@ def required_files(role):
     elif role == 'worker':
         result.add(str(ROOT/'active.json'))
     else:
-        result.add('/etc/caddy/Caddyfile')
+        result = {'/etc/caddy/Caddyfile'}
     return result
 
 
@@ -126,6 +126,12 @@ def validate(plan):
     # be represented even when the directory is absent on the predecessor.
     names = {item['path'] for item in files}
     require({p+'.d' for p in unit_paths(UNITS[role])} <= names, 'baseline omits unit drop-ins')
+    if role == 'router':
+        allowed = {'/etc/systemd/system/caddy.service', '/usr/lib/systemd/system/caddy.service',
+                   '/lib/systemd/system/caddy.service'}
+        require('/etc/systemd/system/caddy.service' in names and len(allowed & declared) == 1,
+                'router baseline must bind its actual Caddy fragment and absent /etc override')
+        require({p+'.d' for p in allowed & declared} <= names, 'baseline omits vendor unit drop-ins')
     if role == 'worker':
         require(str(ROOT/'active.invalid.json') in names, 'baseline omits invalidation state')
         require({'/usr/local/lib/transparent-pir/storage-policy.py', '/usr/local/lib/transparent-pir/headless-console.py'} <= names,
@@ -244,14 +250,7 @@ class Host:
             require(not item['required'] or path.exists() or path.is_symlink(), 'required predecessor file is absent')
         for item in self.plan['baseline']['retained']:
             B.retained_identity(item)
-        # Effective units may be loaded from vendor directories or drop-ins;
-        # refuse rather than copying only the guessed /etc fragment.
-        for unit in UNITS[self.role]:
-            state = self.commands.state(unit)
-            require(state.get('FragmentPath') == '/etc/systemd/system/'+unit, 'unexpected product unit fragment')
-            drops = shlex.split(state.get('DropInPaths', ''))
-            expected = Path('/etc/systemd/system/'+unit+'.d')
-            require(all(Path(p).parent == expected for p in drops), 'uncaptured external unit drop-in')
+        self.effective_units()
         if self.role == 'coordinator':
             self.quiet((QUALITY,))
             self.predecessor_coordinator()
@@ -267,6 +266,21 @@ class Host:
             start = next(shlex.split(line[10:]) for line in Path(candidate['source']).read_text().splitlines() if line.startswith('ExecStart='))
             binary = next(i['source'] for i in self.plan['installs'] if i['target'] == '/usr/local/bin/transparent-shard-server')
             self.commands.run([binary, *start[1:], '--verify-only'], timeout=300)
+
+    def effective_units(self):
+        required = {i['path'] for i in self.plan['baseline']['files'] if i['required']}
+        names = {i['path'] for i in self.plan['baseline']['files']}
+        for unit in UNITS[self.role]:
+            state = self.commands.state(unit)
+            fragment = state.get('FragmentPath')
+            allowed = {'/etc/systemd/system/'+unit}
+            if self.role == 'router':
+                allowed |= {'/usr/lib/systemd/system/'+unit, '/lib/systemd/system/'+unit}
+            require(fragment in allowed and fragment in required, 'unexpected or uncaptured product unit fragment')
+            dirs = {'/etc/systemd/system/'+unit+'.d', fragment+'.d'}
+            require(dirs <= names, 'baseline omits effective unit drop-in directories')
+            drops = shlex.split(state.get('DropInPaths', ''))
+            require(all(str(Path(p).parent) in dirs for p in drops), 'uncaptured external unit drop-in')
 
     def predecessor_coordinator(self):
         old = load(ROOT/'controller.json')

@@ -834,3 +834,56 @@ class ServicePreparation(Preparation):
             require(not path.exists(), 'service preparation already owned; inspect status or reconcile')
         resources(PREPARED)
         return result
+
+
+class CutoverPreparation(ServicePreparation):
+    """Retain the actual proof bundle, then its reviewed product specification.
+
+    Two immutable stages avoid self-referential hashes: the specification points
+    to an already retained proof bundle. This never captures or installs state.
+    """
+    GATES = {'artifact-verification', 'native-certificates', 'independent-chain-oracle', 'comprehensive-ci'}
+    PROOFS = {'inventory.json', 'v10-sample.json', 'v11-sample.json'} | {g+'.json' for g in GATES}
+
+    def __init__(self, inventory, request, expected):
+        require(isinstance(request, dict) and isinstance(request.get('files'), dict) and
+                set(request['files']) in (self.PROOFS, {'product.json'}), 'invalid cutover input file set')
+        self.FILES = set(request['files'])
+        super().__init__(inventory, request, expected)
+
+    def render(self):
+        P.verify_release(self.request['release_result_sha256'])
+        result = json.loads((P.EVIDENCE/'result.json').read_text(), object_pairs_hook=unique)
+        publication = P.checksum(P.OUTPUT/'shards.json')
+        require(result['status'] == 'passed' and result['map_sha256'] == publication,
+                'cutover inputs require completed exact publication')
+        files = {name: raw.encode() for name, raw in self.request['files'].items()}
+        values = {name: json.loads(raw, object_pairs_hook=unique) for name, raw in files.items()}
+        if self.FILES == {'product.json'}:
+            product = module('prepared_product', HERE/'activity_schema_product.py')
+            spec = product.validate(values['product.json'])
+            require(spec['source_sha'] == self.request['source_sha'] and
+                    spec['publication_sha256'] == publication, 'prepared product identity differs')
+            prepared = product.Product(spec)
+            prepared.bound(product.T.VALIDATION_ID)
+            prepared.inputs(); prepared.units()
+        else:
+            inventory = values['inventory.json']
+            require(isinstance(inventory, dict) and set(inventory) == {'hosts', 'ssh', 'lock', 'services'} and
+                    all(inventory[k] == getattr(self.inventory, k) for k in inventory),
+                    'proof inventory differs from pinned staging inventory')
+            for gate in self.GATES:
+                report = values[gate+'.json']
+                require(isinstance(report, dict) and report.get('status') == 'passed' and report.get('gate') == gate and
+                        report.get('native_source_sha') == P.RELEASE_SHA and report.get('publication_sha256') == publication,
+                        'cutover proof gate identity/status differs: '+gate)
+            for schema in ('v10', 'v11'):
+                sample = values[schema+'-sample.json']
+                require(isinstance(sample, dict) and sample.get('schema') == 'transparent-script-sample-v1' and
+                        sample.get('anchor_height') == 3500738 and sample.get('tool_sha') == P.RELEASE_SHA and
+                        isinstance(sample.get('clients'), list) and sample['clients'] and
+                        all(isinstance(c, dict) and isinstance(c.get('scripts'), list) and c['scripts'] and
+                            type(c.get('journal_events')) is int and c['journal_events'] > 0 and
+                            isinstance(c.get('expected_digest'), str) and HEX.fullmatch(c['expected_digest'])
+                            for c in sample['clients']), 'empty or incompatible recovery sample')
+        return files

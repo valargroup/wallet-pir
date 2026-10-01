@@ -35,6 +35,22 @@ def worker_plan():
 
 
 class PlanTests(unittest.TestCase):
+    def test_router_binds_packaged_fragment_and_absent_override_without_guessing(self):
+        plan=worker_plan();plan.update(role='router',installs=[],worker=None)
+        vendor='/usr/lib/systemd/system/caddy.service'
+        plan['baseline']['files']=[{'path':p,'required':required} for p,required in
+            [('/etc/caddy/Caddyfile',True),(vendor,True),(vendor+'.d',False),
+             ('/etc/systemd/system/caddy.service',False),('/etc/systemd/system/caddy.service.d',False)]]
+        M.validate(plan)
+        commands=type('VendorCommands',(),{'state':lambda _,unit:{'FragmentPath':vendor,'DropInPaths':vendor+'.d/tuning.conf'}})()
+        host=M.Host(plan,commands);host.effective_units()
+        with patch.object(commands,'state',return_value={'FragmentPath':'/tmp/caddy.service'}):
+            with self.assertRaisesRegex(ValueError,'fragment'):host.effective_units()
+        with patch.object(commands,'state',return_value={'FragmentPath':vendor,'DropInPaths':'/run/systemd/system/caddy.service.d/override.conf'}):
+            with self.assertRaisesRegex(ValueError,'external'):host.effective_units()
+        plan['baseline']['files']=[i for i in plan['baseline']['files'] if i['path']!=vendor+'.d']
+        with self.assertRaisesRegex(ValueError,'drop-ins'):M.validate(plan)
+
     def test_reviewed_plan_requires_all_product_state(self):
         plan = worker_plan()
         M.validate(plan)
@@ -337,9 +353,9 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(self.host.commands.states[M.WORKER]['MainPID'], '0')
         self.assertEqual(self.host.saved()[1]['units'][M.WORKER]['ActiveState'], 'active')
 
-    def test_stage_stops_filter_before_install_so_activate_loads_new_binary(self):
+    def test_capture_stops_filter_writer_before_snapshot_and_activate_loads_new_binary(self):
         self.host.capture()
-        self.assertEqual(self.host.commands.states[M.FILTER]['MainPID'], '123')
+        self.assertEqual(self.host.commands.states[M.FILTER]['MainPID'], '0')
         with patch.object(M, 'ROOT', self.dir/'publisher'):
             self.host.stage()
         self.assertEqual(self.host.commands.states[M.FILTER]['MainPID'], '0')

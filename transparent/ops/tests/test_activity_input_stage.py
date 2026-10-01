@@ -283,6 +283,56 @@ class Inputs(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'pinned root'):source.SourceStage(inventory,target='worker')
 
 
+class CutoverInputs(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        root=Path(self.temp.name).resolve();output=root/'initial';output.mkdir();evidence=root/'evidence';evidence.mkdir()
+        (output/'shards.json').write_text('{}')
+        self.publication=M.P.checksum(output/'shards.json')
+        (evidence/'result.json').write_text(json.dumps({'status':'passed','map_sha256':self.publication}))
+        for name,value in (('OUTPUT',output),('EVIDENCE',evidence),('verify_release',lambda _:None)):
+            p=patch.object(M.P,name,value);p.start();self.addCleanup(p.stop)
+        inv={'hosts':{'coordinator':{'machine_id':'a'*32}},'ssh':{'mode':'config'},
+             'lock':{'type':'pinned_host','machine_id':'a'*32},'services':{}}
+        self.inventory=SimpleNamespace(**inv)
+        files={'inventory.json':json.dumps(inv)}
+        for gate in M.CutoverPreparation.GATES:
+            files[gate+'.json']=json.dumps({'gate':gate,'status':'passed','native_source_sha':M.P.RELEASE_SHA,
+                                          'publication_sha256':self.publication})
+        sample={'schema':'transparent-script-sample-v1','anchor_height':3500738,'tool_sha':M.P.RELEASE_SHA,
+                'clients':[{'scripts':['aa'],'journal_events':2,'expected_digest':'f'*64}]}
+        for schema in ('v10','v11'):files[schema+'-sample.json']=json.dumps(sample)
+        self.request={'version':1,'source_sha':'b'*40,'release_result_sha256':'c'*64,'attempt':1,'files':files}
+
+    def preparation(self):return M.CutoverPreparation(self.inventory,self.request,M.digest(self.request))
+
+    def test_closed_proofs_bind_real_inputs_without_writing_or_executing(self):
+        prep=self.preparation();self.assertEqual(set(prep.render()),M.CutoverPreparation.PROOFS)
+        self.assertFalse(prep.target.exists());self.assertFalse(prep.owner.exists())
+        self.assertIs(M.CutoverPreparation.run,M.Preparation.run)
+
+    def test_pending_or_other_publication_gate_cannot_be_staged(self):
+        name='comprehensive-ci.json';original=self.request['files'][name]
+        for field,value in [('status','pending'),('publication_sha256','0'*64),('native_source_sha','0'*40)]:
+            v=json.loads(original);v[field]=value;self.request['files'][name]=json.dumps(v)
+            with self.assertRaisesRegex(ValueError,'gate'):self.preparation().render()
+
+    def test_inventory_drift_empty_sample_and_arbitrary_files_refuse(self):
+        v=json.loads(self.request['files']['inventory.json']);v['lock']['machine_id']='0'*32
+        self.request['files']['inventory.json']=json.dumps(v)
+        with self.assertRaisesRegex(ValueError,'inventory'):self.preparation().render()
+        self.request['files']['inventory.json']=json.dumps(vars(self.inventory))
+        sample=json.loads(self.request['files']['v11-sample.json']);sample['clients']=[]
+        self.request['files']['v11-sample.json']=json.dumps(sample)
+        with self.assertRaisesRegex(ValueError,'sample'):self.preparation().render()
+        self.request['files']['run.py']='print(1)'
+        with self.assertRaisesRegex(ValueError,'file set'):self.preparation()
+
+    def test_specification_cannot_stage_arbitrary_commands_or_missing_product_fields(self):
+        self.request['files']={'product.json':json.dumps({'shell':'execute unreviewed command'})}
+        with self.assertRaisesRegex(ValueError,'specification'):self.preparation().render()
+
+
 class ServiceInputs(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
