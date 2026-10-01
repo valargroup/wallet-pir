@@ -15,12 +15,29 @@ if __package__ is None or __package__ == '':
 from wallet_pir_ops import inherited_lock
 
 
+def release_stdio():
+    """Drop this process's pipe ends without closing the lock descriptors.
+
+    Fork leaves both the waiter and the survivor holding the launcher's
+    stdin, stdout and stderr. Remote writes and the host lock session read
+    stdin until EOF, and a full stdout pipe blocks the transport. Only the
+    transport process may keep those ends.
+    """
+    null = os.open(os.devnull, os.O_RDWR)
+    try:
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+    finally:
+        os.close(null)
+
+
 def main(argv):
     inherited_lock.descriptors(required=True)
     if not argv or Path(argv[0]).name not in ('ssh','scp','rsync'):
         raise ValueError('lock keeper requires a transport command')
     pid = os.fork()
     if pid:
+        release_stdio()
         _, status = os.waitpid(pid, 0)
         return os.waitstatus_to_exitcode(status)
     # This process survives timeout/termination of its launcher. SSH itself
@@ -35,6 +52,7 @@ def main(argv):
             signal.signal(sig, signal.SIG_DFL)
     try:
         child = subprocess.Popen(argv, env=env, close_fds=True, preexec_fn=restore_child_signals)
+        release_stdio()
         status = child.wait()
     except BaseException:
         status = 75
