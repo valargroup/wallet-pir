@@ -1,6 +1,8 @@
 """Command line for `ops/scripts/wallet-pir-deploy.py`."""
 import argparse
+import asyncio
 import importlib.util
+import json
 import os
 from pathlib import Path
 import re
@@ -96,6 +98,17 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    for name in ('run', 'status', 'reconcile'):
+        command = commands.add_parser('schema-host-'+name, help='pinned remote host owner; invoked by the coordinator schema recipe')
+        command.add_argument('--request-sha256', required=True)
+    for name in ('recipe', 'preflight', 'phase'):
+        command = commands.add_parser('schema-product-'+name, help='complete reviewed product service orchestration')
+        command.add_argument('--spec', required=True)
+        command.add_argument('--spec-sha256', required=True)
+        if name == 'phase':
+            command.add_argument('--phase', required=True)
+            command.add_argument('--transaction', required=True)
+            command.add_argument('--journal', required=True)
     for name in ('plan', 'preflight', 'start', 'status', 'run'):
         command = commands.add_parser('schema-publication-'+name,
             help='fixed full v11 preparation job' if name != 'run' else argparse.SUPPRESS)
@@ -152,8 +165,46 @@ def main(argv=None, executor=None, out=print, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     try:
+        if args.command.startswith('schema-host-'):
+            spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            request = module.read_request(sys.stdin.buffer, args.request_sha256)
+            actor = module.Actor(request)
+            actor.identity()
+            action = args.command.removeprefix('schema-host-')
+            try:
+                result = getattr(actor, action)()
+            except Exception as error:
+                result = actor.status()
+                status = result['status'] if result['status'] != 'absent' else 'failed'
+                out(json.dumps({'request_sha256':module.digest(request), 'status':status, 'result':None}))
+                return 75 if isinstance(error, subprocess.TimeoutExpired) else 1
+            # Private plans/baseline bytes never travel in the printed reply.
+            if action == 'run' and request['action'] in module.READ_ONLY:
+                result = {'status':'passed', 'result':result}
+            out(json.dumps({'request_sha256':module.digest(request), 'status':result['status'], 'result':result.get('result')}))
+            return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-product-'):
+            spec = importlib.util.spec_from_file_location('activity_schema_product', ROOT/'transparent/ops/lib/activity_schema_product.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            path = module.checked({'path':args.spec, 'sha256':args.spec_sha256})
+            specification = module.validate(module.H.load(path))
+            if ROOT != Path('/srv/transparent-activity/ops/sources')/specification['source_sha']:
+                raise ValueError('product phases require the pinned immutable operations source')
+            if args.command == 'schema-product-recipe':
+                out(json.dumps(module.recipe(path, args.spec_sha256), sort_keys=True))
+                return 0
+            product = module.Product(specification, spec_sha256=args.spec_sha256)
+            if args.command == 'schema-product-preflight':
+                result = product.preflight()
+            else:
+                result = asyncio.run(product.phase(args.transaction, args.phase, args.journal))
+            out(json.dumps(result, sort_keys=True))
+            return 0
         if args.command.startswith('schema-publication-'):
             spec = importlib.util.spec_from_file_location('activity_publication_job',
                 ROOT/'transparent/ops/lib/activity_publication_job.py')
@@ -231,6 +282,7 @@ def main(argv=None, executor=None, out=print, **options):
                 with deployer.lock_factory() as held:
                     deployer.lock = held
                     try:
+                        deployer.schema_fence()
                         plans, _ = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
                                                    require_baseline=False)
                         deployer.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')),
@@ -259,7 +311,7 @@ def main(argv=None, executor=None, out=print, **options):
                                                            sum(p.action == 'skip' for p in plans)))
     except subprocess.TimeoutExpired:
         out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
-        return 1
+        return 75 if args.command.startswith('schema-') else 1
     except (DeployError, RemoteError, LockHeld, descriptors.DescriptorError, OSError, ValueError) as error:
         out('error: %s' % error)
         return 1

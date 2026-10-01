@@ -140,6 +140,7 @@ class Runner:
         self.active_id = None
 
     def coordinator(self):
+        require(self.state_dir == Path('/srv/transparent-activity/ops/schema'), 'production schema journal must use the shared fenced state directory')
         require(self.inventory.lock.get('type') == 'pinned_host', 'schema operations must run on the pinned coordinator')
         require(os.geteuid() == 0 and ProductionLock.MACHINE_ID.read_text().strip() == self.inventory.lock['machine_id'],
                 'schema operation is not on the pinned root coordinator')
@@ -204,6 +205,10 @@ class Runner:
             try:
                 with os.fdopen(fd, 'wb') as log:
                     code = self.run(command, log, lock.descriptors())
+                if code == 75:
+                    # The child has a durable uncertain remote outcome. A normal
+                    # nonzero path would race it with automatic recovery.
+                    raise subprocess.TimeoutExpired('schema descendant requires reconciliation', command['timeout'])
                 phase.update(exit_code=code, status='passed' if code == 0 else 'failed')
             except BaseException as error:
                 phase['status'] = 'failed' if isinstance(error, Exception) else 'interrupted'

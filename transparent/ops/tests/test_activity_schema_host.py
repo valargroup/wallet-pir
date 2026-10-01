@@ -242,6 +242,9 @@ class HostFilesTests(unittest.TestCase):
         self.host.commands.fail = 'stop'
         with self.assertRaises(RuntimeError):
             self.host.capture()
+        state=json.loads(self.host.root.with_suffix('.units.json').read_text())
+        self.assertEqual(state['units'][M.AUTHORITY[0]]['ActiveState'],'active')
+        self.assertEqual(state['plan_sha256'], M.hashlib.sha256(M.encode(self.plan)).hexdigest())
         self.assertFalse(self.host.root.exists())
 
     def test_main_pid_zero_with_surviving_child_refuses_capture(self):
@@ -321,6 +324,7 @@ class HostFilesTests(unittest.TestCase):
         assignment = self.cache/'assignment.json'
         assignment.write_text('old assignment')
         active = {'directory': str(self.cache), 'assignment': str(assignment), 'map_sha256': 'a'*64}
+        self.host.plan['worker'] = dict(active)
         (old_root/'active.json').write_text(json.dumps(active))
         self.host.commands.control = lambda: {'active': active, 'warm': True, 'candidate': None,
                                              'preparing': None, 'invalidated': False}
@@ -329,6 +333,7 @@ class HostFilesTests(unittest.TestCase):
             self.assertEqual(self.host.commands.states[M.WORKER]['MainPID'], '123')
             self.host.commands.status = 503
             self.host.stage()
+            self.assertEqual(json.loads((old_root/'v11/active.json').read_text()), active)
         self.assertEqual(self.host.commands.states[M.WORKER]['MainPID'], '0')
         self.assertEqual(self.host.saved()[1]['units'][M.WORKER]['ActiveState'], 'active')
 

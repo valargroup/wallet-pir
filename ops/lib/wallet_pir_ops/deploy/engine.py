@@ -19,6 +19,7 @@ import time
 from .. import durable
 from . import descriptors, units
 from .remote import production_lock
+from .. import schema_fence
 from .transaction import FINAL, Journal
 
 SYSTEM = '/etc/systemd/system'
@@ -416,9 +417,18 @@ class Deployer:
         with self.lock_factory() as lock:
             self.lock = lock
             try:
+                self.schema_fence()
                 return self._deploy(sha, binary, source, allow_drift, retire_historical, check, verify_noop)
             finally:
                 self.lock = None
+
+    def schema_fence(self):
+        self.lock.verify()
+        host = self.inventory.lock.get('host')
+        if self.inventory.lock.get('type') == 'pinned_host':
+            schema_fence.local_schema_fence()
+        elif host:
+            schema_fence.schema_mutation_fence(lambda path: self.ex.read(host, path))
 
     def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
@@ -530,6 +540,7 @@ class Deployer:
         with self.lock_factory() as lock:
             self.lock = lock
             try:
+                self.schema_fence()
                 self.rollback_journal(journal, force)
             finally:
                 self.lock = None

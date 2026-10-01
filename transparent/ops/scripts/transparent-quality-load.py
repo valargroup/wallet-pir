@@ -18,7 +18,8 @@ def fetch(url):
  except Exception as e:return {'error':str(e)}
 def worker(w):
  service=w.get('service','transparent-shard-server')
- command=f'cat /proc/meminfo; systemctl show {service} -p ActiveState -p NRestarts -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec; cat /sys/fs/cgroup/system.slice/{service}.service/memory.events; cat /proc/loadavg'
+ disk_paths='/ /srv/transparent-activity /srv/zakura' if w.get('local') else '/ /srv/transparent-pir' if 'upstream' in w else '/ /srv'
+ command=f'cat /proc/meminfo; systemctl show {service} -p ActiveState -p NRestarts -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec; cat /sys/fs/cgroup/system.slice/{service}.service/memory.events; cat /proc/loadavg; df -P {disk_paths}'
  args=['ssh','-i',FLEET['ssh_key'],'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+FLEET['known_hosts'],'-o','ConnectTimeout=4','root@'+w.get('ssh_host','localhost'),command]
  if w.get('local'):args=['/bin/sh','-c',command]
  result={'id':w['id'],'ready':fetch('http://'+w['upstream']+'/v1/ready') if 'upstream' in w else {}}
@@ -27,6 +28,7 @@ def worker(w):
   if 'upstream' not in w:result['ready']={'http':200,'body':{'ready':'ActiveState=active' in p.stdout,'mode':'warm','probe':'systemd '+service}}
   for key,pattern in [('available_kib',r'^MemAvailable:\s+(\d+)'),('total_kib',r'^MemTotal:\s+(\d+)'),('oom',r'^oom (\d+)'),('oom_kill',r'^oom_kill (\d+)'),('restarts',r'^NRestarts=(\d+)'),('cpu_ns',r'^CPUUsageNSec=(\d+)')]:
    m=re.search(pattern,p.stdout,re.M);result[key]=int(m[1]) if m else None
+  result['disk_available_fractions']=[(100-int(line.split()[4].rstrip('%')))/100 for line in p.stdout.splitlines() if re.match(r'^\S+\s+\d+\s+\d+\s+\d+\s+\d+%\s+/',line)]
  except Exception as e:result['error']=str(e)
  return result
 
@@ -113,7 +115,10 @@ def main():
    for w in workers:
     name=w['id'];body=w['ready'].get('body',{})
     if w.get('ssh_exit')!=0 or w.get('available_kib') is None or w.get('total_kib') is None:reasons.append(name+': resource probe unavailable')
-    elif w['available_kib']/w['total_kib']<.15:critical.append(name+': available memory below 15%')
+    elif w['available_kib']/w['total_kib']<.20:critical.append(name+': available memory below 20%')
+    disks=w.get('disk_available_fractions',[])
+    if len(disks)<2:reasons.append(name+': disk resource probe unavailable')
+    elif min(disks)<.20:critical.append(name+': disk headroom below 20%')
     if w['ready'].get('http')!=200 or not body.get('ready') or body.get('mode')!='warm':reasons.append(name+': not warm/ready')
     for key in ['oom','oom_kill','restarts']:
      value=w.get(key)
@@ -130,7 +135,7 @@ def main():
    if c.get('node_height',0)-c.get('public_height',0)>2:reasons.append('publication more than two blocks behind node')
    if init.get('http')!=200:reasons.append('public init unavailable')
    disk=os.statvfs(ROOT)
-   if disk.f_bavail/disk.f_blocks<.1:critical.append('load log filesystem below 10% free')
+   if disk.f_bavail/disk.f_blocks<.20:critical.append('load log filesystem below 20% free')
    with LOCK:
     while WINDOW and WINDOW[0][0]<time.time()-60:WINDOW.popleft()
     recent=list(WINDOW);counts=dict(COUNTS);latch=list(LATCH);ready=LAST_READY

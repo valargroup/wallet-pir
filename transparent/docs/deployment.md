@@ -725,7 +725,10 @@ changes, run through `ops/scripts/wallet-pir-deploy.py`. The wrapper's
 `schema-plan`, `schema-preflight`, `schema-deploy`, `schema-status` and
 `schema-rollback` commands coordinate a checksum-bound recipe on the inventory's
 pinned root coordinator under `/run/lock/wallet-pir-production.lock`.
-Use the same `--inventory` and private `--state-dir` for every command. Plan and
+Use the same `--inventory` and the private coordinator state directory
+`/srv/transparent-activity/ops/schema` for every command. Production schema
+transactions refuse a different state directory: generic deployment and source
+bootstrap check this durable ownership fence under the production lock. Plan and
 preflight precede deployment; `schema-deploy --recipe FILE
 --expect-recipe-sha256 HASH` requires the digest printed by the reviewed plan.
 Status reports the durable journal state, and must be paired with live canonical
@@ -759,6 +762,69 @@ rollback. An unfinished transaction blocks a new deployment.
 This API is an implemented coordination boundary. The actual production recipe,
 trusted phase programs, complete publication and live acceptance checks must be
 prepared and verified before deployment.
+
+### Coordinated product service phases
+
+`schema-product-recipe --spec FILE --spec-sha256 HASH` constructs the complete
+ordered forward/recovery recipe from a reviewed private product specification.
+Retain its exact JSON, then run `schema-plan`, `schema-preflight` and
+`schema-deploy` with that recipe. This constructs service transitions; it does
+not prepare missing native artifacts or worker publication bytes. Product
+preflight refuses until those immutable inputs exist on every pinned host and
+the full-publication artifact, native-certificate, independent-chain-oracle and
+comprehensive-CI gate reports match the frozen native source and publication.
+No report may be generated merely to satisfy this shape; retain and review its
+independent raw inputs before binding it into the specification.
+
+The specification includes one coordinator, one router and every assigned
+worker, with distinct machine pins, complete host baseline/install plans, a
+routing plan, the native assignment, and checksummed load/scaler inputs. Host
+and routing templates permit `{transaction}` only in the transaction identity
+and its prescribed rollback root. Commands, install targets and arbitrary JSON
+strings are never interpolated. Runtime phases bind the actual schema journal
+ID and require its current durable phase intent and the spec digest. They cannot
+be called as free-standing host mutations.
+
+The coordinator captures original service states before stopping writers, then
+captures router and warm workers before withdrawing both metadata origins.
+It stages all workers, installs the coordinator and seeds separate v11 worker
+active records, controller activation, native assignment/request/desired/active
+fleet records and `maintenance=true` before any restart. All workers must warm
+and prove identity before authority startup. The filter, controller, fleet,
+scaler and load units must refer to the reviewed v11 paths. The scaler uses an
+observe-only policy; load uses the retained fat-LTO rate client, exact worker
+pins and a fixture covering all four recent/archive directory/page groups.
+The source load supervisor now stops on memory or disk headroom below 20%,
+including actual worker publication, coordinator candidate and chain disks.
+Existing production load continues using its installed predecessor until cutover.
+
+Private real HTTP/SQLite proof precedes reopening. A hard-link probe enters the
+**running installed publisher's mount namespace**, checks its running executable
+and root identity, links the immutable candidate map on its publication
+filesystem and removes the probe link. Canonical HTTPS recovery must pass before
+load/scaler startup. Recovery restores all workers and coordinator, verifies old
+anchors and exact recovery, restores the original router Caddy bytes while the
+coordinator remains guarded, then reopens and resumes only previously active
+predecessor load/scaler units. Generated recovery phases reserve 740 seconds;
+the outer runner enforces the total deadline and never lowers acceptance gates.
+
+Remote `schema-host-run`, `schema-host-status` and `schema-host-reconcile` are
+internal wrapper commands. The coordinator retains its FD in the local SSH
+process; each remote root actor acquires its **own** pinned host production lock.
+Closed request/plan hashes bind its durable private intent, PID and result.
+No persistent SSH master is created. Parallel worker calls always join all
+outcomes. A lost or unstructured reply, remote timeout or exit 75 leaves the
+coordinator interrupted; exit 75 propagates through the runner rather than
+triggering automatic rollback. Inspect the exact retained request on that host,
+use status, reconcile under its lock only after surviving descendants release
+it, then run explicit schema recovery. A request with a retained result is never
+silently repeated. Partial baselines and capture intents require explicit
+reconciliation; they cannot authorize reopening or be overwritten.
+
+These programs have local process, ordering and failure-injection tests. Actual
+SSH descendant qualification, immutable worker input staging, reviewed live
+plans, complete release gates and a production transaction remain prerequisites;
+source implementation is not evidence of a successful cutover or rollback.
 
 ### Immutable operation source staging over SSH
 

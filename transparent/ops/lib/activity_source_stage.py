@@ -10,11 +10,11 @@ import re
 import shlex
 import subprocess
 
-from wallet_pir_ops import hostlock
+from wallet_pir_ops import hostlock, inherited_lock, schema_fence
 from wallet_pir_ops.deploy.remote import SSHExecutor
 
 HELPER_PATH = Path(__file__).with_name('activity_source_stage_host.py')
-HELPER = Path(hostlock.__file__).read_text()+'\n'+HELPER_PATH.read_text()
+HELPER = Path(hostlock.__file__).read_text()+'\n'+Path(schema_fence.__file__).read_text()+'\n'+HELPER_PATH.read_text()
 MAX_COMPRESSED = 64 << 20  # v1 bound shared with the transmitted root helper.
 
 
@@ -45,7 +45,7 @@ class SourceStage:
         handle = Path(archive).open('rb') if archive else subprocess.DEVNULL
         try:
             result = subprocess.run(self.executor.transport(self.host)+[command], stdin=handle,
-                                    capture_output=True, timeout=1800)
+                                    capture_output=True, timeout=1800, **inherited_lock.options())
         finally:
             if archive:
                 handle.close()

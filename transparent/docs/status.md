@@ -14,9 +14,11 @@ event bytes. Wrapper plan/preflight passed and launched
 `transparent-activity-full-publication-v11`, PID 1876447, using staged operations
 `6e8337fa` and frozen fat-LTO `12ce1291`. The owner reacquired the production
 lock and repeated preflight; cutoff finished and shard publication is active.
-At 03:34 UTC available memory was 83.52%, candidate disk 72.40%, chain disk
-22.91% and root disk 29.76%. Full publication verification, certificates and
-independent extraction checks are still pending. No schema cutover occurred.
+At 04:24 UTC publication still owned PID 1876447 with zero restarts; available
+memory was 83.16%, candidate disk 63.25%, chain disk 22.91% and root disk 29.92%.
+Only cutoff had a completed stage result. Full publication verification,
+certificates and independent extraction checks are still pending. No schema
+cutover occurred.
 
 October 1 routing follow-up: concrete withdrawal/private relay/reopen programs
 now require all workers and independently accepted anchors, checksum-bound
@@ -24,9 +26,24 @@ manifests, unchanged sealed history, nonempty real HTTP recovery and independent
 SQLite reopen. Canonical HTTPS recovery follows reopening and failures withdraw
 both origins again. Legacy metadata remains unavailable; unresolved spends and
 missing classes cannot pass as complete. Fixture tests passed; no live routing
-change, baseline or schema transaction occurred. Complete remote dispatch,
-reviewed host plans/recipe, initial fleet/controller state, filter/sandbox and
-updated load configuration remain open.
+change, baseline or schema transaction occurred. Coordinated product phases now
+provide transaction-bound templates, pinned remote owners/locks, complete v11
+activation/fleet seeding, filter/load/scaler alignment, an installed mount
+namespace probe and original-router restoration during rollback. Original unit
+states are retained before the first stop. Lost replies/exit 75 require
+reconciliation rather than automatic recovery. The exact live plans, immutable
+worker inputs, SSH descendant qualification and production execution remain open.
+
+At 04:38 UTC comprehensive main CI 36812153673 at `beffffc6` completed
+SUCCESS, including every lint/test/helper gate and CPU/CUDA artifact preparation.
+The native release remains frozen at `12ce1291`; later operations inputs require
+their own focused and exact-head CI evidence before deployment.
+
+The frozen prototype observation ended at 03:41 UTC and was independently
+checked against its terminal unit and owner at 04:42 UTC: 107,740 exact queries
+in six hours, 4.988 QPS, zero logical/transport failures, p99 29.81 ms and five
+missed slots. It is inactive with exit 0 and no restarts. This does not satisfy
+canonical freshness/300-block or whole-wallet capacity qualification.
 
 At 03:26 UTC backfill reached 3,440,000 blocks and 352,186,053 events. Its guard
 reported 87.73% available memory, 72.77% candidate-volume disk, 22.91% chain disk

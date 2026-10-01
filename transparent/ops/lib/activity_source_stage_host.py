@@ -218,6 +218,7 @@ def main():
         lock = PinnedHostLock(config, path=LOCK_PATH)
         if request['mode'] == 'stage':
             with lock:
+                local_schema_fence()  # Exact shared source is prefixed by the wrapper.
                 result = stage(request, lock, sys.stdin.buffer)
         else:
             require(os.geteuid() == 0 and lock.MACHINE_ID.read_text().strip() == request['machine_id'],

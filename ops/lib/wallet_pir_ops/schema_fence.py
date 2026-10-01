@@ -1,0 +1,54 @@
+"""Cross-operation fence for an interrupted coordinator schema transaction.
+
+Read under the production lock before any unrelated mutation. This durable
+pointer survives SSH loss; a live descriptor alone cannot fence remote owners
+once their coordinator has died. Only schema recovery may use an unfinished ID.
+The module is stdlib-only so source bootstrap can carry the exact same check.
+"""
+import json
+from pathlib import Path
+import re
+
+SCHEMA_STATE = Path('/srv/transparent-activity/ops/schema')
+SCHEMA_POINTER = 'latest-transparent-schema.json'
+HOST_ACTIONS = Path('/srv/transparent-activity/ops/host-actions')
+
+
+def schema_mutation_fence(read, state=SCHEMA_STATE):
+    raw = read(str(Path(state)/SCHEMA_POINTER))
+    if raw is None:
+        return
+    pointer = json.loads(raw)
+    identifier = pointer.get('id')
+    if set(pointer) != {'id'} or not isinstance(identifier, str) or not re.fullmatch(r'transparent-schema-[A-Za-z0-9-]+', identifier):
+        raise ValueError('invalid schema ownership pointer; reconcile before mutation')
+    raw = read(str(Path(state)/(identifier+'.json')))
+    if raw is None:
+        raise ValueError('missing schema ownership record; reconcile before mutation')
+    record = json.loads(raw)
+    if (record.get('journal_version') != 1 or record.get('id') != identifier or
+            record.get('status') not in ('committed', 'rolled-back')):
+        raise ValueError('unfinished schema transaction; reconcile its remote owners and recover before mutation')
+
+
+def local_schema_fence(state=SCHEMA_STATE):
+    def read(path):
+        target = Path(path)
+        if target.is_symlink():
+            raise ValueError('schema ownership record cannot be a symlink')
+        if not target.exists():
+            return None
+        if target.stat().st_size > 1024*1024:
+            raise ValueError('schema ownership record exceeds bound')
+        return target.read_text()
+    schema_mutation_fence(read, state)
+    raw = read(str(HOST_ACTIONS/'latest.json'))
+    if raw is not None:
+        pointer = json.loads(raw)
+        if (set(pointer) != {'transaction', 'request_id'} or
+                not isinstance(pointer['transaction'], str) or not re.fullmatch(r'transparent-schema-[A-Za-z0-9-]+', pointer['transaction']) or
+                not isinstance(pointer['request_id'], str) or not re.fullmatch('[a-z0-9-]{1,64}', pointer['request_id'])):
+            raise ValueError('invalid remote host ownership pointer')
+        raw = read(str(HOST_ACTIONS/pointer['transaction']/(pointer['request_id']+'.json')))
+        if raw is None or json.loads(raw).get('status') not in ('passed', 'failed', 'reconciled'):
+            raise ValueError('unfinished remote host owner; reconcile before mutation')

@@ -357,25 +357,29 @@ class Host:
         self.preflight()
         require(not self.root.exists(), 'baseline already exists; verify/reconcile instead of recapturing')
         states = {unit: self.commands.state(unit) for unit in UNITS[self.role]}
+        state_path = self.root.with_suffix('.units.json')
+        require(not state_path.exists(), 'capture intent already exists; reconcile instead of recapturing')
+        proof = None
+        if self.role == 'worker':
+            status = self.commands.control()
+            active = load(ROOT/'active.json')
+            require(status.get('warm') is True and status.get('invalidated') is False and
+                    status.get('candidate') is None and status.get('preparing') is None and
+                    status.get('active') == active, 'predecessor worker is not quiescent and warm')
+            proof = {'active': active, 'assignment_sha256': checksum(active['assignment'])}
+        # Preserve original service states BEFORE the first stop. An interrupted
+        # copy must not lose whether publication/load/scaling were active.
+        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof}
+        state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        B.atomic(state_path, encode(state))
         # A failure here intentionally leaves stopped writers stopped. The outer
         # schema journal owns recovery; this helper never guesses a reopen.
         if self.role == 'coordinator':
             self.commands.unit('stop', *WRITERS[self.role])
             self.quiet(WRITERS[self.role])
-        elif self.role == 'worker':
-            status = self.commands.control()
-            require(status.get('warm') is True and status.get('invalidated') is False and
-                    status.get('candidate') is None and status.get('preparing') is None and
-                    status.get('active') == load(ROOT/'active.json'), 'predecessor worker is not quiescent and warm')
         receipt = B.capture(self.root, self.plan['baseline'])
         # State is outside the baseline payload inventory; never add unrecorded
         # files to a baseline whose complete.json is the final copy receipt.
-        proof = None
-        if self.role == 'worker':
-            active = load(ROOT/'active.json')
-            proof = {'active': active, 'assignment_sha256': checksum(active['assignment'])}
-        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof}
-        B.atomic(self.root.with_suffix('.units.json'), encode(state))
         return receipt['plan_sha256']
 
     def saved(self):
@@ -417,6 +421,10 @@ class Host:
         elif self.role == 'worker':
             (ROOT/'v11').mkdir(parents=True, exist_ok=True, mode=0o700)
             CACHE.mkdir(parents=True, exist_ok=True, mode=0o700)
+            active = ROOT/'v11/active.json'
+            require(not active.exists() and not active.is_symlink() and not (ROOT/'v11/active.invalid.json').exists(),
+                    'candidate worker activation state already exists; reconcile before staging')
+            B.atomic(active, encode({k:self.plan['worker'][k] for k in ('directory', 'assignment', 'map_sha256')}))
         self.commands.run(['systemctl', 'daemon-reload'])
 
     def activate(self):
@@ -488,3 +496,11 @@ class Host:
                     'malformed advertised revision anchor')
         return {'worker_id': self.plan['worker']['id'], 'active': active, 'binary_sha256': binary_hash,
                 'revisions': revisions, 'checked_unix': time.time()}
+
+    def restore_routing(self):
+        require(self.role == 'router', 'original routing restore requires the router plan')
+        self.withdrawn()  # Coordinator guard must still cover both origins.
+        self.saved()
+        B.restore(self.root, ['/etc/caddy/Caddyfile'])
+        self.commands.run(['caddy', 'validate', '--config', '/etc/caddy/Caddyfile'])
+        self.commands.unit('reload', 'caddy.service')

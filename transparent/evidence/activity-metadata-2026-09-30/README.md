@@ -261,3 +261,21 @@ serializer exactly; binary and raw evidence hashes are retained. An additional
 public-snapshot fence rejects a newer public map that has not passed the final
 all-worker observation. Earlier passing checks predate those fixes and are
 explicitly excluded from final-input evidence.
+
+The coordinated product service phases and remote ownership follow-up are recorded
+in [focused evidence](schema-product-focused.json). Transaction binding is limited
+to declared identity/rollback-root fields; private owners fence uncertain SSH
+outcomes and exit 75 prevents automatic recovery racing a remote descendant.
+The first mode-regression replay missed fixture path patches and is retained as
+a failed setup, not a valid red result. The corrected replay reproduced the
+private-umask executable-mode defect and passed after explicit mode installation.
+Native inputs remain frozen at `12ce1291`. Full `beffffc6` CI passed every check
+and both artifact preparation jobs. No live candidate input staging, host baseline,
+service transition or canonical v11 validation follows from these local tests.
+
+[Terminal six-hour frozen candidate observation](prototype-e47bdf79/observe-5qps-3cfbc484-2-terminal.json)
+passed with 107,740 exact queries at 4.988 QPS, zero logical/transport failures,
+p50 4.12 ms and p99 29.81 ms. Five missed slots remain in the report. Owner,
+driver/binary/fixture/source pins agreed; the unit ended successfully with no
+restarts. This is a frozen loopback query observation, not the canonical
+six-hour/300-block freshness gate or sustained completed-wallet capacity.

@@ -1,0 +1,23 @@
+{
+  "observed_unix": 1790826798.357688,
+  "head": "beffffc6ef5b6768a48f43351e07522e35cc7858",
+  "fast": {
+    "run": 36812153679,
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "full": {
+    "run": 36812153673,
+    "status": "queued",
+    "conclusion": null,
+    "passing_evidence": false
+  },
+  "predecessor_full": {
+    "head": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+    "run": 36807464393,
+    "status": "completed",
+    "conclusion": "success",
+    "all_checks_and_cpu_cuda_artifacts": "success"
+  },
+  "batch_with_next_implementation": true
+}

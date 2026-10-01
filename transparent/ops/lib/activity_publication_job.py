@@ -19,7 +19,7 @@ import time
 import tomllib
 import urllib.request
 
-from wallet_pir_ops import durable
+from wallet_pir_ops import durable, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock
 
 ROOT = Path('/srv/transparent-activity')
@@ -199,6 +199,7 @@ class PublicationJob:
         plan = self.plan()
         require(identity(plan) == expected_plan, 'publication plan identity differs')
         with ProductionLock(self.inventory.lock) as lock:
+            schema_fence.local_schema_fence()
             journal = self.preflight()
             EVIDENCE.mkdir(parents=True, mode=0o700, exist_ok=True)
             require(EVIDENCE.stat().st_uid == 0 and EVIDENCE.stat().st_mode & 0o077 == 0,

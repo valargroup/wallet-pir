@@ -97,6 +97,17 @@ class SchemaTests(unittest.TestCase):
         self.assertTrue(all(e['status'] == 'passed' for e in record['events']))
         self.assertFalse(self.lock.held)
 
+    def test_child_uncertain_exit_never_runs_automatic_rollback(self):
+        original=self.runner.run
+        def run(command, log, fds):
+            code=original(command, log, fds)
+            return 75 if command['name']=='activate-prewarm' else code
+        self.runner.run=run
+        with self.assertRaisesRegex(ValueError,'reconcile'):
+            self.deploy()
+        self.assertEqual(self.runner.load()['status'],'interrupted')
+        self.assertNotIn('restore-v10',self.calls)
+
     def test_failure_restores_coherent_predecessor_before_unlock(self):
         self.fail = 'verify-canonical'
         with self.assertRaises(module.OperationError):
@@ -484,6 +495,7 @@ class SourceStageTests(unittest.TestCase):
         lock_path = self.root/'production.lock'
         # Only fixture paths/UID differ from the exact transmitted helper.
         prefix = Path(source_stage.hostlock.__file__).read_text()
+        prefix += '\n'+Path(source_stage.schema_fence.__file__).read_text()
         prefix += '\nPinnedHostLock.MACHINE_ID = Path('+repr(str(machine))+')\n'
         prefix += 'PinnedHostLock.ROOT_UID = os.geteuid()\n'
         helper = source_stage.HELPER_PATH.read_text().replace(
@@ -525,6 +537,7 @@ def load_tests(loader, tests, _pattern):
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_host.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_routing.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_recovery_proof.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_product.py'))
     return tests
 
 

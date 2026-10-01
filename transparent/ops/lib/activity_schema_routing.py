@@ -321,7 +321,7 @@ class Routing:
         self.check_guard()
         return record
 
-    async def reopen(self, kind):
+    async def reopen(self, kind, restore_router=None):
         self.check_guard()
         H.B.verify(Path(self.plan['coordinator_baseline']))  # No reopen from a partial snapshot.
         record = H.load(self.root/('verified-'+kind+'.json'))
@@ -344,10 +344,14 @@ class Routing:
             target = fleet.reconciliation_target()
             active, _ = target
             assignment = H.load(active['assignment'])
-            U.apply_coordinator(self.original())
             try:
                 L.atomic_json(fleet.root/'maintenance.json', {'enabled':False})
                 await fleet.route(fleet.roster, assignment)
+                if restore_router:
+                    require(kind == 'v10', 'original router restoration is rollback-only')
+                    restore_router()
+                # Keep the authority guarded through the router handoff.
+                U.apply_coordinator(self.original())
                 await self.public(kind, fleet)
             except BaseException:
                 U.apply_coordinator(self.guarded())

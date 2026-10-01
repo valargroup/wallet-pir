@@ -101,8 +101,19 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   independently reopened SQLite, all reviewed classes and no unresolved effects.
   Failed public verification withdraws both origins; restored authority starts
   only after its maintenance fence is enabled. This is fixture evidence.
-  Complete remote dispatch/lock qualification, reviewed plans/recipe, initial
-  controller/fleet state, filter/sandbox and resumed load still gate deployment.
+  Coordinated product service phases now bind reviewed transaction templates,
+  capture original service states before stopping writers, dispatch pinned
+  remote root owners under host locks, seed restart-safe v11 activation/fleet
+  records and order all-worker warm proof before authority startup. They align
+  filter/load/scaler units, require observe policy and 20% resource floors,
+  probe the running publisher mount namespace and restore original router bytes
+  before rollback reopening. Exit 75/lost replies interrupt instead of racing
+  remote descendants. Generic deployment/source staging now refuse unfinished
+  schema ownership. Complete actual SSH descendant qualification, immutable
+  candidate input staging, reviewed live plans/recipe and full publication
+  certificate/oracle gates remain open. No production baseline or cutover has
+  occurred. Partial capture/restore and stale candidate namespace reconciliation
+  must be exercised before the actual rollback/redeploy acceptance gate.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.
