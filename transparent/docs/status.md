@@ -8,6 +8,15 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Latest attempt `7401ac97` passed locked preflight, then failed coordinator
+baseline capture: the retained v11 activation pointer was misclassified as a
+v10 predecessor generation. Coordinator writers stopped; no remote capture or
+new candidate staging was reached. The new transaction is `rollback-failed`
+because withdrawal required a complete baseline. The reviewed partial-capture
+repair verifies unchanged copies and stopped live state before completion;
+actual guarded recovery is pending. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
+remains recorded.
+
 The [owned warm v10 recovery](../evidence/activity-metadata-2026-09-30/paired-origin-coherent-recovery-a8e6b63b.json)
 passed in 92.912 seconds at `a8e6b63b`. The journal is `rolled-back`. Separate
 private and both canonical encrypted-query proofs each completed one exact sync

@@ -1367,3 +1367,17 @@ and hash, and complete upstream roster equal the reviewed initial publication.
 Seed revalidates its byte inventory against the complete baseline and records a
 private source/baseline-bound adoption receipt before writing fleet state. Missing
 capture declarations, byte drift, foreign identities and symlinks refuse.
+
+A captured initial-v11 pointer is retained candidate bookkeeping, not a v10
+predecessor generation. Discovery recognizes only its fixed path and closed
+record shape; product validation still binds its exact reviewed target.
+
+If preserve fails after all coordinator copies but before completion, explicit
+failed-preserve repair may complete that partial capture only when private intent,
+plan identity, candidate inventories and every copied byte/mode/owner still match
+the stopped live state. It does not recopy or change original payloads. Only an
+owned repair of the latest failed preserve, with no later forward phase, can
+capture the unchanged remote predecessors without repeating the already passed
+native preflight. Complete warm binary/assignment/canonical-anchor coherence is
+then proved before withdrawal. All remote locks, durable owners and ordinary
+rollback budgets remain in force; partial drift or unknown descendants refuse.

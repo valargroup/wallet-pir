@@ -19,6 +19,7 @@ MAX_FILES = 65536
 EXCLUDED = {'ssh', '__pycache__'}
 HEX = re.compile(r'^[0-9a-f]{64}$')
 WORKER_ACTIVE_RECORD = '/opt/transparent-publisher/active.json'
+CANDIDATE_ACTIVE_RECORD = '/srv/transparent-activity/full-v11/publications/active.json'
 
 
 def require(ok, message):
@@ -273,6 +274,17 @@ def captured_publications(root, record, *, live=False):
         if Path(item['path']).name != 'active.json' or tree is None or tree['.']['kind'] != 'file':
             continue
         active = json.loads((Path(root)/'files'/str(index)).read_text())
+        if item['path'] == CANDIDATE_ACTIVE_RECORD:
+            require(isinstance(active,dict) and set(active)=={'directory','map_sha256','height','hash','upstreams'} and
+                    active['directory']=='/srv/transparent-activity/full-v11/publications/initial' and
+                    isinstance(active['map_sha256'],str) and HEX.fullmatch(active['map_sha256']) and
+                    type(active['height']) is int and active['height']>=0 and
+                    isinstance(active['hash'],str) and HEX.fullmatch(active['hash']) and
+                    isinstance(active['upstreams'],list) and active['upstreams'],
+                    'captured candidate activation is malformed')
+            # Product separately binds this candidate pointer to the reviewed
+            # initial map. It is copied rollback state, not the v10 predecessor.
+            continue
         if not isinstance(active,dict) or not isinstance(active.get('directory'),str):
             continue
         source = safe_path(active['directory'])
@@ -451,6 +463,45 @@ def capture(root, plan):
         protections.extend(protect_publications(dict(plan,retained=additional),plan_sha))
     record['captured_publications'] = active
     atomic(root/'complete.json', json.dumps(record, sort_keys=True).encode())
+    return verify(root)
+
+
+def reconcile_capture(root, plan):
+    """Complete only an unchanged, fully copied partial capture; never recopy."""
+    root=Path(root);validate_plan(plan,root)
+    require(root.is_dir() and not root.is_symlink() and not (root/'complete.json').exists(),
+            'partial capture reconciliation requires an incomplete owned directory')
+    require(root.stat().st_uid==os.geteuid() and root.stat().st_mode & 0o077 == 0,
+            'partial capture must be private and owned')
+    plan_sha=hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest()
+    trees={};expected={'files'};total=count=0
+    for index,item in enumerate(plan['files']):
+        source=Path(item['path']);saved=root/'files'/str(index)
+        live=entries(source) if source.exists() or source.is_symlink() else None
+        copy=entries(saved) if saved.exists() or saved.is_symlink() else None
+        require(live==copy and (live is not None or not item['required']),
+                'partial capture bytes differ from stopped live state')
+        trees[item['path']]=copy
+        if copy:
+            for relative,info in copy.items():
+                expected.add(str(Path('files')/str(index)) if relative=='.' else str(Path('files')/str(index)/relative))
+                total+=info.get('size',0);count+=1
+    require(total<=MAX_BYTES and count<=MAX_FILES,'partial capture exceeds bounds')
+    for current,dirs,files in os.walk(root,followlinks=False):
+        for name in dirs+files:
+            require(str((Path(current)/name).relative_to(root)) in expected,'unexpected partial capture payload')
+    protections=protect_publications(plan,plan_sha)
+    retained=[]
+    for item in plan['retained']:
+        protected=next((p for p in protections if p['item']==item),None)
+        current=item if Path(item['sentinel']).exists() or protected is None else dict(item,sentinel=str(Path(protected['protected'])/'publication/shards.json'))
+        retained.append(retained_identity(current))
+    record={'version':1,'plan':plan,'plan_sha256':plan_sha,'files':trees,'retained':retained,'protected_publications':protections}
+    active=captured_publications(root,record,live=True)
+    additional=[item for item in active if item not in plan['retained']]
+    if additional:protections.extend(protect_publications(dict(plan,retained=additional),plan_sha))
+    record['captured_publications']=active
+    atomic(root/'complete.json',json.dumps(record,sort_keys=True).encode())
     return verify(root)
 
 

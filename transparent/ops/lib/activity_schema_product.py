@@ -484,6 +484,15 @@ class Product:
         elif phase == 'withdraw-origins':
             self.local.commands.unit('stop', *H.WRITERS['coordinator'])
             self.local.quiet(H.WRITERS['coordinator'])
+            if not (self.local.root/'complete.json').exists():
+                forward=[e for e in record['events'] if e['group']=='steps']
+                H.require(getattr(self,'recovery_program',None) is not None and len(forward)==1 and
+                          forward[0]['name']=='preserve-v10' and forward[0]['status']=='failed',
+                          'partial capture repair requires failed preserve before any forward effects')
+                self.local.capture(repair_token=transaction)
+                self.remote(self.router,'repair-capture',attempt)
+                await self.all_workers('repair-capture',attempt)
+                await self.verify_preserved(await self.all_workers('verify-rollback-worker',attempt))
             await self.routing.withdraw('v11' if (H.ROOT/'v11/fleet.json').exists() else 'v10')
         elif phase == 'restore-v10':
             if record.get('v10_reconciliation'):

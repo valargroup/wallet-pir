@@ -58,6 +58,33 @@ class BaselineTests(unittest.TestCase):
     def capture(self):
         return B.capture(self.backup, self.plan)
 
+    def test_explicit_partial_capture_completion_never_recopies(self):
+        with patch.object(B,'captured_publications',side_effect=ValueError('after all copies')):
+            with self.assertRaises(ValueError):self.capture()
+        saved=self.backup/'files/0';inode=saved.stat().st_ino
+        record=B.reconcile_capture(self.backup,self.plan)
+        self.assertEqual(saved.stat().st_ino,inode)
+        self.assertEqual(record['files'][str(self.file)],B.entries(self.file))
+        with self.assertRaises(ValueError):B.reconcile_capture(self.backup,self.plan)
+
+    def test_partial_capture_drift_and_unrecorded_payload_refuse(self):
+        with patch.object(B,'captured_publications',side_effect=ValueError('after all copies')):
+            with self.assertRaises(ValueError):self.capture()
+        self.file.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'stopped live state'):B.reconcile_capture(self.backup,self.plan)
+        self.file.write_text('v10');(self.backup/'unexpected').write_text('extra')
+        with self.assertRaisesRegex(ValueError,'unexpected'):B.reconcile_capture(self.backup,self.plan)
+        self.assertFalse((self.backup/'complete.json').exists())
+
+    def test_closed_candidate_pointer_is_not_a_predecessor_generation(self):
+        candidate=self.live/'active.json'
+        candidate.write_text(json.dumps({'directory':'/srv/transparent-activity/full-v11/publications/initial',
+            'map_sha256':'a'*64,'height':1,'hash':'b'*64,'upstreams':['10.142.0.7:8093']}))
+        self.plan['files'].append({'path':str(candidate),'required':True})
+        with patch.object(B,'CANDIDATE_ACTIVE_RECORD',str(candidate)):
+            record=self.capture();self.assertEqual(record['captured_publications'],[])
+            self.assertEqual(record['files'][str(candidate)],B.entries(candidate))
+
     def collected_publication(self):
         child=self.retained/('a'*64);child.mkdir()
         (child/'shards.json').write_text('captured map')

@@ -403,8 +403,24 @@ class Host:
                 require(len(starts) == 1 and str(ROOT/'v11/fleet.json') in shlex.split(starts[0][10:]),
                         'fleet service still refers to old controller configuration')
 
-    def capture(self):
-        self.preflight()
+    def capture(self, *, repair_token=None):
+        if repair_token is not None:
+            # Only the owning failed-preserve recovery calls this after the
+            # original locked full preflight, before any install/activation.
+            self.effective_units()
+            if self.root.exists():
+                if (self.root/'complete.json').exists():return self.saved()[0]['plan_sha256']
+                state_path=self.root.with_suffix('.units.json')
+                require(state_path.is_file() and not state_path.is_symlink() and state_path.stat().st_uid==os.geteuid() and
+                        state_path.stat().st_mode & 0o077 == 0,'partial capture intent must be private and owned')
+                state=load(state_path)
+                require(state['plan_sha256']==hashlib.sha256(encode(self.plan)).hexdigest(), 'partial capture intent differs')
+                require(state.get('candidate')=={str(p):candidate_inventory(p) for p in candidate_paths(self.role)},
+                        'partial captured candidate inventory changed')
+                self.quiet(WRITERS[self.role])
+                return B.reconcile_capture(self.root,self.plan['baseline'])['plan_sha256']
+        else:
+            self.preflight()
         require(not self.root.exists(), 'baseline already exists; verify/reconcile instead of recapturing')
         states = {unit: self.commands.state(unit) for unit in UNITS[self.role]}
         state_path = self.root.with_suffix('.units.json')

@@ -25,7 +25,7 @@ SPEC = importlib.util.spec_from_file_location('dispatch_source_receipt', Path(__
 S = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(S)
 ROOT = Path('/srv/transparent-activity/ops/host-actions')
-ACTIONS = ('preflight', 'protect-publications', 'capture', 'stage', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker', 'repair-restore')
+ACTIONS = ('preflight', 'protect-publications', 'capture', 'stage', 'activate', 'restore', 'restore-routing', 'verify-worker', 'verify-rollback-worker', 'repair-restore','repair-capture')
 READ_ONLY = ('preflight', 'verify-worker', 'verify-rollback-worker')
 MAX_REQUEST = 256*1024
 
@@ -38,10 +38,10 @@ def validate(request):
     fields = {'version', 'request_id', 'action', 'plan', 'plan_sha256'}
     H.require(isinstance(request, dict) and set(request) in (fields, fields|{'recovery_source_sha'}), 'invalid host request')
     if 'recovery_source_sha' in request:
-        H.require(request.get('action') in ('repair-restore','verify-rollback-worker','restore-routing') and
+        H.require(request.get('action') in ('repair-restore','repair-capture','verify-rollback-worker','restore-routing') and
                   isinstance(request['recovery_source_sha'],str) and re.fullmatch('[0-9a-f]{40}',request['recovery_source_sha']),
                   'repair source cannot authorize a forward host phase')
-    H.require(request.get('action') != 'repair-restore' or 'recovery_source_sha' in request, 'repair restore needs a bound repair program')
+    H.require(request.get('action') not in ('repair-restore','repair-capture') or 'recovery_source_sha' in request, 'repair restore/capture needs a bound repair program')
     H.require(type(request['version']) is int and request['version'] == 1 and request['action'] in ACTIONS, 'unsupported host action')
     H.require(isinstance(request['request_id'], str) and re.fullmatch('[a-z0-9-]{1,64}', request['request_id']), 'invalid host request identifier')
     H.validate(request['plan'])
@@ -164,6 +164,8 @@ class Actor:
         action = self.request['action']
         if action == 'repair-restore':
             return self.host.restore(repair_token=self.request['request_id'])
+        if action == 'repair-capture':
+            return self.host.capture(repair_token=self.request['request_id'])
         if action.startswith('verify-'):
             deadline = time.monotonic()+(300 if action == 'verify-worker' else 60)
             while True:
