@@ -191,7 +191,17 @@ def stage(request, lock, incoming, root=STAGE_ROOT):
             os.fsync(fd)
         finally:
             os.close(fd)
-        receipt.update(status='staged', files=files, compressed_bytes=size, completed_unix=time.time())
+        # Retain the exact reviewed export for coordinator-to-worker bootstrap;
+        # no separately uploaded archive or reconstruction is needed.
+        retained_archive=root/'staging'/(source+'.tar.gz')
+        require(not retained_archive.exists(), 'retained source archive already exists')
+        os.chmod(archive,0o400)
+        os.rename(archive,retained_archive)
+        fd=os.open(retained_archive.parent,os.O_RDONLY)
+        try: os.fsync(fd)
+        finally: os.close(fd)
+        receipt.update(status='staged', files=files, compressed_bytes=size, completed_unix=time.time(),
+                       retained_archive=str(retained_archive))
         atomic_json(receipt_path, receipt)
         return {'status': 'staged', 'source_sha': source, 'archive_sha256': checksum, 'path': str(target)}
     except BaseException as error:

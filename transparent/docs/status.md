@@ -9,16 +9,27 @@ checklist; [deployment](deployment.md) owns operating targets.
 ## Activity metadata candidate, 2026-09-30
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its
-independent ingestion health guard passed. The checkpoint binds 42,684,252,745
-event bytes. Wrapper plan/preflight passed and launched
-`transparent-activity-full-publication-v11`, PID 1876447, using staged operations
-`6e8337fa` and frozen fat-LTO `12ce1291`. The owner reacquired the production
-lock and repeated preflight; cutoff finished and shard publication is active.
-At 04:24 UTC publication still owned PID 1876447 with zero restarts; available
-memory was 83.16%, candidate disk 63.25%, chain disk 22.91% and root disk 29.92%.
-Only cutoff had a completed stage result. Full publication verification,
-certificates and independent extraction checks are still pending. No schema
-cutover occurred.
+independent ingestion guard passed. The v11 publication then completed at
+05:14 UTC under the original PID 1876447, staged operations `6e8337fa` and frozen
+fat-LTO `12ce1291`. All three native stages exited 0; all artifact checks and
+four journal rebuilds passed. The immutable map is
+`34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d`:
+82 archive and eight recent shards, 353,831,243 events, 33,451,520,000 allocated
+bytes. The [terminal evidence](../evidence/activity-metadata-2026-09-30/full-publication-terminal.json)
+binds every raw report. The process exited with zero restarts and an empty
+cgroup; RemainAfterExit keeps the unit active and the older immutable owner
+record still says running. Those are retained observations, not an active job.
+Last health: 81.88% available memory, 60.24% candidate disk, 22.91% chain disk and
+30.14% root disk. Native certificates and independent raw-chain comparisons
+remain open; no schema cutover occurred.
+
+Immutable worker input staging now streams a native-selected subset through
+pinned root owners and retains partial-copy/reconciliation evidence. Generic
+and schema mutations fence uncertain input owners even before a schema journal
+exists. Receiver hashes, modes, bounds and native verification precede its
+atomic candidate rename. Source exports are retained for coordinator-to-worker
+bootstrap. These are local implementation tests; no worker bytes, live unit or
+routing have been changed.
 
 October 1 routing follow-up: concrete withdrawal/private relay/reopen programs
 now require all workers and independently accepted anchors, checksum-bound

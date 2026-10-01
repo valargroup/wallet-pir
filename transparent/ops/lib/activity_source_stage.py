@@ -5,13 +5,14 @@ extracts the archive. No service, config, binary or public route is activated.
 """
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
 
 from wallet_pir_ops import hostlock, inherited_lock, schema_fence
-from wallet_pir_ops.deploy.remote import SSHExecutor
+from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HELPER_PATH = Path(__file__).with_name('activity_source_stage_host.py')
 HELPER = Path(hostlock.__file__).read_text()+'\n'+Path(schema_fence.__file__).read_text()+'\n'+HELPER_PATH.read_text()
@@ -19,12 +20,20 @@ MAX_COMPRESSED = 64 << 20  # v1 bound shared with the transmitted root helper.
 
 
 class SourceStage:
-    def __init__(self, inventory, out=print):
+    def __init__(self, inventory, out=print, target=None):
         self.inventory, self.out = inventory, out
         lock = inventory.lock
-        if lock.get('type') != 'remote':
-            raise ValueError('source bootstrap requires a remote coordinator inventory')
-        self.host = lock['host']
+        self.target = target
+        if target is None:
+            if lock.get('type') != 'remote':
+                raise ValueError('source bootstrap requires a remote coordinator inventory')
+            self.host = lock['host']
+        else:
+            if lock.get('type') != 'pinned_host' or os.geteuid() != 0 or Path('/etc/machine-id').read_text().strip() != lock['machine_id']:
+                raise ValueError('remote source staging requires the pinned root coordinator')
+            self.host = target
+            if inventory.hosts[target].get('machine_id') == lock['machine_id']:
+                raise ValueError('remote source staging cannot target its coordinator')
         entry = inventory.hosts[self.host]
         self.machine = entry.get('machine_id')
         if not isinstance(self.machine, str) or not re.fullmatch('[0-9a-f]{32}', self.machine):
@@ -44,7 +53,9 @@ class SourceStage:
         command = shlex.join([*prefix, '/usr/bin/python3', '-c', HELPER, json.dumps(request)])
         handle = Path(archive).open('rb') if archive else subprocess.DEVNULL
         try:
-            result = subprocess.run(self.executor.transport(self.host)+[command], stdin=handle,
+            transport = self.executor.transport(self.host)
+            transport = [*transport[:-1], '-oControlMaster=no', '-oControlPath=none', transport[-1]]
+            result = subprocess.run(transport+[command], stdin=handle,
                                     capture_output=True, timeout=1800, **inherited_lock.options())
         finally:
             if archive:
@@ -76,6 +87,17 @@ class SourceStage:
             self.out('source '+source+' archive '+checksum+' coordinator '+self.host)
             self.out('immutable staging only; no service activation; preflight required before stage')
             return
+        if mode == 'stage' and self.target is not None:
+            with ProductionLock(self.inventory.lock) as lock:
+                lock.verify(); schema_fence.local_schema_fence()
+                old = os.environ.get(inherited_lock.VARIABLE)
+                os.environ[inherited_lock.VARIABLE] = ','.join(map(str,lock.descriptors()))
+                try:
+                    self.call(self.request('preflight', source, checksum))
+                    return self.call(request, archive)
+                finally:
+                    if old is None: os.environ.pop(inherited_lock.VARIABLE,None)
+                    else: os.environ[inherited_lock.VARIABLE] = old
         if mode == 'stage':
             self.call(self.request('preflight', source, checksum))
         return self.call(request, archive if mode == 'stage' else None)

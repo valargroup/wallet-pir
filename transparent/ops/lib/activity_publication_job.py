@@ -228,8 +228,15 @@ class PublicationJob:
             return
         owner = json.loads((EVIDENCE/'owner.json').read_text())
         result = json.loads((EVIDENCE/'result.json').read_text()) if (EVIDENCE/'result.json').exists() else None
-        self.out(json.dumps({'unit':UNIT, 'plan_sha256':owner['plan_sha256'], 'owner_status':owner['status'],
-            'state':state(UNIT), 'result':result}, sort_keys=True))
+        observed = state(UNIT)
+        terminal = (result is not None and result.get('plan_sha256') == owner['plan_sha256'] and
+                    result.get('pid') == owner.get('pid') and observed.get('MainPID') == '0' and
+                    observed.get('NRestarts') == '0' and observed.get('ExecMainStatus') == '0' and observed.get('Result') == 'success')
+        # RemainAfterExit keeps ActiveState=active after the process exits. Old
+        # immutable launch receipts retain status=running; never rewrite them.
+        status = result['status'] if terminal else owner['status']
+        self.out(json.dumps({'unit':UNIT, 'plan_sha256':owner['plan_sha256'], 'owner_status':status,
+            'recorded_owner_status':owner['status'], 'state':observed, 'result':result}, sort_keys=True))
 
     def run(self):
         os.umask(0o077)

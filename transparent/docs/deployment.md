@@ -826,6 +826,64 @@ SSH descendant qualification, immutable worker input staging, reviewed live
 plans, complete release gates and a production transaction remain prerequisites;
 source implementation is not evidence of a successful cutover or rollback.
 
+### Immutable v11 worker input staging
+
+After the owned full-publication preparation terminates successfully, stage the
+reviewed operations export on the coordinator. The coordinator can then use
+`schema-source-{plan,preflight,stage,status} --host HOST` with its pinned-host
+inventory to stage the same export on each router/worker. This form runs only
+as root on the pinned coordinator, holds its production lock through SSH and
+makes the remote helper acquire its own host lock. New source staging retains
+the exact export at `/srv/transparent-activity/ops/staging/<SHA>.tar.gz` for this
+step; older receipts without a retained archive are preserved as recorded.
+Persistent SSH masters are disabled. Preserve earlier sources and receipts.
+
+`schema-input-build --host HOST --worker-id ID --source-sha REV --assignment FILE
+--unit FILE --release-result-sha256 HASH --cache-bytes BYTES` renders a private
+request from the completed full publication and frozen 18-artifact release.
+Native `shard-assign files` selects all manifests/filters and the assigned shard
+directories; the renderer expands those directories into exact files. It also
+includes the complete assignment, two retained worker executables and reviewed
+worker unit. Retain the request JSON with a final newline and its canonical JSON
+SHA-256, which is printed by the subsequent plan. Host aliases and native worker
+IDs may differ. Requests are limited to 65536 files, 192 GiB and an 8 MiB header.
+
+Use the staged wrapper with `--inventory FILE` and the same
+`--host HOST --request FILE --request-sha256 HASH` for
+`schema-input-plan`, `schema-input-preflight`, `schema-input-stage` and
+`schema-input-status`. Plan rechecks the native file list, full publication and
+release identities; preflight checks the remote pinned source/machine, free
+candidate namespace, memory and disk reserve before a byte is sent. Stage
+repeats these checks under the coordinator lock. The pinned receiver journals
+intent, owns its host lock and streams exactly the declared bytes in 1 MiB
+chunks without a temporary whole-publication archive. It rejects truncation,
+extra bytes, links, duplicates, traversal, file/directory collisions and changed
+hashes/sizes/modes. Available memory and disk must stay at least 20%; initial disk
+reserve includes the entire incoming candidate. Raw receiver health, transfer
+counts and the native verifier's PID/log/result are retained privately.
+
+Each complete candidate is renamed on its original filesystem into
+`/srv/transparent-pir/v11/publications/<map SHA>`. Prepared binaries and unit are
+inside its `.inputs/` directory, for the later reviewed host install plan. Native
+`--verify-only` checks the assignment and requested cache budget before the
+completed receipt; later product preflight checks the actual reviewed unit
+configuration again. This changes no live executable, unit, controller active
+record, runtime cache or public route. File preparation is not warm service,
+canonical recovery or qualification.
+
+An interrupted or failed receiver remains fenced. Both the coordinator and
+remote host retain the exact request SHA, original PID, private request and
+result. Uncertain SSH replies return exit 75 and never authorize automatic
+retry. Generic deployment, source staging, publication start and schema deploy
+check these owners even when no schema journal exists. Inspect status, then run
+`schema-input-reconcile` with the exact request under both locks. A remotely
+completed, reverified candidate can be acknowledged; a failed/partial candidate
+is displaced into an `.abandoned-<request SHA>` namespace on its original
+filesystem. Evidence is preserved. A new attempt requires an explicitly rendered
+request with a higher `--attempt` and a new checksum; old requests never replay.
+Actual SSH surviving-descendant qualification and production lifecycle exercises
+remain separate acceptance gates.
+
 ### Immutable operation source staging over SSH
 
 The wrapper's `schema-source-plan`, `schema-source-preflight`,

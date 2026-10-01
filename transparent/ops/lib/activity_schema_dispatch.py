@@ -15,7 +15,7 @@ import shlex
 import subprocess
 import time
 
-from wallet_pir_ops import durable, inherited_lock
+from wallet_pir_ops import durable, inherited_lock, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 SPEC = importlib.util.spec_from_file_location('dispatch_host', Path(__file__).with_name('activity_schema_host.py'))
@@ -90,6 +90,7 @@ class Actor:
         return H.load(self.root/pointer['transaction']/(pointer['request_id']+'.json'))
 
     def fence(self):
+        schema_fence.local_schema_fence()
         previous = self.latest()
         H.require(previous is None or previous.get('status') in ('passed', 'failed', 'reconciled'),
                   'unfinished remote host owner; inspect/reconcile before another action')

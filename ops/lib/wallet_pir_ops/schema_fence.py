@@ -12,36 +12,23 @@ import re
 SCHEMA_STATE = Path('/srv/transparent-activity/ops/schema')
 SCHEMA_POINTER = 'latest-transparent-schema.json'
 HOST_ACTIONS = Path('/srv/transparent-activity/ops/host-actions')
+INPUT_STAGING = Path('/srv/transparent-activity/ops/input-staging')
 
 
-def schema_mutation_fence(read, state=SCHEMA_STATE):
+def schema_mutation_fence(read, state=SCHEMA_STATE, *, skip_input=None):
     raw = read(str(Path(state)/SCHEMA_POINTER))
-    if raw is None:
-        return
-    pointer = json.loads(raw)
-    identifier = pointer.get('id')
-    if set(pointer) != {'id'} or not isinstance(identifier, str) or not re.fullmatch(r'transparent-schema-[A-Za-z0-9-]+', identifier):
-        raise ValueError('invalid schema ownership pointer; reconcile before mutation')
-    raw = read(str(Path(state)/(identifier+'.json')))
-    if raw is None:
-        raise ValueError('missing schema ownership record; reconcile before mutation')
-    record = json.loads(raw)
-    if (record.get('journal_version') != 1 or record.get('id') != identifier or
-            record.get('status') not in ('committed', 'rolled-back')):
-        raise ValueError('unfinished schema transaction; reconcile its remote owners and recover before mutation')
-
-
-def local_schema_fence(state=SCHEMA_STATE):
-    def read(path):
-        target = Path(path)
-        if target.is_symlink():
-            raise ValueError('schema ownership record cannot be a symlink')
-        if not target.exists():
-            return None
-        if target.stat().st_size > 1024*1024:
-            raise ValueError('schema ownership record exceeds bound')
-        return target.read_text()
-    schema_mutation_fence(read, state)
+    if raw is not None:
+        pointer = json.loads(raw)
+        identifier = pointer.get('id')
+        if set(pointer) != {'id'} or not isinstance(identifier, str) or not re.fullmatch(r'transparent-schema-[A-Za-z0-9-]+', identifier):
+            raise ValueError('invalid schema ownership pointer; reconcile before mutation')
+        raw = read(str(Path(state)/(identifier+'.json')))
+        if raw is None:
+            raise ValueError('missing schema ownership record; reconcile before mutation')
+        record = json.loads(raw)
+        if (record.get('journal_version') != 1 or record.get('id') != identifier or
+                record.get('status') not in ('committed', 'rolled-back')):
+            raise ValueError('unfinished schema transaction; reconcile its remote owners and recover before mutation')
     raw = read(str(HOST_ACTIONS/'latest.json'))
     if raw is not None:
         pointer = json.loads(raw)
@@ -52,3 +39,31 @@ def local_schema_fence(state=SCHEMA_STATE):
         raw = read(str(HOST_ACTIONS/pointer['transaction']/(pointer['request_id']+'.json')))
         if raw is None or json.loads(raw).get('status') not in ('passed', 'failed', 'reconciled'):
             raise ValueError('unfinished remote host owner; reconcile before mutation')
+
+    raw = read(str(INPUT_STAGING/'latest.json'))
+    if raw is not None:
+        pointer = json.loads(raw)
+        identifier = pointer.get('request_sha256')
+        if set(pointer) != {'request_sha256'} or not isinstance(identifier,str) or not re.fullmatch('[0-9a-f]{64}',identifier):
+            raise ValueError('invalid input staging ownership pointer')
+        raw = read(str(INPUT_STAGING/(identifier+'.json')))
+        if raw is None:
+            raise ValueError('missing input staging owner; reconcile before mutation')
+        record = json.loads(raw)
+        if record.get('request_sha256') != identifier:
+            raise ValueError('input staging owner identity changed')
+        if record.get('status') not in ('staged','reconciled') and skip_input != identifier:
+            raise ValueError('unfinished input staging owner; reconcile before mutation')
+
+
+def local_schema_fence(state=SCHEMA_STATE, *, skip_input=None):
+    def read(path):
+        target = Path(path)
+        if target.is_symlink():
+            raise ValueError('schema ownership record cannot be a symlink')
+        if not target.exists():
+            return None
+        if target.stat().st_size > 1024*1024:
+            raise ValueError('schema ownership record exceeds bound')
+        return target.read_text()
+    schema_mutation_fence(read, state, skip_input=skip_input)

@@ -1,0 +1,255 @@
+"""Streaming, file identity, interruption fences and native scope preparation."""
+import copy
+import hashlib
+import importlib.util
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest.mock import patch
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'ops/lib'))
+SPEC=importlib.util.spec_from_file_location('input_stage_test',Path(__file__).parents[1]/'lib/activity_input_stage.py')
+M=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(M)
+
+
+class Lock:
+    def __init__(self,path): self.path=path; self.fd=None
+    def __enter__(self): self.fd=os.open(self.path,os.O_CREAT|os.O_RDWR,0o600); return self
+    def __exit__(self,*_): os.close(self.fd); self.fd=None
+    def verify(self): assert self.fd is not None
+    def descriptors(self): self.verify(); return (self.fd,)
+
+
+class Inputs(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve(); self.sources=self.root/'source';self.sources.mkdir()
+        self.mapping=b'map'; self.assignment=b'assignment'
+        self.names={'shards.json':self.mapping,'assignment.json':self.assignment,
+                    '.inputs/transparent-shard-server':b'bin','.inputs/shard-control':b'control',
+                    '.inputs/transparent-shard-server.service':b'unit','a'*64+'/manifest.json':b'manifest',
+                    'a'*64+'/pages-0.bin':b'page\x00data'}
+        files=[]
+        for name,data in sorted(self.names.items()):
+            path=self.sources/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(data)
+            files.append({'path':name,'source':str(path),'size':len(data),'sha256':hashlib.sha256(data).hexdigest(),
+                          'mode':M.INPUTS.get(name,0o600)})
+        self.request={'version':1,'source_sha':'b'*40,'machine_id':'c'*32,'worker_id':'worker-1',
+            'map_sha256':hashlib.sha256(self.mapping).hexdigest(),'assignment_sha256':hashlib.sha256(self.assignment).hexdigest(),
+            'release_result_sha256':'d'*64,'attempt':1,'cache_bytes':1<<30,'files':files}
+        self.lock=Lock(self.root/'lock')
+        self.receiver=M.Receiver(self.request,root=self.root/'publication',owners=self.root/'owners',lock_factory=lambda:self.lock)
+        for name,thing,value in [('resources',M,lambda *_: {}),('local_schema_fence',M.schema_fence,lambda **_:None)]:
+            p=patch.object(thing,name,value);p.start();self.addCleanup(p.stop)
+        self.native_calls=[]
+        p=patch.object(self.receiver,'native',lambda lock:self.native_calls.append(lock.descriptors()))
+        p.start();self.addCleanup(p.stop)
+
+    def body(self): return b''.join(self.names[f['path']] for f in self.request['files'])
+
+    def test_complete_stream_atomic_target_private_modes_and_receipt(self):
+        result=self.receiver.stage(io.BytesIO(self.body()))
+        self.assertEqual(result['status'],'staged');self.assertEqual(result['received_bytes'],len(self.body()))
+        self.assertFalse(self.receiver.partial.exists());self.assertEqual(len(self.native_calls),1)
+        M.verify_files(self.receiver.target,self.request)
+        self.assertEqual(self.receiver.path.stat().st_mode&0o777,0o600)
+        self.assertEqual((self.receiver.owners/(self.receiver.identifier+'.request.json')).stat().st_mode&0o777,0o400)
+        self.assertEqual(self.receiver.status()['pid'],os.getpid())
+        with self.assertRaisesRegex(ValueError,'already exists'):self.receiver.stage(io.BytesIO(self.body()))
+
+    def test_truncated_extra_and_corrupt_stream_keep_failed_partial_and_no_target(self):
+        for data in (self.body()[:-1],self.body()+b'extra',b'x'+self.body()[1:]):
+            with self.subTest(data=data[:4]):
+                root=self.root/hashlib.sha256(data).hexdigest()
+                receiver=M.Receiver(self.request,root=root/'pub',owners=root/'owners',lock_factory=lambda:self.lock)
+                with patch.object(receiver,'native') as native,self.assertRaises(ValueError):receiver.stage(io.BytesIO(data))
+                native.assert_not_called();self.assertFalse(receiver.target.exists());self.assertTrue(receiver.partial.exists())
+                self.assertEqual(receiver.status()['status'],'failed')
+                with self.assertRaisesRegex(ValueError,'already exists'):receiver.stage(io.BytesIO(self.body()))
+
+    def test_interrupted_native_is_retained_and_requires_explicit_reconciliation(self):
+        with patch.object(self.receiver,'native',side_effect=subprocess.TimeoutExpired('native',1)),self.assertRaises(subprocess.TimeoutExpired):
+            self.receiver.stage(io.BytesIO(self.body()))
+        self.assertEqual(self.receiver.status()['status'],'interrupted')
+        result=self.receiver.reconcile();self.assertEqual(result['status'],'reconciled')
+        self.assertFalse(self.receiver.partial.exists());self.assertEqual(len(list(self.receiver.root.glob('*.abandoned-*'))),1)
+        with self.assertRaises(ValueError):self.receiver.stage(io.BytesIO(self.body()))
+        retry=copy.deepcopy(self.request);retry['attempt']=2
+        second=M.Receiver(retry,root=self.receiver.root,owners=self.receiver.owners,lock_factory=lambda:self.lock)
+        with patch.object(second,'native'):self.assertEqual(second.stage(io.BytesIO(self.body()))['status'],'staged')
+
+    def test_crash_after_rename_retains_candidate_before_reconcile(self):
+        self.receiver.stage(io.BytesIO(self.body()))
+        record=json.loads(self.receiver.path.read_text());record['status']='receiving';M.durable.atomic_json(self.receiver.path,record,mode=0o600)
+        self.receiver.reconcile();self.assertFalse(self.receiver.target.exists())
+        self.assertEqual(len(list(self.receiver.root.glob('*.abandoned-*'))),1)
+
+    def test_tampered_modes_bytes_extra_file_and_symlink_refuse_completed_status(self):
+        self.receiver.stage(io.BytesIO(self.body()))
+        path=self.receiver.target/'shards.json'
+        path.chmod(0o644)
+        with self.assertRaisesRegex(ValueError,'mode differs'):self.receiver.status()
+        path.chmod(0o600);path.write_bytes(b'bad')
+        with self.assertRaisesRegex(ValueError,'differs'):self.receiver.status()
+        path.write_bytes(self.mapping);extra=self.receiver.target/'extra';extra.touch()
+        with self.assertRaisesRegex(ValueError,'file set'):self.receiver.status()
+        extra.unlink();extra.symlink_to(self.sources)
+        with self.assertRaisesRegex(ValueError,'tree'):self.receiver.status()
+
+    def test_parent_symlink_refuses_before_owner_or_writes(self):
+        self.receiver.root.symlink_to(self.sources,target_is_directory=True)
+        with self.assertRaisesRegex(ValueError,'symlink'):self.receiver.preflight()
+        self.assertFalse(self.receiver.owners.exists())
+
+    def test_request_boundaries_paths_modes_duplicates_and_file_directory_collision(self):
+        for key,value in [('attempt',0),('cache_bytes',True),('map_sha256','f'*64),('version',2)]:
+            req=copy.deepcopy(self.request);req[key]=value
+            with self.assertRaises(ValueError):M.validate(req)
+        for path in ('../escape','/etc/systemd/system/live.service','shards.json/child','a'*64+'/../escape','a'*64+'//pages.bin','.inputs/unknown'):
+            req=copy.deepcopy(self.request);req['files'][-1]['path']=path
+            with self.assertRaises(ValueError):M.validate(req)
+        for field,value in [('size',True),('size',M.MAX_BYTES+1),('mode',0o777),('source','relative')]:
+            req=copy.deepcopy(self.request);req['files'][-1][field]=value
+            with self.assertRaises(ValueError):M.validate(req)
+        req=copy.deepcopy(self.request);req['files'].append(req['files'][0])
+        with self.assertRaises(ValueError):M.validate(req)
+
+    def test_framing_binds_reviewed_request_and_rejects_duplicate_or_oversize_header(self):
+        raw=M.durable.canonical(self.request)+b'\n'
+        stream=io.BytesIO(raw+self.body());self.assertEqual(M.read_request(stream,M.digest(self.request)),self.request)
+        self.assertEqual(stream.read(),self.body())
+        for data in (raw[:-1],b'{"version":1,"version":1}\n',b'x'*(M.MAX_REQUEST+1)):
+            with self.assertRaises(ValueError):M.read_request(io.BytesIO(data),M.digest(self.request))
+        with self.assertRaises(ValueError):M.read_request(io.BytesIO(raw),'f'*64)
+
+    def test_stream_rechecks_source_and_detects_change_without_archive_buffer(self):
+        output=b''.join(M.chunks(self.request));self.assertEqual(output,M.durable.canonical(self.request)+b'\n'+self.body())
+        first=Path(self.request['files'][0]['source']);first.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'changed during'):b''.join(M.chunks(self.request))
+
+    def test_pipe_pump_joins_process_and_drains_errors_with_bounded_reply(self):
+        program='import sys,json; h=json.loads(sys.stdin.buffer.readline()); n=sum(f["size"] for f in h["files"]); assert len(sys.stdin.buffer.read())==n; sys.stderr.write("private"); print("{}")'
+        code,raw=M.pump([sys.executable,'-c',program],self.request,5)
+        self.assertEqual(code,0);self.assertEqual(raw,b'{}\n')
+        with self.assertRaises(subprocess.TimeoutExpired):M.pump([sys.executable,'-c','import time;time.sleep(5)'],self.request,.01)
+
+    def test_coordinator_and_remote_input_fence_has_no_schema_pointer_shortcut(self):
+        identity=M.digest(self.request);paths={str(M.schema_fence.INPUT_STAGING/'latest.json'):json.dumps({'request_sha256':identity}),
+            str(M.schema_fence.INPUT_STAGING/(identity+'.json')):json.dumps({'request_sha256':identity,'status':'receiving'})}
+        with self.assertRaisesRegex(ValueError,'unfinished input'):M.schema_fence.schema_mutation_fence(paths.get)
+        M.schema_fence.schema_mutation_fence(paths.get,skip_input=identity)
+        with self.assertRaises(ValueError):M.schema_fence.schema_mutation_fence(paths.get,skip_input='f'*64)
+        for status in ('staged','reconciled'):
+            paths[str(M.schema_fence.INPUT_STAGING/(identity+'.json'))]=json.dumps({'request_sha256':identity,'status':status})
+            M.schema_fence.schema_mutation_fence(paths.get)
+
+    def test_renderer_expands_native_digest_directories_and_keeps_unassigned_metadata(self):
+        output=self.root/'full';output.mkdir()
+        digest='a'*64
+        folder=output/digest;folder.mkdir()
+        for name,data in [('manifest.json',b'm'),('filter.bin',b'f'),('page-0.bin',b'pages')]: (folder/name).write_bytes(data)
+        (output/'shards.json').write_bytes(self.mapping)
+        assignment=self.root/'assignment.json'
+        assignment.write_text(json.dumps({'set':{'map_sha256':hashlib.sha256(self.mapping).hexdigest(),'shard_schema':'transparent-shard-v11'},
+             'generated_by':{'source_sha':M.P.RELEASE_SHA},'unassigned':[],'workers':[{'id':'native-worker'}]}))
+        release=self.root/'release';(release/'artifacts').mkdir(parents=True)
+        for name in ('transparent-shard-server','shard-control'): (release/'artifacts'/name).write_bytes(name.encode())
+        evidence=self.root/'evidence';evidence.mkdir();(evidence/'result.json').write_text(json.dumps({'status':'passed','map_sha256':hashlib.sha256(self.mapping).hexdigest()}))
+        unit=self.root/'unit';unit.write_bytes(b'unit')
+        inventory=SimpleNamespace(hosts={'ssh-alias':{'machine_id':'c'*32}})
+        result=SimpleNamespace(stdout=(digest+'/\n'+digest+'/manifest.json\nshards.json\n').encode())
+        pins={'binaries':{'transparent-shard-server':{'sha256':M.P.checksum(release/'artifacts/transparent-shard-server')}}}
+        with patch.object(M.P,'OUTPUT',output),patch.object(M.P,'RELEASE',release),patch.object(M.P,'EVIDENCE',evidence), \
+             patch.object(M.P,'verify_release',return_value=pins),patch.object(M.subprocess,'run',return_value=result):
+            request=M.build(inventory,'ssh-alias','b'*40,assignment,unit,'d'*64,1<<30,1,worker_id='native-worker')
+        self.assertEqual(len(request['files']),8)
+        self.assertIn(digest+'/page-0.bin',{f['path'] for f in request['files']})
+        self.assertEqual(request['worker_id'],'native-worker')
+
+    def client(self):
+        client=object.__new__(M.Client)
+        client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32})
+        client.host='worker';client.request=self.request
+        return client
+
+    def test_uncertain_remote_reply_keeps_coordinator_fence_until_verified_reconcile(self):
+        client=self.client();owners=self.root/'client-owners'
+        with patch.object(M,'OWNERS',owners),patch.object(M,'ProductionLock',return_value=self.lock), \
+             patch.object(client,'checked_sources'),patch.object(M.P,'checksum',side_effect=lambda p:next(i['sha256'] for i in self.request['files'] if i['path']=='.inputs/'+Path(p).name)), \
+             patch.object(client,'call',side_effect=[{'status':'preflight-passed'},subprocess.TimeoutExpired('ssh',1)]):
+            with self.assertRaises(subprocess.TimeoutExpired):client.run('stage')
+        identifier=M.digest(self.request);path=owners/(identifier+'.json')
+        self.assertEqual(json.loads(path.read_text())['status'],'interrupted')
+        replies=[]
+        def call(action):
+            M.inherited_lock.descriptors(required=True,path=self.lock.path);replies.append(action)
+            return {'status':'staged','request_sha256':identifier}
+        with patch.object(M,'OWNERS',owners),patch.object(M,'ProductionLock',return_value=self.lock),patch.object(client,'call',side_effect=call):
+            result=client.run('reconcile')
+        self.assertEqual(result['status'],'staged');self.assertEqual(replies,['status'])
+        self.assertEqual(json.loads(path.read_text())['status'],'staged')
+
+    def test_failed_remote_receive_is_displaced_only_by_explicit_locked_reconciliation(self):
+        client=self.client();owners=self.root/'client-owners';owners.mkdir();identifier=M.digest(self.request)
+        M.durable.atomic_json(owners/'latest.json',{'request_sha256':identifier})
+        M.durable.atomic_json(owners/(identifier+'.request.json'),self.request)
+        M.durable.atomic_json(owners/(identifier+'.json'),{'request_sha256':identifier,'status':'failed'})
+        with patch.object(M,'OWNERS',owners),patch.object(M,'ProductionLock',return_value=self.lock), \
+             patch.object(client,'call',side_effect=[{'status':'failed'},{'status':'reconciled'}]) as call:
+            self.assertEqual(client.run('reconcile')['status'],'reconciled')
+        self.assertEqual([c.args[0] for c in call.call_args_list],['status','reconcile'])
+
+    def test_remote_source_stage_joins_under_coordinator_fd_without_persistent_master(self):
+        spec=importlib.util.spec_from_file_location('input_source_target',M.HERE/'activity_source_stage.py')
+        source=importlib.util.module_from_spec(spec);spec.loader.exec_module(source)
+        client=object.__new__(source.SourceStage)
+        client.target='worker';client.host='worker';client.machine='c'*32;client.out=lambda _:None
+        client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32},hosts={'worker':{}},ssh={'mode':'config'})
+        client.executor=SimpleNamespace(transport=lambda host:['ssh','worker'])
+        archive=self.root/'ops.tar.gz';archive.write_bytes(b'archive')
+        calls=[]
+        def run(argv,**options):
+            self.assertIn('-oControlMaster=no',argv);self.assertIn('-oControlPath=none',argv)
+            self.assertEqual(options['pass_fds'],self.lock.descriptors())
+            self.assertEqual(options['env']['PYTHONDONTWRITEBYTECODE'],'1')
+            calls.append(argv)
+            return SimpleNamespace(returncode=0,stdout=b'{"ok":true,"result":{"status":"staged"}}')
+        with patch.object(source,'ProductionLock',return_value=self.lock),patch.object(source.subprocess,'run',side_effect=run):
+            client.run('stage','b'*40,M.P.checksum(archive),archive)
+        self.assertEqual(len(calls),2)
+
+    def test_native_child_keeps_remote_lock_and_retains_exact_verification_result(self):
+        # Exercise the actual subprocess boundary using an isolated executable.
+        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.inputs/transparent-shard-server'
+        binary.parent.mkdir();binary.write_text('#!'+sys.executable+'\nimport os,sys\nassert os.environ["WALLET_PIR_PRODUCTION_LOCK_FDS"]\nprint("verified")\n')
+        binary.chmod(0o755);self.receiver.owners.mkdir()
+        with self.lock,patch.dict(os.environ,{M.inherited_lock.VARIABLE:str(self.lock.fd),'PYTHONDONTWRITEBYTECODE':'1'}):
+            M.Receiver.native(self.receiver,self.lock)
+        result=json.loads((self.receiver.owners/(self.receiver.identifier+'.native.result.json')).read_text())
+        self.assertEqual(result['exit_code'],0);self.assertEqual(result['status'],'passed')
+        self.assertEqual(result['log_sha256'],M.P.checksum(self.receiver.owners/(self.receiver.identifier+'.native.log')))
+
+    def test_failed_native_verification_retains_exit_and_log_in_denominator(self):
+        self.receiver.partial.mkdir(parents=True);binary=self.receiver.partial/'.inputs/transparent-shard-server'
+        binary.parent.mkdir();binary.write_text('#!'+sys.executable+'\nimport sys\nprint("failure")\nsys.exit(3)\n');binary.chmod(0o755)
+        self.receiver.owners.mkdir()
+        with self.lock,patch.dict(os.environ,{M.inherited_lock.VARIABLE:str(self.lock.fd)}),self.assertRaisesRegex(ValueError,'native candidate'):
+            M.Receiver.native(self.receiver,self.lock)
+        result=json.loads((self.receiver.owners/(self.receiver.identifier+'.native.result.json')).read_text())
+        self.assertEqual(result['status'],'failed');self.assertEqual(result['exit_code'],3)
+        self.assertEqual(result['log_sha256'],M.P.checksum(self.receiver.owners/(self.receiver.identifier+'.native.log')))
+
+    def test_source_bootstrap_target_requires_pinned_coordinator(self):
+        spec=importlib.util.spec_from_file_location('input_source_client',M.HERE/'activity_source_stage.py')
+        source=importlib.util.module_from_spec(spec);spec.loader.exec_module(source)
+        inventory=SimpleNamespace(lock={'type':'remote','host':'coordinator'},hosts={'worker':{'machine_id':'a'*32}},ssh={'mode':'config'})
+        with self.assertRaisesRegex(ValueError,'pinned root'):source.SourceStage(inventory,target='worker')
+
+
+if __name__ == '__main__': unittest.main()

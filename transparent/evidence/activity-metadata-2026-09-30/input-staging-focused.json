@@ -1,0 +1,39 @@
+{
+  "base_sha": "39c3444601ccdc4d586cd01f2d3a923873f7bba5",
+  "command": "make check-fast BASE=39c3444601ccdc4d586cd01f2d3a923873f7bba5",
+  "coverage": [
+    "Native assigned directory expansion plus unassigned manifest/filter metadata",
+    "Truncation, extra bytes, duplicate fields and paths, traversal, mode/hash/file-set mismatch",
+    "Private request/owner/PID/native logs/results and bounded bidirectional pipe join",
+    "Coordinator/remote input fences without a schema journal, verified completion acknowledgment, explicit partial displacement",
+    "Source bootstrap preserves coordinator FD, remote host lock and no persistent master",
+    "Native verifier inherits remote FD and preserves failed exit/log in denominators",
+    "Publication terminal identity versus RemainAfterExit active unit"
+  ],
+  "duration_seconds": 17.237843708950095,
+  "implementation_sha256": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "297f692bc6bbd2fe7420ddf3fb7f2d7a54695b89d05a027fa85ed0c1629b5af7",
+    "ops/lib/wallet_pir_ops/schema_fence.py": "47edf543b1aec5d7eadbd1fc65d3354127d6f542f7db808348d330780b7dbf6c",
+    "transparent/ops/lib/activity_input_stage.py": "13d1a2d391ec248c324b1329cffd983d8fb9ab99df496fcb1b389678fa62c4ad",
+    "transparent/ops/lib/activity_publication_job.py": "87282c568153e140a381eff04061ede25dde1726a6ffe3c1306211b90a464bfe",
+    "transparent/ops/lib/activity_schema_dispatch.py": "b0cbbdcda2dc1fae0952caf1dee8e87624ac85e0da5895b60d9ba88a3814cbd0",
+    "transparent/ops/lib/activity_schema_operation.py": "e8e073de293c1450c4f9fd0e406343316d372de092164742c5383bf65581da86",
+    "transparent/ops/lib/activity_source_stage.py": "fe8b4f8fd960b78b18cdfea6982bbaf77ff0a8808915654d4bed2acb82195920",
+    "transparent/ops/lib/activity_source_stage_host.py": "51bd820410dfd8a07af754cf972d3602796e858e73fb63e8127133cfcec725d0",
+    "transparent/ops/tests/test_activity_input_stage.py": "c75f84f648b0a4854dec655ca089109f17fc7b10d79a2ea1d134afdf0a4341cf",
+    "transparent/ops/tests/test_activity_publication_job.py": "e11ab6d10ac9482525ad90beb264480b9365c2baf9acb4fdf7b16cdbf46cf08e",
+    "transparent/ops/tests/test_activity_schema_operation.py": "7e003cc6fa8c24e4b9eb60140cd6c6a21868b2a911ae3475371eee2f0724d2cc"
+  },
+  "input_manifest_sha256": "82aea3ca23862857ed5d3eb9c136049a303e8cb6877b4a46cae1410a6e477377",
+  "limitations": [
+    "Local fixtures and process boundary tests only. Actual SSH surviving-descendant qualification remains open.",
+    "No worker bytes, units, service state or canonical routing were changed.",
+    "Native inputs are unchanged; comprehensive exact-head CI remains a deployment gate."
+  ],
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "owner_id": "00ffd68b28694b7ab2f7f522b8dc1f02",
+  "raw_log_sha256": "378fcf96f2531e2ca8519324b1e41ff54134ed81133d33567380c14224118100",
+  "status": "passed",
+  "superseded_passing_owner": "84a27a6e6a624bb2a16eec751353417c",
+  "superseded_reason": "Predates native failure-result/health retention and coordinator source-receipt verification"
+}

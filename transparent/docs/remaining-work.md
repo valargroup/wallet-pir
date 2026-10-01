@@ -18,12 +18,15 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [x] Backfill a separate genesis-to-anchor v3 journal through 3500738.
   The frozen ingester and independent guard completed successfully; checkpoint
   and terminal evidence are [retained](../evidence/activity-metadata-2026-09-30/full-ingestion-publication-start.json).
-- [ ] Complete and verify the full v11 publication.
-  Wrapper owner `transparent-activity-full-publication-v11`, PID 1876447,
-  started after plan/preflight against frozen native `12ce1291` and staged
-  operations `6e8337fa`. Cutoff passed; shard publication is active with 20%
-  resource floors and inherited production/journal locks. Preserve its
-  `/srv/transparent-activity/full-v11/preparation` outputs and do not duplicate.
+- [x] Complete full v11 publication and artifact verification.
+  The original wrapper owner PID 1876447 terminated successfully at 05:14 UTC:
+  all artifacts and four journal rebuilds passed, with 90 shards and measured
+  allocation retained in [terminal evidence](../evidence/activity-metadata-2026-09-30/full-publication-terminal.json).
+  Preserve `/srv/transparent-activity/full-v11/preparation`; do not rebuild it.
+- [ ] Complete native correctness certificates and independent raw-chain metadata comparisons for the full publication.
+- [ ] Render reviewed live host plans, stage immutable operations/native/unit/publication inputs through the wrapper, and qualify actual SSH descendant locking.
+  The new input wrapper has local streaming, interruption and reconciliation
+  tests. No worker candidate input transfer or live service transition occurred.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency

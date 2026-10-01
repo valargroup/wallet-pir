@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import time
 
-from wallet_pir_ops import durable
+from wallet_pir_ops import durable, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock
 from wallet_pir_ops.deploy.transaction import new_id
 
@@ -237,6 +237,7 @@ class Runner:
         self.coordinator()
         with self.lock_factory() as lock:
             lock.verify()
+            schema_fence.local_schema_fence()
             previous = self.load()
             require(previous is None or previous['status'] in ('committed', 'rolled-back'),
                     'unfinished schema transaction; recover it before deploying')

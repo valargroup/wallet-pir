@@ -279,3 +279,18 @@ p50 4.12 ms and p99 29.81 ms. Five missed slots remain in the report. Owner,
 driver/binary/fixture/source pins agreed; the unit ended successfully with no
 restarts. This is a frozen loopback query observation, not the canonical
 six-hour/300-block freshness gate or sustained completed-wallet capacity.
+
+[Full-publication terminal evidence](full-publication-terminal.json) records
+successful artifact preparation at 05:14 UTC with 90 shards, 353,831,243 events,
+31.2 GiB measured allocation, all native artifact checks and four journal
+rebuilds. Every stage exited 0; the original process ended with no restarts and
+an empty cgroup. The older immutable owner says running and its RemainAfterExit
+unit stays active; neither implies a live process. Native certificates,
+independent raw-chain metadata comparisons, cutover and final qualification
+remain separate gates.
+
+[Immutable input staging checks](input-staging-focused.json) bind the concrete
+native-selected worker transfer, mode/hash/stream bounds, partial retention,
+coordinator/remote ownership fences and explicit reconciliation. These are local
+fixtures and process boundaries, not actual SSH surviving-descendant evidence
+or a live worker transfer. Native inputs remain at `12ce1291`.

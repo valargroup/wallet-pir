@@ -39,6 +39,23 @@ class PublicationTests(unittest.TestCase):
         self.inventory = SimpleNamespace(lock={'type':'pinned_host','machine_id':'a'*32})
         self.job = M.PublicationJob(self.inventory,'b'*40,'c'*64,lambda _:None)
 
+    def test_terminal_status_uses_result_identity_and_pid_not_remain_after_exit_active(self):
+        M.EVIDENCE.mkdir()
+        owner={'plan_sha256':'c'*64,'pid':123,'status':'running'}
+        result={'plan_sha256':'c'*64,'pid':123,'status':'passed'}
+        (M.EVIDENCE/'owner.json').write_text(json.dumps(owner))
+        (M.EVIDENCE/'result.json').write_text(json.dumps(result))
+        original=(M.EVIDENCE/'owner.json').read_bytes();out=[];self.job.out=out.append
+        with patch.object(M,'state',return_value=dict(self.terminal,ActiveState='active')):self.job.status()
+        reply=json.loads(out[-1]);self.assertEqual(reply['owner_status'],'passed');self.assertEqual(reply['recorded_owner_status'],'running')
+        self.assertEqual((M.EVIDENCE/'owner.json').read_bytes(),original)
+        for mutation in ({'MainPID':'123'},{'NRestarts':'1'},{'Result':'oom-kill'}):
+            with patch.object(M,'state',return_value=dict(self.terminal,**mutation)):self.job.status()
+            self.assertEqual(json.loads(out[-1])['owner_status'],'running')
+        result['pid']=124;(M.EVIDENCE/'result.json').write_text(json.dumps(result))
+        with patch.object(M,'state',return_value=self.terminal):self.job.status()
+        self.assertEqual(json.loads(out[-1])['owner_status'],'running')
+
     def test_completed_checkpoint_is_not_enough_until_ingest_and_guard_pass(self):
         with patch.object(M,'state',return_value=self.terminal):
             M.verify_journal()

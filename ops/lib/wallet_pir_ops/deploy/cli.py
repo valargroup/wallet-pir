@@ -98,6 +98,23 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-input-'+name, help='immutable v11 worker input staging on pinned coordinator')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        command.add_argument('--host', required=True)
+    command = commands.add_parser('schema-input-build', help='render the native-assigned worker input request after full publication')
+    command.add_argument('--host', required=True)
+    command.add_argument('--source-sha', required=True)
+    command.add_argument('--assignment', required=True)
+    command.add_argument('--unit', required=True)
+    command.add_argument('--worker-id', required=True)
+    command.add_argument('--release-result-sha256', required=True)
+    command.add_argument('--cache-bytes', type=int, required=True)
+    command.add_argument('--attempt', type=int, default=1)
+    command = commands.add_parser('schema-input-receive', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
     for name in ('run', 'status', 'reconcile'):
         command = commands.add_parser('schema-host-'+name, help='pinned remote host owner; invoked by the coordinator schema recipe')
         command.add_argument('--request-sha256', required=True)
@@ -120,6 +137,7 @@ def parser():
         command = commands.add_parser('schema-source-'+name)
         command.add_argument('--source-sha', required=True)
         command.add_argument('--sha256', required=True)
+        command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
         if name != 'status':
             command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
@@ -165,6 +183,18 @@ def main(argv=None, executor=None, out=print, **options):
     """`executor` and `options` (passed to `Deployer`) let tests substitute a fake fleet and clock."""
     args = parser().parse_args(argv)
     try:
+        if args.command == 'schema-input-receive':
+            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            request = module.read_request(sys.stdin.buffer, args.request_sha256)
+            receiver = module.Receiver(request); receiver.identity()
+            try:
+                result = receiver.stage(sys.stdin.buffer) if args.action == 'stage' else getattr(receiver,args.action)()
+            except BaseException as error:
+                out(json.dumps({'request_sha256':module.digest(request),'status':'interrupted' if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 'failed'}))
+                return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
+            out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
+            return 0
         if args.command.startswith('schema-host-'):
             spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
             module = importlib.util.module_from_spec(spec)
@@ -187,6 +217,20 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-input-'):
+            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            inventory = descriptors.load_inventory(args.inventory)
+            if args.command == 'schema-input-build':
+                result = module.build(inventory,args.host,args.source_sha,args.assignment,args.unit,
+                                      args.release_result_sha256,args.cache_bytes,args.attempt,worker_id=args.worker_id)
+            else:
+                with Path(args.request).open('rb') as stream:
+                    request = module.read_request(stream,args.request_sha256)
+                    if stream.read(1): raise ValueError('extra input request bytes')
+                result = module.Client(inventory,args.host,request).run(args.command.removeprefix('schema-input-'))
+            out(json.dumps(result,sort_keys=True))
+            return 0
         if args.command.startswith('schema-product-'):
             spec = importlib.util.spec_from_file_location('activity_schema_product', ROOT/'transparent/ops/lib/activity_schema_product.py')
             module = importlib.util.module_from_spec(spec)
@@ -227,7 +271,7 @@ def main(argv=None, executor=None, out=print, **options):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             inventory = descriptors.load_inventory(args.inventory)
-            module.SourceStage(inventory, out).run(args.command.removeprefix('schema-source-'),
+            module.SourceStage(inventory, out, target=args.host).run(args.command.removeprefix('schema-source-'),
                 args.source_sha, args.sha256, getattr(args, 'archive', None))
             return 0
         if args.command.startswith('schema-'):

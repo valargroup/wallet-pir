@@ -361,6 +361,9 @@ class SourceStageTests(unittest.TestCase):
         receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
         self.assertEqual(receipt['pid'], os.getpid())
         self.assertEqual(receipt['compressed_bytes'], len(data))
+        retained=Path(receipt['retained_archive'])
+        self.assertEqual(retained.read_bytes(),data)
+        self.assertEqual(retained.stat().st_mode & 0o777,0o400)
         self.assertEqual(set(receipt['files']), set(self.files))
         self.assertEqual((self.root/'ops/staging'/('a'*40+'.json')).stat().st_mode & 0o777, 0o600)
 
@@ -538,6 +541,7 @@ def load_tests(loader, tests, _pattern):
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_routing.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_recovery_proof.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_product.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_input_stage.py'))
     return tests
 
 
