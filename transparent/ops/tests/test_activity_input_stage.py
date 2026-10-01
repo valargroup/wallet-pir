@@ -30,7 +30,7 @@ class Inputs(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name).resolve(); self.sources=self.root/'source';self.sources.mkdir()
-        self.mapping=b'map'; self.assignment=b'assignment'
+        self.mapping=b'{}'; self.assignment=b'assignment'
         self.names={'shards.json':self.mapping,'assignment.json':self.assignment,
                     '.inputs/transparent-shard-server':b'bin','.inputs/shard-control':b'control',
                     '.inputs/transparent-shard-server.service':b'unit','a'*64+'/manifest.json':b'manifest',
@@ -156,7 +156,7 @@ class Inputs(unittest.TestCase):
         for name,data in [('manifest.json',b'm'),('filter.bin',b'f'),('page-0.bin',b'pages')]: (folder/name).write_bytes(data)
         (output/'shards.json').write_bytes(self.mapping)
         assignment=self.root/'assignment.json'
-        assignment.write_text(json.dumps({'set':{'map_sha256':hashlib.sha256(self.mapping).hexdigest(),'shard_schema':'transparent-shard-v11'},
+        assignment.write_text(json.dumps({'set':{'map_sha256':'e'*64,'shard_schema':'transparent-shard-v11'},
              'generated_by':{'source_sha':M.P.RELEASE_SHA},'unassigned':[],'workers':[{'id':'native-worker'}]}))
         release=self.root/'release';(release/'artifacts').mkdir(parents=True)
         for name in ('transparent-shard-server','shard-control'): (release/'artifacts'/name).write_bytes(name.encode())
@@ -166,7 +166,7 @@ class Inputs(unittest.TestCase):
         result=SimpleNamespace(stdout=(digest+'/\n'+digest+'/manifest.json\nshards.json\n').encode())
         pins={'binaries':{'transparent-shard-server':{'sha256':M.P.checksum(release/'artifacts/transparent-shard-server')}}}
         with patch.object(M.P,'OUTPUT',output),patch.object(M.P,'RELEASE',release),patch.object(M.P,'EVIDENCE',evidence), \
-             patch.object(M.P,'verify_release',return_value=pins),patch.object(M.subprocess,'run',return_value=result):
+             patch.object(M.P,'verify_release',return_value=pins),patch.object(M.transparent_map,'served_sha256',return_value='e'*64),patch.object(M.subprocess,'run',return_value=result):
             request=M.build(inventory,'ssh-alias','b'*40,assignment,unit,'d'*64,1<<30,1,worker_id='native-worker')
         self.assertEqual(len(request['files']),8)
         self.assertIn(digest+'/page-0.bin',{f['path'] for f in request['files']})

@@ -31,6 +31,17 @@ atomic candidate rename. Source exports are retained for coordinator-to-worker
 bootstrap. These are local implementation tests; no worker bytes, live unit or
 routing have been changed.
 
+October 1 input preparation review found and reproduced a raw-file/protocol
+map identity mismatch. The corrected protocol serializer matches the retained
+native verifier's actual full-map digest (`fd4dcadb...`), separate from the
+immutable file (`34e3ebe3...`). Worker plans now bind both identities and seeded
+activation uses the protocol identity. Concrete coordinator preparation renders
+native assignments and separate v11 worker units through the wrapper. Read-only
+fleet inspection found three active workers with no fragment drop-ins and
+existing cache budgets 5/5/48 GiB. The reviewed prepared bundle and worker transfer
+still require plan/preflight and staged exact operations sources. Production stays
+v10; full certificates, raw-chain oracle and qualification remain open.
+
 October 1 routing follow-up: concrete withdrawal/private relay/reopen programs
 now require all workers and independently accepted anchors, checksum-bound
 manifests, unchanged sealed history, nonempty real HTTP recovery and independent

@@ -25,7 +25,7 @@ class Fleet:
         self.roster=[{'id':'recent1','role':'recent-replica','upstream':'10.142.0.1:8093'},
                      {'id':'recent2','role':'recent-replica','upstream':'10.142.0.2:8093'},
                      {'id':'archive1','role':'archive-owner','upstream':'10.142.0.3:8093'}]
-        self.canonical={};self.mapping=mapping;self.digest=M.H.checksum(root/'publication/shards.json')
+        self.canonical={};self.mapping=mapping;self.digest=M.H.transparent_map.served_sha256(mapping)
         self.actions=[];self.fail_route=False;self.bad_anchor=False;self.bad_worker=None
         self.status={'warm':True,'invalidated':False,'candidate':None,'preparing':None,
                      'active':{'map_sha256':self.digest},
@@ -64,7 +64,8 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.mapping={'start_height':0,'genesis_hash':'b'*64,'network':'mainnet','profile':'test',
                       'range_envelope_version':2,'seal':{},'shards':[{'shard_id':0,'manifest_digest':'d'*64,
                       'start_height':0,'end_height':10,'terminal_block_hash':'c'*64,
-                      'parent_block_hash':'0'*64,'geometry':'test','revision':0,'sealed':False}]}
+                      'parent_block_hash':'0'*64,'geometry':'test','revision':0,'sealed':False,
+                      'filter_hash':'8'*64,'scripts':1,'page_rows':1,'txids':1,'directory_segments':1,'page_segments':1}]}
         (self.root/'publication/shards.json').write_text(json.dumps(self.mapping))
         self.fleet=Fleet(self.root,self.mapping)
         self.sample=self.root/'sample.json';self.sample.write_text(json.dumps({'anchor_height':10,'anchor_hash':'c'*64,
@@ -217,7 +218,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         await self.routing.verify('v11')
         self.mapping['profile']='changed'
         (self.root/'publication/shards.json').write_text(json.dumps(self.mapping))
-        self.fleet.digest=M.H.checksum(self.root/'publication/shards.json')
+        self.fleet.digest=M.H.transparent_map.served_sha256(self.mapping)
         self.fleet.status['active']['map_sha256']=self.fleet.digest
         self.fleet.write_assignment()
         with self.assertRaisesRegex(ValueError,'lineage'):await self.routing.reopen('v11')
@@ -249,7 +250,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
 
     def publish(self):
         (self.root/'publication/shards.json').write_text(json.dumps(self.mapping))
-        self.fleet.digest=M.H.checksum(self.root/'publication/shards.json')
+        self.fleet.digest=M.H.transparent_map.served_sha256(self.mapping)
         self.fleet.status['active']['map_sha256']=self.fleet.digest
         self.fleet.write_assignment()
 
@@ -294,7 +295,11 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_malformed_range_or_digest_cannot_reopen(self):
         for field,value in [('start_height',1),('manifest_digest','g'*64),('sealed',None)]:
             old=self.mapping['shards'][0][field]
-            self.mapping['shards'][0][field]=value;self.publish()
+            self.mapping['shards'][0][field]=value
+            if field=='sealed':
+                (self.root/'publication/shards.json').write_text(json.dumps(self.mapping))
+                self.fleet.digest='0'*64
+            else:self.publish()
             with self.assertRaises(ValueError):await self.routing.verify('v11')
             self.mapping['shards'][0][field]=old;self.publish()
 

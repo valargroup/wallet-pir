@@ -117,6 +117,11 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   certificate/oracle gates remain open. No production baseline or cutover has
   occurred. Partial capture/restore and stale candidate namespace reconciliation
   must be exercised before the actual rollback/redeploy acceptance gate.
+  Coordinator preparation now renders native assignment and worker units in an
+  immutable inputs directory through plan/preflight/stage. A reproduced raw-map
+  versus served-map mismatch is fixed across native assignment, activation and
+  routing proofs; worker plans bind both digests. Actual prepared bundle and
+  worker transfer remain open until reviewed plan/source staging succeeds.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

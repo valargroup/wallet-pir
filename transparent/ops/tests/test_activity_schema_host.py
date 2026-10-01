@@ -31,7 +31,7 @@ def worker_plan():
                       'target': '/etc/systemd/system/'+M.WORKER, 'sha256': 'e'*64, 'mode': 0o644}],
         'worker': {'id': 'transparent-pir-recent-01', 'directory': '/srv/transparent-pir/v11/publications/'+'f'*64,
                    'assignment': '/srv/transparent-pir/v11/publications/'+'f'*64+'/assignment.json',
-                   'map_sha256': 'f'*64, 'binary_sha256': 'd'*64, 'assignment_sha256': 'd'*64}}
+                   'map_sha256': 'e'*64, 'map_file_sha256':'f'*64, 'binary_sha256': 'd'*64, 'assignment_sha256': 'd'*64}}
 
 
 class PlanTests(unittest.TestCase):

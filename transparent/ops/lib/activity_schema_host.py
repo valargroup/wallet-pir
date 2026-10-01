@@ -18,7 +18,7 @@ import time
 import urllib.error
 import urllib.request
 
-from wallet_pir_ops import inherited_lock
+from wallet_pir_ops import inherited_lock, transparent_map
 
 SPEC = importlib.util.spec_from_file_location('schema_host_baseline', Path(__file__).with_name('activity_schema_baseline.py'))
 B = importlib.util.module_from_spec(SPEC)
@@ -153,12 +153,12 @@ def validate(plan):
                 'candidate omits separate controller configuration')
     if role == 'worker':
         w = plan['worker']
-        require(isinstance(w, dict) and set(w) == {'id', 'directory', 'assignment', 'assignment_sha256', 'map_sha256', 'binary_sha256'}, 'invalid worker target')
+        require(isinstance(w, dict) and set(w) == {'id', 'directory', 'assignment', 'assignment_sha256', 'map_sha256', 'map_file_sha256', 'binary_sha256'}, 'invalid worker target')
         require(isinstance(w['id'], str) and re.fullmatch('[a-zA-Z0-9-]{1,64}', w['id']), 'invalid worker id')
-        for key in ('map_sha256', 'binary_sha256', 'assignment_sha256'):
+        for key in ('map_sha256', 'map_file_sha256', 'binary_sha256', 'assignment_sha256'):
             require(isinstance(w[key], str) and HEX.fullmatch(w[key]), 'invalid worker identity')
         directory = B.safe_path(w['directory'])
-        require(directory.parent == Path('/srv/transparent-pir/v11/publications') and directory.name == w['map_sha256'],
+        require(directory.parent == Path('/srv/transparent-pir/v11/publications') and directory.name == w['map_file_sha256'],
                 'worker publication is outside v11 namespace')
         require(w['assignment'] == str(directory/'assignment.json'), 'worker assignment is outside candidate')
         binary = next(i for i in plan['installs'] if i['target'] == '/usr/local/bin/transparent-shard-server')
@@ -259,7 +259,9 @@ class Host:
         if self.role == 'worker':
             self.predecessor_worker()
             w = self.plan['worker']
-            require(checksum(Path(w['directory'])/'shards.json') == w['map_sha256'] and
+            require(checksum(Path(w['directory'])/'shards.json') == w['map_file_sha256'] and
+                    transparent_map.served_sha256(load(Path(w['directory'])/'shards.json')) == w['map_sha256'] and
+                    load(w['assignment'])['set']['map_sha256'] == w['map_sha256'] and
                     checksum(w['assignment']) == w['assignment_sha256'], 'staged worker map/assignment disagrees')
             candidate = next(i for i in self.plan['installs'] if i['target'] == '/etc/systemd/system/'+WORKER)
             start = next(shlex.split(line[10:]) for line in Path(candidate['source']).read_text().splitlines() if line.startswith('ExecStart='))

@@ -838,6 +838,37 @@ the exact export at `/srv/transparent-activity/ops/staging/<SHA>.tar.gz` for thi
 step; older receipts without a retained archive are preserved as recorded.
 Persistent SSH masters are disabled. Preserve earlier sources and receipts.
 
+`schema-input-prepare-{plan,preflight,stage,status,reconcile}` prepares the
+concrete native assignment and worker units on the pinned root coordinator.
+Provide `--request FILE --request-sha256 HASH`; stage additionally requires
+`--expect-plan-sha256 HASH` from the reviewed plan. The closed private request
+binds the operations source, frozen release receipt, review time, attempt and
+complete worker identities, roles, VPC upstreams, cache budgets and predecessor
+unit bytes. At least two recent replicas and one archive owner are required.
+Preflight rechecks every running peer's fragment and refuses drop-ins or pending
+unit reloads until reviewed. It uses the completed publication's actual cutoff
+and the native planner with 15% assignment headroom. Plan uses disposable private
+tmpfs scratch; it leaves no retained candidate or owner. Only native provenance
+time is normalized to the request's review time for deterministic plan hashes;
+native placement and identities are preserved and checked again by `shard-assign
+check`. Stage repeats the plan under the lock, retaining inherited descriptors
+through preflight and native children, then atomically retains assignment,
+roster, inventory and units as mode 0400 under
+`/srv/transparent-activity/full-v11/inputs/<request SHA>`. This changes no live
+units or records. Failed/unknown owners fence other mutations and require explicit
+reconciliation, preserving partial output in a same-filesystem abandoned directory.
+
+Publication file and protocol identities are separate. The full publication's
+file SHA is `34e3ebe3...`; native Serde's compact served-map SHA is `fd4dcadb...`.
+Immutable worker directories and file checks use the former; native assignment,
+active records, readiness and fleet/controller activation use the latter. Host
+worker plans bind both `map_file_sha256` and `map_sha256`. The protocol serializer
+rejects unsupported fields/types and matches the independently retained native
+verifier's served digest. Do not replace an immutable file merely to make these
+identities equal. The existing 48 GiB archive cache budget is supported by input
+requests; the bounded maximum is 64 GiB, with the unchanged native admission and
+20% host memory/disk gates.
+
 `schema-input-build --host HOST --worker-id ID --source-sha REV --assignment FILE
 --unit FILE --release-result-sha256 HASH --cache-bytes BYTES` renders a private
 request from the completed full publication and frozen 18-artifact release.

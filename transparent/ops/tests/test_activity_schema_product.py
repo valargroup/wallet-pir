@@ -175,9 +175,10 @@ class ProductSeed(unittest.TestCase):
         self.root=Path(self.tmp.name)
         self.product=object.__new__(M.Product)
         self.product.mapping={'shards':[{'end_height':3500738,'terminal_block_hash':'c'*64}]}
+        p=patch.object(M.H.transparent_map,'served_sha256',return_value='2'*64);p.start();self.addCleanup(p.stop)
         self.product.rows=[{'id':name,'upstream':'10.142.0.'+str(n)+':8093'} for n,name in enumerate(('r1','r2','a1'),1)]
         self.product.workers=[{'plan':{'worker':{'id':w['id'],'directory':'/srv/transparent-pir/v11/publications/'+'a'*64,
-                               'assignment':'/srv/transparent-pir/v11/publications/'+'a'*64+'/assignment.json','map_sha256':'a'*64}}} for w in self.product.rows]
+                               'assignment':'/srv/transparent-pir/v11/publications/'+'a'*64+'/assignment.json','map_sha256':'2'*64,'map_file_sha256':'a'*64}}} for w in self.product.rows]
         self.product.local=SimpleNamespace(withdrawn=lambda:None,quiet=lambda _:None)
         self.product.inputs=lambda:None;self.product.units=lambda:None
         def entry(name,data):
@@ -201,7 +202,7 @@ class ProductSeed(unittest.TestCase):
         state=self.publisher/'v11/state'
         active=json.loads((state/'active.json').read_text())
         desired=json.loads((state/'desired.json').read_text())
-        req=json.loads((state/('a'*64+'.request.json')).read_text())
+        req=json.loads((state/('2'*64+'.request.json')).read_text())
         self.assertEqual(desired,req)
         self.assertEqual(active['map_sha256'],desired['map_sha256'])
         self.assertEqual(active['assignment'],desired['prepared']['assignment'])

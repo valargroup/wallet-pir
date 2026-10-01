@@ -17,8 +17,12 @@ import shlex
 import stat
 import subprocess
 import time
+import tempfile
+import contextlib
+import datetime
+import ipaddress
 
-from wallet_pir_ops import durable, inherited_lock, schema_fence
+from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_map, transparent_unit
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HERE = Path(__file__).parent
@@ -37,6 +41,7 @@ SOURCE = Path('/srv/transparent-activity/ops/sources')
 MAX_REQUEST = 8 << 20
 MAX_FILES = 65536
 MAX_BYTES = 192 << 30
+PREPARED = P.ROOT/'full-v11/inputs'
 CHUNK = 1 << 20
 HEX = re.compile('[0-9a-f]{64}')
 ID = re.compile('[a-zA-Z0-9-]{1,64}')
@@ -79,7 +84,7 @@ def validate(request):
     for key in ('map_sha256','assignment_sha256','release_result_sha256'):
         require(isinstance(request[key], str) and HEX.fullmatch(request[key]), 'invalid staging digest')
     require(type(request['attempt']) is int and 1 <= request['attempt'] <= 100 and
-            type(request['cache_bytes']) is int and 0 < request['cache_bytes'] <= 32 << 30, 'invalid staging bounds')
+            type(request['cache_bytes']) is int and 0 < request['cache_bytes'] <= 64 << 30, 'invalid staging bounds')
     files = request['files']
     require(isinstance(files, list) and 5 <= len(files) <= MAX_FILES, 'invalid input file count')
     names, total = set(), 0
@@ -459,7 +464,7 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
     assignment=Path(assignment); unit=Path(unit)
     require(unit.stat().st_size <= 65536, 'worker unit exceeds bound')
     value=json.loads(assignment.read_text(),object_pairs_hook=unique)
-    require(value['set']['map_sha256'] == result['map_sha256'] and value['set']['shard_schema'] == 'transparent-shard-v11' and
+    require(value['set']['map_sha256'] == transparent_map.served_sha256(json.loads((P.OUTPUT/'shards.json').read_text(),object_pairs_hook=unique)) and value['set']['shard_schema'] == 'transparent-shard-v11' and
             value['generated_by']['source_sha'] == P.RELEASE_SHA and not value['unassigned'], 'assignment is not the complete frozen v11 publication')
     require(isinstance(worker_id,str) and any(w['id'] == worker_id for w in value['workers']), 'worker is absent from native assignment')
     raw=subprocess.run([str(P.RELEASE/'artifacts/shard-assign'),'files','--shard-dir',str(P.OUTPUT),
@@ -496,3 +501,205 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
     return validate({'version':1,'source_sha':source_sha,'machine_id':inventory.hosts[host]['machine_id'],'worker_id':worker_id,
         'map_sha256':result['map_sha256'],'assignment_sha256':P.checksum(assignment),'release_result_sha256':release_sha256,
         'attempt':attempt,'cache_bytes':cache_bytes,'files':files})
+
+
+@contextlib.contextmanager
+def lock_environment(lock):
+    previous=os.environ.get(inherited_lock.VARIABLE)
+    os.environ[inherited_lock.VARIABLE]=','.join(map(str,lock.descriptors()))
+    try:yield
+    finally:
+        if previous is None:os.environ.pop(inherited_lock.VARIABLE,None)
+        else:os.environ[inherited_lock.VARIABLE]=previous
+
+
+class Preparation:
+    """Render and retain the concrete assignment/units without touching services.
+
+    Plan uses disposable private tmpfs scratch for the native atomic planner.
+    Stage repeats the reviewed rendering under the coordinator lock and retains
+    an immutable bundle plus its owner. Unknown partial output needs explicit
+    reconciliation; it is never overwritten or accepted as a complete bundle.
+    """
+    def __init__(self, inventory, request, expected):
+        require(isinstance(request,dict) and set(request)=={'version','source_sha','release_result_sha256',
+                'created_unix','attempt','workers'} and type(request['version']) is int and request['version']==1,
+                'invalid coordinator preparation request')
+        require(isinstance(request['source_sha'],str) and re.fullmatch('[0-9a-f]{40}',request['source_sha']) and
+                isinstance(request['release_result_sha256'],str) and HEX.fullmatch(request['release_result_sha256']) and
+                type(request['created_unix']) is int and 0<request['created_unix']<2**40 and
+                type(request['attempt']) is int and 1<=request['attempt']<=100 and
+                isinstance(request['workers'],list) and 3<=len(request['workers'])<=30 and
+                len(durable.canonical(request))<=MAX_REQUEST and digest(request)==expected,
+                'coordinator preparation identity/bounds disagree')
+        names,ids,machines,roles=set(),set(),set(),[]
+        for worker in request['workers']:
+            require(isinstance(worker,dict) and set(worker)=={'host','id','role','replica_group','upstream','cache_bytes','unit'},
+                    'invalid preparation worker')
+            host=inventory.hosts.get(worker['host'],{})
+            require(isinstance(worker['id'],str) and ID.fullmatch(worker['id']) and
+                    worker['host'] not in names and worker['id'] not in ids and
+                    isinstance(host.get('machine_id'),str) and re.fullmatch('[0-9a-f]{32}',host['machine_id']) and
+                    host['machine_id'] not in machines and host.get('user','root')=='root', 'unreviewed/duplicate worker identity')
+            require(worker['role'] in ('recent-replica','archive-owner') and
+                    (worker['replica_group'] is None if worker['role']=='archive-owner' else
+                     isinstance(worker['replica_group'],str) and ID.fullmatch(worker['replica_group'])) and
+                    type(worker['cache_bytes']) is int and 0<worker['cache_bytes']<=64<<30 and
+                    isinstance(worker['unit'],str) and len(worker['unit'].encode())<=65536, 'invalid worker resources/unit')
+            address,port=worker['upstream'].split(':')
+            require(ipaddress.ip_address(address) in ipaddress.ip_network('10.142.0.0/16') and port=='8093',
+                    'worker upstream is outside reviewed private service network')
+            args=transparent_unit.exec_args(worker['unit'])
+            require(args[0]=='/usr/local/bin/transparent-shard-server' and '--worker-id' in args and
+                    args[args.index('--worker-id')+1]==worker['id'], 'predecessor unit identity differs')
+            names.add(worker['host']);ids.add(worker['id']);machines.add(host['machine_id']);roles.append(worker['role'])
+        require(roles.count('recent-replica')>=2 and roles.count('archive-owner')>=1,'incomplete recent/archive fleet')
+        self.inventory,self.request,self.identifier=inventory,request,expected
+        self.target=PREPARED/expected;self.partial=PREPARED/(expected+'.preparing')
+        self.owner=OWNERS/(expected+'.json')
+        self.executor=SSHExecutor(inventory)
+        self.retained_native=None
+
+    def identity(self):
+        source=self.request['source_sha']
+        require(os.geteuid()==0 and self.inventory.lock=={'type':'pinned_host','machine_id':Path('/etc/machine-id').read_text().strip()},
+                'preparation requires pinned root coordinator')
+        require(Path(__file__).resolve().parents[3]==SOURCE/source,'preparation requires immutable source')
+        receipt=json.loads((SOURCE.parent/'staging'/(source+'.json')).read_text())
+        S.verify_receipt(receipt,SOURCE/source,source,receipt['archive_sha256'])
+
+    def render(self):
+        result=json.loads((P.EVIDENCE/'result.json').read_text())
+        require(result['status']=='passed' and result['map_sha256']==P.checksum(P.OUTPUT/'shards.json'),
+                'full publication is not verified complete')
+        P.verify_release(self.request['release_result_sha256'])
+        report=json.loads((P.EVIDENCE/'publication.json').read_text())
+        cutoff=report['published']['recent_from']
+        mapping=json.loads((P.OUTPUT/'shards.json').read_text(),object_pairs_hook=unique)
+        recent=next((s['start_height'] for s in mapping['shards'] if s['geometry']=='recent-4k-8k'),None)
+        require(cutoff==recent and all(s['geometry']==('recent-4k-8k' if s['start_height']>=cutoff else 'archive-wide')
+                                      for s in mapping['shards']), 'publication cutoff/geometry report disagrees')
+        roster=[{key:w[key] for key in ('id','role','replica_group','upstream','cache_bytes')} |
+                {'ssh_host':self.inventory.hosts[w['host']]['address']} for w in self.request['workers']]
+        # Only the planner's provenance timestamp is normalized to the reviewed
+        # request time. Its placement, budgets and complete set identity remain
+        # native outputs, then the native check validates the retained bytes.
+        with tempfile.TemporaryDirectory(prefix='wallet-pir-assignment-',dir='/dev/shm') as tmp:
+            root=Path(tmp);root.chmod(0o700)
+            (root/'roster.json').write_bytes(durable.canonical(roster))
+            argv=[str(P.RELEASE/'artifacts/shard-assign'),'plan','--shard-dir',str(P.OUTPUT),
+                  '--roster',str(root/'roster.json'),'--recent-from-height',str(cutoff),'--headroom','0.15',
+                  '--out-assignment',str(root/'assignment.json'),'--source-sha',P.RELEASE_SHA]
+            self.native('plan',argv)
+            assignment=json.loads((root/'assignment.json').read_text(),object_pairs_hook=unique)
+            require(assignment['set']['map_sha256']==transparent_map.served_sha256(mapping) and
+                    assignment['set']['shard_schema']=='transparent-shard-v11' and not assignment['unassigned'],
+                    'native assignment is incomplete or identifies another publication')
+            assignment['generated_by']['generated_at']=datetime.datetime.fromtimestamp(self.request['created_unix'],datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            raw=durable.canonical(assignment)
+            (root/'assignment.json').write_bytes(raw)
+            self.native('check',[str(P.RELEASE/'artifacts/shard-assign'),'check','--shard-dir',str(P.OUTPUT),
+                                '--assignment',str(root/'assignment.json')])
+        directory=ROOT/result['map_sha256']
+        files={'assignment.json':raw,'roster.json':durable.canonical(roster),
+               'inventory.json':durable.canonical({'hosts':self.inventory.hosts,'ssh':self.inventory.ssh,
+                                                  'lock':self.inventory.lock,'services':self.inventory.services})}
+        for worker in self.request['workers']:
+            unit,_=transparent_unit.rewrite_exec(worker['unit'],{'--shard-dir':directory,'--assignment':directory/'assignment.json',
+                '--worker-id':worker['id'],'--cache-bytes':worker['cache_bytes'],
+                '--runtime-cache-dir':'/srv/transparent-pir/v11/runtime-cache',
+                '--active-record':'/opt/transparent-publisher/v11/active.json','--control-socket':'/run/transparent-pir/control.sock'},append=True)
+            files[worker['id']+'.service']=unit.encode()
+        return files
+
+    def native(self, name, argv):
+        if self.retained_native is None:
+            return subprocess.run(argv,capture_output=True,check=True,timeout=60,**inherited_lock.options())
+        root=self.retained_native;root.mkdir(mode=0o700,parents=True,exist_ok=True)
+        log=root/(name+'.log');owner=root/(name+'.owner.json');result=root/(name+'.result.json')
+        require(not log.exists() and not owner.exists() and not result.exists(),'native preparation stage already owned')
+        record={'source_sha':P.RELEASE_SHA,'binary_sha256':P.checksum(argv[0]),'started_unix':time.time(),'stage':name,'status':'running'}
+        with log.open('xb') as output:
+            log.chmod(0o600)
+            child=subprocess.Popen(argv,stdout=output,stderr=subprocess.STDOUT,**inherited_lock.options())
+            record['pid']=child.pid;durable.atomic_json(owner,record,mode=0o400)
+            try:
+                code=child.wait(timeout=60);record.update(exit_code=code,status='passed' if code==0 else 'failed')
+                if code:raise subprocess.CalledProcessError(code,argv)
+            except BaseException as error:
+                if child.poll() is None:child.kill()
+                child.wait();record.update(status='interrupted' if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 'failed',error_type=type(error).__name__)
+                raise
+            finally:
+                output.flush();os.fsync(output.fileno())
+                record.update(finished_unix=time.time(),log_sha256=P.checksum(log))
+                durable.atomic_json(result,record,mode=0o400)
+
+    def plan(self):
+        files=self.render()
+        return {'request_sha256':self.identifier,'target':str(self.target),
+                'files':{name:hashlib.sha256(raw).hexdigest() for name,raw in files.items()}}
+
+    def preflight(self):
+        result=self.plan();no_links(self.target);no_links(self.partial);no_links(self.owner)
+        require(not self.target.exists() and not self.partial.exists() and not self.owner.exists(),
+                'preparation owner/output already exists; inspect status or reconcile')
+        resources(PREPARED)
+        for worker in self.request['workers']:
+            state=self.executor.probe_unit(worker['host'],'transparent-shard-server.service')
+            require(state['fragment_text']==worker['unit'] and not state['drop_ins'] and not state['need_daemon_reload'] and
+                    state['active_state']=='active' and state['main_pid']>0, 'worker unit drift/drop-ins require review')
+        return result
+
+    def status(self):
+        no_links(self.owner)
+        if not self.owner.exists():return {'status':'absent','request_sha256':self.identifier}
+        record=json.loads(self.owner.read_text(),object_pairs_hook=unique)
+        require(record['request_sha256']==self.identifier and record.get('kind')=='coordinator-input-preparation', 'preparation owner differs')
+        if record['status']=='staged':
+            no_links(self.target)
+            require({p.name for p in self.target.iterdir()}==set(record['files']), 'prepared file set changed')
+            for name,sha in record['files'].items():
+                path=self.target/name;no_links(path)
+                require(path.is_file() and path.stat().st_mode&0o777==0o400 and P.checksum(path)==sha,'prepared bytes/modes changed')
+        return record
+
+    def run(self, action, expect_plan=None):
+        self.identity()
+        if action in ('plan','preflight','status'):return getattr(self,action)()
+        with ProductionLock(self.inventory.lock) as lock, lock_environment(lock):
+            lock.verify();schema_fence.local_schema_fence(skip_input=self.identifier if action=='reconcile' else None)
+            if action=='reconcile':
+                record=self.status()
+                require(record['status'] in ('running','failed','interrupted') and
+                        json.loads((OWNERS/'latest.json').read_text())=={'request_sha256':self.identifier}, 'preparation does not need reconciliation')
+                for path in (self.partial,self.target):
+                    no_links(path)
+                    if path.exists():
+                        abandoned=path.with_name(path.name+'.abandoned')
+                        require(not abandoned.exists(),'conflicting preparation displacement')
+                        path.rename(abandoned)
+                record.update(status='reconciled',reconciled_unix=time.time());durable.atomic_json(self.owner,record)
+                return record
+            plan=self.preflight();require(digest(plan)==expect_plan,'preparation plan changed')
+            OWNERS.mkdir(mode=0o700,parents=True,exist_ok=True);PREPARED.mkdir(mode=0o700,parents=True,exist_ok=True)
+            durable.atomic_json(OWNERS/(self.identifier+'.request.json'),self.request,mode=0o400)
+            record={'kind':'coordinator-input-preparation','request_sha256':self.identifier,'status':'running','pid':os.getpid(),'started_unix':time.time()}
+            durable.atomic_json(self.owner,record);durable.atomic_json(OWNERS/'latest.json',{'request_sha256':self.identifier})
+            try:
+                self.retained_native=OWNERS/(self.identifier+'.native')
+                files=self.render();require({n:hashlib.sha256(v).hexdigest() for n,v in files.items()}==plan['files'],'prepared rendering changed')
+                self.partial.mkdir(mode=0o700)
+                for name,raw in files.items():
+                    path=self.partial/name
+                    with path.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+                    path.chmod(0o400)
+                sync_dir(self.partial);self.partial.rename(self.target);sync_dir(PREPARED);lock.verify()
+                record.update(status='staged',files=plan['files'],plan_sha256=expect_plan,target=str(self.target))
+                return record
+            except BaseException as error:
+                record.update(status='interrupted' if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 'failed',error_type=type(error).__name__)
+                raise
+            finally:
+                record['finished_unix']=time.time();durable.atomic_json(self.owner,record)
+                self.retained_native=None

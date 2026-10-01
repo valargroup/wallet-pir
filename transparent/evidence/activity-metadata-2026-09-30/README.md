@@ -294,3 +294,13 @@ native-selected worker transfer, mode/hash/stream bounds, partial retention,
 coordinator/remote ownership fences and explicit reconciliation. These are local
 fixtures and process boundaries, not actual SSH surviving-descendant evidence
 or a live worker transfer. Native inputs remain at `12ce1291`.
+
+[Coordinator input preparation and map identity checks](input-preparation-map-identity-focused.json)
+bind the concrete native assignment/unit preparation and a reproduced rejection
+of a correct served-map assignment by the former raw-file comparison. The
+protocol serializer matches the full publication's retained native verifier;
+file and served digests remain distinct. Read-only fleet inputs are retained
+privately with their raw hash. Preparation owners retain native stage PID,
+executable hash, logs and results, including failures. This evidence does not
+establish a live input bundle, service transition, independent extraction
+oracle, snapshot certificate or capacity qualification.

@@ -1,0 +1,68 @@
+{
+  "status": "passed",
+  "gate": "focused-operations-check",
+  "base_sha": "80c94f32d7d8cde6615226d41b9cdd7627cc774b",
+  "check_owner": "77c50f86751f407e9e237af6ce17062b",
+  "duration_seconds": 18.635182666941546,
+  "implementation_sha256": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "579c48d74d8287e41be97846f9edf2e6ee5fc2be8362ccf309491c59731d7c16",
+    "transparent/ops/lib/activity_input_stage.py": "1eb86ef433b2e8cd2a100844efcfba69319603082e84e363def2e503ccd2a109",
+    "transparent/ops/lib/activity_schema_host.py": "00756c736031d849a2f2a954efcb7527478857c1fcd7319f25dca2a8c8feaace",
+    "transparent/ops/lib/activity_schema_product.py": "41076368de78265be91de28c81c6fb064ea71856f0259b2faabb8233208df1b7",
+    "transparent/ops/lib/activity_schema_routing.py": "ed372ed0c4133e1cb7a4af192bf97a8036d8586752b8efb6fc7f6d91bf4a3697",
+    "transparent/ops/tests/test_activity_input_stage.py": "2d9687be4e5a9f200cbbc6eae63b00b73bb1e7fd8a381d1db9206c94363ce87e",
+    "transparent/ops/tests/test_activity_schema_host.py": "4aba06b6517bb43cab9a14959147a95a295b122288062587bfe16117691e2206",
+    "transparent/ops/tests/test_activity_schema_operation.py": "927e073bb406781650195e077a72022c8c08a7fb6caca6610bb56334ffb45ee8",
+    "transparent/ops/tests/test_activity_schema_product.py": "7bc286883b2ffd730f57ddc719576b364727f741c1be15d2402f66eddd98198c",
+    "transparent/ops/tests/test_activity_schema_routing.py": "0ff320cadf2659648261e86b8014ecf5bcbc017895ff2d74447e30d19289cdf6",
+    "ops/lib/wallet_pir_ops/transparent_map.py": "3bb08c1b3119d8230a0bbf21a999a9a2ef48ac2dd3be9b2b2fde00c627e91662",
+    "transparent/ops/tests/test_activity_input_preparation.py": "b8ba12a5020160e841a79153dc6776b0ea0c1f34b024442ccbb8a9eb89507e0a"
+  },
+  "inputs_manifest_sha256": "1dca742a863c1c3351ff769750547eba2c353eb75eaff89215bcf363e9e8e09e",
+  "raw_log_sha256": "c554a58446cf64d93e25f30841ffde8146ec900ab1c1ac7ccc9aca77fcd864bb",
+  "map_identity": {
+    "file_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+    "served_sha256": "fd4dcadb2d35333091b0805c7cbe06d3a715502b2cab9e6326e2c0bc5382cab3",
+    "matches_retained_native_verifier": true
+  },
+  "regression": {
+    "base_sha": "80c94f32d7d8cde6615226d41b9cdd7627cc774b",
+    "regression": "native served map digest differs from file digest",
+    "observations": [
+      {
+        "phase": "red",
+        "tests": 1,
+        "failures": 0,
+        "errors": 1,
+        "passed": false,
+        "log_sha256": "5d09eaccb35ed2e5257c7df02a44c178df98ed397dea2465f77db6eed097e462"
+      },
+      {
+        "phase": "green",
+        "tests": 1,
+        "failures": 0,
+        "errors": 0,
+        "passed": true,
+        "log_sha256": "c3dc4ce80790d0a5a68dcff2d3009be59564c24dfe01144e0f6b50051e539cc3"
+      }
+    ]
+  },
+  "fleet_readonly_raw_sha256": "c9f6f6beadf80915712ec86498d316199484b86153e7cc8dca1d9fce1c2638ac",
+  "limitations": [
+    "No production baseline, input bundle or worker data staged by this check",
+    "Native certificates and independent raw-chain extraction comparisons remain open",
+    "Canonical HTTPS, freshness, sustained wallet capacity and lifecycle gates remain open"
+  ],
+  "superseded_focused_owner": {
+    "id": "8b981edd6f6e4eaea877bf02f964624d",
+    "duration_seconds": 16.031338084023446,
+    "status": "passed-before-native-owner-log-retention",
+    "accepted_for_final_inputs": false
+  },
+  "tests": {
+    "combined_schema": 132,
+    "baseline": 19,
+    "shared_deployment": 45,
+    "load": 6
+  }
+}

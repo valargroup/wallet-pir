@@ -542,6 +542,7 @@ def load_tests(loader, tests, _pattern):
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_recovery_proof.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_product.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_input_stage.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_input_preparation.py'))
     return tests
 
 

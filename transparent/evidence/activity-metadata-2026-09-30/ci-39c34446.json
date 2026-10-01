@@ -1,0 +1,69 @@
+{
+  "head_sha": "39c3444601ccdc4d586cd01f2d3a923873f7bba5",
+  "jobs": [
+    {
+      "conclusion": "success",
+      "name": "Select full checks",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Validate Enhance infrastructure",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Validate transparent elastic infrastructure",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Validate selected helper checks",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Enhance tests",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Transparent tests",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Transparent lint",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Shared lint and tests",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Enhance lint",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Full checks complete",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Prepare native CUDA release artifact (Ubuntu 22.04)",
+      "status": "completed"
+    },
+    {
+      "conclusion": "success",
+      "name": "Prepare qualified release artifacts",
+      "status": "completed"
+    }
+  ],
+  "limitation": "Exact comprehensive CI evidence for 39c34446; newer 80c94f32 operations inputs retain their own pending exact-head gate.",
+  "raw_sha256": "bc0af456913f556a1688a45017bd4c709540de77e0714f3af3b7fcc8bb1f2116",
+  "run_id": 36816657723,
+  "status": "passed"
+}

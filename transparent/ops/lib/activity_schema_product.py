@@ -66,7 +66,7 @@ def validate(spec):
         names.add(entry['host']); machines.add(plan['machine_id']); roles.append(plan['role'])
         if plan['role'] == 'worker':
             w = plan['worker']
-            H.require(w['id'] not in workers and w['map_sha256'] == spec['publication_sha256'] and
+            H.require(w['id'] not in workers and w['map_file_sha256'] == spec['publication_sha256'] and
                       w['assignment_sha256'] == spec['assignment']['sha256'], 'worker publication/assignment disagreement')
             workers.add(w['id'])
     H.require(roles.count('coordinator') == 1 and roles.count('router') == 1 and roles.count('worker') >= 3, 'incomplete role inventory')
@@ -128,9 +128,11 @@ class Product:
                   mapping['shards'][-1]['end_height'] == 3500738, 'initial publication is not the complete approved range')
         assignment = H.load(checked(self.spec['assignment']))
         R.assignment_digest(assignment)
-        H.require(assignment['set']['map_sha256'] == self.spec['publication_sha256'] and
+        H.require(assignment['set']['map_sha256'] == H.transparent_map.served_sha256(mapping) and
                   assignment['set']['shard_schema'] == 'transparent-shard-v11' and not assignment['unassigned'] and
                   assignment['generated_by']['source_sha'] == NATIVE, 'assignment does not bind frozen native inputs')
+        H.require(all(e['plan']['worker']['map_sha256'] == assignment['set']['map_sha256'] for e in self.workers),
+                  'worker protocol identity disagrees with native assignment')
         rows = assignment['workers']
         H.require({w['id'] for w in rows} == {e['plan']['worker']['id'] for e in self.workers} and
                   sum(w['role'] == 'recent-replica' for w in rows) >= 2 and
@@ -206,7 +208,7 @@ class Product:
         self.units()
         state = H.ROOT/'v11/state'
         H.require(state.is_dir() and not any(state.iterdir()), 'candidate fleet state already exists; reconcile')
-        digest = self.spec['publication_sha256']
+        digest = H.transparent_map.served_sha256(self.mapping)
         assignment_path = state/(digest+'.assignment.json')
         H.B.atomic(assignment_path, checked(self.spec['assignment']).read_bytes())
         roster = H.load(H.ROOT/'v11/roster.json')

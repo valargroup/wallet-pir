@@ -211,7 +211,7 @@ class Routing:
         require(target is not None, 'fleet activation record is absent')
         active, request = target
         raw_map = Path(request['directory'])/'shards.json'
-        require(H.checksum(raw_map) == active['map_sha256'] and H.load(raw_map) == mapping,
+        require(H.transparent_map.served_sha256(H.load(raw_map)) == active['map_sha256'] and H.load(raw_map) == mapping,
                 'controller and fleet active publications disagree')
         assignment = H.load(active['assignment'])
         assignment_sha = assignment_digest(assignment)
