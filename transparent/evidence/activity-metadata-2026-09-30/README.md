@@ -223,3 +223,41 @@ regression and the initial fixture isolation failure are retained. The earlier
 13.189-second passing check predates the corrections and is not accepted for the
 final inputs. Capture preserves original router routes and warm worker state;
 staging stops all replaced services, including the filter, before activation.
+
+[Routing and reference recovery evidence](schema-routing-recovery-focused.json)
+records 20 new routing tests, seven real SQLite/native-report tests and 87
+combined schema/staging/preparation/host/routing/recovery tests. The affected
+final check passed in 13.693 seconds against exact retained implementation hashes.
+The first 13.534-second
+check predates the additional running-assignment scope review and is superseded.
+Three red/green regressions reproduce same-chain history rewrite and authority
+startup without a maintenance fence. A corrected fixture API error is retained
+separately and is not passing evidence. These are fixtures, without any live
+routing or service transition.
+
+The concrete dependencies guard both public origins, preserve a loopback-only
+private verification relay, check every worker and accepted retained anchor,
+verify actual manifest bytes and reject sealed-history changes. Nonempty private
+and canonical HTTPS native recoveries independently reopen SQLite and refuse
+unresolved effects, pending work and missing classes. Reopening failures restore
+withdrawal. Old v10 metadata remains unavailable. Complete reviewed plans, remote
+lock/owner dispatch, initial controller/fleet records and the cutover recipe are
+still required. No production or sustained qualification is inferred.
+
+[Completed journal and publication launch](full-ingestion-publication-start.json)
+records the terminal v3 genesis-through-3500738 checkpoint and passing independent
+ingestion guard. Wrapper plan/preflight/start/status used the reviewed staged
+`6e8337fa` operations and all 18 frozen `12ce1291` fat-LTO hashes. The new owner
+PID 1876447 is running cutoff/publication/verification preparation under its
+production lock; cutoff passed and publication was active at the observation.
+Starting preparation establishes no publication completion, canonical cutover
+or qualification. Two local prelaunch evidence/parser failures are retained;
+both occurred before start, and no duplicate job was launched.
+
+The running-worker scope review binds the complete canonical native assignment
+digest, worker identity/role and assigned shard count. A read-only comparison
+against the coordinator's actual v10 assignment matched its installed native
+serializer exactly; binary and raw evidence hashes are retained. An additional
+public-snapshot fence rejects a newer public map that has not passed the final
+all-worker observation. Earlier passing checks predate those fixes and are
+explicitly excluded from final-input evidence.

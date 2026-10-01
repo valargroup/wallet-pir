@@ -523,6 +523,8 @@ def load_tests(loader, tests, _pattern):
     # registering it here avoids central Makefile churn selecting every Rust package.
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_publication_job.py'))
     tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_host.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_routing.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_recovery_proof.py'))
     return tests
 
 

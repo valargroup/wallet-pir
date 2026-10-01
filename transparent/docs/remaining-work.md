@@ -15,7 +15,15 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
 - [x] Finish focused extraction, v11 codec, reference SQLite, contradiction and independent-oracle checks.
 - [x] Freeze prototype source/artifacts; publish bounded real-chain recent and archive geometry data.
 - [x] Establish nonempty HTTP SQLite recovery and exact 5 QPS / 20 QPS prototype gates.
-- [ ] Backfill a separate genesis-to-anchor v3 journal and complete v11 publication.
+- [x] Backfill a separate genesis-to-anchor v3 journal through 3500738.
+  The frozen ingester and independent guard completed successfully; checkpoint
+  and terminal evidence are [retained](../evidence/activity-metadata-2026-09-30/full-ingestion-publication-start.json).
+- [ ] Complete and verify the full v11 publication.
+  Wrapper owner `transparent-activity-full-publication-v11`, PID 1876447,
+  started after plan/preflight against frozen native `12ce1291` and staged
+  operations `6e8337fa`. Cutoff passed; shard publication is active with 20%
+  resource floors and inherited production/journal locks. Preserve its
+  `/srv/transparent-activity/full-v11/preparation` outputs and do not duplicate.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency
@@ -75,7 +83,7 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   The wrapper now owns a fixed full-publication preparation job, with retained
   release identities, completed-ingest/health-guard gates, six-month cutoff,
   all-artifact verification, resource limits and measured allocation. Focused
-  tests passed; it has not been started while ingestion owns the journal.
+  tests passed; it started after ingestion and its guard completed successfully.
   Publisher configuration/state and worker active/cache/publication paths now
   support explicit separate v11 namespaces. Complete trusted cutover/recovery
   orchestration and installed sandbox/SSH descendant checks remain required.
@@ -86,6 +94,15 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   assignment fences and corruption/startup failure recovery. Complete reviewed
   host plans, remote owners/locks, withdrawal/alignment/reopen orchestration,
   independent retrieval and updated load configuration still gate live use.
+  Concrete routing/recovery dependencies now guard both origins, retain a
+  loopback-only private verification relay, require every reviewed worker and
+  accepted retained anchor, bind raw manifest bytes and prevent sealed-history
+  rewrites. Private and canonical HTTPS reference recoveries require nonempty
+  independently reopened SQLite, all reviewed classes and no unresolved effects.
+  Failed public verification withdraws both origins; restored authority starts
+  only after its maintenance fence is enabled. This is fixture evidence.
+  Complete remote dispatch/lock qualification, reviewed plans/recipe, initial
+  controller/fleet state, filter/sandbox and resumed load still gate deployment.
   Candidate load
   owner: `transparent-activity-observe-5qps-3cfbc484-2`; frozen-table observation
   does not count toward the canonical publication/300-block qualification gate.

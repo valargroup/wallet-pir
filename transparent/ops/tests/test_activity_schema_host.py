@@ -191,6 +191,9 @@ class HostFilesTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.dir = Path(self.tmp.name).resolve()
+        root_patch = patch.object(M, 'ROOT', self.dir/'publisher')
+        root_patch.start()
+        self.addCleanup(root_patch.stop)
         self.unit = self.dir/'authority.service'
         self.unit.write_text('v10 unit')
         self.binary = self.dir/'binary'
@@ -227,6 +230,7 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(self.binary.read_bytes(), b'v10 executable')
         self.assertEqual(self.binary.stat().st_mode & 0o777, 0o755)
         self.assertEqual(self.routing.read_text(), 'guarded metadata')
+        self.assertEqual(json.loads((M.ROOT/'state/maintenance.json').read_text()), {'enabled':True})
         self.assertEqual((self.cache/'sentinel').read_text(), 'retained warm bytes')
         starts = [e for e in self.host.commands.events if e[0] == 'start']
         self.assertEqual(starts, [('start', M.START['coordinator'])])
@@ -284,6 +288,19 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(self.routing.read_text(), 'withdrawn routes')
         self.assertEqual(self.host.commands.states[M.LOAD]['MainPID'], '0')
         self.assertEqual(self.host.commands.states[M.SCALER]['MainPID'], '0')
+
+    def test_restored_authority_starts_only_after_maintenance_fence(self):
+        self.host.capture()
+        state = M.ROOT/'state'
+        state.mkdir(parents=True)
+        (state/'maintenance.json').write_text('{"enabled":false}')
+        unit = self.host.commands.unit
+        def guarded_unit(action, *units):
+            if action == 'start':
+                self.assertTrue(json.loads((state/'maintenance.json').read_text())['enabled'])
+            unit(action, *units)
+        self.host.commands.unit = guarded_unit
+        self.host.restore()
 
     def test_router_baseline_precedes_public_withdrawal(self):
         self.host.role = 'router'

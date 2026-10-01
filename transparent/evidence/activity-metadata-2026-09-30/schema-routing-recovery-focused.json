@@ -1,0 +1,127 @@
+{
+  "source_base": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+  "implementation_inputs": {
+    "transparent/ops/lib/activity_schema_routing.py": "9837b23d1321d8a1a4b926ccd68ebbffcb0448e84d89c369e6dce1979094bee0",
+    "transparent/ops/lib/activity_recovery_proof.py": "bf9094626ad53b79c2b90eb07580217e1383750b158d95360cd1e06becc868cf",
+    "transparent/ops/lib/activity_schema_host.py": "f5f214dce8141506940290bc3ed868140c798bb2c587c91058171a667d784f40",
+    "transparent/ops/lib/activity_schema_baseline.py": "bc6ab035a2b618f94236e471f9fb471aab3b89644963a4900372f0cab909ae21",
+    "transparent/ops/scripts/transparent-activity-routing.py": "d93371c022bdeaa97e04fc05976640b343bd27bbbfe17af1b03ae3003d2ebde8",
+    "transparent/ops/scripts/activity-reopen-check.py": "40054f30a26e215d4d3518ac44ea9750826b126e050ea7396d921a578f0c2025",
+    "transparent/ops/tests/test_activity_schema_routing.py": "1ef0e6080e6776c0b02d3be3385d4c3e37e98d9d42a5cea823e2cefc0aaa42c4",
+    "transparent/ops/tests/test_activity_recovery_proof.py": "6c130feb22216ecffb7e46b33dea5e0f1201ad3c7c49ebf723c7d046a12bb81e",
+    "transparent/ops/tests/test_activity_schema_host.py": "f9acfe4b53f0d016ee2b32a90aa0116c67d070890e6577a8dc1844c87e0ebc2b",
+    "transparent/ops/tests/test_activity_schema_operation.py": "79e11d9b81485f4fd8d38f582cc727f872c30ba9dfc92e579a2f9fff08caa4d4",
+    "ops/lib/wallet_pir_ops/inherited_lock.py": "50724124bbf797e0c6eb62c081cd19b1dd29e3f661550bccb284dd8cd172c003"
+  },
+  "regression": {
+    "red": {
+      "tests": 3,
+      "failures": 3,
+      "errors": 0,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-routing-review/red.log",
+      "log_sha256": "74b87dae89beb87804ff093be83583133cef96ef1c28850db1f0b3b9cefe160d"
+    },
+    "green": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-routing-review/green.log",
+      "log_sha256": "33aecec9fbcf15f3175c9fed2489867d3848bb6d262b850d0f769033c06a34f8"
+    }
+  },
+  "unix": 1790825412.250748,
+  "earlier_fixture_error": {
+    "test": "maintenance-before-start regression",
+    "error_type": "AttributeError",
+    "reason": "fixture used nonexistent start method; corrected to service-manager unit API"
+  },
+  "production_mutations": false,
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "tests": {
+    "schema_staging_preparation_host_routing_recovery": 87,
+    "routing": 20,
+    "recovery": 7,
+    "host": 21,
+    "baseline": 19,
+    "shared_deployment": 45
+  },
+  "limitations": [
+    "fixture evidence only; no service or routing transition",
+    "reviewed host plans, remote owners/locks and full recipe unfinished",
+    "full publication and native certificates/independent raw-chain comparisons pending",
+    "canonical freshness/load/whole-wallet/lifecycle/rollback qualification pending"
+  ],
+  "canonical_schema": "transparent-shard-v10",
+  "superseded_checks": [
+    {
+      "check": {
+        "id": "1a4c33c7977444b2a53040df0240ab1a",
+        "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+        "repo": "wallet-pir",
+        "sha": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+        "tool": "codex",
+        "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+        "state": "/Users/roman/.ai-runbook/dev-ux",
+        "log": "/Users/roman/.ai-runbook/dev-ux/checks/1a4c33c7977444b2a53040df0240ab1a.log",
+        "started": 1790825376.769106,
+        "automatic_wake": false,
+        "status": "pass",
+        "exit_code": 0,
+        "duration": 13.534466000040993
+      },
+      "accepted_for_final_inputs": false,
+      "reason": "predates native assignment scope and final public-snapshot checks"
+    },
+    {
+      "check": {
+        "id": "dd4f1331a33b4459a68c12756dd90155",
+        "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+        "repo": "wallet-pir",
+        "sha": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+        "tool": "codex",
+        "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+        "state": "/Users/roman/.ai-runbook/dev-ux",
+        "log": "/Users/roman/.ai-runbook/dev-ux/checks/dd4f1331a33b4459a68c12756dd90155.log",
+        "started": 1790826116.2037592,
+        "automatic_wake": false,
+        "status": "pass",
+        "exit_code": 0,
+        "duration": 13.493883625022136
+      },
+      "accepted_for_final_inputs": false,
+      "reason": "predates final public-snapshot fence"
+    }
+  ],
+  "focused_check": {
+    "id": "5c028ab6cf684f979eea7aa3351a2d3e",
+    "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+    "repo": "wallet-pir",
+    "sha": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+    "tool": "codex",
+    "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+    "state": "/Users/roman/.ai-runbook/dev-ux",
+    "log": "/Users/roman/.ai-runbook/dev-ux/checks/5c028ab6cf684f979eea7aa3351a2d3e.log",
+    "started": 1790826229.309477,
+    "automatic_wake": false,
+    "status": "pass",
+    "exit_code": 0,
+    "duration": 13.693112708977424
+  },
+  "native_assignment_parity": {
+    "read_only": true,
+    "native_digest": "e16196f4079fe141513fa0ebd9d3acd0c9249a1357a2c74af4a0e5d0484cafc0",
+    "python_digest": "e16196f4079fe141513fa0ebd9d3acd0c9249a1357a2c74af4a0e5d0484cafc0",
+    "native_binary_sha256": "761d78846b7ee0e43cd2711a2eac8ad66d88fadbe72edb2f318f9e5b367586d1",
+    "raw_path": "/Users/roman/.ai-runbook/dev-ux/activity-schema-routing-review/native-assignment-canonical.log",
+    "raw_sha256": "210b6b38991edf0ab3be21d42c1134c8bda496df358112b71d9b1d549673f270"
+  },
+  "additional_review_fixes": [
+    "match running worker scope to complete native assignment digest",
+    "reject missing/unassigned history and worker identity/role/scope mismatch",
+    "reject a public map newer than the final all-worker observation"
+  ],
+  "corrected_fixture_failures": [
+    "missing simulated service-manager start API",
+    "fixture publication updates omitted regenerating assignment identities; three tests failed until corrected"
+  ]
+}

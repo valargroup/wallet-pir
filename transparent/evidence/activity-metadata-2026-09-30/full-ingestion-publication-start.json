@@ -1,0 +1,177 @@
+{
+  "observation": {
+    "observed_unix": 1790825690.6487792,
+    "journal": {
+      "version": 3,
+      "start_height": 0,
+      "checkpoint_sha256": "c8f8ede1c894874cd673b69cc91b2dbf1f842f769ef1df408db106a6a7af5c02",
+      "committed_event_bytes": 42684252745,
+      "covered_through": 3500738
+    },
+    "ingest_guard": {
+      "pid": 1689418,
+      "guarded_unit": "transparent-activity-full-ingest-release-a1c4b809",
+      "guarded_pid": 1689410,
+      "source_sha": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+      "through": 3500738,
+      "started_unix": 1790806465.1142588,
+      "binary_sha256": "d4a8cc161cc9c6b938963a81d12dd9b13df5cfad595d6fe4a5309d3a2032a972",
+      "driver_sha256": "894b00bf5c2cc0eea85796ac2340f64402769a0cfee38516e3a486808880da49",
+      "ended_unix": 1790825427.6743314,
+      "status": "passed",
+      "failure": null,
+      "terminal_state": {
+        "MainPID": "0",
+        "Result": "success",
+        "NRestarts": "0",
+        "ExecMainStatus": "0",
+        "ActiveState": "inactive"
+      }
+    },
+    "publication_owner": {
+      "journal": {
+        "checkpoint_sha256": "c8f8ede1c894874cd673b69cc91b2dbf1f842f769ef1df408db106a6a7af5c02",
+        "guard_sha256": "ee9f20d07089371fc382a06d564de6301077b65dde9333582ad1299747fc5cac",
+        "meta_sha256": "a9cbf694ab73fd2e7be85a09d36d03e85362ba4b709626fc53702610f11bea6c"
+      },
+      "launcher_pid": 1876438,
+      "machine_id": "6a16bce88fb2493681d327344090293a",
+      "pid": 1876447,
+      "plan": {
+        "geometries": {
+          "archive_geometry": "archive-wide",
+          "directory_choice": "all",
+          "range_profile": "zcash-transparent-range-v2",
+          "recent_geometry": "recent-4k-8k"
+        },
+        "journal": "/srv/transparent-activity/full-v3/journal",
+        "output": "/srv/transparent-activity/full-v11/publications/initial",
+        "properties": [
+          "CPUQuota=400%",
+          "MemoryHigh=14G",
+          "MemoryMax=16G",
+          "MemorySwapMax=0",
+          "Nice=10",
+          "IOWeight=20",
+          "Restart=no",
+          "KillMode=control-group",
+          "TimeoutStopSec=20",
+          "RemainAfterExit=yes"
+        ],
+        "release_result_sha256": "2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8",
+        "release_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+        "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+        "through": 3500738,
+        "unit": "transparent-activity-full-publication-v11",
+        "version": 1
+      },
+      "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+      "started_unix": 1790825566.1220849,
+      "status": "running",
+      "unit": "transparent-activity-full-publication-v11",
+      "version": 1
+    },
+    "stage_results": {
+      "shard-cutoff.result.json": {
+        "ended_unix": 1790825577.1489987,
+        "error_type": null,
+        "exit_code": 0,
+        "pid": 1876457,
+        "started_unix": 1790825566.9707367,
+        "status": "passed"
+      }
+    },
+    "native_owners": {
+      "shard-cutoff.owner.json": {
+        "binary_sha256": "d0c09335b95fad1b5d9c1199cedf75684a5b6f7850153cbc6ac6d353f6dacff1",
+        "pid": 1876457,
+        "source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+        "started_unix": 1790825567.0265265,
+        "unit": "transparent-activity-full-publication-v11"
+      },
+      "shard-publish.owner.json": {
+        "binary_sha256": "47c7a68db7da08be335a3205afc0236c5a8ae85d97986be6a92379c06173e186",
+        "pid": 1876549,
+        "source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+        "started_unix": 1790825577.4717062,
+        "unit": "transparent-activity-full-publication-v11"
+      }
+    },
+    "health": {
+      "stage": "shard-publish",
+      "unix": 1790825687.4837227,
+      "memory_available": 0.8351982906334926,
+      "disk_available": {
+        "/srv/transparent-activity": 0.7239802149487055,
+        "/srv/zakura": 0.2290533910918131,
+        "/": 0.29760869945663637
+      }
+    }
+  },
+  "launch": {
+    "mode": "start",
+    "exit_code": 0,
+    "seconds": 2.013741416973062,
+    "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-launch.log",
+    "preflight_exit_code": 0,
+    "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+    "local_prelaunch_failures": [
+      "JSON-only parsing of successful text preflight",
+      "attempt to overwrite immutable local ready receipt; stopped after read-only status before launch"
+    ],
+    "reply": [
+      {
+        "geometries": {
+          "archive_geometry": "archive-wide",
+          "directory_choice": "all",
+          "range_profile": "zcash-transparent-range-v2",
+          "recent_geometry": "recent-4k-8k"
+        },
+        "journal": "/srv/transparent-activity/full-v3/journal",
+        "output": "/srv/transparent-activity/full-v11/publications/initial",
+        "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+        "properties": [
+          "CPUQuota=400%",
+          "MemoryHigh=14G",
+          "MemoryMax=16G",
+          "MemorySwapMax=0",
+          "Nice=10",
+          "IOWeight=20",
+          "Restart=no",
+          "KillMode=control-group",
+          "TimeoutStopSec=20",
+          "RemainAfterExit=yes"
+        ],
+        "release_result_sha256": "2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8",
+        "release_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+        "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+        "through": 3500738,
+        "unit": "transparent-activity-full-publication-v11",
+        "version": 1
+      },
+      {
+        "owner_status": "launching",
+        "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+        "result": null,
+        "state": {
+          "ActiveState": "active",
+          "ExecMainStatus": "0",
+          "MainPID": "1876447",
+          "NRestarts": "0",
+          "Result": "success"
+        },
+        "unit": "transparent-activity-full-publication-v11"
+      }
+    ]
+  },
+  "private_raw_path": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-start-observed.json",
+  "private_raw_sha256": "83645289cd707482a9b50a63e07d009b64090d6cf2f1e5dcc5fba98b8efb4424",
+  "canonical_schema": "transparent-shard-v10",
+  "service_cutover": false,
+  "publication_complete": false,
+  "limitations": [
+    "native certificate and independent raw-chain comparison gates remain",
+    "trusted complete service orchestration/recipe not ready",
+    "canonical load/freshness/whole-wallet/lifecycle qualification not established"
+  ]
+}

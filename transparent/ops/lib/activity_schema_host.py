@@ -438,6 +438,11 @@ class Host:
         self.quiet(stop)
         include = [i['path'] for i in self.plan['baseline']['files'] if not deferred(self.role, i['path'])]
         B.restore(self.root, include)
+        if self.role == 'coordinator':
+            # Restoring the old fleet state may restore maintenance=false. Fence
+            # controller/reconciler route retries before restarting either one.
+            (ROOT/'state').mkdir(parents=True, exist_ok=True, mode=0o700)
+            B.atomic(ROOT/'state/maintenance.json', encode({'enabled': True}))
         self.commands.run(['systemctl', 'daemon-reload'])
         # Restore only previously active product units. Load/scaler/Caddy remain
         # governed by the outer verify/reopen phases and the total 900s budget.

@@ -8,6 +8,34 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+At 03:31 UTC the full v3 journal committed genesis through 3500738 and its
+independent ingestion health guard passed. The checkpoint binds 42,684,252,745
+event bytes. Wrapper plan/preflight passed and launched
+`transparent-activity-full-publication-v11`, PID 1876447, using staged operations
+`6e8337fa` and frozen fat-LTO `12ce1291`. The owner reacquired the production
+lock and repeated preflight; cutoff finished and shard publication is active.
+At 03:34 UTC available memory was 83.52%, candidate disk 72.40%, chain disk
+22.91% and root disk 29.76%. Full publication verification, certificates and
+independent extraction checks are still pending. No schema cutover occurred.
+
+October 1 routing follow-up: concrete withdrawal/private relay/reopen programs
+now require all workers and independently accepted anchors, checksum-bound
+manifests, unchanged sealed history, nonempty real HTTP recovery and independent
+SQLite reopen. Canonical HTTPS recovery follows reopening and failures withdraw
+both origins again. Legacy metadata remains unavailable; unresolved spends and
+missing classes cannot pass as complete. Fixture tests passed; no live routing
+change, baseline or schema transaction occurred. Complete remote dispatch,
+reviewed host plans/recipe, initial fleet/controller state, filter/sandbox and
+updated load configuration remain open.
+
+At 03:26 UTC backfill reached 3,440,000 blocks and 352,186,053 events. Its guard
+reported 87.73% available memory, 72.77% candidate-volume disk, 22.91% chain disk
+and 29.76% root disk with zero restarts. Comprehensive CI 36807464393 at
+`26245bd0` passed Transparent lint/tests, shared and selected helper checks;
+Enhance tests remain active and the aggregate is pending. Superseded
+36804203576 is confirmed cancelled, which is not passing evidence.
+
+
 
 October 1 host-transition follow-up: concrete product host programs now stop
 writer units, require empty cgroups, capture complete v10 mutable state, install

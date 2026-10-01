@@ -918,3 +918,47 @@ updated load fixtures, complete host plans/recipe and actual SSH descendant
 qualification still gate production use. The full publication preparation and
 native certificates/oracle gates precede maintenance. No host baseline or service
 transition has been applied by these fixture checks.
+
+### Guarded routing and reference recovery phases
+
+`transparent/ops/scripts/transparent-activity-routing.py` implements the schema
+recipe's withdrawal, private routing, verification, reopening and public
+verification dependencies. Invoke only under the coordinator wrapper's inherited
+production lock, with a closed plan binding both fleet configurations, original
+Caddy bytes, complete coordinator baseline and checksum-bound v10/v11 samples.
+Samples bind every worker executable independently; the compatible retained
+`12ce1291` fat-LTO reader serves both schemas. These dependencies do not supply
+the complete reviewed host plans, remote dispatch or cutover recipe.
+
+Withdrawal guards the coordinator authority before changing router routes. Both
+canonical metadata origins must return 503. A temporary Caddy relay bound only
+to `127.0.0.1:18193` forwards metadata to the local candidate authority and PIR
+setup/query traffic to the reviewed private router. It permits a real HTTP
+reference-wallet recovery while public metadata stays withdrawn. One-shot fleet
+phases use direct SSH without persistent control masters.
+
+Verification requires every reviewed worker, including both recent replicas and
+all archive owners, to attest its warm publication and running executable pin.
+The HTTP worker scope and canonical assignment digest must also match the complete
+reviewed assignment, including worker identity, role and assigned shard count.
+Every advertised retained revision is compared with accepted node anchors. Each
+authority manifest's actual response bytes must match its map digest, schema,
+range, geometry, chain identity and preceding manifest. Sealed entries remain
+identical across recovery and reopening; only a monotonically advancing tail
+may change. A new failed verification retires its predecessor's passing proof.
+
+The brief native recovery retains every report, attempt and SQLite store. An
+independent read-only reopen checks the reader fence, source attribution, exact
+nonempty events, agreeing transaction metadata, complete coverage, no pending
+work and the committed accepted anchor. Unresolved-spend completions cannot
+pass. Legacy v10 metadata remains unavailable. Each reviewed class must complete
+exactly. Owner/result records are atomic, private and durable. This brief gate
+does not replace sustained qualification or the raw-chain extraction oracle.
+
+Reopening requires a complete baseline and a matching proof no older than five
+minutes, then repeats live worker and anchor checks. After reopening, a fresh
+reference recovery uses the two canonical HTTPS origins and independently
+reopens its stores. Origin disagreement, router failure or public recovery
+failure withdraws both origins again. Rollback restoration writes the old
+fleet's maintenance fence before starting the restored authority; load and
+scaler stay stopped until the outer approved phases restore them.

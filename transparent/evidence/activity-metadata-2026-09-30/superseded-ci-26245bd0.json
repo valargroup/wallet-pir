@@ -1,0 +1,496 @@
+{
+  "superseded_run": 36804203576,
+  "head": "6e8337fa91f723e4383f074d2227b1720b341655",
+  "replacement_run": 36807464393,
+  "replacement_head": "26245bd0df3e61f1bdc9860550d4fbb09131a762",
+  "before": {
+    "conclusion": "",
+    "headSha": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "jobs": [
+      {
+        "completedAt": "2026-10-01T02:05:58Z",
+        "conclusion": "success",
+        "databaseId": 110184856601,
+        "name": "Select full checks",
+        "startedAt": "2026-10-01T02:05:51Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:05:52Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:05:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:56Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:05:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:56Z",
+            "conclusion": "success",
+            "name": "Select affected full suites",
+            "number": 3,
+            "startedAt": "2026-10-01T02:05:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:57Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 6,
+            "startedAt": "2026-10-01T02:05:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:57Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 7,
+            "startedAt": "2026-10-01T02:05:57Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184856601"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893165,
+        "name": "Enhance tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893165"
+      },
+      {
+        "completedAt": "2026-10-01T02:06:08Z",
+        "conclusion": "success",
+        "databaseId": 110184893173,
+        "name": "Validate transparent elastic infrastructure",
+        "startedAt": "2026-10-01T02:06:00Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:06:01Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:04Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:05Z",
+            "conclusion": "success",
+            "name": "Run hashicorp/setup-terraform@v3",
+            "number": 3,
+            "startedAt": "2026-10-01T02:06:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Validate provider schema and mock member plans",
+            "number": 4,
+            "startedAt": "2026-10-01T02:06:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893173"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893184,
+        "name": "Enhance lint",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893184"
+      },
+      {
+        "completedAt": "2026-10-01T02:06:10Z",
+        "conclusion": "success",
+        "databaseId": 110184893221,
+        "name": "Validate Enhance infrastructure",
+        "startedAt": "2026-10-01T02:06:00Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:06:02Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:06Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:06:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Run hashicorp/setup-terraform@v3",
+            "number": 3,
+            "startedAt": "2026-10-01T02:06:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Validate provider schema and mock fleet plans",
+            "number": 4,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-10-01T02:06:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-01T02:06:09Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893221"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893222,
+        "name": "Transparent lint",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893222"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893226,
+        "name": "Validate selected helper checks",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893226"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893296,
+        "name": "Transparent tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893296"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110184893311,
+        "name": "Shared lint and tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893311"
+      }
+    ],
+    "status": "queued"
+  },
+  "cancellation_requested": true,
+  "requested_unix": 1790822930.8474188,
+  "passing_evidence": false,
+  "first_after": {
+    "conclusion": "",
+    "headSha": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "jobs": [
+      {
+        "completedAt": "2026-10-01T02:05:58Z",
+        "conclusion": "success",
+        "databaseId": 110184856601,
+        "name": "Select full checks",
+        "startedAt": "2026-10-01T02:05:51Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:05:52Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:05:51Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:56Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:05:52Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:56Z",
+            "conclusion": "success",
+            "name": "Select affected full suites",
+            "number": 3,
+            "startedAt": "2026-10-01T02:05:56Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:57Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 6,
+            "startedAt": "2026-10-01T02:05:57Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:05:57Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 7,
+            "startedAt": "2026-10-01T02:05:57Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184856601"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893165,
+        "name": "Enhance tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893165"
+      },
+      {
+        "completedAt": "2026-10-01T02:06:08Z",
+        "conclusion": "success",
+        "databaseId": 110184893173,
+        "name": "Validate transparent elastic infrastructure",
+        "startedAt": "2026-10-01T02:06:00Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:06:01Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:04Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:05Z",
+            "conclusion": "success",
+            "name": "Run hashicorp/setup-terraform@v3",
+            "number": 3,
+            "startedAt": "2026-10-01T02:06:04Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Validate provider schema and mock member plans",
+            "number": 4,
+            "startedAt": "2026-10-01T02:06:05Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893173"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893184,
+        "name": "Enhance lint",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893184"
+      },
+      {
+        "completedAt": "2026-10-01T02:06:10Z",
+        "conclusion": "success",
+        "databaseId": 110184893221,
+        "name": "Validate Enhance infrastructure",
+        "startedAt": "2026-10-01T02:06:00Z",
+        "status": "completed",
+        "steps": [
+          {
+            "completedAt": "2026-10-01T02:06:02Z",
+            "conclusion": "success",
+            "name": "Set up job",
+            "number": 1,
+            "startedAt": "2026-10-01T02:06:01Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:06Z",
+            "conclusion": "success",
+            "name": "Run actions/checkout@v4",
+            "number": 2,
+            "startedAt": "2026-10-01T02:06:02Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:07Z",
+            "conclusion": "success",
+            "name": "Run hashicorp/setup-terraform@v3",
+            "number": 3,
+            "startedAt": "2026-10-01T02:06:06Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Validate provider schema and mock fleet plans",
+            "number": 4,
+            "startedAt": "2026-10-01T02:06:07Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Post Run actions/checkout@v4",
+            "number": 8,
+            "startedAt": "2026-10-01T02:06:09Z",
+            "status": "completed"
+          },
+          {
+            "completedAt": "2026-10-01T02:06:09Z",
+            "conclusion": "success",
+            "name": "Complete job",
+            "number": 9,
+            "startedAt": "2026-10-01T02:06:09Z",
+            "status": "completed"
+          }
+        ],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893221"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893222,
+        "name": "Transparent lint",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893222"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893226,
+        "name": "Validate selected helper checks",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893226"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893296,
+        "name": "Transparent tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893296"
+      },
+      {
+        "completedAt": "2026-10-01T02:48:50Z",
+        "conclusion": "cancelled",
+        "databaseId": 110184893311,
+        "name": "Shared lint and tests",
+        "startedAt": "2026-10-01T02:05:58Z",
+        "status": "completed",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110184893311"
+      },
+      {
+        "completedAt": "0001-01-01T00:00:00Z",
+        "conclusion": "",
+        "databaseId": 110195296233,
+        "name": "Full checks complete",
+        "startedAt": "2026-10-01T02:48:51Z",
+        "status": "queued",
+        "steps": [],
+        "url": "https://github.com/valargroup/wallet-pir/actions/runs/36804203576/job/110195296233"
+      }
+    ],
+    "status": "queued"
+  },
+  "after": {
+    "conclusion": "cancelled",
+    "headSha": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "status": "completed"
+  }
+}
