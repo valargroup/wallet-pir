@@ -142,6 +142,7 @@ class BaselineTests(unittest.TestCase):
         sha=__import__('hashlib').sha256(json.dumps(self.plan,sort_keys=True).encode()).hexdigest()
         B.protect_publications(self.plan,sha)
         shutil.rmtree(old)
+        B.preflight_retained(self.plan)
         newer=self.retained/('b'*64);newer.mkdir()
         (newer/'shards.json').write_text('new accepted map')
         (newer/'table').write_bytes(b'new immutable table')
@@ -156,6 +157,14 @@ class BaselineTests(unittest.TestCase):
         (self.backup/'complete.json').write_text(json.dumps(tampered))
         with self.assertRaisesRegex(ValueError,'captured activation'):
             B.verify(self.backup)
+
+    def test_missing_preflight_sentinel_requires_completed_exact_pin(self):
+        child=self.collected_publication();sha=__import__('hashlib').sha256(json.dumps(self.plan,sort_keys=True).encode()).hexdigest()
+        protected=self.retained.parent/('.schema-protected-'+sha+'-'+child.name)
+        shutil.rmtree(child)
+        with self.assertRaisesRegex(ValueError,'complete early pin'):B.preflight_retained(self.plan)
+        protected.mkdir(mode=0o700);(protected/'intent.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError,'complete early pin'):B.preflight_retained(self.plan)
 
     def test_only_regular_direct_publication_control_records_may_overlap_retention(self):
         for relative in ('shards.json','nested/active.json','active.json'):

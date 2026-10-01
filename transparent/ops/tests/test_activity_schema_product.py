@@ -38,6 +38,50 @@ def request(action='capture'):
 
 
 class Templates(unittest.TestCase):
+    def test_preserved_fleet_must_share_assignment_map_and_canonical_anchors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);publication=root/'protected/publication';publication.mkdir(parents=True)
+            row={'shard_id':0,'manifest_digest':'b'*64,'start_height':0,'end_height':1,
+                 'terminal_block_hash':'c'*64,'parent_block_hash':'0'*64,'geometry':'test','revision':0,
+                 'sealed':False,'filter_hash':'d'*64,'scripts':1,'page_rows':1,'txids':1,
+                 'directory_segments':1,'page_segments':1}
+            mapping={'genesis_hash':'a'*64,'network':'Main','profile':'test','range_envelope_version':1,
+                     'start_height':0,'seal':{},'shards':[row]}
+            (publication/'shards.json').write_text(json.dumps(mapping))
+            digest=M.H.transparent_map.served_sha256(mapping)
+            assignment=root/'assignment.json';assignment.write_text('captured complete assignment')
+            ids=['recent1','recent2','archive1'];item={'sentinel':str(publication/'shards.json')}
+            baseline={'captured_publications':[item],'protected_publications':[{'item':item,'protected':str(publication.parent)}],
+                      'plan_sha256':'e'*64}
+            p=object.__new__(M.Product);p.root=root/'proof';p.local=SimpleNamespace(saved=lambda:(baseline,None))
+            p.workers=[{'plan':{'worker':{'id':name}}} for name in ids]
+            async def canonical(height):return 'a'*64 if height==0 else 'c'*64
+            fleet=SimpleNamespace(reconciliation_target=lambda:({'map_sha256':digest,'assignment':str(assignment),'workers':ids},{}),
+                                  canonical_hash=canonical)
+            p.routing=SimpleNamespace(fleet=lambda *_,**__:fleet)
+            replies=[{'result':{'worker_id':name,'active':{'map_sha256':digest},'assignment_sha256':M.H.checksum(assignment),
+                       'revisions':[{'digest':'b'*64,'end_height':1,'terminal_block_hash':'c'*64}]}} for name in ids]
+            replies[1]['result']['active']['map_sha256']='f'*64
+            with self.assertRaisesRegex(ValueError,'incoherent'):asyncio.run(p.verify_preserved(replies))
+            self.assertFalse((p.root/'preserved-v10.json').exists())
+            replies[1]['result']['active']['map_sha256']=digest
+            async def foreign(_):return 'f'*64
+            fleet.canonical_hash=foreign
+            with self.assertRaisesRegex(ValueError,'genesis'):asyncio.run(p.verify_preserved(replies))
+            fleet.canonical_hash=canonical;asyncio.run(p.verify_preserved(replies))
+            self.assertEqual(json.loads((p.root/'preserved-v10.json').read_text())['map_sha256'],digest)
+
+    def test_generated_rollback_budget_allows_cold_cache_wait_within_total_limit(self):
+        spec={'source_sha':'a'*40,'publication_sha256':'b'*64,'inventory':{'path':'/inventory.json'}}
+        with patch.object(M,'checked',return_value=Path('/spec.json')),patch.object(M,'validate',return_value=spec), \
+                patch.object(M.H,'load',return_value=spec),patch.object(M.H,'checksum',return_value='c'*64):
+            recipe=M.recipe('/spec.json','c'*64)
+        budgets={command['name']:command['timeout'] for command in recipe['rollback']}
+        self.assertEqual(budgets,{'withdraw-origins':60,'restore-v10':140,'verify-rollback':300,
+                                  'reopen-v10':100,'verify-service':140})
+        self.assertGreater(budgets['verify-rollback'],250)
+        self.assertEqual(sum(budgets.values()),740)
+
     def test_repair_source_requires_current_rollback_intent_and_retained_receipt(self):
         p=object.__new__(M.Product);p.spec={'source_sha':'a'*40}
         root=Path('/srv/transparent-activity/ops/sources')/('b'*40)
@@ -361,6 +405,8 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.product.local.saved=lambda:(None,{'units':{u:{'ActiveState':'active'} for u in (M.H.LOAD,M.H.SCALER,*M.H.AUTHORITY)}})
         async def warm():self.events.append('restored-workers-warm')
         self.product.wait_restored_workers=warm
+        async def preserved(_):self.events.append('coherent-v10-baseline')
+        self.product.verify_preserved=preserved
         owner=self
         class Routing:
             def identity(self,**_):pass
@@ -391,6 +437,7 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         for phase in M.O.FORWARD:await self.phase(phase)
         self.assertLess(self.events.index('local-capture'),self.events.index('router-capture'))
         self.assertLess(self.events.index('a1-capture'),self.events.index('withdraw-v10'))
+        self.assertLess(self.events.index('coherent-v10-baseline'),self.events.index('withdraw-v10'))
         self.assertLess(self.events.index('a1-stage'),self.events.index('seed-complete-state'))
         self.assertLess(self.events.index('a1-verify-worker'),self.events.index('measured-installed-setups'))
         self.assertLess(self.events.index('measured-installed-setups'),self.events.index('local-activate'))

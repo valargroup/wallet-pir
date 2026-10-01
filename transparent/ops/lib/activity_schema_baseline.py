@@ -224,6 +224,24 @@ def protect_publications(plan, plan_sha):
     return protections
 
 
+def preflight_retained(plan):
+    """Read-only validation of live sentinels or exact completed early pins."""
+    sha = hashlib.sha256(json.dumps(plan,sort_keys=True).encode()).hexdigest()
+    for item in plan['retained']:
+        if Path(item['sentinel']).exists():
+            retained_identity(item)
+            continue
+        paths = protection_paths(item,sha)
+        require(paths is not None, 'retained rollback data is missing and unprotected')
+        source, protected = paths
+        require((protected/'complete.json').is_file(), 'retained rollback data lacks a complete early pin')
+        record = json.loads((protected/'complete.json').read_text())
+        require(record['item']==item and record['source']==str(source) and record['protected']==str(protected),
+                'retained early pin differs from reviewed plan')
+        verify_protections({'plan':plan,'plan_sha256':sha,'protected_publications':[record]})
+        retained_identity(dict(item,sentinel=str(protected/'publication/shards.json')))
+
+
 def verify_protections(record):
     for protected in record.get('protected_publications', []):
         item = protected['item']

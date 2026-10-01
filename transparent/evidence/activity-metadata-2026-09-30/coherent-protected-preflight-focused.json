@@ -1,0 +1,27 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "18cc7d189be8d9cf77e018fab4b916c910b89031",
+  "owner": "38a69871bdce4883b67e7115df76c090",
+  "duration_seconds": 21.414554916904308,
+  "command": "make check-fast BASE=18cc7d189be8d9cf77e018fab4b916c910b89031",
+  "result_sha256": "663d817910d1cb27cb8588f7aa60c9c06d1f4c41d479e9ec6e694590b2fa4794",
+  "inputs": {
+    "transparent/docs/deployment.md": "7866b6461801d9fb8bfb2dcddf439dfe66e5fb18db74000b6343615411351fdd",
+    "transparent/ops/lib/activity_schema_baseline.py": "cef50409a8a472d46420e493212bfcb0b9aec51f11a611d01c3823b70707a199",
+    "transparent/ops/lib/activity_schema_host.py": "9b7c0e0981d8204d2f06c2d238d6c1d153221ff09271f24abea9eebb8065b62d",
+    "transparent/ops/lib/activity_schema_product.py": "c34e4efd4c1b1e4436e13b7f1e4a59b751552ca1f7937a96a3b0921b83badd3a",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "40bbafb18483a21778a54de9c3c01bbdf84d8e8f06a3acd504095a5723fe4bd5",
+    "transparent/ops/tests/test_activity_schema_product.py": "bf982d4ec674409be836631109615849bcfb75bb0d51d1fcb0e3ef0e06346a95"
+  },
+  "observations": [
+    "Complete early pins are accepted read-only by preflight after collector removal; missing or incomplete pins refuse",
+    "Captured coordinator and all workers must share one exact publication and assignment with canonical anchors before withdrawal",
+    "Rollback verification receives 300 seconds inside unchanged 740-second total budget"
+  ],
+  "limitations": [
+    "Focused source validation is not live cutover or final qualification",
+    "Original rollback and recovery deadline remain failed; actual acceptance must rerun",
+    "Pending operations CI is explicitly waived, not reported passing"
+  ]
+}

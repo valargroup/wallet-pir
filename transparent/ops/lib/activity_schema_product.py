@@ -37,6 +37,8 @@ PUBLICATION = Path('/srv/transparent-activity/full-v11/publications/initial')
 LOAD_ROOT = Path('/srv/transparent-activity/canonical-load/v11')
 LOAD_BINARY = Path('/srv/transparent-activity/build/evidence')/('release-'+NATIVE)/'artifacts/examples/rate-query'
 GATES = {'artifact-verification', 'native-certificates', 'independent-chain-oracle', 'comprehensive-ci'}
+ROLLBACK_TIMEOUTS = {'withdraw-origins':60, 'restore-v10':140, 'verify-rollback':300,
+                     'reopen-v10':100, 'verify-service':140}
 
 
 def input_(value):
@@ -151,6 +153,35 @@ class Product:
             H.require(time.monotonic() < deadline or not pending, 'restored worker warm deadline exceeded')
             if pending:
                 await asyncio.sleep(2)
+
+    async def verify_preserved(self, replies):
+        """Require one coherent captured predecessor before withdrawing routes."""
+        baseline, _ = self.local.saved()
+        publications = baseline.get('captured_publications',[])
+        H.require(len(publications)==1, 'coordinator capture lacks one protected active publication')
+        protected = next(p for p in baseline['protected_publications'] if p['item']==publications[0])
+        mapping = H.load(Path(protected['protected'])/'publication/shards.json')
+        digest = H.transparent_map.served_sha256(mapping)
+        fleet = self.routing.fleet('v10',read_only=True)
+        target = fleet.reconciliation_target()
+        H.require(target is not None, 'captured predecessor has no coherent authority target')
+        request, _ = target
+        assignment = H.checksum(request['assignment'])
+        expected = {e['plan']['worker']['id'] for e in self.workers}
+        proofs = [reply['result'] for reply in replies]
+        H.require(request['map_sha256']==digest and set(request['workers'])==expected and
+                  len(proofs)==len(expected) and {p['worker_id'] for p in proofs}==expected and
+                  all(p['active']['map_sha256']==digest and p['assignment_sha256']==assignment for p in proofs),
+                  'captured coordinator/worker publication or assignment is incoherent')
+        anchors = {row['manifest_digest']:(row['end_height'],row['terminal_block_hash']) for row in mapping['shards']}
+        advertised = {(r['end_height'],r['terminal_block_hash']) for proof in proofs for r in proof['revisions']}
+        H.require(await fleet.canonical_hash(0)==mapping['genesis_hash'], 'captured predecessor genesis differs')
+        for height, anchor in set(anchors.values()) | advertised:
+            H.require(await fleet.canonical_hash(height)==anchor, 'captured predecessor anchor is not canonical')
+        self.root.mkdir(parents=True,exist_ok=True,mode=0o700)
+        H.B.atomic(self.root/'preserved-v10.json',H.encode({'status':'passed','map_sha256':digest,
+            'assignment_sha256':assignment,'workers':sorted(expected),'anchor_count':len(anchors),
+            'baseline_plan_sha256':baseline['plan_sha256']}))
 
     def inputs(self):
         source=self.spec['source_sha']
@@ -396,6 +427,7 @@ class Product:
             self.local.capture()
             self.remote(self.router, 'capture', attempt)
             await self.all_workers('capture', attempt)
+            await self.verify_preserved(await self.all_workers('verify-rollback-worker',attempt))
         elif phase == 'maintenance':
             await self.routing.withdraw('v10')
         elif phase == 'stage-v11':
@@ -518,7 +550,7 @@ def recipe(spec_path, expected):
     def command(name, group):
         return {'name':name, 'argv':[*base,'schema-product-phase','--spec',str(path),'--spec-sha256',expected,
                 '--phase',name,'--transaction','{transaction}','--journal','{journal}'],
-                'read_only':name.startswith('verify-'), 'timeout':(160 if name in ('verify-rollback','verify-service') else 140) if group=='rollback' else 1800}
+                'read_only':name.startswith('verify-'), 'timeout':ROLLBACK_TIMEOUTS[name] if group=='rollback' else 1800}
     result = {'version':1,'source_sha':spec['source_sha'],'publication_sha256':spec['publication_sha256'],
               'inputs':entries,'rollback_inputs':entries,
               'preflight':[{'name':'product-preflight','argv':[*base,'schema-product-preflight','--spec',str(path),'--spec-sha256',expected],

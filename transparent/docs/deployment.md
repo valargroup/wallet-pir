@@ -37,6 +37,14 @@ records. An older protected child alone cannot satisfy a worker's captured activ
 identity. Unfinished pins refuse reuse; unknown remote outcomes require owner
 observation and explicit reconciliation before another staging attempt.
 
+After capture and before withdrawal, the coordinator compares every captured
+worker's exact warm map and assignment checksum to its protected native map and
+coordinator activation target. It independently checks genesis and every current
+and retained advertised anchor against the node. A mismatch fails preservation
+before v11 staging. Rollback allocates 60/140/300/100/140 seconds to withdrawal,
+restore, cold-cache/private verification, reopen and public verification,
+respectively: 740 seconds total, within the 900-second recovery ceiling.
+
 Public recovery now runs two independent native client proofs with separate
 reopened SQLite stores, using each canonical origin as the encrypted query
 origin in turn. A successful metadata request or filter request alone does not

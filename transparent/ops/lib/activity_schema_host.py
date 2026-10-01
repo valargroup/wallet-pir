@@ -252,8 +252,7 @@ class Host:
         for item in self.plan['baseline']['files']:
             path = Path(item['path'])
             require(not item['required'] or path.exists() or path.is_symlink(), 'required predecessor file is absent')
-        for item in self.plan['baseline']['retained']:
-            B.retained_identity(item)
+        B.preflight_retained(self.plan['baseline'])
         self.effective_units()
         if self.role == 'coordinator':
             self.quiet((QUALITY,))
@@ -536,7 +535,7 @@ class Host:
                     isinstance(r.get('terminal_block_hash'), str) and HEX.fullmatch(r['terminal_block_hash']),
                     'malformed advertised revision anchor')
         return {'worker_id': self.plan['worker']['id'], 'active': active, 'binary_sha256': binary_hash,
-                'revisions': revisions, 'checked_unix': time.time()}
+                'assignment_sha256':assignment_hash, 'revisions': revisions, 'checked_unix': time.time()}
 
     def restore_routing(self):
         require(self.role == 'router', 'original routing restore requires the router plan')
