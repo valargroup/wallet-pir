@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "owner": "362a46897dba4f92a2f388517630bc90",
+  "base_source_sha": "330a9bd4e36c7491f2d38bad74f92ead47a324fd",
+  "duration_seconds": 17.752644709078595,
+  "result_sha256": "ba95b25b2cfa677e8b0ec35944b79ad5ad4334b691c811d354c2c8b70e887190",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_product.py": "38fb954d06567386994fbd69c2295901134675fb388915c3e9f67622b34ab253",
+    "transparent/ops/tests/test_activity_schema_product.py": "5a93187935b8b322c9544da0edd8decd0f6262c5a4061440810b385da9b39e34"
+  },
+  "scope": "Closed candidate publication pointer capture and exact adoption; negative foreign/uncaptured/symlink cases",
+  "limitations": "Fresh production preflight/capture/adoption and all v11 final qualification remain required"
+}

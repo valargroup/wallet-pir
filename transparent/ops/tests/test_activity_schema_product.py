@@ -300,7 +300,7 @@ class Fences(unittest.TestCase):
 class ProductSeed(unittest.TestCase):
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
-        self.root=Path(self.tmp.name)
+        self.root=Path(self.tmp.name).resolve()
         self.product=object.__new__(M.Product)
         self.product.mapping={'shards':[{'end_height':3500738,'terminal_block_hash':'c'*64}]}
         p=patch.object(M.H.transparent_map,'served_sha256',return_value='2'*64);p.start();self.addCleanup(p.stop)
@@ -320,6 +320,10 @@ class ProductSeed(unittest.TestCase):
         (publisher/'v11/roster.json').write_text(json.dumps(self.product.rows))
         publication=self.root/'publications/initial';publication.mkdir(parents=True)
         self.publisher,self.publication=publisher,publication
+        self.product.root=self.root/'proof'
+        self.product.coordinator={'plan':{'baseline':{'files':[{'path':str(publication.parent/'active.json'),'required':False}]}}}
+        self.record={'plan_sha256':'f'*64,'files':{str(publication.parent/'active.json'):None}}
+        self.product.local.saved=lambda:(self.record,None)
         patches=[patch.object(M.H,'ROOT',publisher),patch.object(M,'PUBLICATION',publication),patch.object(M,'LOAD_ROOT',self.root/'load')]
         for p in patches:p.start();self.addCleanup(p.stop)
 
@@ -344,6 +348,27 @@ class ProductSeed(unittest.TestCase):
     def test_changed_assignment_refuses_before_first_fleet_state_write(self):
         Path(self.product.spec['assignment']['path']).write_bytes(b'changed')
         with self.assertRaises(ValueError):self.product.seed()
+        self.assertEqual(list((self.publisher/'v11/state').iterdir()),[])
+
+    def test_exact_captured_stale_activation_is_adopted_with_receipt(self):
+        path=self.publication.parent/'active.json'
+        path.write_text(json.dumps(self.product.expected_activation()))
+        self.record['files'][str(path)]=M.H.B.entries(path)
+        self.product.candidate_activation()
+        self.product.seed()
+        receipt=json.loads((self.product.root/'candidate-publication-adoption.json').read_text())
+        self.assertEqual(receipt['captured'],self.record['files'][str(path)])
+        self.assertEqual(receipt['target'],self.product.expected_activation())
+
+    def test_uncaptured_drift_foreign_activation_and_symlink_refuse(self):
+        path=self.publication.parent/'active.json'
+        path.write_text(json.dumps(self.product.expected_activation()))
+        with self.assertRaisesRegex(ValueError,'changed after capture'):self.product.seed()
+        self.record['files'][str(path)]=M.H.B.entries(path)
+        path.write_text('{}')
+        with self.assertRaisesRegex(ValueError,'reviewed target'):self.product.candidate_activation()
+        path.unlink();path.symlink_to(self.root/'assignment.json')
+        with self.assertRaisesRegex(ValueError,'aliases'):self.product.candidate_activation()
         self.assertEqual(list((self.publisher/'v11/state').iterdir()),[])
 
 

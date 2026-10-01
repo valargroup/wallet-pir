@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "source_sha": "330a9bd4e36c7491f2d38bad74f92ead47a324fd",
+  "owner": "eff243f1703e4f50bf89c7c3118759e4",
+  "duration_seconds": 231.3306604999816,
+  "result_sha256": "4f242e79aa2710c2de4c460a25feeac6557e9a256391092e2913c7790c06ee8c",
+  "phase": "product-preflight",
+  "transaction_created": false,
+  "observed_blocker": "Existing exact initial v11 publication activation left by prior failed cutover; preflight required absence",
+  "correction": "Capture presence and exact bytes, verify reviewed publication identity, record owned adoption before reseeding",
+  "limitations": "No v11 deployment or final acceptance"
+}

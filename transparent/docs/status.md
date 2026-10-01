@@ -15,8 +15,9 @@ with reopened SQLite stores and no failures. Both fresh canonical metadata
 observations returned HTTP 200 through height 3502797. Quality remains stopped.
 This is a brief recovery proof, not v11 or sustained acceptance. The preceding
 [cold archive deadline failure](../evidence/activity-metadata-2026-09-30/protected-policy-cold-deadline-a8e6b63b.json)
-and every original timing failure remain failed. Candidate namespace reconciliation
-and a fresh reviewed v11 deployment are the next steps.
+and every original timing failure remain failed. The next fresh attempt failed preflight on a retained candidate publication pointer,
+before creating a transaction. Its exact presence and byte capture must be reconciled
+before a fresh reviewed v11 deployment.
 
 Latest actual cutover `c28901b4` captured protected coherent baselines on all
 five hosts and passed maintenance and v11 staging, then failed candidate warm

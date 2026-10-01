@@ -1359,3 +1359,11 @@ existing restore phase. These observations do not establish qualification; exact
 worker identity, assignment, warm publication, anchors and real client proofs
 remain mandatory. The remote restore budget is 90 seconds, restore phase 140
 seconds, global warm wait 250 seconds, and total rollback budget 740 seconds.
+
+The coordinator separately captures the direct initial-publication `active.json`
+pointer. A prior failed candidate can leave this outside its fleet-state tree.
+Preflight accepts its presence only when directory, served map, terminal height
+and hash, and complete upstream roster equal the reviewed initial publication.
+Seed revalidates its byte inventory against the complete baseline and records a
+private source/baseline-bound adoption receipt before writing fleet state. Missing
+capture declarations, byte drift, foreign identities and symlinks refuse.

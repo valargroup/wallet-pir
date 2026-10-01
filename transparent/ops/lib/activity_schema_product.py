@@ -304,12 +304,39 @@ class Product:
                       all(isinstance(v,str) and H.HEX.fullmatch(v) for v in pins.values()),
                       'recovery sample omits exact worker binary pins')
             H.require(kind != 'v11' or pins == candidate_pins, 'candidate recovery pins differ from installed plan')
+        self.candidate_activation()
         self.units()
         self.local.preflight()
         for entry in [self.router, *self.workers]: self.remote(entry, 'preflight', 0)
         # Every actual candidate byte must exist before maintenance starts.
-        H.require(not (PUBLICATION.parent/'active.json').exists(), 'initial candidate already activated; reconcile')
         return {'status':'passed', 'publication_sha256':self.spec['publication_sha256']}
+
+    def expected_activation(self):
+        terminal = self.mapping['shards'][-1]
+        return {'directory':str(PUBLICATION), 'map_sha256':H.transparent_map.served_sha256(self.mapping),
+                'height':terminal['end_height'], 'hash':terminal['terminal_block_hash'],
+                'upstreams':[w['upstream'] for w in self.rows]}
+
+    def candidate_activation(self, *, captured=False):
+        path = PUBLICATION.parent/'active.json'
+        H.require(str(path) in {i['path'] for i in self.coordinator['plan']['baseline']['files']},
+                  'baseline omits candidate publication activation presence/absence')
+        H.require(path.parent.resolve() == path.parent and not path.is_symlink(),
+                  'candidate publication activation aliases are refused')
+        current = H.B.entries(path) if path.exists() else None
+        H.require(current is None or (path.is_file() and H.load(path) == self.expected_activation()),
+                  'candidate publication activation differs from reviewed target')
+        if captured:
+            record, _ = self.local.saved()
+            H.require(record['files'][str(path)] == current,
+                      'candidate publication activation changed after capture')
+            receipt = self.root/'candidate-publication-adoption.json'
+            H.require(not receipt.exists() and not receipt.is_symlink(),
+                      'candidate publication adoption needs reconciliation')
+            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            H.B.atomic(receipt, H.encode({'status':'complete','source_sha':self.spec['source_sha'],
+                       'baseline_plan_sha256':record['plan_sha256'],'path':str(path),
+                       'captured':current,'target':self.expected_activation()}))
 
     def units(self):
         installs = {i['target']:Path(i['source']) for i in self.coordinator['plan']['installs']}
@@ -339,6 +366,7 @@ class Product:
         self.units()
         state = H.ROOT/'v11/state'
         H.require(state.is_dir() and not any(state.iterdir()), 'candidate fleet state already exists; reconcile')
+        self.candidate_activation(captured=True)
         digest = H.transparent_map.served_sha256(self.mapping)
         assignment_path = state/(digest+'.assignment.json')
         H.B.atomic(assignment_path, checked(self.spec['assignment']).read_bytes())
@@ -353,9 +381,7 @@ class Product:
                             ('active.json',{'map_sha256':digest,'workers':sorted(prepared),'assignment':str(assignment_path)}),
                             ('maintenance.json',{'enabled':True})):
             H.B.atomic(state/name, H.encode(value))
-        terminal = self.mapping['shards'][-1]
-        H.B.atomic(PUBLICATION.parent/'active.json', H.encode({'directory':str(PUBLICATION),'map_sha256':digest,
-                   'height':terminal['end_height'],'hash':terminal['terminal_block_hash'], 'upstreams':[w['upstream'] for w in self.rows]}))
+        H.B.atomic(PUBLICATION.parent/'active.json', H.encode(self.expected_activation()))
         scaler = H.ROOT/'v11/scaler'
         scaler.mkdir(mode=0o700)
         H.B.atomic(scaler/'policy.json', checked(self.spec['load']['policy']).read_bytes())
