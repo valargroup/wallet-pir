@@ -181,3 +181,24 @@ actual reviewed host plans, service orchestration, SSH-descendant qualification
 and the complete production cutover remain pending. The
 [superseded CI cancellation record](superseded-ci-9212afee.json) confirms final
 cancellation of the owned queued 56/f43 runs; cancellation is not passing evidence.
+
+[Second coordinator source staging](source-stage-coordinator-3d08c15b.json)
+records the 544153-byte reviewed operations export, receipt PID 1797420 and all
+273 retained hashes reverified. It is source preparation; no schema transaction
+or native fleet deployment was performed.
+
+[Publication preparation and namespace evidence](publication-preparation-focused.json) has focused
+fixture coverage: incomplete journal/guard refusal, bound plan identities,
+resource floors, real child descriptor propagation, failed-stage retention,
+v10 manifest rejection, separate v11 publisher config/state, worker active/cache
+namespace replacement and transfer corruption rejection. The complete service
+phase programs and recipe remain open. The job is not started against an active
+journal writer. The repaired comprehensive CI at `aa16dc24` passed all jobs;
+later exact-head CI remains pending.
+The batched affected check passed in 13.717 seconds, including 39 combined
+schema/staging/preparation tests, 33 publisher/fleet tests, 13 worker upgrade and
+namespace tests, 19 baseline tests and 45 shared deployment tests. A first
+constructor-fixture failure and a cancelled overly broad local selection remain
+retained; neither is counted as passing evidence. Registering preparation through
+the existing schema suite avoids a central Makefile change selecting all Rust
+packages. Native inputs remain unchanged at `12ce1291`.

@@ -46,6 +46,11 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       --archive FILE is required except for status. Bootstrap immutable reviewed
       sources over SSH under the coordinator lock; this never activates services.
 
+  schema-publication-{plan,preflight,start,status} --source-sha REV
+      --release-result-sha256 HASH [--expect-plan-sha256 HASH]
+      Prepare the approved full v11 publication on the pinned coordinator.
+      Requires completed ingestion; preserves canonical service and all partial output.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -91,6 +96,13 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    for name in ('plan', 'preflight', 'start', 'status', 'run'):
+        command = commands.add_parser('schema-publication-'+name,
+            help='fixed full v11 preparation job' if name != 'run' else argparse.SUPPRESS)
+        command.add_argument('--source-sha', required=True)
+        command.add_argument('--release-result-sha256', required=True)
+        if name == 'start':
+            command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan', 'preflight', 'stage', 'status'):
         command = commands.add_parser('schema-source-'+name)
         command.add_argument('--source-sha', required=True)
@@ -142,6 +154,22 @@ def main(argv=None, executor=None, out=print, **options):
     try:
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-publication-'):
+            spec = importlib.util.spec_from_file_location('activity_publication_job',
+                ROOT/'transparent/ops/lib/activity_publication_job.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            job = module.PublicationJob(descriptors.load_inventory(args.inventory), args.source_sha,
+                                        args.release_result_sha256, out)
+            action = args.command.removeprefix('schema-publication-')
+            if action == 'start':
+                job.start(args.expect_plan_sha256)
+            elif action == 'preflight':
+                job.preflight()
+                out('full publication preflight passed')
+            else:
+                getattr(job, action)()
+            return 0
         if args.command.startswith('schema-source-'):
             spec = importlib.util.spec_from_file_location('activity_source_stage',
                 ROOT/'transparent/ops/lib/activity_source_stage.py')

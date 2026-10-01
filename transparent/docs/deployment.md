@@ -824,6 +824,40 @@ binary/publication identity and exact private retrieval before restoring routing
 The actual complete host plans, service orchestration and reviewed cutover recipe
 remain open; no production baseline has been captured with this dependency yet.
 
+### Full v11 publication preparation
+
+The deployment wrapper owns a separate preparation job, before any schema
+maintenance. Use its `schema-publication-plan`, `schema-publication-preflight`,
+`schema-publication-start` and `schema-publication-status` commands on the pinned
+root coordinator. Pass the immutable staged operations `--source-sha` and
+`--release-result-sha256`; start additionally requires the printed
+`--expect-plan-sha256`. The frozen release receipt checksum is
+`2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8`.
+Do not launch it until the existing ingest and independent guard finish.
+
+The fixed job publishes `/srv/transparent-activity/full-v3/journal` from genesis
+through 3500738 into `/srv/transparent-activity/full-v11/publications/initial`.
+It derives the six-calendar-month boundary from independently accepted node
+headers, keeps `recent-4k-8k` / `archive-wide`, choice tables `all`, and the v2
+range profile. It uses the 18 retained fat-LTO artifacts at `12ce1291`, rechecking
+receipt, dependency, compiler, profile and every executable hash. Native
+publication is followed by complete artifact verification and four journal
+rebuild samples, final independent genesis/anchor checks and measured allocation,
+table counts and occupancy. Extraction oracle comparisons and native certificates
+remain additional gates before service cutover.
+
+`transparent-activity-full-publication-v11.service` owns the detached work with
+400% CPU, 14 GiB MemoryHigh, 16 GiB MemoryMax, no swap/restart, Nice 10 and IOWeight
+20. The child reacquires the production lock after bounded startup handoff and
+repeats preflight before writing; its native descendants inherit production and
+journal locks. Every five seconds the owner records memory and all three disk
+fractions, stopping its own stage below 20%. The job does not switch units,
+origins, scaler or load. Its private owner, per-stage PID/log/result, health and
+terminal evidence are retained under `full-v11/preparation`. Any existing owner
+or output refuses another start; failed or interrupted preparation requires
+explicit reconciliation, preserving its evidence rather than automatic overwrite.
+Job startup or preparation success is not canonical deployment or qualification.
+
 The publisher, fleet subprocesses and shared SSH executor now pass inherited
 production-lock descriptors and `PYTHONDONTWRITEBYTECODE=1` to children. A real
 local grandchild fixture retained the lock after its parent and original owner

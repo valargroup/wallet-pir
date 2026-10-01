@@ -17,6 +17,7 @@ class StageTimingTests(unittest.IsolatedAsyncioTestCase):
     async def test_control_timings_exclude_other_response_and_request_fields(self):
         fleet = object.__new__(M.Fleet)
         fleet.c = {}
+        fleet.read_only = False
         details = {'loading_seconds': 1.25, 'warming_seconds': 2.5,
                    'unrelated': 'private response payload'}
         fleet.ssh = AsyncMock(return_value=json.dumps({'ok': True, 'result': details}).encode())
@@ -67,6 +68,7 @@ class StageTimingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_staging_never_shares_the_owned_control_connection(self):
         fleet = object.__new__(M.Fleet)
+        fleet.read_only = False
         fleet.c = {'control_sessions': True, 'known_hosts': 'known', 'ssh_key': 'key'}
         fleet.roster = [{'id':'a', 'ssh_host':'worker'}]
         fleet.control_dir = Path('/private/control')

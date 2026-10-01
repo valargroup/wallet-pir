@@ -74,6 +74,31 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(path=path), self.assertRaises(ValueError):
                 deploy.publisher_service(Path(path), Path('/srv/publications'), Path('/srv/initial'))
 
+    def test_v11_publisher_uses_separate_config_and_state(self):
+        service = deploy.publisher_service(Path('/srv/transparent-activity/full-v3/journal'),
+            Path('/srv/transparent-activity/full-v11/publications'), Path('/srv/transparent-activity/full-v11/publications/initial'),
+            state_dir=Path('/opt/transparent-publisher/v11/state'), config_path=Path('/opt/transparent-publisher/v11/controller.json'))
+        self.assertIn('--config "/opt/transparent-publisher/v11/controller.json"', service)
+        writable = next(line for line in service.splitlines() if line.startswith('ReadWritePaths='))
+        self.assertIn('"/opt/transparent-publisher/v11/state"', writable)
+        self.assertNotIn('controller.json', writable)
+        self.assertNotIn('"/opt/transparent-publisher/state"', writable)
+        with self.assertRaisesRegex(ValueError, 'config cannot'):
+            deploy.publisher_service(Path('/journal'),Path('/publications'),Path('/initial'),config_path=Path('/journal'))
+
+    async def test_read_only_fleet_preflight_does_not_create_owned_sessions(self):
+        config = dict(self.fleet.c, state_dir=str(self.root/'absent'), control_sessions=True, status_socket_forwarding=True)
+        fleet = module.Fleet(config, read_only=True)
+        self.assertFalse((self.root/'absent').exists())
+        self.assertFalse(fleet.c['control_sessions'])
+        with self.assertRaisesRegex(RuntimeError, 'read-only'):
+            async with fleet.lock('writer'):
+                self.fail('writer lock acquired')
+        with self.assertRaisesRegex(RuntimeError, 'read-only'):
+            await fleet.control(self.roster[0], {'operation':'activate'})
+        with self.assertRaisesRegex(ValueError, 'requires owned'):
+            module.Fleet(dict(config, control_sessions=False), read_only=True)
+
     def test_quorum_requires_all_archive_owners_and_only_one_recent(self):
         self.assertTrue(self.fleet.quorum({'a1','a2','r2'}))
         self.assertFalse(self.fleet.quorum({'a1','r1','r2'}))

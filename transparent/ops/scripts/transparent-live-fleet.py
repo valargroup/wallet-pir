@@ -107,17 +107,21 @@ async def run(args, data=None, timeout=25, file_output=False):
 
 
 class Fleet:
-    def __init__(self, config):
-        self.c = config
+    def __init__(self, config, *, read_only=False):
+        self.read_only = read_only
         if config.get('status_socket_forwarding') and not config.get('control_sessions'):
             raise ValueError('status socket forwarding requires owned control sessions')
+        if read_only:
+            config = {**config, 'control_sessions':False, 'status_socket_forwarding':False}
+        self.c = config
         self.roster, self.roster_mark = [], None
         self.refresh_roster(strict=True)
         self.root = Path(config['state_dir'])
-        self.root.mkdir(parents=True, exist_ok=True)
         control_dir = self.root / 'ssh'
-        control_dir.mkdir(mode=0o700, exist_ok=True)
-        control_dir.chmod(0o700)
+        if not read_only:
+            self.root.mkdir(parents=True, exist_ok=True)
+            control_dir.mkdir(mode=0o700, exist_ok=True)
+            control_dir.chmod(0o700)
         self.control_dir = control_dir
         self.canonical = {}
         self.canonical_at = {}
@@ -161,6 +165,8 @@ class Fleet:
 
     @asynccontextmanager
     async def lock(self, name, wait=True, timeout=None):
+        if self.read_only:
+            raise RuntimeError('read-only fleet cannot acquire a writer lock')
         # Shared with the reconciler process. Never block the event loop on flock.
         deadline = None if timeout is None else time.monotonic() + timeout
         with (self.root / (name + '.lock')).open('a') as stream:
@@ -258,6 +264,7 @@ class Fleet:
         return self.ssh_args
 
     async def ssh(self, host, command, data=None, timeout=25, multiplex=True):
+        multiplex = multiplex and not self.read_only
         args = self.transfer_ssh_args(host) if multiplex else self.direct_ssh_args + [
             '-oControlMaster=no', '-oControlPersist=no', '-oControlPath=none']
         if multiplex:
@@ -386,6 +393,8 @@ class Fleet:
                     await asyncio.sleep(1)
 
     async def control(self, worker, value):
+        if self.read_only and value.get('operation') != 'status':
+            raise RuntimeError('read-only fleet only permits control status')
         command = shlex.join([self.c.get('control_binary', '/usr/local/bin/shard-control'),
                               self.c.get('control_socket', '/run/transparent-pir/control.sock')])
         # A rejected command is JSON on stdout with exit status 1. Preserve

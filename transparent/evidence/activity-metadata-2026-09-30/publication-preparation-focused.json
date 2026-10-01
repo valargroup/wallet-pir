@@ -1,0 +1,67 @@
+{
+  "source_base": "3d08c15b11c50a1ec0083893f3333f1e008d7fda",
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "implementation_inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "9b2ebff2332660600610c5be00f7110edb61ae2edbf4d3fd1c92a93da80e7b55",
+    "transparent/ops/lib/activity_publication_job.py": "6b86669944bce27af05feef4942679e032b8c7feafbc345044f0ff3f9463c33f",
+    "transparent/ops/scripts/deploy-transparent-publisher.py": "0a49416f7d475ea5faa5d2b85409f03aa889a80c426960b643150e13f24d09cc",
+    "transparent/ops/scripts/transparent-live-fleet.py": "1f42895c4ffa807592cfc137fced0530987c13aa82542c103627c3e8c6d278b1",
+    "transparent/ops/tests/test_activity_publication_job.py": "85b2a4024044f701e20f74c8a881e3771bb756194ca74c5d5849dbaf5db25bf5",
+    "transparent/ops/tests/test_activity_schema_operation.py": "38a9255a7d1e4333d86a32971adad060daaf79cb39f0a05f32b9564a31bfb3fc",
+    "transparent/ops/tests/test_transparent_publication.py": "caf094cd3d012929f5ff44ee7c3917e9a0fb33e6b66b15da697b6aa96b18efd0",
+    "transparent/ops/tests/test_transparent_stage_timing.py": "111c977386ac9ba56885388d148eb3cd68843a0b8c383e9bdac93117ca2fc0f3",
+    "transparent/ops/tests/test_transparent_worker_upgrade.py": "8e048fa8fefe9077b600fd5880b56211359f923c3ae733cf1bbf774c1f64ca11"
+  },
+  "focused_check": {
+    "id": "1680cde5589749a1a89d3d0725118d3d",
+    "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+    "repo": "wallet-pir",
+    "sha": "3d08c15b11c50a1ec0083893f3333f1e008d7fda",
+    "tool": "codex",
+    "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+    "state": "/Users/roman/.ai-runbook/dev-ux",
+    "log": "/Users/roman/.ai-runbook/dev-ux/checks/1680cde5589749a1a89d3d0725118d3d.log",
+    "started": 1790820237.090781,
+    "automatic_wake": false,
+    "status": "pass",
+    "exit_code": 0,
+    "duration": 13.717350666993298
+  },
+  "tests": {
+    "schema_staging_and_publication": 39,
+    "publisher_fleet": 33,
+    "worker_upgrade_and_namespace": 13,
+    "baseline": 19,
+    "shared_deployment": 45
+  },
+  "prior_attempts": [
+    {
+      "owner": "b51c93f570334addad688a0b817b3b5b",
+      "status": "failed",
+      "duration_seconds": 15.961123334011063,
+      "reason": "two constructor-bypassing fixtures lacked read_only mode; fixed"
+    },
+    {
+      "owner": "f2bdb6189c0e4ce5a7384e51e7211b99",
+      "status": "cancelled",
+      "duration_seconds": 238.33452701568604,
+      "reason": "central Makefile registration selected all Rust packages; replaced with existing schema suite registration",
+      "passing_evidence": false
+    }
+  ],
+  "repaired_full_ci": {
+    "run": 36795213620,
+    "source_sha": "aa16dc24c4fa7f702b9de9236174bb66a717f584",
+    "status": "completed",
+    "conclusion": "success"
+  },
+  "publication_job_started": false,
+  "canonical_schema": "transparent-shard-v10",
+  "limitations": [
+    "fixture and source evidence only",
+    "full journal and publication unfinished",
+    "trusted complete cutover and rollback phases and recipe unfinished",
+    "installed sandbox and actual SSH descendant qualification pending",
+    "canonical load/freshness/whole-wallet/lifecycle/rollback qualification pending"
+  ]
+}

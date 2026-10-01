@@ -20,6 +20,23 @@ phases and host plans remain open. At 01:02 UTC the owned backfill reached
 Current main comprehensive run 36797707889 remains queued; it is not passing
 evidence. Native artifacts remain frozen at `12ce1291` and canonical service v10.
 
+At 01:45 UTC backfill reached 1,880,000 blocks and 301,822,008 events. The guard
+reported 88% available memory, 75% candidate-volume disk, 23% chain disk and
+30% root disk with zero restarts. The repaired comprehensive run 36795213620
+passed at `aa16dc24`, including CPU and CUDA artifact preparation. Later main
+run 36800108126 has active Enhance tests and remains pending; 9212's checks and
+CUDA artifact preparation passed while its CPU preparation remains queued.
+No aggregate pass is inferred for those pending runs.
+
+Full-publication preparation is now implemented through the deployment wrapper,
+with a fixed job that refuses unfinished ingestion or any existing owner/output,
+rechecks fat-LTO identities, retains stage attempts and enforces 20% resource
+floors. Publisher config/state and worker persistence support separate v11 paths;
+worker transfers verify both retained binary hashes before loading. Focused
+fixture checks passed. This job has not started, operation sources for these
+changes have not yet been staged, and the complete trusted cutover/recovery
+phases and reviewed recipe remain open.
+
 
 A separate v3/v11 candidate on the coordinator recovered 26,868 events from
 1,000 real blocks, matching the independent block/prevout oracle. Frozen recent

@@ -1,0 +1,35 @@
+{
+  "source_sha": "3d08c15b11c50a1ec0083893f3333f1e008d7fda",
+  "archive_sha256": "011bedbaa1e53752fdd842a027e0afee0461d03b1318d2f8326a3a926ed50193",
+  "archive_bytes": 544153,
+  "export_paths": [
+    "ops",
+    "transparent/ops",
+    "enhance/ops",
+    "tools/ci",
+    "shared/dev"
+  ],
+  "stage_exit_code": 0,
+  "stage_seconds": 4.508025833987631,
+  "status_exit_code": 0,
+  "status_seconds": 2.2198076660279185,
+  "status": {
+    "archive_sha256": "011bedbaa1e53752fdd842a027e0afee0461d03b1318d2f8326a3a926ed50193",
+    "path": "/srv/transparent-activity/ops/sources/3d08c15b11c50a1ec0083893f3333f1e008d7fda",
+    "source_sha": "3d08c15b11c50a1ec0083893f3333f1e008d7fda",
+    "status": "staged",
+    "verified_files": 273
+  },
+  "note": "Local stage-log parsing first rejected multiple JSON lines after the successful stage; decoded each reply then used read-only status. No staging retry.",
+  "scope": "immutable operations-source preparation under wrapper lock; no production baseline or native binary/fleet/schema deployment",
+  "preserved_source_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+  "receipt_pid": 1797420,
+  "root_wrapper_status_exit_code": 0,
+  "root_wrapper_status": "no schema transaction recorded",
+  "quality_rollout": {
+    "unit": "transparent-quality-rollout.service",
+    "MainPID": 0,
+    "ActiveState": "failed",
+    "LoadState": "loaded"
+  }
+}
