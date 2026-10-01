@@ -32,6 +32,7 @@ NATIVE = '12ce12918446eaa56e2d766ec2f43d82c531abb9'
 STATE = Path('/srv/transparent-activity/ops/schema')
 PUBLICATION = Path('/srv/transparent-activity/full-v11/publications/initial')
 LOAD_ROOT = Path('/srv/transparent-activity/canonical-load/v11')
+LOAD_BINARY = Path('/srv/transparent-activity/build/evidence')/('release-'+NATIVE)/'artifacts/examples/rate-query'
 GATES = {'artifact-verification', 'native-certificates', 'independent-chain-oracle', 'comprehensive-ci'}
 
 
@@ -78,7 +79,7 @@ def validate(spec):
     load = spec['load']
     H.require(isinstance(load, dict) and set(load) == {'binary', 'fixture', 'pins', 'policy'} and
               all(input_(v) for v in load.values()), 'invalid load/scaler inputs')
-    H.require(load['binary']['path'] == '/srv/transparent-activity/build/evidence/release-'+NATIVE+'/artifacts/rate-query',
+    H.require(load['binary']['path'] == str(LOAD_BINARY),
               'continuous load must use the retained fat-LTO artifact')
     H.require(isinstance(spec['gates'], dict) and set(spec['gates']) == GATES and
               all(input_(v) for v in spec['gates'].values()), 'missing full-publication release gates')

@@ -36,6 +36,10 @@ def request(action='capture'):
 
 
 class Templates(unittest.TestCase):
+    def test_load_executable_path_matches_the_frozen_release_receipt(self):
+        receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
+        self.assertEqual(str(M.LOAD_BINARY),receipt['binaries']['examples/rate-query']['retained_path'])
+
     def template(self):
         plan=worker_plan()
         plan['transaction']=T.TOKEN;plan['baseline_root']=T.ROOT+T.TOKEN
