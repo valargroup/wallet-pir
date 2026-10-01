@@ -327,7 +327,10 @@ classes, minimum one, p50 14, p95 18; it does not hide that excess. Even padding
 four cannot qualify a 1000 floor with only 60 records. Frozen revision/no timing
 is optimistic: a 100-block refresh cohort or ten-block timing cohort further
 partitions candidates. Segment fan-out differences must enter the transcript
-class too, including empty-bucket/absent-table dispatch behavior. Fragment count
+class too, including empty-bucket/absent-table dispatch behavior. Coincident hashed lookup choices produce one initial request in the current
+helper; the routing model includes this additional count class. Count cover must
+also send two lookup requests for those cases, not just pad overflow. A synthetic
+coincident-choice count tail again isolates five candidates. Fragment count
 is not directly visible inside encrypted rows; where public sizes and this
 contiguous layout imply it from row requests, it is included through that
 observable request count. Across segments the current helper deduplicates row

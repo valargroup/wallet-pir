@@ -180,7 +180,7 @@ def packing(records, codec, threshold, directory_rows=4096, page_rows=4096):
                 break
         if not placed:
             segment = [4] * directory_rows; segment[a] += 2 + entry; dirs.append(segment)
-        per_record.append({"txid":r["txid_internal"], "size":size, "fragments":nfrags, "page_rows_requested":nrows})
+        per_record.append({"txid":r["txid_internal"], "size":size, "fragments":nfrags, "page_rows_requested":nrows,"lookup_queries":len({a,b})})
     occupied_dirs = sum(v > 4 for s in dirs for v in s)
     occupied_pages = sum(v > 4 for v in pages)
     ds, ps = len(dirs), max(1, math.ceil(len(pages) / page_rows))
@@ -238,6 +238,9 @@ def routing(records, pack, lookup="temporal", overflow="global", padding=None, b
         overflow_hash = int.from_bytes(hashlib.sha256(b"txid-sizing/overflow/"+bytes.fromhex(txid)).digest()[:8],"little") % buckets
         l = r["height"] // 50000 if lookup == "temporal" else (r["height"] // 1_000_000 if lookup == "coarse" else (hashed if lookup == "hash" else 0))
         # Overflow route exists only when requested, except cover includes inline.
+        lookup_queries = len(set(choices(txid,4096,bucket=l)))
+        if padding is not None:
+            lookup_queries = 2  # cover a coincident-choice lookup with another query
         actual = p["page_rows_requested"]
         requested = actual if padding is None else max(padding, actual)
         o = (overflow_hash if overflow == "hash" else (r["height"] // 1_000_000 if overflow == "broad" else 0)) if requested else "none"
@@ -246,7 +249,7 @@ def routing(records, pack, lookup="temporal", overflow="global", padding=None, b
         result.append({"txid":txid,"lookup":l,"overflow":o,
             "revision":r["height"] // revision_width if revision_width else "frozen",
             "segments":(lookup_segments, overflow_segments if requested else 0),
-            "query_count":2+requested,"fragment_request_count":requested,
+            "query_count":lookup_queries+requested,"fragment_request_count":requested,
             "timing":r["height"] // timing_width if timing_width else "unmodeled"})
     return classes(result,("lookup","overflow","revision","segments","query_count","fragment_request_count","timing"))
 
@@ -264,6 +267,7 @@ def negative_controls():
     refresh = [dict(r,revision=int(r["txid"])>=20000) for r in padded]
     timed = [dict(r,timing=int(r["txid"])>=20000) for r in padded]
     segmented = [dict(r,segments=2 if int(r["txid"])>=20000 else 1) for r in padded]
+    lookup_count_tail = [dict(r,query_count=4 if int(r["txid"])>=20000 else 5) for r in padded]
     dummy_rows = rows + [dict(rows[-1],txid="dummy-"+str(i),real=False) for i in range(10000)]
     # Each marginal route has 10000 real txids, while two intersections have 5.
     independent = [dict(rows[0],txid=str(i),lookup=int(i>=10000),
@@ -271,6 +275,7 @@ def negative_controls():
     return {"qualification":"synthetic negative controls only","global_overflow_narrow_lookup":unpadded,
         "repeated_fragments":repeated,"global_lookup_count_cover":fixed,
         "new_revision_tail":classes(refresh,fields),"timing_tail":classes(timed,fields),
+        "coincident_lookup_choice_tail":classes(lookup_count_tail,fields),
         "segment_tail":classes(segmented,fields),"dummy_and_empty_rows":classes(dummy_rows,fields),
         "independent_routes_joint":classes(independent,fields),
         "independent_routes_lookup_marginal":classes(independent,("lookup",)),

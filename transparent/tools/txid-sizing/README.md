@@ -56,7 +56,8 @@ explicit provenance. The scan-byte proxy is neither measured CPU time nor latenc
 Routing classes intersect lookup bucket, overflow route, revision/time cohort,
 segment vector, observable request counts, and optional timing cohorts. Only
 real distinct txids contribute. `cover_3` means at least three page row requests
-for every opening, including inline transactions; records exceeding three still
+for every opening, including inline transactions, plus two lookup queries even
+when the hashed choices coincide; records exceeding three still
 reveal their excess. Hash lookup and hash overflow use different domains; broad
 overflow means a million-height time bucket. Frozen revision/no timing is an
 assumption, not evidence that a real observer lacks timing or history transcripts.

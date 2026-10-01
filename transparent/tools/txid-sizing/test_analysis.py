@@ -45,6 +45,10 @@ class AnalysisTests(unittest.TestCase):
         self.assertEqual(len(a.payload(r)),5)
 
     def test_fragment_boundaries_and_distinct_transactions(self):
+        # A one-row choice domain forces a real coincident-choice lookup.
+        packed=a.packing([record()],"display-v1",128,directory_rows=1)
+        self.assertEqual(packed["per_record"][0]["lookup_queries"],1)
+        self.assertEqual(packed["encrypted_requests_per_tx_uniform"],1)
         self.assertEqual(len(a.fragments(4050)),1)
         self.assertEqual(len(a.fragments(4051)),2)
         for size in (1,4050,4051,100000):
@@ -56,7 +60,7 @@ class AnalysisTests(unittest.TestCase):
 
     def test_five_candidate_intersection_refresh_timing_controls(self):
         c=a.negative_controls()
-        for label in ("global_overflow_narrow_lookup","repeated_fragments","new_revision_tail","timing_tail","segment_tail","dummy_and_empty_rows"):
+        for label in ("global_overflow_narrow_lookup","repeated_fragments","new_revision_tail","timing_tail","segment_tail","dummy_and_empty_rows","coincident_lookup_choice_tail"):
             self.assertEqual(c[label]["class_weighted"]["min"],5)
             self.assertEqual(c[label]["classes_below_policy"],{"1000":1,"10000":1})
         self.assertEqual(c["global_lookup_count_cover"]["class_weighted"]["min"],20005)
