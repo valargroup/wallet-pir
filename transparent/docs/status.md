@@ -56,7 +56,11 @@ The wrapper now implements a journaled coordinator-only schema recipe boundary,
 with input hashes, inherited production lock descriptors, durable phase intent
 and bounded recovery. Seventeen failure/recovery tests and 45 existing shared
 deployment tests passed. Actual production phase programs, a reviewed recipe
-and wrapper-mediated source staging remain incomplete; no production change was
+remain incomplete. Wrapper-mediated immutable source staging now has exact
+archive/commit checks, bounded extraction and a single root process holding the
+production lock throughout receipt and extraction. All 30 schema/staging tests
+passed, including a real lock-contention fixture. No production source was
+staged and no production change was
 made. At 00:09 UTC backfill reached 840000. At 00:12 its guard observed 89%
 available host memory, 79% candidate-volume disk, 23% chain-disk and 30% root-disk
 headroom with zero ingest restarts. The three owned jobs stayed active and the

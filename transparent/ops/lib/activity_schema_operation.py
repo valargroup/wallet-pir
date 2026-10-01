@@ -125,7 +125,8 @@ def verify_inputs(entries):
 def run_command(command, log, pass_fds):
     result = subprocess.run(command['argv'], timeout=command['timeout'],
                             stdout=log, stderr=subprocess.STDOUT, pass_fds=pass_fds,
-                            env=dict(os.environ, WALLET_PIR_PRODUCTION_LOCK_FDS=','.join(map(str, pass_fds))))
+                            env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
+                                     WALLET_PIR_PRODUCTION_LOCK_FDS=','.join(map(str, pass_fds))))
     return result.returncode
 
 

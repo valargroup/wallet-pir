@@ -42,6 +42,10 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Journaled Transparent cutover phases, verified inputs and bounded rollback.
       Recipes contain no credentials. Deployment requires the reviewed plan hash.
 
+  schema-source-{plan,preflight,stage,status} --source-sha REV --sha256 HASH
+      --archive FILE is required except for status. Bootstrap immutable reviewed
+      sources over SSH under the coordinator lock; this never activates services.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -87,6 +91,12 @@ def parser():
     top.add_argument('--state-dir', default=str(default_state_dir()))
     top.add_argument('--baseline', help='baseline file (default <state-dir>/baselines/<service>.json)')
     commands = top.add_subparsers(dest='command', required=True)
+    for name in ('plan', 'preflight', 'stage', 'status'):
+        command = commands.add_parser('schema-source-'+name)
+        command.add_argument('--source-sha', required=True)
+        command.add_argument('--sha256', required=True)
+        if name != 'status':
+            command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
         command = commands.add_parser(name, help='Transparent multi-component schema transaction')
         command.add_argument('--recipe', required=True, help='reviewed coordinator-only cutover recipe; no credentials')
@@ -132,6 +142,15 @@ def main(argv=None, executor=None, out=print, **options):
     try:
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-source-'):
+            spec = importlib.util.spec_from_file_location('activity_source_stage',
+                ROOT/'transparent/ops/lib/activity_source_stage.py')
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            inventory = descriptors.load_inventory(args.inventory)
+            module.SourceStage(inventory, out).run(args.command.removeprefix('schema-source-'),
+                args.source_sha, args.sha256, getattr(args, 'archive', None))
+            return 0
         if args.command.startswith('schema-'):
             spec = importlib.util.spec_from_file_location('activity_schema_operation',
                 ROOT/'transparent/ops/lib/activity_schema_operation.py')

@@ -757,5 +757,31 @@ explicit recovery, so a possibly live descendant cannot race an automatic
 rollback. An unfinished transaction blocks a new deployment.
 
 This API is an implemented coordination boundary. The actual production recipe,
-trusted phase programs, wrapper-mediated source staging, complete publication
-and live acceptance checks must be prepared and verified before deployment.
+trusted phase programs, complete publication and live acceptance checks must be
+prepared and verified before deployment.
+
+### Immutable operation source staging over SSH
+
+The wrapper's `schema-source-plan`, `schema-source-preflight`,
+`schema-source-stage` and `schema-source-status` commands bootstrap reviewed
+operation sources on the coordinator. They require a remote-lock inventory with
+the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
+`--sha256` identities, and `--archive FILE` except for status. Create the archive
+with `git archive --format=tar.gz` from that exact commit. Run plan and preflight
+before stage; stage also repeats preflight. The helper receives the archive and
+performs every write in the same root process holding the production lock.
+It does not depend on a separate SSH lock process surviving the transfer.
+
+Sources are retained under `/srv/transparent-activity/ops/sources/<SHA>` with
+private receipts under `/srv/transparent-activity/ops/staging/`. The helper
+verifies the received checksum and Git commit marker, rejects links, special
+files, traversal and duplicates, bounds compressed/expanded data and entry count,
+and enforces disk reserve, 20% disk headroom and 20% available memory. Completed staging is
+idempotent only when every retained source file still matches. Failed or
+interrupted receipts require reconciliation; neither a retry nor a new archive
+may silently overwrite the retained source. Source staging does not activate a
+service, switch a publication or establish canonical validation. Preserve these
+sources and receipts as rollback material.
+Invoke the staged wrapper with `/usr/bin/python3 -B` so imports do not alter its
+verified file set. Schema phase subprocesses also receive
+`PYTHONDONTWRITEBYTECODE=1`; their descendant programs must preserve it.

@@ -1,12 +1,14 @@
 """Failure/interruption coverage for the wrapper's schema transaction boundary."""
 import copy
 import importlib.util
+import io
 import json
 import os
 import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import unittest
 from types import SimpleNamespace
 
@@ -292,6 +294,214 @@ if phase=='verify-canonical':sys.exit(1)
         self.assertEqual(code, 0)
         self.assertIn('recipe '+module.digest(self.recipe), output)
         self.assertFalse((self.root/'state').exists())
+
+
+HOST_SPEC = importlib.util.spec_from_file_location('source_host', ROOT/'transparent/ops/lib/activity_source_stage_host.py')
+source_host = importlib.util.module_from_spec(HOST_SPEC)
+HOST_SPEC.loader.exec_module(source_host)
+STAGE_SPEC = importlib.util.spec_from_file_location('source_stage', ROOT/'transparent/ops/lib/activity_source_stage.py')
+source_stage = importlib.util.module_from_spec(STAGE_SPEC)
+STAGE_SPEC.loader.exec_module(source_stage)
+
+
+class SourceStageTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.meminfo = self.root/'meminfo'
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 800 kB\n')
+        from unittest.mock import patch
+        memory = patch.object(source_host, 'MEMINFO', self.meminfo)
+        memory.start()
+        self.addCleanup(memory.stop)
+        self.lock = Lock()
+        self.request = {'mode': 'stage', 'source_sha': 'a'*40, 'sha256': '', 'machine_id': 'b'*32}
+        self.files = {'ops/scripts/wallet-pir-deploy.py': b'wrapper',
+                      'transparent/ops/lib/activity_schema_operation.py': b'recipe runner'}
+
+    def archive(self, extra=(), commit=None):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode='w:gz', format=tarfile.PAX_FORMAT,
+                          pax_headers={'comment': commit or self.request['source_sha']}) as tar:
+            for name, contents in self.files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(contents)
+                tar.addfile(entry, io.BytesIO(contents))
+            for entry in extra:
+                tar.addfile(entry)
+        raw = data.getvalue()
+        self.request['sha256'] = module.hashlib.sha256(raw).hexdigest()
+        return raw
+
+    def stage(self, data):
+        with self.lock:
+            return source_host.stage(self.request, self.lock, io.BytesIO(data), self.root/'ops')
+
+    def test_bounded_archive_is_staged_idempotently_with_verified_files(self):
+        data = self.archive()
+        result = self.stage(data)
+        self.assertEqual(result['status'], 'staged')
+        target = Path(result['path'])
+        for name, contents in self.files.items():
+            self.assertEqual((target/name).read_bytes(), contents)
+        # A retry verifies the retained set and does not consume replacement bytes.
+        self.assertEqual(self.stage(b'not a second upload'), result)
+        receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
+        self.assertEqual(receipt['compressed_bytes'], len(data))
+        self.assertEqual(set(receipt['files']), set(self.files))
+        self.assertEqual((self.root/'ops/staging'/('a'*40+'.json')).stat().st_mode & 0o777, 0o600)
+
+    def test_preflight_and_status_do_not_create_files(self):
+        self.archive()
+        for mode, expected in [('preflight', 'preflight-passed'), ('status', 'absent')]:
+            self.request['mode'] = mode
+            result = source_host.stage(self.request, source_stage.hostlock.PinnedHostLock(None), io.BytesIO(), self.root/'ops')
+            self.assertEqual(result['status'], expected)
+            self.assertFalse((self.root/'ops').exists())
+
+    def test_transferred_checksum_failure_keeps_failed_receipt(self):
+        data = self.archive()
+        self.request['sha256'] = 'f'*64
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            self.stage(data)
+        receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertFalse((self.root/'ops/sources'/('a'*40)).exists())
+        with self.assertRaisesRegex(ValueError, 'incomplete retained'):
+            self.stage(data)
+
+    def test_commit_marker_mismatch_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'requested git commit'):
+            self.stage(self.archive(commit='c'*40))
+
+    def test_traversal_links_special_files_and_duplicates_rejected(self):
+        cases = [('unsafe', '../escape', tarfile.REGTYPE),
+                 ('unsafe', '/absolute', tarfile.REGTYPE),
+                 ('links', 'link', tarfile.SYMTYPE),
+                 ('links', 'hard', tarfile.LNKTYPE),
+                 ('special', 'fifo', tarfile.FIFOTYPE),
+                 ('duplicate', 'ops/scripts/wallet-pir-deploy.py', tarfile.REGTYPE)]
+        for expected, name, kind in cases:
+            with self.subTest(name=name):
+                entry = tarfile.TarInfo(name)
+                entry.type, entry.linkname = kind, '../escape'
+                target = self.root/('case-'+str(cases.index((expected, name, kind))))
+                raw = self.archive([entry])
+                with self.lock, self.assertRaises(ValueError):
+                    source_host.stage(self.request, self.lock, io.BytesIO(raw), target)
+                self.assertFalse((self.root/'escape').exists())
+
+    def test_compressed_and_expanded_bounds_reject_without_install(self):
+        from unittest.mock import patch
+        data = self.archive()
+        for field, limit in [('MAX_COMPRESSED', len(data)-1), ('MAX_EXPANDED', 1), ('MAX_ENTRIES', 1)]:
+            with self.subTest(field=field), self.lock, patch.object(source_host, field, limit):
+                with self.assertRaises(ValueError):
+                    source_host.stage(self.request, self.lock, io.BytesIO(data), self.root/field)
+
+    def test_existing_file_tamper_or_addition_or_symlink_is_rejected(self):
+        data = self.archive()
+        target = Path(self.stage(data)['path'])
+        path = target/'ops/scripts/wallet-pir-deploy.py'
+        path.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'checksum changed'):
+            self.stage(data)
+        path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
+        (target/'unreviewed.py').write_bytes(b'extra')
+        with self.assertRaisesRegex(ValueError, 'file set changed'):
+            self.stage(data)
+        (target/'unreviewed.py').unlink()
+        (target/'outside').symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.stage(data)
+
+    def test_status_verifies_files_without_requiring_free_disk(self):
+        from unittest.mock import patch
+        data = self.archive()
+        self.stage(data)
+        self.request['mode'] = 'status'
+        with patch.object(source_host.os, 'statvfs', side_effect=AssertionError('status must remain readable')):
+            result = self.stage(b'')
+        self.assertEqual(result['verified_files'], 2)
+        self.assertNotIn('files', result)
+
+    def test_disk_floor_stops_before_receipt_or_upload(self):
+        from unittest.mock import patch
+        data = self.archive()
+        disk = SimpleNamespace(f_bavail=1, f_frsize=4096, f_blocks=100)
+        with patch.object(source_host.os, 'statvfs', return_value=disk):
+            with self.assertRaisesRegex(ValueError, 'disk reserve'):
+                self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+
+    def test_memory_floor_stops_before_receipt_or_upload(self):
+        data = self.archive()
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 199 kB\n')
+        with self.assertRaisesRegex(ValueError, 'memory below 20 percent'):
+            self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 200 kB\n')
+        self.assertEqual(self.stage(data)['status'], 'staged')
+
+    def test_lost_lock_stops_before_mutation(self):
+        data = self.archive()
+        self.lock.lost = True
+        with self.assertRaises(LockHeld):
+            self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+
+    def test_wrapper_source_plan_has_no_remote_effects_and_checks_hash(self):
+        archive = self.root/'source.tar.gz'
+        archive.write_bytes(self.archive())
+        inventory = self.root/'inventory.json'
+        inventory.write_text(json.dumps({'hosts': {'coordinator': {'machine_id': 'b'*32}},
+            'ssh': {'mode': 'config'}, 'lock': {'type': 'remote', 'host': 'coordinator'}, 'services': {}}))
+        argv = ['--inventory', str(inventory), 'schema-source-plan', '--archive', str(archive),
+                '--source-sha', self.request['source_sha'], '--sha256', self.request['sha256']]
+        self.assertEqual(cli.main(argv, out=lambda x: None), 0)
+        archive.write_bytes(b'changed')
+        self.assertEqual(cli.main(argv, out=lambda x: None), 1)
+
+    def test_real_helper_owns_lock_during_receipt_and_extraction(self):
+        data = self.archive()
+        machine = self.root/'machine-id'
+        machine.write_text(self.request['machine_id'])
+        lock_path = self.root/'production.lock'
+        # Only fixture paths/UID differ from the exact transmitted helper.
+        prefix = Path(source_stage.hostlock.__file__).read_text()
+        prefix += '\nPinnedHostLock.MACHINE_ID = Path('+repr(str(machine))+')\n'
+        prefix += 'PinnedHostLock.ROOT_UID = os.geteuid()\n'
+        helper = source_stage.HELPER_PATH.read_text().replace(
+            "STAGE_ROOT = Path('/srv/transparent-activity/ops')", 'STAGE_ROOT = Path('+repr(str(self.root/'ops'))+')').replace(
+            "LOCK_PATH = Path('/run/lock/wallet-pir-production.lock')", 'LOCK_PATH = Path('+repr(str(lock_path))+')')
+        helper = helper.replace("MEMINFO = Path('/proc/meminfo')", 'MEMINFO = Path('+repr(str(self.meminfo))+')')
+        assertion = '''
+_save = atomic_json
+def atomic_json(path, value):
+    competing = os.open(LOCK_PATH, os.O_RDWR)
+    try:
+        try:
+            fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise AssertionError('receipt mutation ran without production lock')
+    finally:
+        os.close(competing)
+    _save(path, value)
+'''
+        helper = helper.replace("if __name__ == '__main__':", assertion+"\nif __name__ == '__main__':")
+        result = subprocess.run([sys.executable, '-c', prefix+'\n'+helper, json.dumps(self.request)],
+                                input=data, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        reply = json.loads(result.stdout)
+        self.assertTrue(reply['ok'], reply)
+        from unittest.mock import patch
+        with patch.object(source_stage.hostlock.PinnedHostLock, 'MACHINE_ID', machine), \
+             patch.object(source_stage.hostlock.PinnedHostLock, 'ROOT_UID', os.geteuid()), \
+             source_stage.hostlock.PinnedHostLock({'type': 'pinned_host', 'machine_id': self.request['machine_id']}, path=lock_path) as lock:
+            lock.verify()
 
 
 if __name__ == '__main__':

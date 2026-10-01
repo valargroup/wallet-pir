@@ -1,0 +1,55 @@
+{
+  "observed_utc": "2026-10-01T00:25:30.935774+00:00",
+  "base_sha": "aa16dc24c4fa7f702b9de9236174bb66a717f584",
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "1cdf18a9a92d284604c6546fbec4dec8c603ad53f83cbc4f80399f55a40098c0",
+    "transparent/ops/lib/activity_source_stage.py": "28b54440cf3ad6492e6d2fb57bb0d4f36fae6c6a51a8b4869b144c66d8992539",
+    "transparent/ops/lib/activity_source_stage_host.py": "4e3205638105e879962a9f001ada9d5bf4f9b8aac6ae14122e84120e64b75584",
+    "transparent/ops/lib/activity_schema_operation.py": "2ccd79f0a7d2a690c7128dab22e1a8e8f3533345410a97c1dbf5c1b7d8302b12",
+    "transparent/ops/tests/test_activity_schema_operation.py": "2c345c29ac06d1beae3152662786a2952618d7624247f848060dcd9980b3ce8f"
+  },
+  "checks": [
+    {
+      "command": "python3 transparent/ops/tests/test_activity_schema_operation.py",
+      "tests": 30,
+      "seconds": 0.677,
+      "exit": 0
+    },
+    {
+      "command": "python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'",
+      "tests": 45,
+      "seconds": 1.672,
+      "exit": 0
+    }
+  ],
+  "coverage": [
+    "Root helper holds production lock during receiving, extraction and durable receipts in one process.",
+    "Real subprocess fixture confirms a competing lock cannot be acquired during receipt mutations.",
+    "Read-only source preflight and status create no files.",
+    "Exact transferred archive checksum and git commit marker required.",
+    "Archive size, entry and expansion limits; unsafe traversal, links, special files and duplicates rejected.",
+    "Disk reserve and 20 percent headroom; changed or additional retained files rejected.",
+    "Failed receipt prevents silent retry or overwrite.",
+    "Status verifies all retained files and remains usable below disk floor.",
+    "Memory below 20 percent stops before receipt or upload; the exact 20 percent boundary passes."
+  ],
+  "limitations": [
+    "No source was staged on production during these focused tests.",
+    "Actual production recipe and trusted cutover phase programs remain incomplete.",
+    "Source staging does not activate services or qualify canonical recovery.",
+    "Native candidate artifacts remain frozen at 12ce12918446eaa56e2d766ec2f43d82c531abb9."
+  ],
+  "superseded_affected_check": {
+    "id": "2aa21abd14b843008b3fcd4251199fd1",
+    "passed_before_memory_floor_addition": true,
+    "final_inputs_changed": true
+  },
+  "affected_check": {
+    "owner_id": "26516c4d14764905b7ae772457776d22",
+    "command": "make check-fast BASE=aa16dc24c4fa7f702b9de9236174bb66a717f584",
+    "base_sha": "aa16dc24c4fa7f702b9de9236174bb66a717f584",
+    "seconds": 13.726511458051391,
+    "exit": 0,
+    "accepted": "Source inputs unchanged during check. Only this result record was added afterward."
+  }
+}

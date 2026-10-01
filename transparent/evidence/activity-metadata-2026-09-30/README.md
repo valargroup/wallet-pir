@@ -148,3 +148,9 @@ comprehensive check jobs passing, a failed CUDA artifact compiler guard and
 pending CPU artifact preparation. The CUDA selection regression reproduced the
 configuration gap and passed after explicitly pinning the recorded compiler.
 This snapshot is not aggregate passing CI or deployment evidence.
+
+[Source staging focused evidence](source-staging-focused.json) records the
+immutable SSH bootstrap boundary and 30 combined schema/staging tests. Transfer,
+extraction and receipt writes share one root lock owner. No production source
+was staged by these fixture tests; the actual recipe, phase programs and live
+cutover gates remain open.
