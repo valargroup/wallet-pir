@@ -7,12 +7,11 @@ numbers are reconciled below rather than retained as a second release checklist.
 
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
-Current protected cutover failed warm verification; reviewed repair passed private
-recovery and Transparent encrypted queries, then failed Enhance encrypted queries
-at its missing transparent revision route. Both origins were re-guarded.
-Finish the closed paired-origin routing repair and actual full HTTP/SQLite proofs,
-then reconcile the retained candidate namespace before a fresh v11 redeploy.
-All original timing failures remain failed and require an actual rerun.
+The latest warm repair passed private and separate encrypted-query/reopened SQLite
+proofs through both canonical origins; the new transaction is `rolled-back`.
+Reconcile captured stale v11 candidate namespaces through the locked host stage,
+then perform a fresh reviewed v11 redeploy. All cold timing failures remain failed
+and require actual fault reruns. All sustained acceptance gates remain open.
 
 Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
 started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10

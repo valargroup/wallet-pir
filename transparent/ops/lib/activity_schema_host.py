@@ -94,6 +94,32 @@ def required_files(role):
     return result
 
 
+def candidate_paths(role):
+    if role == 'worker':
+        return (ROOT/'v11',)
+    if role == 'coordinator':
+        return (ROOT/'v11', Path('/srv/transparent-activity/canonical-load/v11'))
+    return ()
+
+
+def candidate_inventory(path):
+    require(path.parent.resolve() == path.parent, 'candidate namespace ancestor aliases are refused')
+    if not path.exists() and not path.is_symlink():
+        return None
+    require(path.is_dir() and not path.is_symlink(), 'candidate namespace must be a regular directory')
+    result = {}
+    remaining = 64*1024*1024
+    for current, directories, files in os.walk(path, followlinks=False):
+        for name in ['.']+sorted(directories+files):
+            item = Path(current) if name == '.' else Path(current)/name
+            value = B.describe(item, remaining)
+            require(value['kind'] in ('file','directory'), 'candidate namespace refuses links and special files')
+            result[str(item.relative_to(path))] = value
+            remaining -= value.get('size',0)
+            require(len(result) <= 512, 'candidate namespace inventory exceeds bound')
+    return result
+
+
 def deferred(role, path):
     """Recovery may not reopen routing, resume load or re-enable scaling."""
     return (path == '/etc/caddy/Caddyfile' or path.startswith('/etc/caddy/Caddyfile.') or
@@ -244,6 +270,11 @@ class Host:
             require(self.commands.empty_cgroup(s), 'product writer has surviving descendants: '+unit)
 
     def preflight(self):
+        names = {i['path'] for i in self.plan['baseline']['files']}
+        require({str(p) for p in candidate_paths(self.role)} <= names,
+                'baseline omits candidate namespace presence/absence')
+        for path in candidate_paths(self.role):
+            candidate_inventory(path)
         # Every source is checked before stopping anything or copying state.
         for item in self.plan['installs']:
             source = Path(item['source'])
@@ -388,7 +419,9 @@ class Host:
             proof = {'active': active, 'assignment_sha256': checksum(active['assignment'])}
         # Preserve original service states BEFORE the first stop. An interrupted
         # copy must not lose whether publication/load/scaling were active.
-        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof}
+        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof,
+                 'candidate':{str(p):candidate_inventory(p) for p in candidate_paths(self.role)}}
+        require(len(encode(state)) <= 256*1024, 'candidate capture receipt exceeds bound')
         state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         B.atomic(state_path, encode(state))
         # A failure here intentionally leaves stopped writers stopped. The outer
@@ -421,9 +454,46 @@ class Host:
         require(state_path.is_file() and not state_path.is_symlink() and state_path.stat().st_uid == os.geteuid() and
                 state_path.stat().st_mode & 0o077 == 0, 'baseline unit state must be a private owned file')
         state = load(state_path)
-        require(set(state) == {'plan_sha256', 'units', 'worker'} and state['plan_sha256'] == hashlib.sha256(encode(self.plan)).hexdigest() and
+        require(set(state) in ({'plan_sha256', 'units', 'worker'}, {'plan_sha256', 'units', 'worker', 'candidate'}) and state['plan_sha256'] == hashlib.sha256(encode(self.plan)).hexdigest() and
                 set(state['units']) == set(UNITS[self.role]), 'baseline unit state is incomplete or belongs to another plan')
         return record, state
+
+    def reconcile_candidates(self):
+        record, state = self.saved()
+        paths = candidate_paths(self.role)
+        require(isinstance(state.get('candidate'),dict) and set(state['candidate'])=={str(p) for p in paths},
+                'candidate reconciliation requires a complete captured inventory')
+        names = {i['path'] for i in record['plan']['files']}
+        require({str(p) for p in paths} <= names, 'baseline omits candidate namespace presence/absence')
+        moves = []
+        for path in paths:
+            current = candidate_inventory(path)
+            captured = record['files'][str(path)]
+            require(current == state['candidate'][str(path)], 'candidate inventory changed after capture')
+            require((B.entries(path) if current is not None else None) == captured,
+                    'candidate namespace changed after capture')
+            if current is None:
+                continue
+            retained = path.with_name(path.name+'.schema-before-'+self.plan['transaction'])
+            require(not retained.exists() and not retained.is_symlink(), 'prior candidate namespace needs reconciliation')
+            require(path.stat().st_dev == retained.parent.stat().st_dev, 'candidate retention crosses filesystems')
+            if self.role == 'worker' and len(current)>1:
+                active = path/'active.json'
+                require(set(current)=={'.','active.json'} and active.is_file() and
+                        load(active)=={k:self.plan['worker'][k] for k in ('directory','assignment','map_sha256')},
+                        'stale worker candidate differs from reviewed target')
+            moves.append({'source':str(path),'retained':str(retained),'inventory':current})
+        receipt = self.root.with_suffix('.candidate.json')
+        require(not receipt.exists() and not receipt.is_symlink(), 'candidate reconciliation intent already exists')
+        intent = {'transaction':self.plan['transaction'],'source_sha':self.plan['source_sha'],
+                  'baseline_plan_sha256':record['plan_sha256'],'status':'intent','moves':moves}
+        B.atomic(receipt, encode(intent))
+        for move in moves:
+            source, retained = Path(move['source']),Path(move['retained'])
+            require(candidate_inventory(source)==move['inventory'], 'candidate changed after reconciliation intent')
+            os.rename(source,retained);B.sync_dir(source.parent)
+            require(candidate_inventory(retained)==move['inventory'], 'retained candidate bytes changed')
+        intent['status']='complete';B.atomic(receipt,encode(intent))
 
     def stage(self):
         self.saved()
@@ -432,6 +502,7 @@ class Host:
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)
+        self.reconcile_candidates()
         for item in self.plan['installs']:
             path = Path(item['target'])
             require(not path.is_symlink() and path.parent.resolve() == path.parent, 'candidate target has a symlink ancestor')
@@ -471,6 +542,24 @@ class Host:
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
 
+    def settle_restored_worker(self):
+        # Use part of the existing 140-second restore phase for startup. The
+        # outer 250-second wait and complete verification remain unchanged.
+        started=time.monotonic();observations=[]
+        while time.monotonic()-started < 40:
+            try:
+                status=self.commands.control()
+                observation={'warm':status.get('warm'),'map_sha256':status.get('active',{}).get('map_sha256')}
+            except (OSError,ValueError,subprocess.SubprocessError) as error:
+                observation={'error_type':type(error).__name__}
+            observations.append(observation)
+            if observation.get('warm') is True:
+                break
+            remaining=40-(time.monotonic()-started)
+            if remaining>0:time.sleep(min(2,remaining))
+        return {'seconds':time.monotonic()-started,'observations':observations,
+                'qualification':'startup observations only; exact worker proof remains mandatory'}
+
     def restore(self, *, repair_token=None):
         self.withdrawn()
         record, state = self.saved()  # Validate all rollback bytes before stopping.
@@ -509,6 +598,8 @@ class Host:
         self.commands.unit('start', *start)
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
+        return {'status':'restored','startup':self.settle_restored_worker()
+                if self.role=='worker' and WORKER in start else None}
 
     def verify_worker(self, *, rollback=False):
         require(self.role == 'worker', 'warm worker verification requires a worker plan')

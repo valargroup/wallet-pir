@@ -8,15 +8,15 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
-Latest `9f802f71` warm repair passed restoration and private native/SQLite
-verification, then refused reopening at worker attestation. Protected predecessor
-continuation was enabled in private verification but lost in the separate reopen
-process. The [failed attempt](../evidence/activity-metadata-2026-09-30/protected-reopen-policy-failure-9f802f71.json)
-is retained. The reviewed correction re-establishes that policy from the complete
-protected baseline in later rollback phases; current warm identity and canonical
-anchors remain mandatory. The preceding cold-start [deadline failure](../evidence/activity-metadata-2026-09-30/paired-origin-cold-deadline-9f802f71.json)
-is separately preserved. Both canonical origins remain guarded; actual paired
-recovery and all v11 acceptance gates remain open.
+The [owned warm v10 recovery](../evidence/activity-metadata-2026-09-30/paired-origin-coherent-recovery-a8e6b63b.json)
+passed in 92.912 seconds at `a8e6b63b`. The journal is `rolled-back`. Separate
+private and both canonical encrypted-query proofs each completed one exact sync
+with reopened SQLite stores and no failures. Both fresh canonical metadata
+observations returned HTTP 200 through height 3502797. Quality remains stopped.
+This is a brief recovery proof, not v11 or sustained acceptance. The preceding
+[cold archive deadline failure](../evidence/activity-metadata-2026-09-30/protected-policy-cold-deadline-a8e6b63b.json)
+and every original timing failure remain failed. Candidate namespace reconciliation
+and a fresh reviewed v11 deployment are the next steps.
 
 Latest actual cutover `c28901b4` captured protected coherent baselines on all
 five hosts and passed maintenance and v11 staging, then failed candidate warm

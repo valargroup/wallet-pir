@@ -1341,3 +1341,21 @@ baseline in each separate rollback reopen/service process. Future preparation ma
 coexist with the exact warm current map; current map, binary, assignment, HTTP
 readiness and independently canonical anchors remain mandatory. Forward and
 unprotected rollback phases retain static preparation checks.
+
+### Retained candidate namespaces and restored startup
+
+Fresh forward host plans explicitly capture presence or absence of the complete
+`/opt/transparent-publisher/v11` tree and, on the coordinator, the candidate
+canonical-load tree. After quiescence, stage binds their full bounded file
+inventories, including lock files, to the complete baseline. It retains any
+captured tree in a transaction-named sibling on its original filesystem before
+installing fresh candidate files. Worker stale activation must match the reviewed
+candidate directory, assignment and map exactly. Drift, aliases, special files,
+uncaptured state or a prior reconciliation intent refuse staging. Original
+baselines, recipes and displaced candidate bytes remain intact.
+
+Restoration records up to 40 seconds of worker startup observations inside the
+existing restore phase. These observations do not establish qualification; exact
+worker identity, assignment, warm publication, anchors and real client proofs
+remain mandatory. The remote restore budget is 90 seconds, restore phase 140
+seconds, global warm wait 250 seconds, and total rollback budget 740 seconds.

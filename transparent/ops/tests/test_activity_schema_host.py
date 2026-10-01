@@ -261,11 +261,15 @@ class HostFilesTests(unittest.TestCase):
         self.cache = self.dir/'v10-cache'
         self.cache.mkdir()
         (self.cache/'sentinel').write_text('retained warm bytes')
-        self.plan = {'transaction': 'transparent-schema-local-fixture', 'role': 'coordinator',
+        self.plan = {'source_sha':'b'*40, 'transaction': 'transparent-schema-local-fixture', 'role': 'coordinator',
             'baseline_root': str(self.dir/'baseline'), 'baseline': {'version': 1,
             'files': [{'path': str(p), 'required': True} for p in (self.unit, self.binary, self.routing)],
             'retained': [{'path': str(self.cache), 'sentinel': str(self.cache/'sentinel'),
                           'sha256': M.checksum(self.cache/'sentinel')}]}, 'installs': []}
+        self.candidate_load_patch=patch.object(M, 'candidate_paths', side_effect=lambda role:
+            (M.ROOT/'v11', self.dir/'candidate-load') if role=='coordinator' else (M.ROOT/'v11',) if role=='worker' else ())
+        self.candidate_load_patch.start();self.addCleanup(self.candidate_load_patch.stop)
+        self.plan['baseline']['files'] += [{'path':str(p),'required':False} for p in M.candidate_paths('coordinator')]
         # Plan validation has separate production-path tests above. Bind the
         # actual transition implementation to fixture paths, not a fake copy.
         with patch.object(M, 'validate', side_effect=lambda p: p):
@@ -274,6 +278,78 @@ class HostFilesTests(unittest.TestCase):
         self.route_patch = patch.object(M, 'deferred', side_effect=lambda _, p: p == str(self.routing))
         self.route_patch.start()
         self.addCleanup(self.route_patch.stop)
+
+    def test_candidate_reconciliation_preserves_whole_captured_tree_and_receipt(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        (candidate/'active.json').write_text('private stale candidate bytes')
+        (candidate/'owner.lock').write_bytes(b'')
+        self.host.capture()
+        self.host.reconcile_candidates()
+        retained=candidate.with_name(candidate.name+'.schema-before-'+self.plan['transaction'])
+        self.assertFalse(candidate.exists())
+        self.assertEqual((retained/'active.json').read_text(),'private stale candidate bytes')
+        self.assertTrue((retained/'owner.lock').is_file())
+        receipt=json.loads(self.host.root.with_suffix('.candidate.json').read_text())
+        self.assertEqual(receipt['status'],'complete')
+        self.assertEqual(receipt['moves'][0]['inventory']['owner.lock']['kind'],'file')
+        with self.assertRaises(ValueError):self.host.reconcile_candidates()
+
+    def test_candidate_inventory_binds_even_lock_bytes_and_absent_namespaces(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        lock=candidate/'owner.lock';lock.write_text('before')
+        self.host.capture();lock.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+
+    def test_worker_candidate_requires_exact_reviewed_activation(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        target=worker_plan()['worker']
+        active={k:target[k] for k in ('directory','assignment','map_sha256')}
+        (candidate/'active.json').write_text(json.dumps(active))
+        self.host.capture()
+        record,state=self.host.saved()
+        state['candidate']={str(candidate):state['candidate'][str(candidate)]}
+        self.host.role='worker';self.host.plan['worker']=target
+        self.host.saved=lambda:(record,state)
+        self.host.plan['worker']=dict(target,map_sha256='0'*64)
+        with self.assertRaisesRegex(ValueError,'reviewed target'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+        self.host.plan['worker']=target
+        self.host.reconcile_candidates()
+        self.assertFalse(candidate.exists())
+
+    def test_candidate_uncaptured_presence_and_ancestor_alias_refuse(self):
+        self.host.capture()
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        alias=self.dir/'alias';alias.symlink_to(M.ROOT,target_is_directory=True)
+        with self.assertRaisesRegex(ValueError,'ancestor aliases'):M.candidate_inventory(alias/'v11')
+        self.assertTrue(candidate.exists())
+
+    def test_startup_settle_is_bounded_and_does_not_claim_qualification(self):
+        from unittest.mock import Mock
+        self.host.commands.control=Mock(side_effect=[ValueError('starting'),{'warm':False},{'warm':True}])
+        ticks=iter([0,0,2,2,4,4,6])
+        with patch.object(M.time,'monotonic',side_effect=lambda:next(ticks)),patch.object(M.time,'sleep'):
+            result=self.host.settle_restored_worker()
+        self.assertEqual(len(result['observations']),3)
+        self.assertEqual(result['observations'][0]['error_type'],'ValueError')
+        self.assertIn('exact worker proof remains mandatory',result['qualification'])
+        self.host.commands.control=Mock(return_value={'warm':False})
+        ticks=iter([0,0,41,41,41])
+        with patch.object(M.time,'monotonic',side_effect=lambda:next(ticks)),patch.object(M.time,'sleep'):
+            result=self.host.settle_restored_worker()
+        self.assertFalse(result['observations'][-1]['warm'])
+        self.assertNotEqual(result.get('status'),'passed')
+
+    def test_candidate_reconciliation_refuses_drift_symlink_and_uncaptured_state(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        payload=candidate/'state.json';payload.write_text('captured')
+        self.host.capture();payload.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+        payload.unlink();payload.symlink_to(self.unit)
+        with self.assertRaisesRegex(ValueError,'links'):M.candidate_inventory(candidate)
 
     def test_quiesce_capture_restore_bytes_modes_and_deferred_routes(self):
         self.host.capture()
@@ -415,6 +491,7 @@ class HostFilesTests(unittest.TestCase):
         self.host.plan['installs'] = [{'source': str(source), 'target': str(self.unit),
                                       'sha256': M.checksum(source), 'mode': 0o644}]
         self.host.saved = lambda: None
+        self.host.reconcile_candidates = lambda: None
         with patch.object(M, 'ROOT', self.dir/'publisher'):
             self.host.stage()
             displaced = Path(str(drops)+'.activity-v10-'+self.host.plan['transaction'])
@@ -436,6 +513,7 @@ class HostFilesTests(unittest.TestCase):
         # staged input failure only, while saved()/identity are covered above.
         self.host.plan['installs'] = sources
         self.host.saved = lambda: None
+        self.host.reconcile_candidates = lambda: None
         Path(sources[1]['source']).write_bytes(b'corruption')
         with self.assertRaisesRegex(ValueError, 'changed during copy'):
             with patch.object(M, 'ROOT', self.dir/'publisher'):

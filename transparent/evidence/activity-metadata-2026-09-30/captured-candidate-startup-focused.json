@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "owner": "a684fcdd413549f4a48b7f4fee1fc09a",
+  "base_source_sha": "a8e6b63b5b4c66311780d1d98c076409553afac6",
+  "duration_seconds": 21.516870083054528,
+  "command": "make check-fast BASE=a8e6b63b5b4c66311780d1d98c076409553afac6",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_host.py": "e473e13b63c36289bb1b22bf7bd65e9182e8aa8d849fe696a4cf011873cbaa71",
+    "transparent/ops/tests/test_activity_schema_host.py": "5ca9d6baf7873900944d019714025989840d114be956d205ee3bce65d2f94d48"
+  },
+  "result_sha256": "a93b58e6bc0cdf132ea91699336e9a52649bbf0e259f4677b8277d9a1ec88b9e",
+  "scope": [
+    "Captured candidate whole-tree retention including lock bytes",
+    "Worker stale activation exact reviewed target; drift, aliases and uncaptured state refused",
+    "Bounded startup observations; readiness and client qualification remain mandatory"
+  ],
+  "rollback_budget_seconds": 740,
+  "limitations": [
+    "No production candidate reconciliation or fresh v11 acceptance yet",
+    "Earlier cold archive failures remain failed"
+  ]
+}
