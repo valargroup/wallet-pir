@@ -1,5 +1,17 @@
 # Remaining work for the transparent PIR recovery beta
 
+Attempt 10 passed candidate preparation and independent worker activation, but
+canonical verification failed with HTTP 503. Automatic cold rollback passed in
+379.941 seconds; private and each canonical native/query/SQLite proof passed,
+and all owners exited. The historical response endpoint/body were not retained;
+controller startup reconciliation is an inference. A closed startup observation
+now permits only the native controller's exact local reconciliation refusal,
+with pinned unit/PID/binary, no restart/OOM, 20% resource floors and both public
+origins still withdrawn. It is bounded to 300 seconds inside the unchanged
+canonical phase; all full canonical gates still follow. Actual corrected cutover
+and all final qualification remain open.
+[Evidence](../evidence/activity-metadata-2026-09-30/attempt10-canonical-refusal-cold-rollback-9164c2c7.json).
+
 Attempt 9 completed the remote v11 cutover and exact private/both canonical
 query proofs, but continuous publication failed: operations inputs used `v2`
 instead of the native profile name `zcash-transparent-range-v2`. Load remained

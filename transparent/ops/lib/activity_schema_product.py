@@ -11,6 +11,7 @@ import base64
 import hashlib
 import importlib.util
 import time
+import urllib.error
 from pathlib import Path
 
 from wallet_pir_ops import inherited_lock
@@ -403,6 +404,67 @@ class Product:
         script = Path('/srv/transparent-activity/ops/sources')/self.spec['source_sha']/'transparent/ops/scripts/transparent-activity-link-probe.py'
         self.local.commands.run(['/usr/bin/nsenter','--target',pid,'--mount','--','/usr/bin/python3','-B',str(script)], timeout=15)
 
+    async def publisher_bootstrap(self):
+        """Observe only the native controller's closed startup reconciliation.
+
+        This stays inside the existing 1800-second canonical phase. A metadata
+        response ends observation; it does not replace any canonical proof.
+        """
+        started = time.monotonic()
+        initial = None
+        observations = []
+        expected = next(i['sha256'] for i in self.coordinator['plan']['installs']
+                        if i['target'] == '/usr/local/bin/transparent-publish-controller')
+        unit_path = '/etc/systemd/system/'+H.AUTHORITY[0]
+        expected_unit = next(i['sha256'] for i in self.coordinator['plan']['installs'] if i['target'] == unit_path)
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            while True:
+                H.require(time.monotonic()-started < 300, 'publisher bootstrap observation deadline exceeded')
+                self.local.withdrawn()
+                self.routing.check_guard()
+                state = self.local.commands.state(H.AUTHORITY[0])
+                pid = state.get('MainPID', '0')
+                H.require(state.get('ActiveState') == 'active' and pid.isdigit() and int(pid)>0 and
+                          not state.get('DropInPaths') and state.get('FragmentPath') == unit_path and
+                          H.checksum(unit_path) == expected_unit, 'publisher bootstrap unit changed or exited')
+                H.require(H.checksum('/proc/'+pid+'/exe') == expected, 'publisher bootstrap binary differs')
+                resources = self.local.commands.service_resources(H.AUTHORITY[0], PUBLICATION.parent)
+                H.require(resources['memory_available']/resources['memory_total'] >= .20 and
+                          resources['disk_available']/resources['disk_total'] >= .20,
+                          'publisher bootstrap resource floor failed')
+                H.require(resources['pid'] == pid and resources['oom'] == 0 and resources['oom_kill'] == 0,
+                          'publisher bootstrap OOM or process identity changed')
+                identity = (pid, state.get('NRestarts'), resources['restarts'])
+                H.require(all(v is not None for v in identity), 'publisher bootstrap restart observation unavailable')
+                if initial is None: initial = identity
+                H.require(identity == initial, 'publisher bootstrap restarted')
+                observation = {'elapsed_seconds':time.monotonic()-started, 'resources':resources}
+                observations.append(observation)
+                try:
+                    self.routing.fetch('http://127.0.0.1:8094/v1/shards')
+                except urllib.error.HTTPError as error:
+                    body = getattr(error, 'activity_body', b'')
+                    observation['http'] = {'url':str(error.url)[:512], 'status':error.code,
+                                           'body':body[:2048].decode('utf-8', errors='replace'),
+                                           'truncated':len(body)>2048}
+                    H.require(error.url == 'http://127.0.0.1:8094/v1/shards' and error.code == 503 and
+                              body == b'transparent publication is being reconciled',
+                              'publisher bootstrap refused an unexpected HTTP response')
+                    status = self.routing.fetch('http://127.0.0.1:8094/v1/status')
+                    H.require(isinstance(status, dict) and status.get('phase') == 'starting' and
+                              not status.get('publication_error') and not status.get('ingest_error'),
+                              'publisher bootstrap failed or left startup reconciliation')
+                    await asyncio.sleep(min(2, max(0, 300-(time.monotonic()-started))))
+                    continue
+                self.local.withdrawn()
+                self.routing.check_guard()
+                return
+        finally:
+            H.B.atomic(self.root/('publisher-bootstrap-'+str(time.time_ns())+'.private.json'),
+                       H.encode({'source_sha':self.spec['source_sha'], 'observations':observations,
+                                 'qualification':'startup observation only; full canonical proof still required'}))
+
     def owned(self, transaction, phase, journal):
         inherited_lock.descriptors(required=True, path=H.LOCK)
         H.require(Path(journal) == STATE/(transaction+'.json'), 'phase journal is outside owning schema state')
@@ -485,6 +547,7 @@ class Product:
             await self.routing.route_private('v11')
         elif phase == 'verify-canonical':
             self.sandbox()
+            await self.publisher_bootstrap()
             await self.routing.verify('v11')
         elif phase == 'resume-load':
             # Reopen includes a fresh real HTTPS recovery before it returns.

@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import hashlib
+import io
 import copy
 import importlib.util
 import json
@@ -12,6 +13,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 HERE = Path(__file__).parent
@@ -462,6 +464,69 @@ class InstalledSetups(unittest.TestCase):
             self.assertFalse((self.product.root/'installed-setups.json').exists())
 
 
+class PublisherBootstrap(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        self.product = object.__new__(M.Product)
+        self.product.root = Path(self.tmp.name)
+        self.product.spec = {'source_sha':'b'*40}
+        self.product.coordinator = {'plan':{'installs':[{'target':'/usr/local/bin/transparent-publish-controller',
+                                                       'sha256':'c'*64}, {'target':'/etc/systemd/system/'+M.H.AUTHORITY[0], 'sha256':'c'*64}]}}
+        self.state = {'ActiveState':'active', 'MainPID':'123', 'NRestarts':'0', 'DropInPaths':'',
+                      'FragmentPath':'/etc/systemd/system/'+M.H.AUTHORITY[0]}
+        self.resources = {'pid':'123','restarts':'0','memory_available':40,'memory_total':100,
+                          'disk_available':40,'disk_total':100,'oom':0,'oom_kill':0}
+        self.probes = 0; self.guards = 0
+        self.body = b'transparent publication is being reconciled'
+        self.status = {'phase':'starting'}
+        def fetch(url):
+            if url.endswith('/v1/status'): return self.status
+            self.probes += 1
+            if self.probes == 1:
+                error = urllib.error.HTTPError(url,503,'Service Unavailable',{},io.BytesIO(self.body))
+                error.activity_body = self.body
+                error.close()
+                raise error
+            return {'shards':[{}]}
+        self.product.routing = SimpleNamespace(fetch=fetch,check_guard=lambda:None)
+        self.product.local = SimpleNamespace(withdrawn=self.withdrawn, commands=SimpleNamespace(
+            state=lambda _:self.state, service_resources=lambda *_:self.resources))
+
+    def withdrawn(self): self.guards += 1
+
+    async def observe(self):
+        with patch.object(M.H,'checksum',return_value='c'*64), patch.object(M.asyncio,'sleep'):
+            await self.product.publisher_bootstrap()
+
+    async def test_native_startup_refusal_is_observed_then_full_proof_remains_separate(self):
+        native = (HERE.parents[1]/'services/transparent-filter-server/src/controller.rs').read_text()
+        self.assertIn('withdrawn: AtomicBool::new(true)',native)
+        self.assertIn(self.body.decode(),native)
+        await self.observe()
+        self.assertEqual(self.probes,2); self.assertEqual(self.guards,3)
+        record = json.loads(next(self.product.root.glob('publisher-bootstrap-*.private.json')).read_text())
+        self.assertEqual(record['observations'][0]['http']['status'],503)
+
+    async def test_foreign_refusal_and_native_errors_do_not_retry(self):
+        for body,status in [(b'foreign',{'phase':'starting'}),(self.body,{'phase':'serving'}),
+                            (self.body,{'phase':'starting','publication_error':'failure'}),
+                            (self.body,{'phase':'starting','ingest_error':'failure'})]:
+            self.body=body; self.status=status; self.probes=0
+            with self.assertRaises(ValueError): await self.observe()
+            self.assertEqual(self.probes,1)
+
+    async def test_identity_floors_and_deadline_refuse(self):
+        for key,value in [('oom',1),('oom_kill',1),('memory_available',19),('disk_available',19),('pid','999')]:
+            original=self.resources[key];self.resources[key]=value
+            with self.assertRaises(ValueError): await self.observe()
+            self.resources[key]=original
+        self.state['DropInPaths']='foreign'
+        with self.assertRaises(ValueError): await self.observe()
+        self.state['DropInPaths']=''
+        with patch.object(M.time,'monotonic',side_effect=[0,300]):
+            with self.assertRaisesRegex(ValueError,'deadline'): await self.observe()
+
+
 class ProductPhases(unittest.IsolatedAsyncioTestCase):
     async def test_late_partial_capture_attests_guard_and_keeps_regenerated_routes(self):
         self.group='rollback';self.product.root=Path(tempfile.mkdtemp());self.addCleanup(__import__('shutil').rmtree,self.product.root)
@@ -531,6 +596,8 @@ class ProductPhases(unittest.IsolatedAsyncioTestCase):
         self.product.seed=lambda:self.events.append('seed-complete-state')
         self.product.verify_setups=lambda:self.events.append('measured-installed-setups')
         self.product.sandbox=lambda:self.events.append('installed-sandbox')
+        async def bootstrap():self.events.append('publisher-bootstrap')
+        self.product.publisher_bootstrap=bootstrap
         self.group='steps'
         source=patch.object(M.D.S,'verify_receipt',return_value=None);source.start();self.addCleanup(source.stop)
         load=patch.object(M.H,'load',return_value={'archive_sha256':'c'*64});load.start();self.addCleanup(load.stop)

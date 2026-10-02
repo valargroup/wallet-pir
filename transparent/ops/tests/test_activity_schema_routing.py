@@ -2,14 +2,17 @@
 from contextlib import asynccontextmanager
 import copy
 import hashlib
+import http.server
 import importlib.util
 import io
 import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]/'ops/lib'))
@@ -17,6 +20,31 @@ SPEC = importlib.util.spec_from_file_location('schema_routing', Path(__file__).p
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
 BINARY = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
+
+
+class HttpRefusal(unittest.TestCase):
+    def test_real_http_refusal_preserves_native_reconciliation_body(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503);self.end_headers()
+                self.wfile.write(b'transparent publication is being reconciled')
+            def log_message(self,*_):pass
+        with http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler) as server:
+            thread=threading.Thread(target=server.serve_forever);thread.start()
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    M.read_json('http://127.0.0.1:'+str(server.server_port)+'/v1/shards')
+                self.assertEqual(caught.exception.activity_body,b'transparent publication is being reconciled')
+            finally:
+                server.shutdown();thread.join()
+
+    def test_private_response_context_is_bounded_and_public_exception_unchanged(self):
+        url='http://127.0.0.1:8094/v1/shards'
+        error=urllib.error.HTTPError(url,503,'Service Unavailable',{},io.BytesIO(b'x'*9000))
+        with patch.object(M.urllib.request,'urlopen',side_effect=error):
+            with self.assertRaises(urllib.error.HTTPError) as caught:M.read_json(url)
+        self.assertEqual(str(caught.exception),'HTTP Error 503: Service Unavailable')
+        self.assertEqual(len(caught.exception.activity_body),2049)
 
 
 class RepairIdentity(unittest.TestCase):

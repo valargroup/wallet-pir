@@ -273,16 +273,19 @@ class Commands:
         return {'ready':ready, 'metrics':metrics}
 
     def cache_resources(self):
+        return self.service_resources(WORKER, CACHE)
+
+    def service_resources(self, unit, root):
         memory = {line.split(':',1)[0]:int(line.split()[1])*1024
                   for line in Path('/proc/meminfo').read_text().splitlines()
                   if line.startswith(('MemTotal:', 'MemAvailable:'))}
         require(set(memory) == {'MemTotal','MemAvailable'} and memory['MemTotal'] > 0,
                 'memory floor observation unavailable')
-        require(CACHE.is_dir() and not CACHE.is_symlink() and CACHE.parent.resolve() == CACHE.parent,
+        require(root.is_dir() and not root.is_symlink() and root.parent.resolve() == root.parent,
                 'cache resource namespace is aliased')
-        disk = os.statvfs(CACHE)
+        disk = os.statvfs(root)
         require(disk.f_blocks > 0, 'disk floor observation unavailable')
-        state = self.state(WORKER)
+        state = self.state(unit)
         group = state.get('ControlGroup','')
         events = {}
         if group:

@@ -1446,3 +1446,17 @@ The activity service-input controller uses the full native range profile name
 `zcash-transparent-range-v2`, bound to the reviewed publication geometry.
 Shorthand `v2` and foreign names refuse before service staging. A committed
 cutover and brief canonical proof do not accept continuous-publication freshness.
+
+### Controller startup observation before canonical verification
+
+The native publication authority starts withdrawn until it reconciles its first
+publication. The v11 canonical phase observes only the fixed local metadata
+endpoint's exact native HTTP 503 reconciliation body while status is `starting`
+and reports no ingestion/publication error. Unexpected responses and failures
+refuse immediately. The installed unit, executable, PID, restart/OOM counters,
+20% memory/disk floors and both public withdrawals remain checked. This
+observation is capped at 300 seconds inside the existing 1,800-second forward
+phase. Bounded HTTP refusal context is retained privately; public exception text
+is unchanged. A successful response ends observation and still requires all
+worker/map/assignment/anchor and real private/canonical recovery proofs. Cache
+preparation, worker warm bounds, rollback bounds and acceptance floors are unchanged.

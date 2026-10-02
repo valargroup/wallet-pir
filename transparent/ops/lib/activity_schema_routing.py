@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import time
+import urllib.error
 import urllib.request
 
 from wallet_pir_ops import inherited_lock
@@ -42,8 +43,15 @@ def require(ok, message):
 
 
 def read_json(url, expected_digest=None):
-    with urllib.request.urlopen(urllib.request.Request(url, headers={'Cache-Control':'no-cache'}), timeout=10) as response:
-        data = response.read(MAX_REPLY+1)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={'Cache-Control':'no-cache'}), timeout=10) as response:
+            data = response.read(MAX_REPLY+1)
+    except urllib.error.HTTPError as error:
+        # The owning private product phase may retain this bounded context.
+        # Preserve the public exception text and never retry arbitrary refusals.
+        error.activity_body = error.read(2049)
+        error.close()
+        raise
     require(len(data) <= MAX_REPLY, 'service metadata exceeds bound')
     if expected_digest is not None:
         require(hashlib.sha256(data).hexdigest() == expected_digest, 'canonical manifest bytes differ from their map digest')
