@@ -1460,3 +1460,11 @@ phase. Bounded HTTP refusal context is retained privately; public exception text
 is unchanged. A successful response ends observation and still requires all
 worker/map/assignment/anchor and real private/canonical recovery proofs. Cache
 preparation, worker warm bounds, rollback bounds and acceptance floors are unchanged.
+
+Service input preparation binds roster archive ownership to the qualified v11
+map. Every archive owner needs an inclusive integer range; the sorted ranges
+must partition all archive shards contiguously from zero with no gaps or overlap.
+Recent replicas cannot own archive ranges. The native assignment, memory budgets
+and full installed worker proofs remain separate gates. Controller bootstrap
+records bounded phase and publication/ingestion error context privately before
+refusing startup errors.

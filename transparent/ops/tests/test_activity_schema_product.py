@@ -514,6 +514,9 @@ class PublisherBootstrap(unittest.IsolatedAsyncioTestCase):
             self.body=body; self.status=status; self.probes=0
             with self.assertRaises(ValueError): await self.observe()
             self.assertEqual(self.probes,1)
+            if body == b'transparent publication is being reconciled':
+                records=[json.loads(p.read_text()) for p in self.product.root.glob('publisher-bootstrap-*.private.json')]
+                self.assertTrue(any(r['observations'][0].get('controller_status') == status for r in records))
 
     async def test_identity_floors_and_deadline_refuse(self):
         for key,value in [('oom',1),('oom_kill',1),('memory_available',19),('disk_available',19),('pid','999')]:

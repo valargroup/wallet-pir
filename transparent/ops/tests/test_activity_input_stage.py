@@ -375,7 +375,9 @@ class ServiceInputs(unittest.TestCase):
             'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
                 'worker_schema':'transparent-shard-v11','worker_active_record':'/opt/transparent-publisher/v11/active.json',
                 'worker_runtime_cache_dir':'/srv/transparent-pir/v11/runtime-cache','worker_root':'/srv/transparent-pir/v11/publications'}),
-            'roster.json':json.dumps([{'id':'worker-'+str(i)} for i in range(3)]),
+            'roster.json':json.dumps([{'id':'worker-'+str(i),
+                'role':'archive-owner' if i == 2 else 'recent-replica',
+                **({'archive_range':[0,0]} if i == 2 else {})} for i in range(3)]),
             'pins.json':json.dumps({'worker-'+str(i):M.WORKER_HASHES['transparent-shard-server'] for i in range(3)}),
             'policy.json':json.dumps({'mode':'observe'}),
             'fixture.json':json.dumps({'schema':'transparent-shard-v11','tables':[{'shard_id':s['shard_id'],
@@ -414,6 +416,43 @@ class ServiceInputs(unittest.TestCase):
                 with self.assertRaises(ValueError):self.preparation(r).render()
         r=copy.deepcopy(self.request);v=json.loads(r['files']['fixture.json']);v['tables'].pop();r['files']['fixture.json']=json.dumps(v)
         with self.assertRaisesRegex(ValueError,'traffic group'):self.preparation(r).render()
+
+    def test_archive_ownership_is_bound_to_publication_before_staging(self):
+        for span in (None, [], [0], [True,0], [0,False], [0,1], [1,1], [-1,0],
+                     [0,'0'], [0,2**64], [1,0]):
+            r=copy.deepcopy(self.request); roster=json.loads(r['files']['roster.json'])
+            roster[2]['archive_range']=span; r['files']['roster.json']=json.dumps(roster)
+            with self.subTest(span=span),self.assertRaises(ValueError):self.preparation(r).render()
+        for change in ('recent-range','foreign-role','overlap','missing-owner'):
+            r=copy.deepcopy(self.request); roster=json.loads(r['files']['roster.json'])
+            if change=='recent-range':roster[0]['archive_range']=[0,0]
+            elif change=='foreign-role':roster[2]['role']='foreign'
+            elif change=='missing-owner':roster[2]['role']='recent-replica';roster[2].pop('archive_range')
+            else:roster.append({'id':'extra','role':'archive-owner','archive_range':[0,0]})
+            r['files']['roster.json']=json.dumps(roster)
+            r['files']['pins.json']=json.dumps({w['id']:M.WORKER_HASHES['transparent-shard-server'] for w in roster})
+            with self.subTest(change=change),self.assertRaises(ValueError):self.preparation(r).render()
+
+    def test_split_archive_ranges_cover_the_same_native_boundary(self):
+        mapping=json.loads((self.output/'shards.json').read_text())
+        mapping['shards'].insert(1,{'shard_id':1,'manifest_digest':'2'*64,'geometry':'archive-wide','start_height':0})
+        mapping['shards'][-1]['shard_id']=2
+        (self.output/'shards.json').write_text(json.dumps(mapping))
+        (self.evidence/'result.json').write_text(json.dumps({'status':'passed','map_sha256':M.P.checksum(self.output/'shards.json')}))
+        r=copy.deepcopy(self.request);roster=json.loads(r['files']['roster.json'])
+        roster.append({'id':'extra','role':'archive-owner','archive_range':[1,1]})
+        r['files']['roster.json']=json.dumps(roster)
+        r['files']['pins.json']=json.dumps({w['id']:M.WORKER_HASHES['transparent-shard-server'] for w in roster})
+        fixture=json.loads(r['files']['fixture.json'])
+        for target in fixture['tables']:
+            if target['geometry']=='recent-4k-8k':target['shard_id']=2
+        r['files']['fixture.json']=json.dumps(fixture)
+        self.preparation(r).render()
+        roster[-1]['archive_range']=[0,1];r['files']['roster.json']=json.dumps(roster)
+        with self.assertRaisesRegex(ValueError,'gap, overlap'):self.preparation(r).render()
+        native=(Path(__file__).parents[2]/'services/transparent-shard-server/src/router.rs').read_text()
+        self.assertIn('next != recent_from_shard',native)
+        self.assertIn('pinned archive ranges must be contiguous from shard 0',native)
 
     def test_closed_files_digest_bounds_and_duplicate_configuration_keys(self):
         for name in ('../../Caddyfile','credentials','unknown.json'):

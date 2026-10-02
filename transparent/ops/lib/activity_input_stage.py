@@ -801,6 +801,28 @@ class ServicePreparation(Preparation):
                 controller.get('recent_geometry') == 'recent-4k-8k' and controller.get('archive_geometry') == 'archive-wide' and
                 controller.get('directory_choice') == 'all' and controller.get('range_profile') == P.GEOMETRIES['range_profile'],
                 'controller profile/cutoff differs from the approved publication')
+        archive = sorted(s['shard_id'] for s in mapping['shards'] if s['geometry'] == 'archive-wide')
+        require(archive and all(type(i) is int for i in archive) and archive == list(range(len(archive))),
+                'publication archive is not contiguous from shard zero')
+        require(all(w.get('role') in ('recent-replica', 'archive-owner') for w in roster) and
+                sum(w['role'] == 'recent-replica' for w in roster) >= 2,
+                'service roster roles differ from the required fleet')
+        ranges = []
+        for worker in roster:
+            span = worker.get('archive_range')
+            if worker['role'] == 'recent-replica':
+                require(span is None, 'recent replica has archive ownership')
+                continue
+            require(isinstance(span, list) and len(span) == 2 and
+                    all(type(i) is int and 0 <= i < 2**64 for i in span) and
+                    span[0] <= span[1], 'archive owner lacks a valid pinned range')
+            ranges.append(span)
+        next_shard = 0
+        for first, last in sorted(ranges):
+            require(first == next_shard and last < len(archive),
+                    'archive ownership has a gap, overlap or foreign shard')
+            next_shard = last + 1
+        require(next_shard == len(archive), 'archive ownership differs from the approved publication')
         entries = {s['shard_id']: s for s in mapping['shards']}
         fixture = configs['fixture.json']
         require(fixture.get('schema') == 'transparent-shard-v11' and isinstance(fixture.get('tables'), list),

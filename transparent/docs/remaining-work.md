@@ -1,5 +1,17 @@
 # Remaining work for the transparent PIR recovery beta
 
+Attempt 11 passed candidate preparation and activation, then the closed startup
+guard refused a real publication error: the cloned predecessor roster pinned
+archive shards 0–76 while the v11 map requires 0–81. Native `shard-assign`
+confirmed the mismatch. Automatic cold rollback passed all five phases in
+390.229 seconds; independent private/both canonical native proofs and five
+reopened SQLite stores passed, and all owners exited. Service preparation now
+requires pinned archive ranges to cover the qualified map exactly, rejecting
+stale ranges, gaps, overlap, foreign shards, invalid endpoints and changed roles.
+The private generator derives this fleet's single owner's range from the
+checksum-verified qualified v11 map. Corrected cutover and all final gates remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt11-archive-roster-refusal-cold-rollback-7bdbcbb9.json).
+
 Attempt 10 passed candidate preparation and independent worker activation, but
 canonical verification failed with HTTP 503. Automatic cold rollback passed in
 379.941 seconds; private and each canonical native/query/SQLite proof passed,

@@ -452,6 +452,9 @@ class Product:
                               body == b'transparent publication is being reconciled',
                               'publisher bootstrap refused an unexpected HTTP response')
                     status = self.routing.fetch('http://127.0.0.1:8094/v1/status')
+                    observation['controller_status'] = {
+                        key: str(status[key])[:2048] for key in ('phase', 'publication_error', 'ingest_error')
+                        if isinstance(status, dict) and key in status}
                     H.require(isinstance(status, dict) and status.get('phase') == 'starting' and
                               not status.get('publication_error') and not status.get('ingest_error'),
                               'publisher bootstrap failed or left startup reconciliation')
