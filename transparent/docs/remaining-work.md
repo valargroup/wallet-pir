@@ -254,6 +254,20 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Txid display sizing and independent routing
+
+Findings and evidence: [sizing and anonymity](../../docs/transparent-txid-sizing-and-anonymity-findings.md).
+The boundary is strictly more than 80% of eligible confirmed records inline.
+Full-chain threshold and minimum-population qualification remain **UNQUALIFIED**.
+
+- [x] Discover documented node/export sources and retain sanitized access/selection outcomes.
+- [x] Retain a bounded canonical upstream-vector sample, missing-prevout exclusions, exact pins, byte/packing comparisons and routing negative controls.
+- [ ] Obtain a sanctioned immutable complete canonical export or read-only archive selector through one accepted anchor/hash; include complete raw outputs, prevouts/shared metadata, coinbase, mixed pools, external unshielding, unusual scripts and transparent-input/no-output records. Verify eligibility, continuity and checksums independently of supported-script history.
+- [ ] Build a streaming census runner over that source; reconcile all eligible txids and retain era/coinbase/raw-script/input-only strata, output and fragment counts, occupied/slack bytes and reproducible 85/90/95/99/higher coverage frontiers at all requested cutoffs.
+- [ ] Replay joint lookup/overflow routing at every retained revision and refresh/tail boundary. Intersect bucket, revision/time, segment/query counts, modeled timing and prior-history transcript. Count distinct real candidates; evaluate policy floors 1000 and 10000 without formal anonymity claims. Preserve five-candidate, dummy/repeat, excess-query, thin-tail and timing negative controls.
+- [ ] Measure native preprocessing reservations, RSS, uploaded/returned bytes, row/segment evaluations and query latency/throughput on existing sanctioned resources for independent lookup/overflow geometries and cover schedules. Pin workload weights/cache assumptions; no provisioning or production mutation is implied.
+- [ ] Select a joint inline threshold and independent lookup/overflow design strictly above 80% from the measured cost/privacy frontier. Require an explicit population/cover policy and residual-correlation decision before implementing a new manifest/codec or sharding scheme. Keep one logical coordinator; do not couple display to script-history table geometry.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

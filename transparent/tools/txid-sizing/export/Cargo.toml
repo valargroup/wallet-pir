@@ -1,0 +1,22 @@
+[package]
+name = "txid-sizing-export"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+hex = "0.4"
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+transparent-events = { path = "../../../crates/transparent-events" }
+transparent-filter = { path = "../../../crates/transparent-filter" }
+transparent-shard = { path = "../../../crates/transparent-shard" }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "af944f5194ef2e9921bc96af017629450375013c" }
+
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
