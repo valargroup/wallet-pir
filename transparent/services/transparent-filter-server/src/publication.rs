@@ -1271,6 +1271,96 @@ mod tests {
         }
     }
 
+    /// Retention cost over a publication shaped like production's: one
+    /// manifest per shard of the retained v10 census, each carrying a choice
+    /// table sized for its script count, and three superseded tails. Prints
+    /// both scans' seconds; run with `--ignored --nocapture` on an optimized
+    /// build.
+    #[test]
+    #[ignore]
+    fn retention_scan_cost_at_census_scale() {
+        let census = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../evidence/compact-layout-2026-09-28/census.jsonl"),
+        )
+        .unwrap();
+        let scripts: Vec<u64> = census
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|row| row["type"] == "shard")
+            .map(|row| row["scripts"].as_u64().unwrap())
+            .collect();
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let template_dir = root.path().join("template");
+        let mut options = options(&template_dir, None);
+        options.directory_choice = DirectoryChoice::All;
+        let template_map = publish(&options, &journal, zero).unwrap();
+        let tail = template_map.shards.last().unwrap();
+        let template: ShardManifest = serde_json::from_slice(
+            &std::fs::read(template_dir.join(&tail.manifest_digest).join("manifest.json"))
+                .unwrap(),
+        )
+        .unwrap();
+
+        let previous = root.path().join("previous");
+        let mut shards = Vec::new();
+        let mut manifest_bytes = 0;
+        let last = scripts.len() as u64 - 1;
+        let mut write = |manifest: &ShardManifest| {
+            let bytes = manifest.canonical_bytes();
+            manifest_bytes += bytes.len();
+            let dir = previous.join(manifest.digest());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.json"), bytes).unwrap();
+            manifest.digest()
+        };
+        for (id, keys) in scripts.iter().enumerate() {
+            let segment = (keys * 123).div_ceil(100).saturating_add(32).div_ceil(3);
+            let encoded = (13 + (3 * segment).div_ceil(8)).div_ceil(3) * 4;
+            let mut manifest = template.clone();
+            manifest.shard_id = id as u64;
+            manifest.sealed = id as u64 != last;
+            manifest.revision = if manifest.sealed { 0 } else { 4 };
+            manifest.directory_choice = Some("A".repeat(encoded as usize));
+            if id as u64 == last {
+                for revision in 1..4 {
+                    let mut superseded = manifest.clone();
+                    superseded.revision = revision;
+                    write(&superseded);
+                }
+            }
+            let mut entry = tail.clone();
+            entry.shard_id = id as u64;
+            entry.sealed = manifest.sealed;
+            entry.revision = manifest.revision;
+            entry.manifest_digest = write(&manifest);
+            shards.push(entry);
+        }
+
+        let started = std::time::Instant::now();
+        link_superseded_tails_per_shard(&previous, &root.path().join("a"), &shards, &journal);
+        let per_shard = started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
+        link_superseded_tails(&previous, &root.path().join("b"), &shards, &journal).unwrap();
+        let single = started.elapsed().as_secs_f64();
+        println!(
+            "{}",
+            serde_json::json!({
+                "shards": shards.len(),
+                "manifests": shards.len() + 3,
+                "manifest_bytes": manifest_bytes,
+                "per_shard_scan_seconds": per_shard,
+                "single_scan_seconds": single,
+            })
+        );
+    }
+
     #[test]
     fn sealed_reorg_builds_a_separate_suffix_and_snapshot_survives_rollback() {
         let root = tempfile::tempdir().unwrap();

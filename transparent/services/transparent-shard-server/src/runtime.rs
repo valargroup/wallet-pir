@@ -225,6 +225,16 @@ impl Iterator for RowCoefficients<'_> {
     }
 }
 
+/// Leading `D`-row blocks of a `table_rows`-row plaintext that hold any
+/// nonzero byte, and at least one.
+fn used_blocks(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
+    let last = rows
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |at| at / row_bytes);
+    (last / native::D + 1).min(table_rows / native::D)
+}
+
 /// One segment of one shard revision's table, prepared to answer queries.
 pub struct TableRuntime {
     pub(crate) preprocessed: Vec<NativePreprocessed>,
@@ -313,9 +323,17 @@ impl TableRuntime {
         // database, exactly lifted.
         let padded = server.db_rows_padded();
         let db = server.db();
-        let hint = native::hint(&profile.masks, profile.rows, profile.cols, |col| {
-            &db[col * padded..col * padded + profile.rows]
-        })?;
+        // Zero rows add nothing to `masks * database`, so trailing blocks of
+        // them are left out of the product. A growing tail's page table fills
+        // from its first row and is mostly empty for much of its life; the
+        // hint, and every byte published from it, is the same.
+        let used = used_blocks(rows, profile.row_bytes, profile.rows);
+        let hint = native::hint(
+            &profile.masks[..used],
+            used * native::D,
+            profile.cols,
+            |col| &db[col * padded..col * padded + used * native::D],
+        )?;
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -915,6 +933,50 @@ mod tests {
             rebuilt,
             TableRuntime::build(&shared, &rows).unwrap().public_params
         );
+    }
+
+    /// Leaving trailing zero blocks out of the hint publishes exactly the
+    /// masks the whole-table product does: an empty table, content ending
+    /// on either side of a block boundary, and content in the last row.
+    #[test]
+    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
+        let shared =
+            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+        let profile = &shared.profile;
+        let full = |rows: &[u8]| {
+            let columns: Vec<Vec<u16>> = (0..profile.cols)
+                .map(|col| {
+                    (0..profile.rows)
+                        .map(|row| native::row_coefficient(rows, profile.row_bytes, row, col))
+                        .collect()
+                })
+                .collect();
+            let hint =
+                native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+            native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap()
+        };
+        let bytes = profile.rows * profile.row_bytes;
+        for (filled, expected_blocks) in [
+            (0, 1),
+            (1, 1),
+            (native::D * profile.row_bytes, 1),
+            (native::D * profile.row_bytes + 1, 2),
+            (bytes, 2),
+        ] {
+            let mut rows = vec![0u8; bytes];
+            for (i, byte) in rows[..filled].iter_mut().enumerate() {
+                *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
+            }
+            assert_eq!(
+                used_blocks(&rows, profile.row_bytes, profile.rows),
+                expected_blocks
+            );
+            assert_eq!(
+                TableRuntime::build(&shared, &rows).unwrap().public_params,
+                full(&rows),
+                "{filled} leading bytes"
+            );
+        }
     }
 
     /// Every registry geometry must have parameters and a reservation that
