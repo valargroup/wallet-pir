@@ -8,6 +8,20 @@ checklist; [deployment](deployment.md) owns operating targets.
 
 ## Activity metadata candidate, 2026-09-30
 
+Attempt 12 activated a fresh v11 publication after the archive roster correction,
+then canonical verification refused a worker warm-publication attestation.
+The failed native status body was not retained, so future preparation is a
+possible cause, not a confirmed historical diagnosis. Local SSH transport failed
+separately; the remote owner completed automatic cold rollback in 389.565 seconds.
+Independent private/both canonical native proofs, five reopened SQLite stores
+and owner exit checks passed. V11 serving verification now checks the exact
+warm, non-invalidated active map while a future candidate prepares, as the native
+status producer distinguishes these states. HTTP readiness, assignment, release,
+all workers and every independently canonical advertised anchor remain required.
+Control and HTTP observations are retained privately before refusal. Initial
+candidate prewarm, all phase bounds and all final qualification gates remain
+unchanged and open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt12-warm-refusal-cold-rollback-6f37db70.json).
+
 Attempt 11 passed candidate preparation and activation, then the closed startup
 guard refused a real publication error: the cloned predecessor roster pinned
 archive shards 0–76 while the v11 map requires 0–81. Native `shard-assign`

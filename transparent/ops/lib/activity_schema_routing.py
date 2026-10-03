@@ -322,9 +322,23 @@ class Routing:
         manifests = set()
         for worker in workers:
             status = await fleet.control(worker, {'operation':'status'})
-            require(warm_active(status, active['map_sha256'], continuous=kind == 'v10' and
-                    getattr(self,'predecessor_continuous',False)), 'worker does not attest the complete warm publication')
-            ready = self.fetch('http://'+worker['upstream']+'/v1/ready')
+            self.worker_observation(kind, worker, active['map_sha256'], 'control', status)
+            # Native warm/invalidated describe the active serving state. Future
+            # preparation is separate; every current map, HTTP, assignment,
+            # release and independently canonical revision check still follows.
+            require(warm_active(status, active['map_sha256'], continuous=kind == 'v11' or
+                    kind == 'v10' and getattr(self,'predecessor_continuous',False)),
+                    'worker does not attest the complete warm publication')
+            url = 'http://'+worker['upstream']+'/v1/ready'
+            try:
+                ready = self.fetch(url)
+            except urllib.error.HTTPError as error:
+                body = getattr(error, 'activity_body', b'')
+                self.worker_observation(kind, worker, active['map_sha256'], 'http',
+                    {'url':url, 'status':error.code, 'body':body[:2048].decode('utf-8', errors='replace'),
+                     'truncated':len(body)>2048})
+                raise
+            self.worker_observation(kind, worker, active['map_sha256'], 'http', ready)
             require(ready.get('ready') is True and ready.get('mode') == 'warm' and ready.get('map_sha256') == active['map_sha256'],
                     'HTTP readiness does not agree with native control')
             require(rows[worker['id']]['role'] == worker['role'] and rows[worker['id']]['upstream'] == worker['upstream'] and
@@ -375,6 +389,15 @@ class Routing:
         lineage = {k:mapping.get(k) for k in ('genesis_hash','network','profile','range_envelope_version','start_height','seal')}
         return {'kind':kind, 'lineage':lineage, 'history':mapping['shards'], 'map_sha256':active['map_sha256'], 'assignment_sha256':assignment_sha,
                 'manifests':sorted(manifests), 'workers':observations}
+
+    def worker_observation(self, kind, worker, digest, channel, value):
+        """Retain bounded private evidence before a serving attestation refuses."""
+        data = H.encode({'source_sha':self.plan['source_sha'], 'transaction':self.plan['transaction'],
+                         'kind':kind, 'worker':worker['id'], 'expected_map_sha256':digest,
+                         'channel':channel, 'observation':value})
+        require(len(data) <= MAX_REPLY, 'worker observation exceeds bound')
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        H.B.atomic(self.root/('worker-observation-'+str(time.time_ns())+'.private.json'), data)
 
     def pins(self, kind):
         # Public binary identities only; derive v10 pins from independently

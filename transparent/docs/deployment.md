@@ -1468,3 +1468,12 @@ Recent replicas cannot own archive ranges. The native assignment, memory budgets
 and full installed worker proofs remain separate gates. Controller bootstrap
 records bounded phase and publication/ingestion error context privately before
 refusing startup errors.
+
+Continuous v11 serving verification attests the current active publication even
+while the native worker prepares a future candidate. Warmth and invalidation
+must describe that exact active map; a candidate's warmth cannot substitute.
+Both recent replicas, all archive owners, HTTP readiness, assignment and release
+identities, complete map manifests and independent canonical anchors still pass
+before private and each public recovery proof. Bounded private worker control
+and HTTP observations are retained before a refusal. Initial candidate activation
+still uses its separate strict warm proof and unchanged deadlines.

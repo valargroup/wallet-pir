@@ -250,6 +250,62 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse((self.routing.root/'verified-v11.json').exists())
         self.assertNotEqual(self.current,self.original)
 
+    async def test_future_preparation_preserves_exact_current_v11_proof(self):
+        self.fleet.status['preparing']={'map_sha256':'1'*64}
+        self.fleet.status['candidate']={'map_sha256':'2'*64,'warm':False}
+        await self.routing.verify('v11')
+        for key,value in [('warm',False),('invalidated',True),('active',{'map_sha256':'3'*64})]:
+            original=self.fleet.status[key];self.fleet.status[key]=value
+            with self.assertRaisesRegex(ValueError,'warm publication'):await self.routing.verify('v11')
+            self.fleet.status[key]=original
+        self.bad_assignment=True
+        with self.assertRaisesRegex(ValueError,'scope'):await self.routing.verify('v11')
+        self.bad_assignment=False;self.bad_binary=True
+        with self.assertRaisesRegex(ValueError,'binary'):await self.routing.verify('v11')
+        self.bad_binary=False;self.fleet.bad_anchor=True
+        with self.assertRaisesRegex(ValueError,'canonical'):await self.routing.verify('v11')
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
+
+    async def test_future_preparation_does_not_permit_wrong_http_serving_map(self):
+        self.fleet.status['preparing']={'map_sha256':'1'*64}
+        fetch=self.routing.fetch
+        def changed(url,expected_digest=None):
+            result=fetch(url,expected_digest)
+            if url.endswith('/v1/ready'):result['map_sha256']='2'*64
+            return result
+        self.routing.fetch=changed
+        with self.assertRaisesRegex(ValueError,'HTTP readiness'):await self.routing.verify('v11')
+        records=[json.loads(p.read_text()) for p in self.routing.root.glob('worker-observation-*.private.json')]
+        self.assertTrue(any(r['channel']=='http' and r['observation']['map_sha256']=='2'*64 for r in records))
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
+
+    async def test_worker_http_error_is_retained_without_retry_or_public_text_change(self):
+        fetch=self.routing.fetch
+        error=urllib.error.HTTPError('http://10.142.0.1:8093/v1/ready',503,'Service Unavailable',{},None)
+        error.activity_body=b'warming'
+        calls=[]
+        def refused(url,expected_digest=None):
+            if url.endswith('/v1/ready'):calls.append(url);raise error
+            return fetch(url,expected_digest)
+        self.routing.fetch=refused
+        with self.assertRaises(urllib.error.HTTPError) as caught:await self.routing.verify('v11')
+        self.assertEqual(str(caught.exception),'HTTP Error 503: Service Unavailable')
+        self.assertEqual(len(calls),1)
+        records=[json.loads(p.read_text()) for p in self.routing.root.glob('worker-observation-*.private.json')]
+        self.assertTrue(any(r['channel']=='http' and r['observation']['body']=='warming' for r in records))
+
+    async def test_refused_control_status_is_retained_privately_before_failure(self):
+        self.fleet.status['warm']=False
+        with self.assertRaisesRegex(ValueError,'warm publication'):await self.routing.verify('v11')
+        paths=list(self.routing.root.glob('worker-observation-*.private.json'))
+        self.assertEqual(len(paths),1)
+        record=json.loads(paths[0].read_text())
+        self.assertEqual(record['observation'],self.fleet.status)
+        self.assertEqual(record['expected_map_sha256'],self.fleet.digest)
+        self.assertEqual(record['channel'],'control')
+        self.assertEqual(paths[0].stat().st_mode & 0o777,0o600)
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
+
     async def test_unwarm_replica_binary_drift_wrong_schema_and_retired_fork_refuse(self):
         for field,value in [('bad_worker','recent2'),('bad_anchor',True)]:
             setattr(self.fleet,field,value)
