@@ -217,7 +217,7 @@ fn extend(store: &mut EventStore, day: &[Block], through: u64) {
         store
             .append_block(height, block_hash(height), &events)
             .unwrap();
-        if height % 512 == 0 || height == through {
+        if height.is_multiple_of(512) || height == through {
             store.commit().unwrap();
         }
     }
