@@ -1303,8 +1303,12 @@ mod tests {
         let template_map = publish(&options, &journal, zero).unwrap();
         let tail = template_map.shards.last().unwrap();
         let template: ShardManifest = serde_json::from_slice(
-            &std::fs::read(template_dir.join(&tail.manifest_digest).join("manifest.json"))
-                .unwrap(),
+            &std::fs::read(
+                template_dir
+                    .join(&tail.manifest_digest)
+                    .join("manifest.json"),
+            )
+            .unwrap(),
         )
         .unwrap();
 
