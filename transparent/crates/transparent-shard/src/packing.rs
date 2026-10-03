@@ -75,6 +75,42 @@ pub fn fragments(events: &[TransparentEvent]) -> Vec<&[TransparentEvent]> {
     result
 }
 
+/// Bins counted by free payload bytes, `0..=ROW_PAYLOAD`, with a bitmap of the
+/// values that have any, so the tightest bin that fits is a short word scan.
+struct FreeSpace {
+    bins: Vec<u64>,
+    occupied: [u64; ROW_PAYLOAD / 64 + 1],
+}
+
+impl Default for FreeSpace {
+    fn default() -> Self {
+        Self {
+            bins: vec![0; ROW_PAYLOAD + 1],
+            occupied: [0; ROW_PAYLOAD / 64 + 1],
+        }
+    }
+}
+
+impl FreeSpace {
+    fn add(&mut self, space: usize, bins: u64) {
+        self.bins[space] += bins;
+        self.occupied[space / 64] |= 1 << (space % 64);
+    }
+
+    /// Removes and returns every bin at the smallest space of at least `size`.
+    fn take_at_least(&mut self, size: usize) -> Option<(usize, u64)> {
+        let mut word = size / 64;
+        let mut bits = *self.occupied.get(word)? & (u64::MAX << (size % 64));
+        while bits == 0 {
+            word += 1;
+            bits = *self.occupied.get(word)?;
+        }
+        let space = word * 64 + bits.trailing_zeros() as usize;
+        self.occupied[word] &= !(1 << (space % 64));
+        Some((space, std::mem::take(&mut self.bins[space])))
+    }
+}
+
 fn change(map: &mut BTreeMap<usize, u64>, key: usize, add: bool) {
     if add {
         *map.entry(key).or_default() += 1;
@@ -175,7 +211,57 @@ impl PackedDemand {
     /// Run the same descending best-fit rule as the builder, in count batches.
     /// Filling equal-sized entries into the tightest bin leaves that bin the
     /// tightest until it no longer fits; this permits exact multiplicity batching.
+    ///
+    /// The sealer asks for this after every block, so it runs over a dense
+    /// count per free-space value rather than a cloned map: every space is at
+    /// most one row's payload. The steps and their order are exactly those of
+    /// [`Self::calculate_mixed_rows_sparse`], which remains the definition and
+    /// handles any space outside that bound.
     fn calculate_mixed_rows(&self) -> u64 {
+        let bounded =
+            |map: &BTreeMap<usize, u64>| map.keys().next_back().is_none_or(|k| *k <= ROW_PAYLOAD);
+        if !bounded(&self.tails) || !bounded(&self.short) || self.short.contains_key(&0) {
+            return self.calculate_mixed_rows_sparse();
+        }
+        let mut free = FreeSpace::default();
+        for (&space, &bins) in &self.tails {
+            free.add(space, bins);
+        }
+        let mut rows = self.long_rows;
+        for (&size, &count) in self.short.iter().rev() {
+            let mut remaining = count;
+            while remaining != 0 {
+                let (space, bins) = match free.take_at_least(size) {
+                    Some(found) => found,
+                    None => {
+                        let bins = remaining.div_ceil((ROW_PAYLOAD / size) as u64);
+                        rows += bins;
+                        (ROW_PAYLOAD, bins)
+                    }
+                };
+                let per = (space / size) as u64;
+                let full = bins.min(remaining / per);
+                if full != 0 {
+                    free.add(space % size, full);
+                }
+                remaining -= full * per;
+                let mut unused = bins - full;
+                if unused != 0 && remaining != 0 {
+                    free.add(space - remaining as usize * size, 1);
+                    remaining = 0;
+                    unused -= 1;
+                }
+                if unused != 0 {
+                    free.add(space, unused);
+                }
+            }
+        }
+        rows
+    }
+
+    /// The reference form of [`Self::calculate_mixed_rows`], over a map of
+    /// free-space values.
+    fn calculate_mixed_rows_sparse(&self) -> u64 {
         let mut free = self.tails.clone();
         let mut rows = self.long_rows;
         for (&size, &count) in self.short.iter().rev() {
@@ -297,6 +383,61 @@ mod tests {
             );
             assert_eq!(state.inline, history[history.len().saturating_sub(2)..]);
         }
+    }
+
+    /// The dense packer is the map packer, step for step: equal row counts
+    /// over arbitrary demand, including bins at every boundary space, counts
+    /// far past one row, and spaces outside the dense bound.
+    #[test]
+    fn dense_best_fit_equals_the_map_reference() {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |bound: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % bound
+        };
+        for case in 0..2_000 {
+            let mut demand = PackedDemand::default();
+            let classes = 1 + next(if case % 4 == 0 { 2_000 } else { 40 });
+            for _ in 0..classes {
+                let size = match next(8) {
+                    0 => PAGE_ENTRY_HEADER_BYTES,
+                    1 => ROW_PAYLOAD,
+                    2 => ROW_PAYLOAD / 2 + next(3) as usize,
+                    _ => PAGE_ENTRY_HEADER_BYTES + next(FRAGMENT_PAYLOAD as u64 + 1) as usize,
+                };
+                let count = if next(10) == 0 {
+                    1 + next(100_000)
+                } else {
+                    1 + next(30)
+                };
+                *demand.short.entry(size).or_default() += count;
+            }
+            for _ in 0..next(if case % 4 == 0 { 2_000 } else { 40 }) {
+                let space = match next(6) {
+                    0 => 0,
+                    1 => FRAGMENT_PAYLOAD,
+                    _ => next(FRAGMENT_PAYLOAD as u64 + 1) as usize,
+                };
+                *demand.tails.entry(space).or_default() += 1 + next(5);
+                demand.long_rows += 2;
+            }
+            assert_eq!(
+                demand.calculate_mixed_rows(),
+                demand.calculate_mixed_rows_sparse(),
+                "case {case}"
+            );
+        }
+        // A free space outside the dense bound is left to the map packer.
+        let mut demand = PackedDemand::default();
+        demand.short.insert(ROW_PAYLOAD, 3);
+        demand.short.insert(PAGE_ENTRY_HEADER_BYTES, 500);
+        demand.tails.insert(ROW_PAYLOAD + 7, 1);
+        assert_eq!(
+            demand.calculate_mixed_rows(),
+            demand.calculate_mixed_rows_sparse()
+        );
     }
 
     #[test]
