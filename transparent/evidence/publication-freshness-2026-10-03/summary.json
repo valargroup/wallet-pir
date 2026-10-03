@@ -1,0 +1,404 @@
+{
+ "schema": "transparent-publication-bench-summary-v1",
+ "fills": {
+  "10.2": {
+   "base": {
+    "publish_seconds": [
+     2.504374183,
+     2.703989895,
+     2.45459984,
+     2.5294185000000002,
+     2.415573032,
+     2.522332329
+    ],
+    "publish_median": 2.5133532560000003,
+    "runtime_seconds": {
+     "directory": [
+      2.3540628200000002,
+      2.333159754,
+      2.930921735,
+      2.369006527
+     ],
+     "pages": [
+      2.510040089,
+      2.398547502,
+      2.540774633,
+      2.543595941
+     ]
+    },
+    "runtime_median": {
+     "directory": 2.3615346735,
+     "pages": 2.525407361
+    },
+    "runtime_median_sum": 4.8869420345000005,
+    "map_sha256_by_height": [
+     [
+      3011751,
+      "6562af093a7ab4964422234682cfa7cebbe72e70269b36c4395c45c4755a4b1f"
+     ],
+     [
+      3011752,
+      "31547229e3d14aa2866dc5106c94cd17aa1dd30d0ac7e40acd1039dd6545874e"
+     ],
+     [
+      3011753,
+      "b8210714dc3ef9163c30acdfdd3f3e846a799f03b79e988483cbe21388438777"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "2324fd752f2a3a9b8a72a855aaaf5d4ed68e7bf9e1b23907525651456e77ab08"
+     ],
+     "pages": [
+      "d52cf9e8f3b2d44b24f4aafb5e24ea32c2202784aadbb27fe3a516c6d7bd59a2"
+     ]
+    },
+    "tail": {
+     "end_height": 3011753,
+     "manifest_digest": "5531dc28abae5aec691aad6d089642165c66b2dd759bc685ba142a436617bdbd",
+     "page_rows": 1919,
+     "revision": 3,
+     "scripts": 23583,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "final": {
+    "publish_seconds": [
+     1.295486493,
+     1.232299727,
+     1.273329981,
+     1.792677868,
+     1.299087091,
+     1.343591448
+    ],
+    "publish_median": 1.297286792,
+    "runtime_seconds": {
+     "directory": [
+      2.516403114,
+      2.365786582,
+      2.513722976,
+      2.25590014
+     ],
+     "pages": [
+      1.6925424040000001,
+      1.653563892,
+      1.707320027,
+      1.641649591
+     ]
+    },
+    "runtime_median": {
+     "directory": 2.4397547790000003,
+     "pages": 1.6730531480000002
+    },
+    "runtime_median_sum": 4.112807927,
+    "map_sha256_by_height": [
+     [
+      3011751,
+      "6562af093a7ab4964422234682cfa7cebbe72e70269b36c4395c45c4755a4b1f"
+     ],
+     [
+      3011752,
+      "31547229e3d14aa2866dc5106c94cd17aa1dd30d0ac7e40acd1039dd6545874e"
+     ],
+     [
+      3011753,
+      "b8210714dc3ef9163c30acdfdd3f3e846a799f03b79e988483cbe21388438777"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "2324fd752f2a3a9b8a72a855aaaf5d4ed68e7bf9e1b23907525651456e77ab08"
+     ],
+     "pages": [
+      "d52cf9e8f3b2d44b24f4aafb5e24ea32c2202784aadbb27fe3a516c6d7bd59a2"
+     ]
+    },
+    "tail": {
+     "end_height": 3011753,
+     "manifest_digest": "5531dc28abae5aec691aad6d089642165c66b2dd759bc685ba142a436617bdbd",
+     "page_rows": 1919,
+     "revision": 3,
+     "scripts": 23583,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "byte_comparison": {
+    "files_compared": 76,
+    "published_bytes_identical": true,
+    "journal_identical": true,
+    "differing_files": []
+   },
+   "map_digests_identical": true,
+   "public_params_identical": true,
+   "publish_median_reduction": 0.4838422378935181
+  },
+  "13.5": {
+   "base": {
+    "publish_seconds": [
+     5.9740204420000005,
+     6.548367092,
+     6.37834327,
+     6.523467931,
+     6.172736209,
+     8.114610793
+    ],
+    "publish_median": 6.4509056005000005,
+    "runtime_seconds": {
+     "directory": [
+      2.9110081770000003,
+      2.488604861,
+      2.682636748,
+      3.0715420509999998
+     ],
+     "pages": [
+      3.042688468,
+      2.33249603,
+      2.765760636,
+      2.613158843
+     ]
+    },
+    "runtime_median": {
+     "directory": 2.7968224625,
+     "pages": 2.6894597395
+    },
+    "runtime_median_sum": 5.486282202,
+    "map_sha256_by_height": [
+     [
+      3015553,
+      "c6ada06aba5221f8c8a3dee1b5edcdc5493b1d3641025eb3d3e0939974c01138"
+     ],
+     [
+      3015554,
+      "26bdb51028f1f91c4da1de17b38f4da43253b81506bb061d2642806a9b85e5d9"
+     ],
+     [
+      3015555,
+      "b685ff3b591f90fd5ce724004dd32467feea5b496ab0f67278c0535f5b5fb047"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "babf136557ececf3cb3f2c101e7a45c10002572efbd28d6c9e3591993859688f"
+     ],
+     "pages": [
+      "0b87bf40e3ec7f7e05cf8846fccbc4527e1520b72982fc3c13eaba478cdab9dc"
+     ]
+    },
+    "tail": {
+     "end_height": 3015555,
+     "manifest_digest": "130e036b748a502a3f5b340f833df9f4a068573c52dde17a102486ea1c1122b2",
+     "page_rows": 5266,
+     "revision": 3,
+     "scripts": 56206,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "final": {
+    "publish_seconds": [
+     2.635396188,
+     2.5406659400000002,
+     2.56924331,
+     3.036148891,
+     2.7250795759999997,
+     2.748811611
+    ],
+    "publish_median": 2.680237882,
+    "runtime_seconds": {
+     "directory": [
+      2.6529326920000003,
+      2.384097601,
+      3.003956347,
+      2.441810661
+     ],
+     "pages": [
+      2.101449054,
+      2.174945908,
+      2.721786414,
+      2.24762314
+     ]
+    },
+    "runtime_median": {
+     "directory": 2.5473716765,
+     "pages": 2.211284524
+    },
+    "runtime_median_sum": 4.7586562005,
+    "map_sha256_by_height": [
+     [
+      3015553,
+      "c6ada06aba5221f8c8a3dee1b5edcdc5493b1d3641025eb3d3e0939974c01138"
+     ],
+     [
+      3015554,
+      "26bdb51028f1f91c4da1de17b38f4da43253b81506bb061d2642806a9b85e5d9"
+     ],
+     [
+      3015555,
+      "b685ff3b591f90fd5ce724004dd32467feea5b496ab0f67278c0535f5b5fb047"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "babf136557ececf3cb3f2c101e7a45c10002572efbd28d6c9e3591993859688f"
+     ],
+     "pages": [
+      "0b87bf40e3ec7f7e05cf8846fccbc4527e1520b72982fc3c13eaba478cdab9dc"
+     ]
+    },
+    "tail": {
+     "end_height": 3015555,
+     "manifest_digest": "130e036b748a502a3f5b340f833df9f4a068573c52dde17a102486ea1c1122b2",
+     "page_rows": 5266,
+     "revision": 3,
+     "scripts": 56206,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "byte_comparison": {
+    "files_compared": 76,
+    "published_bytes_identical": true,
+    "journal_identical": true,
+    "differing_files": []
+   },
+   "map_digests_identical": true,
+   "public_params_identical": true,
+   "publish_median_reduction": 0.584517578153328
+  },
+  "15.9": {
+   "base": {
+    "publish_seconds": [
+     8.99288305,
+     9.813813703,
+     9.527476378,
+     9.909940847,
+     11.233569626,
+     9.233211707
+    ],
+    "publish_median": 9.670645040499998,
+    "runtime_seconds": {
+     "directory": [
+      2.6050085960000002,
+      2.385845607,
+      2.872089875,
+      2.402854825
+     ],
+     "pages": [
+      2.267550795,
+      2.376910642,
+      2.736010119,
+      2.55762648
+     ]
+    },
+    "runtime_median": {
+     "directory": 2.5039317105,
+     "pages": 2.467268561
+    },
+    "runtime_median_sum": 4.9712002715,
+    "map_sha256_by_height": [
+     [
+      3018318,
+      "b27aef9c2011f86646efc682b21bac266bf30f3248bf7812127b417a26c2c48a"
+     ],
+     [
+      3018319,
+      "4e8a760a3e97528d6193f2afe5ecae311ef36bde02997d64abc69528d2ca5754"
+     ],
+     [
+      3018320,
+      "1c75ecd55d2cf0336b1208297261fca5eda8bafd79ac68a611182a5a0b1f790a"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "c29dc82a8bd06a4cae57ad992db10239e1699fa5645d72b943455c61b5049e0c"
+     ],
+     "pages": [
+      "1157f868e4dd991cd3092e99e178eaf7fa5aa554ccdfa30ad0c058771591206a"
+     ]
+    },
+    "tail": {
+     "end_height": 3018320,
+     "manifest_digest": "e06cadf0b5300d70655d555d48d7bfabe410a5ab38ad0d308de649da545e3085",
+     "page_rows": 7715,
+     "revision": 3,
+     "scripts": 78119,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "final": {
+    "publish_seconds": [
+     3.861920989,
+     3.691089199,
+     3.625183879,
+     4.331535572,
+     3.689046592,
+     4.185394117
+    ],
+    "publish_median": 3.776505094,
+    "runtime_seconds": {
+     "directory": [
+      2.661383894,
+      3.254526039,
+      3.053136117,
+      3.855925641
+     ],
+     "pages": [
+      2.611844231,
+      2.559673785,
+      2.385691756,
+      2.302655163
+     ]
+    },
+    "runtime_median": {
+     "directory": 3.153831078,
+     "pages": 2.4726827705
+    },
+    "runtime_median_sum": 5.6265138485,
+    "map_sha256_by_height": [
+     [
+      3018318,
+      "b27aef9c2011f86646efc682b21bac266bf30f3248bf7812127b417a26c2c48a"
+     ],
+     [
+      3018319,
+      "4e8a760a3e97528d6193f2afe5ecae311ef36bde02997d64abc69528d2ca5754"
+     ],
+     [
+      3018320,
+      "1c75ecd55d2cf0336b1208297261fca5eda8bafd79ac68a611182a5a0b1f790a"
+     ]
+    ],
+    "public_params_sha256": {
+     "directory": [
+      "c29dc82a8bd06a4cae57ad992db10239e1699fa5645d72b943455c61b5049e0c"
+     ],
+     "pages": [
+      "1157f868e4dd991cd3092e99e178eaf7fa5aa554ccdfa30ad0c058771591206a"
+     ]
+    },
+    "tail": {
+     "end_height": 3018320,
+     "manifest_digest": "e06cadf0b5300d70655d555d48d7bfabe410a5ab38ad0d308de649da545e3085",
+     "page_rows": 7715,
+     "revision": 3,
+     "scripts": 78119,
+     "shard_id": 2,
+     "start_height": 3009417
+    }
+   },
+   "byte_comparison": {
+    "files_compared": 76,
+    "published_bytes_identical": true,
+    "journal_identical": true,
+    "differing_files": []
+   },
+   "map_digests_identical": true,
+   "public_params_identical": true,
+   "publish_median_reduction": 0.6094877768562226
+  }
+ }
+}

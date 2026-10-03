@@ -6,6 +6,23 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Publication freshness profile, 2026-10-03
+
+A local benchmark profiled attempt 14's failed freshness, measured at serial
+cycles of 23–25 s. The tail used is a deterministic synthetic `recent-8k` tail
+derived from the retained mainnet day. Most native publication time was the
+sealer's exact page-row count, recomputed over cloned maps for every tail block
+at every publication.
+
+Source `921e1642` keeps output byte-identical and cuts release-fast publication
+at 97% fill from 9.67 s to 3.78 s on the hub. Recent workers also skip empty
+page-hint blocks: 0–0.7 s locally, depending on fill.
+
+Nothing is deployed. A projection still leaves burst visibility above 30 s for
+full tails, because the recent workers' two sequential native tail builds
+remain. Freshness acceptance stays open.
+[Evidence](../evidence/publication-freshness-2026-10-03/README.md).
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

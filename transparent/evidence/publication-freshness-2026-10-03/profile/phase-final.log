@@ -1,0 +1,37 @@
+journal through 3018317 in 0.0s
+journal 3000000-3018318, archive-wide below 3000001 at SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3000001 at SealPolicy { scripts: Limit { target: 407260, capacity: 475136 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+PROF loop 1.281 seal 1.091
+PROFB group+filter 0.403
+PROFB histories+pages 0.578
+PROFB pagetable+directory+choice 0.724
+PROF build_shard 1.866
+PROF manifests 0.355
+PROF write 0.160
+shard   2 3009417-3018318 (8902 blocks) scripts 78117 pages 7715 events 556963 segments 1/1 TAIL r1
+PROF before-map 3.772
+published 3 shards covering 3000000-3018318; filters ~0.40 MB
+{"capture_seconds":0.056885365,"cycle":0,"filters_open_seconds":0.002036229,"height":3018318,"map_sha256":"b27aef9c2011f86646efc682b21bac266bf30f3248bf7812127b417a26c2c48a","publish_seconds":3.821080963,"shards":3,"tail":{"end_height":3018318,"manifest_digest":"f62a958b91715c841f9bf4e92b76386315f768ae76ba16008fc5207a5e85ff2b","page_rows":7715,"revision":1,"scripts":78117,"shard_id":2,"start_height":3009417},"total_seconds":3.880007843}
+journal 3000000-3018319, archive-wide below 3000001 at SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3000001 at SealPolicy { scripts: Limit { target: 407260, capacity: 475136 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+PROF loop 1.138 seal 0.965
+PROFB group+filter 0.347
+PROFB histories+pages 0.536
+PROFB pagetable+directory+choice 0.947
+PROF build_shard 1.980
+PROF manifests 0.333
+PROF write 0.191
+shard   2 3009417-3018319 (8903 blocks) scripts 78117 pages 7715 events 556965 segments 1/1 TAIL r2
+PROF before-map 3.764
+published 3 shards covering 3000000-3018319; filters ~0.40 MB
+{"capture_seconds":0.055556322,"cycle":1,"filters_open_seconds":0.002052336,"height":3018319,"map_sha256":"4e8a760a3e97528d6193f2afe5ecae311ef36bde02997d64abc69528d2ca5754","publish_seconds":3.814338312,"shards":3,"tail":{"end_height":3018319,"manifest_digest":"64423cb2ea5e09824f1bddc0dc9b1828c4fd5ff996a4f05ece660bd9400063e0","page_rows":7715,"revision":2,"scripts":78117,"shard_id":2,"start_height":3009417},"total_seconds":3.871952211}
+journal 3000000-3018320, archive-wide below 3000001 at SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }, recent-8k from 3000001 at SealPolicy { scripts: Limit { target: 407260, capacity: 475136 }, page_rows: Limit { target: 7936, capacity: 8192 } }
+PROF loop 1.274 seal 1.070
+PROFB group+filter 0.341
+PROFB histories+pages 0.500
+PROFB pagetable+directory+choice 0.715
+PROF build_shard 1.699
+PROF manifests 0.334
+PROF write 0.162
+shard   2 3009417-3018320 (8904 blocks) scripts 78119 pages 7715 events 556973 segments 1/1 TAIL r3
+PROF before-map 3.583
+published 3 shards covering 3000000-3018320; filters ~0.40 MB
+{"capture_seconds":0.054947432,"cycle":2,"filters_open_seconds":0.001964552,"height":3018320,"map_sha256":"1c75ecd55d2cf0336b1208297261fca5eda8bafd79ac68a611182a5a0b1f790a","publish_seconds":3.636888802,"shards":3,"tail":{"end_height":3018320,"manifest_digest":"e06cadf0b5300d70655d555d48d7bfabe410a5ab38ad0d308de649da545e3085","page_rows":7715,"revision":3,"scripts":78119,"shard_id":2,"start_height":3009417},"total_seconds":3.6938052409999997}
