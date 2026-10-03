@@ -340,6 +340,10 @@ cannot evict it.
 
 Runtime construction encodes the segment, computes the public hint with exact lifted
 products against the table's query masks, and builds two-mask preprocessing per block.
+The hint (`transparent_native::batched_hint`) transforms 32 columns at a time under three
+30-bit primes and reduces the CRT-reconstructed integer sum modulo `q`. It equals the
+shared `pir_native::hint` exactly, and any shape beyond its checked capacity is handed to
+that reference.
 Database-dependent preprocessing is rebuilt for each changed table; client secrets and
 uploaded key bodies are never shared. The cache reserves the database, the published masks
 and the preprocessing at its eight-byte-word bound (64 MiB per block); built preprocessing

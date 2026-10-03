@@ -7,6 +7,7 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Recent-worker prewarm hint](prewarm-hint-2026-10-03/README.md) | Local release-fast comparison on the retained synthetic recent-8k tails: two-table runtime build at two threads −30% to −37% (4.81 s → 3.05 s at 97% fill), identical hints, masks and answers, unchanged peak memory; not deployed and not a freshness qualification |
 | [Tail publication profile and compute fix](publication-freshness-2026-10-03/README.md) | Local release-fast benchmark on a synthetic recent-8k tail derived from the retained mainnet day: native publication −48% to −61% (9.67 s → 3.78 s at 97% fill) with byte-identical output; partly filled page-hint reduction; not deployed and not a freshness qualification |
 | [Recent replicas on the shared native crate](shared-native-rollout-2026-09-30/README.md) | Rolling upgrade of three recent replicas (one elastic added first) to `6360f0d8` without maintenance, then a 10-minute 20 QPS gate: 12,528/12,528 exact, p99 48 ms; archive owner not upgraded, not a soak |
 | [Archive tier from two owners to one](archive-consolidation-2026-09-29/README.md) | Cutover to a single archive owner and the same combined 20 QPS measurement (mixed and archive-only) before and after, recent tier held at two; the archive-only client is built from an uncommitted change |

@@ -18,10 +18,18 @@ Source `921e1642` keeps output byte-identical and cuts release-fast publication
 at 97% fill from 9.67 s to 3.78 s on the hub. Recent workers also skip empty
 page-hint blocks: 0–0.7 s locally, depending on fill.
 
-Nothing is deployed. A projection still leaves burst visibility above 30 s for
-full tails, because the recent workers' two sequential native tail builds
-remain. Freshness acceptance stays open.
+A projection still left burst visibility above 30 s for full tails, because
+the recent workers' two sequential native tail builds remained.
 [Evidence](../evidence/publication-freshness-2026-10-03/README.md).
+
+Those builds now compute the public hint in column-batched exact NTTs. The
+hint is unchanged byte for byte, and the published masks and query answers
+are identical. On the same retained tails, a two-thread directory-plus-pages
+build fell from 4.81 s to 3.05 s at 97% fill, and from 4.19 s to 2.91 s at
+24%. Peak memory is unchanged. Arithmetic puts burst visibility at about
+23–29 s, with little margin at the top. Nothing is deployed, and freshness
+acceptance stays open.
+[Evidence](../evidence/prewarm-hint-2026-10-03/README.md).
 
 ## Activity metadata candidate, 2026-09-30
 
