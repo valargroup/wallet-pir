@@ -1,27 +1,40 @@
-//! Times a segment's public hint both ways in the runtime build pool, and
-//! proves the two give the same runtime.
+//! Times a segment's public hint and runtime build in the runtime build pool.
 //!
 //! ```text
 //! TRANSPARENT_BUILD_THREADS=2 cargo run --profile release-fast \
 //!   -p transparent-shard-server --example hint_bench -- \
-//!   --geometry recent-8k --repeats 3 directory=directory.0.bin pages=pages.0.bin
+//!   [--runtime-only] --geometry recent-8k --repeats 3 \
+//!   directory=directory.0.bin pages=pages.0.bin
 //! ```
 //!
-//! For each table it builds the column-major database the runtime scans, over
-//! the leading row blocks that hold any nonzero byte as the runtime does. It
-//! then alternates the reference `pir_native::hint` with the batched
+//! By default, for each table it builds the column-major database the runtime
+//! scans, over the leading row blocks that hold any nonzero byte as the runtime
+//! does. It then alternates the reference `pir_native::hint` with the batched
 //! `transparent_native::batched_hint::hint`, requires every hint to be equal,
 //! and requires the masks published from the reference hint to equal those of
-//! a full `TableRuntime::build`. One JSON line per table goes to stdout.
+//! a full `TableRuntime::build`.
+//!
+//! `--runtime-only` builds the tables' runtimes one after another, as a worker
+//! with one build slot prewarms a tail revision, and nothing else, so that
+//! binaries from two sources can be compared by time, published masks and peak
+//! resident memory. One JSON line per table goes to stdout, then a summary.
 use serde_json::json;
 use std::time::Instant;
 use transparent_native::{self as native, D};
 use transparent_shard_server::runtime::{build_pool, SharedParams, TableRuntime};
 use transparent_shard_server::shardset::Table;
 
+fn peak_rss_bytes() -> Option<u64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|line| line.starts_with("VmHWM:"))?;
+    let kib: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kib * 1024)
+}
+
 fn main() -> Result<(), String> {
     let mut geometry = "recent-8k".to_string();
     let mut repeats = 3usize;
+    let mut runtime_only = false;
     let mut tables = Vec::new();
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -33,6 +46,7 @@ fn main() -> Result<(), String> {
                     .and_then(|v| v.parse().ok())
                     .ok_or("--repeats value")?
             }
+            "--runtime-only" => runtime_only = true,
             table => tables.push(
                 table
                     .split_once('=')
@@ -41,11 +55,9 @@ fn main() -> Result<(), String> {
             ),
         }
     }
-    let geometry = transparent_shard::layout::PROFILES
-        .iter()
-        .find(|g| g.name == geometry)
-        .ok_or("unknown geometry")?;
+    let geometry = transparent_shard::layout::by_name(&geometry).ok_or("unknown geometry")?;
     let threads = build_pool().current_num_threads();
+    let mut inputs = Vec::new();
     for (name, path) in tables {
         let table = match name.as_str() {
             "directory" => Table::Directory,
@@ -53,11 +65,41 @@ fn main() -> Result<(), String> {
             _ => return Err(format!("unknown table {name}")),
         };
         let shared = SharedParams::build(geometry, table)?;
-        let profile = &shared.profile;
         let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
-        if bytes.len() != profile.rows * profile.row_bytes {
+        if bytes.len() != shared.profile.rows * shared.profile.row_bytes {
             return Err(format!("{path}: {} bytes", bytes.len()));
         }
+        inputs.push((name, path, shared, bytes));
+    }
+    if runtime_only {
+        let mut rounds = Vec::new();
+        let mut digests = Vec::new();
+        for _ in 0..repeats {
+            let started = Instant::now();
+            let mut tables = Vec::new();
+            digests.clear();
+            for (name, _, shared, bytes) in &inputs {
+                let table_started = Instant::now();
+                let runtime = build_pool().install(|| TableRuntime::build(shared, bytes))?;
+                tables
+                    .push(json!({"table": name, "seconds": table_started.elapsed().as_secs_f64()}));
+                digests.push(
+                    json!({"table": name, "public_params_sha256": runtime.public_params_sha256}),
+                );
+            }
+            rounds.push(json!({"seconds": started.elapsed().as_secs_f64(), "tables": tables}));
+        }
+        println!(
+            "{}",
+            json!({
+                "mode": "runtime-only", "geometry": geometry.name, "threads": threads,
+                "rounds": rounds, "public_params": digests, "peak_rss_bytes": peak_rss_bytes(),
+            })
+        );
+        return Ok(());
+    }
+    for (name, path, shared, bytes) in &inputs {
+        let profile = &shared.profile;
         let last = bytes
             .iter()
             .rposition(|b| *b != 0)
@@ -67,7 +109,7 @@ fn main() -> Result<(), String> {
         let columns: Vec<Vec<u16>> = (0..profile.cols)
             .map(|col| {
                 (0..rows)
-                    .map(|row| native::row_coefficient(&bytes, profile.row_bytes, row, col))
+                    .map(|row| native::row_coefficient(bytes, profile.row_bytes, row, col))
                     .collect()
             })
             .collect();
@@ -95,7 +137,7 @@ fn main() -> Result<(), String> {
         let mut runtime_sha256 = String::new();
         for _ in 0..repeats {
             let started = Instant::now();
-            let runtime = build_pool().install(|| TableRuntime::build(&shared, &bytes))?;
+            let runtime = build_pool().install(|| TableRuntime::build(shared, bytes))?;
             runtime_s.push(started.elapsed().as_secs_f64());
             if runtime.public_params != published {
                 return Err(format!("{path}: runtime masks differ from the reference"));
