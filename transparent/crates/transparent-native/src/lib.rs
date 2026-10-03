@@ -15,7 +15,10 @@
 //! Correctness certificates for this mode are snapshot-specific: see
 //! `examples/native_certificate.rs` in the shard server.
 
+use pir_native::hint as pir_hint;
 pub use pir_native::*;
+
+pub mod batched_hint;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 

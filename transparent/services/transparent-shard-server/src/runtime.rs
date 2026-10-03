@@ -326,9 +326,10 @@ impl TableRuntime {
         // Zero rows add nothing to `masks * database`, so trailing blocks of
         // them are left out of the product. A growing tail's page table fills
         // from its first row and is mostly empty for much of its life; the
-        // hint, and every byte published from it, is the same.
+        // hint, and every byte published from it, is the same. The batched
+        // hint computes the reference's exact integers several times faster.
         let used = used_blocks(rows, profile.row_bytes, profile.rows);
-        let hint = native::hint(
+        let hint = native::batched_hint::hint(
             &profile.masks[..used],
             used * native::D,
             profile.cols,
@@ -976,6 +977,62 @@ mod tests {
                 full(&rows),
                 "{filled} leading bytes"
             );
+        }
+    }
+
+    /// The batched hint changes nothing a client or the disk cache sees. At
+    /// the deployed geometry, for a full directory and a partly filled page
+    /// table, the runtime publishes the masks of one prepared from the
+    /// reference hint over every block, answers byte for byte as it does, and
+    /// decodes to the selected row.
+    #[test]
+    fn the_batched_hint_runtime_is_the_reference_runtime() {
+        for (table, filled) in [(Table::Directory, 8_192), (Table::Pages, 5_000)] {
+            let shared = SharedParams::build(&RECENT_8K, table).unwrap();
+            let profile = &shared.profile;
+            let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+            for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
+                *byte = (i.wrapping_mul(2_654_435_761) >> 9) as u8;
+            }
+            let fast = TableRuntime::build(&shared, &rows).unwrap();
+            let server = database_server(
+                &shared,
+                (0..profile.rows * profile.cols).map(|i| {
+                    native::row_coefficient(
+                        &rows,
+                        profile.row_bytes,
+                        i / profile.cols,
+                        i % profile.cols,
+                    )
+                }),
+                false,
+            );
+            let (padded, db) = (server.db_rows_padded(), server.db());
+            let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                &db[c * padded..c * padded + profile.rows]
+            })
+            .unwrap();
+            let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+            let reference = TableRuntime::assemble(server, preprocessed).unwrap();
+            assert_eq!(fast.public_params, reference.public_params);
+            assert_eq!(fast.public_params_epoch, reference.public_params_epoch);
+            let binding = [7u8; 8];
+            for selected in [0, filled - 1, profile.rows - 1] {
+                let (secret, upload) = profile.prepare(selected).unwrap();
+                let mut body = binding.to_vec();
+                body.extend(upload);
+                let answer = fast.evaluate(&shared, binding, &body).unwrap();
+                assert_eq!(answer, reference.evaluate(&shared, binding, &body).unwrap());
+                let row = profile
+                    .decode(&secret, &fast.public_params, &answer[16..])
+                    .unwrap();
+                let at = selected * profile.row_bytes;
+                assert_eq!(
+                    row,
+                    &rows[at..at + profile.row_bytes],
+                    "{table:?} row {selected}"
+                );
+            }
         }
     }
 
