@@ -286,9 +286,9 @@ def report(data):
     selected=None;selection={}
     for t in THRESHOLDS:
         coverage=result['codecs']['display-v1']['thresholds'][str(t)]['upper_size_population']['coverage']
-        lower=max(0,coverage['estimate']-z*coverage['standard_error'])
+        lower=max(0,coverage['estimate']-z*coverage['standard_error']) if coverage['ci95'] is not None else None
         selection[str(t)]=dict(worst_case_estimate=coverage['estimate'],familywise_normal_lower95=lower)
-        if selected is None and lower>.8:selected=t
+        if selected is None and lower is not None and lower>.8:selected=t
     result['threshold_decision']=dict(selected_bytes=selected,requirement='strictly greater than 80% of distinct eligible records',candidates=selection,z=z,method='one-sided 95% Bonferroni normal lower bounds over seven prespecified cutoffs; block clustering/FPC; conservative unknown-fee membership; asymptotic, not a full census guarantee')
     result['ci_limitations']='HT totals; block-cluster ratio linearization with stratum FPC; pointwise normal 95% except explicit seven-cutoff Bonferroni selection. Asymptotic, not formal guarantees. Sparse/extreme tails and heavy block counts can have poor coverage. Zero-observed tails unresolved.'
     result['packing_limitations']='Additive payload/envelope/fragment estimates, not a full-chain packing replay. packing_bounds evaluates per-record fee-length possibilities including the nonmonotone inline jump. No measured native latency/RSS.'
@@ -329,7 +329,7 @@ def apply_bootstrap(report,bootstrap):
     for t in THRESHOLDS:
         row=decision['candidates'][str(t)]
         row['bootstrap_bonferroni_lower95']=bootstrap['worst_case_fee_coverage'][str(t)]['bonferroni_lower95']
-        if selected is None and min(row['familywise_normal_lower95'],row['bootstrap_bonferroni_lower95'])>.8:selected=t
+        if selected is None and row['familywise_normal_lower95'] is not None and min(row['familywise_normal_lower95'],row['bootstrap_bonferroni_lower95'])>.8:selected=t
     decision['selected_bytes']=selected
     decision['bootstrap_screen']='Require both one-sided seven-cutoff adjusted normal and rescaled block-bootstrap lower bounds strictly above 80%; asymptotic sensitivity only.'
     return report

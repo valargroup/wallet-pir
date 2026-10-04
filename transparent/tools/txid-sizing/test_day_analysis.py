@@ -105,6 +105,10 @@ class DaySizingTests(unittest.TestCase):
         d.apply_bootstrap(report,bootstrap)
         self.assertEqual(report['threshold_decision']['selected_bytes'],192)
         self.assertEqual(report['threshold_decision']['normal_selected_bytes'],128)
+        report['threshold_decision']['candidates']['128']['familywise_normal_lower95']=None
+        bootstrap['worst_case_fee_coverage']['128']['bonferroni_lower95']=1.0
+        d.apply_bootstrap(report,bootstrap)
+        self.assertEqual(report['threshold_decision']['selected_bytes'],192)
         for t in d.THRESHOLDS:report['threshold_decision']['candidates'][str(t)]['familywise_normal_lower95']=.8
         d.apply_bootstrap(report,bootstrap)
         self.assertIsNone(report['threshold_decision']['selected_bytes'])
