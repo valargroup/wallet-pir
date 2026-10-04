@@ -7,6 +7,7 @@ from pathlib import Path
 import analyze
 import geometry
 import survey
+import day_analysis
 
 
 def main():
@@ -46,6 +47,28 @@ def main():
         for name,digest in new_pins["source_files"].items():
             if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
                 raise ValueError("survey source changed: "+name)
+    day=evidence/"day-statistics.json.gz"
+    if day.exists():
+        report=day_analysis.report(day_analysis.read(day))
+        if report!=day_analysis.read(evidence/"day-analysis.json"):
+            raise ValueError("one-day report regeneration mismatch")
+        if day_analysis.geometry_projection(report)!=day_analysis.read(evidence/"day-geometry.json"):
+            raise ValueError("one-day geometry regeneration mismatch")
+        pins=day_analysis.read(evidence/"day-sources.json")
+        for name,digest in pins["source_files"].items():
+            if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+                raise ValueError("one-day source changed: "+name)
+        for name,digest in pins["data_files"].items():
+            if hashlib.sha256((evidence/name).read_bytes()).hexdigest()!=digest:
+                raise ValueError("one-day data changed: "+name)
+        data=day_analysis.read(day)
+        receipt=day_analysis.read(evidence/"day-receipt.json.gz")
+        if data["design"]!=receipt["design"] or len(receipt["blocks"])!=len(data["blocks"]):
+            raise ValueError("one-day design/receipt mismatch")
+        raw={b["height"]:b for b in receipt["blocks"]}
+        for b in data["blocks"]:
+            if raw[b["height"]]["hash"]!=b["hash"] or raw[b["height"]]["frame_sha256"]!=b["source_sha256"]:
+                raise ValueError("one-day block source pin mismatch")
     print("checksums, source pins and deterministic reports verified; retained vector and incomplete census qualification limits remain explicit")
 
 
