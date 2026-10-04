@@ -1546,9 +1546,342 @@ in the compact report. Retain both files. The staged report keeps scalar
 certificate scores and all setup bindings within the existing 256 KiB cutover
 input bound; neither source evidence nor arithmetic detail is discarded.
 
-The independent-chain oracle producer and the production execution controls
-still require implementation. These offline producers and their fixture tests
-are source evidence; no candidate native qualification has been performed.
+The independent-chain oracle producer and its execution controls still require
+implementation, as do load, capacity and fault controls. These offline
+producers and their fixture tests are source evidence; no candidate native
+qualification has been performed.
+
+#### Native gate execution
+
+`schema-candidate-execute-*` produces the raw inputs of the two reports above.
+Run it from root's workstation. It needs the remote-lock inventory, pinned SSH,
+and a `machine_id` pin and a root or sudo identity for every inventory host:
+
+- `schema-candidate-execute-{plan,preflight,stage} --source-sha REV --mode MODE
+  --attempt N --preparation-request-sha256 H`. Stage also needs
+  `--expect-plan-sha256` from the reviewed plan.
+- `schema-candidate-execute-{status,reconcile} --source-sha REV
+  --request-sha256 H`. Reconcile reads the retained request through status. It
+  refuses if this inventory's hosts differ from that request's hosts.
+
+The closed request (version 2) contains `kind`, `mode`, `source_sha`,
+`candidate_sha`, `candidate_identity`, `preparation_request_sha256`,
+`publication_sha256`, `coordinator`, `machine_id`, `hosts` and `attempt`.
+`hosts` is the sorted list of every inventory host and its machine ID, and must
+include the coordinator. The request names the staged CandidatePreparation
+owner, the candidate provenance digest and the pinned publication map
+`34e3ebe3...`. It refuses historical, partial or foreign identities, and a
+partial, duplicated or coordinator-less host list. There are only two modes:
+
+| Mode | Children |
+| --- | --- |
+| `artifact-verification` | One `shard-verify --shard-dir /srv/transparent-activity/full-v11/publications/initial` with `--expect-start 0`, `--expect-through 3500738`, `--expect-anchor-hash 00000000007b5488...`, `--expect-recent-from 3289805`, both geometries, `--expect-map-sha256 34e3ebe3...` and `--source-sha c3c66b9b...`. No `--data-dir`, journal, rebuild or `--out`. |
+| `native-certificates` | One `native_certificate segment --geometry G --table T --rows-bin <publication>/<manifest digest>/<table>.<index>.bin` for each manifest table segment: all 180, derived from the 90 checksum-bound manifests. No synthetic mode and no `--public`. |
+
+Each remote call runs the staged wrapper's fixed `schema-candidate-execute-receive
+--action ACTION --request-sha256 HASH` as `/usr/bin/python3 -B`. The actions are
+`plan`, `preflight`, `stage`, `status`, `reconcile` and the read-only `survey`.
+The plan, executable, argv and paths all derive from the request; the caller
+chooses none of them.
+
+Before any child starts, the receiver checks:
+
+- Root, the coordinator machine ID and the staged source receipt.
+- The staged CandidatePreparation owner and request, then the whole 18-artifact
+  bundle.
+- The runtime host ABI: x86-64, `glibc 2.39`, and the `x86-64-v3` and
+  `pclmulqdq` CPU flags.
+- The publication. It must be root-owned, not group- or other-writable, with no
+  links. It holds exactly `shards.json` and 90 manifest directories. Each
+  directory holds exactly `manifest.json`, `filter.bin` and its segment files.
+  These must all agree: the map hash, coverage, anchor and tiers, every manifest
+  hash, and every table file size (rows × 4096).
+
+##### All-host reconciliation under the lock
+
+Stage and reconcile take the global production lock in the receiving process.
+They then emit a lock line carrying a fresh nonce and the receiver's PID, start
+ticks and boot ID. Root's client then runs the read-only `survey` over pinned
+SSH on every other inventory host. The receiver surveys the coordinator itself.
+Each survey records:
+
+- Machine ID, boot ID, effective UID and the staged operations source.
+- The schema, host-action and input-staging fence.
+- Every process holding that host's production lock.
+- Every live process that carries a launch token or runs a stage or reconcile
+  receiver.
+- An inventory of every entry under the schema state, host-action and
+  input-staging owner namespaces, latest or not and of any kind, with a digest.
+  Every regular `.json` file is parsed. Any integer `pid` or `*_pid` value in
+  it is a recorded process, bound to the start ticks (`start_ticks` or
+  `process_start`), boot ID and cgroup kept beside it.
+- Every live process associated with a recorded process:
+  - the PID matches the kept start ticks or, without them, the process started
+    no later than the record's last write;
+  - a member of a session or process group the recorded process led, when that
+    process is gone or still live (Linux never reuses a PID while such a
+    session or group exists);
+  - a process in the recorded cgroup, when that cgroup is not the observer's;
+  - a process whose session or group leader is gone and that started between
+    the record's `started_unix`/`started` and its last write;
+  - a process started in that window whose parent is PID 1, a `systemd`
+    manager, unscanned or younger than itself: a reparented child, including
+    one that made its own session. The oldest process of a `.service` cgroup
+    is that service's main process and is exempt;
+  - every live descendant, by parent PID, of any process above, including the
+    children of a recorded process that is still running.
+
+  Records last written before this boot, or naming another boot, are skipped.
+  Kernel threads and kernel-spawned helpers (session 0) are never associated.
+- Every live process of a closed operational class: its executable or an argv
+  element has the basename of a candidate tool, `wallet-pir-deploy.py` or
+  `transparent-block-server`, or lies under `/srv/transparent-activity/` or
+  `/srv/transparent-pir/`. Such a process is allowed only when systemd placed
+  it in the cgroup of an exact baseline unit:
+  `transparent-shard-server`, `transparent-filter-server`,
+  `transparent-publish-controller`, `transparent-control-sessions`,
+  `transparent-fleet-scaler`, `transparent-replica-reconciler` and
+  `transparent-quality-rollout`. The survey records each bound process's unit,
+  PID, start ticks, executable and executable SHA-256. Any other match is
+  unattributed and refuses, whatever its session, parent or token. That
+  includes an active unit outside this baseline running an operational
+  executable, even a deleted one (the `(deleted)` suffix is stripped before
+  matching). The survey keeps its exact PID, start ticks, executable and
+  cgroup. It never stops, signals or allowlists it; adding a unit to the
+  baseline needs root's reviewed provenance.
+
+These rules are fixed heuristics, not proof that no descendant survives. A
+detached process with an unclassified name, started outside every recorded
+window, is not seen. A refusal can also be a false positive, for example a
+daemon that double-forked during a recorded operation. Root reviews the
+retained raw survey in either case.
+
+The survey is the stdlib-only `ops/lib/wallet_pir_ops/owner_survey.py`. It has
+no package imports, so a source bootstrap can embed its exact text, as it does
+`hostlock` and `schema_fence`. The caller passes every input: namespaces,
+bounds, classes, baseline units, lock path, allowed holder and a binding of
+nonce, request and host. The raw result echoes all of them, with the class
+digest and the digests of the records behind each association. The receiver
+refuses a reply whose bounds, classes, baseline or binding differ from its own.
+
+The survey reads command lines and the launch-token variable only in memory.
+A retained process entry, and every refusal reason, keeps:
+
+- PID, start ticks, session, group, parent, UID, kernel name, cgroup and
+  executable path.
+- The SHA-256 and byte count of the command line, read to 4096 bytes. A count
+  of 4097 means the digest covers only that bounded prefix.
+- The token's SHA-256, never its value. The launch record keeps the receiver's
+  own token, so its digest identifies own processes offline.
+- The operational class entries it matched (a tool name or root), and the
+  lock, receiver and unreadable flags.
+
+No argument or environment value is retained. Credentials, URL credentials or
+inline script text in another process's command line never reach the evidence.
+  On the coordinator this walk keeps the 2-second health sampling, and a
+  failure there still retains every reply already received.
+- Every candidate execution owner and its status. The unfinished check runs on
+  every selected owner. Only the listed display is cut to 64, and the reply
+  carries the complete count and a digest of the whole selection. More than
+  10000 selected owners refuses.
+
+Before any owner exists, the receiver checks the nonce, the host set, every
+machine ID and the source. It refuses on any of:
+
+- A host that is missing, extra, stale or foreign, or a transport failure.
+- A missing operations source, an unreadable machine ID, owner record or
+  process.
+- An owner namespace over 100000 entries, 512 MiB of `.json` records or
+  100000 recorded processes; one record over 16 MiB; a symlink or special file.
+- An unfinished fence or candidate execution owner.
+- Any live process associated with any retained owner record, terminal or not.
+- Any unattributed live operational-class process.
+- A lock holder other than the receiver.
+- Any live candidate process or other receiver.
+
+Every reply is retained as raw immutable bytes, pass or fail, under
+`/srv/transparent-activity/candidates/executions/surveys/<request SHA>/<nonce>/`.
+The `index.json` there is referenced from the owner record. Surveys never write
+on any host.
+
+##### Launch, limits and sampling
+
+After a clear survey, stage writes the request and a `running` owner to
+`/srv/transparent-activity/ops/input-staging/`, then points `latest.json` at it.
+Children then run one at a time. For each child, the receiver:
+
+1. Re-checks the binary hash, ELF ABI and host ABI. For certificates, it hashes
+   the table in chunks, sampling between chunks, and checks its identity again
+   after the child exits.
+2. Records a durable launch intent with a random launch token.
+3. Starts a fixed guardian (`GUARDIAN_SHA256` is in the plan) in its own
+   session. The guardian inherits the lock descriptor, a gate pipe, a notify
+   pipe and its report file, and carries the token in its environment. It is a
+   child subreaper and ignores SIGHUP, SIGINT and SIGPIPE.
+4. The guardian forks the native process and reports its PID. That process
+   dies with the guardian (`PR_SET_PDEATHSIG`), sets the hard limits
+   `RLIMIT_AS`, `RLIMIT_CPU` (with a 5-second grace before SIGKILL) and
+   `RLIMIT_CORE=0`, then waits on the gate.
+5. The receiver checks that the reported process is the guardian's child in
+   its session. It writes `owner.json` and the child record durably, with the
+   native and guardian PIDs, start ticks, boot ID, token and guardian deadline.
+   Only then does it send `go`, and the native process executes the closed
+   argv.
+
+If the receiver dies before `go`, the native process sees end-of-file and exits
+125 without executing anything.
+
+The guardian has its own deadline: the child's wall budget plus a 60-second
+launch window, from its own start. At that deadline, at native exit or on
+SIGTERM, it kills the native process and then every descendant, through pidfds
+re-checked against their start ticks. As a subreaper it also finds descendants
+that left its session. It writes `guardian.json` with the native exit status,
+whether the deadline expired, and what it killed. The receiver's own wall
+deadline is shorter. The guardian bounds an IO-blocked child, which
+`RLIMIT_CPU` cannot stop, after the receiver is gone. Only killing the guardian
+from outside escapes it: the native process then dies with it, and a surviving
+descendant keeps the lock and the fence until root inspects it.
+
+The per-mode budgets are in the plan, with their basis:
+
+| Mode | Wall | Guardian | CPU | Address space | Aggregate per stage |
+| --- | --- | --- | --- | --- | --- |
+| `native-certificates` | 600 s | 660 s | 600 s | 14 GiB | 180 × 600 s + 3600 s = 111600 s |
+| `artifact-verification` | 1800 s | 1860 s | 1800 s | 14 GiB | 1800 s + 3600 s = 5400 s |
+
+- The certificate limits are root's conservative closed choice. They match the
+  prepared certificate driver's `RLIMIT_AS` and its per-segment CPU and wall.
+- The artifact wall time is the unchanged 1800-second report-contract ceiling.
+- Root accepted the artifact values as a conservative initial ceiling: the
+  pinned `shard-verify` path streams segments and maps no whole publication.
+  They are not measurements of `shard-verify`.
+- All budgets are explicit ceilings, not qualification evidence. Failures are
+  retained without widening them; root sets the production allowance after
+  current measurements.
+- The aggregate budget covers one stage on the coordinator, from lock
+  acquisition to the terminal owner record. That includes surveys, candidate
+  and publication checks, table hashing, input retention, every child and the
+  sampling between children. Root accepted the 3600 seconds outside children
+  and the aggregates as finite operational maxima, not estimates.
+- The 60-second guardian launch window is a wrapper choice. It bounds only the
+  owner write before `go` and a dead receiver's child, and awaits root's
+  review.
+- The receiver refuses to start a child the remaining aggregate budget cannot
+  cover.
+- The client's SSH wait is the aggregate plus 900 seconds. It is transport
+  only and bounds nothing remote.
+- Sampled RSS is recorded as an observation, never as a limit.
+
+The receiver takes one health sample at lock acquisition, then at least every 2
+seconds through all locked work: checks, hashing, the wait for surveys, each
+child and the gaps between children. It also samples before each spawn and
+after each exit. All samples go to `health.ndjson` in the execution directory.
+The run stops, its own child is stopped, and the owner fails on any of:
+
+- Memory or disk below 20 percent.
+- A sampling gap over 10 seconds.
+- The aggregate deadline.
+- A child past its wall deadline, or killed by its hard limits.
+- stdout above 16 MiB or stderr above 1 MiB.
+- A nonzero exit, a refused launch, an expired guardian, or any descendant the
+  guardian had to kill or a token-bearing process still alive after exit.
+
+Each child's private directory under
+`/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` keeps
+these files, all 0400 with a single link:
+
+- `owner.json`: actual binary, argv, guardian digest, token, native PID and
+  start ticks, guardian identity and deadline, boot ID, source, candidate,
+  publication and limits.
+- `native.json` (raw stdout) and `stderr.log`.
+- `guardian.json`: the guardian's terminal report.
+- `health.json`: that child's samples, from before spawn to after exit.
+- `result.json`: status, native exit code or signal, native PID, times, limits
+  and the guardian's PID, exit code and report reference.
+
+Owner and result follow the `activity_candidate_reports.capture` contract, and
+each successful capture is checked against it. Private copies of the map and
+manifests sit under `inputs/`. A complete run writes `references.json` and the
+owner becomes `staged` with `gate: unevaluated`. Native exit zero is not a gate
+pass until `activity-candidate-report.py` accepts the retained bytes.
+
+Two constraints remain:
+
+- The references are absolute coordinator paths. The report producer reads them
+  there, or from an exact copy at the same paths. Its compact report and
+  raw-evidence index are unchanged.
+- The certificate report still needs the root-supplied `certifier` path.
+
+##### Failure and recovery
+
+A failure stops the run at that child and keeps every byte, including the failed
+attempt. The `latest.json` owner fences every other mutation until
+`schema-candidate-execute-reconcile` succeeds. SIGHUP (including SSH loss),
+SIGTERM or SIGINT makes the receiver stop its own child, record `interrupted`
+and exit 75. If the transport is lost while the receiver lives, the client
+reports an unknown outcome (exit 75), and root runs status and then reconcile.
+
+Reconciliation acquires the production lock before any effect:
+
+1. Refuse while the recorded receiver is alive. Identity is boot ID, PID and
+   start ticks.
+2. Acquire the production lock, waiting at most 30 seconds. Children inherit
+   it, so while the guardian, the native process or any descendant holding it
+   lives, the lock is unavailable. Refuse then without writing the owner or
+   signalling anything, and say which case applies: own processes until the
+   guardian deadline, own processes past it, or a holder this owner cannot
+   prove its own. The observation is kept as
+   `reconciliation-unlocked-<time>-<random>.json`.
+3. Under the lock, check that the owner did not change. Append the attempt
+   (claimant PID, start ticks, boot ID) to `recoveries` and save it. This is the
+   first owner write of the recovery.
+4. Scan every process for the launch token and the recorded guardian's session.
+   Own processes carry the exact token inside that session. In the launch
+   window, that is the session of the token-bearing guardian. If a token escaped
+   the session or a session member lacks it, refuse and signal nothing.
+5. Own processes that released the lock (possible only after the guardian was
+   killed from outside) are signalled while this reconciler holds the lock,
+   each through a pidfd re-checked against its start ticks: TERM, then KILL.
+   A reused PID is never signalled.
+6. Run the fence and an all-host survey, as stage does. This one allows only
+   this owner to be unfinished. Then mark the owner `reconciled`.
+
+Every locked attempt, blocked or not, writes an immutable
+`reconciliation-<n>.json` with the claimant, the observations, the guardian
+report, the signals and the survey reference. A blocked attempt leaves the
+owner unfinished and the fence in place. A retry needs a new attempt. If the
+receiver dies between fork and `go`, the native process's end-of-file exit
+frees the lock within the lock wait.
+
+The receiver writes only this private qualification evidence. It never touches
+a live service, cache, unit, route or journal writer.
+
+Fixture tests use real child processes, flock locks, rlimits, pidfd signals,
+signals and a second surveyed host process. They cover:
+
+- Receiver death with an IO-blocked child, refused without effect until the
+  guardian deadline and then reconciled under the lock; death before the child
+  owner write and before `go`.
+- The guardian's gate, limits, deadline, SIGTERM and parent-death kill, and
+  its subtree kill of a setsid descendant.
+- SIGHUP, lost transport, a concurrent reconciler, a reused PID, a foreign
+  session and an unknown lock holder, none of them signalled.
+- Escaped descendants, own descendants left by a killed guardian, and live or
+  missing remote owners, sources and lock holders.
+- Nonlatest owners of any kind in every namespace with a live process, a
+  terminal owner whose process died while a descendant lives, PID reuse,
+  namespace overflow, unreadable records and links, and each association rule.
+- A legacy child that made its own session and was reparented after its parent
+  exited, with no token and a live session leader: refused by its recorded
+  window, by its executable class, or both. Baseline binding by exact unit
+  cgroup, and the survey run from its embedded text.
+- Partial, stale and foreign surveys.
+- Floors, gaps, the aggregate budget, wall deadlines, hard memory and CPU
+  limits, output bounds and nonzero exits.
+- Drift and 180-segment coverage.
+
+No production execution has occurred, and the budgets above still need root's
+review. Installed and canonical setup agreement remains a separate cutover gate.
 
 #### Independent raw RPC validation
 
@@ -1618,10 +1951,11 @@ Root's ordered path, without rebuilding the old CI or native chain:
    Then run candidate plan, preflight, stage and status against the retained
    `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
-   immutable publication. Gates that read the journal can use a
-   [journal snapshot](#candidate-journal-snapshot) instead of the live journal.
-   Bind each report from retained raw results; a document shaped like a passing
-   report is not evidence.
+   immutable publication: `schema-candidate-execute-*` for artifact verification
+   and native certificates. Gates that read the journal require a verified
+   [journal snapshot](#candidate-journal-snapshot), never the live journal.
+   Bind each report from retained raw results with `activity-candidate-report.py`;
+   a document shaped like a passing report is not evidence.
 4. Stage the candidate worker pair on every worker.
 5. Render version-2 service, proof and product inputs, then follow the existing
    schema plan, preflight and deploy path.

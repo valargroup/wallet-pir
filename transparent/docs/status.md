@@ -152,6 +152,36 @@ Root's fourth review found three owner-contract gaps, and the path now:
 Eighty-five focused tests passed; each new case failed against the previous
 source. No host was contacted and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
+Operations source then added the locked `schema-candidate-execute-*` path for
+the artifact-verification and native-certificate executions. It retains raw
+captures for the offline report producer. Root rejected the first version.
+The revision adds three controls: an all-host survey under the lock before
+mutation, kernel-enforced per-child limits within a finite per-stage budget,
+and recovery through a claim with pidfd signals. Root rejected that revision
+too: the survey read only candidate owners and latest fences, and recovery
+signalled before holding the production lock. The second revision surveys every
+retained record of every owner namespace and associates recorded processes with
+live ones by start identity, session, group, cgroup, orphan and reparented
+windows and descendants. It refuses unattributed processes of the closed
+operational classes outside baseline service cgroups. These are fixed
+heuristics, not complete descendant clearance. The survey is a reusable
+stdlib-only component for root's source bootstrap. Each
+child now runs under a guardian with its own deadline that kills an IO-blocked
+child and its descendants after receiver death. Reconciliation acquires the
+production lock before any owner write or signal. Fixture tests and
+single-guard mutations passed on the development hub. Root set all budgets as
+explicit ceilings; the 60-second guardian launch window awaits its review. No
+candidate native program ran on a production host, and no gate report exists.
+
+Root's review of the third revision found that retained surveys kept raw
+command-line operands of unattributed processes. Two fixture tests also failed
+on root's Linux run. The revision keeps arguments and token values in memory
+only and retains the command line's SHA-256 and length, the token's SHA-256,
+the matched class entries and flags. The test failures came from a fixture
+lock holder that shared the test runner's session. When that session's leader
+was gone or outside the fixture cgroup, the production orphan-window rule
+correctly refused it on the coordinator before worker-a. The fixture holder
+now leads its own session; production scans are unchanged.
 
 ## Activity metadata candidate, 2026-09-30
 

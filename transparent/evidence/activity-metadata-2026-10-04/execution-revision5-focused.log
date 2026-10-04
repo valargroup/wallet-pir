@@ -1,0 +1,78 @@
+# Focused suites after root's af377c9b review (argument persistence, fixture session isolation), committed tree 51f293e00e8b8296ba43759da1b2cf36f2ca0f86, development hub, unprivileged.
+
+== python3 -B transparent/ops/tests/test_activity_candidate_execution.py
+Ran 50 tests in 102.105s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate_reports.py
+Ran 8 tests in 0.732s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate_upload.py
+Ran 21 tests in 5.668s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate.py
+Ran 25 tests in 0.660s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_input_stage.py
+Ran 33 tests in 4.787s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_input_preparation.py
+Ran 7 tests in 0.117s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_product.py
+Ran 42 tests in 0.333s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_lock_qualification.py
+Ran 8 tests in 6.689s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_operation.py
+Ran 212 tests in 15.890s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_baseline.py
+Ran 32 tests in 0.570s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_host.py
+Ran 39 tests in 0.652s
+OK
+exit 0
+
+== python3 -B -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+Ran 46 tests in 4.498s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate_execution.py, run in a session whose leader had exited (root's failing condition: setsid sh -c '(...) &'); run before the commit on a working tree whose code and tests equal it
+Ran 50 tests in 103.028s
+OK
+exit 0
+
+== systemd-run --user --scope python3 -B transparent/ops/tests/test_activity_candidate_execution.py Interruption Survey (runner outside its session leader's cgroup); run before the commit on a working tree whose code and tests equal it
+Ran 29 tests in 45.450s
+OK
+exit 0
+
+== make check-fast BASE=286b8c0cf15db08e59c20bef581da8919cce49fc
+CHECK_STAGE {"stage": "helpers", "seconds": 22.908, "exit": 0}
+exit 0
+
+== git diff --check 286b8c0cf15db08e59c20bef581da8919cce49fc HEAD
+clean

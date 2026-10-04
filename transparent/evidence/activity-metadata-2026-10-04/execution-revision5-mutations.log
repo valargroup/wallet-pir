@@ -1,0 +1,7 @@
+# Single-guard mutations of wallet_pir_ops/owner_survey.py on code equal to 51f293e00e8b8296ba43759da1b2cf36f2ca0f86. Each was applied in the working tree and restored afterwards; the new argument test, Closed and Survey were run with -f.
+argv retained in summaries                         killed FAILED (failures=1)
+marker value retained                              killed FAILED (failures=1)
+argument in refusal reason                         killed FAILED (failures=1)
+command digest over unbounded read                 killed FAILED (failures=1)
+class entry replaced by matched argument           killed FAILED (failures=1)
+fixture holder shares the runner's session          killed FAILED (failures=2)  (pre-fix fixture, run in a session whose leader had exited: both of root's regex failures reproduced, coordinator orphan-in-recorded-window refusal before worker-a)
