@@ -1605,15 +1605,34 @@ Each survey records:
 - Every process holding that host's production lock.
 - Every live process that carries a launch token or runs a stage or reconcile
   receiver.
-- Every candidate execution owner, with the liveness of its recorded receiver
-  and child.
+- An inventory of every entry under the schema state, host-action and
+  input-staging owner namespaces, latest or not and of any kind, with a digest.
+  Every regular `.json` file is parsed. Any integer `pid` or `*_pid` value in
+  it is a recorded process, bound to the start ticks (`start_ticks` or
+  `process_start`), boot ID and cgroup kept beside it.
+- Every live process associated with a recorded process:
+  - the PID matches the kept start ticks or, without them, the process started
+    no later than the record's last write;
+  - a member of a session or process group the recorded process led, when that
+    process is gone or still live (Linux never reuses a PID while such a
+    session or group exists);
+  - a process in the recorded cgroup, when that cgroup is not the observer's;
+  - a process whose session or group leader is gone and that started between
+    the record's `started_unix`/`started` and its last write.
+
+  Records last written before this boot, or naming another boot, are skipped.
+- Every candidate execution owner and its status.
 
 Before any owner exists, the receiver checks the nonce, the host set, every
 machine ID and the source. It refuses on any of:
 
 - A host that is missing, extra, stale or foreign, or a transport failure.
-- A missing operations source, an unreadable machine ID, owner or process.
-- An unfinished fence or owner.
+- A missing operations source, an unreadable machine ID, owner record or
+  process.
+- An owner namespace over 100000 entries, 512 MiB of `.json` records or
+  100000 recorded processes; one record over 16 MiB; a symlink or special file.
+- An unfinished fence or candidate execution owner.
+- Any live process associated with any retained owner record, terminal or not.
 - A lock holder other than the receiver.
 - Any live candidate process or other receiver.
 
@@ -1632,36 +1651,58 @@ Children then run one at a time. For each child, the receiver:
    the table in chunks, sampling between chunks, and checks its identity again
    after the child exits.
 2. Records a durable launch intent with a random launch token.
-3. Starts a fixed launcher (`LAUNCHER_SHA256` is in the plan) in its own session.
-   The launcher inherits the lock descriptor and a gate pipe, and carries the
-   token in its environment.
-4. The launcher sets the hard limits `RLIMIT_AS`, `RLIMIT_CPU` (with a 5-second
-   grace before SIGKILL) and `RLIMIT_CORE=0`. It then waits on the gate.
-5. The receiver writes `owner.json` and the child record durably, with PID,
-   start ticks, boot ID and token. Only then does it send `go`, and the
-   launcher executes the closed native argv in place.
+3. Starts a fixed guardian (`GUARDIAN_SHA256` is in the plan) in its own
+   session. The guardian inherits the lock descriptor, a gate pipe, a notify
+   pipe and its report file, and carries the token in its environment. It is a
+   child subreaper and ignores SIGHUP, SIGINT and SIGPIPE.
+4. The guardian forks the native process and reports its PID. That process
+   dies with the guardian (`PR_SET_PDEATHSIG`), sets the hard limits
+   `RLIMIT_AS`, `RLIMIT_CPU` (with a 5-second grace before SIGKILL) and
+   `RLIMIT_CORE=0`, then waits on the gate.
+5. The receiver checks that the reported process is the guardian's child in
+   its session. It writes `owner.json` and the child record durably, with the
+   native and guardian PIDs, start ticks, boot ID, token and guardian deadline.
+   Only then does it send `go`, and the native process executes the closed
+   argv.
 
-If the receiver dies before `go`, the launcher sees end-of-file and exits 125
-without executing anything.
+If the receiver dies before `go`, the native process sees end-of-file and exits
+125 without executing anything.
+
+The guardian has its own deadline: the child's wall budget plus a 60-second
+launch window, from its own start. At that deadline, at native exit or on
+SIGTERM, it kills the native process and then every descendant, through pidfds
+re-checked against their start ticks. As a subreaper it also finds descendants
+that left its session. It writes `guardian.json` with the native exit status,
+whether the deadline expired, and what it killed. The receiver's own wall
+deadline is shorter. The guardian bounds an IO-blocked child, which
+`RLIMIT_CPU` cannot stop, after the receiver is gone. Only killing the guardian
+from outside escapes it: the native process then dies with it, and a surviving
+descendant keeps the lock and the fence until root inspects it.
 
 The per-mode budgets are in the plan, with their basis:
 
-| Mode | Wall | CPU | Address space | Aggregate per stage |
-| --- | --- | --- | --- | --- |
-| `native-certificates` | 600 s | 600 s | 14 GiB | 180 × 600 s + 3600 s = 111600 s |
-| `artifact-verification` | 1800 s | 1800 s | 14 GiB | 1800 s + 3600 s = 5400 s |
+| Mode | Wall | Guardian | CPU | Address space | Aggregate per stage |
+| --- | --- | --- | --- | --- | --- |
+| `native-certificates` | 600 s | 660 s | 600 s | 14 GiB | 180 × 600 s + 3600 s = 111600 s |
+| `artifact-verification` | 1800 s | 1860 s | 1800 s | 14 GiB | 1800 s + 3600 s = 5400 s |
 
 - The certificate limits are root's conservative closed choice. They match the
   prepared certificate driver's `RLIMIT_AS` and its per-segment CPU and wall.
 - The artifact wall time is the unchanged 1800-second report-contract ceiling.
-- The artifact CPU and address-space values are not separately reviewed
-  measurements of `shard-verify`. Root must accept or replace them before
-  production.
+- Root accepted the artifact values as a conservative initial ceiling: the
+  pinned `shard-verify` path streams segments and maps no whole publication.
+  They are not measurements of `shard-verify`.
+- All budgets are explicit ceilings, not qualification evidence. Failures are
+  retained without widening them; root sets the production allowance after
+  current measurements.
 - The aggregate budget covers one stage on the coordinator, from lock
   acquisition to the terminal owner record. That includes surveys, candidate
   and publication checks, table hashing, input retention, every child and the
-  sampling between children. The 3600 seconds outside children is a wrapper
-  choice that also awaits root's review.
+  sampling between children. Root accepted the 3600 seconds outside children
+  and the aggregates as finite operational maxima, not estimates.
+- The 60-second guardian launch window is a wrapper choice. It bounds only the
+  owner write before `go` and a dead receiver's child, and awaits root's
+  review.
 - The receiver refuses to start a child the remaining aggregate budget cannot
   cover.
 - The client's SSH wait is the aggregate plus 900 seconds. It is transport
@@ -1679,18 +1720,21 @@ The run stops, its own child is stopped, and the owner fails on any of:
 - The aggregate deadline.
 - A child past its wall deadline, or killed by its hard limits.
 - stdout above 16 MiB or stderr above 1 MiB.
-- A nonzero exit, a refused launch, or a token-bearing descendant still alive
-  after exit.
+- A nonzero exit, a refused launch, an expired guardian, or any descendant the
+  guardian had to kill or a token-bearing process still alive after exit.
 
 Each child's private directory under
 `/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` keeps
 these files, all 0400 with a single link:
 
-- `owner.json`: actual binary, argv, launcher digest, token, PID, start ticks,
-  boot ID, source, candidate, publication and limits.
+- `owner.json`: actual binary, argv, guardian digest, token, native PID and
+  start ticks, guardian identity and deadline, boot ID, source, candidate,
+  publication and limits.
 - `native.json` (raw stdout) and `stderr.log`.
+- `guardian.json`: the guardian's terminal report.
 - `health.json`: that child's samples, from before spawn to after exit.
-- `result.json`: status, exit code or signal, PID, times and limits.
+- `result.json`: status, native exit code or signal, native PID, times, limits
+  and the guardian's PID, exit code and report reference.
 
 Owner and result follow the `activity_candidate_reports.capture` contract, and
 each successful capture is checked against it. Private copies of the map and
@@ -1714,34 +1758,37 @@ SIGTERM or SIGINT makes the receiver stop its own child, record `interrupted`
 and exit 75. If the transport is lost while the receiver lives, the client
 reports an unknown outcome (exit 75), and root runs status and then reconcile.
 
-Reconciliation works in this order:
+Reconciliation acquires the production lock before any effect:
 
-1. Take an exclusive recovery claim: a non-blocking flock on
-   `<request SHA>.recovery.lock`. A competing reconciler refuses before
-   observing or signalling anything.
-2. Append the claim (claimant PID, start ticks and boot ID) to the owner's
-   `recoveries` and save it durably, before any signal.
-3. Refuse while the recorded receiver is alive. Identity is boot ID, PID and
+1. Refuse while the recorded receiver is alive. Identity is boot ID, PID and
    start ticks.
-4. Prove lock ownership. Scan every process for the launch token, the recorded
-   child's session and holders of the production-lock inode. Own processes carry
-   the exact token inside the recorded child's session. In the launch window,
-   that is the token-bearing launcher that leads its own session. If a token
-   escaped that session, a session member lacks it, or any lock holder is not
-   own, refuse and signal nothing.
-5. Signal only own processes, each through a pidfd opened and re-checked against
-   its start ticks: TERM, then KILL. A reused PID is never signalled.
-6. Acquire the production lock, waiting at most 30 seconds. Children inherited
-   it, so holding it proves no own descendant survives.
-7. Under the lock, run the fence and an all-host survey, as stage does. This
-   one allows only this owner to be unfinished. Then mark the owner
-   `reconciled`.
+2. Acquire the production lock, waiting at most 30 seconds. Children inherit
+   it, so while the guardian, the native process or any descendant holding it
+   lives, the lock is unavailable. Refuse then without writing the owner or
+   signalling anything, and say which case applies: own processes until the
+   guardian deadline, own processes past it, or a holder this owner cannot
+   prove its own. The observation is kept as
+   `reconciliation-unlocked-<time>-<random>.json`.
+3. Under the lock, check that the owner did not change. Append the attempt
+   (claimant PID, start ticks, boot ID) to `recoveries` and save it. This is the
+   first owner write of the recovery.
+4. Scan every process for the launch token and the recorded guardian's session.
+   Own processes carry the exact token inside that session. In the launch
+   window, that is the session of the token-bearing guardian. If a token escaped
+   the session or a session member lacks it, refuse and signal nothing.
+5. Own processes that released the lock (possible only after the guardian was
+   killed from outside) are signalled while this reconciler holds the lock,
+   each through a pidfd re-checked against its start ticks: TERM, then KILL.
+   A reused PID is never signalled.
+6. Run the fence and an all-host survey, as stage does. This one allows only
+   this owner to be unfinished. Then mark the owner `reconciled`.
 
-Every attempt, blocked or not, writes an immutable `reconciliation-<n>.json`
-with the claim, the observations, the holders, the signals and the survey
-reference. A blocked attempt leaves the owner unfinished and the fence in place.
-A retry needs a new attempt. If the receiver dies between fork and `go`, the
-launcher's end-of-file exit means recovery finishes within the lock wait.
+Every locked attempt, blocked or not, writes an immutable
+`reconciliation-<n>.json` with the claimant, the observations, the guardian
+report, the signals and the survey reference. A blocked attempt leaves the
+owner unfinished and the fence in place. A retry needs a new attempt. If the
+receiver dies between fork and `go`, the native process's end-of-file exit
+frees the lock within the lock wait.
 
 The receiver writes only this private qualification evidence. It never touches
 a live service, cache, unit, route or journal writer.
@@ -1749,11 +1796,18 @@ a live service, cache, unit, route or journal writer.
 Fixture tests use real child processes, flock locks, rlimits, pidfd signals,
 signals and a second surveyed host process. They cover:
 
-- Receiver death mid-child, before the child owner write and before `go`.
-- SIGHUP, lost transport, competing reconcilers, a reused PID, a foreign session
-  and a foreign lock holder.
-- Escaped descendants, and live or missing remote owners, sources and lock
-  holders.
+- Receiver death with an IO-blocked child, refused without effect until the
+  guardian deadline and then reconciled under the lock; death before the child
+  owner write and before `go`.
+- The guardian's gate, limits, deadline, SIGTERM and parent-death kill, and
+  its subtree kill of a setsid descendant.
+- SIGHUP, lost transport, a concurrent reconciler, a reused PID, a foreign
+  session and an unknown lock holder, none of them signalled.
+- Escaped descendants, own descendants left by a killed guardian, and live or
+  missing remote owners, sources and lock holders.
+- Nonlatest owners of any kind in every namespace with a live process, a
+  terminal owner whose process died while a descendant lives, PID reuse,
+  namespace overflow, unreadable records and links, and each association rule.
 - Partial, stale and foreign surveys.
 - Floors, gaps, the aggregate budget, wall deadlines, hard memory and CPU
   limits, output bounds and nonzero exits.

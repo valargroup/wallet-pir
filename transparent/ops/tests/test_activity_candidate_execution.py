@@ -76,11 +76,15 @@ if mode == 'allocate':
 if mode == 'spin':
     while True:
         pass
-if mode in ('sleep', 'fork', 'escape'):
+if mode in ('sleep', 'fork', 'escape', 'block', 'unlock'):
     child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=mode == 'escape',
-                             pass_fds=[int(f) for f in fds.split(',') if f])
+                             pass_fds=[] if mode == 'unlock' else [int(f) for f in fds.split(',') if f])
     open(control['mark'], 'w').write(json.dumps({{'pid': os.getpid(), 'grandchild': child.pid}}))
-    if mode != 'fork':
+    if mode == 'block':
+        # Blocked in a read that never completes: no CPU, so RLIMIT_CPU never fires.
+        blocked, writer = os.pipe()
+        os.read(blocked, 1)
+    elif mode != 'fork':
         time.sleep(60)
     sys.exit(0)
 if mode == 'noisy':
@@ -117,6 +121,7 @@ C = E.C
 C.ARTIFACTS.update(config['artifacts']); C.ROOT = Path(config['candidates']); C.TARGET = Path(config['target'])
 C.OWNER = os.getuid(); C.abi = lambda name, data: None
 E.OWNERS = Path(config['owners']); E.PUBLICATION = Path(config['publication']); E.MAP_SHA256 = config['map']
+E.SCHEMA = Path(config['fence']) / 'schema'
 E.MACHINE_ID = Path(config['machine'])
 def source():
     if config['source'] is None:
@@ -128,6 +133,8 @@ E.resources = lambda paths: {'observed_unix': time.time(), 'memory_available': .
 E.SAMPLE_SECONDS = .1
 for name, value in config.get('constants', {}).items():
     setattr(E, name, value.encode() if name == 'RECEIVE' else value)
+for mode, budget in config.get('budgets', {}).items():
+    E.BUDGETS[mode] = budget
 fence = E.schema_fence.local_schema_fence
 E.schema_fence.INPUT_STAGING = Path(config['owners'])
 E.schema_fence.HOST_ACTIONS = Path(config['fence']) / 'host-actions'
@@ -215,7 +222,7 @@ class Fixture(unittest.TestCase):
                                    (E, 'staged_source', lambda: 'e'*40), (E, 'SAMPLE_SECONDS', .1),
                                    (E, 'host_abi', lambda: {'machine': 'x86_64', 'libc': E.GLIBC, 'cpu_flags': sorted(E.CPU_FLAGS)}),
                                    (E, 'resources', lambda paths: dict(HEALTHY, observed_unix=time.time())),
-                                   (E.schema_fence, 'INPUT_STAGING', self.owners),
+                                   (E.schema_fence, 'INPUT_STAGING', self.owners), (E, 'SCHEMA', self.fence/'schema'),
                                    (E.schema_fence, 'HOST_ACTIONS', self.fence/'host-actions')):
             p = patch.object(thing, name, value); p.start(); self.addCleanup(p.stop)
         p = patch.dict(C.ARTIFACTS, self.pins); p.start(); self.addCleanup(p.stop)
@@ -226,7 +233,7 @@ class Fixture(unittest.TestCase):
         self.publication = self.root/'publication'
         self.publish()
         p = patch.object(E, 'PUBLICATION', self.publication); p.start(); self.addCleanup(p.stop)
-        self.constants = {}
+        self.constants, self.budgets = {}, {}
 
     def tearDown(self):
         # Never leave fixture processes behind, even after a failed assertion.
@@ -347,10 +354,22 @@ class Fixture(unittest.TestCase):
             time.sleep(.05)
         self.fail('condition not reached')
 
+    def gone(self, pid):
+        current = E.process(pid)
+        return current is None or current['state'] == 'Z'
+
+    def shorten(self, wall, grace=1):
+        """Short artifact wall and guardian deadlines, the same in this process and every harness."""
+        budget = dict(E.BUDGETS['artifact-verification'], wall_seconds=wall)
+        self.budgets['artifact-verification'] = budget
+        self.constants['GUARDIAN_GRACE_SECONDS'] = grace
+        for p in (patch.dict(E.BUDGETS, {'artifact-verification': budget}), patch.object(E, 'GUARDIAN_GRACE_SECONDS', grace)):
+            p.start(); self.addCleanup(p.stop)
+
     def config(self, host='coordinator', **change):
         values = {'lib': str(HERE.parents[2]/'ops/lib'), 'module': str(MODULE), 'artifacts': self.pins,
                   'candidates': str(C.ROOT), 'target': str(C.TARGET), 'publication': str(self.publication),
-                  'map': E.MAP_SHA256, 'constants': self.constants, 'source': 'e'*40}
+                  'map': E.MAP_SHA256, 'constants': self.constants, 'budgets': self.budgets, 'source': 'e'*40}
         if host == 'coordinator':
             values.update(owners=str(self.owners), machine=str(self.machine), fence=str(self.fence), lock=str(self.lockpath))
         else:
@@ -410,11 +429,12 @@ class Closed(Fixture):
                          (1800, 1800, 14 << 30))
         self.assertEqual(budget['aggregate_seconds'], 1800+3600)
         self.assertEqual(budget['transport_seconds'], 1800+3600+900)
-        self.assertIn('root must accept or replace', budget['basis'])
+        self.assertIn('not a shard-verify measurement', budget['basis'])
         self.assertIn('lock acquisition', budget['aggregate_scope'])
         self.assertEqual((budget['concurrency'], budget['floor'], budget['max_gap_seconds']), (1, .2, 10))
         self.assertNotIn('memory_bytes', budget)
-        self.assertEqual(plan['hosts'], HOSTS); self.assertEqual(plan['launcher_sha256'], E.LAUNCHER_SHA256)
+        self.assertEqual(budget['guardian_seconds'], 1800+60)
+        self.assertEqual(plan['hosts'], HOSTS); self.assertEqual(plan['guardian_sha256'], E.GUARDIAN_SHA256)
         self.assertEqual(I.digest(plan), I.digest(self.receiver().plan()))
         self.assertEqual({p.name for p in self.owners.iterdir()},
                          {'latest.json', self.preparation+'.json', self.preparation+'.request.json'})
@@ -530,25 +550,91 @@ class Closed(Fixture):
         self.assertEqual(process.wait(10), -signal.SIGKILL)
         self.assertFalse(E.signal_exact(process.pid, ticks, signal.SIGKILL))
 
-    def test_launcher_without_go_exits_before_exec_and_with_go_applies_hard_limits(self):
+    def guardian(self, argv, budget, go=True):
+        """One real guardian launch, as the receiver drives it."""
+        gate, release = os.pipe(); notify, told = os.pipe()
+        path = self.root/('guardian-%d.json' % time.monotonic_ns())
+        report = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        child = subprocess.Popen(E.guardian_argv(gate, told, report, budget, argv), pass_fds=(gate, told, report),
+                                 close_fds=True, start_new_session=True)
+        self.addCleanup(lambda: (child.poll() is None and child.kill(), child.wait()))
+        for fd in (gate, told, report):
+            os.close(fd)
+        native = int(os.read(notify, 32)); os.close(notify)
+        current = E.process(native)
+        self.assertEqual((current['ppid'], current['session'], current['pgid']), (child.pid,)*3)
+        if go:
+            os.write(release, b'go\n')
+        os.close(release)
+        return child, native, path
+
+    def test_guardian_gates_exec_and_applies_hard_limits_only_to_the_native_process(self):
         target = self.root/'target.sh'
         target.write_text('#!/bin/sh\nulimit -v > %s\nulimit -t >> %s\n' % (self.root/'limits', self.root/'limits'))
         target.chmod(0o755)
-        budget = {'address_space_bytes': 1 << 30, 'cpu_seconds': 7}
+        budget = {'address_space_bytes': 1 << 30, 'cpu_seconds': 7, 'wall_seconds': 30}
         for go in (False, True):
-            gate, release = os.pipe()
-            child = subprocess.Popen(E.launcher_argv(gate, budget, [str(target)]), pass_fds=(gate,), close_fds=True)
-            os.close(gate)
-            if go:
-                os.write(release, b'go\n')
-            os.close(release)
-            code = child.wait(30)
+            child, native, path = self.guardian([str(target)], budget, go)
+            self.assertEqual(child.wait(30), 0)
+            report = E.guardian_report(path, {'pid': native})
+            self.assertEqual((report['expired'], report['killed'], report['survivors']), (False, [], []))
             if not go:
-                self.assertEqual(code, E.LAUNCH_REFUSED); self.assertFalse((self.root/'limits').exists())
+                self.assertEqual(report['returncode'], E.LAUNCH_REFUSED); self.assertFalse((self.root/'limits').exists())
             else:
-                self.assertEqual(code, 0)
+                self.assertEqual(report['returncode'], 0)
                 self.assertEqual((self.root/'limits').read_text().split(), [str((1 << 30)//1024), '7'])
-        self.assertEqual(E.LAUNCHER_SHA256, hashlib.sha256(E.LAUNCHER.encode()).hexdigest())
+        self.assertEqual(E.GUARDIAN_SHA256, hashlib.sha256(E.GUARDIAN.encode()).hexdigest())
+
+    def blocked_native(self):
+        """A native stand-in blocked in IO with an escaped (setsid) grandchild."""
+        script = self.root/'blocked.py'
+        script.write_text('import os, subprocess, sys, time\n'
+                          'child = subprocess.Popen(["sleep", "60"], start_new_session=True)\n'
+                          'open(sys.argv[1], "w").write(str(child.pid))\n'
+                          'blocked, writer = os.pipe()\nos.read(blocked, 1)\n')
+        mark = self.root/('grandchild-%d' % time.monotonic_ns())
+        return [sys.executable, '-B', str(script), str(mark)], mark
+
+    def test_guardian_deadline_kills_an_io_blocked_native_and_escaped_descendants_without_the_receiver(self):
+        argv, mark = self.blocked_native()
+        budget = {'address_space_bytes': 1 << 31, 'cpu_seconds': 600, 'wall_seconds': 1.5}
+        with patch.object(E, 'GUARDIAN_GRACE_SECONDS', 0):
+            started = time.monotonic()
+            child, native, path = self.guardian(argv, budget)
+        self.wait_for(lambda: mark.exists() and mark.read_text())
+        grandchild = int(mark.read_text())
+        self.assertEqual(E.process(native)['state'], 'S')
+        # Nobody waits on the guardian or signals anything: its own deadline ends the run.
+        self.assertEqual(child.wait(30), 0)
+        self.assertGreaterEqual(time.monotonic()-started, 1.4)
+        report = E.guardian_report(path, {'pid': native})
+        self.assertEqual((report['expired'], report['returncode'], report['survivors']), (True, -signal.SIGKILL, []))
+        self.assertIn(grandchild, [k['pid'] for k in report['killed']])
+        self.wait_for(lambda: self.gone(grandchild) and self.gone(native))
+
+    def test_guardian_death_kills_its_native_child_and_term_stops_the_subtree(self):
+        argv, mark = self.blocked_native()
+        budget = {'address_space_bytes': 1 << 31, 'cpu_seconds': 600, 'wall_seconds': 60}
+        child, native, path = self.guardian(argv, budget)
+        self.wait_for(lambda: mark.exists() and mark.read_text())
+        grandchild = int(mark.read_text())
+        self.addCleanup(lambda: E.process(grandchild) and os.kill(grandchild, signal.SIGKILL))
+        os.kill(child.pid, signal.SIGKILL); child.wait(10)
+        # The kernel parent-death signal ends the native process; an escaped grandchild outlives it.
+        self.wait_for(lambda: self.gone(native))
+        self.assertEqual(path.stat().st_size, 0)
+        self.assertIsNotNone(E.process(grandchild))
+        os.kill(grandchild, signal.SIGKILL)
+        argv, mark = self.blocked_native()
+        child, native, path = self.guardian(argv, budget)
+        self.wait_for(lambda: mark.exists() and mark.read_text())
+        grandchild = int(mark.read_text())
+        os.kill(child.pid, signal.SIGTERM)
+        self.assertEqual(child.wait(30), 0)
+        report = E.guardian_report(path, {'pid': native})
+        self.assertEqual((report['stopped'], report['expired'], report['returncode']), (True, False, -signal.SIGKILL))
+        self.assertIn(grandchild, [k['pid'] for k in report['killed']])
+        self.wait_for(lambda: self.gone(grandchild))
 
 
 class Run(Fixture):
@@ -562,7 +648,17 @@ class Run(Fixture):
         self.assertIn('lock-inherited=True lock-held=True', stderr)
         self.assertIn('as=%d cpu=1800' % (14 << 30), stderr)
         owner = json.loads((receiver.evidence/'artifact/owner.json').read_text())
-        self.assertIn('sid=%d ' % owner['pid'], stderr)
+        # The native process runs in its guardian's session, under its guardian's deadline.
+        self.assertIn('sid=%d ' % owner['guardian']['pid'], stderr)
+        self.assertEqual((owner['session'], owner['pgid']), (owner['guardian']['pid'],)*2)
+        self.assertNotEqual(owner['pid'], owner['guardian']['pid'])
+        self.assertEqual(owner['guardian_seconds'], 1860); self.assertEqual(owner['guardian_sha256'], E.GUARDIAN_SHA256)
+        result = json.loads((receiver.evidence/'artifact/result.json').read_text())
+        guardian = R.value(result['guardian']['report'])
+        self.assertEqual((guardian['native_pid'], guardian['returncode'], guardian['expired'], guardian['killed']),
+                         (owner['pid'], 0, False, []))
+        self.assertEqual((result['pid'], result['guardian']['pid'], result['guardian']['exit_code']),
+                         (owner['pid'], owner['guardian']['pid'], 0))
         self.assertEqual({k: owner[k] for k in ('native_source_sha', 'candidate_sha256', 'binary_sha256', 'publication_sha256')},
                          {'native_source_sha': C.SOURCE_SHA, 'candidate_sha256': C.identity(),
                           'binary_sha256': self.pins['shard-verify'], 'publication_sha256': E.MAP_SHA256})
@@ -626,19 +722,21 @@ class Run(Fixture):
                 ('native', 'native.json'), ('stderr', 'stderr.log'), ('health', 'health.json'))}
         with self.assertRaises(ValueError): R.capture(refs, 'shard-verify', E.MAP_SHA256)
         self.fenced()
+        before = receiver.owner.read_bytes()
         with self.assertRaisesRegex(ValueError, 'receiver is still active'): self.reconcile(receiver)
         self.fenced()
-        blocked = json.loads(receiver.owner.read_text())['recoveries'][-1]
-        self.assertEqual(blocked['outcome'], 'blocked')
-        self.assertFalse(R.value(blocked['evidence'])['receiver_alive'] is False)
+        # Refused without the lock: retained evidence only, the owner record is untouched.
+        self.assertEqual(receiver.owner.read_bytes(), before)
+        [unlocked] = receiver.evidence.glob('reconciliation-unlocked-*.json')
+        self.assertTrue(json.loads(unlocked.read_text())['receiver_alive'])
         self.exited(receiver)
         reconciled = self.reconcile(receiver)
         self.assertEqual(reconciled['status'], 'reconciled')
-        self.assertEqual([r['outcome'] for r in reconciled['recoveries']], ['blocked', 'reconciled'])
+        self.assertEqual([r['outcome'] for r in reconciled['recoveries']], ['reconciled'])
         self.assertEqual(R.value(reconciled['reconciliation']['survey'])['phase'], 'reconcile')
         E.schema_fence.local_schema_fence()
         self.assertTrue((receiver.evidence/'artifact/stderr.log').exists())
-        self.assertTrue((receiver.evidence/'reconciliation-1.json').exists() and (receiver.evidence/'reconciliation-2.json').exists())
+        self.assertTrue((receiver.evidence/'reconciliation-1.json').exists())
         with self.assertRaisesRegex(ValueError, 'does not need'): self.reconcile(receiver)
 
     def test_certificate_failure_stops_before_any_later_segment(self):
@@ -816,6 +914,123 @@ class Survey(Fixture):
         self.wait_for(lambda: any(p['receiver'] for p in E.scan() if p['pid'] == other.pid))
         self.refused('live, unreadable or foreign', self.receiver(attempt=2))
 
+    def live(self, **options):
+        process = subprocess.Popen(['sleep', '30'], **options)
+        self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait()))
+        return process
+
+    def associated(self, attempts, host='coordinator'):
+        survey = json.loads((attempts[-1]/(host+'.json')).read_text())
+        self.assertEqual(survey['associated_count'], len(survey['associated']))
+        return [(p['pid'], p['association']) for p in survey['associated']]
+
+    def test_nonlatest_owner_of_any_kind_in_every_namespace_with_a_live_process_refuses(self):
+        live = self.live()
+        ticks = E.process(live.pid)['start_ticks']
+        cases = [(self.owners/('a'*64+'.json'), {'kind': 'coordinator-input-preparation', 'status': 'running', 'pid': live.pid}),
+                 (self.fence/'host-actions/transparent-schema-x/r1.json', {'status': 'passed', 'pid': live.pid}),
+                 (self.fence/'schema/transparent-schema-old.json', {'status': 'committed', 'events': [{'relay_pid': live.pid}]}),
+                 (self.owners/('b'*64+'.native')/'owner.json', {'pid': live.pid, 'process_start': ticks}),
+                 (self.owners/('c'*64+'.json'), {'kind': E.KIND, 'status': 'reconciled',
+                                                 'child': {'pid': live.pid, 'start_ticks': ticks, 'boot_id': E.boot_id()}})]
+        for attempt, (path, record) in enumerate(cases, 1):
+            with self.subTest(str(path.relative_to(self.root))):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                I.durable.atomic_json(path, record)
+                attempts = self.refused('associated with a retained owner record', self.receiver(attempt=attempt))
+                self.assertEqual(self.associated(attempts), [(live.pid, 'recorded-process')])
+                path.unlink()
+        # A reused PID, by other start ticks, boot or a start after the record's last write, is not the owner.
+        I.durable.atomic_json(self.owners/('c'*64+'.json'), {'status': 'failed', 'pid': live.pid, 'start_ticks': ticks-1})
+        I.durable.atomic_json(self.owners/('d'*64+'.json'), {'status': 'failed', 'pid': live.pid, 'boot_id': '0'})
+        old = self.owners/('e'*64+'.json')
+        I.durable.atomic_json(old, {'status': 'failed', 'pid': live.pid})
+        os.utime(old, (time.time()-3600,)*2)
+        self.assertEqual(self.stage(self.receiver(attempt=9))['status'], 'staged')
+
+    def test_terminal_owner_whose_process_died_refuses_while_a_descendant_lives(self):
+        tree = self.root/'tree.py'
+        tree.write_text('import json, os, subprocess, sys, time\n'
+                        'if sys.argv[1] == "leader":\n'
+                        '    subprocess.Popen([sys.executable, __file__, "parent"]).wait()\n'
+                        'else:\n'
+                        '    started = time.time()\n'
+                        '    child = subprocess.Popen(["sleep", "30"])\n'
+                        '    print(json.dumps({"parent": os.getpid(), "started": started, "descendant": child.pid}), flush=True)\n')
+        # A recorded session leader died; its descendant keeps the session. On the remote host.
+        parent = subprocess.Popen([sys.executable, str(tree), 'parent'], stdout=subprocess.PIPE, start_new_session=True)
+        ticks = E.process(parent.pid)['start_ticks']
+        descendant = json.loads(parent.stdout.readline())['descendant']
+        self.addCleanup(lambda: E.signal_exact(descendant, E.process(descendant)['start_ticks'], signal.SIGKILL)
+                        if E.process(descendant) else None)
+        parent.wait(); parent.stdout.close()
+        self.assertEqual(E.process(descendant)['session'], parent.pid)
+        I.durable.atomic_json(self.worker/'owners'/('a'*64+'.json'),
+                              {'kind': 'candidate-archive-upload', 'status': 'staged', 'pid': parent.pid, 'process_start': ticks})
+        attempts = self.refused('worker-a')
+        self.assertEqual(self.associated(attempts, 'worker-a'), [(descendant, 'recorded-session-or-group')])
+        E.signal_exact(descendant, E.process(descendant)['start_ticks'], signal.SIGKILL)
+        self.wait_for(lambda: self.gone(descendant))
+        # A non-leader parent died inside a leader that also died: the orphan started within its record.
+        leader = subprocess.Popen([sys.executable, str(tree), 'leader'], stdout=subprocess.PIPE, start_new_session=True)
+        value = json.loads(leader.stdout.readline())
+        leader.wait(); leader.stdout.close()
+        orphan = value['descendant']
+        self.addCleanup(lambda: E.signal_exact(orphan, E.process(orphan)['start_ticks'], signal.SIGKILL)
+                        if E.process(orphan) else None)
+        self.wait_for(lambda: E.process(value['parent']) is None)
+        path = self.fence/'host-actions/transparent-schema-t/run.json'; path.parent.mkdir(parents=True)
+        I.durable.atomic_json(path, {'status': 'passed', 'pid': value['parent'], 'started_unix': value['started']})
+        attempts = self.refused('associated with a retained owner record', self.receiver(attempt=2))
+        self.assertEqual(self.associated(attempts), [(orphan, 'orphan-in-recorded-window')])
+
+    def test_association_rules_bind_start_identity_session_cgroup_window_and_boot(self):
+        hz, booted = os.sysconf('SC_CLK_TCK'), 1000.0
+        def proc(pid, at, session=None, cgroup='0::/observer'):
+            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session or pid, 'pgid': session or pid,
+                    'cgroup': cgroup}
+        def ref(pid, **change):
+            return dict({'record': 'r.json', 'key': 'pid', 'pid': pid, 'window': None, 'mtime': 2000.0,
+                         'start_ticks': None, 'boot_id': None, 'cgroup': None}, **change)
+        def found(references, processes, excluded=()):
+            return [(p['pid'], p['association']) for p in
+                    E.associate(references, processes, set(excluded), '0::/observer', booted)]
+        early, late = proc(10, 1500), proc(10, 2500)
+        self.assertEqual(found([ref(10)], [early]), [(10, 'recorded-process')])
+        self.assertEqual(found([ref(10)], [late]), [])
+        self.assertEqual(found([ref(10, start_ticks=early['start_ticks'])], [early]), [(10, 'recorded-process')])
+        self.assertEqual(found([ref(10, start_ticks=7)], [early]), [])
+        self.assertEqual(found([ref(10, boot_id='0')], [early]), [])
+        self.assertEqual(found([ref(10, mtime=900.0)], [early]), [])
+        self.assertEqual(found([ref(10)], [early], excluded=[10]), [])
+        self.assertEqual(found([ref(11)], [proc(20, 2500, session=11)]), [(20, 'recorded-session-or-group')])
+        self.assertEqual(found([ref(11)], [proc(11, 2500), proc(20, 2600, session=11)]), [])
+        self.assertEqual(found([ref(11, cgroup='0::/old')], [proc(21, 2500, cgroup='0::/old')]), [(21, 'recorded-cgroup')])
+        self.assertEqual(found([ref(11, cgroup='0::/observer')], [proc(21, 2500)]), [])
+        self.assertEqual(found([ref(12, window=1400.0)], [proc(22, 1500, session=99)]), [(22, 'orphan-in-recorded-window')])
+        self.assertEqual(found([ref(12, window=1600.0)], [proc(22, 1500, session=99)]), [])
+        self.assertEqual(found([ref(12, window=1400.0)], [proc(99, 1000), proc(22, 1500, session=99)]), [])
+        records = E.recorded({'started_unix': 5.0, 'pid': 3, 'start_ticks': 4, 'boot_id': 'b',
+                              'events': [{'relay_pid': 6, 'ssh_pid': 7}, {'ppid': 8, 'pid': True}],
+                              'child': {'pid': 9, 'process_start': 10, 'started': 11.0}}, 'x.json', 12.0)
+        self.assertEqual(sorted((r['pid'], r['key'], r['start_ticks'], r['window']) for r in records),
+                         [(3, 'pid', 4, 5.0), (6, 'relay_pid', None, 5.0), (7, 'ssh_pid', None, 5.0), (9, 'pid', 10, 11.0)])
+
+    def test_owner_namespace_overflow_unreadable_records_and_links_refuse(self):
+        with patch.object(E, 'MAX_OWNER_ENTRIES', 2):
+            attempts = self.refused('exceed 2 entries')
+        self.assertEqual(json.loads((attempts[-1]/'coordinator.json').read_text())['inventory']['entries'], 3)
+        bad = self.fence/'schema/transparent-schema-bad.json'; bad.parent.mkdir(parents=True); bad.write_text('{')
+        self.refused('owner record unreadable', self.receiver(attempt=2)); bad.unlink()
+        link = self.owners/('e'*64+'.json'); link.symlink_to(self.owners/'latest.json')
+        self.refused('link or special file', self.receiver(attempt=3)); link.unlink()
+        with patch.object(E, 'MAX_OWNER_FILE', 10):
+            self.refused('owner record exceeds bound', self.receiver(attempt=4))
+        with patch.object(E, 'MAX_REFERENCES', 0):
+            I.durable.atomic_json(self.fence/'schema/transparent-schema-ok.json', {'status': 'committed', 'pid': 1})
+            self.refused('more than 0 processes', self.receiver(attempt=5))
+        self.assertEqual(self.stage(self.receiver(attempt=6))['status'], 'staged')
+
     def test_surveys_that_never_arrive_refuse_before_mutation(self):
         class Silent(Channel):
             def emit(self, value): self.emitted.append(value)
@@ -843,31 +1058,66 @@ class Interruption(Fixture):
         self.wait_for(lambda: self.mark.exists() and self.mark.stat().st_size)
         return child
 
-    def gone(self, pid):
-        current = E.process(pid)
-        return current is None or current['state'] == 'Z'
+    def unlocked(self, receiver):
+        return sorted(receiver.evidence.glob('reconciliation-unlocked-*.json'))
 
-    def test_receiver_killed_mid_child_keeps_lock_and_fence_until_claimed_pidfd_recovery(self):
-        self.behave('sleep')
+    def test_receiver_death_with_io_blocked_child_fences_until_the_guardian_deadline_then_recovers_locked(self):
+        self.shorten(wall=3, grace=1)
+        self.behave('block')
         receiver = self.receiver()
         process = self.launch(receiver)
         child = self.started(receiver)
+        grandchild = json.loads(self.mark.read_text())['grandchild']
         os.kill(process.pid, signal.SIGKILL); process.wait()
-        self.assertTrue(E.alive(child))
+        native = child['native']
+        self.assertTrue(E.alive(child)); self.assertEqual(E.process(native['pid'])['state'], 'S')
         with self.assertRaises(BlockingIOError):
             with self.lock(): pass
         self.fenced()
-        holders = [p['pid'] for p in E.scan(self.lockpath) if p['holds']]
-        self.assertEqual(set(holders), {child['pid'], json.loads(self.mark.read_text())['grandchild']})
+        holders = {p['pid'] for p in E.scan(self.lockpath) if p['holds']}
+        self.assertEqual(holders, {child['pid'], native['pid'], grandchild})
+        # Before the deadline: no lock, so no owner write and nothing signalled.
+        before = receiver.owner.read_bytes()
+        with patch.object(E, 'LOCK_WAIT_SECONDS', .3), self.assertRaisesRegex(ValueError, 'until its deadline'):
+            self.reconcile(receiver)
+        self.assertEqual(receiver.owner.read_bytes(), before)
+        self.assertTrue(E.alive(child) and not self.gone(native['pid']) and not self.gone(grandchild))
+        refusal = json.loads(self.unlocked(receiver)[-1].read_text())
+        self.assertEqual({p['pid'] for p in refusal['holders']}, holders)
+        self.assertEqual(refusal['outcome']['outcome'], 'blocked-unlocked')
+        # The guardian's own deadline kills the IO-blocked child and its descendant and frees the lock.
+        self.wait_for(lambda: not any(p['holds'] for p in E.scan(self.lockpath)), timeout=30)
+        self.assertTrue(self.gone(native['pid']) and self.gone(grandchild))
+        report = json.loads((receiver.evidence/'artifact/guardian.json').read_text())
+        self.assertEqual((report['native_pid'], report['expired']), (native['pid'], True))
+        self.assertIn(grandchild, [k['pid'] for k in report['killed']])
+        self.fenced()
+        record = self.reconcile(receiver)
+        self.assertEqual(record['reconciliation']['action'], 'no-live-child')
+        self.assertEqual([r['outcome'] for r in record['recoveries']], ['reconciled'])
+        evidence = R.value(record['recoveries'][-1]['evidence'])
+        self.assertEqual(R.value(evidence['guardian'])['expired'], True)
+        E.schema_fence.local_schema_fence()
+        self.assertTrue((receiver.evidence/'health.ndjson').stat().st_size > 0)
+
+    def test_guardian_killed_leaves_own_unlocked_descendant_stopped_only_under_the_lock(self):
+        self.behave('unlock')
+        receiver = self.receiver()
+        process = self.launch(receiver)
+        child = self.started(receiver)
+        grandchild = json.loads(self.mark.read_text())['grandchild']
+        os.kill(process.pid, signal.SIGKILL); process.wait()
+        # Guardian killed from outside: the kernel kills the native process; the
+        # grandchild that dropped the lock descriptor stays in the session.
+        os.kill(child['pid'], signal.SIGKILL)
+        self.wait_for(lambda: self.gone(child['native']['pid']))
+        self.wait_for(lambda: not any(p['holds'] for p in E.scan(self.lockpath)))
+        self.assertFalse(self.gone(grandchild))
         record = self.reconcile(receiver)
         self.assertEqual(record['reconciliation']['action'], 'terminated-own-processes')
-        self.assertEqual({s['pid'] for s in record['reconciliation']['signalled']}, set(holders))
-        self.assertFalse(E.alive(child))
-        self.wait_for(lambda: self.gone(json.loads(self.mark.read_text())['grandchild']))
+        self.assertEqual([s['pid'] for s in record['reconciliation']['signalled']], [grandchild])
+        self.wait_for(lambda: self.gone(grandchild))
         E.schema_fence.local_schema_fence()
-        evidence = R.value(record['recoveries'][-1]['evidence'])
-        self.assertEqual({p['pid'] for p in evidence['holders_before']}, set(holders))
-        self.assertTrue((receiver.evidence/'health.ndjson').stat().st_size > 0)
 
     def test_receiver_death_before_child_owner_write_never_execs_and_recovers_bounded(self):
         for attempt, crash in enumerate(('before-owner', 'before-go'), 1):
@@ -910,7 +1160,7 @@ class Interruption(Fixture):
         with self.assertRaises(ValueError): self.stage(receiver)
         return self.exited(receiver)
 
-    def test_reused_pid_foreign_session_and_foreign_lock_holder_are_never_signalled(self):
+    def test_reused_pid_foreign_session_and_unknown_lock_holder_are_never_signalled(self):
         receiver = self.receiver()
         record = self.failed(receiver)
         token = receiver.identifier+':artifact:'+'a'*32
@@ -920,7 +1170,7 @@ class Interruption(Fixture):
         ticks = E.process(foreign.pid)['start_ticks']
         record.update(launch={'key': 'artifact', 'token': token, 'intent_unix': time.time()},
                       child={'key': 'artifact', 'token': token, 'pid': foreign.pid, 'start_ticks': ticks,
-                             'boot_id': E.boot_id()})
+                             'boot_id': E.boot_id(), 'deadline_unix': time.time()-100})
         receiver.save(record)
         with self.assertRaisesRegex(ValueError, 'cannot be attributed'): self.reconcile(receiver)
         self.assertIsNone(foreign.poll()); self.fenced()
@@ -928,35 +1178,60 @@ class Interruption(Fixture):
         record = json.loads(receiver.owner.read_text())
         record['child']['start_ticks'] = ticks-1
         receiver.save(record)
+        before = receiver.owner.read_bytes()
         holder = self.holder(self.lockpath)
         with patch.object(E, 'LOCK_WAIT_SECONDS', .3), self.assertRaisesRegex(ValueError, 'cannot prove its own'):
             self.reconcile(receiver)
         self.assertIsNone(holder.poll()); self.assertIsNone(foreign.poll()); self.fenced()
+        self.assertEqual(receiver.owner.read_bytes(), before)
+        self.assertEqual([p['pid'] for p in json.loads(self.unlocked(receiver)[-1].read_text())['holders']], [holder.pid])
         holder.kill(); holder.wait()
         reconciled = self.reconcile(receiver)
         self.assertEqual(reconciled['reconciliation']['action'], 'no-live-child')
         self.assertIsNone(foreign.poll())
-        self.assertEqual([r['outcome'] for r in reconciled['recoveries']], ['blocked', 'blocked', 'reconciled'])
+        self.assertEqual([r['outcome'] for r in reconciled['recoveries']], ['blocked', 'reconciled'])
 
-    def test_competing_reconciler_and_escaped_descendant_leave_everything_untouched(self):
+    def test_escaped_lock_holding_descendant_blocks_until_the_guardian_deadline_kills_it(self):
+        self.shorten(wall=3, grace=1)
         self.behave('escape')
         receiver = self.receiver()
         process = self.launch(receiver)
         child = self.started(receiver)
         escaped = json.loads(self.mark.read_text())['grandchild']
         os.kill(process.pid, signal.SIGKILL); process.wait()
-        claim = os.open(receiver.claim_path, os.O_RDWR | os.O_CREAT, 0o600)
-        fcntl.flock(claim, fcntl.LOCK_EX)
-        with self.assertRaisesRegex(ValueError, 'another reconciliation'): self.reconcile(receiver)
-        os.close(claim)
-        self.assertTrue(E.alive(child)); self.assertEqual(json.loads(receiver.owner.read_text())['recoveries'], [])
-        with self.assertRaisesRegex(ValueError, 'escaped'): self.reconcile(receiver)
+        # A token-bearing process outside the guardian session holds the lock: not provably own.
+        with patch.object(E, 'LOCK_WAIT_SECONDS', .3), self.assertRaisesRegex(ValueError, 'cannot prove its own'):
+            self.reconcile(receiver)
         self.assertTrue(E.alive(child)); self.assertFalse(self.gone(escaped)); self.fenced()
-        evidence = R.value(json.loads(receiver.owner.read_text())['recoveries'][-1]['evidence'])
-        self.assertEqual([p['pid'] for p in evidence['before']['escaped']], [escaped])
-        os.kill(escaped, signal.SIGKILL)
-        self.wait_for(lambda: self.gone(escaped))
-        self.assertEqual(self.reconcile(receiver)['reconciliation']['action'], 'terminated-own-processes')
+        self.assertEqual(json.loads(receiver.owner.read_text())['recoveries'], [])
+        refusal = json.loads(self.unlocked(receiver)[-1].read_text())
+        self.assertIn(escaped, [p['pid'] for p in refusal['holders']])
+        self.assertNotIn(escaped, [p['pid'] for p in refusal['own']])
+        # As the guardian is a subreaper, even a setsid descendant stays within its deadline.
+        self.wait_for(lambda: self.gone(escaped) and not any(p['holds'] for p in E.scan(self.lockpath)), timeout=30)
+        self.assertEqual(self.reconcile(receiver)['reconciliation']['action'], 'no-live-child')
+
+    def test_concurrent_reconciliation_refuses_without_effect_while_the_first_holds_the_lock(self):
+        receiver = self.receiver()
+        self.failed(receiver)
+        self.constants['LOCK_WAIT_SECONDS'] = .3
+        competing = {}
+
+        class Racing(Channel):
+            def emit(inner, value):
+                if value.get('phase') == 'locked':
+                    before = receiver.owner.read_bytes()
+                    result = subprocess.run(self.harness('reconcile', receiver.identifier), stdin=subprocess.DEVNULL,
+                                            capture_output=True, timeout=60)
+                    competing.update(code=result.returncode, reply=json.loads(result.stdout.decode().splitlines()[-1]),
+                                     unchanged=receiver.owner.read_bytes() == before)
+                super().emit(value)
+        record = self.reconcile(receiver, Racing(self, skip=receiver.identifier))
+        self.assertEqual(record['status'], 'reconciled')
+        self.assertEqual(competing['code'], 1); self.assertTrue(competing['unchanged'])
+        self.assertIn('cannot prove its own', competing['reply']['error'])
+        self.assertEqual([r['outcome'] for r in record['recoveries']], ['reconciled'])
+        self.assertEqual(len(self.unlocked(receiver)), 1)
 
     def test_live_or_missing_remote_owner_blocks_recovery_and_keeps_the_fence(self):
         receiver = self.receiver()

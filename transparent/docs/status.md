@@ -74,11 +74,17 @@ the artifact-verification and native-certificate executions. It retains raw
 captures for the offline report producer. Root rejected the first version.
 The revision adds three controls: an all-host survey under the lock before
 mutation, kernel-enforced per-child limits within a finite per-stage budget,
-and recovery through a claim with pidfd signals. Fixture tests and single-guard
-mutations passed on the development hub. The certificate limits are root's.
-The artifact CPU and address-space limits and the time allowed outside children
-still await root's review. No candidate native program ran on a production host,
-and no gate report exists.
+and recovery through a claim with pidfd signals. Root rejected that revision
+too: the survey read only candidate owners and latest fences, and recovery
+signalled before holding the production lock. The second revision surveys every
+retained record of every owner namespace and associates recorded processes with
+live ones by start identity, session, group, cgroup and orphan window. Each
+child now runs under a guardian with its own deadline that kills an IO-blocked
+child and its descendants after receiver death. Reconciliation acquires the
+production lock before any owner write or signal. Fixture tests and
+single-guard mutations passed on the development hub. Root set all budgets as
+explicit ceilings; the 60-second guardian launch window awaits its review. No
+candidate native program ran on a production host, and no gate report exists.
 
 ## Activity metadata candidate, 2026-09-30
 

@@ -14,21 +14,30 @@ The executable, argv and paths derive from the closed request; nothing is
 caller-chosen. Stage and reconcile hold the global production lock in the
 receiving process. Under it, before any mutation, the receiver surveys its own
 host and requires a fresh survey of every other pinned inventory host, bound to
-a nonce it issued after acquiring the lock. Any missing, unreadable, unfinished
-or live owner, lock holder or candidate process on any host refuses, and every
-survey reply is retained.
+a nonce it issued after acquiring the lock. Each survey enumerates every
+retained record of the schema, host-action and input-staging owner namespaces,
+latest or not and of any kind, within fixed bounds, and associates every
+recorded process with live processes by PID and start identity, session,
+process group, cgroup and orphan start window. Any overflow, unreadable record
+or process, unfinished candidate owner, lock holder, candidate process or live
+association on any host refuses, and every survey reply is retained.
 
-Children run one at a time behind a closed launcher. The launcher applies the
-hard address-space, CPU and core limits, then waits on a gate pipe; the native
-program is executed only after its PID, start ticks and launch token are
-durable. Each child inherits the lock descriptor, runs in its own session, and
-is sampled for the 20% memory/disk floors with no gap over 10 seconds, as is
-all other work under the lock. A wall deadline per child and one finite
-aggregate deadline per stage bound the run. Any failure stops it and fences
-further mutation until reconciliation, which takes an exclusive durable
-recovery claim, proves every production lock holder is its own token-bound
-child, signals only those processes through pidfds, and leaves ambiguous or
-escaped processes untouched and the owner fenced.
+Children run one at a time under a closed guardian. The guardian is the session
+leader and a child subreaper; it forks the native process, which applies the
+hard address-space, CPU and core limits, dies with the guardian, and waits on a
+gate pipe. The native program is executed only after its PID, start ticks and
+launch token are durable. The guardian kills the native process and every
+descendant at its own finite deadline even when the receiver is gone, so an
+IO-blocked child cannot hold the lock past it. Each child inherits the lock
+descriptor and is sampled for the 20% memory/disk floors with no gap over 10
+seconds, as is all other work under the lock. A wall deadline per child and one
+finite aggregate deadline per stage bound the run. Any failure stops it and
+fences further mutation until reconciliation. Reconciliation first acquires the
+production lock, so no recovery effect or owner write happens while any own
+child, its guardian or an unknown process holds it; until then it retains its
+observation and refuses. Under the lock it signals only token-bound processes
+it proves its own through pidfds, and leaves ambiguous or escaped processes
+untouched and the owner fenced.
 
 Every raw stdout, stderr, owner, result and health sample is retained privately
 under the candidate namespace with a `references.json` usable by
@@ -51,7 +60,6 @@ import stat
 import subprocess
 import sys
 import time
-import fcntl
 
 from wallet_pir_ops import durable, inherited_lock, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
@@ -76,6 +84,8 @@ KIND = 'candidate-native-execution'
 SURVEY_KIND = 'candidate-execution-survey'
 MODES = {'artifact-verification': 'shard-verify', 'native-certificates': 'examples/native_certificate'}
 OWNERS = I.OWNERS
+# The retained production owner namespaces every survey enumerates in full.
+SCHEMA = schema_fence.SCHEMA_STATE
 SOURCE = I.SOURCE
 MACHINE_ID = Path('/etc/machine-id')
 BOOT_ID = Path('/proc/sys/kernel/random/boot_id')
@@ -101,12 +111,13 @@ BUDGETS = {
                  '14 GiB per segment, matching the prepared certificate driver RLIMIT_AS and per-segment CPU/wall'},
     'artifact-verification': {
         'wall_seconds': 1800, 'cpu_seconds': 1800, 'address_space_bytes': 14*GiB,
-        'basis': 'wall: the unchanged 1800 s report-contract ceiling per native execution, kept by root; CPU equals '
-                 'wall and the address-space limit reuses the root-chosen 14 GiB certificate limit; neither is a '
-                 'separately reviewed shard-verify measurement, so root must accept or replace them before production'},
+        'basis': 'root decision on the attempt-2 review: a conservative initial ceiling of the unchanged 1800 s '
+                 'report-contract wall, equal CPU and 14 GiB, supported by streaming SegmentSource::verify in the '
+                 'pinned source; an explicit ceiling, not a shard-verify measurement or qualification evidence'},
 }
 # Wrapper work under the lock outside native children: surveys, publication and
 # bundle checks, table hashing, input retention, sampling between children.
+# Root accepted it and the aggregates as finite operational maxima, not estimates.
 NON_CHILD_SECONDS = 3600
 CPU_GRACE_SECONDS = 5
 FLOOR = .2
@@ -121,6 +132,13 @@ MAX_REPLY = 4 << 20
 MAX_HOSTS = 32
 MAX_SURVEY = 1 << 20
 MAX_LISTED = 64
+# Owner namespace enumeration bounds; reaching any refuses the survey.
+MAX_OWNER_ENTRIES = 100000
+MAX_OWNER_FILE = 16 << 20
+MAX_OWNER_BYTES = 512 << 20
+MAX_REFERENCES = 100000
+# Clock granularity between kernel start times (btime is whole seconds) and file mtimes.
+TOLERANCE_SECONDS = 2
 SURVEY_HOST_SECONDS = 120
 SURVEY_WAIT_SECONDS = MAX_HOSTS*SURVEY_HOST_SECONDS + 120
 HANDSHAKE_SECONDS = 300
@@ -140,27 +158,137 @@ NAME = re.compile('[A-Za-z0-9._-]{1,64}')
 MACHINE = re.compile('[0-9a-f]{32}')
 NONCE = re.compile('[0-9a-f]{64}')
 TOKEN = re.compile('[0-9a-f]{64}:[0-9a-z-]{1,32}:[0-9a-f]{32}')
-# Fixed launcher: limits first, then wait on the gate. Exit 125 without exec
-# unless the receiver durably recorded this process and sent `go`.
-LAUNCHER = r'''import os, resource, sys
-gate, address, cpu, grace = map(int, sys.argv[1:5])
-resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-resource.setrlimit(resource.RLIMIT_AS, (address, address))
-resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + grace))
-received = b''
-while len(received) < 3:
-    data = os.read(gate, 3 - len(received))
-    if not data:
-        break
-    received += data
+# Fixed guardian: session leader and child subreaper with its own deadline. It
+# forks the native process, reports its PID on the notify pipe, and writes one
+# terminal report. The native process dies with the guardian, applies the hard
+# limits, and exits 125 without exec unless the receiver durably recorded it
+# and sent `go`. At native exit, guardian deadline or SIGTERM, the guardian
+# kills the native process and every descendant through pidfds after checking
+# their start ticks, then reaps them. It never reads the gate itself.
+GUARDIAN = r'''import ctypes, json, os, resource, select, signal, sys, time
+gate, notify, report, address, cpu, grace = map(int, sys.argv[1:7])
+wall = float(sys.argv[7])
+argv = sys.argv[9:]
+stop = []
+signal.signal(signal.SIGTERM, lambda *_: stop.append(1))
+for name in ('SIGHUP', 'SIGINT', 'SIGPIPE'):
+    signal.signal(getattr(signal, name), signal.SIG_IGN)
+libc = ctypes.CDLL(None, use_errno=True)
+guardian = os.getpid()
+if libc.prctl(36, 1, 0, 0, 0) != 0:
+    os._exit(126)
+deadline = time.monotonic() + wall
+native = os.fork()
+if native == 0:
+    try:
+        if libc.prctl(1, signal.SIGKILL, 0, 0, 0) != 0 or os.getppid() != guardian:
+            os._exit(125)
+        for name in ('SIGTERM', 'SIGHUP', 'SIGINT', 'SIGPIPE'):
+            signal.signal(getattr(signal, name), signal.SIG_DFL)
+        os.close(notify)
+        os.close(report)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        resource.setrlimit(resource.RLIMIT_AS, (address, address))
+        resource.setrlimit(resource.RLIMIT_CPU, (cpu, cpu + grace))
+        received = b''
+        while len(received) < 3:
+            data = os.read(gate, 3 - len(received))
+            if not data:
+                break
+            received += data
+        os.close(gate)
+        if received == b'go\n':
+            os.execve(argv[0], argv, os.environ)
+    finally:
+        os._exit(125)
 os.close(gate)
-if received != b'go\n':
-    os._exit(125)
-argv = sys.argv[6:]
-os.execve(argv[0], argv, os.environ)
+pidfd = os.pidfd_open(native)
+state = {'status': None, 'ended': None}
+def stat(pid):
+    try:
+        with open('/proc/%d/stat' % pid) as stream:
+            fields = stream.read().rsplit(')', 1)[1].split()
+    except (OSError, IndexError):
+        return None
+    return fields[0], int(fields[1]), int(fields[19])
+def reap():
+    while True:
+        try:
+            pid, status = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            return
+        if pid == 0:
+            return
+        if pid == native:
+            state['status'], state['ended'] = status, time.time()
+def subtree():
+    children = {}
+    for name in os.listdir('/proc'):
+        if name.isdigit():
+            observed = stat(int(name))
+            if observed and observed[0] != 'Z':
+                children.setdefault(observed[1], []).append((int(name), observed[2]))
+    found, pending = [], [guardian]
+    while pending and len(found) < 4096:
+        for item in children.get(pending.pop(), []):
+            found.append(item)
+            pending.append(item[0])
+    return found
+try:
+    os.write(notify, b'%d\n' % native)
+except OSError:
+    pass
+os.close(notify)
+expired = stopped = False
+while state['status'] is None:
+    if (stop or time.monotonic() >= deadline) and not (expired or stopped):
+        expired, stopped = not stop, bool(stop)
+        try:
+            signal.pidfd_send_signal(pidfd, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    select.select([pidfd], [], [], .2)
+    reap()
+os.close(pidfd)
+killed, end = {}, time.monotonic() + 10
+while time.monotonic() < end:
+    members = subtree()
+    if not members:
+        break
+    for pid, start in members:
+        try:
+            fd = os.pidfd_open(pid)
+        except OSError:
+            continue
+        try:
+            observed = stat(pid)
+            if observed and observed[2] == start:
+                signal.pidfd_send_signal(fd, signal.SIGKILL)
+                killed[pid, start] = {'pid': pid, 'start_ticks': start}
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+    time.sleep(.05)
+    reap()
+time.sleep(.05)
+reap()
+survivors = [{'pid': pid, 'start_ticks': start} for pid, start in subtree()]
+value = {'native_pid': native, 'returncode': os.waitstatus_to_exitcode(state['status']),
+         'ended_unix': state['ended'], 'expired': expired, 'stopped': stopped,
+         'killed': list(killed.values())[:64], 'killed_count': len(killed), 'survivors': survivors[:64]}
+os.write(report, json.dumps(value, sort_keys=True).encode() + b'\n')
+os.fsync(report)
+os.close(report)
+os._exit(1 if survivors else 0)
 '''
-LAUNCHER_SHA256 = hashlib.sha256(LAUNCHER.encode()).hexdigest()
+GUARDIAN_SHA256 = hashlib.sha256(GUARDIAN.encode()).hexdigest()
 LAUNCH_REFUSED = 125
+# The guardian's own deadline: the child wall budget plus a fixed launch window
+# for the durable owner write and gate, measured from the guardian's start.
+GUARDIAN_GRACE_SECONDS = 60
+NOTIFY_SECONDS = 30
+MAX_GUARDIAN_REPORT = 1 << 16
 HEX = I.HEX
 require = I.require
 digest = I.digest
@@ -314,9 +442,14 @@ def dispatches(mode, binary, layout):
             for s in layout['segments']]
 
 
-def launcher_argv(gate, budget, argv):
-    return [sys.executable, '-B', '-c', LAUNCHER, str(gate), str(budget['address_space_bytes']),
-            str(budget['cpu_seconds']), str(CPU_GRACE_SECONDS), '--', *argv]
+def guardian_seconds(budget):
+    return budget['wall_seconds']+GUARDIAN_GRACE_SECONDS
+
+
+def guardian_argv(gate, notify, report, budget, argv):
+    return [sys.executable, '-B', '-c', GUARDIAN, str(gate), str(notify), str(report),
+            str(budget['address_space_bytes']), str(budget['cpu_seconds']), str(CPU_GRACE_SECONDS),
+            str(guardian_seconds(budget)), '--', *argv]
 
 
 def host_abi():
@@ -351,8 +484,29 @@ def process(pid):
             'start_ticks': int(fields[19])}
 
 
+def booted_unix():
+    for line in Path('/proc/stat').read_text().splitlines():
+        if line.startswith('btime '):
+            return int(line.split()[1])
+    raise ValueError('kernel boot time unavailable')
+
+
+def started_unix(start_ticks, booted=None):
+    """Wall-clock start of a process from its kernel start ticks."""
+    return (booted_unix() if booted is None else booted)+start_ticks/os.sysconf('SC_CLK_TCK')
+
+
+def cgroup(pid):
+    try:
+        return Path('/proc/%d/cgroup' % pid).read_text().strip()[:512]
+    except (FileNotFoundError, ProcessLookupError):
+        return None
+
+
 def me():
-    return {'pid': os.getpid(), 'start_ticks': process(os.getpid())['start_ticks'], 'boot_id': boot_id()}
+    current = process(os.getpid())
+    return {'pid': os.getpid(), 'start_ticks': current['start_ticks'], 'boot_id': boot_id(),
+            'session': current['session'], 'pgid': current['pgid'], 'cgroup': cgroup(os.getpid())}
 
 
 def alive(recorded):
@@ -401,7 +555,7 @@ def scan(lock_path=None):
             continue
         if not privileged and owner != os.geteuid():
             continue
-        current.update(uid=owner, token=None, holds=False, receiver=False, unreadable=False)
+        current.update(uid=owner, token=None, holds=False, receiver=False, unreadable=False, cgroup=cgroup(pid))
         try:
             for item in Path('/proc/%d/environ' % pid).read_bytes().split(b'\0'):
                 if item.startswith(MARKER.encode()+b'='):
@@ -430,11 +584,11 @@ def scan(lock_path=None):
 def classify(processes, token, leader=None):
     """Split processes into this launch's own, escaped and ambiguous members.
 
-    Own members carry the exact launch token and stay in the recorded child's
-    session; without a recorded child (the launch window) a token-bearing
-    session leader is the unexecuted launcher. A token outside that session has
-    escaped; a member of the session without the token is ambiguous. Either is
-    preserved for inspection, never signalled.
+    Own members carry the exact launch token and stay in the recorded
+    guardian's session; without a recorded guardian (the launch window) the
+    session of a token-bearing session leader, the guardian, counts. A token
+    outside that session has escaped; a member of the session without the token
+    is ambiguous. Either is preserved for inspection, never signalled.
     """
     own, escaped, ambiguous = [], [], []
     consistent = True
@@ -442,13 +596,15 @@ def classify(processes, token, leader=None):
         current = process(leader['pid'])
         consistent = (leader.get('boot_id') in (None, boot_id()) and
                       (current is None or current['state'] == 'Z' or current['start_ticks'] == leader['start_ticks']))
+    else:
+        leaders = {p['pid'] for p in processes if p['token'] == token and p['session'] == p['pid']}
     for item in processes:
         if item['pid'] == os.getpid():
             continue
         if leader is not None:
             member = consistent and item['session'] == leader['pid'] and item['start_ticks'] >= leader['start_ticks']
         else:
-            member = item['token'] == token and item['session'] == item['pid']
+            member = item['session'] in leaders
         if item['token'] == token and not item['unreadable']:
             (own if member else escaped).append(item)
         elif member:
@@ -458,7 +614,8 @@ def classify(processes, token, leader=None):
 
 def summary(items):
     return [{k: item[k] for k in ('pid', 'start_ticks', 'session', 'pgid', 'ppid', 'uid', 'token', 'holds',
-                                  'receiver', 'unreadable') if k in item} for item in items[:MAX_LISTED]]
+                                  'receiver', 'unreadable', 'cgroup', 'association', 'record', 'key')
+             if k in item} for item in items[:MAX_LISTED]]
 
 
 def signal_exact(pid, start_ticks, sig):
@@ -500,6 +657,23 @@ def stop_own(token, leader=None, wait=None):
             time.sleep(.05)
     observed['survivors'] = summary(classify(scan(), token, leader)[0])
     return observed
+
+
+def guardian_report(path, native):
+    """The guardian's terminal report for this exact native process."""
+    path = Path(path)
+    no_links(path)
+    info = path.lstat()
+    require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= MAX_GUARDIAN_REPORT,
+            'candidate guardian report is missing or exceeds bound')
+    value = json.loads(path.read_bytes(), object_pairs_hook=I.unique)
+    require(isinstance(value, dict) and set(value) == {'native_pid', 'returncode', 'ended_unix', 'expired', 'stopped',
+                                                       'killed', 'killed_count', 'survivors'} and
+            value['native_pid'] == native['pid'] and type(value['returncode']) is int and
+            R.number(value['ended_unix']) and type(value['expired']) is bool and type(value['stopped']) is bool and
+            type(value['killed_count']) is int and isinstance(value['killed'], list) and
+            isinstance(value['survivors'], list), 'candidate guardian report is invalid')
+    return value
 
 
 def resources(paths):
@@ -629,6 +803,174 @@ def lock_path(factory):
     return Path(factory().PATH)
 
 
+PID_KEY = re.compile('(?:^|_)pid$')
+
+
+def recorded(record, name, mtime):
+    """Every process a retained record names, with whatever identity it kept.
+
+    Any integer `pid` or `*_pid` value counts. Start ticks (`start_ticks`, or
+    `process_start` of the upload owner), boot ID and cgroup bind only a `pid`
+    in the same object. The start window is that object's, else the record's
+    `started_unix`/`started`; the record's mtime closes it.
+    """
+    found = []
+    def window(value, default=None):
+        return next((value[k] for k in ('started_unix', 'started') if R.number(value.get(k))), default)
+    top = window(record) if isinstance(record, dict) else None
+    stack = [record]
+    while stack:
+        value = stack.pop()
+        if isinstance(value, list):
+            stack.extend(value)
+            continue
+        if not isinstance(value, dict):
+            continue
+        start = window(value, top)
+        for key, item in value.items():
+            if isinstance(item, (dict, list)):
+                stack.append(item)
+            elif type(item) is int and item > 0 and PID_KEY.search(key):
+                own = key == 'pid'
+                found.append({'record': name, 'key': key, 'pid': item, 'window': start, 'mtime': mtime,
+                              'start_ticks': next((value[k] for k in ('start_ticks', 'process_start')
+                                                   if own and type(value.get(k)) is int), None),
+                              'boot_id': value.get('boot_id') if own and isinstance(value.get('boot_id'), str) else None,
+                              'cgroup': value.get('cgroup') if own and isinstance(value.get('cgroup'), str) else None})
+    return found
+
+
+def owner_inventory(roots):
+    """Every entry of the retained owner namespaces, bounded and complete.
+
+    Every regular `.json` file is parsed, latest or not and of any kind, and
+    yields its recorded processes; other files are listed. Symlinks, special
+    files, unreadable or oversized records and any bound overflow are reasons
+    to refuse, never skipped silently.
+    """
+    reasons, references, executions, listing = [], [], [], []
+    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0}
+
+    def walk():
+        for label, root in roots:
+            root = Path(root)
+            if root.is_symlink():
+                reasons.append('owner namespace is a symlink: '+label)
+                continue
+            if not root.exists():
+                listing.append([label, 'absent'])
+                continue
+            pending = [root]
+            while pending:
+                directory = pending.pop()
+                try:
+                    entries = sorted(os.scandir(directory), key=lambda e: e.name)
+                except OSError as error:
+                    reasons.append('owner namespace unreadable: %s %s' % (label, type(error).__name__))
+                    continue
+                for entry in entries:
+                    counts['entries'] += 1
+                    if counts['entries'] > MAX_OWNER_ENTRIES:
+                        reasons.append('owner namespaces exceed %d entries' % MAX_OWNER_ENTRIES)
+                        return
+                    relative = label+'/'+os.path.relpath(entry.path, root)
+                    try:
+                        info = entry.stat(follow_symlinks=False)
+                    except OSError as error:
+                        reasons.append('owner entry unreadable: %s %s' % (relative, type(error).__name__))
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(Path(entry.path))
+                        listing.append([relative, 'directory'])
+                        continue
+                    if not stat.S_ISREG(info.st_mode):
+                        reasons.append('owner namespace holds a link or special file: '+relative)
+                        continue
+                    if not entry.name.endswith('.json'):
+                        listing.append([relative, 'file', info.st_size, info.st_mtime_ns])
+                        continue
+                    if info.st_size > MAX_OWNER_FILE:
+                        reasons.append('owner record exceeds bound: '+relative)
+                        continue
+                    counts['json_files'] += 1
+                    counts['json_bytes'] += info.st_size
+                    if counts['json_bytes'] > MAX_OWNER_BYTES:
+                        reasons.append('owner records exceed %d bytes' % MAX_OWNER_BYTES)
+                        return
+                    try:
+                        with open(entry.path, 'rb') as stream:
+                            raw = stream.read(MAX_OWNER_FILE+1)
+                        require(len(raw) <= MAX_OWNER_FILE, 'owner record exceeds bound')
+                        record = json.loads(raw, object_pairs_hook=I.unique)
+                    except (OSError, ValueError) as error:
+                        reasons.append('owner record unreadable: %s %s' % (relative, type(error).__name__))
+                        continue
+                    sha = hashlib.sha256(raw).hexdigest()
+                    listing.append([relative, 'json', len(raw), info.st_mtime_ns, sha])
+                    references.extend(recorded(record, relative, info.st_mtime_ns/1e9))
+                    if len(references) > MAX_REFERENCES:
+                        reasons.append('owner records name more than %d processes' % MAX_REFERENCES)
+                        return
+                    if (label == 'input-staging' and directory == root and HEX.fullmatch(entry.name[:-5]) and
+                            isinstance(record, dict) and record.get('kind') == KIND):
+                        executions.append({'name': entry.name, 'sha256': sha, 'status': record.get('status')})
+    walk()
+    inventory = dict(counts, references=len(references),
+                     sha256=hashlib.sha256(durable.canonical(listing)).hexdigest())
+    return inventory, references, executions, reasons
+
+
+def associate(references, processes, excluded, observer_cgroup, booted):
+    """Live processes a retained record may still own; read-only.
+
+    - recorded process: the PID is live and matches the kept start ticks, or,
+      without them, started no later than the record was last written;
+    - session or process group: when the recorded process is gone or still its
+      owner, every live member of a session or group it led (Linux never reuses
+      a PID while such a session or group exists);
+    - cgroup: likewise, every live process in a kept cgroup other than the
+      observer's own;
+    - orphan window: a live process whose session or group leader is gone and
+      that started within the record's start window and last write.
+
+    Records last written before this boot or naming another boot are skipped.
+    """
+    current = boot_id()
+    live = {p['pid']: p for p in processes if p['pid'] not in excluded}
+    present = {p['pid'] for p in processes}
+    started = {pid: started_unix(p['start_ticks'], booted) for pid, p in live.items()}
+    groups = {}
+    for p in live.values():
+        for value in {p['session'], p['pgid']}:
+            groups.setdefault(value, []).append(p)
+        if p.get('cgroup') and p['cgroup'] != observer_cgroup:
+            groups.setdefault(('cgroup', p['cgroup']), []).append(p)
+    orphans = [p for p in live.values() if p['session'] not in present or p['pgid'] not in present]
+    found = {}
+
+    def flag(item, reason, ref):
+        found.setdefault(item['pid'], dict(item, association=reason, record=ref['record'], key=ref['key']))
+    for ref in references:
+        if ref['mtime'] < booted-TOLERANCE_SECONDS or ref['boot_id'] not in (None, current) or ref['pid'] in excluded:
+            continue
+        item = live.get(ref['pid'])
+        owner = item is not None and (item['start_ticks'] == ref['start_ticks'] if ref['start_ticks'] is not None
+                                      else started[item['pid']] <= ref['mtime']+TOLERANCE_SECONDS)
+        if owner:
+            flag(item, 'recorded-process', ref)
+        if owner or ref['pid'] not in present:
+            for member in groups.get(ref['pid'], []):
+                flag(member, 'recorded-session-or-group', ref)
+            if ref['cgroup'] and ref['cgroup'] != observer_cgroup:
+                for member in groups.get(('cgroup', ref['cgroup']), []):
+                    flag(member, 'recorded-cgroup', ref)
+        if ref['window'] is not None:
+            for member in orphans:
+                if ref['window']-TOLERANCE_SECONDS <= started[member['pid']] <= ref['mtime']+TOLERANCE_SECONDS:
+                    flag(member, 'orphan-in-recorded-window', ref)
+    return sorted(found.values(), key=lambda p: p['pid'])
+
+
 def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=None, owners=None):
     """One host's owner/process reconciliation; read-only, bounded, raw JSON.
 
@@ -662,6 +1004,10 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
         reasons.append('fence: '+observed['fence'])
     path = path or lock_path(lambda: ProductionLock({'type': 'pinned_host', 'machine_id': request['machine_id']}))
     owners = Path(owners or OWNERS)
+    inventory, references, executions, problems = owner_inventory(
+        (('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS), ('input-staging', owners)))
+    reasons.extend(problems)
+    observed['inventory'] = inventory
     processes = scan(path)
     excluded = ancestors()
     holders = [p for p in processes if p['holds']]
@@ -671,37 +1017,21 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
         reasons.append('production lock holder differs from the expected owner')
     live = [p for p in processes if p['pid'] not in excluded and (p['token'] or p['receiver'] or p['unreadable'])]
     observed['processes'] = summary(live)
+    observed['scanned'] = len(processes)
     if live:
         reasons.append('live, unreadable or foreign candidate execution process')
-    observed['owners'] = []
-    try:
-        names = sorted(e.name for e in os.scandir(owners)) if owners.exists() else []
-    except OSError as error:
-        names = []
-        reasons.append('owner namespace unreadable: %s' % type(error).__name__)
-    for name in names:
-        if not name.endswith('.json') or name == 'latest.json' or not HEX.fullmatch(name[:-5]):
-            continue
-        try:
-            raw = (owners/name).read_bytes()
-            require(len(raw) <= 1 << 22, 'owner exceeds bound')
-            record = json.loads(raw, object_pairs_hook=I.unique)
-        except (OSError, ValueError) as error:
-            reasons.append('owner unreadable: %s %s' % (name, type(error).__name__))
-            continue
-        if not isinstance(record, dict) or record.get('kind') != KIND:
-            continue
-        item = {'name': name, 'sha256': hashlib.sha256(raw).hexdigest(), 'status': record.get('status')}
-        observed['owners'].append(item)
-        if record.get('status') not in ('staged', 'reconciled') and name[:-5] != skip:
-            reasons.append('unfinished candidate execution owner: '+name)
-        for role in ('receiver', 'child'):
-            recorded = record.get(role)
-            if isinstance(recorded, dict) and type(recorded.get('pid')) is int and alive(recorded) and \
-                    not (role == 'receiver' and holder and recorded['pid'] == holder['pid']):
-                reasons.append('live recorded candidate execution %s: %s' % (role, name))
-    observed['owners'] = observed['owners'][-MAX_LISTED:]
-    observed['blocked'] = reasons
+    associated = associate(references, processes, excluded, cgroup(os.getpid()), booted_unix())
+    observed['associated'] = summary(associated)
+    observed['associated_count'] = len(associated)
+    if associated:
+        reasons.append('live process associated with a retained owner record: '+', '.join(
+            '%d %s %s' % (p['pid'], p['association'], p['record']) for p in associated[:4]))
+    for item in executions:
+        if item['status'] not in ('staged', 'reconciled') and item['name'] != '%s.json' % skip:
+            reasons.append('unfinished candidate execution owner: '+item['name'])
+    observed['owners'] = executions[-MAX_LISTED:]
+    observed['blocked'] = [reason[:300] for reason in reasons[:MAX_LISTED]]
+    observed['blocked_count'] = len(reasons)
     observed['status'] = 'blocked' if reasons else 'clear'
     return observed
 
@@ -718,8 +1048,10 @@ def verify_survey(raw, request, identifier, nonce, host, skip, holder=None):
             value.get('nonce') == nonce and value.get('host') == host and value.get('skip') == skip and
             value.get('machine_id') == entry['machine_id'] and value.get('source_sha') == request['source_sha'] and
             value.get('euid') == C.OWNER, 'host survey identity is foreign, stale or partial: '+host)
-    require(value.get('status') == 'clear' and value.get('blocked') == [] and value.get('fence') == 'clear' and
-            value.get('processes') == [] and isinstance(value.get('lock'), dict) and
+    require(value.get('status') == 'clear' and value.get('blocked') == [] and value.get('blocked_count') == 0 and
+            value.get('fence') == 'clear' and value.get('processes') == [] and value.get('associated') == [] and
+            value.get('associated_count') == 0 and isinstance(value.get('inventory'), dict) and
+            isinstance(value['inventory'].get('sha256'), str) and isinstance(value.get('lock'), dict) and
             isinstance(value['lock'].get('holders'), list) and
             [h.get('pid') for h in value['lock']['holders']] == ([holder['pid']] if holder else []) and
             isinstance(value.get('owners'), list) and
@@ -770,7 +1102,6 @@ class Receiver:
         self.owners = Path(owners or OWNERS)
         self.owner = self.owners/(self.identifier+'.json')
         self.retained = self.owners/(self.identifier+'.request.json')
-        self.claim_path = self.owners/(self.identifier+'.recovery.lock')
         self.evidence = Path(evidence or evidence_root())/self.identifier
         self.surveys = Path(evidence or evidence_root())/'surveys'/self.identifier
         self.root = Path(publication_root or PUBLICATION)
@@ -809,13 +1140,14 @@ class Receiver:
                                       'owner record: host surveys, candidate and publication checks, table hashing, '
                                       'input retention, every native child and the sampling between them',
                       non_child_seconds=NON_CHILD_SECONDS, cpu_grace_seconds=CPU_GRACE_SECONDS,
+                      guardian_seconds=guardian_seconds(self.budget),
                       transport_seconds=aggregate_seconds(self.mode)+TRANSPORT_MARGIN_SECONDS,
                       floor=FLOOR, sample_seconds=SAMPLE_SECONDS, max_gap_seconds=MAX_GAP_SECONDS,
                       max_stdout=MAX_STDOUT, max_stderr=MAX_STDERR, concurrency=1)
         return {'version': VERSION, 'kind': KIND, 'request': self.request, 'request_sha256': self.identifier,
                 'mode': self.mode, 'executable': self.executable, 'binary': str(binary),
                 'binary_sha256': C.ARTIFACTS[self.executable], 'candidate_identity': C.identity(),
-                'launcher_sha256': LAUNCHER_SHA256,
+                'guardian_sha256': GUARDIAN_SHA256,
                 'publication': {'root': str(self.root), 'map_sha256': MAP_SHA256, 'start': START, 'through': THROUGH,
                                 'anchor_hash': ANCHOR_HASH, 'recent_from': RECENT_FROM, 'shards': SHARDS,
                                 'segments': SEGMENTS, 'manifests': sorted(layout['manifests'])},
@@ -857,7 +1189,7 @@ class Receiver:
 
     def checked(self, sampler=None):
         schema_fence.local_schema_fence()
-        for path in (self.owners, self.owner, self.retained, self.evidence, self.claim_path):
+        for path in (self.owners, self.owner, self.retained, self.evidence):
             no_links(path)
         require(self.status()['status'] == 'absent' and not self.evidence.exists() and not self.retained.exists(),
                 'candidate execution already owned; inspect status or reconcile')
@@ -1050,47 +1382,58 @@ class Receiver:
         verify_host(host_abi())
         sampler.tick()
         before = self.table(item, sampler) if self.mode == 'native-certificates' else None
-        files = {name: directory/name for name in ('owner.json', 'native.json', 'stderr.log', 'health.json', 'result.json')}
-        child = failure = code = ended = started = leader = None
+        files = {name: directory/name for name in ('owner.json', 'native.json', 'stderr.log', 'health.json', 'result.json',
+                                                   'guardian.json')}
+        child = failure = ended = started = leader = native = report = None
         token = '%s:%s:%s' % (self.identifier, item['key'], secrets.token_hex(16))
         first = len(sampler.samples)
-        gate = None
+        gate = notify = None
         stdout = os.open(files['native.json'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         stderr = os.open(files['stderr.log'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
         try:
             sampler.sample()
             first = len(sampler.samples)-1
-            # Launch intent is durable before fork; the launcher cannot exec
-            # until its own identity is durable too.
+            # Launch intent is durable before fork; the native process cannot
+            # exec until its own and its guardian's identity are durable too.
             record['launch'] = {'key': item['key'], 'token': token, 'intent_unix': time.time()}
             self.save(record)
             self.critical = True
             try:
                 started = time.time()
                 descriptors = lock.descriptors()
-                gate, release = os.pipe()
+                gate_read, gate = os.pipe()
+                notify, notify_write = os.pipe()
+                written = os.open(files['guardian.json'], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                 try:
                     child = subprocess.Popen(
-                        launcher_argv(gate, budget, item['argv']), stdin=subprocess.DEVNULL, stdout=stdout,
-                        stderr=stderr, cwd=directory, start_new_session=True, close_fds=True,
-                        pass_fds=(*descriptors, gate),
+                        guardian_argv(gate_read, notify_write, written, budget, item['argv']), stdin=subprocess.DEVNULL,
+                        stdout=stdout, stderr=stderr, cwd=directory, start_new_session=True, close_fds=True,
+                        pass_fds=(*descriptors, gate_read, notify_write, written),
                         env=dict(ENVIRONMENT, **{inherited_lock.VARIABLE: ','.join(map(str, descriptors)), MARKER: token}))
                 finally:
-                    os.close(gate)
-                    gate = release
-                leader = {'pid': child.pid, 'start_ticks': process(child.pid)['start_ticks'], 'boot_id': boot_id()}
+                    for fd in (gate_read, notify_write, written):
+                        os.close(fd)
+                current = process(child.pid)
+                require(current is not None and current['state'] != 'Z', 'candidate guardian exited before launch')
+                leader = {'pid': child.pid, 'start_ticks': current['start_ticks'], 'boot_id': boot_id()}
+                native = self.native(child, notify)
+                os.close(notify)
+                notify = None
+                deadline_unix = started+guardian_seconds(budget)
                 owner = {'version': VERSION, 'kind': KIND, 'request_sha256': self.identifier, 'key': item['key'],
                          'mode': self.mode, 'executable': self.executable, 'binary': str(binary),
                          'binary_sha256': C.ARTIFACTS[self.executable], 'argv': item['argv'],
-                         'launcher_sha256': LAUNCHER_SHA256, 'token': token,
+                         'guardian_sha256': GUARDIAN_SHA256, 'token': token,
                          'native_source_sha': C.SOURCE_SHA, 'candidate_sha256': C.identity(),
                          'publication_sha256': MAP_SHA256, 'operations_source_sha': self.request['source_sha'],
-                         **leader, 'pgid': child.pid, 'started_unix': started,
-                         'timeout_seconds': budget['wall_seconds'],
+                         **native, 'boot_id': leader['boot_id'], 'session': child.pid, 'pgid': child.pid,
+                         'guardian': leader, 'guardian_deadline_unix': deadline_unix, 'started_unix': started,
+                         'timeout_seconds': budget['wall_seconds'], 'guardian_seconds': guardian_seconds(budget),
                          'limits': {k: budget[k] for k in ('cpu_seconds', 'address_space_bytes')},
                          'receiver': record['receiver'], 'host': plan['host'], 'segment': item.get('segment')}
                 write_once(files['owner.json'], durable.canonical(owner)+b'\n')
-                record['child'] = {'key': item['key'], 'token': token, **leader}
+                record['child'] = {'key': item['key'], 'token': token, **leader, 'native': native,
+                                   'deadline_unix': deadline_unix}
                 self.save(record)
                 if not self.pending:
                     os.write(gate, b'go\n')
@@ -1103,8 +1446,7 @@ class Receiver:
             deadline = time.monotonic()+budget['wall_seconds']
             while True:
                 try:
-                    code = child.wait(timeout=SAMPLE_SECONDS)
-                    ended = time.time()
+                    child.wait(timeout=SAMPLE_SECONDS)
                     break
                 except subprocess.TimeoutExpired:
                     pass
@@ -1115,45 +1457,60 @@ class Receiver:
                 if time.monotonic() > deadline:
                     raise Budget('native child exceeded the wall deadline')
             sampler.sample()
+            report = guardian_report(files['guardian.json'], native)
+            ended = report['ended_unix']
             require(os.fstat(stdout).st_size <= MAX_STDOUT and os.fstat(stderr).st_size <= MAX_STDERR,
                     'native output exceeded its bound')
-            require(code != LAUNCH_REFUSED, 'native launch gate refused')
-            require(code == 0, 'native child exited %s' % code)
-            remaining = classify(scan(), token, leader)
-            require(not any(remaining), 'native child left live descendants')
+            require(not report['expired'], 'native child exceeded the guardian deadline')
+            require(report['returncode'] != LAUNCH_REFUSED, 'native launch gate refused')
+            require(report['returncode'] == 0, 'native child exited %s' % report['returncode'])
+            require(not report['killed_count'] and child.returncode == 0 and not any(classify(scan(), token, leader)),
+                    'native child left live descendants')
             if before is not None:
                 require(identity_of(Path(item['segment']['path']).lstat()) == before, 'certificate table changed during execution')
             require(hashed(binary, sampler.tick) == C.ARTIFACTS[self.executable], 'candidate executable changed during execution')
         except BaseException as error:
             # Cleanup and retention finish before any later signal is honoured.
             self.critical, failure = True, error
-            if gate is not None:
-                os.close(gate)
-                gate = None
+            for fd in (gate, notify):
+                if fd is not None:
+                    os.close(fd)
+            gate = notify = None
             if child is not None:
+                # The receiver holds the production lock here: these are lock-owned effects.
                 stopped = stop_own(token, leader, wait=lambda: sampler.sample(strict=False))
-                child.wait()
-                if ended is None:
-                    ended = time.time()
-                if stopped['escaped'] or stopped['ambiguous'] or stopped['survivors']:
+                if not (stopped['escaped'] or stopped['ambiguous'] or stopped['survivors']):
+                    child.wait()
+                else:
                     failure = Blocked('native child left processes it could not prove its own: %s' % stopped)
+                if report is None and native is not None:
+                    try:
+                        report = guardian_report(files['guardian.json'], native)
+                    except (OSError, ValueError):
+                        pass
                 sampler.sample(strict=False)
+            if ended is None:
+                ended = report['ended_unix'] if report and report['ended_unix'] else time.time()
             raise failure
         finally:
             self.critical = True
             for fd in (stdout, stderr):
                 os.fsync(fd); os.fchmod(fd, 0o400); os.close(fd)
+            if files['guardian.json'].exists():
+                os.chmod(files['guardian.json'], 0o400)
             write_once(files['health.json'], json.dumps(sampler.samples[first:], sort_keys=True).encode()+b'\n')
             interrupted = isinstance(failure, (Interrupted, KeyboardInterrupt, SystemExit))
+            code = report['returncode'] if report else None
             result = {'status': 'passed' if failure is None else 'interrupted' if interrupted else 'failed',
-                      'exit_code': child.returncode if child is not None else None,
-                      'pid': child.pid if child is not None else None, 'started_unix': started, 'ended_unix': ended,
-                      'timeout_seconds': budget['wall_seconds'],
+                      'exit_code': code, 'pid': native['pid'] if native else None,
+                      'started_unix': started, 'ended_unix': ended, 'timeout_seconds': budget['wall_seconds'],
                       'limits': {k: budget[k] for k in ('cpu_seconds', 'address_space_bytes')},
                       'max_sampled_rss_bytes': max((s.get('sampled_rss_bytes', 0) for s in sampler.samples[first:]),
-                                                   default=0)}
-            if child is not None and child.returncode is not None and child.returncode < 0:
-                result['signal'] = signal.Signals(-child.returncode).name
+                                                   default=0),
+                      'guardian': {'pid': child.pid if child else None, 'exit_code': child.returncode if child else None,
+                                   'report': reference(files['guardian.json']) if report else None}}
+            if type(code) is int and code < 0:
+                result['signal'] = signal.Signals(-code).name
             if failure is not None:
                 result.update(error_type=type(failure).__name__, error=str(failure)[:300])
             write_once(files['result.json'], durable.canonical(result)+b'\n')
@@ -1169,66 +1526,110 @@ class Receiver:
             raise Interrupted('candidate execution receiver interrupted')
         return refs
 
-    def claim(self):
-        """Exclusive recovery claim: a held flock plus a durable claim record."""
-        no_links(self.claim_path)
-        fd = os.open(self.claim_path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    def native(self, guardian, notify):
+        """The guardian's forked native process, gated and not yet executed."""
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            os.close(fd)
-            raise ValueError('another reconciliation holds this recovery claim; nothing was signalled') from None
-        return fd
+            line = Lines(notify).read(NOTIFY_SECONDS, 32)
+        except (TimeoutError, EOFError):
+            raise ValueError('candidate guardian did not report its native process') from None
+        require(re.fullmatch(b'[1-9][0-9]{0,9}', line), 'invalid candidate guardian report')
+        current = process(int(line))
+        require(current is not None and current['state'] != 'Z' and current['ppid'] == guardian.pid and
+                current['session'] == guardian.pid, 'native process is not the guardian\'s gated child')
+        return {'pid': current['pid'], 'start_ticks': current['start_ticks']}
 
     def reconcile(self, channel):
-        """Stop only own token-bound processes, then reconcile every host under the lock."""
+        """Acquire the production lock first; then stop only own processes and reconcile every host."""
         record = self.status()
         require(load(self.owners/'latest.json') == {'request_sha256': self.identifier},
                 'reconcile the latest input owner first')
         require(record['status'] in UNFINISHED, 'candidate execution does not need reconciliation')
-        claim = self.claim()
         handlers = self.handlers()
+        evidence = {'version': 1, 'kind': KIND+'-reconciliation', 'request_sha256': self.identifier,
+                    'observer': me(), 'started_unix': time.time(), 'receiver': record.get('receiver'),
+                    'launch': record.get('launch'), 'child': record.get('child')}
         try:
-            record = self.status()
-            require(record['status'] in UNFINISHED, 'candidate execution does not need reconciliation')
-            attempt = {'claimant': me(), 'claimed_unix': time.time(), 'outcome': 'claimed'}
-            record.setdefault('recoveries', []).append(attempt)
-            # Durable before any observation, signal or lock attempt.
-            self.save(record)
-            evidence = {'version': 1, 'kind': KIND+'-reconciliation', 'request_sha256': self.identifier,
-                        'attempt': len(record['recoveries']), 'claim': attempt, 'receiver': record.get('receiver'),
-                        'launch': record.get('launch'), 'child': record.get('child')}
+            lock = self.acquire(record, evidence)
             try:
-                outcome = self.recover(record, evidence, channel)
-            except BaseException as error:
-                attempt.update(outcome='blocked', error_type=type(error).__name__, error=str(error)[:300],
-                               ended_unix=time.time())
-                evidence['outcome'] = attempt
-                attempt['evidence'] = self.retain_reconciliation(evidence)
+                lock.verify()
+                require(self.status() == record, 'candidate execution owner changed before the lock was held')
+                attempt = {'claimant': evidence['observer'], 'locked_unix': time.time(), 'outcome': 'locked'}
+                record.setdefault('recoveries', []).append(attempt)
+                # The first owner write of this recovery, made under the production lock.
                 self.save(record)
-                raise
-            attempt.update(outcome='reconciled', ended_unix=time.time())
-            evidence['outcome'] = attempt
-            attempt['evidence'] = self.retain_reconciliation(evidence)
-            record.update(status='reconciled', reconciled_unix=time.time(), reconciliation=outcome,
-                          launch=None, child=None)
-            self.save(record)
-            return record
+                evidence['attempt'] = len(record['recoveries'])
+                name = 'reconciliation-%d.json' % evidence['attempt']
+                try:
+                    outcome = self.recover(record, evidence, channel, lock)
+                except BaseException as error:
+                    attempt.update(outcome='blocked', error_type=type(error).__name__, error=str(error)[:300],
+                                   ended_unix=time.time())
+                    evidence['outcome'] = attempt
+                    attempt['evidence'] = self.retain_reconciliation(evidence, name)
+                    self.save(record)
+                    raise
+                attempt.update(outcome='reconciled', ended_unix=time.time())
+                evidence['outcome'] = attempt
+                attempt['evidence'] = self.retain_reconciliation(evidence, name)
+                record.update(status='reconciled', reconciled_unix=time.time(), reconciliation=outcome,
+                              launch=None, child=None)
+                self.save(record)
+                return record
+            finally:
+                lock.__exit__(None, None, None)
         finally:
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
-            os.close(claim)
 
-    def recover(self, record, evidence, channel):
-        receiver = record['receiver']
-        evidence['receiver_alive'] = alive(receiver)
-        if evidence['receiver_alive']:
-            raise Blocked('candidate execution receiver is still active; observe it before reconciliation')
-        path = lock_path(self.lock_factory)
-        launch, child = record.get('launch'), record.get('child')
-        processes = scan(path)
+    def acquire(self, record, evidence):
+        """The production lock, or a retained refusal that signalled and wrote nothing.
+
+        While the receiver lives, or while any process holds the lock, recovery
+        has no effect at all. Own children keep the lock until their guardian's
+        deadline has killed them; the refusal says which case applies.
+        """
+        evidence['receiver_alive'] = alive(record['receiver'])
+        message = 'candidate execution receiver is still active; observe it before reconciliation'
+        if not evidence['receiver_alive']:
+            deadline = time.monotonic()+LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    return self.lock_factory().__enter__()
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        break
+                    time.sleep(.2)
+        processes = scan(lock_path(self.lock_factory))
         holders = [p for p in processes if p['holds']]
-        evidence['holders_before'] = summary(holders)
+        launch, child = record.get('launch'), record.get('child')
+        own = []
+        if launch:
+            own = classify(processes, launch['token'], child if child and child.get('token') == launch['token'] else None)[0]
+        evidence['holders'], evidence['own'] = summary(holders), summary(own)
+        if not evidence['receiver_alive']:
+            if holders and {p['pid'] for p in holders} <= {p['pid'] for p in own}:
+                limit = child.get('deadline_unix') if child else None
+                if limit is not None and time.time() < limit+STOP_SECONDS:
+                    message = ('own guardian holds the production lock until its deadline %d; nothing was signalled, '
+                               'reconcile after it' % limit)
+                else:
+                    message = 'own processes hold the production lock past their guardian deadline; preserved, nothing signalled'
+            else:
+                message = ('the production lock is held by a process this owner cannot prove its own; '
+                           'preserved, nothing signalled')
+        evidence['outcome'] = {'outcome': 'blocked-unlocked', 'error': message, 'ended_unix': time.time()}
+        self.retain_reconciliation(evidence, 'reconciliation-unlocked-%d-%s.json' % (time.time_ns(), secrets.token_hex(4)))
+        raise Blocked(message)
+
+    def recover(self, record, evidence, channel, lock):
+        """Under the held production lock: stop own processes that released it, then survey every host."""
+        launch, child = record.get('launch'), record.get('child')
+        processes = scan(lock_path(self.lock_factory))
+        evidence['holders_locked'] = summary([p for p in processes if p['holds'] and p['pid'] != os.getpid()])
+        if child:
+            report = self.evidence/child['key']/'guardian.json'
+            if report.exists() and report.stat().st_size:
+                evidence['guardian'] = reference(report)
         own, escaped, ambiguous = [], [], []
         if launch:
             leader = child if child and child.get('token') == launch['token'] else None
@@ -1236,45 +1637,28 @@ class Receiver:
         evidence['before'] = {'own': summary(own), 'escaped': summary(escaped), 'ambiguous': summary(ambiguous)}
         if escaped or ambiguous:
             raise Blocked('processes of this launch escaped or cannot be attributed; preserved, nothing signalled')
-        mine = {p['pid'] for p in own}
-        if any(p['pid'] not in mine for p in holders):
-            raise Blocked('the production lock is held by a process this owner cannot prove its own; '
-                          'preserved, nothing signalled')
         observed = {'action': 'no-live-child'}
         if own:
+            lock.verify()
             stopped = stop_own(launch['token'], leader)
             evidence['stopped'] = stopped
             if stopped['escaped'] or stopped['ambiguous'] or stopped['survivors']:
                 raise Blocked('own processes survived or became unattributable during recovery')
             observed = {'action': 'terminated-own-processes', 'signalled': stopped['signalled']}
-        # Children inherited the lock: holding it proves no own descendant does.
-        deadline = time.monotonic()+LOCK_WAIT_SECONDS
-        while True:
-            try:
-                lock = self.lock_factory().__enter__()
-                break
-            except BlockingIOError:
-                if time.monotonic() >= deadline:
-                    evidence['holders_after'] = summary([p for p in scan(path) if p['holds']])
-                    raise Blocked('production lock is still held by an unknown process; inspect before any mutation') from None
-                time.sleep(.2)
-        try:
-            lock.verify()
-            schema_fence.local_schema_fence(skip_input=self.identifier)
-            current = self.status()
-            require(current['status'] == record['status'] and current.get('recoveries') == record['recoveries'],
-                    'candidate execution owner changed during reconciliation')
-            # Recovery itself runs no child; resource floors never block it.
-            observed['survey'] = evidence['survey'] = self.handshake(channel, lock, lambda: None, skip=self.identifier)
-            lock.verify()
-            return observed
-        finally:
-            lock.__exit__(None, None, None)
+        lock.verify()
+        schema_fence.local_schema_fence(skip_input=self.identifier)
+        current = self.status()
+        require(current['status'] == record['status'] and current.get('recoveries') == record['recoveries'],
+                'candidate execution owner changed during reconciliation')
+        # Recovery itself runs no child; resource floors never block it.
+        observed['survey'] = evidence['survey'] = self.handshake(channel, lock, lambda: None, skip=self.identifier)
+        lock.verify()
+        return observed
 
-    def retain_reconciliation(self, evidence):
+    def retain_reconciliation(self, evidence, name):
         no_links(self.evidence)
         self.evidence.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = self.evidence/('reconciliation-%d.json' % evidence['attempt'])
+        path = self.evidence/name
         write_once(path, durable.canonical(evidence)+b'\n')
         I.sync_dir(self.evidence)
         return reference(path)
