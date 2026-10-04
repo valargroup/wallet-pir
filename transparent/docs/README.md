@@ -21,7 +21,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 10. [Txid display PIR](txid-display.md): opt-in server tables, native HTTP demo and subsequent wallet integration.
 
-11. [Txid sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md): measured sample limits, codec proposals and independent routing intersections.
+11. [Txid sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md): whole-range probability sizing bounds, codec proposals and joint routing limits.
 
 ## Product boundaries
 
