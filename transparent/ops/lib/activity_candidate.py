@@ -148,12 +148,15 @@ def regular(file, bound):
     return file
 
 
-def read_ci(archive, kind):
-    """Five CI roles through the release tool's exact-revision bundle checks."""
+def read_ci(archive, kind, scratch='/dev/shm'):
+    """Five CI roles through the release tool's exact-revision bundle checks.
+
+    Production keeps Linux tmpfs scratch; a workstation passes a private directory.
+    """
     release = module('candidate_release', HERE.parents[2]/'tools/ci/release.py')
     regular(archive, MAX_ARCHIVE)
     require(tuple(release.BINARIES[kind]) == CI_KINDS[kind], 'CI release kind inventory changed')
-    with tempfile.TemporaryDirectory(prefix='wallet-pir-candidate-', dir='/dev/shm') as tmp:
+    with tempfile.TemporaryDirectory(prefix='wallet-pir-candidate-', dir=scratch) as tmp:
         destination = Path(tmp)/'bundle'
         # Unique flat regular members, revision, SHA256SUMS and exact inventory.
         release.extract(Path(archive), destination, SOURCE_SHA, kind)
@@ -202,12 +205,12 @@ def read_supplemental(archive):
     return payload
 
 
-def collect(archives):
+def collect(archives, scratch='/dev/shm'):
     """All 18 candidate artifacts, verified before any byte is retained."""
     require(isinstance(archives, dict) and set(archives) == {*CI_KINDS, 'supplemental'}, 'candidate archive set differs')
     payload, digests = {}, {}
     for kind in CI_KINDS:
-        items, digests[kind] = read_ci(archives[kind], kind)
+        items, digests[kind] = read_ci(archives[kind], kind, scratch)
         payload.update(items)
     payload.update(read_supplemental(archives['supplemental']))
     digests['supplemental'] = SUPPLEMENTAL_ARCHIVE_SHA256

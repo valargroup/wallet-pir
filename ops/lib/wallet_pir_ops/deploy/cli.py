@@ -56,6 +56,11 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   schema-candidate-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
       [--expect-plan-sha256 H]  Verify and retain the changed-native candidate's 18
       artifacts under /srv/transparent-activity/candidates; installs and runs nothing.
+  schema-candidate-upload-{plan,preflight,stage} --source-sha REV --attempt N
+      --transparent-filter F --transparent-publisher F --supplemental F [--expect-plan-sha256 H]
+  schema-candidate-upload-{status,reconcile} --source-sha REV --request-sha256 H
+      From root's workstation (remote-lock inventory, pinned SSH): stream exactly the three
+      pinned candidate archives to the coordinator's fixed candidate archive namespace.
   schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
       Render the candidate worker executable pair for schema-input-{plan,...,stage}.
 
@@ -115,6 +120,19 @@ def parser():
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
         if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-upload-'+name, help='transfer the three pinned candidate archives to the coordinator')
+        command.add_argument('--source-sha', required=True)
+        if name in ('status','reconcile'):
+            command.add_argument('--request-sha256', required=True)
+            continue
+        command.add_argument('--attempt', type=int, required=True)
+        for kind in ('transparent-filter','transparent-publisher','supplemental'):
+            command.add_argument('--'+kind, required=True, metavar='ARCHIVE')
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
     command = commands.add_parser('schema-candidate-worker-build', help='render candidate worker executables for an already staged publication')
     command.add_argument('--host', required=True)
     command.add_argument('--source-sha', required=True)
@@ -258,6 +276,10 @@ def main(argv=None, executor=None, out=print, **options):
                 return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
             out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
             return 0
+        if args.command == 'schema-candidate-receive':
+            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out)
         if args.command.startswith('schema-host-'):
             spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
             module = importlib.util.module_from_spec(spec)
@@ -280,6 +302,24 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-candidate-upload-'):
+            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            action = args.command.removeprefix('schema-candidate-upload-')
+            archives = ({kind:getattr(args, kind.replace('-','_')) for kind in module.ORDER}
+                        if action not in ('status','reconcile') else None)
+            upload = module.Upload(descriptors.load_inventory(args.inventory), args.source_sha,
+                                   attempt=getattr(args,'attempt',None), archives=archives,
+                                   request_sha256=getattr(args,'request_sha256',None))
+            try:
+                result = upload.run(action, getattr(args,'expect_plan_sha256',None))
+            except module.Unknown as error:
+                out('error: outcome unknown: %s' % error)
+                return 75
+            out(json.dumps(result,sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+module.digest(result))
+            return 0
         if args.command.startswith('schema-candidate-'):
             spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

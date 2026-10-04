@@ -176,6 +176,12 @@ def no_links(path):
         require(not parent.is_symlink(), 'candidate path contains a symlink')
 
 
+def require_release_tool(source):
+    """Candidate CI bundle checks import the staged source's release tool."""
+    receipt=json.loads((SOURCE.parent/'staging'/(source+'.json')).read_text())
+    require('tools/ci/release.py' in receipt.get('files',{}),'operations source lacks tools/ci/release.py for candidate archives')
+
+
 def resources(root, remaining=0):
     memory = dict(line.split(':',1) for line in Path('/proc/meminfo').read_text().splitlines())
     require(int(memory['MemAvailable'].split()[0])*5 >= int(memory['MemTotal'].split()[0]), 'input staging memory below 20 percent')
@@ -398,11 +404,14 @@ def chunks(request):
                     'input source changed during SSH streaming')
 
 
-def pump(argv, request, timeout):
-    """Bounded bidirectional pipe pump: no archive or whole-file buffering."""
+def pump(argv, request, timeout, body=None):
+    """Bounded bidirectional pipe pump: no archive or whole-file buffering.
+
+    `body` replaces the input request's chunks with another bounded stream.
+    """
     process=subprocess.Popen(argv,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,**inherited_lock.options())
     output=bytearray(); deadline=time.monotonic()+timeout
-    selector=selectors.DefaultSelector(); iterator=iter(chunks(request)); pending=b''
+    selector=selectors.DefaultSelector(); iterator=iter(chunks(request) if body is None else body); pending=b''
     for stream,events in ((process.stdin,selectors.EVENT_WRITE),(process.stdout,selectors.EVENT_READ),(process.stderr,selectors.EVENT_READ)):
         os.set_blocking(stream.fileno(),False); selector.register(stream,events)
     try:
@@ -854,6 +863,10 @@ class CandidatePreparation(Preparation):
         self.owner=OWNERS/(expected+'.json')
         self.ABANDONED='.abandoned-'+expected
         self.executor=None;self.retained_native=None
+
+    def identity(self):
+        super().identity()
+        require_release_tool(self.request['source_sha'])
 
     def render(self):
         return C.files(self.request['archives'])

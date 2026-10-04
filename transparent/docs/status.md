@@ -57,7 +57,14 @@ four new candidate-bound gate reports, and they refuse 12ce reports, relabelled 
 mixed reports, and changed certificate floors.
 
 The supplemental reader accepted the retained archive read-only. Focused fixture
-tests and mutations passed. No production host was accessed. Nothing was staged
+tests and mutations passed.
+
+Later on 2026-10-04, operations source added a guarded
+`schema-candidate-upload-*` path. It moves the three root-held archives to the
+coordinator's fixed candidate archive namespace. Fixture tests covered real
+pipes, truncation, extra bytes, changed sources, foreign archives, interruption
+and explicit reconciliation. No archive was transferred and no host was
+contacted. No production host was accessed. Nothing was staged
 or deployed, and no candidate gate was run. Freshness, capacity and every other
 acceptance gate below remain as recorded.
 [Evidence](../evidence/activity-metadata-2026-10-04/README.md).

@@ -1038,7 +1038,8 @@ operation sources on the coordinator. They require a remote-lock inventory with
 the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
 `--sha256` identities, and `--archive FILE` except for status. Create the archive
 with `git archive --format=tar.gz` from that exact commit, exporting `ops`,
-`transparent/ops`, `enhance/ops`, `tools/ci` and `shared/dev`. This contains the
+`transparent/ops`, `enhance/ops`, `tools/ci` and `shared/dev`. Candidate archive
+transfer and preparation refuse a source whose receipt lacks `tools/ci/release.py`. This contains the
 operation dependencies without historical evidence bundles. The reviewed
 operations export at `56b67ba0` was 536659 bytes; its whole-tree archive was
 81439424 bytes and exceeded the 64 MiB transfer limit. The client now rejects
@@ -1339,6 +1340,99 @@ manifest, lock and toolchain digests. The ABI ceiling is glibc 2.39, from the fi
 production hosts' read-only report. That ceiling is a loadability bound, not
 runtime or hardware qualification.
 
+#### Candidate archive transfer
+
+Root keeps the three reviewed archives on its workstation. Before preparation,
+transfer them to the coordinator with
+`schema-candidate-upload-{plan,preflight,stage} --source-sha REV --attempt N
+--transparent-filter F --transparent-publisher F --supplemental F`; stage also
+requires `--expect-plan-sha256` from the reviewed plan. Then run
+`schema-candidate-upload-status --source-sha REV --request-sha256 HASH`. The
+inventory must use a remote coordinator lock, pinned SSH host keys, and the
+coordinator's `machine_id` pin. The operations source must already be staged
+there.
+
+The only inputs are three archives, under the fixed logical names
+`transparent-filter`, `transparent-publisher` and `supplemental`. Each must be an
+absolute, bounded, regular file. Symlinks anywhere in its path and hard links
+refuse. Their SHA-256 pins are fixed in
+`transparent/ops/lib/activity_candidate_upload.py`:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `transparent-filter` | `1a3dcc5805dbb4b0cfbf82fe32c0be72b501d350d3f7ae2385b7e3f378506ea1` |
+| `transparent-publisher` | `092fe69ce76f8003714524f77741754448913efb7ca483d3fe36e056a50708fa` |
+| `supplemental` | `d3a8f60a76e0fa59288fe670275abed75b304b7d390cde368effb842c840a9c3` |
+
+The closed request is `{version: 1, kind, source_sha, candidate_sha, ci_run,
+attempt, machine_id, archives: {name: {sha256, size}}}`. It carries no path.
+Local plan and preflight hash the real bytes and run `activity_candidate.collect`
+over all 18 artifacts. That checks CI revision and checksums, the supplemental
+build provenance and the ABI ceiling. This scratch is a private temporary
+directory, so plan works on a Mac or on Linux. The coordinator keeps its Linux
+tmpfs scratch. The plan names the fixed remote target, the retained
+CandidatePreparation request and its digest, and the next coordinator argv.
+
+Stage streams the closed request header and then the three archives, in that
+order, over one SSH session without persistent masters. The remote command is
+fixed: `/usr/bin/python3 -B
+/srv/transparent-activity/ops/sources/<REV>/ops/scripts/wallet-pir-deploy.py
+schema-candidate-receive --action ACTION --request-sha256 HASH`. Neither scp, a
+generic upload, a caller-chosen target nor inline remote code is used.
+
+The client checks every archive's device, inode, size, mtime and ctime against
+the identity verified at plan. It checks them again while streaming, and refuses
+growth or change.
+
+The receiver checks root, the coordinator machine ID and the staged source
+receipt. That receipt must include `tools/ci/release.py`, because the CI bundle
+checks import it. Every operations source export must therefore include
+`tools/ci`, and CandidatePreparation applies the same guard.
+
+The receiver holds the production lock in the receiving process and runs the
+schema/input fence and the 20% memory and disk checks. It writes its request and
+a `receiving` owner to `/srv/transparent-activity/ops/input-staging/` before
+reading any archive byte. It then points `latest.json` at that owner.
+
+Each archive is written with `O_EXCL|O_NOFOLLOW` into the private directory
+`/srv/transparent-activity/candidates/archives/<request SHA>.receiving`, in
+bounded chunks with total and idle deadlines. Truncation, extra bytes and a
+checksum mismatch refuse.
+
+Before the directory is renamed to `.../archives/<request SHA>`, the receiver
+checks the exact private file set and runs all 18 artifact checks again. Files
+must be root-owned, mode 0400, with a single link. It then writes
+`preparation-request.json` (0400) beside the archives. It installs and runs
+nothing.
+
+A failure or interruption keeps the owner and every received byte. That owner
+fences all other mutation until
+`schema-candidate-upload-reconcile --source-sha REV --request-sha256 HASH`.
+Reconciliation observes status first. Under the lock, it refuses while the
+recorded owner process, identified by PID and kernel start time, is still active.
+The receiver starts no descendants. It then renames the partial or target to a
+same-directory `.abandoned-<request SHA>` sibling. A retry needs a new attempt.
+
+If the local SSH session is lost, times out or returns no parseable reply, the
+outcome is unknown. The client exits 75, never retries and never infers the
+remote exit. Root runs status and then reconcile explicitly.
+
+The reviewed order is:
+
+1. `schema-candidate-upload-plan`, then `schema-candidate-upload-preflight`.
+2. `schema-candidate-upload-stage --expect-plan-sha256 <plan sha256>`.
+3. `schema-candidate-upload-status`.
+4. On the coordinator, `schema-candidate-{plan,preflight,stage,status}`.
+   Use `--request /srv/transparent-activity/candidates/archives/<request
+   SHA>/preparation-request.json --request-sha256 <preparation digest>`. The
+   upload plan prints that digest and the exact argv. Root writes no request
+   file on the host.
+
+Fixture tests exercise real pipes and child processes. Root owns the actual
+archive round trip.
+
+#### Bundle preparation
+
 Prepare the bundle on the pinned root coordinator with
 `schema-candidate-{plan,preflight,stage,status,reconcile} --request FILE
 --request-sha256 HASH`; stage also requires `--expect-plan-sha256` from the
@@ -1415,8 +1509,9 @@ Recovery samples keep their historical `tool_sha` 12ce.
 Root's ordered path, without rebuilding the old CI or native chain:
 
 1. Stage the reviewed operations source.
-2. Run candidate plan, preflight, stage and status against the retained CI bundles
-   and supplemental archive.
+2. Transfer the three retained archives with `schema-candidate-upload-*`.
+   Then run candidate plan, preflight, stage and status against the retained
+   `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
    immutable publication. Bind each report from retained raw results; a document
    shaped like a passing report is not evidence.

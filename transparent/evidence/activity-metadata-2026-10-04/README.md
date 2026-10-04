@@ -7,7 +7,8 @@ qualifies it. Everything here was produced on the development hub.
 None of it is a native, hardware, fleet or production qualification:
 
 - No production host was accessed.
-- No artifact was staged, no candidate gate was run, and nothing was deployed.
+- No artifact was staged or transferred, no candidate gate was run, and nothing
+  was deployed.
 
 The earlier activity record is
 [activity-metadata-2026-09-30](../activity-metadata-2026-09-30/README.md); its
@@ -21,6 +22,8 @@ The earlier activity record is
 | [manifest.json](manifest.json) | Sanitized result of that build: source and tree, toolchain, Cargo input digests, stages and flag checks. It also records each artifact's SHA-256, ELF and maximum glibc, the argument-handling probe, CI run 37173250956's roles and the retained archive digest `d3a8f60a...`. The binaries, logs and archive stay outside Git. |
 | [focused.log](focused.log) | Run on the working tree committed with this record. Focused operations suites on the candidate preparation change: 25 new candidate tests, the touched input, product and routing suites, the schema runner, host and baseline suites, and the deploy wrapper tests. All passed. |
 | [mutations.log](mutations.log) | Nineteen single-guard mutations of the new checks. Each made `test_activity_candidate.py` fail, and each source was restored. |
+| [upload-focused.log](upload-focused.log) | Focused suites on the guarded archive transfer change, run on the committed working tree: the new `test_activity_candidate_upload.py`, the candidate, input, preparation, product, lock, schema runner, baseline and host suites, and the deploy wrapper tests. All passed. |
+| [upload-mutations.log](upload-mutations.log) | Fourteen single-guard mutations of the transfer checks. Each made `test_activity_candidate_upload.py` fail, and each source was restored. |
 
 ## How the pieces fit
 

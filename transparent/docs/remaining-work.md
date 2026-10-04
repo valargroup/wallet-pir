@@ -238,6 +238,8 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Source guards and focused fixture checks are [retained](../evidence/activity-metadata-2026-10-04/README.md).
   The following remain open:
   - Stage the reviewed operations source.
+  - Transfer the three retained archives with `schema-candidate-upload-*`. The
+    path exists in source; no archive has been transferred.
   - Run candidate bundle plan, preflight and stage from the retained CI 37173250956
     bundles and supplemental archive.
   - Produce the four candidate-bound artifact-verification, native-certificate,
