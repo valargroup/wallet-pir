@@ -92,6 +92,11 @@ class Fixture(unittest.TestCase):
                             ('ROOT', self.root/'candidates'), ('TARGET', self.root/'candidates'/('release-'+C.SOURCE_SHA)),
                             ('OWNER', os.getuid())):
             p = patch.object(C, name, value); p.start(); self.addCleanup(p.stop)
+        # Fixture archives use private scratch on either host OS; the production
+        # reader keeps its explicit Linux tmpfs requirement.
+        scratch = SimpleNamespace(TemporaryDirectory=lambda **options:
+                                  tempfile.TemporaryDirectory(**dict(options, dir=self.root)))
+        p = patch.object(C, 'tempfile', scratch); p.start(); self.addCleanup(p.stop)
 
     def ci(self, kind, *, revision=C.SOURCE_SHA, data=None, name=None):
         payload = {n:(data or self.data).get(n, self.data[n]) for n in RELEASE.BINARIES[kind]}
