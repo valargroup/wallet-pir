@@ -1,0 +1,627 @@
+{
+  "source_sha": "c3c66b9b51a5e2f4a6ac9261a941a397d119e920",
+  "source_tree": "e9637e4399fd5d65bdadddeb58745f321730fe94",
+  "source": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/source",
+  "source_tar_sha256": "cf56219e35c09577d4c3b0ffbb53cd840754affc93362348febbe28ffbf54a09",
+  "profile": "release",
+  "toolchain": "1.97.1",
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "jobs": 3,
+  "target": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir",
+  "cargo_home": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/config/wallet-pir/cargo",
+  "root": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920",
+  "driver_sha256": "41b607bdb9d4df0eb866edba6b9cfacda6bfd37a72a0723b02d33335691f9808",
+  "started_at": 1791091485.786387,
+  "ended_at": 1791092696.2532265,
+  "status": "passed",
+  "build_exit": 0,
+  "toolchain_versions": {
+    "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+    "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)"
+  },
+  "input_sha256": {
+    "Cargo.lock": "bf3559f2ad10f1fe91a9e729b8c9f3dbff7c68ca1d17f65a25b68c8837956377",
+    "Cargo.toml": "adcbb246f0b25c030564c469ddcc9d983fa7f204ddd0a45e27c193058da7fbb6",
+    "rust-toolchain.toml": "5d959dfcc98b53886ee772ba216c4f9a1b31f093b46b5b263c0d084af54e821d",
+    ".cargo/config.toml": "64026065f1a74b49130265ccfeabcedd1ba1ae0655e7432ec2b2ac03e4b18d13",
+    "transparent/services/transparent-filter-server/Cargo.toml": "f0425ae88699ca63d83461e383f74a1fb576e348dbc9cde60056df9aee386c83",
+    "transparent/services/transparent-shard-server/Cargo.toml": "fa7b7807a66903db69ae164ee028b53cc289dfc2c604f46c3bdc75ee9cd776ff",
+    "transparent/tools/transparent-loadtest/Cargo.toml": "22e8da3610d2f26330c63b6ed40ccaa79db24c43ba53a9a749ee98b7dc3e6f75",
+    "transparent/tools/transparent-measure/Cargo.toml": "add6902d037156c5a4b0a60f0eb93ce4b26376496ece75f582663fed33c6bac9",
+    "transparent/crates/transparent-wallet-store/Cargo.toml": "d21307ffd13694f6999c54c2909c67c4e31cc55fe11a7b56d7a8c94e2d6cb22a",
+    "$CARGO_HOME/config.toml": "c30941df69411449c9f1bf5594365479e65f7ea7e70741f6d7155d9788a000b0"
+  },
+  "dependencies": {
+    "packages": 564,
+    "registry": 531,
+    "git": [
+      "git+https://github.com/valargroup/ipir-sp.git?tag=v0.1.0-rc.6#1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+      "git+https://github.com/zakura-core/wallet-libraries.git?rev=ae8b023207bd35f42862314190b69d9e490fed72#ae8b023207bd35f42862314190b69d9e490fed72",
+      "git+https://github.com/zakura-core/zakura.git?rev=1faf150fc3648aae22c55a6b30f8f5a9b9ce934e#1faf150fc3648aae22c55a6b30f8f5a9b9ce934e",
+      "git+https://github.com/zakura-core/zakura.git?rev=af944f5194ef2e9921bc96af017629450375013c#af944f5194ef2e9921bc96af017629450375013c"
+    ]
+  },
+  "source_files_verified_after_build": 4113,
+  "ci_built_roles_present_in_lane": {
+    "transparent-filter-server": false,
+    "transparent-shard-server": false,
+    "transparent-publish-controller": false,
+    "shard-control": false,
+    "shard-assign": false,
+    "shard-prune": false
+  },
+  "stages": [
+    {
+      "name": "bins",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "build",
+        "--locked",
+        "--profile",
+        "release",
+        "-v",
+        "-p",
+        "transparent-filter-server",
+        "-p",
+        "transparent-loadtest",
+        "-p",
+        "transparent-measure",
+        "--bin",
+        "transparent-event-ingest",
+        "--bin",
+        "shard-publish",
+        "--bin",
+        "event-spotcheck",
+        "--bin",
+        "shard-verify",
+        "--bin",
+        "script-sample",
+        "--bin",
+        "shard-cutoff",
+        "--bin",
+        "journal-inventory",
+        "--bin",
+        "shard-census",
+        "--bin",
+        "transparent-loadtest",
+        "--bin",
+        "transparent-measure"
+      ],
+      "cwd": "<source>",
+      "started_at": 1791091485.8492408,
+      "seconds": 955.059,
+      "exit_code": 0,
+      "log": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/logs/bins.log",
+      "log_sha256": "84af73998d8d614b6347ef2f64df1c9c81556a7ea7db6cbf7335dd0c1cd65e4a",
+      "rustc_invocations": 542,
+      "native_cpu_flag_seen": false,
+      "requested_flags_seen": true
+    },
+    {
+      "name": "shard-server-examples",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "build",
+        "--locked",
+        "--profile",
+        "release",
+        "-v",
+        "-p",
+        "transparent-shard-server",
+        "--example",
+        "rate-query",
+        "--example",
+        "native_certificate"
+      ],
+      "cwd": "<source>",
+      "started_at": 1791092440.9136124,
+      "seconds": 151.197,
+      "exit_code": 0,
+      "log": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/logs/shard-server-examples.log",
+      "log_sha256": "d283eceab47d1bd05e6a66af5514d88721fbe0e2c3666e81d252097e4d1d098b",
+      "rustc_invocations": 17,
+      "native_cpu_flag_seen": false,
+      "requested_flags_seen": true
+    },
+    {
+      "name": "wallet-store-example",
+      "command": [
+        "cargo",
+        "+1.97.1",
+        "build",
+        "--locked",
+        "--profile",
+        "release",
+        "-v",
+        "-p",
+        "transparent-wallet-store",
+        "--example",
+        "activity-reopen"
+      ],
+      "cwd": "<source>",
+      "started_at": 1791092592.110739,
+      "seconds": 102.167,
+      "exit_code": 0,
+      "log": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/logs/wallet-store-example.log",
+      "log_sha256": "de0393a2e3fe84aebe6b7b38171efd19db269c43abf65199b17c3ad17b5e744c",
+      "rustc_invocations": 72,
+      "native_cpu_flag_seen": false,
+      "requested_flags_seen": true
+    }
+  ],
+  "artifacts": {
+    "transparent-event-ingest": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/transparent-event-ingest",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/transparent-event-ingest",
+      "sha256": "3a55bad8bd3f067f02afe4b962922ce21de125e14b7ba395deec5f5e34f1fd4c",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "max_glibc": "2.38",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 22413712,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.007,
+        "passed": true
+      }
+    },
+    "shard-publish": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/shard-publish",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/shard-publish",
+      "sha256": "e3c97822ce6bd47c227f73ca0eaa1d3148db0b49997213d23ad5a5320ba94c25",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 4794400,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "event-spotcheck": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/event-spotcheck",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/event-spotcheck",
+      "sha256": "b41f39892685a79942d113723a63fa280e0fcde0e3dde1f55b303a62cadaf617",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 4335624,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "shard-verify": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/shard-verify",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/shard-verify",
+      "sha256": "94678c6b15dd04b79419899f4f2509d9b0dc97288ee2dff85e3f29616d1c4f5a",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 1782432,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.001,
+        "passed": true
+      }
+    },
+    "script-sample": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/script-sample",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/script-sample",
+      "sha256": "a8ee0aca180692ebf286f9236eecd32a9bc4a7ec84e768125ae99d450671c7a3",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 1115496,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "shard-cutoff": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/shard-cutoff",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/shard-cutoff",
+      "sha256": "227f2f93640a686860e3a2079a4612b4563e31099180d27e61200b0aaf13df7b",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "max_glibc": "2.38",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 19982792,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.005,
+        "passed": true
+      }
+    },
+    "journal-inventory": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/journal-inventory",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/journal-inventory",
+      "sha256": "3f0d369d92fc49eb0fc9763118d2053fadc4107863b60b876a20df3790c07b80",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libstdc++.so.6",
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "max_glibc": "2.38",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 19936000,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.005,
+        "passed": true
+      }
+    },
+    "shard-census": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/shard-census",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/shard-census",
+      "sha256": "fd24af1bf3595443f7e159d9b66e5266ca9b989c80ffa5c003b9a5f2852a019f",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 1380064,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "transparent-loadtest": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/transparent-loadtest",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/transparent-loadtest",
+      "sha256": "d4f6aa14729d1ab11954fcaf6d189d2d00788e64e1fce17efeff7aa82b3140c9",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.39",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 9632608,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.003,
+        "passed": true
+      }
+    },
+    "transparent-measure": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/transparent-measure",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/transparent-measure",
+      "sha256": "44a867ac8e41c50387e266cc929a4b1a9ce8a9607e910664f1e5b33c453f2165",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 7243424,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "examples/rate-query": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/examples/rate-query",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/examples/rate-query",
+      "sha256": "cd0a8910e52c310a258dcd1845d5d06c49850692015089c53d40f17e810af2de",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 4475784,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [
+          "--help"
+        ],
+        "exit_code": 0,
+        "expected_exit": 0,
+        "marker": "Usage:",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "examples/native_certificate": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/examples/native_certificate",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/examples/native_certificate",
+      "sha256": "73fa6513a2d87f31c6f7c356079592a7ca4508b8130d4204635edcd6c2613e6a",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 1028048,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [],
+        "exit_code": 101,
+        "expected_exit": 101,
+        "marker": "segment|synthetic",
+        "seconds": 0.002,
+        "passed": true
+      }
+    },
+    "examples/activity-reopen": {
+      "built_path": "/mnt/roman-dev-2-data/ai-dev/cache/build/t-8efb3346400f40f8/a1/wallet-pir/release/examples/activity-reopen",
+      "retained_path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920/artifacts/examples/activity-reopen",
+      "sha256": "493fc2ad8e9d9a70c98724cf007e0b1db8e6095ccca616cbcf6ce043bd575220",
+      "elf": true,
+      "elf_class": "ELF64",
+      "data": "little-endian",
+      "os_abi": "SYSV",
+      "type": "DYN",
+      "machine": "x86-64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ],
+      "max_glibc": "2.34",
+      "ldd_exit": 0,
+      "unresolved": false,
+      "executable": true,
+      "bytes": 2828744,
+      "linux_x86_64": true,
+      "probe": {
+        "args": [],
+        "exit_code": 1,
+        "expected_exit": 1,
+        "marker": "store root required",
+        "seconds": 0.002,
+        "passed": true
+      }
+    }
+  },
+  "context": {
+    "purpose": "Supplemental fat-LTO tools completing the 18-artifact activity inventory; not a native, hardware or production certification.",
+    "ci_release": {
+      "run": "37173250956",
+      "roles_not_rebuilt": [
+        "transparent-filter-server",
+        "transparent-shard-server",
+        "transparent-publish-controller",
+        "shard-control",
+        "shard-assign",
+        "shard-prune"
+      ],
+      "inventory_roles_from_ci": [
+        "transparent-filter-server",
+        "transparent-shard-server",
+        "transparent-publish-controller",
+        "shard-control",
+        "shard-assign"
+      ]
+    },
+    "transparent_regression": "Not built: the reviewed activity qualification path (transparent/ops/lib/activity_schema_product.py) reads only release-<sha>/artifacts/<name> and artifacts/examples/rate-query, and the earlier activity release builds compiled transparent-regression without retaining it. Its only callers are the superseded v10 cutover scripts and the manual public regression workflow and make target.",
+    "probes": "Each artifact was run once on the build host with --help, or without arguments for the two non-clap examples, to show it loads and reaches argument handling. Nothing else was executed."
+  },
+  "archive": {
+    "path": "/mnt/roman-dev-2-data/ai-dev/workspaces/t-8efb3346400f40f8/a1/qualification/release-c3c66b9b51a5e2f4a6ac9261a941a397d119e920.tar.gz",
+    "sha256": "d3a8f60a76e0fa59288fe670275abed75b304b7d390cde368effb842c840a9c3",
+    "members": [
+      "owner.json",
+      "result.json",
+      "source.tar.sha256",
+      "logs",
+      "artifacts",
+      "sanity"
+    ]
+  },
+  "host": {
+    "platform": "Linux-6.8.0-134-generic-x86_64-with-glibc2.39",
+    "cpu": "DO-Premium-Intel",
+    "logical_cpus": 8,
+    "cgroup_memory_max": "12884901888",
+    "cgroup_cpu_max": "300000 100000",
+    "cgroup_memory_peak": "5777424384"
+  }
+}
