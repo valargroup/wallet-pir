@@ -1,0 +1,138 @@
+    Finished `release-fast` profile [optimized] target(s) in 38.08s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 3`
+     Running unittests src/lib.rs (<target>/release-fast/deps/transparent_native-a8a366e736bc79fe)
+
+running 15 tests
+test batched_hint::tests::crt_reconstructs_signed_values_at_the_capacity_edges ... ok
+test batched_hint::tests::forward_evaluates_at_odd_powers_in_bit_reversed_order ... ok
+test batched_hint::tests::capacity_edge_selects_the_path ... ok
+test batched_hint::tests::extreme_operands_match_schoolbook_products ... ok
+test batched_hint::tests::matches_the_reference_hint_and_its_shape_refusals ... ok
+test batched_hint::tests::primes_and_roots_satisfy_the_derivation ... ok
+test batched_hint::tests::shoup_products_are_canonical ... ok
+test batched_hint::tests::transforms_invert_exactly ... ok
+test tests::a_profile_refuses_shapes_the_scheme_would_not_serve ... ok
+test tests::row_coefficients_match_the_bit_reader ... ok
+test tests::seeds_are_distinct_per_geometry_table_and_schema ... ok
+test tests::sizes_are_the_deployed_profile ... ok
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... ok
+test batched_hint::tests::known_answer_vectors ... ok
+test tests::two_mask_rounded_roundtrip ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.17s
+
+     Running unittests src/lib.rs (<target>/release-fast/deps/transparent_shard_server-4ad7f9c9d2c9ff33)
+
+running 52 tests
+test admission::tests::body_bytes_are_bounded_across_waiting_requests ... ok
+test admission::tests::a_dropped_wait_is_in_the_latency_histogram ... ok
+test admission::tests::waiting_places_are_bounded_and_returned_on_drop ... ok
+test assignment::tests::a_disjoint_covering_assignment_is_accepted_and_digests_stably ... ok
+test assignment::tests::a_shard_nobody_holds_must_be_listed_as_unassigned ... ok
+test assignment::tests::overlapping_archive_owners_are_refused ... ok
+test assignment::tests::replicas_in_one_group_must_hold_the_same_shards ... ok
+test assignment::tests::tiers_are_enforced_by_role ... ok
+test assignment::tests::worker_identity_ignores_provenance_and_peers_but_binds_serving_state ... ok
+test filecache::tests::advice_preserves_contents_and_file_position ... ok
+test filecache::tests::blocked_advice_does_not_block_consumers_or_grow_queue ... ok
+test filecache::tests::queued_descriptor_survives_source_removal_and_replacement ... ok
+test memory::tests::admitted_query_waits_for_memory_without_exceeding_the_budget ... ok
+test memory::tests::cancelled_waiter_cannot_release_blocking_work_reservation ... ok
+test memory::tests::cancelling_a_queued_builder_releases_its_turn ... ok
+test admission::tests::slots_and_their_busy_time_are_reported ... ok
+test memory::tests::expired_or_cancelled_query_wait_does_not_leave_a_reservation ... ok
+test memory::tests::phase_handoff_retains_remaining_work_and_other_owners ... ok
+test memory::tests::simultaneous_work_and_resident_memory_share_headroom ... ok
+test metrics::tests::labels_reach_every_series_and_the_histogram_is_cumulative ... ok
+test metrics::tests::timers_classify_success_error_and_dropped_handlers_once ... ok
+test admission::tests::a_request_that_outwaits_its_deadline_is_refused_retryably ... ok
+test prewarm::tests::corruption_is_not_retried_and_permanent_pressure_is_bounded ... ok
+test prewarm::tests::cancellation_stops_retrying_an_obsolete_candidate ... ok
+test router::tests::a_pinned_owner_over_budget_is_refused ... ok
+test router::tests::a_roster_that_cannot_hold_its_share_is_refused ... ok
+test router::tests::a_saturated_pool_is_not_ejected_on_a_single_proxy_error ... ok
+test router::tests::a_single_pinned_owner_holds_the_whole_archive ... ok
+test router::tests::a_single_pinned_owner_is_refused_when_its_headroom_does_not_fit ... ok
+test router::tests::pinned_ranges_must_cover_the_archive_exactly_and_all_owners ... ok
+test router::tests::pinned_ranges_reproduce_the_balanced_plan_byte_for_byte ... ok
+test router::tests::recent_replicas_come_and_go_without_moving_an_archive_cut ... ok
+test router::tests::the_archive_is_split_contiguously_and_balanced_by_reserved_bytes ... ok
+test router::tests::the_caddyfile_routes_each_shard_to_its_owners_and_nothing_else ... ok
+test memory::tests::cold_builders_keep_fifo_order_until_memory_is_released ... ok
+test prewarm::tests::transient_admission_does_not_permanently_lose_a_warm_target ... ok
+test runtime::disk::tests::a_restored_entry_must_publish_the_masks_it_stored ... ok
+test runtime::disk::tests::batched_words_preserve_legacy_bytes_across_buffer_boundaries ... ok
+test runtime::disk::tests::busy_collection_defers_then_prunes_only_unretained_files ... ok
+test runtime::disk::tests::incremental_snapshot_preserves_bytes_and_checksum_across_writeback ... ok
+test runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory ... ok
+test runtime::tests::every_registry_geometry_reserves_something_servable ... ok
+test runtime::tests::failed_waiter_cannot_forget_a_replacement_slot ... ok
+test runtime::tests::masks_rebuilt_from_row_bytes_equal_the_served_masks ... ok
+test runtime::tests::only_the_database_term_follows_the_row_count ... ok
+test runtime::tests::runtime_builds_run_in_their_own_smaller_pool ... ok
+test runtime::tests::the_batched_hint_is_dispatched_for_recent_geometries_only ... ok
+test runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget ... ok
+test runtime::tests::the_reservation_is_the_native_upper_bound ... ok
+test runtime::tests::the_batched_hint_runtime_is_the_reference_runtime ... ok
+test runtime::tests::trailing_zero_blocks_leave_the_published_masks_unchanged ... ok
+test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries has been running for over 60 seconds
+test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries ... ok
+
+test result: ok. 52 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 104.07s
+
+     Running tests/revisions_and_cache.rs (<target>/release-fast/deps/revisions_and_cache-c13a4b6b53e64de3)
+
+running 20 tests
+test a_revision_ahead_of_the_map_is_refused ... ok
+test a_pruned_revision_is_refused_with_the_current_map_digest ... ok
+test a_request_that_cannot_fit_the_budget_is_refused_retryably ... ok
+test a_segment_corrupted_after_loading_fails_its_build ... ok
+test a_set_holding_a_superseded_revision_loads ... ok
+test a_runtime_in_use_is_not_evicted_to_make_room ... ok
+test blocked_collection_keeps_status_and_readiness_responsive ... ok
+test blocked_invalidation_refuses_without_blocking_executor ... ok
+test burst::drained_external_errors_and_truncated_records_still_fail ... ok
+test burst::external_query_clients ... ignored, manual external burst clients; started by the burst runner
+test burst::external_records_drain_inflight_completion_after_stop ... ok
+test burst::publication_burst_under_exact_load ... ignored, manual recent-8k burst benchmark; use make transparent-burst
+test a_second_runtime_evicts_the_first_rather_than_exceeding_the_budget ... ok
+test blocked_activation_keeps_executor_responsive ... ok
+test concurrent_cold_requests_build_once ... ok
+test each_revision_is_answered_under_its_own_identity ... ok
+test superseded_revisions_beyond_the_bound_are_refused ... ok
+test the_served_map_matches_its_advertised_digest ... ok
+test live_prepare_activate_and_invalidate ... ok
+test revision_churn_bounds_runtimes_and_collects_idle_snapshots has been running for over 60 seconds
+test revision_churn_bounds_runtimes_and_collects_idle_snapshots ... ok
+
+test result: ok. 18 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 84.80s
+
+     Running tests/round_trip.rs (<target>/release-fast/deps/round_trip-180b89fac0740d42)
+
+running 18 tests
+test a_capacity_refusal_reads_the_upload_and_keeps_the_connection ... ok
+test a_filter_for_a_shard_outside_the_set_is_refused ... ok
+test a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place ... ok
+test a_query_without_a_declared_length_is_refused ... ok
+test a_query_built_for_one_shard_is_refused_by_another ... ok
+test a_shard_set_missing_a_shard_is_refused ... ok
+test a_query_built_for_one_table_is_refused_by_the_other ... ok
+test a_request_that_outwaits_its_deadline_is_refused_retryably ... ok
+test a_slow_upload_times_out_without_holding_a_place ... ok
+test a_tampered_table_is_refused_at_load ... ok
+test a_truncated_query_is_refused_rather_than_padded ... ok
+test an_oversized_query_is_refused_before_any_work ... ok
+test each_shards_published_filter_is_served_verbatim ... ok
+test the_manifest_route_serves_canonical_bytes_that_digest_to_the_path ... ok
+test the_map_is_identical_under_both_paths ... ok
+test unknown_shards_and_tables_are_refused ... ok
+test every_shard_reports_the_same_scheme_but_its_own_setup ... ok
+test rows_retrieved_from_each_shard_equal_that_shards_published_table ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 45.34s
+
+
+real	4m39.981s
+user	8m25.985s
+sys	0m37.288s

@@ -111,7 +111,7 @@ a `Hint` type alias and `is_multiple_of` in tests. Neither changes semantics.
 
 ## Validation
 
-Results of the focused suite and `make check-fast` are in [results.md](results.md).
+Results of the focused suite, clippy and `make check-fast` are in [results.md](results.md). [SHA256SUMS](SHA256SUMS) covers the retained logs and the manifest.
 
 **First failure.** The first focused run failed two disk-cache integration
 tests with `CacheError::Overloaded`:

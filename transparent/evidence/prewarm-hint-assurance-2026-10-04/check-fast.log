@@ -1,0 +1,107 @@
+CHECK_STAGE {"stage": "format", "seconds": 4.233, "exit": 0}
+CHECK_STAGE {"stage": "tests", "seconds": 0.039, "exit": 0}
+CHECK_STAGE {"stage": "helpers", "seconds": 37.828, "exit": 0}
+CHECK_STAGE {"stage": "compile:pir-observability", "seconds": 44.004, "exit": 0}
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests:pir-observability", "seconds": 0.284, "exit": 0}
+CHECK_STAGE {"stage": "compile:pir-native", "seconds": 50.722, "exit": 0}
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:pir-native", "seconds": 0.351, "exit": 0}
+CHECK_STAGE {"stage": "compile:pir-control", "seconds": 7.034, "exit": 0}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests:pir-control", "seconds": 0.277, "exit": 0}
+CHECK_STAGE {"stage": "compile:enhance-pir", "seconds": 60.268, "exit": 0}
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:enhance-pir", "seconds": 0.353, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-events", "seconds": 3.908, "exit": 0}
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-events", "seconds": 0.261, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-blocks", "seconds": 52.284, "exit": 0}
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-blocks", "seconds": 0.412, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-wallet", "seconds": 52.067, "exit": 0}
+test result: ok. 47 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2.70s
+CHECK_STAGE {"stage": "tests:transparent-wallet", "seconds": 3.13, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-filter", "seconds": 27.306, "exit": 0}
+test result: ok. 81 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-filter", "seconds": 0.346, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-native", "seconds": 12.14, "exit": 0}
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.09s
+CHECK_STAGE {"stage": "tests:transparent-native", "seconds": 11.457, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-shard", "seconds": 16.37, "exit": 0}
+test result: ok. 126 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 21.72s
+CHECK_STAGE {"stage": "tests:transparent-shard", "seconds": 21.998, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-wallet-store", "seconds": 73.55, "exit": 0}
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests:transparent-wallet-store", "seconds": 0.315, "exit": 0}
+CHECK_STAGE {"stage": "compile:enhance-pir-server", "seconds": 285.364, "exit": 0}
+test result: ok. 163 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 14.52s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:enhance-pir-server", "seconds": 14.989, "exit": 0}
+CHECK_STAGE {"stage": "compile:pir-apm", "seconds": 58.274, "exit": 0}
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.12s
+test result: ok. 109 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 2.29s
+CHECK_STAGE {"stage": "tests:pir-apm", "seconds": 4.783, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-filter-server", "seconds": 747.735, "exit": 0}
+test result: ok. 64 passed; 0 failed; 1 ignored; 0 measured; 1 filtered out; finished in 15.46s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-filter-server", "seconds": 16.08, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-shard-server", "seconds": 83.878, "exit": 0}
+test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 3 filtered out; finished in 28.39s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-shard-server", "seconds": 28.921, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-block-server", "seconds": 49.044, "exit": 0}
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests:transparent-block-server", "seconds": 0.358, "exit": 0}
+CHECK_STAGE {"stage": "compile:enhance-pir-load-test", "seconds": 7.883, "exit": 0}
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests:enhance-pir-load-test", "seconds": 0.341, "exit": 0}
+CHECK_STAGE {"stage": "compile:pir-monitor", "seconds": 26.733, "exit": 0}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:pir-monitor", "seconds": 0.353, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-loadtest", "seconds": 61.773, "exit": 0}
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+CHECK_STAGE {"stage": "tests:transparent-loadtest", "seconds": 0.46, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-regression", "seconds": 6.313, "exit": 0}
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-regression", "seconds": 0.388, "exit": 0}
+CHECK_STAGE {"stage": "compile:transparent-measure", "seconds": 14.741, "exit": 0}
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+CHECK_STAGE {"stage": "tests:transparent-measure", "seconds": 0.527, "exit": 0}
+CHECK_STAGE {"stage": "compile", "seconds": 42.875, "exit": 0}
+CHECK_STAGE {"stage": "reclaim", "seconds": 1.488, "exit": 0}
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.18s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+CHECK_STAGE {"stage": "tests", "seconds": 1.284, "exit": 0}
+CHECK_STAGE {"stage": "integration:enhance-fast", "seconds": 45.929, "exit": 0}
+real	31m46.686s
+user	79m9.177s
+sys	4m38.231s
+exit=0
