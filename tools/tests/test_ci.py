@@ -579,6 +579,9 @@ class RealCargoOracleTests(unittest.TestCase):
         (self.root / 'src').mkdir(parents=True)
         (self.root / 'Cargo.toml').write_text('[package]\nname = "oracle"\nversion = "0.1.0"\nedition = "2021"\n')
         (self.root / 'src/lib.rs').write_text('pub fn one() -> u8 { 1 }\n')
+        # The temporary crate is outside ROOT, so rustup cannot inherit its pin.
+        # Use the repository toolchain for the real Cargo configuration oracle.
+        shutil.copyfile(ROOT / 'rust-toolchain.toml', self.root / 'rust-toolchain.toml')
         self.env = {key: value for key, value in os.environ.items()
                     if key not in {'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC',
                                    'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
