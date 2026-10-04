@@ -1550,6 +1550,36 @@ The independent-chain oracle producer and the production execution controls
 still require implementation. These offline producers and their fixture tests
 are source evidence; no candidate native qualification has been performed.
 
+#### Independent raw RPC validation
+
+`transparent/ops/lib/activity_oracle_rpc.py` validates retained RPC attempts
+without reading any journal or running a native program. Each attempt binds an
+HTTP status and independent local `request`/`response` byte references. A gzip
+body additionally binds `decoded_sha256`; both the retained compressed bytes
+and the bounded decompressed bytes are verified. Each body is bounded at128MiB
+and an input has at most4096attempts. Original bodies stay retained while the
+validator keeps only an indexing/category projection in memory, excluding large
+shielded proof fields.
+
+The validator matches response IDs, methods, verbose transaction identities,
+block heights/hashes and complete transaction/previous-output coverage. It
+independently applies the nonempty/non-OP_RETURN script rule, counts receives
+and spends, and compares all17block counts/hashes with the native multiset
+comparison result. It derives public transaction pool/category counts from the
+sampled block transactions, excluding previous-output lookups. Oversized-batch
+refusals remain bound raw evidence and every refused transaction must have a
+subsequent successful verbose response. Other failed requests, unresolved
+previous outputs, malformed encodings, conflicting projections and native
+count disagreements refuse.
+
+This validator alone cannot produce an oracle gate. Exact candidate native
+execution, immutable snapshot construction/verification, writer restoration,
+canonical anchors and complete reviewed category coverage remain prerequisites.
+Historical corpus compatibility tests are parser tests only; they cannot
+qualify c3. Native multiset comparison verifies full event fields; the Python
+raw validator independently verifies coverage/counts/categories, and does not
+claim to rederive every monetary or metadata field.
+
 #### Offline candidate cutover assembly
 
 `transparent/ops/scripts/activity-candidate-inputs.py --input <absolute-file>
