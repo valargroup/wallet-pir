@@ -391,7 +391,9 @@ if __name__=='__main__':
     bs=sub.add_parser('bootstrap');bs.add_argument('input',type=Path);bs.add_argument('output',type=Path)
     ge=sub.add_parser('geometry');ge.add_argument('input',type=Path);ge.add_argument('output',type=Path)
     args=p.parse_args()
-    if args.command=='extract':print(json.dumps(extract(args.checkpoint,args.binary,args.status)))
+    if args.command=='extract':
+        receipt=extract(args.checkpoint,args.binary,args.status)
+        print(json.dumps({k:v for k,v in receipt.items() if k!='pins'}))
     elif args.command=='summarize':summarize(args.checkpoint)
     elif args.command=='bootstrap':census.atomic_json(args.output,bootstrap_selection(read(args.input)))
     elif args.command=='geometry':census.atomic_json(args.output,geometry_projection(read(args.input)))
