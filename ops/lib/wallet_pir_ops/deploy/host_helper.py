@@ -149,60 +149,153 @@ def run(argv, timeout):
     return {'returncode': result.returncode, 'output': (result.stdout + result.stderr)[-4000:]}
 
 
-def read_many(paths, limit=1 << 20):
-    """Bounded texts of up to 512 files: None when absent, never through a link."""
-    if not isinstance(paths, list) or len(paths) > 512:
-        raise ValueError('read_many takes at most 512 paths')
-    result = {}
-    for path in paths:
+WRAPPER_MARKER = b'wallet-pir-deploy.py'
+INHERITED_MARKER = b'WALLET_PIR_PRODUCTION_LOCK_FDS='
+
+
+def bounded(path, limit):
+    """Bytes of one regular file, never through a link; refuses past `limit`."""
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, 'rb') as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError('not a regular file: ' + path)
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError('file exceeds read bound: ' + path)
+    return data
+
+
+def owner_records(roots, file_limit, byte_limit, record_limit=1 << 20):
+    """Every retained `*.json` owner record two levels deep, except requests.
+
+    Truncation, links and oversized records refuse rather than being skipped:
+    an unread record could name a live owner.
+    """
+    records, total = {}, 0
+    for root in roots:
+        stack = [(root, 0)]
+        while stack:
+            path, depth = stack.pop()
+            try:
+                info = os.lstat(path)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                raise ValueError('owner namespace is not a directory: ' + path)
+            for name in sorted(os.listdir(path)):
+                child = os.path.join(path, name)
+                mode = os.lstat(child).st_mode
+                if stat.S_ISLNK(mode):
+                    raise ValueError('owner namespace contains a link: ' + child)
+                if stat.S_ISDIR(mode):
+                    if depth == 0:
+                        stack.append((child, 1))
+                    continue
+                if not name.endswith('.json') or name.endswith('.request.json'):
+                    continue
+                if len(records) >= file_limit:
+                    raise ValueError('owner namespaces exceed the record bound')
+                data = bounded(child, record_limit)
+                total += len(data)
+                if total > byte_limit:
+                    raise ValueError('owner namespaces exceed the byte bound')
+                records[child] = data.decode()
+    return records
+
+
+def process_chain(proc, pid):
+    """This probe and its ancestors, which are never owner evidence."""
+    chain = set()
+    while pid > 1 and pid not in chain:
+        chain.add(pid)
         try:
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        except FileNotFoundError:
-            result[path] = None
-            continue
-        with os.fdopen(descriptor, 'rb') as handle:
-            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
-                raise ValueError('not a regular file: ' + path)
-            data = handle.read(limit + 1)
-        if len(data) > limit:
-            raise ValueError('file exceeds read bound: ' + path)
-        result[path] = data.decode()
-    return result
-
-
-def list_json(path, limit=512):
-    """Sorted `*.json` names of a real directory, or None when it is absent."""
-    try:
-        info = os.lstat(path)
-    except FileNotFoundError:
-        return None
-    if not stat.S_ISDIR(info.st_mode):
-        raise ValueError('not a directory: ' + path)
-    names = sorted(name for name in os.listdir(path) if name.endswith('.json'))
-    if len(names) > limit:
-        raise ValueError('too many records in ' + path)
-    return names
-
-
-def proc_stats(pids):
-    """`/proc/PID/stat` of up to 512 PIDs, boot time and clock ticks per second."""
-    if not isinstance(pids, list) or len(pids) > 512 or not all(isinstance(p, int) and p > 0 for p in pids):
-        raise ValueError('proc_stats takes at most 512 positive PIDs')
-    boot = next(int(line.split()[1]) for line in open('/proc/stat') if line.startswith('btime '))
-    stats = {}
-    for pid in pids:
-        try:
-            with open('/proc/%d/stat' % pid) as handle:
-                stats[str(pid)] = handle.read()
+            with open(os.path.join(proc, str(pid), 'stat')) as handle:
+                pid = int(handle.read().rsplit(')', 1)[1].split()[1])
         except (FileNotFoundError, ProcessLookupError):
-            stats[str(pid)] = None
-    return {'boot_unix': boot, 'ticks': os.sysconf('SC_CLK_TCK'), 'stats': stats}
+            break
+    return chain
+
+
+def ownership_probe(roots, lock_path, machine_id_path, proc='/proc', file_limit=4096, byte_limit=64 << 20,
+                    process_limit=65536, fd_limit=1 << 20):
+    """Read-only owner and process evidence of one host, in one bounded pass.
+
+    Returns the retained owner records, the production lock's kernel holders and
+    every live process: its stat line and whether it holds the lock file open,
+    carries the inherited-lock variable or runs the deploy wrapper. Environment
+    and command-line contents are never returned. Unreadable evidence is
+    reported, and every bound refuses instead of truncating.
+    """
+    machine = bounded(machine_id_path, 4096).decode()
+    records = owner_records(roots, file_limit, byte_limit)
+    try:
+        lock = os.stat(lock_path)
+    except FileNotFoundError:
+        lock = None
+    wanted = (lock and '%02x:%02x:%d' % (os.major(lock.st_dev), os.minor(lock.st_dev), lock.st_ino))
+    holders = []
+    with open(os.path.join(proc, 'locks')) as handle:
+        for line in handle:
+            fields = line.split()
+            if wanted and len(fields) > 5 and wanted in fields[4:6]:
+                holders.append(line.strip())
+    with open(os.path.join(proc, 'stat')) as handle:
+        boot = next(int(line.split()[1]) for line in handle if line.startswith('btime '))
+    own = process_chain(proc, os.getpid())
+    pids = sorted(int(name) for name in os.listdir(proc) if name.isdigit())
+    if len(pids) > process_limit:
+        raise ValueError('process table exceeds bound')
+    processes, descriptors = [], 0
+    for pid in pids:
+        base = os.path.join(proc, str(pid))
+        try:
+            with open(os.path.join(base, 'stat')) as handle:
+                entry = {'pid': pid, 'stat': handle.read()}
+        except (FileNotFoundError, ProcessLookupError):
+            continue  # Exited while the table was read.
+        if pid in own:
+            entry['self'] = True
+            processes.append(entry)
+            continue
+        unknown = []
+        try:
+            names = os.listdir(os.path.join(base, 'fd'))
+            descriptors += len(names)
+            if descriptors > fd_limit:
+                raise ValueError('descriptor tables exceed bound')
+            entry['lock_fd'] = False
+            for name in names:
+                try:
+                    target = os.stat(os.path.join(base, 'fd', name))
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if lock is not None and (target.st_dev, target.st_ino) == (lock.st_dev, lock.st_ino):
+                    entry['lock_fd'] = True
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except PermissionError:
+            unknown.append('fd')
+        for key, name, marker, limit in (('inherited', 'environ', INHERITED_MARKER, 1 << 22),
+                                         ('wrapper', 'cmdline', WRAPPER_MARKER, 1 << 22)):
+            try:
+                with open(os.path.join(base, name), 'rb') as handle:
+                    data = handle.read(limit + 1)
+                if len(data) > limit:
+                    unknown.append(name)
+                entry[key] = marker in data
+            except (FileNotFoundError, ProcessLookupError):
+                entry[key] = False
+            except PermissionError:
+                unknown.append(name)
+        if unknown:
+            entry['unknown'] = unknown
+        processes.append(entry)
+    return {'machine_id': machine, 'records': records, 'lock_holders': holders, 'boot_unix': boot,
+            'ticks': os.sysconf('SC_CLK_TCK'), 'processes': processes}
 
 
 OPERATIONS = {
-    'read_many': read_many,
-    'list_json': list_json,
-    'proc_stats': proc_stats,
+    'ownership_probe': ownership_probe,
     'ping': lambda: None,
     'sha256': sha256,
     'read': read,

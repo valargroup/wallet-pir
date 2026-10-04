@@ -47,8 +47,9 @@ import stat
 import subprocess
 import sys
 import time
-import urllib.request
 import base64
+import select
+import socket
 import ctypes
 import struct
 
@@ -76,7 +77,9 @@ SOURCE = I.SOURCE
 MAP = P.OUTPUT/'shards.json'
 RESULT = P.EVIDENCE/'result.json'
 CUTOFF = P.EVIDENCE/'cutoff.json'
-RPC = 'http://127.0.0.1:8232'
+RPC = ('127.0.0.1', 8232)
+RPC_SECONDS = 10  # The publication job's existing per-anchor bound; never raised.
+MAX_RPC_BODY = 65536
 COOKIE = Path('/root/.cache/zakura/.cookie')
 PROC = Path('/proc')
 CGROUP = Path('/sys/fs/cgroup')
@@ -562,23 +565,27 @@ class Budget:
                 stream.flush(); os.fsync(stream.fileno())
 
     def seconds(self):
-        """A positive timeout for one call; refuses when nothing remains."""
+        """The exact time left for one call; never rounded up past the deadline."""
         self.check()
-        return max(1, int(self.remaining()))
+        left = self.remaining()
+        if left <= 0:
+            raise subprocess.TimeoutExpired(self.label, 0)
+        return left
 
 
 # --- every pinned host's owners -------------------------------------------------
 
 PID_FIELDS = ('pid', 'child_pid', 'ssh_pid', 'relay_pid', 'parent_pid', 'launcher_pid')
 SOURCE_STATES = ('staged', 'failed')
+FLEET_PROC = Path('/proc')
 
 
 class LocalHost:
-    """The coordinator's own owner records, read in-process."""
+    """The coordinator's own owner and process evidence, read in-process."""
 
-    def call(self, op, budget, **arguments):
+    def probe(self, budget, **arguments):
         budget.check()
-        return host_helper.OPERATIONS[op](**arguments)
+        return host_helper.ownership_probe(proc=str(FLEET_PROC), **arguments)
 
 
 class RemoteHost:
@@ -587,8 +594,8 @@ class RemoteHost:
     def __init__(self, executor, host):
         self.executor, self.host = executor, host
 
-    def call(self, op, budget, **arguments):
-        return self.executor.call(self.host, op, deadline=budget.seconds(), **arguments)
+    def probe(self, budget, **arguments):
+        return self.executor.call(self.host, 'ownership_probe', deadline=budget.seconds(), **arguments)
 
 
 def owner_processes(record):
@@ -614,85 +621,97 @@ def owner_processes(record):
     return found
 
 
-def live(stat_text, boot, ticks, start, latest):
-    """Whether a live PID can be the recorded owner or one of its descendants.
+class Table:
+    """One host's process table from a probe: identity, session and group."""
 
-    A recorded kernel start time must match exactly. Without one, a process that
-    started no later than the record's last update could be its owner; only a
-    PID reused afterwards is excluded. A missing record time fails closed.
+    def __init__(self, probe):
+        self.boot, self.ticks = probe['boot_unix'], probe['ticks']
+        self.entries = {}
+        for entry in probe['processes']:
+            fields = entry['stat'].rsplit(')', 1)[1].split()
+            if fields[0] in ('Z', 'X'):
+                continue
+            self.entries[entry['pid']] = dict(entry, ppid=int(fields[1]), pgrp=int(fields[2]),
+                                              session=int(fields[3]), start=int(fields[19]))
+
+    def started_unix(self, entry):
+        return self.boot+entry['start']/self.ticks
+
+
+def owned(table, pid, start, latest):
+    """Refuse a live recorded owner or any live member of its session or group.
+
+    A recorded kernel start time must not match a live process. Without one, a
+    process started no later than the record's last update could be the owner.
+    Descendants keep the owner's session and process group after the owner
+    exits and they are reparented, so a live member of either refuses unless
+    the PID was demonstrably reused by a newer leader that started them all.
     """
-    if stat_text is None:
-        return False
-    fields = stat_text.rsplit(')', 1)[1].split()
-    if fields[0] in ('Z', 'X'):
-        return False
-    started = int(fields[19])
-    if start is not None:
-        return started == start
-    return latest is None or boot+started/ticks <= latest+1
+    leader = table.entries.get(pid)
+    reused = False
+    if leader is not None and not leader.get('self'):
+        if start is not None:
+            alive = leader['start'] == start
+        else:
+            alive = latest is None or table.started_unix(leader) <= latest+1
+        require(not alive, 'live recorded owner PID %d' % pid)
+        reused = True
+    for member in table.entries.values():
+        if member['pid'] == pid or member.get('self') or pid not in (member['session'], member['pgrp']):
+            continue
+        require(reused and member['start'] >= leader['start'],
+                'live descendant PID %d of recorded owner PID %d' % (member['pid'], pid))
 
 
-def fleet_host(name, machine_id, reader, budget, *, skip_input=None):
-    """Fresh exact machine, fence, source-staging and owner-process reads of one host."""
-    pointers = [str(schema_fence.SCHEMA_STATE/schema_fence.SCHEMA_POINTER),
-                str(schema_fence.HOST_ACTIONS/'latest.json'), str(schema_fence.INPUT_STAGING/'latest.json')]
-    staging = SOURCE.parent/'staging'
-    receipt = {'host':name, 'machine_id':machine_id, 'reads':{}, 'source_staging':None, 'processes':None}
-    first = reader.call('read_many', budget, paths=[str(MACHINE_ID), *pointers])
-    receipt['reads'].update(first)
-    require((first[str(MACHINE_ID)] or '').strip() == machine_id, 'host %s machine identity differs from its pin' % name)
-    names = reader.call('list_json', budget, path=str(staging))
-    receipt['source_staging'] = names
-    records = []
-
-    def named(path, build):
-        try:
-            pointer = json.loads(first[path]) if first[path] is not None else None
-            return build(pointer) if isinstance(pointer, dict) else None
-        except (ValueError, TypeError, KeyError):
-            return None  # The fence below refuses the malformed pointer.
-    for path in filter(None, (
-            named(pointers[0], lambda p: str(schema_fence.SCHEMA_STATE/(str(p['id'])+'.json'))),
-            named(pointers[1], lambda p: str(schema_fence.HOST_ACTIONS/str(p['transaction'])/(str(p['request_id'])+'.json'))),
-            named(pointers[2], lambda p: str(schema_fence.INPUT_STAGING/(str(p['request_sha256'])+'.json'))))):
-        if '..' not in Path(path).parts:
-            records.append(path)
-    sources = [str(staging/n) for n in names or [] if re.fullmatch(r'[0-9a-f]{40}\.json', n)]
-    if records or sources:
-        receipt['reads'].update(reader.call('read_many', budget, paths=records+sources))
-    reads = receipt['reads']
-
-    def read(path):
-        require(path in reads, 'host %s owner record was not read: %s' % (name, path))
-        return reads[path]
+def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
+    """Fresh exact machine, owner-namespace and process-ownership evidence of one host."""
+    roots = [str(schema_fence.SCHEMA_STATE), str(schema_fence.HOST_ACTIONS), str(schema_fence.INPUT_STAGING),
+             str(SOURCE.parent/'staging')]
+    probe = reader.probe(budget, roots=roots, lock_path=str(lock_path), machine_id_path=str(MACHINE_ID))
+    receipt = {'host':name, 'machine_id':machine_id, 'probe':probe}
+    require(probe['machine_id'].strip() == machine_id, 'host %s machine identity differs from its pin' % name)
+    records = probe['records']
     skip = skip_input[0] if skip_input and machine_id == skip_input[1] else None
-    schema_fence.schema_mutation_fence(read, schema_fence.SCHEMA_STATE, skip_input=skip)
-    owned = str(schema_fence.INPUT_STAGING/(skip+'.json')) if skip else None
-    processes = []
-    for path in records+sources:
-        text = reads[path]
-        require(text is not None, 'host %s owner record vanished: %s' % (name, path))
-        value = json.loads(text)
-        if path in sources:
+    schema_fence.schema_mutation_fence(records.get, schema_fence.SCHEMA_STATE, skip_input=skip)
+    own = str(schema_fence.INPUT_STAGING/(skip+'.json')) if skip else None
+    staging = str(SOURCE.parent/'staging')+'/'
+    table = Table(probe)
+    for path, text in sorted(records.items()):
+        try:
+            value = json.loads(text)
+        except ValueError:
+            raise ValueError('host %s has an unreadable owner record: %s' % (name, path)) from None
+        if path.startswith(staging):
             require(isinstance(value, dict) and value.get('status') in SOURCE_STATES,
                     'host %s has unfinished source staging' % name)
-        if path != owned:
-            processes += owner_processes(value)
-    if processes:
-        observed = reader.call('proc_stats', budget, pids=sorted({p for p, _, _ in processes})[:512])
-        receipt['processes'] = observed
-        for pid, start, latest in processes:
-            require(not live(observed['stats'].get(str(pid)), observed['boot_unix'], observed['ticks'], start, latest),
-                    'host %s has a live recorded owner or descendant: PID %d' % (name, pid))
+        if path == own:
+            continue
+        for pid, start, latest in owner_processes(value):
+            try:
+                owned(table, pid, start, latest)
+            except ValueError as error:
+                raise ValueError('host %s: %s (%s)' % (name, error, Path(path).name)) from None
+    for entry in table.entries.values():
+        if entry.get('self'):
+            continue
+        require(not entry.get('unknown'), 'host %s process %d ownership is unreadable' % (name, entry['pid']))
+        require(not (entry.get('lock_fd') or entry.get('inherited') or entry.get('wrapper')),
+                'host %s has a live wrapper process or descendant: PID %d' % (name, entry['pid']))
+    if isinstance(reader, RemoteHost):
+        # The coordinator's lock is this operation's own; any remote holder is not.
+        require(not probe['lock_holders'], 'host %s production lock is held' % name)
     return receipt
 
 
-def fleet(inventory, budget, executor_factory, *, skip_input=None, retain=None):
+def fleet(inventory, budget, executor_factory, *, lock_path, skip_input=None, retain=None):
     """Every pinned host, coordinator first; each raw receipt kept when `retain`.
 
-    Refuses missing pins, unreadable or unfinished owners, unfinished source
-    staging and live recorded owners or descendants. `skip_input` is
-    `(request SHA, coordinator machine ID)`: only this snapshot's own owner.
+    Refuses missing pins; unreadable, truncated, unfinished or linked owner
+    records; unfinished source staging; live recorded owners and members of
+    their sessions or process groups; and any other live process that holds the
+    production lock, carries the inherited-lock variable or runs the deploy
+    wrapper. Only the probing process and its ancestors are exempt, and on the
+    coordinator `skip_input` names this snapshot's own owner record.
     """
     coordinator = inventory.lock['machine_id']
     hosts = [('coordinator', coordinator, LocalHost())]
@@ -707,7 +726,7 @@ def fleet(inventory, budget, executor_factory, *, skip_input=None, retain=None):
     receipts = []
     for name, machine, reader in hosts:
         try:
-            receipt = dict(fleet_host(name, machine, reader, budget, skip_input=skip_input), result='passed')
+            receipt = dict(fleet_host(name, machine, reader, budget, lock_path, skip_input=skip_input), result='passed')
         except BaseException as error:
             receipt = {'host':name, 'machine_id':machine, 'result':'refused', 'error_type':type(error).__name__,
                        'error':str(error)[:300]}
@@ -756,21 +775,98 @@ class Systemd:
 
 
 class Node:
-    """Independent canonical block hashes from the coordinator's own node."""
+    """Independent canonical block hashes from the coordinator's own node.
 
-    def block_hash(self, height, timeout):
-        cookie = COOKIE.read_text().strip()
-        body = json.dumps({'jsonrpc':'2.0', 'id':height, 'method':'getblockhash', 'params':[height]}).encode()
-        request = urllib.request.Request(RPC, body, {'Content-Type':'application/json',
-            'Authorization':'Basic '+base64.b64encode(cookie.encode()).decode()})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=timeout) as response:
-            raw = response.read(65537)
-        require(len(raw) <= 65536, 'anchor RPC response exceeds bound')
-        result = json.loads(raw)
-        require(result.get('id') == height and result.get('error') is None and
+    One aggregate deadline bounds connect, send and every receive, so a node
+    that trickles bytes cannot extend it. Only a direct `200` answer from the
+    fixed loopback endpoint is accepted: no proxy and no redirect. Failures
+    report only their type; credential-bearing text never reaches a message.
+    """
+
+    def block_hash(self, height, budget):
+        end = time.monotonic()+min(RPC_SECONDS, budget.seconds())
+        try:
+            payload = exchange(height, end)
+        except subprocess.TimeoutExpired:
+            raise
+        except ValueError as error:
+            raise ValueError('anchor RPC refused: %s' % error) from None
+        except Exception as error:
+            raise ValueError('anchor RPC failed: %s' % type(error).__name__) from None
+        try:
+            result = json.loads(payload)
+        except ValueError:
+            raise ValueError('anchor RPC refused: invalid JSON response') from None
+        require(isinstance(result, dict) and result.get('id') == height and result.get('error') is None and
                 isinstance(result.get('result'), str) and HEX.fullmatch(result['result']), 'invalid anchor RPC response')
         return result['result']
+
+
+def exchange(height, end):
+    """One HTTP/1.1 JSON-RPC POST with `Connection: close`, read to EOF by `end`."""
+    def left():
+        remaining = end-time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired('anchor RPC', RPC_SECONDS)
+        return remaining
+    cookie = read_small(COOKIE, 4096).decode().strip()
+    body = json.dumps({'jsonrpc':'2.0', 'id':height, 'method':'getblockhash', 'params':[height]}).encode()
+    head = ('POST / HTTP/1.1\r\nHost: %s:%d\r\nContent-Type: application/json\r\nAuthorization: Basic %s\r\n'
+            'Content-Length: %d\r\nConnection: close\r\n\r\n' % (RPC[0], RPC[1], base64.b64encode(cookie.encode()).decode(),
+                                                               len(body))).encode()
+    connection = socket.create_connection(RPC, timeout=left())
+    try:
+        connection.setblocking(False)
+        outgoing, response = head+body, b''
+        while outgoing:
+            if not select.select([], [connection], [], left())[1]:
+                left(); continue
+            outgoing = outgoing[connection.send(outgoing):]
+        while True:
+            if not select.select([connection], [], [], left())[0]:
+                left(); continue
+            chunk = connection.recv(8192)
+            if not chunk:
+                break
+            response += chunk
+            require(len(response) <= MAX_RPC_BODY+8192, 'response exceeds bound')
+    finally:
+        connection.close()
+    header, separator, payload = response.partition(b'\r\n\r\n')
+    require(separator, 'incomplete response')
+    lines = header.split(b'\r\n')
+    status = lines[0].split()
+    require(len(status) >= 2 and status[0] in (b'HTTP/1.0', b'HTTP/1.1') and status[1] == b'200',
+            'status is not 200; redirects and errors are not followed')
+    headers = {}
+    for line in lines[1:]:
+        key, colon, value = line.partition(b':')
+        require(colon and key.strip().lower() not in headers, 'malformed response header')
+        headers[key.strip().lower()] = value.strip().lower()
+    if b'transfer-encoding' in headers:
+        require(headers[b'transfer-encoding'] == b'chunked' and b'content-length' not in headers, 'unsupported transfer encoding')
+        payload = dechunk(payload)
+    else:
+        require(b'content-length' in headers and headers[b'content-length'].isdigit() and
+                int(headers[b'content-length']) == len(payload), 'response length differs')
+    require(len(payload) <= MAX_RPC_BODY, 'response exceeds bound')
+    return payload
+
+
+def dechunk(data):
+    body = b''
+    while True:
+        size, separator, data = data.partition(b'\r\n')
+        size = size.split(b';', 1)[0].strip()
+        require(separator and size and len(size) <= 8 and all(c in b'0123456789abcdefABCDEF' for c in size),
+                'malformed chunk')
+        size = int(size, 16)
+        if size == 0:
+            return body
+        require(len(data) >= size+2 and data[size:size+2] == b'\r\n', 'truncated chunk')
+        body += data[:size]
+        require(len(body) <= MAX_RPC_BODY, 'response exceeds bound')
+        data = data[size+2:]
 
 
 # --- the operation ------------------------------------------------------------
@@ -925,7 +1021,7 @@ class Snapshot:
         self.pinned(self.inventory)
         schema_fence.local_schema_fence()
         # Every pinned host, under the caller's production lock for stage.
-        hosts = fleet(self.inventory, budget, self.executor, retain=retain)
+        hosts = fleet(self.inventory, budget, self.executor, lock_path=self.lock_path, retain=retain)
         self.namespace()
         self.publication()
         journal_root()
@@ -954,7 +1050,7 @@ class Snapshot:
             return {'status':'absent', 'request_sha256':self.identifier}
         record = self.load()
         if record['status'] == 'staged':
-            verify_tree(self.target, record['manifest'], full=False)
+            manifest_of(self.target, record['manifest'])
         return record
 
     def save(self, record):
@@ -972,7 +1068,8 @@ class Snapshot:
         checks += [(pairs[i], pairs[i+1]) for i in range(0, len(pairs), 2)]
         observed = []
         for height, expected in checks:
-            actual = self.node.block_hash(height, timeout=min(10, budget.seconds()))
+            budget.check()
+            actual = self.node.block_hash(height, budget)
             require(actual == expected, 'canonical anchor differs at height %d; the chain or journal reorganized' % height)
             observed.append({'height':height, 'hash':actual})
         return {'unix':time.time(), 'anchors':observed}
@@ -1058,7 +1155,7 @@ class Snapshot:
                 inherited_lock.descriptors(required=True, path=self.lock_path)
                 schema_fence.local_schema_fence(skip_input=self.identifier)
                 inventory = self.owned_inventory(record)
-                record['hosts'] = fleet(inventory, total, self.executor, retain=self.receipts('owner'),
+                record['hosts'] = fleet(inventory, total, self.executor, lock_path=self.lock_path, retain=self.receipts('owner'),
                                         skip_input=(self.identifier, self.request['machine_id']))
                 original = self.running(self.writer['main_pid'], self.writer['process_start'])
                 before = committed(JOURNAL, self.request)
@@ -1208,13 +1305,13 @@ class Snapshot:
             output.write(raw); output.flush(); os.fchmod(output.fileno(), 0o400); os.fsync(output.fileno())
         sync_dir(self.partial)
         manifest_sha = hashlib.sha256(raw).hexdigest()
-        verify_tree(self.partial, manifest_sha, full=False)
+        manifest_of(self.partial, manifest_sha)
         total.check()
         inherited_lock.descriptors(required=True, path=self.lock_path)
         require(not self.target.exists(), 'journal snapshot target appeared')
         os.rename(self.partial, self.target)
         sync_dir(SNAPSHOTS)
-        verify_tree(self.target, manifest_sha, full=False)
+        manifest_of(self.target, manifest_sha)
         self.phase(record, 'retained', manifest=manifest_sha, target=str(self.target))
 
     # Restoration of the exact owned writer.
@@ -1307,7 +1404,7 @@ class Snapshot:
             inventory = self.owned_inventory(record)
             require(self.pinned(self.inventory) == self.pinned(inventory),
                     'reconcile inventory differs from the retained snapshot inventory')
-            hosts = fleet(inventory, self.budget('journal snapshot reconcile'), self.executor,
+            hosts = fleet(inventory, self.budget('journal snapshot reconcile'), self.executor, lock_path=self.lock_path,
                           retain=self.receipts('reconcile'), skip_input=(self.identifier, self.request['machine_id']))
             previous = record['phase']
             stop_issued = PHASES.index(previous) >= PHASES.index('quiescing')
@@ -1634,8 +1731,8 @@ def inspect(root, request, expected, budget):
             'records':result}
 
 
-def verify_tree(root, manifest_sha256, *, full, request=None, budget=None):
-    """The retained snapshot; the full form re-derives everything within `budget`."""
+def manifest_of(root, manifest_sha256):
+    """Status only: private file set, sizes and manifest digest. Not verification."""
     root = Path(root)
     structure(root)
     require(set(os.listdir(root)) == {'journal', 'manifest.json'}, 'snapshot top-level set differs')
@@ -1647,10 +1744,50 @@ def verify_tree(root, manifest_sha256, *, full, request=None, budget=None):
     for name in FILES:
         require((root/'journal'/name).lstat().st_size == manifest['contents']['files'][name]['size'],
                 'snapshot file size differs')
-    if full:
-        require(budget is not None and request is not None, 'full snapshot verification needs its request and budget')
-        expected = expected_hashes(request, manifest)
-        require(inspect(root, request, expected, budget) == manifest['contents'], 'snapshot contents differ from the manifest')
+    return manifest
+
+
+def verify_tree(root, manifest_sha256, *, request, budget):
+    """Full verification: re-derive every digest, boundary and anchor within `budget`."""
+    manifest = manifest_of(root, manifest_sha256)
+    require(isinstance(budget, Budget), 'full snapshot verification needs a budget')
+    require(inspect(root, request, expected_hashes(request, manifest), budget) == manifest['contents'],
+            'snapshot contents differ from the manifest')
+    return manifest
+
+
+def verify_snapshot(request_sha256, *, deadline, guard, health=None):
+    """Full re-verification for a consumer, such as root's oracle, under its own lock.
+
+    Contract: `deadline` is an absolute `time.monotonic()` bound the caller
+    chose. `guard` is called before the first read and then with every resource
+    sample, at most once a second, and must raise when the caller's production
+    lock or other preconditions no longer hold. `health`, when given, receives
+    every sample and refusal. The snapshot must be `staged` by its own owner.
+    Every file digest, record boundary, independently observed anchor, coverage
+    hash and sidecar is re-derived from the private copy within the deadline,
+    with the 20% memory and disk floors. There is no manifest-only form; status
+    output is not verification.
+    """
+    require(callable(guard), 'snapshot verification needs a guard')
+    require(type(deadline) in (int, float) and deadline > time.monotonic(), 'snapshot verification needs a future deadline')
+    require(isinstance(request_sha256, str) and HEX.fullmatch(request_sha256), 'invalid journal snapshot request digest')
+    guard()
+    retained = OWNERS/(request_sha256+'.request.json')
+    no_links(retained)
+    require(retained.lstat().st_size <= MAX_REQUEST, 'retained journal snapshot request exceeds bound')
+    request = validate(json.loads(retained.read_text(), object_pairs_hook=I.unique))
+    require(digest(request) == request_sha256, 'retained journal snapshot request differs')
+    snapshot = Snapshot(None, request, request_sha256)
+    record = snapshot.load()
+    require(record['status'] == 'staged' and record.get('target') == str(snapshot.target) and
+            isinstance(record.get('manifest'), str), 'journal snapshot is not staged')
+    budget = Budget(deadline, 'journal snapshot consumer verification', health=health, guard=guard)
+    manifest = verify_tree(snapshot.target, record['manifest'], request=request, budget=budget)
+    require(manifest['request_sha256'] == request_sha256 and manifest['qualification'] == NOT_QUALIFICATION,
+            'journal snapshot manifest names another request')
+    guard()
+    budget.check()
     return manifest
 
 

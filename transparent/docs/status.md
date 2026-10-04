@@ -114,8 +114,21 @@ Root's provisional review then asked for more assurance, and the path now:
 - reserves disk for the exact bytes still to be copied under quiescence;
 - re-runs the record-boundary and anchor checks over the copied blocks.
 
-Sixty-seven focused tests passed, and all 50 single-guard mutations were caught.
-No host was contacted and no snapshot was taken; see
+A second provisional review found that the all-host check could still miss
+orphaned descendants and older owners. The path now:
+
+- probes every retained owner record and every live process on each host;
+- refuses live recorded owners and members of their sessions or process groups,
+  with an exact fixture for a dead recorded parent and its live orphaned native
+  child;
+- refuses unrecorded live processes that hold the production lock, carry the
+  inherited-lock variable or run the wrapper;
+- bounds the anchor RPC by one aggregate deadline, with no redirects and
+  sanitized errors;
+- exposes a full-verification contract for root's locked consumer.
+
+Seventy-eight focused tests passed, and all 67 single-guard mutations, including
+the helper's, were caught. No host was contacted and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
 
 ## Activity metadata candidate, 2026-09-30

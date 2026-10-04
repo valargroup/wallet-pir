@@ -1618,29 +1618,46 @@ does not contend refuses, because that would mean the protocols differ. A POSIX
 `lockf` holder also refuses. Plan does not contend.
 
 **Every pinned host.** Before any effect, preflight, stage, the owner and
-reconcile each read every pinned inventory host afresh, including the
-coordinator. Remote hosts are read through three read-only deploy-helper
-operations over pinned SSH: `read_many`, `list_json` and `proc_stats`. Each
-read is bounded and never follows a link. On each host:
+reconcile each probe every pinned inventory host afresh, including the
+coordinator. Remote hosts are probed through one read-only deploy-helper
+operation, `ownership_probe`, over pinned SSH. On each host the probe returns:
 
-- `/etc/machine-id` must equal the host's pin. A host without a pin, or one that
-  cannot be reached or read, refuses.
-- The shared schema fence runs over that host's schema, host-action and
-  input-staging owner pointers and records. A missing, malformed or unfinished
-  owner refuses; only this snapshot's own coordinator owner is exempt.
-- Every source-staging receipt must be `staged` or `failed`.
-- Every PID a pointed owner or source receipt records must not still be running.
-  Only top-level PID fields and its `launcher` and `owner` objects count. A
-  recorded kernel start time must not match a live process. Without one, a live
-  process started no later than the record's last update refuses, because it
-  could be the owner or a descendant; a missing record time fails closed. A
-  restored writer that a proof merely observed is not an owner.
+- `/etc/machine-id`, which must equal the host's pin. A host without a pin, or
+  one that cannot be reached or read, refuses.
+- **Every retained owner record.** That is every `*.json` up to two levels deep
+  under the schema state, host-action, input-staging and source-staging
+  namespaces, except `*.request.json`. More than 4096 records, more than 64 MiB,
+  a record over 1 MiB or any link refuses rather than truncating.
+- **Every live process,** up to 65,536 processes and 2^20 descriptors in total;
+  more refuses. For each: its stat line (PID, parent, process group, session and
+  kernel start time), and three yes-or-no markers. It holds the production lock
+  file open; its environment carries `WALLET_PIR_PRODUCTION_LOCK_FDS`; its command
+  line runs `wallet-pir-deploy.py`. Environment and command-line contents are
+  never returned or retained. Evidence that cannot be read is reported as
+  unknown. Only the probing process and its ancestors are exempt.
+- **The production lock's kernel holders** from `/proc/locks`.
 
-Under a lock, the raw reads, process observations and result for each host are
-kept at mode 0400 under
+The coordinator then refuses if any of these hold:
+
+- the shared schema fence fails over that host's latest owner pointers;
+- a source-staging receipt is not `staged` or `failed`;
+- **any** retained owner record names a live owner. Top-level PID fields and the
+  `launcher` and `owner` objects count. A recorded kernel start time must not
+  match; without one, a process started no later than the record's last update
+  could be the owner, and a missing record time fails closed;
+- a live process shares the session or process group of a recorded owner PID.
+  Descendants keep both after their owner exits and they are reparented, so a
+  dead recorded parent with a live orphaned native child refuses. Only a reused
+  PID whose newer leader started every such member is accepted;
+- any other live process holds the production lock, carries the inherited-lock
+  variable or runs the deploy wrapper, whether or not a record names it;
+- any process's ownership evidence is unreadable;
+- a remote host's production lock has any kernel holder. The coordinator's lock
+  is this operation's own.
+
+On the coordinator only this snapshot's own owner record is exempt. Each host's
+raw probe and result, including refusals, are kept at mode 0400 under
 `/srv/transparent-activity/ops/input-staging/<request SHA>.snapshot-fleet/<stage|owner|reconcile>-<time>/<host>.json`.
-A refused host keeps its receipt too. Records the pointers do not name, other
-than source receipts, are outside this check.
 
 **One total bound.** `total_seconds` starts when stage begins. It runs through
 the owner's adoption, pre-copy, copy, anchors and full re-verification; the owner
@@ -1732,6 +1749,16 @@ PID and start time durably. Restoration is proven only when the new PID passes
 the same identity, interplay, cgroup, executable and lock checks, does not
 restart during the proof, and memory and disk meet the floors.
 
+**Anchor RPC.** Each node anchor is one HTTP/1.1 JSON-RPC POST, with
+`Connection: close`, to the fixed loopback endpoint. There is no proxy. One
+aggregate deadline bounds connect, send and every receive, so trickled bytes
+cannot extend it. That deadline is the smaller of the publication job's existing
+10-second per-anchor bound and the remaining total. Only a direct `200` answer
+with a matching length or bounded chunked body up to 64 KiB is accepted, so
+redirects and errors are never followed. A failure reports only its exception
+type; the cookie never reaches a message. `Budget.seconds` returns the exact time
+remaining and never rounds up past the total.
+
 After restoration, the owner checks the node anchors again at genesis, the
 publication anchor, the pre-quiescence tip and the snapshot tip. Within the
 remaining total, with sampled floors, it then re-reads the private copy alone. It
@@ -1758,9 +1785,23 @@ sidecar policy summary and coverage, the host receipts' digests, the writer
 identities and the anchors. Only then, and only within the total, does it rename
 the partial directory to
 `/srv/transparent-activity/snapshots/journal/<request SHA>/` and record `staged`.
-Status checks the private single-link file set, sizes and the manifest digest.
-A full re-verification of a retained snapshot requires an explicit budget and
-repeats the same record and anchor checks.
+Status checks only the private single-link file set, sizes and the manifest
+digest; it is not verification.
+
+**Consumer contract.** Root's locked oracle consumer verifies a snapshot with
+`activity_journal_snapshot.verify_snapshot(request_sha256, deadline=...,
+guard=..., health=None)`; there is no manifest-only adapter. The arguments are:
+
+- `deadline` is an absolute `time.monotonic()` bound the consumer chooses.
+- `guard` is called before the first read, with every resource sample (at most
+  once a second) and at the end. It must raise when the consumer's production
+  lock or other preconditions no longer hold.
+- `health`, when given, receives every sample and refusal.
+
+The snapshot must be `staged` by its own owner. Within the deadline and the 20%
+floors, the call re-derives every file digest, record boundary, independently
+observed anchor, coverage hash and sidecar from the private copy, and refuses on
+any difference.
 
 **Failure and reconciliation.** Any other outcome records `failed`,
 `interrupted` or `restore-failed`. The owner, the sidecar inventory, the host
