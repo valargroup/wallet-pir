@@ -248,18 +248,20 @@ class FakeExecutor:
         failure = self.root/('hosts/%s.unreachable' % host)
         if failure.exists():
             raise S.RemoteError('%s: %s failed (exit 255): connection refused' % (host, op))
-        assert op == 'ownership_probe' and set(arguments) == {'roots', 'lock_path', 'machine_id_path'}
+        assert op == 'ownership_probe' and set(arguments) == {'roots', 'lock_path', 'machine_id_path', 'classes'}
         base = self.root/'hosts'/host
         local = lambda path: str(base/str(path).lstrip('/'))
         probe = S.host_helper.ownership_probe([local(r) for r in arguments['roots']], local(arguments['lock_path']),
-                                              local(arguments['machine_id_path']), proc=str(base/'proc'))
-        # Record names as the remote host reports them, in its own namespace.
+                                              local(arguments['machine_id_path']), arguments['classes'], proc=str(base/'proc'))
+        # Names as the remote host reports them, in its own namespace.
         probe['records'] = {'/'+str(Path(k).relative_to(base)):v for k, v in probe['records'].items()}
+        probe['files'] = [['/'+str(Path(k).relative_to(base)), size, kind] for k, size, kind in probe['files']]
         return json.loads(json.dumps(probe))
 
 
 BOOT = int(time.time())-100000
 TICKS = os.sysconf('SC_CLK_TCK')
+BOOT_ID = '6f0c1d6e-0000-4000-8000-000000000001'
 
 
 def fake_proc(proc):
@@ -267,10 +269,13 @@ def fake_proc(proc):
     proc.mkdir(parents=True, exist_ok=True)
     (proc/'stat').write_text('cpu 0 0 0 0\nbtime %d\n' % BOOT)
     (proc/'locks').touch()
+    (proc/'sys/kernel/random').mkdir(parents=True, exist_ok=True)
+    (proc/'sys/kernel/random/boot_id').write_text(BOOT_ID+'\n')
 
 
 def fake_process(proc, pid, *, started, ppid=1, pgrp=None, session=None, state='S', lock=None,
-                 inherited=False, wrapper=False, unreadable=False):
+                 inherited=False, wrapper=False, unreadable=False, exe='/usr/bin/sleep', argv=None,
+                 cgroup='/user.slice/session-1.scope'):
     base = proc/str(pid)
     (base/'fd').mkdir(parents=True)
     fields = [state, str(ppid), str(pgrp or pid), str(session or pid), *['0']*15, str(int((started-BOOT)*TICKS)), *['0']*5]
@@ -278,7 +283,10 @@ def fake_process(proc, pid, *, started, ppid=1, pgrp=None, session=None, state='
     if lock is not None:
         os.symlink(lock, base/'fd'/'3')
     (base/'environ').write_bytes(b'PATH=/usr/bin\0'+(b'WALLET_PIR_PRODUCTION_LOCK_FDS=3\0' if inherited else b''))
-    (base/'cmdline').write_bytes(b'/usr/bin/python3\0'+(b'/srv/s/ops/scripts/wallet-pir-deploy.py\0' if wrapper else b'native\0'))
+    argv = argv or ['/usr/bin/python3', '/srv/s/ops/scripts/wallet-pir-deploy.py' if wrapper else 'native']
+    (base/'cmdline').write_bytes(b''.join(a.encode()+b'\0' for a in argv))
+    os.symlink(exe, base/'exe')
+    (base/'cgroup').write_text('0::%s\n' % cgroup)
     if unreadable:
         (base/'fd').chmod(0)
     return base
@@ -1512,19 +1520,101 @@ class Fleet(Fixture):
         namespace = self.remote(S.schema_fence.INPUT_STAGING)
         namespace.mkdir(parents=True, exist_ok=True)
         (namespace/'old.json').symlink_to(self.root/'elsewhere.json')
-        with self.assertRaisesRegex(ValueError, 'contains a link'):
-            self.snapshot().preflight()
+        self.refuses('contains a link')
         (namespace/'old.json').unlink()
         (namespace/'big.json').write_text(' '*((1 << 20)+1))
-        with self.assertRaisesRegex(ValueError, 'exceeds read bound'):
-            self.snapshot().preflight()
+        self.refuses('exceeds read bound')
         (namespace/'big.json').unlink()
         (namespace/'x.request.json').write_text(' '*((1 << 20)+1))  # Requests carry no owners.
+        os.mkfifo(namespace/'pipe')
+        self.refuses('special file')
+        (namespace/'pipe').unlink()
+        deep = namespace
+        for level in range(9):
+            deep = deep/('d%d' % level)
+        deep.mkdir(parents=True)
+        self.refuses('exceeds the depth bound')
+        shutil.rmtree(namespace/'d0')
         self.snapshot().preflight()
-        for number in range(4097):
-            (namespace/('%d.json' % number)).write_text('{}')
-        with self.assertRaisesRegex(ValueError, 'exceed the record bound'):
-            self.snapshot().preflight()
+
+    def test_every_namespace_entry_is_enumerated_within_bounds(self):
+        # A schema transaction's phase logs sit two levels down; owners deeper still are read.
+        schema = self.remote(S.schema_fence.SCHEMA_STATE)
+        (schema/'transparent-schema-x/forward').mkdir(parents=True)
+        (schema/'transparent-schema-x/forward/00-stage-1.log').write_text('log')
+        self.worker_record(S.schema_fence.SCHEMA_STATE/'transparent-schema-x/forward/deep.owner.json',
+                           {'status':'passed', 'child':{'pid':4900, 'start_ticks':5}})
+        receipts = self.remote(S.schema_fence.INPUT_STAGING/('a'*64+'.snapshot-fleet/owner-1'))
+        receipts.mkdir(parents=True)
+        (receipts/'worker-01.json').write_text('not parsed: receipts hold copies')
+        snapshot = self.snapshot()
+        snapshot.preflight()
+        probe = S.fleet_host('worker-01', WORKER, S.RemoteHost(S.SSHExecutor(self.inventory), 'worker-01'),
+                             S.Budget(time.monotonic()+30, 'test'), S.ProductionLock.PATH)['probe']
+        kinds = {Path(p).name:kind for p, _, kind in probe['files']}
+        self.assertEqual((kinds['00-stage-1.log'], kinds['deep.owner.json'], kinds['worker-01.json']),
+                         ('other', 'record', 'receipt'))
+        fake_process(self.proc, 4900, started=BOOT+5.5/TICKS)  # Kernel start tick 5.
+        self.refuses('live recorded owner PID 4900')
+        for limit, message in ((2, 'entry bound'),):
+            with self.assertRaisesRegex(ValueError, message):
+                S.host_helper.owner_records([str(schema)], limit, 1 << 20)
+        with self.assertRaisesRegex(ValueError, 'byte bound'):
+            S.host_helper.owner_records([str(schema)], 100, 10)
+
+    def test_owned_child_and_children_identities_count_and_observations_do_not(self):
+        record = {'status':'staged', 'finished_unix':time.time()-60,
+                  'child':{'pid':101, 'start_ticks':100},
+                  'children':[{'identity':{'pid':102, 'start_ticks':101}}],
+                  'launch':{'owner':{'pid':103, 'process_start':102, 'boot_id':BOOT_ID}},
+                  'restoration':{'writer':{'pid':104, 'process_start':103}}, 'writer_before':{'pid':105}}
+        found = {(pid, start) for pid, start, _, _ in S.owner_processes(record)}
+        self.assertEqual(found, {(101, 100), (102, 101), (103, 102)})
+        for pid, ticks in ((101, 100), (102, 101), (103, 102)):
+            base = fake_process(self.proc, pid, started=BOOT+(ticks+.5)/TICKS)
+            self.worker_input(record)
+            with self.subTest(pid=pid):
+                self.refuses('live recorded owner PID %d' % pid)
+            shutil.rmtree(base)
+        fake_process(self.proc, 104, started=time.time()-600)  # Observed writer only.
+        fake_process(self.proc, 105, started=time.time()-600)
+        self.snapshot().preflight()
+        # An identity from an earlier boot names no live process.
+        fake_process(self.proc, 103, started=BOOT+102.5/TICKS)
+        self.worker_input(dict(record, launch={'owner':{'pid':103, 'process_start':102, 'boot_id':'earlier-boot'}}))
+        self.snapshot().preflight()
+        self.worker_input(record)
+        self.refuses('live recorded owner PID 103')
+
+    def test_detached_native_survivor_without_markers_refuses(self):
+        # Own session, reparented, lock descriptor and environment gone, no wrapper argv.
+        tool = str(S.P.ROOT/'build/evidence/release-x/artifacts/shard-publish')
+        base = fake_process(self.proc, 5000, started=time.time()-30, ppid=1, exe=tool, argv=[tool, '--data-dir', 'j'])
+        self.refuses('unattributable live mutation or native process: PID 5000')
+        shutil.rmtree(base)
+        base = fake_process(self.proc, 5001, started=time.time()-30, exe='/usr/bin/python3',
+                            argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'transparent/ops/lib/x.py')])
+        self.refuses('unattributable live mutation or native process: PID 5001')
+        shutil.rmtree(base)
+        base = fake_process(self.proc, 5002, started=time.time()-30, exe='/tmp/copied', argv=['event-spotcheck'])
+        self.refuses('PID 5002')
+        shutil.rmtree(base)
+        # The same classes inside a reviewed long-running service are attributable.
+        fake_process(self.proc, 5003, started=time.time()-30, exe='/usr/bin/python3',
+                     argv=['/usr/bin/python3', '-B', str(S.I.SOURCE/('a'*40)/'transparent/ops/scripts/transparent-live-fleet.py')],
+                     cgroup='/system.slice/transparent-publish-controller.service')
+        fake_process(self.proc, 5004, started=time.time()-30, exe='/usr/local/bin/transparent-shard-server',
+                     cgroup='/system.slice/transparent-shard-server.service')
+        self.snapshot().preflight()
+        base = fake_process(self.proc, 5005, started=time.time()-30, exe=tool,
+                            cgroup='/system.slice/transparent-activity-full-publication-v11.service')
+        self.refuses('PID 5005')  # A transient operation unit is not a reviewed service.
+
+    def test_parent_closure_attributes_unmarked_children_of_live_wrappers(self):
+        fake_process(self.proc, 5100, started=time.time()-30, wrapper=True)
+        fake_process(self.proc, 5101, started=time.time()-20, ppid=5100, session=5101)
+        fake_process(self.proc, 5102, started=time.time()-10, ppid=5101, session=5102)
+        self.refuses('live wrapper process or descendant: PID 5100, 5101, 5102')
 
     def test_probe_reads_real_proc_markers_without_contents(self):
         lock = self.root/'real.lock'
@@ -1535,7 +1625,7 @@ class Fleet(Fixture):
                                   env=dict(os.environ, WALLET_PIR_PRODUCTION_LOCK_FDS='3'))
         holder.stdout.readline(); holder.stdout.close()
         self.addCleanup(release, holder)
-        probe = S.host_helper.ownership_probe([], str(lock), str(S.MACHINE_ID))
+        probe = S.host_helper.ownership_probe([], str(lock), str(S.MACHINE_ID), {'roots':[], 'tools':[]})
         entries = {p['pid']:p for p in probe['processes']}
         self.assertEqual((entries[holder.pid]['lock_fd'], entries[holder.pid]['inherited']), (True, True))
         self.assertTrue(entries[os.getpid()].get('self'))
@@ -1785,6 +1875,15 @@ class Consumer(Fixture):
         S.manifest_of(snapshot.target, record['manifest'])  # Status alone cannot see the change.
         with self.assertRaisesRegex(ValueError, 'contents differ'):
             S.verify_snapshot(snapshot.identifier, deadline=time.monotonic()+60, guard=lambda: None)
+
+    def test_nonfinite_deadlines_refuse_before_any_read(self):
+        called = []
+        for deadline in (float('inf'), float('nan'), float('-inf')):
+            with self.subTest(deadline=deadline), self.assertRaisesRegex(ValueError, 'finite future deadline'):
+                S.verify_snapshot('a'*64, deadline=deadline, guard=lambda: called.append(1))
+            with self.assertRaisesRegex(ValueError, 'must be finite'):
+                S.Budget(deadline, 'test')
+        self.assertEqual(called, [])
 
     def test_unstaged_snapshots_refuse(self):
         state = self.systemd.state(); state['stop_error'] = True; self.systemd.write(state)

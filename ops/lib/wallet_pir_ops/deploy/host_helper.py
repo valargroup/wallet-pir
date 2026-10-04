@@ -165,17 +165,23 @@ def bounded(path, limit):
     return data
 
 
-def owner_records(roots, file_limit, byte_limit, record_limit=1 << 20):
-    """Every retained `*.json` owner record two levels deep, except requests.
+RECEIPTS = '.snapshot-fleet'
 
-    Truncation, links and oversized records refuse rather than being skipped:
-    an unread record could name a live owner.
+
+def owner_records(roots, entry_limit, byte_limit, depth_limit=8, record_limit=1 << 20):
+    """Every entry of the owner namespaces, to any depth within finite bounds.
+
+    Each non-request `*.json` file is returned as an owner record. Snapshot
+    receipt trees (`*.snapshot-fleet`) hold copies, not owners: their files are
+    listed and type-checked but not parsed. Every other file is listed with its
+    size and kind. Exceeding a bound, a link or a special file refuses: nothing
+    below the bounds is skipped silently.
     """
-    records, total = {}, 0
+    records, files, total, entries = {}, [], 0, 0
     for root in roots:
-        stack = [(root, 0)]
+        stack = [(root, 0, False)]
         while stack:
-            path, depth = stack.pop()
+            path, depth, receipt = stack.pop()
             try:
                 info = os.lstat(path)
             except FileNotFoundError:
@@ -183,24 +189,42 @@ def owner_records(roots, file_limit, byte_limit, record_limit=1 << 20):
             if not stat.S_ISDIR(info.st_mode):
                 raise ValueError('owner namespace is not a directory: ' + path)
             for name in sorted(os.listdir(path)):
+                entries += 1
+                if entries > entry_limit:
+                    raise ValueError('owner namespaces exceed the entry bound')
                 child = os.path.join(path, name)
-                mode = os.lstat(child).st_mode
+                child_info = os.lstat(child)
+                mode = child_info.st_mode
                 if stat.S_ISLNK(mode):
                     raise ValueError('owner namespace contains a link: ' + child)
                 if stat.S_ISDIR(mode):
-                    if depth == 0:
-                        stack.append((child, 1))
+                    if depth+1 > depth_limit:
+                        raise ValueError('owner namespace exceeds the depth bound: ' + child)
+                    stack.append((child, depth+1, receipt or name.endswith(RECEIPTS)))
                     continue
-                if not name.endswith('.json') or name.endswith('.request.json'):
-                    continue
-                if len(records) >= file_limit:
-                    raise ValueError('owner namespaces exceed the record bound')
-                data = bounded(child, record_limit)
-                total += len(data)
-                if total > byte_limit:
-                    raise ValueError('owner namespaces exceed the byte bound')
-                records[child] = data.decode()
-    return records
+                if not stat.S_ISREG(mode):
+                    raise ValueError('owner namespace contains a special file: ' + child)
+                if receipt:
+                    kind = 'receipt'
+                elif name.endswith('.request.json'):
+                    kind = 'request'
+                elif name.endswith('.json'):
+                    kind = 'record'
+                    data = bounded(child, record_limit)
+                    total += len(data)
+                    if total > byte_limit:
+                        raise ValueError('owner namespaces exceed the byte bound')
+                    records[child] = data.decode()
+                else:
+                    kind = 'other'
+                files.append([child, child_info.st_size, kind])
+    return records, files
+
+
+def matches(value, roots, tools):
+    """Whether a path or argument belongs to an operation executable class."""
+    value = value[:-len(' (deleted)')] if value.endswith(' (deleted)') else value
+    return any(value.startswith(root.rstrip('/') + '/') for root in roots) or os.path.basename(value) in tools
 
 
 def process_chain(proc, pid):
@@ -216,18 +240,26 @@ def process_chain(proc, pid):
     return chain
 
 
-def ownership_probe(roots, lock_path, machine_id_path, proc='/proc', file_limit=4096, byte_limit=64 << 20,
+def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', entry_limit=65536, byte_limit=64 << 20,
                     process_limit=65536, fd_limit=1 << 20):
     """Read-only owner and process evidence of one host, in one bounded pass.
 
-    Returns the retained owner records, the production lock's kernel holders and
-    every live process: its stat line and whether it holds the lock file open,
-    carries the inherited-lock variable or runs the deploy wrapper. Environment
-    and command-line contents are never returned. Unreadable evidence is
-    reported, and every bound refuses instead of truncating.
+    Returns the owner namespace inventory and records, the production lock's
+    kernel holders, the boot identity and every live process: its stat line,
+    executable path and cgroup, and whether it holds the lock file open, carries
+    the inherited-lock variable, runs the deploy wrapper, or runs an executable
+    or argument of an operation class (`classes` names their roots and tool
+    names). Environment and command-line contents are never returned.
+    Unreadable evidence is reported, and every bound refuses.
     """
     machine = bounded(machine_id_path, 4096).decode()
-    records = owner_records(roots, file_limit, byte_limit)
+    records, files = owner_records(roots, entry_limit, byte_limit)
+    try:
+        with open(os.path.join(proc, 'sys/kernel/random/boot_id')) as handle:
+            boot_id = handle.read().strip()
+    except FileNotFoundError:
+        boot_id = None
+    roots_class, tools = classes['roots'], set(classes['tools'])
     try:
         lock = os.stat(lock_path)
     except FileNotFoundError:
@@ -283,14 +315,34 @@ def ownership_probe(roots, lock_path, machine_id_path, proc='/proc', file_limit=
                 if len(data) > limit:
                     unknown.append(name)
                 entry[key] = marker in data
+                if name == 'cmdline':
+                    argv = [a.decode(errors='replace') for a in data.split(b'\0') if a]
+                    entry['class_argv'] = any(matches(a, roots_class, tools) for a in argv[:1]) or \
+                        any(a.startswith('/') and matches(a, roots_class, ()) for a in argv)
             except (FileNotFoundError, ProcessLookupError):
                 entry[key] = False
+                entry.setdefault('class_argv', False)
             except PermissionError:
                 unknown.append(name)
+        try:
+            entry['exe'] = os.readlink(os.path.join(base, 'exe'))
+            entry['class_exe'] = matches(entry['exe'], roots_class, tools)
+        except (FileNotFoundError, ProcessLookupError):
+            entry['exe'], entry['class_exe'] = None, False  # Kernel threads have none.
+        except PermissionError:
+            unknown.append('exe')
+        try:
+            with open(os.path.join(base, 'cgroup')) as handle:
+                entry['cgroup'] = next((line.strip().split(':', 2)[2] for line in handle if line.startswith('0::')), None)
+        except (FileNotFoundError, ProcessLookupError):
+            entry['cgroup'] = None
+        except PermissionError:
+            unknown.append('cgroup')
         if unknown:
             entry['unknown'] = unknown
         processes.append(entry)
-    return {'machine_id': machine, 'records': records, 'lock_holders': holders, 'boot_unix': boot,
+    return {'machine_id': machine, 'records': records, 'files': files, 'lock_holders': holders, 'boot_unix': boot,
+            'boot_id': boot_id,
             'ticks': os.sysconf('SC_CLK_TCK'), 'processes': processes}
 
 

@@ -127,7 +127,17 @@ orphaned descendants and older owners. The path now:
   sanitized errors;
 - exposes a full-verification contract for root's locked consumer.
 
-Seventy-eight focused tests passed, and all 67 single-guard mutations, including
+A third provisional review then added further requirements, and the path now:
+
+- counts owned `launch`, `child` and `children` identities with `start_ticks` and
+  boot identity;
+- walks the whole owner namespace within finite bounds;
+- closes over live descendants by parent PID;
+- refuses unattributable survivors of operation executable and argument classes
+  outside reviewed service units;
+- refuses non-finite deadlines.
+
+Eighty-three focused tests passed, and all 81 single-guard mutations, including
 the helper's, were caught. No host was contacted and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
 

@@ -38,6 +38,7 @@ snapshot is input for root's oracle and candidate gates; it qualifies nothing.
 """
 import hashlib
 import importlib.util
+import math
 import json
 import os
 from pathlib import Path
@@ -215,6 +216,18 @@ def process_start(pid):
     except (FileNotFoundError, ProcessLookupError):
         return None
     return int(raw.rsplit(')', 1)[1].split()[19])
+
+
+def boot_id():
+    try:
+        return (PROC/'sys/kernel/random/boot_id').read_text().strip()
+    except FileNotFoundError:
+        return None
+
+
+def identity_of(pid):
+    """A process identity that survives PID reuse and reboots."""
+    return {'pid':pid, 'process_start':process_start(pid), 'boot_id':boot_id()}
 
 
 def process_active(pid, start):
@@ -531,6 +544,7 @@ class Budget:
     """
 
     def __init__(self, deadline, label, *, reserve=0, health=None, guard=None):
+        require(type(deadline) in (int, float) and math.isfinite(deadline), 'budget deadline must be finite')
         self.deadline, self.label, self.reserve = deadline, label, reserve
         self.health, self.guard = health, guard
         self.copied, self.last = 0, float('-inf')
@@ -578,6 +592,14 @@ class Budget:
 PID_FIELDS = ('pid', 'child_pid', 'ssh_pid', 'relay_pid', 'parent_pid', 'launcher_pid')
 SOURCE_STATES = ('staged', 'failed')
 FLEET_PROC = Path('/proc')
+H = module('journal_snapshot_schema_host', HERE/'activity_schema_host.py')
+# Reviewed long-running service units whose processes are attributable to the
+# unit rather than to an operation (activity_schema_host.UNITS and QUALITY).
+SERVICES = frozenset(u for units in H.UNITS.values() for u in units) | {H.QUALITY}
+# Operation executable and argument classes: retained release, candidate and
+# worker artifacts, staged operation sources, and the native tools by name.
+CLASS_ROOTS = (P.ROOT/'build', C.ROOT, I.WORKER_ROOT, I.CANDIDATE_WORKERS, I.SOURCE)
+TOOLS = frozenset({Path(name).name for name in C.SUPPLEMENTAL_PINS} | {'shard-assign', 'shard-control'})
 
 
 class LocalHost:
@@ -598,26 +620,45 @@ class RemoteHost:
         return self.executor.call(self.host, 'ownership_probe', deadline=budget.seconds(), **arguments)
 
 
-def owner_processes(record):
-    """(pid, recorded start, latest record time) for the record's own processes.
+OWNED = ('launch', 'launcher', 'owner', 'child', 'children')
 
-    Only owner fields count: top-level PID fields and the `launcher` and `owner`
-    objects. Processes a record merely observed, such as a restored writer in
-    a proof, are not its owners and are excluded.
+
+def owned_holders(value, depth=0):
+    """A record's own process identities: itself and its owned containers.
+
+    `launch`, `launcher`, `owner`, `child` and `children` (a list) name processes
+    the record started or ran as; each may carry an `identity` object and nest
+    further owned containers. Anything else, such as a restored writer inside a
+    proof, is an observation, not an owner.
     """
+    if not isinstance(value, dict) or depth > 4:
+        return []
+    found = [value]
+    if isinstance(value.get('identity'), dict):
+        found.append(value['identity'])
+    for key in OWNED:
+        items = value.get(key)
+        for item in items if isinstance(items, list) else [items]:
+            found += owned_holders(item, depth+1)
+    return found
+
+
+def owner_processes(record):
+    """(pid, recorded start, latest record time, boot identity) for every owned process."""
     if not isinstance(record, dict):
         return []
-    times = [v for k, v in record.items() if k.endswith('_unix') and type(v) in (int, float)]
+    times = [v for k, v in record.items() if k.endswith('_unix') and type(v) in (int, float) and math.isfinite(v)]
     latest = max(times) if times else None
     found = []
-    for holder in (record, record.get('launcher'), record.get('owner')):
-        if not isinstance(holder, dict):
-            continue
+    for holder in owned_holders(record):
         for key in PID_FIELDS:
             pid = holder.get(key)
             if type(pid) is int and pid > 0:
-                start = holder.get('process_start') if key == 'pid' else None
-                found.append((pid, start if type(start) is int else None, latest))
+                start = None
+                if key == 'pid':
+                    start = next((holder[k] for k in ('process_start', 'start_ticks') if type(holder.get(k)) is int), None)
+                boot = {k:holder[k] for k in ('boot_id', 'boot_unix') if k in holder}
+                found.append((pid, start, latest, boot))
     return found
 
 
@@ -625,7 +666,7 @@ class Table:
     """One host's process table from a probe: identity, session and group."""
 
     def __init__(self, probe):
-        self.boot, self.ticks = probe['boot_unix'], probe['ticks']
+        self.boot, self.ticks, self.boot_id = probe['boot_unix'], probe['ticks'], probe.get('boot_id')
         self.entries = {}
         for entry in probe['processes']:
             fields = entry['stat'].rsplit(')', 1)[1].split()
@@ -637,8 +678,20 @@ class Table:
     def started_unix(self, entry):
         return self.boot+entry['start']/self.ticks
 
+    def descendants(self, pids):
+        """The live parent-PID closure below `pids`, while each parent is present."""
+        children = {}
+        for entry in self.entries.values():
+            children.setdefault(entry['ppid'], []).append(entry['pid'])
+        found, stack = set(), list(pids)
+        while stack:
+            for child in children.get(stack.pop(), []):
+                if child not in found:
+                    found.add(child); stack.append(child)
+        return found
 
-def owned(table, pid, start, latest):
+
+def owned(table, pid, start, latest, boot=None):
     """Refuse a live recorded owner or any live member of its session or group.
 
     A recorded kernel start time must not match a live process. Without one, a
@@ -647,6 +700,10 @@ def owned(table, pid, start, latest):
     exits and they are reparented, so a live member of either refuses unless
     the PID was demonstrably reused by a newer leader that started them all.
     """
+    if boot and any((key == 'boot_id' and value != table.boot_id) or
+                    (key == 'boot_unix' and (type(value) not in (int, float) or abs(value-table.boot) > 1))
+                    for key, value in boot.items()):
+        return  # Recorded in an earlier boot: neither it nor its descendants survive.
     leader = table.entries.get(pid)
     reused = False
     if leader is not None and not leader.get('self'):
@@ -667,7 +724,8 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
     """Fresh exact machine, owner-namespace and process-ownership evidence of one host."""
     roots = [str(schema_fence.SCHEMA_STATE), str(schema_fence.HOST_ACTIONS), str(schema_fence.INPUT_STAGING),
              str(SOURCE.parent/'staging')]
-    probe = reader.probe(budget, roots=roots, lock_path=str(lock_path), machine_id_path=str(MACHINE_ID))
+    probe = reader.probe(budget, roots=roots, lock_path=str(lock_path), machine_id_path=str(MACHINE_ID),
+                         classes={'roots':[str(r) for r in CLASS_ROOTS], 'tools':sorted(TOOLS)})
     receipt = {'host':name, 'machine_id':machine_id, 'probe':probe}
     require(probe['machine_id'].strip() == machine_id, 'host %s machine identity differs from its pin' % name)
     records = probe['records']
@@ -686,17 +744,28 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
                     'host %s has unfinished source staging' % name)
         if path == own:
             continue
-        for pid, start, latest in owner_processes(value):
+        for pid, start, latest, boot in owner_processes(value):
             try:
-                owned(table, pid, start, latest)
+                owned(table, pid, start, latest, boot)
             except ValueError as error:
                 raise ValueError('host %s: %s (%s)' % (name, error, Path(path).name)) from None
-    for entry in table.entries.values():
-        if entry.get('self'):
-            continue
+    others = {pid:e for pid, e in table.entries.items() if not e.get('self')}
+    for entry in others.values():
         require(not entry.get('unknown'), 'host %s process %d ownership is unreadable' % (name, entry['pid']))
-        require(not (entry.get('lock_fd') or entry.get('inherited') or entry.get('wrapper')),
-                'host %s has a live wrapper process or descendant: PID %d' % (name, entry['pid']))
+    wrappers = {pid for pid, e in others.items() if e.get('lock_fd') or e.get('inherited') or e.get('wrapper')}
+    if wrappers:
+        closure = sorted(wrappers | table.descendants(wrappers))
+        raise ValueError('host %s has a live wrapper process or descendant: PID %s' % (name, ', '.join(map(str, closure[:16]))))
+    # After a parent exits, survivors are recognised by executable or argument
+    # class. Only processes inside a reviewed long-running service unit are
+    # attributable; everything else of a mutation or native class refuses.
+    own = table.descendants({pid for pid, e in table.entries.items() if e.get('self')})
+    for pid, entry in sorted(others.items()):
+        if pid in own or not (entry.get('class_exe') or entry.get('class_argv')):
+            continue
+        unit = Path(entry.get('cgroup') or '/').name
+        require(unit in SERVICES, 'host %s has an unattributable live mutation or native process: PID %d (%s)'
+                % (name, pid, entry.get('exe')))
     if isinstance(reader, RemoteHost):
         # The coordinator's lock is this operation's own; any remote holder is not.
         require(not probe['lock_holders'], 'host %s production lock is held' % name)
@@ -1092,7 +1161,7 @@ class Snapshot:
             durable.atomic_json(self.retained_inventory, inventory, mode=0o400)
             # One total bound from here, through the owner's verification.
             record = {'version':1, 'kind':KIND, 'request_sha256':self.identifier, 'plan_sha256':expected_plan,
-                      'status':'running', 'phase':'launching', 'launcher':{'pid':os.getpid(), 'process_start':process_start(os.getpid())},
+                      'status':'running', 'phase':'launching', 'launcher':identity_of(os.getpid()),
                       'inventory_sha256':durable.digest(inventory), 'deadline_unix':time.time()+budget.remaining(),
                       'preflight':proof, 'started_unix':time.time(), 'events':[{'phase':'launching', 'unix':time.time()}]}
             # The owner and the shared fence pointer exist before any effect.
@@ -1134,7 +1203,7 @@ class Snapshot:
         record = self.load()
         require(record['status'] == 'running' and record['phase'] == 'launching' and 'owner' not in record,
                 'journal snapshot owner was already adopted; never replay')
-        self.phase(record, 'adopted', owner={'pid':os.getpid(), 'process_start':process_start(os.getpid())})
+        self.phase(record, 'adopted', owner=identity_of(os.getpid()))
         return record
 
     def owned_inventory(self, record):
@@ -1770,7 +1839,8 @@ def verify_snapshot(request_sha256, *, deadline, guard, health=None):
     output is not verification.
     """
     require(callable(guard), 'snapshot verification needs a guard')
-    require(type(deadline) in (int, float) and deadline > time.monotonic(), 'snapshot verification needs a future deadline')
+    require(type(deadline) in (int, float) and math.isfinite(deadline) and deadline > time.monotonic(),
+            'snapshot verification needs a finite future deadline')
     require(isinstance(request_sha256, str) and HEX.fullmatch(request_sha256), 'invalid journal snapshot request digest')
     guard()
     retained = OWNERS/(request_sha256+'.request.json')

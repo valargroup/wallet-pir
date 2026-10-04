@@ -1624,40 +1624,74 @@ operation, `ownership_probe`, over pinned SSH. On each host the probe returns:
 
 - `/etc/machine-id`, which must equal the host's pin. A host without a pin, or
   one that cannot be reached or read, refuses.
-- **Every retained owner record.** That is every `*.json` up to two levels deep
-  under the schema state, host-action, input-staging and source-staging
-  namespaces, except `*.request.json`. More than 4096 records, more than 64 MiB,
-  a record over 1 MiB or any link refuses rather than truncating.
+- **The whole owner namespace.** The schema state, host-action, input-staging and
+  source-staging trees are walked to any depth within finite bounds: depth 8,
+  65,536 entries, 64 MiB of records and 1 MiB per record. Exceeding a bound, any
+  link and any special file refuse; nothing is skipped silently. Every
+  non-request `*.json` is parsed as an owner record. Every file is listed by
+  name, size and kind: record, request, receipt or other, such as a schema
+  phase log. This module's own `*.snapshot-fleet` receipt trees hold copies of
+  records, not owners, so they are listed and type-checked but not parsed.
 - **Every live process,** up to 65,536 processes and 2^20 descriptors in total;
-  more refuses. For each: its stat line (PID, parent, process group, session and
-  kernel start time), and three yes-or-no markers. It holds the production lock
-  file open; its environment carries `WALLET_PIR_PRODUCTION_LOCK_FDS`; its command
-  line runs `wallet-pir-deploy.py`. Environment and command-line contents are
-  never returned or retained. Evidence that cannot be read is reported as
-  unknown. Only the probing process and its ancestors are exempt.
-- **The production lock's kernel holders** from `/proc/locks`.
+  more refuses. For each it returns:
+  - its stat line: PID, parent, process group, session and kernel start time;
+  - its executable path and unified cgroup;
+  - whether it holds the production lock file open, its environment carries
+    `WALLET_PIR_PRODUCTION_LOCK_FDS`, or its command line runs
+    `wallet-pir-deploy.py`;
+  - whether its executable or arguments belong to an operation class.
+
+  Operation classes are executables or absolute arguments under
+  `/srv/transparent-activity/build`, `/srv/transparent-activity/candidates`, the
+  portable worker releases, `/srv/transparent-pir/v11/candidates` and the staged
+  operation sources. They also include an executable or `argv[0]` named for a
+  native tool: the 13 supplemental tools, `shard-assign` and `shard-control`.
+  Environment and command-line contents are never returned or retained.
+  Unreadable evidence is reported as unknown. Only the probing process and its
+  ancestors are exempt.
+- **The boot identity,** and the production lock's kernel holders from
+  `/proc/locks`.
 
 The coordinator then refuses if any of these hold:
 
 - the shared schema fence fails over that host's latest owner pointers;
 - a source-staging receipt is not `staged` or `failed`;
-- **any** retained owner record names a live owner. Top-level PID fields and the
-  `launcher` and `owner` objects count. A recorded kernel start time must not
-  match; without one, a process started no later than the record's last update
-  could be the owner, and a missing record time fails closed;
+- **any** owner record names a live owned process. A record owns:
+  - its top-level PID fields;
+  - its `launch`, `launcher`, `owner` and `child` objects and its `children`
+    list, each with an optional nested `identity` and further owned containers.
+
+  Observations such as a restored writer inside a proof are not owners. A
+  recorded `process_start` or `start_ticks` must not match a live process.
+  Without one, a process started no later than the record's last update could
+  be the owner, and a missing record time fails closed. An identity with a
+  different `boot_id` or `boot_unix` is from an earlier boot and names nothing
+  live;
 - a live process shares the session or process group of a recorded owner PID.
-  Descendants keep both after their owner exits and they are reparented, so a
-  dead recorded parent with a live orphaned native child refuses. Only a reused
-  PID whose newer leader started every such member is accepted;
+  A dead recorded parent with a live orphaned child in its session refuses. Only
+  a reused PID whose newer leader started every such member is accepted;
 - any other live process holds the production lock, carries the inherited-lock
-  variable or runs the deploy wrapper, whether or not a record names it;
+  variable or runs the deploy wrapper. The refusal names its whole live
+  parent-PID descendant closure;
+- a live process of an operation class is not inside a reviewed long-running
+  service unit. These units are `activity_schema_host.UNITS` and the quality
+  rollout unit. This finds survivors after their parent exits, even in their own
+  session with the lock descriptor closed, the environment cleared and no
+  wrapper argument. A transient operation unit, such as the publication job, is
+  not a reviewed service;
 - any process's ownership evidence is unreadable;
 - a remote host's production lock has any kernel holder. The coordinator's lock
   is this operation's own.
 
-On the coordinator only this snapshot's own owner record is exempt. Each host's
-raw probe and result, including refusals, are kept at mode 0400 under
+The snapshot records its own launcher and owner as `pid`, `process_start` and
+`boot_id`. On the coordinator only this snapshot's own owner record is exempt.
+Each host's raw probe and result, including refusals, are kept at mode 0400
+under
 `/srv/transparent-activity/ops/input-staging/<request SHA>.snapshot-fleet/<stage|owner|reconcile>-<time>/<host>.json`.
+
+The remaining limit is attribution. A process outside every operation class, in
+a new session, with no lock descriptor, environment marker or wrapper argument,
+and whose recorded parent has exited cannot be attributed from `/proc`.
 
 **One total bound.** `total_seconds` starts when stage begins. It runs through
 the owner's adoption, pre-copy, copy, anchors and full re-verification; the owner
@@ -1792,7 +1826,9 @@ digest; it is not verification.
 `activity_journal_snapshot.verify_snapshot(request_sha256, deadline=...,
 guard=..., health=None)`; there is no manifest-only adapter. The arguments are:
 
-- `deadline` is an absolute `time.monotonic()` bound the consumer chooses.
+- `deadline` is an absolute, finite `time.monotonic()` bound the consumer
+  chooses. Infinite and NaN deadlines refuse before any read, as does a
+  non-finite deadline for any `Budget`.
 - `guard` is called before the first read, with every resource sample (at most
   once a second) and at the end. It must raise when the consumer's production
   lock or other preconditions no longer hold.
