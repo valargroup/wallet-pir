@@ -69,6 +69,7 @@ def block_summary(frame, extracted):
         if shielded!=r['shielded_components']:raise ValueError('shared shielded-component flag')
         g='coinbase' if cb else 'non_coinbase'
         totals[g]+=1;totals['outputs']+=len(outputs);totals['transparent_inputs']+=ni
+        totals[g+'_outputs']+=len(outputs)
         totals['input_only']+=ni>0 and not outputs;totals['shielded_components']+=r['shielded_components']
         totals['fee_unknown']+=r['fee']=='unknown';totals['fee_not_applicable']+=r['fee']=='not_applicable'
         totals['fee_exact_zero']+=r['fee']==0;totals['fee_exact_nonzero']+=isinstance(r['fee'],int) and r['fee']>0
@@ -273,7 +274,9 @@ def report(data):
                         for bound in dh:
                             for size,n in b['hist']['display-v1/'+bound][category]:dh[bound][size]+=n*s['N']/s['n']
             coverage={str(t):{bound:survey.estimate(vals(lambda b:sum(n for size,n in b['hist']['display-v1/'+bound][category] if size<=t) if inside(b) else 0),design,den,proportion=True) for bound in ('lower','upper')} for t in THRESHOLDS}
-            result['domains'][name][category]=dict(eligible=survey.estimate(den,design),sample_blocks=sum(inside(b) for b in data['blocks']),coverage=coverage,frontier_size_bounds_bytes={str(p):[survey.hist_quantile(dh['lower'],p),survey.hist_quantile(dh['upper'],p)] for p in (.85,.9,.95,.99)})
+            fragments={str(t):{bound:survey.estimate(vals(lambda b:sum(n*((size+a.FRAGMENT-1)//a.FRAGMENT) for size,n in b['hist']['display-v1/'+bound][category] if size>t) if inside(b) else 0),design) for bound in ('lower','upper')} for t in THRESHOLDS}
+            output_key='outputs' if category=='all' else category+'_outputs'
+            result['domains'][name][category]=dict(eligible=survey.estimate(den,design),outputs=survey.estimate(vals(lambda b:b['totals'].get(output_key,0) if inside(b) else 0),design),sample_blocks=sum(inside(b) for b in data['blocks']),coverage=coverage,fragments=fragments,frontier_size_bounds_bytes={str(p):[survey.hist_quantile(dh['lower'],p),survey.hist_quantile(dh['upper'],p)] for p in (.85,.9,.95,.99)})
         result['domains'][name]['totals']={k:survey.estimate(vals(lambda b:b['totals'].get(k,0) if inside(b) else 0),design) for k in ('all_transactions','eligible','shielded_only','outputs','input_only','raw_escape_outputs')}
     routed_thresholds=sorted(set(THRESHOLDS)|{v for pair in result['codecs']['display-v1']['frontier_size_bounds_bytes'].values() for v in pair if v<=4044})
     result['routing']=route_report(data,routed_thresholds)
