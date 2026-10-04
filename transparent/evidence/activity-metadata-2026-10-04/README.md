@@ -7,8 +7,8 @@ qualifies it. Everything here was produced on the development hub.
 None of it is a native, hardware, fleet or production qualification:
 
 - No production host was accessed.
-- No artifact was staged or transferred, no candidate gate was run, and nothing
-  was deployed.
+- No artifact was staged or transferred, no candidate gate or candidate native
+  program was run, and nothing was deployed.
 
 The earlier activity record is
 [activity-metadata-2026-09-30](../activity-metadata-2026-09-30/README.md); its
@@ -24,6 +24,8 @@ The earlier activity record is
 | [mutations.log](mutations.log) | Nineteen single-guard mutations of the new checks. Each made `test_activity_candidate.py` fail, and each source was restored. |
 | [upload-focused.log](upload-focused.log) | Focused suites on the guarded archive transfer change, run on the committed working tree: the new `test_activity_candidate_upload.py`, the candidate, input, preparation, product, lock, schema runner, baseline and host suites, and the deploy wrapper tests. All passed. |
 | [upload-mutations.log](upload-mutations.log) | Fourteen single-guard mutations of the transfer checks. Each made `test_activity_candidate_upload.py` fail, and each source was restored. |
+| [execution-focused.log](execution-focused.log) | Focused suites on the locked native gate execution change, run on the committed working tree: the new `test_activity_candidate_execution.py`, the report, upload, candidate, input, preparation, product, lock, schema runner, baseline and host suites, and the deploy wrapper tests. All passed. `make check-fast BASE=286b8c0c` also passed, running only the helper stage. |
+| [execution-mutations.log](execution-mutations.log) | Eighteen single-guard mutations of the execution checks. Each made `test_activity_candidate_execution.py` fail, and each source was restored. |
 
 ## How the pieces fit
 
