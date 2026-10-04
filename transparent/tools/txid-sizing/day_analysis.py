@@ -85,7 +85,10 @@ def block_summary(frame, extracted):
         # Public identity hash only; raw scripts remain in retained external inputs.
         lh=int.from_bytes(hashlib.sha256(b'txid-sizing/lookup/'+bytes.fromhex(r['txid_internal'])).digest()[:8],'little')
         oh=int.from_bytes(hashlib.sha256(b'txid-sizing/overflow/'+bytes.fromhex(r['txid_internal'])).digest()[:8],'little')
-        shapes.append([lh,oh,len(set(a.choices(r['txid_internal'],4096))),*sizes['display-v1']])
+        # Choice hashes include the bucket salt. Preserve exact coincidence
+        # bits for every modeled bucket, rather than reusing bucket 0's count.
+        coincidence_mask=sum(1<<bucket for bucket in range(71) if len(set(a.choices(r['txid_internal'],4096,bucket=bucket)))==1)
+        shapes.append([lh,oh,coincidence_mask,*sizes['display-v1']])
     return dict(height=frame['height'],hash=frame['hash'],stratum=frame['stratum'],totals=dict(totals),scripts=dict(scripts),
         hist={c:{g:sorted(v.items()) for g,v in gs.items()} for c,gs in hist.items()},shapes=shapes,
         size_pairs={c:[[lo,hi,n] for (lo,hi),n in sorted(ps.items())] for c,ps in pairs.items()})
@@ -132,8 +135,9 @@ def extract(root,binary,status):
 GEOMETRIES=(('temporal','global',1,1),('coarse','global',1,1),('global','global',1,1),('hash','global',4,1),('hash','global',16,1),('hash','global',64,1),('hash','broad',4,1),('hash','hash',4,4),('hash','hash',16,16))
 
 def transcript_keys(shape,height,t,geometry,cover=3,cohort=None):
-    lh,oh,initial,lo,hi=shape;lookup,overflow,lb,ob=geometry
+    lh,oh,coincidence_mask,lo,hi=shape;lookup,overflow,lb,ob=geometry
     l=height//50000 if lookup=='temporal' else (height//1000000 if lookup=='coarse' else (lh%lb if lookup=='hash' else 0))
+    initial=1 if coincidence_mask & (1<<l) else 2
     keys=set()
     for size in (lo,hi):
         count=(size+a.FRAGMENT-1)//a.FRAGMENT if size>t else 0

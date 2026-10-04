@@ -72,6 +72,15 @@ class DaySizingTests(unittest.TestCase):
         # Global overflow preserves both distinct observable lookup buckets.
         self.assertNotEqual(d.transcript_keys([0,0,2,200,200],10,128,geo),d.transcript_keys([1,0,2,200,200],10,128,geo))
 
+    def test_choice_coincidence_uses_actual_bucket_salt(self):
+        import json
+        geo=('hash','global',4,1)
+        mask=1<<2
+        same=json.loads(next(iter(d.transcript_keys([2,0,mask,200,200],10,128,geo,0))))
+        distinct=json.loads(next(iter(d.transcript_keys([3,0,mask,200,200],10,128,geo,0))))
+        self.assertEqual(same[4],2)  # one initial plus one page
+        self.assertEqual(distinct[4],3)  # two initial plus one page
+
     def test_five_real_candidates_not_fragments_or_padding(self):
         # Synthetic complete control; no real-population minimum claim.
         design={'strata':[{'name':'control','N':1,'n':1}]}
