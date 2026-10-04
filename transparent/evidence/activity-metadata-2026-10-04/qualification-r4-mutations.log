@@ -1,0 +1,12 @@
+# Single-guard mutations of transparent/ops/lib/activity_deployed_qualification.py at tree 9301dc5d2654da7ee0c2461c1a0e971b1b09cd31, 2026-10-04T21:13:06Z
+# each mutation replaced one guard, ran test_activity_deployed_qualification.py, then restored the source (sha256 checked)
+refreshed survey before the stop     killed (suite failed)
+same preparation recheck             killed (suite failed)
+active map unchanged at recheck      killed (suite failed)
+preparation instance age             killed (suite failed)
+recovery timed from the stop         killed (suite failed)
+owner survey bound                   killed (suite failed)
+surveys written once apart           killed (suite failed)
+stop and recovery fit before stop    killed (suite failed)
+mutations: 8, survived: 0
+transparent/ops/lib/activity_deployed_qualification.py: OK
