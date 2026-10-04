@@ -932,6 +932,28 @@ class OwnerFindingTests(unittest.TestCase):
         findings = Q.owner_findings(FakeCommands())
         self.assertEqual(findings['processes']['owned_roots'], [])
 
+    def test_unmatched_surviving_native_service_refuses_with_its_exact_identity(self):
+        # Root's read-only 2026-10-04 observation: an active coordinator unit outside the product
+        # baseline, running a deleted build from an owner root. It must refuse, never be exempted.
+        self.child.kill(); self.child.wait()
+        unit = 'transparent-activity-prototype-server-e47bdf79.service'
+        exe = str(self.root/'owned/build/target/release-fast/transparent-shard-server')+' (deleted)'
+        survivor = {'pid':1512286, 'state':'S', 'ppid':1, 'pgid':1512286, 'session':1512286, 'start_ticks':244751095,
+                    'boot_id':'b', 'exe':exe, 'argv':[exe[:-len(' (deleted)')]], 'cgroup':'0::/system.slice/'+unit+'\n'}
+        class Survivor(FakeCommands):
+            listing = unit+' loaded active running x\n'
+            main_pid, active = '1512286', 'active'
+        with patch.object(Q, 'process_table', lambda: {1512286:survivor}):
+            with self.assertRaises(ValueError) as refused:
+                Q.owner_findings(Survivor())
+            message = str(refused.exception)
+            self.assertIn("('escaped', 1512286, 244751095, %r" % exe, message)
+            self.assertIn("('unit', %r, 'active', '1512286')" % unit, message)
+            # Neither an owner exemption for another unit nor this owner's own identity admits it.
+            with self.assertRaisesRegex(ValueError, "'escaped', 1512286"):
+                Q.owner_findings(Survivor(), own_unit='transparent-activity-qualification-'+'0'*16, own_request='a'*64)
+            self.assertNotIn(unit, Q.PRODUCT_UNITS)
+
     def test_incomplete_or_unknown_scope_refuses(self):
         self.child.kill(); self.child.wait()
         (self.root/'owners').mkdir()

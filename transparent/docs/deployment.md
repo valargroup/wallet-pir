@@ -1684,7 +1684,13 @@ every pinned host, none exempt, reconciliation:
 
 Only this owner's own record and unit are exempt, and only on the coordinator.
 Each record's path, SHA-256 and per-process verdicts, and the escaped-process
-lists, are retained. Reconciliation runs at preflight, every 60 seconds
+lists, are retained. A refusal names each survivor exactly: an escaped process
+by PID, start ticks, executable (including a ` (deleted)` suffix) and leading
+arguments, and a live unit by name, active state and main PID. A survivor that
+no retained record or product unit accounts for, such as a historical
+prototype service still running a deleted build from an owner root, refuses
+every preflight and effect. This owner never stops, kills or exempts it; root
+reviews and disposes of it separately. Reconciliation runs at preflight, every 60 seconds
 during load, freshness and capacity, and immediately before and after each
 fault effect.
 

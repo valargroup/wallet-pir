@@ -1218,7 +1218,7 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
     roots = [p for p in table.values() if p['state'] != 'Z' and p['pid'] not in exempt and under_owned_roots(p)
              and not in_units(p, own_units)]
     for process in {p['pid']:p for p in escaped+roots}.values():
-        findings['live'].append(('escaped', process['pid'], process['exe'], process['argv'][:4]))
+        findings['live'].append(('escaped', process['pid'], process['start_ticks'], process['exe'], process['argv'][:4]))
     findings['processes'].update(escaped=[p['pid'] for p in escaped], owned_roots=[p['pid'] for p in roots])
     listing = commands_.run(['systemctl', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full',
                              'transparent-activity-*', 'transparent-full-burst-*'], timeout=10).decode()
@@ -1232,7 +1232,7 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
                 and commands_.empty_cgroup(state))
         findings['units'][unit] = {k:state.get(k) for k in ('ActiveState', 'SubState', 'MainPID', 'Result', 'ControlGroup')}
         if not idle:
-            findings['live'].append(('unit', unit))
+            findings['live'].append(('unit', unit, state.get('ActiveState'), state.get('MainPID')))
     require(not findings['live'], 'owner processes or units are not quiescent: %s' % findings['live'][:8])
     return findings
 
@@ -2624,7 +2624,7 @@ class Qualification:
 
     def refuse(self, effect, reason):
         """Record a refusal before any unit effect; nothing was stopped."""
-        effect.update(status='refused', refused_unix=time.time(), reason=reason[:300])
+        effect.update(status='refused', refused_unix=time.time(), reason=reason[:2000])
         self.save(self.record)
         raise ValueError('publication interruption refused before the publisher stop: '+reason)
 
