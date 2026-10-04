@@ -127,9 +127,10 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(any('mid-preparation' in m for m in interruption['missing_assurance']))
 
     def test_bounds_fit_their_owner_runtimes(self):
-        # A fault's effect, 900 s recovery and post checks fit inside the owner deadline.
+        # A fault's owner survey, effect, 900 s recovery and post checks fit inside the owner deadline.
         for fault, seconds in Q.EFFECT_SECONDS.items():
-            self.assertLess(Q.QUERY_PROBE_SECONDS+Q.WALLET_PROBE_SECONDS+seconds+Q.RECOVERY_SECONDS+Q.POST_SECONDS+600,
+            self.assertLess(Q.QUERY_PROBE_SECONDS+Q.WALLET_PROBE_SECONDS+Q.OWNER_SURVEY_SECONDS+seconds+Q.RECOVERY_SECONDS+
+                            Q.POST_SECONDS+600,
                             Q.RUNTIME['fault']-Q.OWNER_MARGIN, fault)
         longest = sum(Q.CAPACITY[k] for k in ('preparation_deadline_seconds', 'duration_seconds', 'recovery_deadline_seconds'))
         self.assertLess(longest+300+Q.CHILD_STOP_SECONDS+600+Q.MAX_CONTINUATIONS*(Q.CONTINUATION_SECONDS+120),
@@ -138,6 +139,10 @@ class ValidationTests(unittest.TestCase):
                         Q.RUNTIME['staged-load']-Q.OWNER_MARGIN)
         self.assertGreater(Q.STOP_TIMEOUT, Q.CHILD_STOP_SECONDS)
         self.assertGreaterEqual(Q.REMOTE_BOUND['stop-start'], Q.UNIT_SECONDS['stop']+Q.LOSS_HOLD_SECONDS+Q.UNIT_SECONDS['start'])
+        # The preparation wait, a whole refreshed survey and recheck precede the stop's own bound.
+        self.assertEqual(Q.EFFECT_SECONDS['publication-interruption'],
+                         Q.REMOTE_BOUND['await-preparation']+Q.SSH_MARGIN+Q.OWNER_SURVEY_SECONDS+
+                         Q.REMOTE_BOUND['control-status']+Q.SSH_MARGIN+Q.STOP_EFFECT_SECONDS)
 
     def test_targets_and_compositions_are_the_reviewed_values(self):
         self.assertEqual(Q.P95_TARGETS['small-active'], 5); self.assertEqual(Q.P95_TARGETS['restore-6m'], 10)
@@ -1342,47 +1347,150 @@ class FlowTests(unittest.TestCase):
         q.deadline = Q.Deadline(Q.RUNTIME['fault']-Q.OWNER_MARGIN)
         return q
 
-    def test_publication_interruption_lands_inside_a_preparation_and_restores_the_publisher(self):
-        q = self.fault_owner(request('fault', fault='publication-interruption'))
-        system = FakeSystem(Q.PUBLISHER)
-        calls, order = [], []
-        preparing = {'map_sha256':'2'*64, 'phase':'building'}
+    def interruption_owner(self, attempt, system, order, clock, *, wait=0, recheck=None, surveys=None):
+        """A publication-interruption owner whose remote replies and surveys are scripted.
+
+        The preparation wait advances the clock by `wait`. A control-status read
+        while the publisher is active is the pre-stop recheck (`recheck` edits
+        it); one while it is inactive is the post-stop read. `surveys` maps a
+        survey number to an exception it raises.
+        """
+        q = self.fault_owner(dict(request('fault', fault='publication-interruption'), attempt=attempt))
+        preparing = {'map_sha256':'2'*64, 'age_seconds':10.0, 'phase':'building'}
+        observed = {}
         def remote(host, operation, action):
-            calls.append((host, operation, action))
-            order.append(operation)
             if operation == 'await-preparation':
-                return None, {'status':'passed', 'observed':'preparing', 'control':{'preparing':preparing, 'active_map_sha256':'1'*64}}
+                order.append('await-preparation')
+                clock.sleep(wait)
+                observed['unix'] = time.time()
+                return None, {'status':'passed', 'observed':'preparing', 'unix':observed['unix'],
+                              'control':{'preparing':dict(preparing), 'active_map_sha256':'1'*64}}
             state = system.units[Q.PUBLISHER]['ActiveState']
-            order.append('publisher '+state)
-            return None, {'status':'passed', 'control':{'active_map_sha256':self.after_map, 'preparing':None}}
-        q.remote = remote
+            order.append('control-status publisher '+state)
+            if state == 'active':
+                unix = observed['unix']+20
+                reply = {'status':'passed', 'unix':unix, 'control':{'active_map_sha256':'1'*64,
+                         'preparing':dict(preparing, age_seconds=preparing['age_seconds']+20, phase='warming')}}
+                (recheck or (lambda value: None))(reply)
+                return None, reply
+            return None, {'status':'passed', 'unix':time.time(), 'control':{'active_map_sha256':self.after_map, 'preparing':None}}
+        def all_hosts(operation, running):
+            order.append('survey '+operation)
+            number = sum(o.startswith('survey') for o in order)
+            if number in (surveys or {}):
+                raise surveys[number]
+            return {'coordinator':{'findings':{'survey':number}, 'rollback':{'complete_sha256':'r'}}}
+        q.remote, q.all_hosts = remote, all_hosts
+        return q
+
+    def test_publication_interruption_lands_inside_a_preparation_and_restores_the_publisher(self):
+        system = FakeSystem(Q.PUBLISHER)
+        clock = Clock()
         self.after_map = '1'*64
         identity, executable = fake_processes(system)
         with identity, executable, patch.object(Q, 'commands', lambda deadline=None: system), \
-                patch.object(Q, 'local_resources', lambda commands=None: {'units':{}}), patch.object(Q, 'node', lambda *a: 100):
+                patch.object(Q, 'local_resources', lambda commands=None: {'units':{}}), patch.object(Q, 'node', lambda *a: 100), \
+                patch.object(Q.time, 'monotonic', clock), patch.object(Q.time, 'sleep', clock.sleep):
+            order = []
+            q = self.interruption_owner(1, system, order, clock, wait=299)
             result = q.fault()
             self.assertEqual(result['status'], 'passed')
-            self.assertEqual(order, ['await-preparation', 'control-status', 'publisher inactive'])
+            # The publisher stops only after a second, complete survey and the recheck that follow the wait.
+            self.assertEqual(order, ['survey probe', 'await-preparation', 'survey probe', 'control-status publisher active',
+                                     'control-status publisher inactive', 'survey identity'])
             effect = q.status()['effect']
             self.assertTrue(effect['inside_preparation'])
             self.assertEqual([p['phase'] for p in effect['phases']], ['stopping', 'stopped', 'starting', 'verified'])
             self.assertEqual(system.units[Q.PUBLISHER]['ActiveState'], 'active')
-            self.assertTrue((q.directory/'raw/owners-before-effect.json').exists())
-            late = self.fault_owner(dict(request('fault', fault='publication-interruption'), attempt=2))
-            late.remote = remote
-            self.after_map = '2'*64  # the preparation had already activated
+            first = json.loads((q.directory/'raw/owners-before-effect.json').read_text())
+            second = json.loads((q.directory/'raw/owners-before-stop.json').read_text())
+            self.assertEqual((first['hosts']['coordinator']['findings'], second['hosts']['coordinator']['findings']),
+                             ({'survey':1}, {'survey':2}))  # the first survey is retained, never overwritten
+            self.assertEqual(effect['preparation_recheck']['control']['preparing']['map_sha256'], '2'*64)
+            # Recovery is timed from the stop, so the 299 s wait leaves the whole 900 s.
+            self.assertLess(result['recovery']['recovered_seconds'], 1)
+            with self.assertRaises(FileExistsError):
+                Q.write_once(q.directory/'raw/owners-before-effect.json', {})
+            late = self.interruption_owner(2, system, [], clock)
+            self.after_map = '2'*64  # the preparation activated after the recheck, during the stop
             with self.assertRaisesRegex(ValueError, 'not proven inside'):
                 late.fault()
             self.assertEqual(late.record['effect']['status'], 'passed')  # publisher restored; the fault failed
             self.assertEqual(system.units[Q.PUBLISHER]['ActiveState'], 'active')
-            broken = self.fault_owner(dict(request('fault', fault='publication-interruption'), attempt=3))
-            broken.remote = remote
+            self.after_map = '1'*64
+            broken = self.interruption_owner(3, system, [], clock)
             system.fail['start'] = 2
             with self.assertRaises(subprocess.CalledProcessError):
                 broken.fault()
             self.assertEqual(broken.record['effect']['phase'], 'starting')
             self.assertEqual(broken.record['effect']['status'], 'starting')  # unrestored: stays fenced
             self.assertIn('restore_error', broken.record['effect'])
+
+    def test_publication_interruption_refuses_before_the_stop_after_a_delayed_preparation(self):
+        system = FakeSystem(Q.PUBLISHER)
+        clock = Clock()
+        self.after_map = '1'*64
+        foreign = ValueError("owner processes or units are not quiescent: [('escaped', 4242, '/srv/transparent-activity/x')]")
+        def finished(reply):  # the preparation completed while every host was re-surveyed
+            reply['control'].update(preparing=None, active_map_sha256='2'*64)
+        def restarted(reply):  # same digest, but a new preparation instance
+            reply['control']['preparing']['age_seconds'] = 1.0
+        def another(reply):
+            reply['control']['preparing']['map_sha256'] = '3'*64
+        def activated(reply):  # a different map activated while the same one prepares
+            reply['control']['active_map_sha256'] = '4'*64
+        def lost(host, operation, action):
+            raise Q.Unknown('remote qualification probe on recent-01 timed out; outcome unknown')
+        identity, executable = fake_processes(system)
+        with identity, executable, patch.object(Q, 'commands', lambda deadline=None: system), \
+                patch.object(Q, 'local_resources', lambda commands=None: {'units':{}}), patch.object(Q, 'node', lambda *a: 100), \
+                patch.object(Q.time, 'monotonic', clock), patch.object(Q.time, 'sleep', clock.sleep):
+            cases = [({'surveys':{2:foreign}}, 'not quiescent'), ({'recheck':finished}, 'no longer the same'),
+                     ({'recheck':restarted}, 'no longer the same'), ({'recheck':another}, 'no longer the same'),
+                     ({'recheck':activated}, 'no longer the same')]
+            for attempt, (options, message) in enumerate(cases, 1):
+                order = []
+                q = self.interruption_owner(attempt, system, order, clock, wait=299, **options)
+                calls = len(system.calls)
+                with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: .*'+message):
+                    q.fault()
+                effect = q.status()['effect']
+                self.assertEqual(effect['status'], 'refused', message)
+                self.assertNotIn('unit', effect)  # never captured, never stopped: nothing to restore
+                self.assertNotIn('phases', effect)
+                self.assertFalse(any(c[:2] == ['systemctl', '--no-block'] for c in system.calls[calls:]))
+                self.assertEqual(system.units[Q.PUBLISHER]['ActiveState'], 'active')
+                self.assertNotIn('control-status publisher inactive', order)
+                self.assertTrue((q.directory/'raw/owners-before-effect.json').exists())
+            # A refreshed survey slower than its fixed bound refuses rather than acting on it.
+            slow = self.interruption_owner(len(cases)+1, system, [], clock, wait=299)
+            survey = slow.all_hosts
+            def overrun(operation, running):
+                value = survey(operation, running)
+                if (slow.directory/'raw/owners-before-effect.json').exists():
+                    clock.sleep(Q.OWNER_SURVEY_SECONDS+1)
+                return value
+            slow.all_hosts = overrun
+            with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: .*owner survey'):
+                slow.fault()
+            self.assertFalse((slow.directory/'raw/owners-before-stop.json').exists())
+            # A lost recheck reply is not a proven preparation.
+            unknown = self.interruption_owner(len(cases)+2, system, [], clock)
+            scripted = unknown.remote
+            unknown.remote = lambda host, operation, action: (lost if operation == 'control-status' else scripted)(host, operation, action)
+            with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: .*Unknown'):
+                unknown.fault()
+            # No refresh or stop starts once the stop, its restoration and the whole 900 s recovery no longer fit,
+            # here after a wait that overran its own bound.
+            overran = Q.REMOTE_BOUND['await-preparation']+Q.SSH_MARGIN+Q.OWNER_SURVEY_SECONDS+60
+            short = self.interruption_owner(len(cases)+3, system, [], clock, wait=overran)
+            short.deadline = Q.Deadline(Q.OWNER_SURVEY_SECONDS+Q.EFFECT_SECONDS['publication-interruption']+
+                                        Q.RECOVERY_SECONDS+Q.POST_SECONDS+1)
+            with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: .*Budget: a refreshed owner survey'):
+                short.fault()
+            self.assertFalse((short.directory/'raw/owners-before-stop.json').exists())
+            self.assertEqual(short.status()['effect']['status'], 'refused')
+            self.assertEqual(system.units[Q.PUBLISHER]['ActiveState'], 'active')
 
     def test_remote_fault_unknown_transport_stays_fenced(self):
         q = self.fault_owner(request('fault', fault='recent-worker-loss', target='recent-01'))

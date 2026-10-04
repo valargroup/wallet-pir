@@ -150,6 +150,13 @@ QUERY_PROBE_SECONDS = 90
 WALLET_PROBE_SECONDS = 180  # the recovery proof's 120 s native bound plus store inspection
 ATTEMPT_SECONDS = QUERY_PROBE_SECONDS+WALLET_PROBE_SECONDS+60
 RESTORE_LIMIT = 3
+# One pinned all-host owner survey: the coordinator's own scan, then every remote
+# probe in parallel. A survey that overruns this bound refuses the effect.
+LOCAL_OWNER_SECONDS = 60
+OWNER_SURVEY_SECONDS = LOCAL_OWNER_SECONDS+REMOTE_BOUND['probe']+SSH_MARGIN
+# A rechecked preparation is the same instance only if its native age advanced
+# with the replying host's clock, within this tolerance.
+PREPARATION_AGE_TOLERANCE = 5
 RECONCILE_SECONDS = 240
 CHILD_STOP_SECONDS = 30
 # Reserved before RuntimeMaxSec so a clean stop can end children and seal results;
@@ -172,9 +179,12 @@ MAX_SEED_BYTES = 64 << 20
 INTERRUPT_PROFILES = ('restore-old', 'restore-6m', 'catch-up-30d', 'multi-script')
 RUNTIME = {'staged-load':2400, 'freshness':FRESHNESS['bound_seconds']+1800,
            'capacity':10800+MAX_CONTINUATIONS*(CONTINUATION_SECONDS+120), 'fault':3600}
+# The publisher stop itself, its post-stop status read, its start and a restoration.
+STOP_EFFECT_SECONDS = UNIT_SECONDS['stop']+REMOTE_BOUND['control-status']+SSH_MARGIN+UNIT_SECONDS['start']+RESTORE_SECONDS
 EFFECT_SECONDS = {'client-reopen':INTERRUPT_SECONDS+CONTINUATION_SECONDS+120,
-                  'publication-interruption':REMOTE_BOUND['await-preparation']+REMOTE_BOUND['control-status']+
-                                             UNIT_SECONDS['stop']+UNIT_SECONDS['start']+RESTORE_SECONDS+3*SSH_MARGIN,
+                  # Wait for a preparation, re-survey every owner, recheck it, then stop.
+                  'publication-interruption':REMOTE_BOUND['await-preparation']+SSH_MARGIN+OWNER_SURVEY_SECONDS+
+                                             REMOTE_BOUND['control-status']+SSH_MARGIN+STOP_EFFECT_SECONDS,
                   'recent-worker-loss':REMOTE_BOUND['stop-start']+RESTORE_SECONDS+SSH_MARGIN,
                   'archive-restart':REMOTE_BOUND['restart']+RESTORE_SECONDS+SSH_MARGIN,
                   'router-restart':REMOTE_BOUND['restart']+RESTORE_SECONDS+SSH_MARGIN, 'rollback-redeploy':0}
@@ -356,7 +366,9 @@ def bounds():
     return {'owner_runtime_seconds':RUNTIME, 'owner_margin_seconds':OWNER_MARGIN, 'remote_seconds':REMOTE_BOUND,
             'restore_seconds':RESTORE_SECONDS,
             'ssh_margin_seconds':SSH_MARGIN, 'unit_seconds':UNIT_SECONDS, 'attempt_seconds':ATTEMPT_SECONDS,
-            'effect_seconds':EFFECT_SECONDS, 'post_seconds':POST_SECONDS, 'restore_limit':RESTORE_LIMIT,
+            'effect_seconds':EFFECT_SECONDS, 'stop_effect_seconds':STOP_EFFECT_SECONDS,
+            'owner_survey_seconds':OWNER_SURVEY_SECONDS, 'preparation_age_tolerance_seconds':PREPARATION_AGE_TOLERANCE,
+            'post_seconds':POST_SECONDS, 'restore_limit':RESTORE_LIMIT,
             'reconcile_seconds':RECONCILE_SECONDS, 'remote_health_interval_seconds':REMOTE_HEALTH_INTERVAL,
             'remote_health_stale_seconds':REMOTE_HEALTH_STALE, 'loop_seconds':LOOP_SECONDS}
 
@@ -2517,12 +2529,25 @@ class Qualification:
         require(elapsed <= RECOVERY_SECONDS, 'recovery completed after 900 seconds (%.1f s)' % elapsed)
         return {'recovered_seconds':elapsed, 'attempts':attempts, 'probe':result, 'ready':ready, 'public':public}
 
-    def owners_before_effect(self, raw):
-        """Pinned all-host owner reconciliation under the lock, retained raw."""
+    def owners_before_effect(self, raw, name='owners-before-effect.json'):
+        """Pinned all-host owner reconciliation under the lock, bounded, retained raw once.
+
+        Each survey has its own file, so a later survey never replaces an
+        earlier one, and must finish within OWNER_SURVEY_SECONDS.
+        """
         self.lock.verify()
         self.quiescent_children()
-        hosts = self.all_hosts('probe', running=True)
-        write_once(raw/'owners-before-effect.json', hosts)
+        outer = self.deadline
+        bound = outer.child(OWNER_SURVEY_SECONDS)
+        try:
+            self.deadline = bound
+            hosts = self.all_hosts('probe', running=True)
+        finally:
+            self.deadline = outer
+        elapsed = bound.elapsed()
+        require(elapsed <= OWNER_SURVEY_SECONDS, 'owner survey exceeded its %d s bound (%.1f s)' % (OWNER_SURVEY_SECONDS, elapsed))
+        write_once(raw/name, {'unix':time.time(), 'elapsed_seconds':elapsed, 'hosts':hosts})
+        self.lock.verify()
         return hosts
 
     def fault(self):
@@ -2536,7 +2561,8 @@ class Qualification:
             self.health(health)
             self.remote_health(health)
         before = self.probe(raw/'before')
-        self.deadline.need(EFFECT_SECONDS[fault]+RECOVERY_SECONDS+POST_SECONDS, 'the fault, its recovery and post checks')
+        self.deadline.need(OWNER_SURVEY_SECONDS+EFFECT_SECONDS[fault]+RECOVERY_SECONDS+POST_SECONDS,
+                           'the owner survey, the fault, its recovery and post checks')
         self.owners_before_effect(raw)
         effect = {'fault':fault, 'status':'starting', 'started_unix':time.time()}
         self.record['effect'] = effect
@@ -2548,7 +2574,8 @@ class Qualification:
             effect['status'] = 'passed'
         elif fault == 'publication-interruption':
             allowed = (PUBLISHER,)
-            effect.update(self.publication_interruption())
+            # Recovery is timed from the publisher stop, after the preparation wait.
+            started = self.publication_interruption(raw)
         elif fault == 'rollback-redeploy':
             # Root performed both through schema-rollback/schema-deploy; this owner
             # only binds their journals and never synthesizes either outcome.
@@ -2595,12 +2622,25 @@ class Qualification:
                 'retained rollback baseline changed: '+', '.join(sorted(h for h in rollback if after.get(h, {}).get('rollback') != rollback[h])))
         return {'status':'passed', 'failures':[], 'before':before, 'effect':effect, 'recovery':recovered}
 
-    def publication_interruption(self):
+    def refuse(self, effect, reason):
+        """Record a refusal before any unit effect; nothing was stopped."""
+        effect.update(status='refused', refused_unix=time.time(), reason=reason[:300])
+        self.save(self.record)
+        raise ValueError('publication interruption refused before the publisher stop: '+reason)
+
+    def publication_interruption(self, raw):
         """Stop the publisher only while a recent replica reports an in-progress preparation.
 
         The native worker control status reports `preparing` with the candidate map
-        digest. The stop counts as inside that preparation only if the same worker,
-        read after the stop completed, still has not activated that map.
+        digest, its age and phase. The wait for one may outlive the first owner
+        survey, so every pinned host is surveyed again afterwards (retained apart
+        from the first) and the same worker is re-read: the stop proceeds only if
+        the same preparation instance (same digest, age advanced with the host's
+        clock, nothing newly activated) is still in progress and the full stop,
+        restoration, 900 s recovery and post checks still fit. Anything else
+        refuses before the stop. The stop counts as inside that preparation only
+        if the same worker, read after the stop completed, still has not
+        activated that map. Returns the monotonic time of the stop.
         """
         recent = next(h['host'] for h in self.hosts if h['worker'] is not None and h['worker']['role'] == 'recent-replica')
         effect = self.record['effect']
@@ -2608,11 +2648,37 @@ class Qualification:
         effect['preparation'] = observed
         self.save(self.record)
         require(observed.get('observed') == 'preparing', 'no in-progress preparation within %d s' % PREPARATION_WAIT_SECONDS)
-        effect['node_height'] = node('getblockcount', [], self.deadline.timeout(3))
+        preparing = observed['control']['preparing']
+        try:
+            self.deadline.need(OWNER_SURVEY_SECONDS+REMOTE_BOUND['control-status']+SSH_MARGIN+STOP_EFFECT_SECONDS+
+                               RECOVERY_SECONDS+POST_SECONDS, 'a refreshed owner survey, the publisher stop and its recovery')
+            surveyed = time.time()
+            self.owners_before_effect(raw, 'owners-before-stop.json')
+            effect['owners_before_stop'] = {'unix':surveyed, 'file':'raw/owners-before-stop.json'}
+            self.save(self.record)
+            _, current = self.remote(recent, 'control-status', 'probe')
+        except Exception as error:
+            self.refuse(effect, 'owners or preparation not re-proven after the wait: %s: %s' % (type(error).__name__, error))
+        effect['preparation_recheck'] = current
+        self.save(self.record)
+        control, before = current.get('control') or {}, observed['control']
+        again = control.get('preparing') if isinstance(control.get('preparing'), dict) else {}
+        advanced = (type(again.get('age_seconds')) in (int, float) and type(preparing.get('age_seconds')) in (int, float) and
+                    type(current.get('unix')) in (int, float) and type(observed.get('unix')) in (int, float) and
+                    again['age_seconds'] >= preparing['age_seconds']+(current['unix']-observed['unix'])-PREPARATION_AGE_TOLERANCE)
+        if not (again.get('map_sha256') == preparing.get('map_sha256') and advanced and
+                control.get('active_map_sha256') == before.get('active_map_sha256') != preparing.get('map_sha256')):
+            self.refuse(effect, 'the observed preparation is no longer the same in-progress instance')
+        try:
+            effect['node_height'] = node('getblockcount', [], self.deadline.timeout(3))
+            self.deadline.need(STOP_EFFECT_SECONDS+RECOVERY_SECONDS+POST_SECONDS, 'the publisher stop and its recovery')
+        except Exception as error:
+            self.refuse(effect, '%s: %s' % (type(error).__name__, error))
         unit = UnitEffect(PUBLISHER, effect, lambda: self.save(self.record), commands(self.deadline))
         unit.capture()
         self.save(self.record)  # durable pre-fault publisher identity
         self.lock.verify()
+        started = time.monotonic()
         try:
             unit.stop(self.deadline)
             try:
@@ -2633,7 +2699,7 @@ class Qualification:
         effect['status'] = 'passed'
         self.save(self.record)
         require(effect['inside_preparation'], 'publisher stop was not proven inside an in-progress preparation')
-        return {}
+        return started
 
     def seed_trial(self):
         """The reconciled capacity trial whose retained scenario, sample and seeds drive the reopen."""
