@@ -1179,6 +1179,15 @@ class FlowTests(unittest.TestCase):
         with patch.object(Q, 'node_raw', node_raw), patch.object(Q, 'fetch', disagree), open(os.devnull, 'w') as stream:
             with self.assertRaisesRegex(ValueError, 'origins disagree'):
                 q.observe_freshness(window, stream)
+        reads = []
+        def racing(url, timeout):
+            reads.append(url)
+            height = 101 if len(reads) != 2 else 100  # the filter origin lags once, then agrees
+            value = {'shards':[{'end_height':height, 'terminal_block_hash':'h%d' % height}]}
+            return value, json.dumps(value).encode(), None
+        with patch.object(Q, 'node_raw', node_raw), patch.object(Q, 'fetch', racing), open(os.devnull, 'w') as stream:
+            self.assertIsNone(q.observe_freshness(window, stream))
+        self.assertEqual(len(reads), 5)  # public, filters, both re-read, one replica
 
     def test_freshness_run_retains_failed_intervals_and_resets_on_errors(self):
         q = self.owner(request('freshness'))
@@ -1296,6 +1305,10 @@ class FlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'within 900 seconds'):
                 q.recover(raw, started, ())
             self.assertEqual(len(probes), 1)  # another bounded attempt no longer fits after 600 s
+            probes.clear()
+            with self.assertRaisesRegex(ValueError, 'within 900 seconds: a recovery attempt needs 330 s'):
+                q.recover(raw, clock()-600, ())  # the effect itself used 600 s
+            self.assertEqual(probes, [])  # no attempt starts that cannot finish
             clock.now += 1
             q.probe = lambda directory: clock.sleep(100) or {'query':'passed'}
             started = clock()

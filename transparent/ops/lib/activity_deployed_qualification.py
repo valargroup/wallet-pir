@@ -1944,7 +1944,10 @@ class Qualification:
         self.tip_hash = timed('getblockhash', rpc, 'getblockhash', height)[0]
         public, public_before, public_after = timed('public', shards, SHARD_ORIGIN+'/v1/shards')
         filters = timed('filters', shards, FILTER_ORIGIN+'/v1/filters/shards')[0]
-        require(public == filters, 'public origins disagree')
+        if public != filters:  # one re-read of both, in case a publication landed between them
+            public, public_before, public_after = timed('public-reread', shards, SHARD_ORIGIN+'/v1/shards')
+            filters = timed('filters-reread', shards, FILTER_ORIGIN+'/v1/filters/shards')[0]
+        require(public == filters, 'public origins disagree across a stable re-read')
         require(timed('getblockhash-public', rpc, 'getblockhash', public['end_height'])[0] == public['terminal_block_hash'],
                 'public endpoint is not canonical')
         window.serving('public', public['end_height'], public_before, public_after)
@@ -2178,8 +2181,7 @@ class Qualification:
                         with (raw/('recovery-%02d.error.json' % attempts)).open('x') as stream:
                             json.dump({'error_type':type(error).__name__, 'error':str(error)[:500], 'unix':time.time(),
                                        'elapsed_seconds':deadline.elapsed()}, stream)
-                        deadline.need(15+ATTEMPT_SECONDS, 'another recovery attempt')
-                        deadline.sleep(15)
+                        deadline.sleep(15)  # the next attempt must still fit whole
                         continue
                     break
         except Budget as error:

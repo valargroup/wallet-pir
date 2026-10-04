@@ -254,12 +254,16 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   The closed [deployed qualification](deployment.md#deployed-candidate-qualification)
   interface exists in source with focused fixture tests; nothing has run. The
   following remain open:
-  - Review the eight-wallet composition and the owner memory budgets.
+  - Review the eight-wallet composition, the owner memory budgets and the
+    fixed timing bounds.
   - After the candidate transaction commits, run staged load, then freshness,
     then 3+ trials per level, then the six faults, one request at a time.
   - Close the missing-assurance gaps the interface records: quality-alert
     shadow state, continuation of retained heavy and interrupted stores,
-    mid-preparation restart timing and cache-corruption injection.
+    cache-corruption injection, and an owner-run probe of the rolled-back v10
+    service.
+  - An owner killed during a fault effect leaves the unit stopped and fenced
+    until `schema-qualify-reconcile` restores it.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 
 ## Server txid display stage (2026-10-01)

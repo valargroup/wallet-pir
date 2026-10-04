@@ -1606,11 +1606,13 @@ That source can be newer than the product transaction's source.
 
 - `schema-qualify-plan --request F --request-sha256 H` prints the plan and its
   digest. It does not read hosts.
-- `schema-qualify-preflight` uses the same arguments.
+- `schema-qualify-preflight` uses the same arguments. It holds the production
+  lock, because its remote probes briefly take each host's lock.
 - `schema-qualify-run` adds `--expect-plan-sha256 H` and launches the owner.
-- `schema-qualify-status --request-sha256 H` reports the owner.
+- `schema-qualify-status --request-sha256 H` reports the owner, its effect and
+  its remote actions.
 - `schema-qualify-reconcile --request-sha256 H` reconciles the owner after it
-  stops.
+  stops and restores any owned unit effect that did not finish.
 - `schema-qualify-summary --transaction ID` is read-only. It prints the
   capacity decision from that transaction's reconciled trials.
 
@@ -1623,13 +1625,16 @@ The closed request has `version=1`, `kind`, `source_sha`, `attempt`,
 - A fault that targets a worker also needs `target`.
 - `rollback-redeploy` also needs `rolled_back_transaction`.
 
-Requests cannot carry URLs, argv, paths, units, signals or thresholds.
+Requests cannot carry URLs, argv, paths, units, signals, thresholds or timing.
+The plan lists every fixed bound.
 
 Every action rechecks the same deployment:
 
 - The latest schema transaction is exactly `transaction`. Its status is
   `committed`, and every forward phase passed under `recipe_sha256`.
-- The recipe's product specification is version 2 for candidate `c3c66b9b`.
+- The recipe's product specification is version 2 for candidate `c3c66b9b`,
+  with one coordinator, a router, at least two recent replicas and an archive
+  owner.
 - The rollback budgets are unchanged.
 - The candidate `rate-query` and `transparent-loadtest` match their pins.
 - The load fixture, recovery sample, assignment and inventory match their
@@ -1637,14 +1642,36 @@ Every action rechecks the same deployment:
 - The scaler policy is `observe`, and the quality supervisor is stopped with an
   empty cgroup.
 - The coordinator has at least 20% memory and disk headroom.
-- Every router and worker answers a read-only SSH probe through the staged
-  wrapper. The probe checks that host's schema, host-action and input fences and
-  its unfinished qualification actions. It also checks 20% headroom and records
-  restart and OOM counters.
-- Every worker is ready on the candidate executable.
+- Every pinned host passes owner reconciliation (below). Remote hosts also need
+  20% headroom, and their restart and OOM counters are recorded.
+- Each host's retained rollback baseline for `transaction`
+  (`/opt/transparent-publisher/schema-rollback/<transaction>`) verifies
+  read-only, and its digest is recorded.
+- Every worker is ready as its assigned role on the candidate executable. Its
+  assignment digests and incarnation are recorded.
+- The public map's protocol digest, sealed shards and canonical tail are
+  recorded.
 
 The historical 12ce publication, assignment, samples and rollback reader stay
 unchanged; only the forward v11 recovery reader is the candidate client.
+
+**Owner reconciliation.** A terminal journal does not prove quiescence. On
+every pinned host, none exempt, reconciliation:
+
+- takes the host's production lock without waiting (on the coordinator, the
+  owner already holds it), so no lock-inheriting owner or descendant lives;
+- passes the shared schema, host-action and input fences;
+- reads the latest owner of the host-action, input-staging and
+  qualification-action namespaces, and fails if a recorded owner or child
+  identity (PID, start ticks, boot) is alive, or a recorded bare PID names a
+  process that started before its record;
+- lists every `transparent-activity-*` and `transparent-full-burst-*` unit, and
+  fails if one has a main PID, is transitioning or has a non-empty cgroup.
+
+Only this owner's own record and unit are exempt, and only on the coordinator.
+Raw findings are retained. Reconciliation runs at preflight, every 60 seconds
+during load, freshness and capacity, and immediately before and after each
+fault effect.
 
 Launch then works in this order:
 
@@ -1654,14 +1681,33 @@ Launch then works in this order:
 2. It retains the request, plan and preflight as read-only files under
    `/srv/transparent-activity/qualification/<request SHA>`.
 3. It starts the fixed transient unit `transparent-activity-qualification-<prefix>`
-   with `Restart=no`, `KillMode=control-group` and `RuntimeMaxSec`.
+   with `Restart=no`, `KillMode=control-group`, `TimeoutStopSec=90` and
+   `RuntimeMaxSec`.
 
 The unit's owner reacquires the production lock. Clients start in their own
-sessions and inherit the lock. Each process's PID, start ticks and boot ID are
-recorded before and after it starts.
+sessions and inherit the lock. Each child's intent is saved before it starts,
+and its PID, start ticks and boot ID after. A child started before its identity
+was saved is still in the owner's cgroup and still holds the lock.
 
-Health is checked every 5 seconds on the coordinator and every 60 seconds on
-remote hosts. Any of these stops the activity:
+**Timing bounds.** The owner's deadline ends 150 seconds before
+`RuntimeMaxSec`. Every wait, network call, `systemctl` call and child shares it,
+and no bounded suboperation starts unless its whole bound still fits. Node RPCs
+are bounded at 3 seconds, origin reads at 4 or 5 seconds, `systemctl` at 15
+seconds, unit stop and start at 90 seconds each, and each remote call at its
+operation bound plus 30 seconds, plus 150 seconds of restoration for an effect. A clean stop has 30 seconds to end children and
+then seals the result.
+
+| Owner | `RuntimeMaxSec` |
+| --- | --- |
+| staged load | 2400 |
+| freshness | 45000 |
+| capacity | 10800 |
+| fault | 3600 |
+
+Health is checked every 1 to 2 seconds on the coordinator. Remote reconciliation runs
+in a background thread, so a slow SSH probe never stalls observations. A failed
+or more than 150-second-old remote result stops the activity. Any of these also
+stops it:
 
 - headroom below 20%
 - an OOM
@@ -1670,12 +1716,14 @@ remote hosts. Any of these stops the activity:
 - a lost lock
 
 The owner writes `result.json` exactly once and seals all raw files read-only.
-Reconcile requires all of the following:
+An owned unit effect that did not finish or restore makes the result `failed`
+and `fenced`. Reconcile requires all of the following:
 
 - the lock is free
 - the unit has no main PID and its cgroup is empty
 - no recorded process or owned session is alive
-- every remote action has finished
+- every owned local effect and remote action is `passed`, `restored` or
+  `refused`, restoring it first if needed
 
 An interrupted run gets an `interrupted` result, and its partial raw files are
 kept. If SSH drops, run status and reconcile again; never repeat a request.
@@ -1697,19 +1745,27 @@ A stage passes only on raw output, with:
 - p50 below 0.7 seconds and p99 below 2 seconds
 - transport attempt failures below 1%
 - a measured 75–85% recent share
+- every client exiting 0 within its bound
 
 A freshness or health violation, or a failed stage, refuses escalation and keeps
-the failed stage.
+the failed stage. A stage starts only if it and 120 seconds fit the deadline.
 
-**Freshness.** The owner timestamps each new node height, then checks when the
-public map and every recent replica serve it. Every served tail must be the
-canonical block hash. Public must be within 30 seconds and recent within 60
-seconds.
+**Freshness.** Each observation reads the node tip and hash, both public maps,
+every recent replica and the canonical hash of every served tail. Each call's
+raw response is kept once under `raw/responses/<sha256>`, and each observation
+line records every call's monotonic and wall-clock start and end.
 
-A violation or reorganization closes the current interval as failed, records it
-in `intervals.jsonl` and starts a new interval with no inherited credit. The run
-passes after 6 hours and 300 blocks in one interval; it fails after 12 hours
-without one. Sampling every second can only lengthen measured latency.
+Latency is an upper bound from observation times, not a guess of when a block
+arrived. A block counts as born at the start of the last node read that did not
+report it. It counts as visible at the end of the first read that serves it.
+The public origins must be within 30 seconds and each recent replica within
+60 seconds.
+
+A violation, a reorganization, a failed observation or more than 10 seconds
+between complete observations closes the current interval. The closed interval
+is recorded as failed in `intervals.jsonl`, and a new interval starts with no
+inherited credit. Unobserved time never counts as fresh. The run passes after
+6 hours and 300 blocks in one interval; it fails after 12 hours without one.
 
 **Capacity.** One request is one sustained 60-minute candidate
 `transparent-loadtest` scenario at level 8, 20 or 40. The scenario fixes:
@@ -1730,6 +1786,10 @@ The evaluator reads `wallets.ndjson`, `requests.ndjson` and `metrics.ndjson`:
 - Only `exact` outcomes with exact events count as completed syncs.
   `scheduled` wallets and request counts never count.
 - A trial fails if:
+  - the loadtest did not exit 0 by itself, or the owner stopped it, whatever
+    its partial rows show
+  - a wallet event is malformed, duplicated, unscheduled, or out of order
+    (started before scheduled, or finished before started)
   - any wallet lacks a terminal outcome
   - failed or incomplete outcomes exceed 5%, heavy attempts included
   - 503 attempts exceed 10%
@@ -1759,15 +1819,46 @@ load-window exact-sync rate at the highest passing level.
 | Fault | Fixed action |
 | --- | --- |
 | `client-reopen` | Kills the owner's own loadtest client mid-sync, then integrity-checks its store |
-| `publication-interruption` | Restarts the coordinator publish controller; recovery also needs the public map to reach the pre-fault node tip |
+| `publication-interruption` | Waits up to 300 s for a recent replica to report a preparation, then stops and restarts the coordinator publish controller; recovery also needs the public map to reach the pre-fault node tip |
 | `recent-worker-loss` | Stops the target recent replica's worker, waits 60 s, then starts it |
 | `archive-restart` | Restarts the target archive owner |
 | `router-restart` | Restarts router Caddy |
 | `rollback-redeploy` | Changes nothing; verifies retained journals |
 
-Remote actions run through hidden `schema-qualify-remote` under that host's own
-production lock. Each records durable intent before its single `systemctl`
-transition, and is never replayed.
+A fault starts only if its effect, 900-second recovery and post checks fit the
+owner deadline, and only after owner reconciliation of every host and of the
+owner's own children.
+
+**Unit effects.** A unit effect, local or remote, first records the exact
+pre-fault service: active state, main PID, start ticks, executable digest, unit
+fragment, drop-ins and cgroup. It saves each phase (`stopping`, `stopped`,
+`starting`, `restarting`, `verified`) before the `systemctl --no-block` call
+that enters it, then polls under the deadline. Success requires the same unit
+definition, cgroup and executable, with a new process.
+
+Remote effects run through hidden `schema-qualify-remote` under that host's own
+production lock, within 240 seconds (`stop-start`) or 180 seconds (`restart`).
+They ignore SSH hangup and broken pipes. A termination signal or a handled
+failure enters restoration, bounded at 150 more seconds. A request is never
+replayed.
+
+Restoration starts only the owned unit, only after an owned stop, and at most
+three times per effect. An unchanged original process counts as restored only
+if the recorded phase shows no stop or restart took effect. A worker must also
+be ready on the restored executable. A unit that stopped without an owned stop,
+changed without an owned effect, or now runs a different definition or
+executable stays fenced for review.
+
+The coordinator treats a lost or unstructured remote reply as unknown. The
+action stays fenced, and every later mutation refuses, until reconcile.
+Remote reconcile waits for that host's lock, then either restores and proves the
+owned service or, if no intent was ever recorded, writes a permanent `refused`
+record so a delayed request can never act.
+
+`publication-interruption` counts only if a recent replica's native control
+status reported `preparing` with a candidate map before the stop, and the same
+worker, read after the stop completed, has not activated that map. Otherwise
+the fault fails after restarting the publisher.
 
 `rollback-redeploy` performs no effect. Root runs the reviewed `schema-rollback`
 and then `schema-deploy` of the same recipe. The fault then verifies the
@@ -1780,16 +1871,26 @@ retained journals:
 - The forward timeouts are still 1800 seconds.
 - The redeploy is the latest committed transaction of the same recipe, created
   after rollback. An unchanged recipe digest keeps cache preparation 1200,
-  candidate warm 300 and restored-start 250 bound.
+  stage 1800, candidate warm 300 and restored-start 250 bound.
 
 Every fault requires the following:
 
 - The canonical query and reopened-wallet probes pass before the fault.
-- Within 900 seconds of the fault, the owner gets exact canonical encrypted
-  queries, the existing reopened-SQLite recovery proof, and worker
-  binary/map identity equal to the original baseline.
-- After recovery, a fresh health check passes, and the remote action and owned
-  clients have ended.
+- One 900-second monotonic deadline starts with the effect. A recovery attempt
+  starts only if its whole 330-second bound fits. A success measured after 900
+  seconds fails, and the measured time is retained. Each attempt needs:
+  - exact canonical encrypted queries and the existing reopened-SQLite
+    recovery proof;
+  - every worker on its baseline binary, worker ID, role and assignment
+    digests;
+  - every worker serving exactly the current public map, whose tail is
+    canonical, with every sealed pre-fault shard unchanged. Publication
+    advances during a fault, so the stale pre-fault map is never required;
+  - a new incarnation for a faulted worker and an unchanged one for every
+    other worker.
+- After recovery, health and owner reconciliation of every host pass, and the
+  owner's children have ended. Every host's retained rollback baseline is
+  unchanged.
 
 **Missing assurance.** No result sets `qualified`. These gaps need native or
 external interfaces, not weaker gates:
@@ -1799,13 +1900,20 @@ external interfaces, not weaker gates:
 - **Continuation.** No native interface resumes a retained heavy or interrupted
   SQLite store. Capacity and `client-reopen` therefore keep that store as
   explicit incomplete evidence, and continuation stays unmeasured.
-- **Mid-preparation timing.** No native status shows a preparation in progress,
-  so the publication restart is not proven to land inside one.
 - **Cache corruption.** No reviewed, non-destructive way exists to inject cache
-  corruption. `archive-restart` exercises only an owner restart and cache
-  reload.
+  corruption. `archive-restart` exercises only an archive-owner restart and
+  cache reload.
+- **Rolled-back service probe.** The v10 state is proven only by the recipe's
+  own `verify-rollback` and `verify-service` phases. The owner probes the
+  redeployed candidate, timed from its own start, and records the time from the
+  redeploy commit to that proof.
 - **`transparent-measure`.** It serves its own local shard set, so it cannot
   measure a deployment and is not used.
+
+Owner kill points have no automatic recovery. An owner killed by
+`RuntimeMaxSec`, `TimeoutStopSec` or `SIGKILL` during a fault effect can leave
+the publisher or a worker stopped until `schema-qualify-reconcile` restores it.
+Until then, the fence blocks every wrapper mutation.
 
 The capacity owner is limited to 10 GiB high and 12 GiB maximum memory. Other
 owners are limited to 4/6 GiB. CPU is 200% and swap is zero. The host-wide 20%

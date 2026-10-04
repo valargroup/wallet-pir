@@ -67,6 +67,7 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   schema-qualify-{status,reconcile} --request-sha256 H
       Deployed candidate staged load, freshness, capacity trial or one lifecycle fault,
       run as one detached owner under the lock; run requires the reviewed plan digest.
+      Reconcile restores an owned unit effect that did not finish before releasing the fence.
   schema-qualify-summary --transaction ID
       Read-only capacity decision from reconciled trials of one transaction.
 
