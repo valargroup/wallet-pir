@@ -1621,6 +1621,9 @@ Each survey records:
     the record's `started_unix`/`started` and its last write.
 
   Records last written before this boot, or naming another boot, are skipped.
+  Kernel threads and kernel-spawned helpers (session 0) are never associated.
+  On the coordinator this walk keeps the 2-second health sampling, and a
+  failure there still retains every reply already received.
 - Every candidate execution owner and its status.
 
 Before any owner exists, the receiver checks the nonce, the host set, every
