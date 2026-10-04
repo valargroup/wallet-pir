@@ -84,4 +84,18 @@ class DaySizingTests(unittest.TestCase):
         self.assertIsNone(c['qualified_population_minimum'])
         self.assertGreater(report['128:global/global:1/1:cover0']['observed_possible_classes'],1)
 
+    def test_geometry_segments_multiply_responses_but_not_uploads(self):
+        metrics={k:{bound:{'estimate':value} for bound in ('lower','upper')} for k,value in (
+            ('directory_entry_bytes_min',100_000_000),('directory_entry_bytes_max',100_000_000),
+            ('overflow_entry_bytes',200_000_000),('covered_page_requests',3000),('fragments',100))}
+        report={'threshold_decision':{'selected_bytes':128},'totals':{'eligible':{'estimate':1000}},
+            'codecs':{'display-v1':{'thresholds':{'128':{'packing_bounds':metrics}}}}}
+        scenarios=d.geometry_projection(report)['scenarios']
+        rows=[s for s in scenarios if s['fee_size_bound']=='upper' and s['lookup_rows']==4096 and s['overflow_rows']==4096]
+        global_row=next(s for s in rows if s['lookup_buckets']==1 and s['overflow_buckets']==1)
+        hash_row=next(s for s in rows if s['lookup_buckets']==4 and s['overflow_buckets']==4)
+        self.assertEqual(global_row['cover3_upload_bytes_per_open'],hash_row['cover3_upload_bytes_per_open'])
+        self.assertGreater(global_row['cover3_response_body_bytes_per_open'],hash_row['cover3_response_body_bytes_per_open'])
+        self.assertIsNone(global_row['measured_native_rss_bytes'])
+
 if __name__=='__main__':unittest.main()
