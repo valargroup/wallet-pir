@@ -162,8 +162,17 @@ LOOP_SECONDS = 2
 # Reviewed schema recipe budgets; a successful rollback must use them unchanged.
 ROLLBACK_BUDGET = {'withdraw-origins':60, 'restore-v10':140, 'verify-rollback':300, 'reopen-v10':100, 'verify-service':140}
 FORWARD_TIMEOUT = 1800
-RUNTIME = {'staged-load':2400, 'freshness':FRESHNESS['bound_seconds']+1800, 'capacity':10800, 'fault':3600}
-EFFECT_SECONDS = {'client-reopen':300,
+# One retained store resumes through the pinned loadtest's `--scenario-worker` protocol.
+CONTINUATION_SECONDS = 600
+MAX_CONTINUATIONS = 4
+INTERRUPT_SECONDS = 300
+CONTINUATION_JOB_ID = 1
+MAX_STORE_BYTES = 2 << 30
+MAX_SEED_BYTES = 64 << 20
+INTERRUPT_PROFILES = ('restore-old', 'restore-6m', 'catch-up-30d', 'multi-script')
+RUNTIME = {'staged-load':2400, 'freshness':FRESHNESS['bound_seconds']+1800,
+           'capacity':10800+MAX_CONTINUATIONS*(CONTINUATION_SECONDS+120), 'fault':3600}
+EFFECT_SECONDS = {'client-reopen':INTERRUPT_SECONDS+CONTINUATION_SECONDS+120,
                   'publication-interruption':REMOTE_BOUND['await-preparation']+REMOTE_BOUND['control-status']+
                                              UNIT_SECONDS['stop']+UNIT_SECONDS['start']+RESTORE_SECONDS+3*SSH_MARGIN,
                   'recent-worker-loss':REMOTE_BOUND['stop-start']+RESTORE_SECONDS+SSH_MARGIN,
@@ -174,10 +183,12 @@ MEMORY = {'capacity':('10G', '12G')}
 MISSING = {
     'all': ['quality alerts: their shadow state is APM configuration with no coordinator interface; '
             'only the stopped quality supervisor is verified'],
-    'capacity': ['heavy continuation: transparent-loadtest retains incomplete heavy SQLite stores but no native '
-                 'interface resumes a retained store; continuation is unmeasured and capacity stays unqualified'],
-    'client-reopen': ['interrupted-store continuation: the interrupted store is integrity-checked and an exact '
-                      'fresh recovery is required; no native interface resumes the interrupted store'],
+    'capacity': ['heavy continuation: incomplete heavy stores resume through the pinned loadtest\'s existing '
+                 '--scenario-worker protocol; that adapter is an unproven interface candidate until real '
+                 'measurements are reviewed, and an exact outcome deletes the store natively'],
+    'client-reopen': ['interrupted-store continuation: the interrupted store resumes through the pinned loadtest\'s '
+                      'existing --scenario-worker protocol; that adapter is an unproven interface candidate until '
+                      'real measurements are reviewed, and an exact outcome deletes the store natively'],
     'archive-restart': ['cache corruption: injecting a corrupt runtime/disk cache needs destructive file mutation '
                         'with no reviewed native interface; only an archive-owner restart and cache reload run'],
     'rollback-redeploy': ['rolled-back service probe: the v10 state is proven only by the recipe\'s own '
@@ -299,7 +310,8 @@ def validate(request):
     kind, fault = request['kind'], request.get('fault')
     extra = {'staged-load':set(), 'freshness':set(), 'capacity':{'level', 'trial', 'sample'},
              'fault':{'fault'} | ({'target'} if fault in FAULT_TARGET else set()) |
-                     ({'rolled_back_transaction'} if fault == 'rollback-redeploy' else set())}[kind]
+                     ({'rolled_back_transaction'} if fault == 'rollback-redeploy' else set()) |
+                     ({'seed_trial'} if fault == 'client-reopen' else set())}[kind]
     require(set(request) == base | extra, 'qualification request fields are closed')
     require(type(request['version']) is int and request['version'] == 1 and
             isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
@@ -316,6 +328,8 @@ def validate(request):
         require('rolled_back_transaction' not in request or isinstance(request['rolled_back_transaction'], str) and
                 TXN.fullmatch(request['rolled_back_transaction']) and request['rolled_back_transaction'] != request['transaction'],
                 'rollback/redeploy needs the distinct rolled-back transaction')
+        require('seed_trial' not in request or isinstance(request['seed_trial'], str) and HEX.fullmatch(request['seed_trial']),
+                'client reopen needs the reconciled capacity trial that retains its wallet seeds')
     return request
 
 
@@ -358,13 +372,17 @@ def activity(request):
     if kind == 'capacity':
         return {'level':request['level'], 'trial':request['trial'], 'composition':COMPOSITION[request['level']],
                 'p95_targets':P95_TARGETS, 'heavy':HEAVY, 'capacity':CAPACITY, 'client':'transparent-loadtest',
-                'mode':'sustained', 'seed':request['trial'], 'origins':[SHARD_ORIGIN, FILTER_ORIGIN]}
+                'mode':'sustained', 'seed':request['trial'], 'origins':[SHARD_ORIGIN, FILTER_ORIGIN],
+                'heavy_continuation':{'protocol':'transparent-loadtest --scenario-worker', 'seconds':CONTINUATION_SECONDS,
+                                      'maximum':MAX_CONTINUATIONS}}
     fault = request['fault']
     return {'fault':fault, 'target':request.get('target'), 'action':list(FAULT_ACTION[fault]) if fault in FAULT_ACTION else None,
             'loss_hold_seconds':LOSS_HOLD_SECONDS if FAULT_ACTION.get(fault, (None, None))[1] == 'stop-start' else None,
             'preparation_wait_seconds':PREPARATION_WAIT_SECONDS if fault == 'publication-interruption' else None,
             'recovery_seconds':RECOVERY_SECONDS, 'rollback_budget':ROLLBACK_BUDGET,
-            'rolled_back_transaction':request.get('rolled_back_transaction'),
+            'rolled_back_transaction':request.get('rolled_back_transaction'), 'seed_trial':request.get('seed_trial'),
+            'continuation':{'protocol':'transparent-loadtest --scenario-worker', 'interrupt_seconds':INTERRUPT_SECONDS,
+                            'seconds':CONTINUATION_SECONDS, 'profiles':list(INTERRUPT_PROFILES)} if fault == 'client-reopen' else None,
             'probes':['canonical encrypted query (rate-query 5 QPS, 30 s)', 'reopened-wallet recovery proof',
                       'worker binary/assignment identity, worker map equal to the canonical public map, sealed prefix kept',
                       'retained rollback baselines unchanged on every host']}
@@ -1596,6 +1614,84 @@ class RemoteMonitor:
         self.thread.join(REMOTE_BOUND['probe']+SSH_MARGIN+5)
 
 
+# --- retained-store continuation ----------------------------------------------------
+
+def store_files(store):
+    """A SQLite store and its WAL sidecars, as the native store leaves them."""
+    store = Path(store)
+    return [p for p in (store, store.with_name(store.name+'-wal'), store.with_name(store.name+'-shm')) if p.exists()]
+
+
+def copy_store(store, directory):
+    """Copy a store with its sidecars into a new private directory; return their digests."""
+    directory.mkdir(mode=0o700)
+    files = {}
+    for path in store_files(store):
+        require(path.is_file() and not path.is_symlink(), 'retained store is not a plain file: '+str(path))
+        target = directory/path.name
+        with path.open('rb') as source, target.open('xb') as copy:
+            while chunk := source.read(1 << 20):
+                copy.write(chunk)
+            copy.flush()
+            os.fsync(copy.fileno())
+        files[path.name] = checksum(target)
+    return files
+
+
+def load_seed(path, sample):
+    """A retained prepared-history seed of the same chain and workload anchor."""
+    path = Path(path)
+    require(path.is_file() and not path.is_symlink() and path.stat().st_size <= MAX_SEED_BYTES,
+            'no retained prepared-history seed: '+path.name)
+    seed = json.loads(path.read_bytes())
+    require(isinstance(seed, dict) and set(seed) == {'map_sha256', 'genesis_hash', 'anchor', 'events'} and
+            seed['genesis_hash'] == sample['genesis_hash'] and
+            seed['anchor'] == {'height':sample['anchor_height'], 'hash':sample['anchor_hash']} and
+            isinstance(seed['map_sha256'], str) and HEX.fullmatch(seed['map_sha256']) and isinstance(seed['events'], list) and
+            all(isinstance(e, dict) and set(e) == {'script', 'event'} for e in seed['events']),
+            'retained seed belongs to another chain or workload anchor')
+    return seed
+
+
+def inspect_store(path, client, seed):
+    """Reopen a copy of an interrupted store and audit its prior history against the seed."""
+    scripts = set(client['scripts'])
+    allowed = {(e['script'], e['event']) for e in seed['events']}
+    with closing(sqlite3.connect(Path(path).resolve().as_uri(), uri=True)) as db:
+        integrity = db.execute('PRAGMA integrity_check').fetchone()[0]
+        meta = dict(db.execute('SELECT key, value FROM wallet_meta'))
+        counts = {t:db.execute('SELECT COUNT(*) FROM '+t).fetchone()[0]
+                  for t in ('scripts', 'coverage', 'receives', 'spends', 'pending_work', 'commits')}
+        prior = [(bytes(s).hex(), bytes(e).hex()) for table in ('receives', 'spends')
+                 for s, e in db.execute('SELECT script, event FROM %s WHERE height < ?' % table, (client['required_from'],))]
+        stored = {bytes(s).hex() for (s,) in db.execute('SELECT script FROM scripts')}
+    return {'integrity':integrity, 'schema_version':meta.get('schema_version'),
+            'set_identity_sha256':hashlib.sha256(meta.get('set_identity', '').encode()).hexdigest() if 'set_identity' in meta else None,
+            'anchor':meta.get('anchor'), 'counts':counts, 'prior_events':len(prior),
+            'prior_events_in_seed':all(item in allowed for item in prior), 'scripts_in_wallet':stored <= scripts}
+
+
+def continuation_job(config, client, sample, seed, seed_path, store_path):
+    """The one closed `--scenario-worker` job: reviewed config, sample wallet, seed and store only."""
+    return {'id':CONTINUATION_JOB_ID, 'config':config,
+            'wallet':{k:client[k] for k in ('class', 'scripts', 'required_from', 'expected_digest', 'journal_events')},
+            'map_digest':seed['map_sha256'], 'genesis_hash':sample['genesis_hash'], 'start_height':sample['start_height'],
+            'anchor':{'height':sample['anchor_height'], 'hash':sample['anchor_hash']},
+            'store_path':str(store_path), 'seed_path':str(seed_path), 'preparing':False}
+
+
+def worker_events(path):
+    """Ready, at most one start and one outcome, and requests, all of the one job."""
+    events = lines(path)
+    require(events and events[0] == {'type':'ready'}, 'scenario worker did not report ready')
+    require(all(e.get('type') in ('started', 'request', 'outcome') and e.get('id') == CONTINUATION_JOB_ID for e in events[1:]),
+            'malformed scenario worker event')
+    started = [e for e in events if e['type'] == 'started']
+    outcomes = [e for e in events if e['type'] == 'outcome']
+    require(len(started) <= 1 and len(outcomes) <= 1, 'duplicate scenario worker event')
+    return started, [e for e in events if e['type'] == 'request'], outcomes
+
+
 # --- coordinator owner ----------------------------------------------------------
 
 class Qualification:
@@ -1758,6 +1854,8 @@ class Qualification:
         request = self.request
         if request['kind'] == 'capacity':
             escalation(reconciled_trials(request['transaction']), request['level'], request['trial'])
+        if request.get('fault') == 'client-reopen':
+            self.seed_trial()
         if request.get('fault') in FAULT_TARGET:
             entry = next((h for h in self.hosts if h['host'] == request['target']), None)
             require(entry is not None and entry['worker'] is not None and entry['worker']['role'] == FAULT_TARGET[request['fault']],
@@ -1955,13 +2053,13 @@ class Qualification:
         return self.launch(expected)
 
     # Owned children -------------------------------------------------------------
-    def spawn(self, name, argv, stdout, stderr):
+    def spawn(self, name, argv, stdout, stderr, stdin=None):
         """Durable intent, then a new owned session that inherits the lock."""
         self.lock.verify()
         entry = {'name':name, 'status':'starting', 'intent_unix':time.time()}
         self.record['children'].append(entry)
         self.save(self.record)
-        process = subprocess.Popen([str(a) for a in argv], stdout=stdout, stderr=stderr, start_new_session=True,
+        process = subprocess.Popen([str(a) for a in argv], stdin=stdin, stdout=stdout, stderr=stderr, start_new_session=True,
                                    pass_fds=self.lock.descriptors(), env=dict(os.environ))
         entry.update(status='running', identity=process_identity(process.pid))
         self.save(self.record)
@@ -2216,7 +2314,120 @@ class Qualification:
             self.stop_children()
         evaluation = evaluate_capacity(raw/'loadtest', request['level'], ended, process.returncode, failure, metrics)
         evaluation['freshness'] = window.record(time.monotonic())
+        heavy = self.heavy_continuations(raw, scenario, request['sample'], stopped=failure)
+        evaluation['heavy_continuation'] = heavy
+        if heavy['failures']:
+            evaluation['failures'] = sorted(set(evaluation['failures']+heavy['failures']))
+            evaluation['status'] = 'failed'
         return {'status':evaluation['status'], 'failures':evaluation['failures'], 'capacity':evaluation}
+
+    def heavy_continuations(self, raw, config, sample, stopped=None):
+        """Resume each incomplete heavy store once, through the worker protocol, within fixed bounds.
+
+        A heavy wallet that neither finished in its 600-second attempt nor exactly
+        in its bounded continuation fails the trial. Nothing resumes after the
+        owner stopped the trial for health or freshness.
+        """
+        scheduled, _, outcomes, _ = wallet_events(lines(raw/'loadtest/wallets.ndjson'))
+        pending = [i for i, e in sorted(scheduled.items()) if e['profile'] == HEAVY and i in outcomes and
+                   outcomes[i]['outcome'] != 'exact']
+        result = {'pending':pending, 'continued':[], 'failures':[]}
+        if not pending:
+            return result
+        if stopped:
+            result['failures'].append('heavy continuation not run: the trial was stopped')
+            return result
+        if len(pending) > MAX_CONTINUATIONS:
+            result['failures'].append('incomplete heavy stores exceed the continuation bound')
+        with (raw/'health.jsonl').open('a') as health:
+            for identifier in pending[:MAX_CONTINUATIONS]:
+                index = scheduled[identifier].get('sample_index')
+                try:
+                    require(type(index) is int and 0 <= index < len(sample['clients']) and
+                            sample['clients'][index]['class'] == HEAVY, 'heavy wallet does not name a heavy sample client')
+                    self.health(health)
+                    value = self.continue_store(raw/('continuation-%d' % identifier), config, sample['clients'][index], sample,
+                                                raw/'loadtest/seeds'/('sample-%d.json' % index),
+                                                raw/'loadtest/stores'/('wallet-%d.sqlite' % identifier), 'heavy-%d' % identifier)
+                except Budget:
+                    raise
+                except Exception as error:
+                    value = {'status':'failed', 'error':str(error)[:300]}
+                result['continued'].append(dict(value, wallet=identifier))
+                if value['status'] != 'passed':
+                    result['failures'].append('heavy wallet %d did not complete exactly after continuation' % identifier)
+        return result
+
+    def run_worker(self, directory, name, job, seconds, *, interrupt=False):
+        """One owned `--scenario-worker` child with one closed job, bounded, all output retained.
+
+        With `interrupt`, the child is terminated once it has issued a request
+        and created its store, before any outcome.
+        """
+        events, errors = directory/'worker.ndjson', directory/'worker.log'
+        bound = self.deadline.child(seconds)
+        started = time.monotonic()
+        terminated = timed_out = False
+        with events.open('xb') as out, errors.open('xb') as err:
+            process = self.spawn(name, [artifact('transparent-loadtest'), '--scenario-worker'], out, err, stdin=subprocess.PIPE)
+            try:
+                process.stdin.write(json.dumps(job).encode()+b'\n')
+                process.stdin.close()
+                while process.poll() is None:
+                    if interrupt:
+                        seen = lines(events)
+                        if any(e.get('type') == 'outcome' for e in seen):
+                            break
+                        if any(e.get('type') == 'request' for e in seen) and Path(job['store_path']).exists():
+                            terminated = True
+                            break
+                    if bound.remaining() <= 0:
+                        timed_out = True
+                        break
+                    time.sleep(.2)
+            finally:
+                self.stop_children()
+        begun, requests, outcomes = worker_events(events)
+        return {'exit_code':process.returncode, 'pid':process.pid, 'seconds':time.monotonic()-started,
+                'terminated':terminated, 'timed_out':timed_out, 'started':bool(begun), 'requests':len(requests),
+                'outcome':outcomes[0] if outcomes else None, 'events_sha256':checksum(events)}
+
+    def continue_store(self, directory, config, client, sample, seed_path, store, label):
+        """Resume one retained store and keep pre-resume evidence apart from the native outcome.
+
+        The retained store is copied untouched (`pre-resume`), a second copy is
+        reopened and audited (`inspect`): integrity, schema, and prior history
+        that is a subset of the retained seed. A third copy resumes. An exact
+        native outcome deletes that copy, so no completed database is claimed;
+        the exactness oracle is the sample's expected digest and event count.
+        """
+        self.deadline.need(CONTINUATION_SECONDS+120, 'a store continuation')
+        store = Path(store)
+        require(store.is_file() and not store.is_symlink() and sum(p.stat().st_size for p in store_files(store)) <= MAX_STORE_BYTES,
+                'no bounded retained store to continue: '+store.name)
+        seed = load_seed(seed_path, sample)
+        directory.mkdir(mode=0o700)
+        evidence = {'label':label, 'store':str(store), 'seed_sha256':checksum(seed_path),
+                    'pre_resume':copy_store(store, directory/'pre-resume')}
+        copy_store(store, directory/'inspect')
+        audit = inspect_store(directory/'inspect'/store.name, client, seed)
+        evidence['inspection'] = audit
+        require(audit['integrity'] == 'ok' and audit['schema_version'] and audit['prior_events_in_seed'] and audit['scripts_in_wallet'],
+                'retained store failed its pre-resume audit')
+        copy_store(store, directory/'resume')
+        resume = directory/'resume'/store.name
+        job = continuation_job(config, client, sample, seed, seed_path, resume)
+        write_once(directory/'job.json', job)
+        run = self.run_worker(directory, 'continuation-'+label, job, CONTINUATION_SECONDS)
+        outcome = run['outcome'] or {}
+        oracle = outcome.get('actual_digest') == client['expected_digest'] and outcome.get('events') == client['journal_events']
+        exact = (run['exit_code'] == 0 and not run['timed_out'] and outcome.get('outcome') == 'exact' and
+                 outcome.get('events_exact') is True and oracle)
+        evidence.update(run=run, oracle_exact=oracle, status='passed' if exact else 'failed',
+                        post_resume='deleted by the native exact outcome; no completed database is retained'
+                        if not resume.exists() else 'retained after a non-exact outcome')
+        write_once(directory/'continuation.json', evidence)
+        return evidence
 
     def probe(self, directory):
         """Exact canonical encrypted queries, then a reopened-wallet recovery, each bounded."""
@@ -2424,34 +2635,48 @@ class Qualification:
         require(effect['inside_preparation'], 'publisher stop was not proven inside an in-progress preparation')
         return {}
 
+    def seed_trial(self):
+        """The reconciled capacity trial whose retained scenario, sample and seeds drive the reopen."""
+        sha = self.request['seed_trial']
+        owner = OWNERS/(sha+'.json')
+        require(owner.is_file() and not owner.is_symlink(), 'seed trial owner is not retained')
+        record = json.loads(owner.read_bytes())
+        request = record.get('request') or {}
+        require(record.get('kind') == 'deployed-qualification' and record.get('status') == 'reconciled' and
+                record.get('request_sha256') == sha and request.get('kind') == 'capacity' and
+                request.get('transaction') == self.request['transaction'], 'seed trial is not a reconciled capacity trial of this transaction')
+        raw = ROOT/sha/'raw'
+        sample = json.loads((raw/'sample.json').read_bytes())
+        require(digest(sample) == request.get('sample_sha256'), 'seed trial sample differs from its retained request')
+        config = json.loads((raw/'scenario.json').read_bytes())
+        scheduled, _, _, _ = wallet_events(lines(raw/'loadtest/wallets.ndjson'))
+        for profile in INTERRUPT_PROFILES:
+            for identifier, event in sorted(scheduled.items()):
+                index = event.get('sample_index')
+                if event['profile'] == profile and type(index) is int and 0 <= index < len(sample['clients']) and \
+                        sample['clients'][index]['class'] == profile and (raw/'loadtest/seeds'/('sample-%d.json' % index)).is_file():
+                    return {'trial':sha, 'config':config, 'sample':sample, 'client':sample['clients'][index], 'sample_index':index,
+                            'seed_path':raw/'loadtest/seeds'/('sample-%d.json' % index), 'profile':profile}
+        raise ValueError('seed trial retains no seeded wallet of an interruptible profile')
+
     def client_reopen(self, raw):
-        """Terminate this owner's own wallet client mid-sync, then reopen its store."""
-        recovery = self.spec['routing']['recovery']['v11']
+        """Terminate this owner's own worker-protocol wallet mid-sync, then resume its exact store."""
+        trial = self.seed_trial()
         directory = raw/'interrupted-client'
         directory.mkdir(mode=0o700)
-        stores = directory/'stores'
-        bound = self.deadline.child(EFFECT_SECONDS['client-reopen'])
-        with (directory/'native.log').open('xb') as log:
-            process = self.spawn('interrupted-client', [artifact('transparent-loadtest'), '--shard-url', SHARD_ORIGIN,
-                '--filter-url', FILTER_ORIGIN, '--sample', recovery['sample'], '--steps', 1, '--step-duration', '300s',
-                '--http-attempts', 1, '--timeout', '60s', '--store-dir', stores, '--retain-stores',
-                '--json-out', directory/'native.json', '--run-id', 'interrupted-client', '--source-sha', self.request['source_sha']], log, log)
-            try:
-                waited = bound.child(120)
-                while not any(stores.rglob('*.sqlite')) and process.poll() is None:
-                    require(waited.remaining() > 0, 'owned client did not open a wallet store')
-                    waited.sleep(.5)
-                terminated = process.poll() is None
-            finally:
-                self.stop_children()
-        require(terminated, 'owned client exited before it could be terminated')
-        require(not session_members([process.pid]), 'terminated client left owned descendants')
-        checked = []
-        for path in sorted(stores.rglob('*.sqlite')):
-            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
-                checked.append({'database':str(path), 'integrity':db.execute('PRAGMA integrity_check').fetchone()[0]})
-        require(checked and all(c['integrity'] == 'ok' for c in checked), 'interrupted wallet store failed to reopen')
-        return {'terminated_pid':process.pid, 'reopened':checked}
+        (directory/'store').mkdir(mode=0o700)
+        store = directory/'store'/'wallet.sqlite'
+        seed = load_seed(trial['seed_path'], trial['sample'])
+        job = continuation_job(trial['config'], trial['client'], trial['sample'], seed, trial['seed_path'], store)
+        write_once(directory/'job.json', job)
+        run = self.run_worker(directory, 'interrupted-client', job, INTERRUPT_SECONDS, interrupt=True)
+        require(run['terminated'] and run['outcome'] is None, 'owned client was not terminated mid-sync')
+        require(not session_members([run['pid']]), 'terminated client left owned descendants')
+        continuation = self.continue_store(raw/'client-continuation', trial['config'], trial['client'], trial['sample'],
+                                           trial['seed_path'], store, 'client')
+        require(continuation['status'] == 'passed', 'interrupted store did not continue to an exact outcome')
+        return {'seed_trial':trial['trial'], 'profile':trial['profile'], 'sample_index':trial['sample_index'],
+                'interrupted':run, 'continuation':{k:continuation[k] for k in ('status', 'inspection', 'oracle_exact', 'post_resume')}}
 
 
 def interrupted(_signal, _frame):

@@ -79,13 +79,15 @@ class Clock:
 class ValidationTests(unittest.TestCase):
     def test_every_kind_accepts_only_closed_fields(self):
         for value in (request(), request('freshness'), capacity_request(),
-                      request('fault', fault='router-restart'), request('fault', fault='client-reopen'),
+                      request('fault', fault='router-restart'), request('fault', fault='client-reopen', seed_trial='c'*64),
                       request('fault', fault='recent-worker-loss', target='recent-01'),
                       request('fault', fault='rollback-redeploy', rolled_back_transaction='transparent-schema-0')):
             self.assertEqual(Q.validate(copy.deepcopy(value)), value)
         injected = [request(url='https://example.invalid'), request(argv=['/bin/sh']), request(unit='ssh.service'),
                     request(seconds=1), request('fault', fault='router-restart', target='router'),
                     request('fault', fault='recent-worker-loss'), request('fault', fault='signal-worker'),
+                    request('fault', fault='client-reopen'), request('fault', fault='client-reopen', seed_trial='/tmp/x'),
+                    request('fault', fault='router-restart', seed_trial='c'*64),
                     request('fault', fault='rollback-redeploy', rolled_back_transaction='transparent-schema-1'),
                     request('capacity', level=10, trial=1, sample=sample()), request('capacity', level=8, trial=7, sample=sample()),
                     request('capacity', level=20, trial=1, sample=sample(list(Q.COMPOSITION[8]))),
@@ -1462,6 +1464,218 @@ class FlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'owned child is still running'):
                 busy.fault()
             self.assertNotIn('effect', busy.record)  # no effect without quiescence
+
+
+FAKE_WORKER = r"""
+import json, pathlib, sqlite3, sys, time
+modes = pathlib.Path(__file__).with_name('worker-modes')
+queue = modes.read_text().split()
+mode, rest = queue[0], queue[1:]
+modes.write_text(' '.join(rest))
+assert sys.argv[1:] == ['--scenario-worker'], sys.argv
+print(json.dumps({'type':'ready'}), flush=True)
+job = json.loads(sys.stdin.readline())
+assert set(job) == {'id', 'config', 'wallet', 'map_digest', 'genesis_hash', 'start_height', 'anchor', 'store_path', 'seed_path', 'preparing'}
+assert job['preparing'] is False and job['config']['store'] == 'sqlite'
+print(json.dumps({'type':'started', 'id':job['id'], 'at':time.time()}), flush=True)
+seed = json.loads(pathlib.Path(job['seed_path']).read_text())
+db = sqlite3.connect(job['store_path'])
+db.executescript('CREATE TABLE IF NOT EXISTS wallet_meta (key TEXT PRIMARY KEY, value TEXT); '
+                 'CREATE TABLE IF NOT EXISTS scripts (script BLOB PRIMARY KEY); CREATE TABLE IF NOT EXISTS coverage (x); '
+                 'CREATE TABLE IF NOT EXISTS receives (script BLOB, height INTEGER, event BLOB); '
+                 'CREATE TABLE IF NOT EXISTS spends (script BLOB, height INTEGER, event BLOB); '
+                 'CREATE TABLE IF NOT EXISTS pending_work (x); CREATE TABLE IF NOT EXISTS commits (x);')
+db.execute("INSERT OR REPLACE INTO wallet_meta VALUES ('schema_version', '4')")
+for script in job['wallet']['scripts']:
+    db.execute('INSERT OR IGNORE INTO scripts VALUES (?)', (bytes.fromhex(script),))
+events = seed['events'] if mode != 'foreign' else [{'script':job['wallet']['scripts'][0], 'event':'ff'}]
+if not db.execute('SELECT COUNT(*) FROM receives').fetchone()[0]:
+    for event in events:
+        db.execute('INSERT INTO receives VALUES (?, ?, ?)', (bytes.fromhex(event['script']), 1, bytes.fromhex(event['event'])))
+db.commit(); db.close()
+print(json.dumps({'type':'request', 'id':job['id'], 'at':time.time(), 'status':200}), flush=True)
+if mode in ('hang', 'foreign', 'slow'):
+    time.sleep(60)
+wallet = job['wallet']
+exact = mode == 'exact'
+print(json.dumps({'type':'outcome', 'id':job['id'], 'at':time.time(), 'outcome':'exact' if exact else 'mismatched',
+                  'events_exact':exact, 'actual_digest':wallet['expected_digest'] if exact else '0'*64,
+                  'events':wallet['journal_events'], 'seeded_events':1, 'commits':2}), flush=True)
+if exact:
+    pathlib.Path(job['store_path']).unlink()
+"""
+
+
+def store_sample():
+    value = sample()
+    value['clients'] = [dict(c, required_from=10) for c in value['clients']]
+    return value
+
+
+def write_seed(path, value, events=None):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    client = value['clients'][0]
+    path.write_text(json.dumps({'map_sha256':'9'*64, 'genesis_hash':value['genesis_hash'],
+                                'anchor':{'height':value['anchor_height'], 'hash':value['anchor_hash']},
+                                'events':events if events is not None else [{'script':client['scripts'][0], 'event':'ab'}]}))
+
+
+class ContinuationTests(unittest.TestCase):
+    """Resume through a fake that speaks the pinned `--scenario-worker` line protocol."""
+    setUp = FlowTests.setUp
+
+    def owner(self, value):
+        q = FlowTests.owner(self, value)
+        q.deadline = Q.Deadline(Q.RUNTIME['capacity'])
+        (self.root/'worker.py').write_text(FAKE_WORKER)
+        (self.root/'worker').write_text('#!/bin/sh\nexec %s %s "$@"\n' % (sys.executable, self.root/'worker.py'))
+        os.chmod(self.root/'worker', 0o755)
+        patcher = patch.object(Q, 'artifact', lambda name: self.root/'worker')
+        patcher.start(); self.addCleanup(patcher.stop)
+        return q
+
+    def modes(self, *values):
+        (self.root/'worker-modes').write_text(' '.join(values))
+
+    def heavy_raw(self, q, value, outcomes):
+        raw = q.directory/'raw'
+        (raw/'loadtest/stores').mkdir(parents=True)
+        heavy = [i for i, c in enumerate(value['clients']) if c['class'] == Q.HEAVY][0]
+        events = []
+        for identifier, outcome in enumerate(outcomes, 1):
+            events += [{'type':'scheduled', 'id':identifier, 'at':1, 'profile':Q.HEAVY, 'sample_index':heavy},
+                       {'type':'started', 'id':identifier, 'at':2}, {'type':'outcome', 'id':identifier, 'at':3, 'outcome':outcome}]
+            if outcome != 'exact':
+                self.modes('mismatch')  # leaves a partial store in the native layout
+                job = Q.continuation_job({'store':'sqlite'}, value['clients'][heavy], value, json.loads((self.seed).read_text()),
+                                         self.seed, raw/'loadtest/stores'/('wallet-%d.sqlite' % identifier))
+                subprocess.run([str(self.root/'worker'), '--scenario-worker'], input=json.dumps(job).encode()+b'\n',
+                               capture_output=True, check=True)
+        write_lines(raw/'loadtest/wallets.ndjson', events)
+        return raw, heavy
+
+    def test_heavy_store_resumes_to_an_exact_native_outcome(self):
+        value = store_sample()
+        q = self.owner(capacity_request())
+        self.seed = q.directory/'raw/loadtest/seeds'/('sample-%d.json' % [c['class'] for c in value['clients']].index(Q.HEAVY))
+        write_seed(self.seed, value)
+        value['clients'][[c['class'] for c in value['clients']].index(Q.HEAVY)]['scripts'] = value['clients'][0]['scripts']
+        raw, heavy = self.heavy_raw(q, value, ['timed_out', 'exact'])
+        self.modes('exact')
+        result = q.heavy_continuations(raw, {'store':'sqlite'}, value)
+        self.assertEqual(result['failures'], [], result)
+        continued = result['continued'][0]
+        self.assertEqual((continued['wallet'], continued['status']), (1, 'passed'))
+        self.assertTrue(continued['inspection']['prior_events_in_seed'])
+        self.assertIn('deleted by the native exact outcome', continued['post_resume'])
+        self.assertTrue((raw/'continuation-1/pre-resume/wallet-1.sqlite').exists())  # the untouched retained store
+        self.assertFalse((raw/'continuation-1/resume/wallet-1.sqlite').exists())
+        self.assertEqual(json.loads((raw/'continuation-1/job.json').read_text())['store_path'],
+                         str(raw/'continuation-1/resume/wallet-1.sqlite'))
+        self.assertEqual(q.record['children'][-1]['status'], 'exited')
+
+    def test_heavy_continuation_failures_fail_the_trial(self):
+        value = store_sample()
+        heavy = [c['class'] for c in value['clients']].index(Q.HEAVY)
+        value['clients'][heavy]['scripts'] = value['clients'][0]['scripts']
+        q = self.owner(capacity_request())
+        self.seed = q.directory/'raw/loadtest/seeds'/('sample-%d.json' % heavy)
+        write_seed(self.seed, value)
+        raw, _ = self.heavy_raw(q, value, ['timed_out'])
+        self.modes('mismatch')
+        self.assertEqual(q.heavy_continuations(raw, {'store':'sqlite'}, value)['failures'],
+                         ['heavy wallet 1 did not complete exactly after continuation'])
+        self.assertIn('trial was stopped', q.heavy_continuations(raw, {'store':'sqlite'}, value, stopped='health')['failures'][0])
+        other = self.owner(dict(capacity_request(), attempt=2))
+        self.seed = other.directory/'raw/loadtest/seeds'/('sample-%d.json' % heavy)
+        write_seed(self.seed, value)
+        raw, _ = self.heavy_raw(other, value, ['timed_out']*2)
+        self.seed.unlink()
+        with patch.object(Q, 'MAX_CONTINUATIONS', 1):
+            failures = other.heavy_continuations(raw, {'store':'sqlite'}, value)['failures']
+        self.assertEqual(failures, ['incomplete heavy stores exceed the continuation bound',
+                                    'heavy wallet 1 did not complete exactly after continuation'])
+
+    def test_resume_audits_prior_history_and_bounds_the_worker(self):
+        value = store_sample()
+        client = value['clients'][0]
+        q = self.owner(capacity_request())
+        seed = q.directory/'seed.json'
+        write_seed(seed, value)
+        store = q.directory/'store.sqlite'
+        self.modes('mismatch')
+        job = Q.continuation_job({'store':'sqlite'}, client, value, json.loads(seed.read_text()), seed, store)
+        subprocess.run([str(self.root/'worker'), '--scenario-worker'], input=json.dumps(job).encode()+b'\n', capture_output=True, check=True)
+        write_seed(seed, value, events=[])  # the retained store holds history the seed never had
+        with self.assertRaisesRegex(ValueError, 'pre-resume audit'):
+            q.continue_store(q.directory/'audit', {'store':'sqlite'}, client, value, seed, store, 'audit')
+        write_seed(seed, dict(value, anchor_height=21))
+        with self.assertRaisesRegex(ValueError, 'another chain or workload anchor'):
+            q.continue_store(q.directory/'anchor', {'store':'sqlite'}, client, value, seed, store, 'anchor')
+        write_seed(seed, value)
+        self.modes('slow')
+        with patch.object(Q, 'CONTINUATION_SECONDS', 2):
+            slow = q.continue_store(q.directory/'slow', {'store':'sqlite'}, client, value, seed, store, 'slow')
+        self.assertTrue(slow['run']['timed_out'])
+        self.assertEqual(slow['status'], 'failed')
+        self.assertNotEqual(slow['run']['exit_code'], 0)
+        self.assertEqual(Q.session_members([slow['run']['pid']]), [])
+        with self.assertRaisesRegex(ValueError, 'no bounded retained store'):
+            q.continue_store(q.directory/'none', {'store':'sqlite'}, client, value, seed, q.directory/'absent.sqlite', 'none')
+
+    def seed_trial(self, q, value):
+        trial = 'd'*64
+        raw = Q.ROOT/trial/'raw'
+        index = [c['class'] for c in value['clients']].index('restore-old')
+        write_seed(raw/'loadtest/seeds'/('sample-%d.json' % index), value)
+        value['clients'][index]['scripts'] = value['clients'][0]['scripts']
+        (raw/'sample.json').write_text(json.dumps(value))
+        (raw/'scenario.json').write_text(json.dumps({'store':'sqlite'}))
+        write_lines(raw/'loadtest/wallets.ndjson', [{'type':'scheduled', 'id':7, 'at':1, 'profile':'restore-old', 'sample_index':index}])
+        durable.atomic_json(Q.OWNERS/(trial+'.json'), {'kind':'deployed-qualification', 'status':'reconciled', 'request_sha256':trial,
+                            'request':{'kind':'capacity', 'transaction':'transparent-schema-1', 'sample_sha256':durable.digest(value)}})
+        return trial
+
+    def test_client_reopen_interrupts_mid_sync_and_resumes_exactly(self):
+        value = store_sample()
+        q = self.owner(request('fault', fault='client-reopen', seed_trial='d'*64))
+        self.seed_trial(q, value)
+        raw = q.directory/'raw'; raw.mkdir()
+        self.modes('hang', 'exact')
+        effect = q.client_reopen(raw)
+        self.assertTrue(effect['interrupted']['terminated'])
+        self.assertIsNone(effect['interrupted']['outcome'])
+        self.assertEqual(effect['profile'], 'restore-old')
+        self.assertEqual(effect['continuation']['status'], 'passed')
+        self.assertTrue((raw/'client-continuation/pre-resume/wallet.sqlite').exists())
+        self.assertEqual([c['status'] for c in q.record['children']], ['exited', 'exited'])
+        finished = self.owner(dict(request('fault', fault='client-reopen', seed_trial='d'*64), attempt=2))
+        raw = finished.directory/'raw'; raw.mkdir()
+        self.modes('exact')
+        with self.assertRaisesRegex(ValueError, 'not terminated mid-sync'):
+            finished.client_reopen(raw)  # it completed before it could be interrupted
+        foreign = self.owner(dict(request('fault', fault='client-reopen', seed_trial='d'*64), attempt=3))
+        raw = foreign.directory/'raw'; raw.mkdir()
+        self.modes('foreign', 'exact')
+        with self.assertRaisesRegex(ValueError, 'pre-resume audit'):
+            foreign.client_reopen(raw)
+
+    def test_seed_trial_must_be_a_reconciled_trial_of_this_transaction(self):
+        value = store_sample()
+        q = self.owner(request('fault', fault='client-reopen', seed_trial='d'*64))
+        trial = self.seed_trial(q, value)
+        self.assertEqual(q.seed_trial()['sample_index'], [c['class'] for c in value['clients']].index('restore-old'))
+        record = json.loads((Q.OWNERS/(trial+'.json')).read_text())
+        for change in ({'status':'finished'}, {'request':dict(record['request'], transaction='transparent-schema-2')},
+                       {'request':dict(record['request'], sample_sha256='0'*64)}):
+            durable.atomic_json(Q.OWNERS/(trial+'.json'), dict(record, **change))
+            with self.assertRaises(ValueError):
+                q.seed_trial()
+        durable.atomic_json(Q.OWNERS/(trial+'.json'), record)
+        for path in (Q.ROOT/trial/'raw/loadtest/seeds').iterdir():
+            path.unlink()
+        with self.assertRaisesRegex(ValueError, 'no seeded wallet'):
+            q.seed_trial()
 
 
 class HealthTests(unittest.TestCase):
