@@ -118,6 +118,7 @@ POLICIES = ('every-committed-block', 'mirror-source')
 INTERPLAY = ('RequiredBy', 'RequisiteOf', 'BoundBy', 'ConsistsOf', 'UpheldBy', 'TriggeredBy', 'PropagatesStopTo')
 NOT_QUALIFICATION = ('journal snapshot only; it is not an oracle, certificate, candidate, '
                      'serving or capacity qualification')
+FLEET_HOSTS = ('coordinator', 'router', 'worker-1', 'worker-2', 'worker-3')
 require = I.require
 digest = I.digest
 
@@ -797,6 +798,23 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
     return receipt
 
 
+def pinned_fleet(inventory, coordinator):
+    """Require every production host before a snapshot can stop its writer."""
+    require(inventory is not None and inventory.lock == {'type':'pinned_host', 'machine_id':coordinator},
+            'journal snapshot requires the pinned coordinator inventory')
+    machines = []
+    for name, entry in inventory.hosts.items():
+        machine = entry.get('machine_id')
+        require(isinstance(machine, str) and re.fullmatch('[0-9a-f]{32}', machine),
+                'host %s has no machine pin' % name)
+        machines.append(machine)
+    require(sorted(inventory.hosts) == list(FLEET_HOSTS) and len(set(machines)) == len(machines),
+            'journal snapshot requires the complete five-host production fleet with distinct machine pins')
+    if 'coordinator' in FLEET_HOSTS:
+        require(inventory.hosts['coordinator']['machine_id'] == coordinator,
+                'journal snapshot coordinator machine pin differs')
+
+
 def fleet(inventory, budget, executor_factory, *, lock_path, skip_input=None, retain=None):
     """Every pinned host, coordinator first; each raw receipt kept when `retain`.
 
@@ -808,6 +826,7 @@ def fleet(inventory, budget, executor_factory, *, lock_path, skip_input=None, re
     coordinator `skip_input` names this snapshot's own owner record.
     """
     coordinator = inventory.lock['machine_id']
+    pinned_fleet(inventory, coordinator)
     hosts = [('coordinator', coordinator, LocalHost())]
     executor = None
     for name in sorted(inventory.hosts):
@@ -996,8 +1015,7 @@ class Snapshot:
         return Budget(time.monotonic()+self.bounds['total_seconds'], label)
 
     def pinned(self, inventory):
-        require(inventory is not None and inventory.lock == {'type':'pinned_host', 'machine_id':self.request['machine_id']},
-                'journal snapshot requires the pinned coordinator inventory')
+        pinned_fleet(inventory, self.request['machine_id'])
         return {'hosts':inventory.hosts, 'ssh':inventory.ssh, 'lock':inventory.lock, 'services':inventory.services}
 
     def receipts(self, label):

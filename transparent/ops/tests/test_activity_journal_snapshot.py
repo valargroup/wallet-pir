@@ -311,7 +311,8 @@ def configure(config, assign):
                         ('RESULT', root/'publication/result.json'), ('CUTOFF', root/'publication/cutoff.json'),
                         ('MEMINFO', root/'meminfo'), ('OWNER', os.getuid()), ('statvfs', disk(root)),
                         ('SOURCE', root/'ops/sources'), ('MACHINE_ID', root/'machine-id'),
-                        ('SSHExecutor', lambda inventory: FakeExecutor(root)), ('FLEET_PROC', root/'proc')):
+                        ('SSHExecutor', lambda inventory: FakeExecutor(root)), ('FLEET_PROC', root/'proc'),
+                        ('FLEET_HOSTS', ('coordinator', 'worker-01'))):
         assign(S, name, value)
     assign(S.P, 'THROUGH', THROUGH)
     assign(S.schema_fence, 'INPUT_STAGING', root/'owners')
@@ -369,6 +370,45 @@ def entry(action, expected, config):
         print(type(error).__name__, error, flush=True)
         return 1
     return 0
+
+
+class ProductionFleet(unittest.TestCase):
+    """Actual fleet requirements, without the local two-machine override."""
+
+    def inventory(self):
+        return SimpleNamespace(lock={'type':'pinned_host', 'machine_id':'1'*32},
+            hosts={name:{'machine_id':str(index+1)*32} for index,name in enumerate(S.FLEET_HOSTS)},
+            ssh={}, services={})
+
+    def test_partial_foreign_and_duplicate_machine_fleets_refuse(self):
+        base = self.inventory()
+        self.assertEqual(len(base.hosts), 5)
+        S.pinned_fleet(base, '1'*32)
+        for omitted in S.FLEET_HOSTS:
+            inventory = self.inventory(); del inventory.hosts[omitted]
+            with self.subTest(omitted=omitted), self.assertRaisesRegex(ValueError, 'complete five-host'):
+                S.pinned_fleet(inventory, '1'*32)
+        inventory = self.inventory()
+        inventory.hosts['worker-4'] = inventory.hosts.pop('worker-3')
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            S.pinned_fleet(inventory, '1'*32)
+        inventory = self.inventory()
+        inventory.hosts['worker-3']['machine_id'] = '1'*32
+        with self.assertRaisesRegex(ValueError, 'distinct machine pins'):
+            S.pinned_fleet(inventory, '1'*32)
+        inventory = self.inventory()
+        inventory.hosts['coordinator']['machine_id'] = '9'*32
+        with self.assertRaisesRegex(ValueError, 'coordinator machine pin differs'):
+            S.pinned_fleet(inventory, '1'*32)
+
+    def test_partial_fleet_refuses_before_probe_transport_or_retention(self):
+        inventory = self.inventory(); del inventory.hosts['router']
+        calls = []
+        budget = SimpleNamespace(check=lambda: calls.append('check'))
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            S.fleet(inventory,budget,lambda _:calls.append('transport'),
+                    lock_path=Path('/nonexistent-fixture-lock'),retain=lambda _:calls.append('retain'))
+        self.assertEqual(calls, [])
 
 
 class Fixture(unittest.TestCase):
@@ -1709,6 +1749,10 @@ class Fleet(Fixture):
         self.assertEqual(self.receipts(snapshot, 'reconcile')['worker-01']['result'], 'refused')
         (self.root/'hosts/worker-01.unreachable').unlink()
         snapshot.inventory = S.descriptors.load_inventory(self.write_inventory(extra={'machine_id':'f'*32}))
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            self.reconcile(snapshot)
+        self.assertEqual(self.record(snapshot)['status'], 'failed')
+        snapshot.inventory = S.descriptors.load_inventory(self.write_inventory(**{'worker-01':{'machine_id':'f'*32}}))
         with self.assertRaisesRegex(ValueError, 'reconcile inventory differs'):
             self.reconcile(snapshot)
         snapshot.inventory = S.descriptors.load_inventory(self.write_inventory())
