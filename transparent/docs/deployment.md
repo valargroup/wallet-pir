@@ -1865,9 +1865,33 @@ or stores, or more than four incomplete heavy stores fail the trial.
 | `router-restart` | Restarts router Caddy |
 | `rollback-redeploy` | Changes nothing; verifies retained journals |
 
-A fault starts only if its effect, 900-second recovery and post checks fit the
-owner deadline, and only after owner reconciliation of every host and of the
-owner's own children.
+A fault starts only if an owner survey, its effect, 900-second recovery and
+post checks fit the owner deadline, and only after owner reconciliation of every
+host and of the owner's own children. Each all-host survey must finish within
+120 seconds and is retained once under its own name; a later survey never
+replaces an earlier one.
+
+`publication-interruption` waits before its effect, so the first survey
+(`owners-before-effect.json`) may be up to 345 seconds old when a preparation
+appears. The owner then refuses unless all of the following hold, in order,
+before it stops the publisher:
+
+1. the stop, its post-stop read, start, restoration, 900-second recovery and
+   post checks still fit the owner deadline;
+2. a second complete survey of every pinned host passes, retained as
+   `owners-before-stop.json`;
+3. a re-read of the same recent replica reports the same preparation instance:
+   same map digest, an age that advanced with that host's clock (5-second
+   tolerance), and an unchanged active map that is not the prepared one.
+
+A refusal is recorded on the effect as `refused`. No publisher state was
+captured or changed, so nothing is fenced. Recovery is timed from the publisher
+stop, not from the start of the wait.
+
+No other effect waits after its survey. A remote effect re-runs owner
+reconciliation under the target host's lock immediately before it captures
+the unit. The `stop-start` hold and every start after a stop restore that same
+owned effect. `client-reopen` only terminates its own child session.
 
 **Unit effects.** A unit effect, local or remote, first records the exact
 pre-fault service: active state, main PID, start ticks, executable digest, unit

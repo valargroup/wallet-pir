@@ -1489,6 +1489,24 @@ class FlowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: .*Budget: a refreshed owner survey'):
                 short.fault()
             self.assertFalse((short.directory/'raw/owners-before-stop.json').exists())
+            # A survey and recheck that each use their whole bound, then the node read, leave the stop short.
+            total = Q.OWNER_SURVEY_SECONDS+Q.EFFECT_SECONDS['publication-interruption']+Q.RECOVERY_SECONDS+Q.POST_SECONDS
+            refresh = Q.OWNER_SURVEY_SECONDS+Q.REMOTE_BOUND['control-status']+Q.SSH_MARGIN
+            tight = self.interruption_owner(len(cases)+4, system, [], clock, wait=total-refresh-Q.STOP_EFFECT_SECONDS-
+                                            Q.RECOVERY_SECONDS-Q.POST_SECONDS,
+                                            recheck=lambda reply: clock.sleep(Q.REMOTE_BOUND['control-status']+Q.SSH_MARGIN))
+            tight.deadline = Q.Deadline(total)
+            survey = tight.all_hosts
+            def whole(operation, running):
+                if (tight.directory/'raw/owners-before-effect.json').exists():
+                    clock.sleep(Q.OWNER_SURVEY_SECONDS)
+                return survey(operation, running)
+            tight.all_hosts = whole
+            with patch.object(Q, 'node', lambda *a: clock.sleep(3) or 100):
+                with self.assertRaisesRegex(ValueError, 'refused before the publisher stop: Budget: the publisher stop'):
+                    tight.fault()
+            self.assertTrue((tight.directory/'raw/owners-before-stop.json').exists())
+            self.assertNotIn('unit', tight.status()['effect'])
             self.assertEqual(short.status()['effect']['status'], 'refused')
             self.assertEqual(system.units[Q.PUBLISHER]['ActiveState'], 'active')
 
