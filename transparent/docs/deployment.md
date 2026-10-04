@@ -1550,6 +1550,37 @@ The independent-chain oracle producer and the production execution controls
 still require implementation. These offline producers and their fixture tests
 are source evidence; no candidate native qualification has been performed.
 
+#### Offline candidate cutover assembly
+
+`transparent/ops/scripts/activity-candidate-inputs.py --input <absolute-file>
+--input-sha256 <digest> --out <new-absolute-directory>` assembles inert local
+version-2 service, proof and product staging requests. It does not query hosts,
+install configuration, start workers or qualify deployment.
+
+The checksum-bound input object has `source_sha`, `release_result_sha256`,
+`attempt`, `mapping`, `inventory`, `samples`, `gates`, `service_request` and
+`product_template`. Byte references use the report producer's independent,
+bounded local-file format. `samples` contains `v10` and `v11`; `gates` contains
+all four exact candidate gates. The three measured gates must bind readable raw
+evidence indexes; native certificate coverage must contain all 180 bindings.
+Historical samples retain their 12ce tool identity and anchor3500738. Both the
+service request and product template must already be explicit version2 inputs
+for the reviewed operations source and c3 candidate. The assembler refuses a
+version1 template instead of converting historical deployment evidence.
+
+The template contains explicit reviewed host plans, assignment, routing,
+rollback readers and load inputs. Only inventory, gate and recovery-sample
+references are rebound to the new proof request's checksum namespace. Service
+configuration and load references must match the exact supplied service request;
+coordinator and worker executable installs must use their separate pinned
+candidate namespaces. The existing host/routing/product validators run before
+output. Retain each request and its canonical digest for guarded wrapper
+plan/preflight/staging. Outputs are exclusive, immutable and durable; interrupted
+partial output remains evidence and requires a new output directory. Remote
+preparation still verifies publication, service content, staged bytes, fleet
+ownership and preflight independently. No request can be produced while any
+candidate gate is pending.
+
 Root's ordered path, without rebuilding the old CI or native chain:
 
 1. Stage the reviewed operations source.
