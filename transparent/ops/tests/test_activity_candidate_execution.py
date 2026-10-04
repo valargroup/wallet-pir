@@ -361,6 +361,10 @@ class Fixture(unittest.TestCase):
             time.sleep(.05)
         self.fail('condition not reached')
 
+    def kill(self, pid, start_ticks):
+        """Cleanup of an exact fixture process; a reused PID is untouched."""
+        E.signal_exact(pid, start_ticks, signal.SIGKILL)
+
     def gone(self, pid):
         current = E.process(pid)
         return current is None or current['state'] == 'Z'
@@ -569,6 +573,7 @@ class Closed(Fixture):
             os.close(fd)
         native = int(os.read(notify, 32)); os.close(notify)
         current = E.process(native)
+        self.addCleanup(self.kill, native, current['start_ticks'])
         self.assertEqual((current['ppid'], current['session'], current['pgid']), (child.pid,)*3)
         if go:
             os.write(release, b'go\n')
@@ -610,6 +615,7 @@ class Closed(Fixture):
             child, native, path = self.guardian(argv, budget)
         self.wait_for(lambda: mark.exists() and mark.read_text())
         grandchild = int(mark.read_text())
+        self.addCleanup(self.kill, grandchild, E.process(grandchild)['start_ticks'])
         self.assertEqual(E.process(native)['state'], 'S')
         # Nobody waits on the guardian or signals anything: its own deadline ends the run.
         self.assertEqual(child.wait(30), 0)
@@ -625,7 +631,7 @@ class Closed(Fixture):
         child, native, path = self.guardian(argv, budget)
         self.wait_for(lambda: mark.exists() and mark.read_text())
         grandchild = int(mark.read_text())
-        self.addCleanup(lambda: E.process(grandchild) and os.kill(grandchild, signal.SIGKILL))
+        self.addCleanup(self.kill, grandchild, E.process(grandchild)['start_ticks'])
         os.kill(child.pid, signal.SIGKILL); child.wait(10)
         # The kernel parent-death signal ends the native process; an escaped grandchild outlives it.
         self.wait_for(lambda: self.gone(native))
@@ -636,6 +642,7 @@ class Closed(Fixture):
         child, native, path = self.guardian(argv, budget)
         self.wait_for(lambda: mark.exists() and mark.read_text())
         grandchild = int(mark.read_text())
+        self.addCleanup(self.kill, grandchild, E.process(grandchild)['start_ticks'])
         os.kill(child.pid, signal.SIGTERM)
         self.assertEqual(child.wait(30), 0)
         report = E.guardian_report(path, {'pid': native})
@@ -994,8 +1001,8 @@ class Survey(Fixture):
     def test_association_rules_bind_start_identity_session_cgroup_window_and_boot(self):
         hz, booted = os.sysconf('SC_CLK_TCK'), 1000.0
         def proc(pid, at, session=None, cgroup='0::/observer'):
-            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session or pid, 'pgid': session or pid,
-                    'cgroup': cgroup}
+            session = pid if session is None else session
+            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session, 'pgid': session, 'cgroup': cgroup}
         def ref(pid, **change):
             return dict({'record': 'r.json', 'key': 'pid', 'pid': pid, 'window': None, 'mtime': 2000.0,
                          'start_ticks': None, 'boot_id': None, 'cgroup': None}, **change)
@@ -1018,9 +1025,12 @@ class Survey(Fixture):
         self.assertEqual(found([ref(12, window=1600.0)], [proc(22, 1500, session=99)]), [])
         self.assertEqual(found([ref(12, window=1400.0)], [proc(99, 1000), proc(22, 1500, session=99)]), [])
         self.assertEqual(found([ref(12, window=1400.0)], [proc(23, 1500, session=0)]), [])
+        # As root sees it: kernel threads are never scanned, so never associated.
         kthreadd = E.process(2)
-        if kthreadd is not None:
-            self.assertTrue(kthreadd['kernel']); self.assertNotIn(2, [p['pid'] for p in E.scan()])
+        self.assertTrue(kthreadd['kernel'])
+        with patch.object(E.os, 'geteuid', lambda: 0):
+            scanned = E.scan()
+        self.assertNotIn(2, [p['pid'] for p in scanned]); self.assertIn(os.getpid(), [p['pid'] for p in scanned])
         records = E.recorded({'started_unix': 5.0, 'pid': 3, 'start_ticks': 4, 'boot_id': 'b',
                               'events': [{'relay_pid': 6, 'ssh_pid': 7}, {'ppid': 8, 'pid': True}],
                               'child': {'pid': 9, 'process_start': 10, 'started': 11.0}}, 'x.json', 12.0)
