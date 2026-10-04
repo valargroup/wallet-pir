@@ -15,6 +15,7 @@ from statistics import NormalDist
 import analyze as a
 import census
 import survey
+import geometry as legacy_geometry
 
 THRESHOLDS=(128,192,256,384,512,768,1024)
 CODECS=a.CODECS
@@ -208,7 +209,7 @@ def packing_extents(size,threshold,compact=False):
         directory_max=directory_min+(0 if inline else 4)
     else:directory_min=directory_max=48+(size if inline else 0)
     return dict(directory_entry_bytes_min=directory_min,directory_entry_bytes_max=directory_max,
-        overflow_entry_bytes=sum(2+header+chunk for _,chunk,header in fr),fragments=len(fr))
+        overflow_entry_bytes=sum(2+header+chunk for _,chunk,header in fr),fragments=len(fr),covered_page_requests=max(3,len(fr)))
 
 def packing_bound(block,codec,threshold,metric,upper):
     total=0
@@ -253,7 +254,7 @@ def report(data):
                 side={kind:survey.estimate(vals(lambda b,k=kind:metric(b,k)),design) for kind in ('inline','overflow','fragments','payload_bytes','overflow_entry_bytes','directory_entry_bytes_min','directory_entry_bytes_max')}
                 side['coverage']=survey.estimate(vals(lambda b:metric(b,'inline')),design,denom,proportion=True)
                 row[bound+'_size_population']=side
-            row['packing_bounds']={kind:{bound:survey.estimate(vals(lambda b,k=kind,up=bound=='upper':packing_bound(b,c,t,k,up)),design) for bound in ('lower','upper')} for kind in ('directory_entry_bytes_min','directory_entry_bytes_max','overflow_entry_bytes','fragments')}
+            row['packing_bounds']={kind:{bound:survey.estimate(vals(lambda b,k=kind,up=bound=='upper':packing_bound(b,c,t,k,up)),design) for bound in ('lower','upper')} for kind in ('directory_entry_bytes_min','directory_entry_bytes_max','overflow_entry_bytes','fragments','covered_page_requests')}
             rows[str(t)]=row
         result['codecs'][c]=dict(frontier_size_bounds_bytes=frontiers,frontier_ci95={bound:survey.frontier_intervals(groups,design,c+'/'+bound) for bound in ('lower','upper')},thresholds=rows,observed_size_range=[min(weighted['lower']),max(weighted['upper'])],true_maximum=None)
     result['domains']={}
@@ -318,6 +319,39 @@ def bootstrap_selection(data,repetitions=2000):
         out[str(t)]=dict(ci95=[rs[int(.025*repetitions)],rs[min(repetitions-1,int(.975*repetitions))]],bonferroni_lower95=rs[int(.05/7*repetitions)])
     return dict(schema='txid-sizing-cluster-bootstrap-v1',seed='wallet-pir/day/cluster-bootstrap/v1',repetitions=repetitions,method='resample whole blocks within original strata; centered stratum means rescaled by sqrt(1-f); percentile sensitivity, asymptotic',worst_case_fee_coverage=out)
 
+def geometry_projection(report):
+    """Small byte/cost comparison; not measured native capacity or full packing."""
+    t=report['threshold_decision']['selected_bytes']
+    if t is None:return {'schema':'txid-sizing-one-day-geometry-v1','decision':'no threshold qualified for sizing recommendation'}
+    totals=report['codecs']['display-v1']['thresholds'][str(t)]['packing_bounds']
+    population=report['totals']['eligible']['estimate']
+    covered=totals['covered_page_requests']['upper']['estimate']/population
+    fragments=totals['fragments']['upper']['estimate']/population
+    density=.75;scenarios=[]
+    for size_bound in ('lower','upper'):
+        directory=totals['directory_entry_bytes_'+('max' if size_bound=='upper' else 'min')][size_bound]['estimate']
+        overflow=totals['overflow_entry_bytes'][size_bound]['estimate']
+        for lb,ob in ((1,1),(4,1),(16,1),(4,4),(16,16)):
+            for lr,pr in ((4096,4096),(8192,32768),(32768,65536)):
+                ls=max(1,math.ceil(directory/(lb*density*lr*a.ROW)))
+                ps=max(1,math.ceil(overflow/(ob*density*pr*a.ROW)))
+                lquery=27648+math.ceil(lr*49/8);pquery=27648+math.ceil(pr*49/8)
+                scenarios.append(dict(fee_size_bound=size_bound,lookup_buckets=lb,overflow_buckets=ob,lookup_rows=lr,overflow_rows=pr,
+                    assumed_density=density,assumed_equal_bucket_load=True,lookup_segments_per_bucket=ls,overflow_segments_per_bucket=ps,
+                    table_allocated_bytes=lb*ls*lr*a.ROW+ob*ps*pr*a.ROW,
+                    native_reservation_bytes=lb*legacy_geometry.reservation(lr,ls)+ob*legacy_geometry.reservation(pr,ps),
+                    covered_average_page_requests=covered,
+                    cover3_upload_bytes_per_open=2*lquery+covered*pquery,
+                    cover3_response_body_bytes_per_open=(2*ls+covered*ps)*5632,
+                    cover3_segment_evaluations_per_open=2*ls+covered*ps,
+                    uncovered_upper_page_requests_per_open=fragments,
+                    uncovered_upload_bytes_per_open=2*lquery+fragments*pquery,
+                    uncovered_response_body_bytes_per_open=(2*ls+fragments*ps)*5632,
+                    scan_byte_proxy_per_covered_open=2*ls*lr*a.ROW+covered*ps*pr*a.ROW,
+                    measured_native_rss_bytes=None,measured_latency_seconds=None))
+    return dict(schema='txid-sizing-one-day-geometry-v1',threshold=t,projected_directory_entry_bytes=[totals['directory_entry_bytes_min']['lower']['estimate'],totals['directory_entry_bytes_max']['upper']['estimate']],projected_overflow_entry_bytes=[totals['overflow_entry_bytes']['lower']['estimate'],totals['overflow_entry_bytes']['upper']['estimate']],scenarios=scenarios,
+        limits='Sample-derived additive entry bytes. Density/equal bucket load and uniform tx openings assumed; no full population packing, row slack, segment placement, measured RSS/latency or hardware qualification. Native reservation is the existing source formula including setup scratch, not measured resident memory. Uploads are per row query and do not multiply by segments; response bodies/evaluations do. Fixed segment vectors within buckets assumed for routing; changing epochs/vectors needs replay.')
+
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
     ex=sub.add_parser('extract');ex.add_argument('checkpoint',type=Path);ex.add_argument('binary',type=Path);ex.add_argument('--status',type=Path,required=True)
@@ -325,9 +359,11 @@ if __name__=='__main__':
     st=sub.add_parser('statistics');st.add_argument('checkpoint',type=Path);st.add_argument('output',type=Path)
     sm=sub.add_parser('summarize');sm.add_argument('checkpoint',type=Path)
     bs=sub.add_parser('bootstrap');bs.add_argument('input',type=Path);bs.add_argument('output',type=Path)
+    ge=sub.add_parser('geometry');ge.add_argument('input',type=Path);ge.add_argument('output',type=Path)
     args=p.parse_args()
     if args.command=='extract':print(json.dumps(extract(args.checkpoint,args.binary,args.status)))
     elif args.command=='summarize':summarize(args.checkpoint)
     elif args.command=='bootstrap':census.atomic_json(args.output,bootstrap_selection(read(args.input)))
+    elif args.command=='geometry':census.atomic_json(args.output,geometry_projection(read(args.input)))
     elif args.command=='statistics':json_gz(args.output,statistics(args.checkpoint))
     else:census.atomic_json(args.output,report(read(args.input)))
