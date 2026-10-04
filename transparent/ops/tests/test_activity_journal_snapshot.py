@@ -197,7 +197,7 @@ class FakeSystemd:
         return {'ActiveState':state['active'], 'SubState':'running' if state['active'] == 'active' else 'dead',
                 'MainPID':str(state['pid']), 'NRestarts':'0', 'FragmentPath':state['fragment'],
                 'DropInPaths':' '.join(state['drop_ins']), 'ControlGroup':'/fixture.slice/'+unit,
-                'NeedDaemonReload':'no'}
+                'NeedDaemonReload':'no', **{k:'' for k in S.INTERPLAY}, **state.get('interplay', {})}
 
     def pids(self, group):
         state = self.state()
@@ -309,7 +309,8 @@ def entry(action, expected, config):
 
 
 class Fixture(unittest.TestCase):
-    bounds = {'stop_seconds':5, 'copy_seconds':30, 'restart_seconds':5, 'restart_attempts':2, 'total_seconds':120}
+    bounds = {'precopy_seconds':30, 'stop_seconds':5, 'copy_seconds':30, 'restart_seconds':5, 'restart_attempts':2,
+              'total_seconds':200}
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
@@ -377,6 +378,7 @@ class Fixture(unittest.TestCase):
                    'publication':{'map_sha256':sha(self.root/'publication/shards.json'), 'anchor_height':THROUGH,
                                   'anchor_hash':display(THROUGH)},
                    'journal':{'version':3, 'genesis_hash':display(0), 'start_height':0},
+                   'sidecars':{'policy':'mirror-source', 'coverage_heights':[0, 2]},
                    'writer':{'unit':UNIT, 'fragment_path':str(self.fragment), 'fragment_sha256':sha(self.fragment),
                              'drop_ins':[{'path':str(self.dropin), 'sha256':sha(self.dropin)}],
                              'binary_path':PYTHON, 'binary_sha256':sha(PYTHON), 'main_pid':pid,
@@ -565,7 +567,9 @@ class Request(Fixture):
                 self.request(candidate={'identity':'0'*64}), self.request(publication={'anchor_height':THROUGH+1}),
                 self.request(journal={'version':2}), self.request(journal={'start_height':1}),
                 self.request(writer={'binary_path':'/usr/../bin/x'}), self.request(writer={'unit':'../x.service'}),
-                self.request(writer={'main_pid':True}),
+                self.request(writer={'main_pid':True}), self.request(sidecars={'policy':'skip'}),
+                self.request(sidecars={'coverage_heights':[2, 0]}), self.request(sidecars={'coverage_heights':[1, 1]}),
+                self.request(sidecars={'coverage_heights':[-1]}), self.request(sidecars={'extra':1}),
                 self.request(writer={'drop_ins':[{'path':'/b/20.conf', 'sha256':'0'*64}, {'path':'/a/10.conf', 'sha256':'0'*64}]})]
         for value in bad:
             with self.assertRaises(ValueError):
@@ -706,6 +710,14 @@ class Preflight(Fixture):
         with self.assertRaisesRegex(ValueError, 'running executable'):
             self.snapshot(request).preflight()
 
+    def test_stop_propagating_or_restarting_dependents_refuse(self):
+        for name in S.INTERPLAY:
+            state = self.systemd.state(); state['interplay'] = {name:'other.unit'}; self.systemd.write(state)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, name+' would propagate'):
+                self.snapshot().preflight()
+        state = self.systemd.state(); state['interplay'] = {}; self.systemd.write(state)
+        self.snapshot().preflight()
+
     def test_inactive_or_foreign_writers_refuse(self):
         request = self.request()
         pid = self.systemd.state()['pid']
@@ -801,7 +813,7 @@ class Stage(Fixture):
         manifest = self.staged(snapshot, record, original)
         self.assertEqual(manifest['journal']['blocks'], BLOCKS)
         self.assertEqual([e['phase'] for e in record['events']],
-                         ['launching', 'adopted', 'quiescing', 'quiesced', 'copying', 'copied', 'restoring', 'restored', 'retained'])
+                         ['launching', 'adopted', 'precopying', 'quiescing', 'quiesced', 'copying', 'copied', 'restoring', 'restored', 'retained'])
         with S.ProductionLock({'type':'pinned_host', 'machine_id':MACHINE}) as lock:
             with patch.dict(os.environ, {inherited_lock.VARIABLE:str(lock.fd)}):
                 with self.assertRaisesRegex(ValueError, 'already adopted'):
@@ -826,8 +838,8 @@ class Stage(Fixture):
             pass
 
     def test_unknown_owner_outcome_is_not_inferred(self):
-        snapshot = self.snapshot(self.request(bounds={'stop_seconds':1, 'copy_seconds':1, 'restart_seconds':1,
-                                                      'restart_attempts':1, 'total_seconds':3}))
+        snapshot = self.snapshot(self.request(bounds={'precopy_seconds':1, 'stop_seconds':1, 'copy_seconds':1,
+                                                      'restart_seconds':1, 'restart_attempts':1, 'total_seconds':4}))
         with patch.object(S.Snapshot, 'owner_command', lambda self: ['sleep', '5']):
             with self.assertRaisesRegex(S.Unknown, 'still running'):
                 snapshot.stage(self.plan(snapshot))
@@ -1011,7 +1023,7 @@ class Failures(Fixture):
         # A longer fork passes the length check but not the recorded prefix.
         self.start_writer('reorg-longer')
         snapshot = self.snapshot()
-        record = self.owner_failure(snapshot, ValueError, 'journal reorganized or differs at height %d' % (BLOCKS-1))
+        record = self.owner_failure(snapshot, ValueError, 'differs from its pre-quiesce prefix at height %d' % (BLOCKS-3))
         self.failed(snapshot, record, 'failed')
         self.reconciled(snapshot)
 
@@ -1042,7 +1054,7 @@ class Failures(Fixture):
         self.reconciled(snapshot)
 
     def test_unproven_restarted_writer_is_left_for_root(self):
-        snapshot = self.snapshot(self.request(bounds={'restart_seconds':1, 'total_seconds':60}))
+        snapshot = self.snapshot(self.request(bounds={'restart_seconds':1}))
 
         def nolock():
             state = self.systemd.state(); state['mode'] = 'nolock'; self.systemd.write(state)
@@ -1149,6 +1161,147 @@ class Failures(Fixture):
             other.reconcile()
 
 
+class Sidecars(Fixture):
+    """Immutable sidecars are pre-copied live and reconciled under quiescence."""
+
+    def every_height(self):
+        for height in range(BLOCKS):
+            path = self.journal/'display-v1'/(display(height)+'.bin')
+            if not path.exists():
+                path.write_bytes(sidecar(internal(height)))
+
+    def after_precopy(self, change):
+        real = S.Snapshot.precopy
+
+        def precopy(self_, *args):
+            result = real(self_, *args)
+            change()
+            return result
+        p = patch.object(S.Snapshot, 'precopy', precopy); p.start(); self.addCleanup(p.stop)
+
+    def failure(self, message):
+        snapshot = self.snapshot()
+        with self.assertRaisesRegex(ValueError, message):
+            self.inprocess(snapshot)
+        record = self.record(snapshot)
+        self.assertEqual(record['status'], 'failed')
+        self.assertTrue(snapshot.partial.is_dir() and snapshot.inventory.exists())
+        self.fenced()
+        return snapshot, record
+
+    def test_policy_every_committed_block(self):
+        request = self.request(sidecars={'policy':'every-committed-block'})
+        with self.assertRaisesRegex(ValueError, 'committed blocks have no display sidecar: %d' % (BLOCKS//2)):
+            self.snapshot(request).preflight()
+        self.every_height()
+        snapshot = self.snapshot(request)
+        record = self.inprocess(snapshot)
+        summary = record['snapshot']['display']
+        self.assertEqual((summary['sidecars'], summary['sidecars_absent_in_source']), (BLOCKS, 0))
+        self.assertEqual(len(list((snapshot.target/'journal/display-v1').iterdir())), BLOCKS)
+
+    def test_mirror_source_records_absence_without_inferring_it(self):
+        snapshot = self.snapshot()
+        record = self.inprocess(snapshot)
+        summary = record['snapshot']['display']
+        self.assertEqual((summary['policy'], summary['sidecars'], summary['sidecars_absent_in_source']),
+                         ('mirror-source', (BLOCKS+1)//2, BLOCKS//2))
+        manifest = S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request)
+        self.assertEqual([c['height'] for c in manifest['journal']['display']['coverage']], [0, 2])
+        self.assertEqual(manifest['journal']['display']['coverage'][1]['hash'], display(2))
+        self.assertEqual(manifest['contents']['sidecars'], (BLOCKS+1)//2)
+
+    def test_coverage_heights_need_their_sidecars(self):
+        with self.assertRaisesRegex(ValueError, 'coverage heights have no display sidecar'):
+            self.snapshot(self.request(sidecars={'coverage_heights':[0, THROUGH]})).preflight()
+        with self.assertRaisesRegex(ValueError, 'beyond the committed journal'):
+            self.snapshot(self.request(sidecars={'coverage_heights':[BLOCKS+10]})).preflight()
+
+    def test_sidecar_replaced_after_precopy(self):
+        def replace():
+            path = self.journal/'display-v1'/(display(2)+'.bin')
+            data = path.read_bytes(); path.unlink(); path.write_bytes(data)
+        self.after_precopy(replace)
+        self.failure('changed or vanished at height 2')
+
+    def test_sidecar_removed_after_precopy(self):
+        self.after_precopy(lambda: (self.journal/'display-v1'/(display(4)+'.bin')).unlink())
+        self.failure('changed or vanished at height 4')
+
+    def test_sidecar_written_after_precopy_is_copied_while_quiesced(self):
+        self.after_precopy(lambda: (self.journal/'display-v1'/(display(3)+'.bin')).write_bytes(sidecar(internal(3))))
+        snapshot = self.snapshot()
+        record = self.inprocess(snapshot)
+        summary = record['snapshot']['display']
+        self.assertEqual((summary['sidecars'], summary['copied_while_quiesced']), ((BLOCKS+1)//2+1, 1))
+        self.assertTrue((snapshot.target/'journal/display-v1'/display_file(3)).exists())
+
+    def test_newer_block_without_sidecar_refuses_every_committed_block(self):
+        self.every_height()
+
+        def extend():
+            append(self.journal); append(self.journal)  # Height 9 has no sidecar.
+            (self.journal/'display-v1'/display_file(BLOCKS)).write_bytes(sidecar(internal(BLOCKS)))
+        self.after_precopy(extend)
+        snapshot = self.snapshot(self.request(sidecars={'policy':'every-committed-block'}))
+        with self.assertRaisesRegex(ValueError, 'committed block %d has no display sidecar' % (BLOCKS+1)):
+            self.inprocess(snapshot)
+        self.assertEqual(self.record(snapshot)['restoration']['status'], 'proven')
+
+    def test_copy_changed_after_the_writer_restarts(self):
+        snapshot = self.snapshot()
+        real = S.Snapshot.restore
+
+        def restore(self_, *args, **options):
+            result = real(self_, *args, **options)
+            events = snapshot.partial/'journal/events.bin'
+            events.chmod(0o600)
+            with open(events, 'r+b') as stream:
+                stream.seek(10); byte = stream.read(1); stream.seek(10); stream.write(bytes([byte[0] ^ 1]))
+            events.chmod(0o400)
+            return result
+        with patch.object(S.Snapshot, 'restore', restore):
+            with self.assertRaisesRegex(ValueError, 'differ from the bytes copied'):
+                self.inprocess(snapshot)
+        self.assertFalse(snapshot.target.exists())
+
+    def test_a_block_below_the_tip_changed_after_precopy(self):
+        def rewrite():
+            with open(self.journal/'blocks.bin', 'r+b') as stream:
+                stream.seek(5*48); stream.write(internal(5, b'other'))
+        self.after_precopy(rewrite)
+        self.failure('differs from its pre-quiesce prefix at height 5')
+
+    def test_precopy_deadline_never_stops_the_writer(self):
+        original = self.systemd.state()['pid']
+        real = S.copy_sidecar
+
+        def slow(*args):
+            time.sleep(.6)
+            return real(*args)
+        snapshot = self.snapshot(self.request(bounds={'precopy_seconds':1}))
+        with patch.object(S, 'copy_sidecar', slow):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.inprocess(snapshot)
+        events = {e['phase']:e['unix'] for e in self.record(snapshot)['events']}
+        self.assertLess(self.record(snapshot)['finished_unix']-events['precopying'], 2.4)  # Stopped mid-pass.
+        record = self.record(snapshot)
+        self.assertEqual((record['status'], record['phase']), ('interrupted', 'precopying'))
+        self.assertEqual((record['restoration']['started'], record['restoration']['writer']['pid']), (False, original))
+        self.reconcile(snapshot)
+
+    def reconcile(self, snapshot):
+        real = S.process_active
+        with patch.object(S, 'process_active', lambda pid, start: pid != os.getpid() and real(pid, start)):
+            record = snapshot.reconcile()
+        self.assertEqual(record['status'], 'reconciled')
+        self.assertTrue(Path(record['reconciliation']['retained'][0]).is_dir())
+
+
+def display_file(height):
+    return display(height)+'.bin'
+
+
 class Tree(Fixture):
     def test_staged_snapshot_status_detects_namespace_misuse(self):
         snapshot = self.snapshot()
@@ -1168,7 +1321,7 @@ class Tree(Fixture):
         events.chmod(0o400)
         side = next((snapshot.target/'journal/display-v1').iterdir())
         side.unlink(); side.symlink_to(self.root/'elsewhere')
-        with self.assertRaisesRegex(ValueError, 'sidecar'):
+        with self.assertRaisesRegex(ValueError, 'private single-link'):
             S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request)
 
 

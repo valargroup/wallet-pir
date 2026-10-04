@@ -1,12 +1,12 @@
 """Immutable snapshot of the full v3 event journal for candidate qualification.
 
-The full journal `/srv/transparent-activity/full-v3/journal` has one writer: a
-native `EventStore::open` owner that holds `writer.lock` with Rust
-`File::try_lock` for its whole writable lifetime. On Linux that is an exclusive
-`flock`, so this module proves the protocol on the existing lock file: the
-reviewed writer process is the `FLOCK WRITE` holder in `/proc/locks`, holds the
-file open, and a non-blocking `flock` from here is refused. It never creates a
-substitute lock.
+The full journal `/srv/transparent-activity/full-v3/journal` has one writer, the
+publication controller, whose native `EventStore::open` holds `writer.lock` with
+Rust `File::try_lock` for its whole writable lifetime. On Linux that is an
+exclusive `flock`, so this module proves the protocol on the existing lock file:
+the reviewed writer process is the `FLOCK WRITE` holder in `/proc/locks`, holds
+the file open, and a non-blocking `flock` from here is refused. It never creates
+a substitute lock.
 
 Only the deployment wrapper runs these actions, on the pinned root coordinator
 from immutable staged operations source. Stage holds the production lock, runs
@@ -14,17 +14,23 @@ the cross-operation fences, records a durable owner before any effect and hands
 the lock descriptor to a detached owner process, so a lost SSH session neither
 releases the lock nor leaves the owner unrecorded. The owner:
 
-1. rechecks the exact reviewed unit, binary, PID and kernel start time;
+1. rechecks the exact reviewed unit, binary, PID, kernel start time and the
+   unit's lack of stop-propagating or restarting dependents;
 2. records the committed prefix and independent node anchors;
-3. stops only that writer, then takes `writer.lock` itself, so no writer can
+3. pre-copies the immutable, self-authenticating display sidecars of every
+   committed block while the writer still runs, recording their identities;
+4. stops only that writer, then takes `writer.lock` itself, so no writer can
    reopen the journal while bytes are copied;
-4. copies only the checkpoint-committed prefix, complete 48-byte block records
-   and the committed blocks' display sidecars into private regular files under
-   `/srv/transparent-activity/snapshots/journal`, with hashes, a time bound and
-   the 20% memory/disk floors;
-5. restores the same writer on every handled exit and proves its identity,
+5. copies only the checkpoint-committed prefix of the four journal files and
+   re-observes every committed block hash and sidecar, under the reviewed
+   sidecar policy, into private regular files under
+   `/srv/transparent-activity/snapshots/journal`, with time bounds and the 20%
+   memory/disk floors;
+6. restores the same writer on every handled exit and proves its identity,
    writer lock and resources before any terminal success.
 
+Native `events_at` reads a missing sidecar as no oversized events, so sidecars
+are part of a faithful copy, and their absence is recorded, never inferred.
 Failure keeps the owner, partial bytes and health samples. Every non-staged
 owner fences other mutation until explicit `reconcile`, which restores only the
 exact owned writer and refuses foreign or unknown writer owners. A staged
@@ -43,6 +49,8 @@ import sys
 import time
 import urllib.request
 import base64
+import ctypes
+import struct
 
 from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_unit
 from wallet_pir_ops.deploy.remote import ProductionLock
@@ -96,9 +104,13 @@ SAMPLE_SECONDS = 1
 MAX_REQUEST = 16384
 HEX = re.compile('[0-9a-f]{64}')
 UNIT = re.compile(r'[A-Za-z0-9][A-Za-z0-9@._-]{0,200}\.service')
-PHASES = ('launching', 'adopted', 'quiescing', 'quiesced', 'copying', 'copied', 'restoring', 'restored', 'retained')
+PHASES = ('launching', 'adopted', 'precopying', 'quiescing', 'quiesced', 'copying', 'copied', 'restoring', 'restored', 'retained')
 UNFINISHED = ('running', 'failed', 'interrupted', 'restore-failed')
-BOUNDS = ('stop_seconds', 'copy_seconds', 'restart_seconds', 'restart_attempts', 'total_seconds')
+BOUNDS = ('precopy_seconds', 'stop_seconds', 'copy_seconds', 'restart_seconds', 'restart_attempts', 'total_seconds')
+POLICIES = ('every-committed-block', 'mirror-source')
+# Reverse dependencies through which stopping the writer would stop another
+# unit, or through which systemd could start it again while it is quiesced.
+INTERPLAY = ('RequiredBy', 'RequisiteOf', 'BoundBy', 'ConsistsOf', 'UpheldBy', 'TriggeredBy', 'PropagatesStopTo')
 NOT_QUALIFICATION = ('journal snapshot only; it is not an oracle, certificate, candidate, '
                      'serving or capacity qualification')
 require = I.require
@@ -128,7 +140,7 @@ def safe_absolute(value):
 def validate(request):
     """The closed, path-free snapshot request; root chooses every bound."""
     require(isinstance(request, dict) and set(request) == {'version', 'kind', 'source_sha', 'attempt', 'machine_id',
-            'candidate', 'publication', 'journal', 'writer', 'bounds'} and type(request['version']) is int and
+            'candidate', 'publication', 'journal', 'sidecars', 'writer', 'bounds'} and type(request['version']) is int and
             request['version'] == 1 and request['kind'] == KIND, 'invalid journal snapshot request')
     require(isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
             type(request['attempt']) is int and 1 <= request['attempt'] <= 100 and
@@ -148,6 +160,13 @@ def validate(request):
             type(journal['start_height']) is int and journal['start_height'] == START_HEIGHT and
             isinstance(journal['genesis_hash'], str) and HEX.fullmatch(journal['genesis_hash']),
             'journal snapshot format identity differs')
+    sidecars = request['sidecars']
+    require(isinstance(sidecars, dict) and set(sidecars) == {'policy', 'coverage_heights'} and
+            sidecars['policy'] in POLICIES and isinstance(sidecars['coverage_heights'], list) and
+            len(sidecars['coverage_heights']) <= 64 and
+            all(type(h) is int and START_HEIGHT <= h < 1 << 32 for h in sidecars['coverage_heights']) and
+            sidecars['coverage_heights'] == sorted(set(sidecars['coverage_heights'])),
+            'invalid journal snapshot sidecar policy or coverage heights')
     writer = request['writer']
     require(isinstance(writer, dict) and set(writer) == {'unit', 'fragment_path', 'fragment_sha256', 'drop_ins',
             'binary_path', 'binary_sha256', 'main_pid', 'process_start'}, 'invalid journal writer identity')
@@ -168,7 +187,7 @@ def validate(request):
     require(isinstance(bounds, dict) and set(bounds) == set(BOUNDS) and
             all(type(bounds[k]) is int and 0 < bounds[k] < 1 << 31 for k in BOUNDS),
             'journal snapshot bounds must all be reviewed positive integers')
-    require(bounds['total_seconds'] >= bounds['stop_seconds']+bounds['copy_seconds']+
+    require(bounds['total_seconds'] >= bounds['precopy_seconds']+bounds['stop_seconds']+bounds['copy_seconds']+
             bounds['restart_seconds']*bounds['restart_attempts'], 'total bound is shorter than its phases')
     require(len(durable.canonical(request)) <= MAX_REQUEST, 'journal snapshot request exceeds bound')
     return request
@@ -446,16 +465,29 @@ def iterate_records(path, length):
                 yield data[at:at+RECORD_BYTES]
 
 
-def sidecar_estimate(root, length):
-    """Count and bytes of committed display sidecars before quiescence."""
-    count = size = 0
-    for raw in iterate_records(Path(root)/'blocks.bin', length):
+def sidecar_estimate(root, length, sidecars):
+    """Committed sidecar presence before quiescence, against policy and coverage."""
+    count = size = absent = 0
+    missing = []
+    coverage = set(sidecars['coverage_heights'])
+    for height, raw in enumerate(iterate_records(Path(root)/'blocks.bin', length), START_HEIGHT):
         try:
             info = sidecar_path(root, raw[:32]).lstat()
         except FileNotFoundError:
+            absent += 1
+            if height in coverage or len(missing) < 16:
+                missing.append(height)
             continue
         count += 1; size += info.st_size
-    return {'sidecars':count, 'sidecar_bytes':size}
+    return {'sidecars':count, 'sidecar_bytes':size, 'sidecars_absent':absent, 'absent_heights_sample':missing[:16],
+            'coverage_absent':sorted(coverage & set(missing))}
+
+
+def sidecar_policy(estimate, sidecars, tip_height):
+    require(all(h <= tip_height for h in sidecars['coverage_heights']), 'coverage heights lie beyond the committed journal')
+    require(not estimate['coverage_absent'], 'coverage heights have no display sidecar')
+    require(sidecars['policy'] != 'every-committed-block' or not estimate['sidecars_absent'],
+            'committed blocks have no display sidecar: %d' % estimate['sidecars_absent'])
 
 
 # --- host observations -------------------------------------------------------
@@ -484,7 +516,8 @@ def resources(root, remaining=0):
 
 
 class Systemd:
-    PROPERTIES = 'ActiveState,SubState,MainPID,NRestarts,FragmentPath,DropInPaths,ControlGroup,NeedDaemonReload'
+    PROPERTIES = ','.join(('ActiveState', 'SubState', 'MainPID', 'NRestarts', 'FragmentPath', 'DropInPaths',
+                           'ControlGroup', 'NeedDaemonReload', *INTERPLAY))
 
     def show(self, unit):
         data = subprocess.run(['systemctl', 'show', unit, '--property='+self.PROPERTIES], capture_output=True,
@@ -543,6 +576,7 @@ class Snapshot:
         self.retained = OWNERS/(expected+'.request.json')
         self.log = OWNERS/(expected+'.snapshot.log')
         self.health = OWNERS/(expected+'.snapshot-health.ndjson')
+        self.inventory = OWNERS/(expected+'.snapshot-sidecars.bin')
         self.target = SNAPSHOTS/expected
         self.partial = SNAPSHOTS/(expected+'.copying')
         self.systemd = systemd or Systemd()
@@ -586,6 +620,9 @@ class Snapshot:
         require(checksum(writer['fragment_path']) == writer['fragment_sha256'], 'writer unit drift: fragment bytes')
         text = read_small(writer['fragment_path'], 1 << 20).decode()
         require(transparent_unit.exec_args(text)[0] == writer['binary_path'], 'writer unit drift: ExecStart binary')
+        for name in INTERPLAY:
+            require(not state.get(name, '').split(),
+                    'writer unit drift: %s would propagate its stop or restart it' % name)
         drop_ins = sorted(state.get('DropInPaths', '').split(), key=os.path.basename)
         require(drop_ins == [d['path'] for d in writer['drop_ins']], 'writer unit drift: drop-in set')
         for item in writer['drop_ins']:
@@ -629,6 +666,7 @@ class Snapshot:
         return {'version':1, 'kind':KIND, 'request_sha256':self.identifier, 'journal':str(JOURNAL),
                 'target':str(self.target), 'partial':str(self.partial), 'owner':str(self.owner),
                 'writer':self.writer, 'bounds':self.bounds, 'publication':self.request['publication'],
+                'sidecars':self.request['sidecars'],
                 'candidate':self.request['candidate'],
                 'effects':'stop and restore only the reviewed journal writer; copy its committed prefix into the fixed private snapshot namespace',
                 'qualification':NOT_QUALIFICATION}
@@ -637,12 +675,14 @@ class Snapshot:
         plan = self.stable_plan()
         self.publication()
         journal = committed(JOURNAL, self.request)
-        observation = {'journal':journal, **sidecar_estimate(JOURNAL, journal['blocks_bytes']), **self.observed()}
+        estimate = sidecar_estimate(JOURNAL, journal['blocks_bytes'], self.request['sidecars'])
+        observation = {'journal':journal, **estimate, **self.observed(),
+                       'quiesced_copy_bytes':journal['events_bytes']+journal['blocks_bytes']}
         return {'plan':plan, 'plan_sha256':digest(plan), 'observation':observation}
 
     def namespace(self):
         no_links(SNAPSHOTS)
-        for path in (self.owner, self.retained, self.target, self.partial, self.log, self.health):
+        for path in (self.owner, self.retained, self.target, self.partial, self.log, self.health, self.inventory):
             no_links(path)
             require(not path.exists(), 'journal snapshot already owned; inspect status or reconcile')
         if SNAPSHOTS.exists():
@@ -657,7 +697,8 @@ class Snapshot:
         journal_root()
         writer = self.running(self.writer['main_pid'], self.writer['process_start'])
         journal = committed(JOURNAL, self.request)
-        estimate = sidecar_estimate(JOURNAL, journal['blocks_bytes'])
+        estimate = sidecar_estimate(JOURNAL, journal['blocks_bytes'], self.request['sidecars'])
+        sidecar_policy(estimate, self.request['sidecars'], journal['tip_height'])
         anchors = self.anchors(journal['tip_height'], journal['tip_hash'])
         sample = resources(SNAPSHOTS, journal['events_bytes']+journal['blocks_bytes']+estimate['sidecar_bytes'])
         return {'status':'preflight-passed', 'request_sha256':self.identifier, 'writer':writer,
@@ -771,12 +812,16 @@ class Snapshot:
                 schema_fence.local_schema_fence(skip_input=self.identifier)
                 original = self.running(self.writer['main_pid'], self.writer['process_start'])
                 before = committed(JOURNAL, self.request)
-                estimate = sidecar_estimate(JOURNAL, before['blocks_bytes'])
+                estimate = sidecar_estimate(JOURNAL, before['blocks_bytes'], self.request['sidecars'])
+                sidecar_policy(estimate, self.request['sidecars'], before['tip_height'])
                 anchors = self.anchors(before['tip_height'], before['tip_hash'])
                 resources(SNAPSHOTS, before['events_bytes']+before['blocks_bytes']+estimate['sidecar_bytes'])
-                # Durable before the stop: reconciliation may then restart it.
-                self.phase(record, 'quiescing', writer_before=original, before=before, estimate=estimate,
+                self.phase(record, 'precopying', writer_before=original, before=before, estimate=estimate,
                            anchors_before=anchors)
+                precopy = self.precopy(before, estimate)
+                self.running(self.writer['main_pid'], self.writer['process_start'])
+                # Durable before the stop: reconciliation may then restart it.
+                self.phase(record, 'quiescing', precopy=precopy)
                 stop_issued = True
                 self.quiesce(record, writer_lock)
                 self.phase(record, 'copying')
@@ -842,51 +887,65 @@ class Snapshot:
             raise Foreign('journal writer restarted during the snapshot')
         inherited_lock.descriptors(required=True, path=self.lock_path)
 
-    def copy(self, before, estimate):
-        """Independent private copies of exactly the committed prefix."""
-        deadline = time.monotonic()+self.bounds['copy_seconds']
+    def sampler(self, deadline, bound, remaining, progress, *, quiet):
+        """Deadline, resource floors, inherited lock and (when stopped) quiescence."""
+        def sample():
+            if time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired('journal snapshot copy', bound)
+            if time.monotonic()-progress['last'] >= SAMPLE_SECONDS:
+                if quiet:
+                    self.check_quiet()
+                inherited_lock.descriptors(required=True, path=self.lock_path)
+                observed = resources(SNAPSHOTS, max(0, remaining-progress['copied']))
+                with self.health.open('a') as stream:
+                    stream.write(json.dumps(dict(observed, copied_bytes=progress['copied'], quiesced=quiet), sort_keys=True)+'\n')
+                    stream.flush(); os.fsync(stream.fileno())
+                progress['last'] = time.monotonic()
+        return sample
+
+    def precopy(self, before, estimate):
+        """While the writer runs, copy the immutable committed sidecars."""
+        deadline = time.monotonic()+self.bounds['precopy_seconds']
         no_links(SNAPSHOTS)
         SNAPSHOTS.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.namespace_dir(SNAPSHOTS)
         require(not self.target.exists(), 'journal snapshot target appeared')
         self.partial.mkdir(mode=0o700)
-        journal = self.partial/'journal'
-        journal.mkdir(mode=0o700)
+        (self.partial/'journal').mkdir(mode=0o700)
         self.health.touch(mode=0o600, exist_ok=False)
+        progress = {'last':0., 'copied':0}
+        remaining = before['events_bytes']+before['blocks_bytes']+estimate['sidecar_bytes']
+        sample = self.sampler(deadline, self.bounds['precopy_seconds'], remaining, progress, quiet=False)
+        result = precopy_sidecars(self.partial/'journal', self.inventory, before['blocks_bytes'], sample)
+        if time.monotonic() >= deadline:
+            raise subprocess.TimeoutExpired('journal snapshot sidecar pre-copy', self.bounds['precopy_seconds'])
+        return result
+
+    def copy(self, before, estimate):
+        """Independent private copies of exactly the committed prefix."""
+        deadline = time.monotonic()+self.bounds['copy_seconds']
+        journal = self.partial/'journal'
         root = journal_root()
         quiet = committed(JOURNAL, self.request)
         require(quiet['blocks'] >= before['blocks'], 'journal reorganized below the pre-quiesce prefix')
-        files = {}
-        remaining = quiet['events_bytes']+quiet['blocks_bytes']+estimate['sidecar_bytes']
         progress = {'last':0., 'copied':0}
-
-        def sample():
-            if time.monotonic() >= deadline:
-                raise subprocess.TimeoutExpired('journal snapshot copy', self.bounds['copy_seconds'])
-            if time.monotonic()-progress['last'] >= SAMPLE_SECONDS:
-                self.check_quiet()
-                observed = resources(SNAPSHOTS, max(0, remaining-progress['copied']))
-                with self.health.open('a') as stream:
-                    stream.write(json.dumps(dict(observed, copied_bytes=progress['copied']), sort_keys=True)+'\n')
-                    stream.flush(); os.fsync(stream.fileno())
-                progress['last'] = time.monotonic()
-
+        sample = self.sampler(deadline, self.bounds['copy_seconds'], quiet['events_bytes']+quiet['blocks_bytes'],
+                              progress, quiet=True)
         lengths = {'meta.json':None, 'checkpoint.bin':CHECKPOINT_BYTES,
                    'blocks.bin':quiet['blocks_bytes'], 'events.bin':quiet['events_bytes']}
-        for name in FILES:
-            files[name] = copy_file(JOURNAL/name, journal/name, lengths[name], sample, progress)
+        files = {name:copy_file(JOURNAL/name, journal/name, lengths[name], sample, progress) for name in FILES}
         require(files['meta.json']['sha256'] == quiet['meta_sha256'] and
                 files['checkpoint.bin']['sha256'] == quiet['checkpoint_sha256'], 'journal changed while quiesced')
-        sidecars = copy_sidecars(journal, quiet['blocks_bytes'], sample, progress)
+        sidecars = reconcile_sidecars(journal, self.inventory, quiet['blocks_bytes'], self.request['sidecars'], sample)
         current = JOURNAL.lstat()
         require((current.st_dev, current.st_ino) == (root.st_dev, root.st_ino), 'journal directory was replaced')
         self.check_quiet()
-        sync_tree(self.partial)
+        sync_filesystem(self.partial)
         # Format and boundaries now; the byte re-read waits until the writer runs.
-        summary = verify_journal(journal, self.request, before, files, sidecars)
+        summary = verify_journal(journal, self.request, before, files)
         if time.monotonic() >= deadline:
             raise subprocess.TimeoutExpired('journal snapshot copy', self.bounds['copy_seconds'])
-        return summary
+        return {**summary, 'display':sidecars}
 
     def namespace_dir(self, path):
         info = Path(path).lstat()
@@ -894,10 +953,14 @@ class Snapshot:
                 'snapshot namespace is not a private root-owned directory')
 
     def retain(self, record, started):
-        """Write the manifest, then publish the complete snapshot by rename."""
+        """Re-derive every digest, write the manifest, then publish by rename."""
+        contents = inspect(self.partial, self.request)
+        snapshot = record['snapshot']
+        require(contents['files'] == snapshot['files'] and contents['sidecars'] == snapshot['display']['sidecars'] and
+                contents['tip_hash'] == snapshot['tip_hash'], 'snapshot bytes differ from the bytes copied')
         manifest = {'version':1, 'kind':KIND, 'request_sha256':self.identifier, 'source_sha':self.request['source_sha'],
                     'candidate':self.request['candidate'], 'publication':self.request['publication'],
-                    'journal_source':str(JOURNAL), 'journal':record['snapshot'], 'before':record['before'],
+                    'journal_source':str(JOURNAL), 'journal':snapshot, 'contents':contents, 'before':record['before'],
                     'writer':{'before':record['writer_before'], 'restored':record['restoration']},
                     'anchors':{'before':record['anchors_before'], 'after':record['anchors_after']},
                     'qualification':NOT_QUALIFICATION}
@@ -907,7 +970,7 @@ class Snapshot:
             output.write(raw); output.flush(); os.fchmod(output.fileno(), 0o400); os.fsync(output.fileno())
         sync_dir(self.partial)
         manifest_sha = hashlib.sha256(raw).hexdigest()
-        verify_tree(self.partial, manifest_sha, full=True, request=self.request)
+        verify_tree(self.partial, manifest_sha, full=False)
         if time.monotonic()-started > self.bounds['total_seconds']:
             raise subprocess.TimeoutExpired('journal snapshot', self.bounds['total_seconds'])
         inherited_lock.descriptors(required=True, path=self.lock_path)
@@ -1091,45 +1154,134 @@ def sidecar_digest():
     return hashlib.sha256(b'wallet-pir-journal-snapshot-sidecars-v1\n')
 
 
-def copy_sidecars(journal, blocks_bytes, sample, progress):
-    """Copy committed blocks' display sidecars, addressed by the copied records."""
-    source = JOURNAL/'display-v1'
-    exists = os.path.lexists(source)
-    if exists:
-        info = source.lstat()
-        require(stat.S_ISDIR(info.st_mode), 'display sidecar directory is not a directory')
-        (journal/'display-v1').mkdir(mode=0o700)
-    aggregate, count, size, height = sidecar_digest(), 0, 0, START_HEIGHT
-    for raw in iterate_records(journal/'blocks.bin', blocks_bytes):
-        internal = raw[:32]
-        if exists:
-            try:
-                fd, _ = open_existing(sidecar_path(JOURNAL, internal), limit=MAX_SIDECAR)
-            except FileNotFoundError:
-                fd = None
-            if fd is not None:
+INVENTORY = struct.Struct('<32sQQQQ')  # block hash, inode, size, mtime_ns, ctime_ns; inode 0 is absent.
+
+
+def sidecar_identity(info):
+    return (info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def sidecar_source():
+    """The live sidecar directory identity, or None when it does not exist."""
+    path = JOURNAL/'display-v1'
+    if not os.path.lexists(path):
+        return None
+    info = path.lstat()
+    require(stat.S_ISDIR(info.st_mode), 'display sidecar directory is not a directory')
+    return (info.st_dev, info.st_ino)
+
+
+def copy_sidecar(internal, journal):
+    """Copy one immutable, self-authenticating sidecar; None when absent.
+
+    The writer renames each sidecar into place before the block that names it
+    is committed and never rewrites it, so a copy taken while it runs is the
+    committed sidecar. Each copy is checked against its block hash and digest.
+    The whole snapshot is flushed once by `syncfs`, not per small file.
+    """
+    try:
+        fd, info = open_existing(sidecar_path(JOURNAL, internal), limit=MAX_SIDECAR)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd, 'rb') as stream:
+        data = stream.read(MAX_SIDECAR+1)
+    check_sidecar(data, internal)
+    out = write_new(sidecar_path(journal, internal))
+    try:
+        require(os.write(out, data) == len(data), 'short sidecar write')
+        os.fchmod(out, 0o400)
+    finally:
+        os.close(out)
+    return info
+
+
+def precopy_sidecars(journal, inventory, blocks_bytes, sample):
+    """While the writer runs: copy each committed block's sidecar, recording its identity."""
+    directory = sidecar_source()
+    (journal/'display-v1').mkdir(mode=0o700)
+    count = absent = size = 0
+    fd = write_new(inventory)
+    with os.fdopen(fd, 'wb') as output:
+        for raw in iterate_records(JOURNAL/'blocks.bin', blocks_bytes):
+            internal = raw[:32]
+            info = copy_sidecar(internal, journal) if directory else None
+            if info is None:
+                output.write(INVENTORY.pack(internal, 0, 0, 0, 0)); absent += 1
+            else:
+                output.write(INVENTORY.pack(internal, *sidecar_identity(info))); count += 1; size += info.st_size
                 sample()
-                with os.fdopen(fd, 'rb') as stream:
-                    data = stream.read(MAX_SIDECAR+1)
-                check_sidecar(data, internal)
-                out = write_new(sidecar_path(journal, internal))
-                try:
-                    require(os.write(out, data) == len(data), 'short sidecar write')
-                    os.fsync(out); os.fchmod(out, 0o400)
-                finally:
-                    os.close(out)
-                aggregate.update(height.to_bytes(8, 'little')+internal+len(data).to_bytes(8, 'little')+
-                                 hashlib.sha256(data).digest())
-                count += 1; size += len(data); progress['copied'] += len(data)
-        height += 1
-    if exists:
-        current = source.lstat()
-        require((current.st_dev, current.st_ino) == (info.st_dev, info.st_ino), 'display sidecar directory was replaced')
-    return {'sidecars':count, 'sidecar_bytes':size, 'sidecar_sha256':aggregate.hexdigest(),
-            'sidecars_missing':height-START_HEIGHT-count}
+        output.flush(); os.fsync(output.fileno())
+    require(sidecar_source() == directory, 'display sidecar directory was replaced')
+    return {'directory':directory is not None, 'sidecars':count, 'absent':absent, 'bytes':size}
 
 
-def verify_journal(journal, request, before, files, sidecars):
+def reconcile_sidecars(journal, inventory, blocks_bytes, sidecars, sample):
+    """Under quiescence: the copy holds exactly each committed block's sidecar.
+
+    Every committed block's source sidecar is observed again while the writer is
+    stopped and this owner holds writer.lock. Every block hash read while the
+    writer ran must be unchanged, and pre-copied sidecars must keep the same
+    inode, size and times. Sidecars of newer blocks are copied now. A
+    block with no source sidecar refuses under `every-committed-block`; under
+    `mirror-source` it is recorded as absent, which is what the native reader
+    would see, never as evidence that the block has no oversized events.
+    """
+    directory = sidecar_source()
+    policy, coverage = sidecars['policy'], set(sidecars['coverage_heights'])
+    count = absent = late = 0
+    covered = []
+    with open(inventory, 'rb') as stream:
+        for height, raw in enumerate(iterate_records(journal/'blocks.bin', blocks_bytes), START_HEIGHT):
+            internal = raw[:32]
+            entry = stream.read(INVENTORY.size)
+            entry = INVENTORY.unpack(entry) if entry else None
+            try:
+                info = sidecar_path(JOURNAL, internal).lstat() if directory else None
+            except FileNotFoundError:
+                info = None
+            if entry is not None:
+                # Independent prefixes: every block read while the writer ran is unchanged.
+                require(entry[0] == internal, 'journal differs from its pre-quiesce prefix at height %d' % height)
+                if entry[1]:
+                    require(info is not None and stat.S_ISREG(info.st_mode) and sidecar_identity(info) == entry[1:],
+                            'committed display sidecar changed or vanished at height %d' % height)
+                elif info is not None:
+                    require(copy_sidecar(internal, journal) is not None, 'display sidecar vanished')
+                    late += 1
+            elif info is not None:
+                require(copy_sidecar(internal, journal) is not None, 'display sidecar vanished')
+                late += 1
+            if info is None:
+                require(policy != 'every-committed-block', 'committed block %d has no display sidecar' % height)
+                absent += 1
+            else:
+                count += 1
+            if height in coverage:
+                require(info is not None, 'coverage height %d has no display sidecar' % height)
+                covered.append({'height':height, 'hash':display_hex(internal),
+                                'event_count':int.from_bytes(raw[40:48], 'little'), 'sidecar_bytes':info.st_size})
+            if (height & 0xfff) == 0:
+                sample()
+    require(len(covered) == len(coverage), 'coverage heights lie beyond the committed snapshot')
+    require(sidecar_source() == directory, 'display sidecar directory was replaced')
+    return {'policy':policy, 'sidecars':count, 'sidecars_absent_in_source':absent, 'copied_while_quiesced':late,
+            'coverage':covered}
+
+
+def sync_filesystem(path):
+    """One `syncfs` for the snapshot's filesystem, then its directories."""
+    fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.syncfs(fd) != 0:
+            error = ctypes.get_errno()
+            raise OSError(error, os.strerror(error))
+    finally:
+        os.close(fd)
+    sync_tree(path)
+
+
+def verify_journal(journal, request, before, files):
     """Re-read the private copy: format, exact checkpoint, records and anchors."""
     summary = committed(journal, request, exact=True)
     require(summary['meta_sha256'] == files['meta.json']['sha256'] and
@@ -1142,60 +1294,72 @@ def verify_journal(journal, request, before, files, sidecars):
     result = records.finish()
     require(result['tip_height'] == summary['tip_height'] and result['tip_hash'] == summary['tip_hash'],
             'snapshot block records disagree with the checkpoint')
-    return {**summary, 'events':result['events'], 'files':files, **sidecars}
+    return {**summary, 'events':result['events'], 'files':files}
 
 
-def verify_tree(root, manifest_sha256, *, full, request=None):
-    """Exact private, single-link regular files; the full form re-derives all."""
+def structure(root):
+    """Private directories and single-link 0400 regular files, nothing else."""
     root = Path(root)
     no_links(root)
     for directory in (root, root/'journal'):
         info = directory.lstat()
         require(stat.S_ISDIR(info.st_mode) and info.st_uid == OWNER and stat.S_IMODE(info.st_mode) == 0o700,
                 'snapshot directory is not private')
-    require(set(os.listdir(root)) == {'journal', 'manifest.json'}, 'snapshot top-level set differs')
-    manifest_path = root/'manifest.json'
-    raw = read_small(manifest_path, 1 << 20)
-    require(hashlib.sha256(raw).hexdigest() == manifest_sha256, 'snapshot manifest differs')
-    manifest = json.loads(raw, object_pairs_hook=I.unique)
-    journal = manifest['journal']
-    names = set(os.listdir(root/'journal'))
-    require(names in (set(FILES), set(FILES) | {'display-v1'}), 'snapshot journal file set differs')
-    for path in [manifest_path, *(root/'journal'/name for name in FILES)]:
-        info = path.lstat()
-        require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == OWNER and
-                stat.S_IMODE(info.st_mode) == 0o400, 'snapshot file is not a private single-link regular file')
-        if path != manifest_path:
-            require(info.st_size == journal['files'][path.name]['size'], 'snapshot file size differs')
-    if not full:
-        return manifest
+    require(set(os.listdir(root)) <= {'journal', 'manifest.json'}, 'snapshot top-level set differs')
+    require(set(os.listdir(root/'journal')) == set(FILES) | {'display-v1'}, 'snapshot journal file set differs')
     for name in FILES:
-        require(checksum(root/'journal'/name) == journal['files'][name]['sha256'], 'snapshot bytes differ: '+name)
-    require(committed(root/'journal', request, exact=True)['tip_hash'] == journal['tip_hash'], 'snapshot tip differs')
+        private_file((root/'journal'/name).lstat())
+    info = (root/'journal'/'display-v1').lstat()
+    require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == OWNER,
+            'snapshot sidecar directory is not private')
+
+
+def private_file(info):
+    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == OWNER and
+            stat.S_IMODE(info.st_mode) == 0o400, 'snapshot file is not a private single-link regular file')
+
+
+def inspect(root, request):
+    """Re-derive every digest from the private copy alone."""
+    root = Path(root)
+    structure(root)
+    journal = root/'journal'
+    summary = committed(journal, request, exact=True)
+    files = {name:{'size':(journal/name).lstat().st_size, 'sha256':checksum(journal/name)} for name in FILES}
     count = 0
-    if 'display-v1' in names:
-        directory = root/'journal'/'display-v1'
-        info = directory.lstat()
-        require(stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode) == 0o700 and info.st_uid == OWNER,
-                'snapshot sidecar directory is not private')
-        with os.scandir(directory) as entries:
-            for entry in entries:
-                info = entry.stat(follow_symlinks=False)
-                require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_uid == OWNER and
-                        stat.S_IMODE(info.st_mode) == 0o400, 'snapshot sidecar is not a private single-link regular file')
-                count += 1
-    aggregate, present, height = sidecar_digest(), 0, START_HEIGHT
-    for raw in iterate_records(root/'journal'/'blocks.bin', journal['blocks_bytes']):
-        path = sidecar_path(root/'journal', raw[:32])
+    with os.scandir(journal/'display-v1') as entries:
+        for entry in entries:
+            private_file(entry.stat(follow_symlinks=False))
+            count += 1
+    aggregate, present, size = sidecar_digest(), 0, 0
+    for height, raw in enumerate(iterate_records(journal/'blocks.bin', summary['blocks_bytes']), START_HEIGHT):
+        path = sidecar_path(journal, raw[:32])
         if os.path.lexists(path):
             data = read_small(path, MAX_SIDECAR)
             check_sidecar(data, raw[:32])
             aggregate.update(height.to_bytes(8, 'little')+raw[:32]+len(data).to_bytes(8, 'little')+
                              hashlib.sha256(data).digest())
-            present += 1
-        height += 1
-    require(present == count == journal['sidecars'] and aggregate.hexdigest() == journal['sidecar_sha256'],
-            'snapshot display sidecars differ')
+            present += 1; size += len(data)
+    require(present == count, 'snapshot holds display sidecars of no committed block')
+    return {'files':files, 'sidecars':present, 'sidecar_bytes':size, 'sidecar_sha256':aggregate.hexdigest(),
+            'tip_hash':summary['tip_hash'], 'blocks':summary['blocks']}
+
+
+def verify_tree(root, manifest_sha256, *, full, request=None):
+    """The retained snapshot; the full form re-derives every digest."""
+    root = Path(root)
+    structure(root)
+    require(set(os.listdir(root)) == {'journal', 'manifest.json'}, 'snapshot top-level set differs')
+    manifest_path = root/'manifest.json'
+    private_file(manifest_path.lstat())
+    raw = read_small(manifest_path, 1 << 20)
+    require(hashlib.sha256(raw).hexdigest() == manifest_sha256, 'snapshot manifest differs')
+    manifest = json.loads(raw, object_pairs_hook=I.unique)
+    for name in FILES:
+        require((root/'journal'/name).lstat().st_size == manifest['contents']['files'][name]['size'],
+                'snapshot file size differs')
+    if full:
+        require(inspect(root, request) == manifest['contents'], 'snapshot contents differ from the manifest')
     return manifest
 
 

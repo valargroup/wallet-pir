@@ -80,9 +80,31 @@ sidecars, and restores the same writer with proof. Fixture tests covered:
 - interruption, transport loss and every stop, copy and restore failure;
 - resource floors and namespace misuse.
 
-Twenty-five single-guard mutations were each caught. No host was contacted and
-no snapshot was taken. The writer identity, bounds and journal size remain
-root's to measure and decide; see
+Root's read-only audit later on 2026-10-04 reported the following. This task
+did not observe them itself.
+
+- **Writer.** The installed `transparent-publish-controller.service` owns the
+  writable journal. Its `data_dir` is `/srv/transparent-activity/full-v3/journal`,
+  with `meta.json` at version 3 from height 0.
+- **Lock.** `/proc/locks` lists the controller PID as the `FLOCK ADVISORY WRITE`
+  holder of the existing `writer.lock`.
+- **Size.** `events.bin` is 42,699,881,014 bytes and `blocks.bin` 168,301,056
+  bytes, which is 3,506,272 blocks.
+
+The snapshot now covers display sidecars as well. Native `events_at` silently
+reads a missing sidecar as no oversized events, and writers outside display mode
+write no sidecar. The path therefore:
+
+- requires an explicit sidecar policy and sidecars at root-chosen coverage
+  heights;
+- pre-copies the immutable sidecars while the controller runs, then re-observes
+  every committed block's sidecar and block hash under quiescence;
+- refuses controller units with stop-propagating or restarting dependents.
+
+Fifty-four focused tests passed, and all 33 single-guard mutations were caught. A
+hub-only probe projects about 4.5 minutes of copying while the controller is
+stopped. That projection is not a coordinator measurement. No host was contacted
+and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
 
 ## Activity metadata candidate, 2026-09-30
