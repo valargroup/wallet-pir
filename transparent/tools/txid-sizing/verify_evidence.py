@@ -66,8 +66,22 @@ def main():
         receipt=day_analysis.read(evidence/"day-receipt.json.gz")
         if data["design"]!=receipt["design"] or len(receipt["blocks"])!=len(data["blocks"]):
             raise ValueError("one-day design/receipt mismatch")
+        if data["design"]!=day_analysis.read(evidence/"day-plan.json"):
+            raise ValueError("one-day fixed plan changed")
+        expected={h for s in data["design"]["strata"] for h in s["heights"]}
         raw={b["height"]:b for b in receipt["blocks"]}
+        heights={b["height"] for b in data["blocks"]}
+        if expected!=set(raw) or heights!=expected or len(heights)!=len(data["blocks"]):
+            raise ValueError("one-day selection/inventory mismatch")
+        extraction=day_analysis.read(evidence/"day-extraction-receipt.json.gz")
+        record_pins={p["height"]:p["canonical_records_sha256"] for p in extraction["pins"]}
+        if set(record_pins)!=expected or extraction["blocks"]!=len(expected):
+            raise ValueError("one-day canonical inventory mismatch")
+        if sum(b["transactions"] for b in receipt["blocks"])!=extraction["distinct_all_txids"]:
+            raise ValueError("one-day distinct identity total mismatch")
         for b in data["blocks"]:
+            if b["canonical_records_sha256"]!=record_pins[b["height"]]:
+                raise ValueError("one-day canonical record pin mismatch")
             if raw[b["height"]]["hash"]!=b["hash"] or raw[b["height"]]["frame_sha256"]!=b["source_sha256"]:
                 raise ValueError("one-day block source pin mismatch")
     print("checksums, source pins and deterministic reports verified; retained vector and incomplete census qualification limits remain explicit")
