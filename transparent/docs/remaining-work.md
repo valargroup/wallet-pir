@@ -234,6 +234,20 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Earlier full CI found stale operator fixtures and three reference-wallet lint
   findings; the fixture refresh and equivalent lint corrections passed focused
   operator, deployed-jq contract and Clippy checks. Repaired full CI remains open.
+- [ ] Qualify and prepare the changed-native candidate `c3c66b9b` through the [candidate path](deployment.md#changed-native-activity-candidate-c3c66b9b).
+  Source guards and focused fixture checks are [retained](../evidence/activity-metadata-2026-10-04/README.md).
+  The following remain open:
+  - Stage the reviewed operations source.
+  - Run candidate bundle plan, preflight and stage from the retained CI 37173250956
+    bundles and supplemental archive.
+  - Produce the four candidate-bound artifact-verification, native-certificate,
+    chain-oracle and CI reports from actual runs and retained raw results.
+  - Stage and natively verify the candidate worker pair on every worker.
+  - Run version-2 product preflight, including installed setups on both recent
+    replicas, warm serving proof and the unchanged rollback to captured
+    predecessor executables.
+  The historical 12ce publication, assignment, samples and receipts stay
+  unchanged; no floor or deadline changes.
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 

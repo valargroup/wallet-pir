@@ -33,6 +33,9 @@ H = module('routing_host', HERE/'lib/activity_schema_host.py')
 L = module('routing_fleet', HERE/'scripts/transparent-live-fleet.py')
 U = module('routing_upgrade', HERE/'scripts/upgrade-transparent-fleet.py')
 P = module('routing_recovery_proof', HERE/'lib/activity_recovery_proof.py')
+C = module('routing_candidate', HERE/'lib/activity_candidate.py')
+READER = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
+CANDIDATE_READER = str(C.path('transparent-loadtest'))
 LOOPBACK = 'http://127.0.0.1:18193'
 MAX_REPLY = 16 * 1024 * 1024
 
@@ -103,7 +106,9 @@ def validate(plan):
                 H.HEX.fullmatch(entry['binary_sha256']) and H.HEX.fullmatch(entry['sample_sha256']), 'invalid recovery identities')
         # The current reader handles migrated stores and legacy unavailable
         # metadata. Never invoke an obsolete store reader for client rollback.
-        require(entry['binary'] == '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest',
+        # Rollback (v10) keeps the retained 12ce reader; a forward v11 proof may
+        # use the separately prepared candidate client, which the product binds.
+        require(entry['binary'] in ((READER, CANDIDATE_READER) if kind == 'v11' else (READER,)),
                 'recovery must use the retained compatible fat-LTO reader')
     return plan
 

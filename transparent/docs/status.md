@@ -40,6 +40,28 @@ pass through both the batched path and a forced reference fallback. Recent
 timing is unchanged from the record above and was not re-measured.
 [Evidence](../evidence/prewarm-hint-assurance-2026-10-04/README.md).
 
+## Changed-native activity candidate `c3c66b9b`, 2026-10-04
+
+Operations source now prepares and guards the changed-native candidate
+`c3c66b9b` separately from the historical 12ce publication, assignment, samples,
+journal and rollback identities. The 18 artifacts are pinned: five roles from
+comprehensive CI 37173250956, and 13 supplemental fat-LTO tools whose archive
+digest is in the manifest.
+
+A wrapper-only `schema-candidate-*` path verifies those artifacts and retains them
+inertly in a separate coordinator namespace. Candidate worker executables stage
+beside, not into, the immutable worker publication.
+
+Version-2 service, cutover and product inputs bind candidate bytes. They require
+four new candidate-bound gate reports, and they refuse 12ce reports, relabelled or
+mixed reports, and changed certificate floors.
+
+The supplemental reader accepted the retained archive read-only. Focused fixture
+tests and mutations passed. No production host was accessed. Nothing was staged
+or deployed, and no candidate gate was run. Freshness, capacity and every other
+acceptance gate below remain as recorded.
+[Evidence](../evidence/activity-metadata-2026-10-04/README.md).
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

@@ -53,6 +53,12 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Prepare the approved full v11 publication on the pinned coordinator.
       Requires completed ingestion; preserves canonical service and all partial output.
 
+  schema-candidate-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
+      [--expect-plan-sha256 H]  Verify and retain the changed-native candidate's 18
+      artifacts under /srv/transparent-activity/candidates; installs and runs nothing.
+  schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
+      Render the candidate worker executable pair for schema-input-{plan,...,stage}.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -104,6 +110,16 @@ def parser():
             command.add_argument('--request', required=True)
             command.add_argument('--request-sha256', required=True)
             if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-'+name, help='retain the verified changed-native candidate bundle without installation')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-candidate-worker-build', help='render candidate worker executables for an already staged publication')
+    command.add_argument('--host', required=True)
+    command.add_argument('--source-sha', required=True)
+    command.add_argument('--publication-request-sha256', required=True)
+    command.add_argument('--attempt', type=int, default=1)
     for name in ('plan','preflight','stage','status','reconcile'):
         command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
         command.add_argument('--request', required=True)
@@ -264,6 +280,20 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-candidate-'):
+            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            inventory = descriptors.load_inventory(args.inventory)
+            if args.command == 'schema-candidate-worker-build':
+                result = module.build_candidate(inventory,args.host,args.source_sha,args.publication_request_sha256,args.attempt)
+            else:
+                with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
+                if len(raw)>module.MAX_REQUEST: raise ValueError('candidate request exceeds bound')
+                request=json.loads(raw,object_pairs_hook=module.unique)
+                result=module.CandidatePreparation(inventory,request,args.request_sha256).run(
+                    args.command.removeprefix('schema-candidate-'),getattr(args,'expect_plan_sha256',None))
+            out(json.dumps(result,sort_keys=True))
+            return 0
         if args.command.startswith('schema-input-'):
             spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

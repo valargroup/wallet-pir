@@ -35,7 +35,11 @@ def module(name, path):
 
 P = module('input_publication', HERE/'activity_publication_job.py')
 S = module('input_source', HERE/'activity_source_stage_host.py')
+C = module('input_candidate', HERE/'activity_candidate.py')
 ROOT = Path('/srv/transparent-pir/v11/publications')
+# Candidate worker executables stay outside the immutable publication namespace.
+CANDIDATE_WORKERS = Path('/srv/transparent-pir/v11/candidates')
+CANDIDATE_INPUTS = ('.input-transparent-shard-server', '.input-shard-control')
 OWNERS = Path('/srv/transparent-activity/ops/input-staging')
 SOURCE = Path('/srv/transparent-activity/ops/sources')
 MAX_REQUEST = 8 << 20
@@ -94,6 +98,8 @@ def safe(path):
 
 
 def validate(request):
+    if isinstance(request, dict) and type(request.get('version')) is int and request['version'] == 2:
+        return validate_candidate(request)
     require(isinstance(request, dict) and set(request) == {'version','source_sha','machine_id','worker_id',
             'map_sha256','assignment_sha256','release_result_sha256','attempt','cache_bytes','files'}, 'invalid input-staging request')
     require(type(request['version']) is int and request['version'] == 1 and
@@ -129,6 +135,30 @@ def validate(request):
     by_name = {f['path']:f for f in files}
     require(by_name['shards.json']['sha256'] == request['map_sha256'] and
             by_name['assignment.json']['sha256'] == request['assignment_sha256'], 'candidate identity disagrees')
+    require(len(durable.canonical(request)) <= MAX_REQUEST, 'input request exceeds bound')
+    return request
+
+
+def validate_candidate(request):
+    """Only the two candidate worker executables, bound to a staged publication."""
+    require(set(request) == {'version','source_sha','machine_id','worker_id','candidate_sha','publication_request_sha256',
+            'map_sha256','assignment_sha256','attempt','cache_bytes','files'} and request['candidate_sha'] == C.SOURCE_SHA,
+            'invalid candidate worker request')
+    require(isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
+            isinstance(request['machine_id'], str) and re.fullmatch('[0-9a-f]{32}', request['machine_id']) and
+            isinstance(request['worker_id'], str) and ID.fullmatch(request['worker_id']), 'invalid staging identity')
+    for key in ('publication_request_sha256','map_sha256','assignment_sha256'):
+        require(isinstance(request[key], str) and HEX.fullmatch(request[key]), 'invalid staging digest')
+    require(type(request['attempt']) is int and 1 <= request['attempt'] <= 100 and
+            type(request['cache_bytes']) is int and 0 < request['cache_bytes'] <= 64 << 30, 'invalid staging bounds')
+    files = request['files']
+    require(isinstance(files, list) and [i.get('path') if isinstance(i, dict) else None for i in files] == list(CANDIDATE_INPUTS),
+            'candidate worker request must carry exactly the two worker executables')
+    for item in files:
+        name = item['path'].removeprefix('.input-')
+        require(set(item) == {'source','path','size','sha256','mode'} and item['source'] == str(C.path(name)) and
+                item['mode'] == 0o755 and type(item['size']) is int and 0 < item['size'] <= C.MAX_ARTIFACT and
+                item['sha256'] == C.ARTIFACTS[name], 'candidate worker executable identity differs')
     require(len(durable.canonical(request)) <= MAX_REQUEST, 'input request exceeds bound')
     return request
 
@@ -181,13 +211,21 @@ def sync_dir(path):
 
 
 class Receiver:
-    def __init__(self, request, *, root=ROOT, owners=OWNERS, lock_factory=None):
+    def __init__(self, request, *, root=ROOT, owners=OWNERS, candidates=CANDIDATE_WORKERS, lock_factory=None):
         self.request = validate(request)
         self.root, self.owners = Path(root), Path(owners)
         self.identifier = digest(request)
         self.path = self.owners/(self.identifier+'.json')
-        self.target = self.root/request['map_sha256']
-        self.partial = self.root/(request['map_sha256']+'.receiving-'+self.identifier)
+        self.candidate = request['version'] == 2
+        if self.candidate:
+            # Executables only; native verification reads the already staged,
+            # reverified publication of the same worker without changing it.
+            self.target = Path(candidates)/('release-'+C.SOURCE_SHA)
+            self.publication = self.root/request['map_sha256']
+        else:
+            self.target = self.root/request['map_sha256']
+        self.partial = self.target.parent/(self.target.name+'.receiving-'+self.identifier)
+        self.space = self.target.parent
         self.lock_factory = lock_factory or (lambda: ProductionLock({'type':'pinned_host','machine_id':request['machine_id']}))
 
     def identity(self):
@@ -208,17 +246,32 @@ class Receiver:
         if result['status'] == 'staged': verify_files(self.target, self.request)
         return result
 
+    def staged_publication(self):
+        """The exact v1 publication request this worker already staged."""
+        identifier = self.request['publication_request_sha256']
+        owner = self.owners/(identifier+'.json'); no_links(owner)
+        record = json.loads(owner.read_text(), object_pairs_hook=unique)
+        retained = validate(json.loads((self.owners/(identifier+'.request.json')).read_text(), object_pairs_hook=unique))
+        require(record.get('status') == 'staged' and record.get('request_sha256') == identifier and
+                retained['version'] == 1 and digest(retained) == identifier and
+                all(retained[k] == self.request[k] for k in ('machine_id','worker_id','map_sha256','assignment_sha256','cache_bytes')),
+                'candidate worker executables require the exact staged publication of this worker')
+        return retained
+
     def preflight(self):
         schema_fence.local_schema_fence()
-        no_links(self.root); no_links(self.owners)
+        no_links(self.root); no_links(self.owners); no_links(self.space)
         require(self.status()['status'] == 'absent' and not self.target.exists() and not self.partial.exists(),
                 'candidate already exists; inspect/reconcile its owner')
-        resources(self.root, sum(i['size'] for i in self.request['files']))
+        if self.candidate:
+            self.staged_publication()
+        resources(self.space, sum(i['size'] for i in self.request['files']))
         return {'status':'preflight-passed','request_sha256':self.identifier}
 
     def native(self, lock):
-        argv = [str(self.partial/'.input-transparent-shard-server'), '--shard-dir', str(self.partial),
-                '--assignment', str(self.partial/'assignment.json'), '--worker-id', self.request['worker_id'],
+        shard_dir = self.publication if self.candidate else self.partial
+        argv = [str(self.partial/'.input-transparent-shard-server'), '--shard-dir', str(shard_dir),
+                '--assignment', str(shard_dir/'assignment.json'), '--worker-id', self.request['worker_id'],
                 '--cache-bytes', str(self.request['cache_bytes']), '--verify-only']
         with (self.owners/(self.identifier+'.native.log')).open('xb') as log:
             os.fchmod(log.fileno(),0o600)
@@ -229,7 +282,7 @@ class Receiver:
                 deadline = time.monotonic()+300
                 while process.poll() is None:
                     lock.verify()
-                    sample=resources(self.root)
+                    sample=resources(self.space)
                     with (self.owners/(self.identifier+'.health.ndjson')).open('a') as health:
                         health.write(json.dumps(dict(sample,stage='native-verification'),sort_keys=True)+'\n');health.flush();os.fsync(health.fileno())
                     require(time.monotonic() < deadline, 'native candidate verification timed out')
@@ -249,7 +302,7 @@ class Receiver:
     def stage(self, stream):
         with self.lock_factory() as lock:
             lock.verify(); self.preflight()
-            self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+            self.space.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.owners.mkdir(parents=True, exist_ok=True, mode=0o700)
             result = {'version':1,'status':'receiving','request_sha256':self.identifier,
                       'pid':os.getpid(),'started_unix':time.time(),'received_bytes':0}
@@ -271,7 +324,7 @@ class Receiver:
                         while remaining:
                             lock.verify()
                             if time.monotonic()-last >= 5:
-                                sample=resources(self.root)
+                                sample=resources(self.space)
                                 with health_path.open('a') as health:
                                     health.write(json.dumps(dict(sample,received_bytes=result['received_bytes']),sort_keys=True)+'\n'); health.flush(); os.fsync(health.fileno())
                                 last=time.monotonic()
@@ -283,12 +336,14 @@ class Receiver:
                     require(sha.hexdigest() == item['sha256'], 'received candidate checksum differs')
                 require(not stream.read(1), 'extra input stream bytes')
                 verify_files(self.partial,self.request)
+                if self.candidate:
+                    verify_files(self.publication,self.staged_publication())
                 self.native(lock)
                 for directory in sorted([self.partial,*(p for p in self.partial.rglob('*') if p.is_dir())],
                                         key=lambda p:len(p.parts),reverse=True): sync_dir(directory)
-                lock.verify(); resources(self.root)
+                lock.verify(); resources(self.space)
                 require(not self.target.exists(), 'candidate target appeared during transfer')
-                os.rename(self.partial,self.target); sync_dir(self.root)
+                os.rename(self.partial,self.target); sync_dir(self.space)
                 result.update(status='staged',allocated_bytes=sum(p.stat().st_blocks*512 for p in self.target.rglob('*') if p.is_file()))
             except BaseException as error:
                 result.update(status='interrupted' if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 'failed',
@@ -414,6 +469,11 @@ class Client:
         return reply
 
     def checked_sources(self):
+        if self.request['version'] == 2:
+            rendered=build_candidate(self.inventory,self.host,self.request['source_sha'],
+                                     self.request['publication_request_sha256'],self.request['attempt'])
+            require(rendered == self.request, 'input request is not the candidate worker executable pair')
+            return
         by_name={i['path']:i for i in self.request['files']}
         rendered=build(self.inventory,self.host,self.request['source_sha'],by_name['assignment.json']['source'],
                        by_name['.input-transparent-shard-server.service']['source'],self.request['release_result_sha256'],
@@ -423,8 +483,9 @@ class Client:
     def run(self, action):
         if action == 'plan':
             self.checked_sources()
+            target=CANDIDATE_WORKERS/('release-'+C.SOURCE_SHA) if self.request['version'] == 2 else ROOT/self.request['map_sha256']
             return {'request_sha256':digest(self.request),'bytes':sum(i['size'] for i in self.request['files']),
-                    'files':len(self.request['files']),'worker_id':self.request['worker_id'],'target':str(ROOT/self.request['map_sha256'])}
+                    'files':len(self.request['files']),'worker_id':self.request['worker_id'],'target':str(target)}
         if action in ('stage','reconcile'):
             with ProductionLock(self.inventory.lock) as lock:
                 lock.verify()
@@ -435,10 +496,12 @@ class Client:
                 if action == 'stage':
                     require(not record_path.exists(), 'coordinator input owner already exists; inspect retained result')
                     self.checked_sources()
+                    candidate=self.request['version'] == 2
                     for name in ('transparent-shard-server','shard-control'):
                         item=next(i for i in self.request['files'] if i['path'] == '.input-'+name)
-                        require(item['source'] == str(worker_binary(name)) and item['sha256'] == WORKER_HASHES[name],
-                                'input binary is not the qualified portable worker release')
+                        require(item['source'] == str(C.binary(name) if candidate else worker_binary(name)) and
+                                item['sha256'] == (C.ARTIFACTS if candidate else WORKER_HASHES)[name],
+                                'input binary is not the selected worker release')
                     OWNERS.mkdir(parents=True,exist_ok=True,mode=0o700)
                     durable.atomic_json(OWNERS/(identifier+'.request.json'),self.request,mode=0o400)
                     record={'version':1,'request_sha256':identifier,'status':'running','pid':os.getpid(),'started_unix':time.time()}
@@ -524,6 +587,30 @@ def build(inventory, host, source_sha, assignment, unit, release_sha256, cache_b
         'attempt':attempt,'cache_bytes':cache_bytes,'files':files})
 
 
+def build_candidate(inventory, host, source_sha, publication_request, attempt):
+    """Render the candidate worker pair for an exactly staged publication request.
+
+    The publication, its 12ce-generated assignment and the earlier receipts stay
+    historical; only the two executables are new candidate bytes.
+    """
+    require(isinstance(publication_request,str) and HEX.fullmatch(publication_request), 'invalid publication request digest')
+    no_links(OWNERS)
+    record=json.loads((OWNERS/(publication_request+'.json')).read_text(),object_pairs_hook=unique)
+    retained=validate(json.loads((OWNERS/(publication_request+'.request.json')).read_text(),object_pairs_hook=unique))
+    require(record.get('status') == 'staged' and record.get('request_sha256') == publication_request and
+            retained['version'] == 1 and digest(retained) == publication_request and
+            retained['machine_id'] == inventory.hosts[host]['machine_id'],
+            'candidate worker executables require this host\'s staged publication request')
+    files=[]
+    for name in ('transparent-shard-server','shard-control'):
+        source=C.binary(name)
+        files.append({'source':str(source),'path':'.input-'+name,'size':source.stat().st_size,
+                      'sha256':C.ARTIFACTS[name],'mode':0o755})
+    return validate({'version':2,'source_sha':source_sha,'machine_id':retained['machine_id'],'worker_id':retained['worker_id'],
+        'candidate_sha':C.SOURCE_SHA,'publication_request_sha256':publication_request,'map_sha256':retained['map_sha256'],
+        'assignment_sha256':retained['assignment_sha256'],'attempt':attempt,'cache_bytes':retained['cache_bytes'],'files':files})
+
+
 @contextlib.contextmanager
 def lock_environment(lock):
     previous=os.environ.get(inherited_lock.VARIABLE)
@@ -542,6 +629,9 @@ class Preparation:
     an immutable bundle plus its owner. Unknown partial output needs explicit
     reconciliation; it is never overwritten or accepted as a complete bundle.
     """
+    KIND = 'coordinator-input-preparation'
+    ABANDONED = '.abandoned'
+
     def __init__(self, inventory, request, expected):
         require(isinstance(request,dict) and set(request)=={'version','source_sha','release_result_sha256',
                 'created_unix','attempt','workers'} and type(request['version']) is int and request['version']==1,
@@ -676,14 +766,17 @@ class Preparation:
         no_links(self.owner)
         if not self.owner.exists():return {'status':'absent','request_sha256':self.identifier}
         record=json.loads(self.owner.read_text(),object_pairs_hook=unique)
-        require(record['request_sha256']==self.identifier and record.get('kind')=='coordinator-input-preparation', 'preparation owner differs')
+        require(record['request_sha256']==self.identifier and record.get('kind')==self.KIND, 'preparation owner differs')
         if record['status']=='staged':
-            no_links(self.target)
-            require({p.name for p in self.target.iterdir()}==set(record['files']), 'prepared file set changed')
-            for name,sha in record['files'].items():
-                path=self.target/name;no_links(path)
-                require(path.is_file() and path.stat().st_mode&0o777==0o400 and P.checksum(path)==sha,'prepared bytes/modes changed')
+            self.verify_staged(record)
         return record
+
+    def verify_staged(self, record):
+        no_links(self.target)
+        require({p.name for p in self.target.iterdir()}==set(record['files']), 'prepared file set changed')
+        for name,sha in record['files'].items():
+            path=self.target/name;no_links(path)
+            require(path.is_file() and path.stat().st_mode&0o777==0o400 and P.checksum(path)==sha,'prepared bytes/modes changed')
 
     def run(self, action, expect_plan=None):
         self.identity()
@@ -697,26 +790,23 @@ class Preparation:
                 for path in (self.partial,self.target):
                     no_links(path)
                     if path.exists():
-                        abandoned=path.with_name(path.name+'.abandoned')
+                        abandoned=path.with_name(path.name+self.ABANDONED)
                         require(not abandoned.exists(),'conflicting preparation displacement')
                         path.rename(abandoned)
                 record.update(status='reconciled',reconciled_unix=time.time());durable.atomic_json(self.owner,record)
                 return record
             plan=self.preflight();require(digest(plan)==expect_plan,'preparation plan changed')
-            OWNERS.mkdir(mode=0o700,parents=True,exist_ok=True);PREPARED.mkdir(mode=0o700,parents=True,exist_ok=True)
+            OWNERS.mkdir(mode=0o700,parents=True,exist_ok=True);self.partial.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
             durable.atomic_json(OWNERS/(self.identifier+'.request.json'),self.request,mode=0o400)
-            record={'kind':'coordinator-input-preparation','request_sha256':self.identifier,'status':'running','pid':os.getpid(),'started_unix':time.time()}
+            record={'kind':self.KIND,'request_sha256':self.identifier,'status':'running','pid':os.getpid(),'started_unix':time.time()}
             durable.atomic_json(self.owner,record);durable.atomic_json(OWNERS/'latest.json',{'request_sha256':self.identifier})
             try:
                 self.retained_native=OWNERS/(self.identifier+'.native')
                 files=self.render();require({n:hashlib.sha256(v).hexdigest() for n,v in files.items()}==plan['files'],'prepared rendering changed')
                 self.prepare_payload(files)
                 self.partial.mkdir(mode=0o700)
-                for name,raw in files.items():
-                    path=self.partial/name
-                    with path.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
-                    path.chmod(0o400)
-                sync_dir(self.partial);self.partial.rename(self.target);sync_dir(PREPARED);lock.verify()
+                self.write(files)
+                sync_dir(self.partial);self.partial.rename(self.target);sync_dir(self.target.parent);lock.verify()
                 record.update(status='staged',files=plan['files'],plan_sha256=expect_plan,target=str(self.target))
                 return record
             except BaseException as error:
@@ -726,8 +816,67 @@ class Preparation:
                 record['finished_unix']=time.time();durable.atomic_json(self.owner,record)
                 self.retained_native=None
 
+    def write(self, files):
+        for name,raw in files.items():
+            path=self.partial/name
+            with path.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            path.chmod(0o400)
+
     def prepare_payload(self, files):
         pass
+
+
+class CandidatePreparation(Preparation):
+    """Retain the verified 18-artifact candidate bundle in its own namespace.
+
+    Plan reads the reviewed archives into disposable tmpfs scratch only. Stage
+    repeats every check under the coordinator lock and input-owner fence, then
+    renames one complete bundle into `/srv/transparent-activity/candidates`.
+    No executable runs; the frozen 12ce release, publication job, units, routes
+    and live services are untouched. Partial output requires reconciliation.
+    """
+    KIND = 'candidate-artifact-preparation'
+
+    def __init__(self, inventory, request, expected):
+        require(isinstance(request,dict) and set(request)=={'version','source_sha','candidate_sha','ci_run','attempt','archives'} and
+                type(request['version']) is int and request['version']==1, 'invalid candidate preparation request')
+        archives=request['archives']
+        require(isinstance(request['source_sha'],str) and re.fullmatch('[0-9a-f]{40}',request['source_sha']) and
+                request['candidate_sha']==C.SOURCE_SHA and type(request['ci_run']) is int and request['ci_run']==C.CI_RUN and
+                type(request['attempt']) is int and 1<=request['attempt']<=100 and
+                isinstance(archives,dict) and set(archives)=={*C.CI_KINDS,'supplemental'} and
+                len(set(archives.values()))==len(archives) and
+                all(isinstance(v,str) and safe(v).is_absolute() for v in archives.values()) and
+                len(durable.canonical(request))<=MAX_REQUEST and digest(request)==expected,
+                'candidate preparation identity/bounds disagree')
+        self.inventory,self.request,self.identifier=inventory,request,expected
+        self.target=C.TARGET;self.partial=C.ROOT/(C.TARGET.name+'.preparing-'+expected)
+        self.owner=OWNERS/(expected+'.json')
+        self.ABANDONED='.abandoned-'+expected
+        self.executor=None;self.retained_native=None
+
+    def render(self):
+        return C.files(self.request['archives'])
+
+    def preflight(self):
+        result=self.plan()
+        for path in (self.target,self.partial,self.owner):
+            no_links(path)
+            require(not path.exists(),'candidate preparation already owned; inspect status or reconcile')
+        resources(C.ROOT,C.MAX_ARTIFACT*len(C.ARTIFACTS))
+        return result
+
+    def write(self, files):
+        for name,raw in files.items():
+            path=self.partial/name;path.parent.mkdir(mode=0o700,exist_ok=True)
+            with path.open('xb') as stream:stream.write(raw);stream.flush();os.fsync(stream.fileno())
+            path.chmod(0o400 if name=='provenance.json' else C.BINARY_MODE)
+        for directory in (self.partial/'artifacts/examples',self.partial/'artifacts'):sync_dir(directory)
+
+    def verify_staged(self, record):
+        require(C.verify_bundle(self.target)==C.identity() and
+                {name:P.checksum(self.target/name) for name in record['files']}==record['files'],
+                'prepared candidate bundle changed')
 
 
 class ServicePreparation(Preparation):
@@ -745,10 +894,14 @@ class ServicePreparation(Preparation):
              'pins.json', 'policy.json'} | {name+'.service' for name in UNITS}
 
     def __init__(self, inventory, request, expected):
-        require(isinstance(request, dict) and set(request) == {'version', 'source_sha',
-                'release_result_sha256', 'attempt', 'files'} and
-                type(request['version']) is int and request['version'] == 1,
+        # Version 1 is the historical 12ce/80c94f32 build; version 2 selects the
+        # explicit changed-native candidate executables and gate identities.
+        require(isinstance(request, dict) and type(request.get('version')) is int and request['version'] in (1, 2) and
+                set(request) == {'version', 'source_sha', 'release_result_sha256', 'attempt', 'files'} |
+                ({'candidate_sha'} if request['version'] == 2 else set()) and
+                (request['version'] == 1 or request['candidate_sha'] == C.SOURCE_SHA),
                 'invalid service preparation request')
+        self.candidate = request['version'] == 2
         require(isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
                 isinstance(request['release_result_sha256'], str) and HEX.fullmatch(request['release_result_sha256']) and
                 type(request['attempt']) is int and 1 <= request['attempt'] <= 100 and
@@ -781,7 +934,7 @@ class ServicePreparation(Preparation):
                 controller.get('initial_publication') == str(P.OUTPUT) and
                 controller.get('fleet_config') == '/opt/transparent-publisher/v11/fleet.json' and
                 controller.get('fleet_command') == str(SOURCE/self.request['source_sha']/'transparent/ops/scripts/transparent-live-fleet.py') and
-                controller.get('source_sha') == P.RELEASE_SHA and
+                controller.get('source_sha') == (C.SOURCE_SHA if self.candidate else P.RELEASE_SHA) and
                 controller.get('shadow') is False, 'controller inputs are not the frozen v11 namespace')
         require(fleet.get('state_dir') == '/opt/transparent-publisher/v11/state' and
                 fleet.get('roster') == '/opt/transparent-publisher/v11/roster.json' and
@@ -794,7 +947,8 @@ class ServicePreparation(Preparation):
         roster = configs['roster.json']
         require(isinstance(roster, list) and len(roster) >= 3 and
                 len({w['id'] for w in roster}) == len(roster) and
-                configs['pins.json'] == {w['id']: WORKER_HASHES['transparent-shard-server'] for w in roster},
+                configs['pins.json'] == {w['id']: (C.ARTIFACTS if self.candidate else WORKER_HASHES)['transparent-shard-server']
+                                         for w in roster},
                 'load pins omit/change prepared workers')
         mapping = json.loads((P.OUTPUT/'shards.json').read_text(), object_pairs_hook=unique)
         require(controller.get('recent_from') == next(s['start_height'] for s in mapping['shards'] if s['geometry'] == 'recent-4k-8k') and
@@ -888,7 +1042,7 @@ class CutoverPreparation(ServicePreparation):
         if self.FILES == {'product.json'}:
             product = module('prepared_product', HERE/'activity_schema_product.py')
             spec = product.validate(values['product.json'])
-            require(spec['source_sha'] == self.request['source_sha'] and
+            require(spec['source_sha'] == self.request['source_sha'] and (spec['version'] == 2) == self.candidate and
                     spec['publication_sha256'] == publication, 'prepared product identity differs')
             prepared = product.Product(spec)
             prepared.bound(product.T.VALIDATION_ID)
@@ -900,9 +1054,14 @@ class CutoverPreparation(ServicePreparation):
                     'proof inventory differs from pinned staging inventory')
             for gate in self.GATES:
                 report = values[gate+'.json']
+                if self.candidate:
+                    C.verify_gate(report, gate, publication)
+                    continue
                 require(isinstance(report, dict) and report.get('status') == 'passed' and report.get('gate') == gate and
                         report.get('native_source_sha') == P.RELEASE_SHA and report.get('publication_sha256') == publication,
                         'cutover proof gate identity/status differs: '+gate)
+            # Recovery samples are historical journal fixtures created by the
+            # frozen 12ce tools in both builds; never relabel their provenance.
             for schema in ('v10', 'v11'):
                 sample = values[schema+'-sample.json']
                 require(isinstance(sample, dict) and sample.get('schema') == 'transparent-script-sample-v1' and
