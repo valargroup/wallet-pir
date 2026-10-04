@@ -164,7 +164,7 @@ if config.get('crash'):
         return write_once(path, raw, mode)
     def crashing_save(self, record):
         save(self, record)
-        if config['crash'] == 'before-go' and record.get('child'):
+        if config['crash'] == 'before-go' and record.get('child') and record['receiver']['pid'] != os.getpid():
             os._exit(137)
     E.write_once, E.Receiver.save = crashing_write, crashing_save
 parser = argparse.ArgumentParser()
@@ -493,6 +493,17 @@ class Fixture(unittest.TestCase):
 
 
 class Closed(Fixture):
+    def test_guardian_uses_pinned_script_within_process_survey_argument_bound(self):
+        self.assertEqual(E.GUARDIAN_PATH.read_bytes(), E.GUARDIAN.encode())
+        plan = self.receiver().plan()
+        argv = E.guardian_argv(3,4,5,E.BUDGETS['artifact-verification'],plan['dispatches'][0]['argv'])
+        self.assertNotIn('-c', argv)
+        self.assertIn(str(E.GUARDIAN_PATH), argv)
+        self.assertLessEqual(sum(len(a.encode())+1 for a in argv), E.S.BOUNDS['argv_bytes'])
+        with patch.object(E,'GUARDIAN',E.GUARDIAN+'\n# fictional altered code\n'):
+            with self.assertRaisesRegex(ValueError,'guardian script differs'):
+                E.guardian_argv(3,4,5,E.BUDGETS['artifact-verification'],plan['dispatches'][0]['argv'])
+
     def test_artifact_plan_is_one_closed_argv_with_every_expectation_and_reviewed_budgets(self):
         plan = self.receiver().plan()
         self.assertEqual(len(plan['dispatches']), 1)
@@ -720,6 +731,58 @@ class Closed(Fixture):
 
 
 class Run(Fixture):
+    def test_workflow_deadline_reaps_detached_child_without_token_or_lock(self):
+        receiver = self.receiver()
+        detached = self.root/'workflow-detached'
+        def blocked(_receiver,lock,*_):
+            helper = os.fork()
+            if helper == 0:
+                os.setsid()
+                if os.fork(): os._exit(0)
+                os.environ.clear()
+                for fd in lock.descriptors(): os.close(fd)
+                detached.write_text(str(os.getpid()))
+                time.sleep(30)
+                os._exit(0)
+            os.waitpid(helper,0)
+            time.sleep(30)
+        with patch.object(E.Receiver,'workflow',blocked), patch.object(E,'aggregate_seconds',return_value=1.5):
+            with self.assertRaisesRegex(ValueError,'workflow hard deadline'):
+                self.stage(receiver)
+        self.assertTrue(detached.exists())
+        pid = int(detached.read_text())
+        self.assertTrue(self.gone(pid))
+        terminal = json.loads((receiver.evidence/'workflow-supervisor.json').read_text())
+        self.assertIn(pid,[p['pid'] for p in terminal['killed']])
+        self.assertEqual(terminal['survivors'],[])
+        with self.lock(): pass
+
+    def test_workflow_hard_deadline_stops_noncooperative_retention(self):
+        receiver = self.receiver()
+        entered = self.root/'workflow-entered'
+        def blocked(*_):
+            entered.write_text(str(os.getpid()))
+            time.sleep(30)  # No cooperative tick: models blocked retention.
+        with patch.object(E.Receiver, 'workflow', blocked), patch.object(E, 'aggregate_seconds', return_value=1.5):
+            with self.assertRaisesRegex(ValueError, 'workflow hard deadline'):
+                self.stage(receiver)
+        self.assertTrue(entered.exists())
+        self.assertTrue(self.gone(int(entered.read_text())))
+        terminal = json.loads((receiver.evidence/'workflow-supervisor.json').read_text())
+        self.assertTrue(terminal['failed']); self.assertEqual(terminal['survivors'], [])
+        self.assertEqual(receiver.status()['status'], 'failed')
+        self.fenced()
+        with self.lock(): pass
+
+    def test_workflow_cannot_signal_a_preexisting_receiver_child(self):
+        foreign = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(lambda: (foreign.kill(), foreign.wait()) if foreign.poll() is None else None)
+        receiver = self.receiver()
+        with self.assertRaisesRegex(ValueError, 'already has live descendants'):
+            self.stage(receiver)
+        self.assertIsNone(foreign.poll())
+        self.assertFalse(self.ran.exists())
+
     def test_artifact_run_surveys_all_hosts_inherits_lock_and_limits_and_feeds_the_offline_producer(self):
         receiver = self.receiver()
         channel = Channel(self)
@@ -1100,7 +1163,12 @@ class Survey(Fixture):
         old = self.owners/('e'*64+'.json')
         I.durable.atomic_json(old, {'status': 'failed', 'pid': live.pid})
         os.utime(old, (time.time()-3600,)*2)
-        self.assertEqual(self.stage(self.receiver(attempt=9))['status'], 'staged')
+        # Owner PID reuse no longer matches the survey. This in-process
+        # fixture still has an unrelated child, which the outer supervisor
+        # refuses rather than adopting or signalling as workflow work.
+        with self.assertRaisesRegex(ValueError, 'already has live descendants'):
+            self.stage(self.receiver(attempt=9))
+        self.assertIsNone(live.poll())
 
     def test_terminal_owner_whose_process_died_refuses_while_a_descendant_lives(self):
         tree = self.root/'tree.py'
@@ -1495,9 +1563,11 @@ class Interruption(Fixture):
                 self.behave('sleep'); self.ran.unlink(missing_ok=True); self.mark.unlink(missing_ok=True)
                 receiver = self.receiver(attempt=attempt)
                 process = self.launch(receiver, crash=crash)
-                self.assertEqual(process.wait(30), 137)
+                # The injected crash now kills the supervised workflow, while
+                # its receiver survives, cleans up and retains a failed owner.
+                self.assertEqual(process.wait(30), 1)
                 record = json.loads(receiver.owner.read_text())
-                self.assertEqual(record['status'], 'running'); self.assertTrue(record['launch'])
+                self.assertEqual(record['status'], 'failed'); self.assertTrue(record['launch'])
                 self.assertEqual(bool(record['child']), crash == 'before-go')
                 self.assertEqual((receiver.evidence/'artifact/owner.json').exists(), crash == 'before-go')
                 self.fenced()
@@ -1710,10 +1780,14 @@ class Interruption(Fixture):
                       argv[-1])
         survey = client.survey_argv('worker-a', 'a'*64)
         self.assertIn('root@worker-a', survey); self.assertTrue(survey[-1].endswith('--action survey --request-sha256 '+'a'*64))
-        drifted = E.Execution(self.inventory(hosts={'coordinator': base.hosts['coordinator']}), 'e'*40,
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            E.Execution(self.inventory(hosts={'coordinator': base.hosts['coordinator']}), 'e'*40,
+                        request_sha256=I.digest(self.request()))
+        drifted = E.Execution(self.inventory(hosts={name:dict(entry, machine_id='f'*32) if name=='worker-a' else entry
+                                                   for name,entry in base.hosts.items()}), 'e'*40,
                               request_sha256=I.digest(self.request()))
-        drifted.call = lambda action, *args, **kwargs: {'status': 'failed', 'request': self.request(),
-                                                        'request_sha256': I.digest(self.request())}
+        drifted.call = lambda action, *args, **kwargs: {'status':'failed', 'request':self.request(),
+                                                       'request_sha256':I.digest(self.request())}
         with self.assertRaisesRegex(ValueError, 'original inventory'): drifted.run('reconcile')
 
 

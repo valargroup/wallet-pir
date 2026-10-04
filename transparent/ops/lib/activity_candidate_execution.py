@@ -45,6 +45,7 @@ under the candidate namespace with a `references.json` usable by
 offline producer evaluates the retained bytes. Nothing here touches a live
 service, cache, unit, route or writer.
 """
+import ctypes
 import hashlib
 import importlib.util
 import json
@@ -52,6 +53,8 @@ import os
 from pathlib import Path
 import platform
 import re
+import resource
+import select
 import secrets
 import selectors
 import shlex
@@ -299,6 +302,7 @@ os.close(report)
 os._exit(1 if survivors else 0)
 '''
 GUARDIAN_SHA256 = hashlib.sha256(GUARDIAN.encode()).hexdigest()
+GUARDIAN_PATH = HERE.parent/'scripts/activity-native-guardian.py'
 LAUNCH_REFUSED = 125
 # The guardian's own deadline: the child wall budget plus a fixed launch window
 # for the durable owner write and gate, measured from the guardian's start.
@@ -466,7 +470,9 @@ def guardian_seconds(budget):
 
 
 def guardian_argv(gate, notify, report, budget, argv):
-    return [sys.executable, '-B', '-c', GUARDIAN, str(gate), str(notify), str(report),
+    no_links(GUARDIAN_PATH)
+    require(GUARDIAN_PATH.read_bytes() == GUARDIAN.encode(), 'candidate guardian script differs from its fixed code')
+    return [sys.executable, '-B', str(GUARDIAN_PATH), str(gate), str(notify), str(report),
             str(budget['address_space_bytes']), str(budget['cpu_seconds']), str(CPU_GRACE_SECONDS),
             str(guardian_seconds(budget)), '--', *argv]
 
@@ -916,6 +922,10 @@ class Receiver:
                 'mode': self.mode, 'executable': self.executable, 'binary': str(binary),
                 'binary_sha256': C.ARTIFACTS[self.executable], 'candidate_identity': C.identity(),
                 'guardian_sha256': GUARDIAN_SHA256,
+                'workflow_guardian': 'receiver-sub-reaper-pidfd-v1',
+                'workflow_guardian_scope': 'post-handshake input retention, native execution, reference validation '
+                                           'and evidence writes; pre-handshake checks and terminal owner retention '
+                                           'remain cooperatively bounded',
                 'publication': {'root': str(self.root), 'map_sha256': MAP_SHA256, 'start': START, 'through': THROUGH,
                                 'anchor_hash': ANCHOR_HASH, 'recent_from': RECENT_FROM, 'shards': SHARDS,
                                 'segments': SEGMENTS, 'manifests': sorted(layout['manifests'])},
@@ -1072,19 +1082,17 @@ class Receiver:
                 durable.atomic_json(self.owners/'latest.json', {'request_sha256': self.identifier}, mode=0o600)
                 try:
                     self.evidence.mkdir(mode=0o700)
-                    sampler.attach(self.evidence/'health.ndjson')
+                    sampler.attach(self.evidence/'supervisor-health.ndjson')
                     write_once(self.evidence/'plan.json', durable.canonical(plan)+b'\n')
-                    inputs = self.retain_inputs(plan, sampler)
-                    executions = []
-                    for item in plan['dispatches']:
-                        executions.append(self.execute(lock, plan, item, record, sampler))
-                        record['completed'] += 1
-                        self.save(record)
-                    references = self.references(inputs, plan, executions)
-                    sampler.sample()
-                    record.update(status='staged', references=references, launch=None, child=None,
+                    self.supervise(lock, plan, record, sampler)
+                    # The worker alone writes its progress. Reload rather than
+                    # overwriting it with the supervisor's pre-fork copy.
+                    record = load(self.owner, 1 << 22)
+                    require(record.get('workflow_status') == 'passed', 'qualification workflow did not finish')
+                    record.update(status='staged', launch=None, child=None,
                                   gate='unevaluated: run activity-candidate-report on the retained references')
                 except BaseException as error:
+                    record = load(self.owner, 1 << 22)
                     record.update(status='interrupted' if isinstance(error, (Interrupted, KeyboardInterrupt, SystemExit))
                                   else 'failed', error_type=type(error).__name__, error=str(error)[:300])
                     raise
@@ -1093,13 +1101,193 @@ class Receiver:
                     record['finished_unix'] = time.time()
                     sampler.sample(strict=False)
                     sampler.close()
-                    record['samples'] = len(sampler.samples)
+                    record['supervisor_samples'] = len(sampler.samples)
+                    record['samples'] = record.get('workflow_samples', len(sampler.samples))
                     self.save(record)
                 return record
         finally:
             self.critical = self.pending = False
             for sig, handler in handlers.items():
                 signal.signal(sig, handler)
+
+    def workflow(self, lock, plan, record, sampler):
+        """All post-handshake qualification work, inside the hard supervisor."""
+        inputs = self.retain_inputs(plan, sampler)
+        executions = []
+        for item in plan['dispatches']:
+            executions.append(self.execute(lock, plan, item, record, sampler))
+            record['completed'] += 1
+            self.save(record)
+        record['references'] = self.references(inputs, plan, executions)
+        sampler.sample()
+        record['workflow_status'] = 'passed'
+        record['workflow_samples'] = len(sampler.samples)
+        self.save(record)
+
+    def workflow_family(self):
+        """This receiver's descendants, including double forks adopted by it.
+
+        The receiver becomes a Linux child subreaper before it forks its one
+        worker. PID/start identities, rather than process groups or markers,
+        bind the family. No other work is launched by this receiver meanwhile.
+        """
+        children = {}
+        for item in scan():
+            children.setdefault(item['ppid'], []).append(item)
+        found, pending = [], [os.getpid()]
+        while pending:
+            for item in children.get(pending.pop(), []):
+                found.append(item)
+                require(len(found) <= MAX_SELECTED, 'qualification workflow family exceeds bound')
+                pending.append(item['pid'])
+        return found
+
+    def supervise(self, lock, plan, record, sampler):
+        """Hard deadline for hashing, children, validation and evidence writes.
+
+        The worker shares the already-held lock. Before its gate opens, the
+        receiver durably records its PID/start/boot and deadline. The receiver
+        itself is the subreaper, so detached grandchildren stay in its family.
+        Its waiting loop does no report/resource filesystem I/O; a worker
+        blocked in sampling, hashing or fsync is still killed at the deadline.
+        Pre-handshake plan/survey work remains cooperatively bounded.
+        """
+        lock.verify()
+        require(time.monotonic() < sampler.deadline, 'qualification workflow deadline already exhausted')
+        require(not self.workflow_family(), 'qualification receiver already has live descendants; nothing was launched')
+        libc = ctypes.CDLL(None, use_errno=True)
+        previous_subreaper = ctypes.c_int()
+        require(libc.prctl(37, ctypes.byref(previous_subreaper), 0, 0, 0) == 0,
+                'qualification workflow cannot observe child subreaper state')
+        require(libc.prctl(36, 1, 0, 0, 0) == 0, 'qualification workflow requires Linux child subreaper')
+        gate_read, gate_write = os.pipe()
+        record['workflow_status'] = 'launching'
+        record['workflow_deadline_monotonic'] = sampler.deadline
+        worker_cpu = max(1, int(sampler.deadline-time.monotonic()), self.budget['cpu_seconds']+CPU_GRACE_SECONDS)
+        record['workflow_limits'] = {'address_space_bytes':14*GiB, 'cpu_seconds':worker_cpu, 'core_bytes':0}
+        self.save(record)  # Intent before fork, even if the receiver dies next.
+        parent = os.getpid()
+        self.critical = True
+        try:
+            pid = os.fork()
+        except BaseException:
+            os.close(gate_read); os.close(gate_write)
+            libc.prctl(36, previous_subreaper.value, 0, 0, 0)
+            self.critical = False
+            raise
+        if pid == 0:
+            os.close(gate_write)
+            try:
+                require(libc.prctl(1, signal.SIGKILL, 0, 0, 0) == 0 and os.getppid() == parent,
+                        'qualification worker lost its supervisor')
+                self.critical = False
+                self.handlers()
+                resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+                resource.setrlimit(resource.RLIMIT_AS, (14*GiB, 14*GiB))
+                resource.setrlimit(resource.RLIMIT_CPU, (worker_cpu, worker_cpu+CPU_GRACE_SECONDS))
+                token = os.read(gate_read, 3)
+                os.close(gate_read)
+                require(token == b'go\n', 'qualification workflow launch gate refused')
+                # The inherited buffered stream belongs to the supervisor;
+                # never flush or append its copied buffer in this worker.
+                if sampler.stream is not None:
+                    sampler.stream.close()
+                sampler.stream, sampler.written = None, 0
+                sampler.attach(self.evidence/'health.ndjson')
+                record = load(self.owner, 1 << 22)
+                self.workflow(lock, plan, record, sampler)
+                sampler.close()
+                os._exit(0)
+            except BaseException as error:
+                try:
+                    record = load(self.owner, 1 << 22)
+                    record.update(workflow_status='failed', error_type=type(error).__name__, error=str(error)[:300])
+                    self.save(record)
+                finally:
+                    os._exit(1)
+        os.close(gate_read)
+        descriptor = None
+        code = None
+        failure = None
+        current = None
+        try:
+            current = process(pid)
+            require(current is not None and current['state'] != 'Z', 'qualification workflow exited before adoption')
+            descriptor = os.pidfd_open(pid)
+            record['owner'] = {'pid': pid, 'start_ticks': current['start_ticks'], 'boot_id': boot_id(),
+                               'deadline_monotonic': sampler.deadline,
+                               'deadline_unix':time.time()+max(0,sampler.deadline-time.monotonic())}
+            record['workflow_status'] = 'adopted'
+            self.save(record)
+            if self.pending:
+                raise Interrupted('qualification workflow interrupted before its gate')
+            require(time.monotonic() < sampler.deadline, 'qualification workflow deadline expired before its gate')
+            os.write(gate_write, b'go\n')
+            os.close(gate_write); gate_write = None
+            interrupted_at = None
+            while True:
+                observed, status = os.waitpid(pid, os.WNOHANG)
+                if observed:
+                    code = os.waitstatus_to_exitcode(status)
+                    break
+                if self.pending:
+                    if interrupted_at is None:
+                        interrupted_at = time.monotonic()
+                        signal_exact(pid, current['start_ticks'], signal.SIGTERM)
+                    if time.monotonic()-interrupted_at >= STOP_SECONDS:
+                        raise Interrupted('qualification workflow supervisor interrupted')
+                require(time.monotonic() < sampler.deadline, 'qualification workflow hard deadline exceeded')
+                select.select([descriptor], [], [], min(.2, max(0, sampler.deadline-time.monotonic())))
+            if self.pending:
+                raise Interrupted('qualification workflow supervisor interrupted')
+            if code != 0:
+                failed = load(self.owner, 1 << 22)
+                failure_type = {'Budget':Budget, 'Blocked':Blocked, 'Interrupted':Interrupted}.get(
+                    failed.get('error_type'), ValueError)
+                raise failure_type(failed.get('error', 'qualification workflow exited %s' % code))
+        except BaseException as error:
+            failure = error
+            raise
+        finally:
+            self.critical = True
+            if gate_write is not None:
+                os.close(gate_write)
+            if descriptor is not None:
+                os.close(descriptor)
+            # Reap the worker and every detached descendant before allowing
+            # terminal success or release of the inherited production lock.
+            end = time.monotonic()+KILL_SECONDS
+            killed = []
+            while True:
+                family = self.workflow_family()
+                if not family:
+                    break
+                for member in family:
+                    if signal_exact(member['pid'], member['start_ticks'], signal.SIGKILL):
+                        killed.append({'pid':member['pid'], 'start_ticks':member['start_ticks']})
+                while True:
+                    try:
+                        reaped, _ = os.waitpid(-1, os.WNOHANG)
+                        if not reaped: break
+                    except ChildProcessError:
+                        break
+                if time.monotonic() >= end:
+                    break
+                time.sleep(.05)
+            survivors = self.workflow_family()
+            if not survivors:
+                require(libc.prctl(36, previous_subreaper.value, 0, 0, 0) == 0,
+                        'qualification workflow cannot restore child subreaper state')
+            terminal = {'schema':'candidate-workflow-supervisor-v1', 'request_sha256':self.identifier,
+                        'supervisor':record['receiver'], 'worker_pid':pid,
+                        'worker_start_ticks':current['start_ticks'] if current else None,
+                        'deadline_monotonic':sampler.deadline, 'limits':record['workflow_limits'],
+                        'exit_code':code, 'failed':failure is not None,
+                        'killed':killed, 'survivors':summary(survivors), 'ended_monotonic':time.monotonic()}
+            write_once(self.evidence/'workflow-supervisor.json', durable.canonical(terminal)+b'\n')
+            require(not survivors, 'qualification workflow left live descendants')
+            require(failure is not None or not killed, 'qualification workflow left descendants requiring cleanup')
+            self.critical = False
 
     def retain_inputs(self, plan, sampler):
         """Private single-link copies of the hash-checked map and manifests."""
@@ -1388,10 +1576,13 @@ class Receiver:
         own = []
         if launch:
             own = classify(processes, launch['token'], child if child and child.get('token') == launch['token'] else None)[0]
+        worker = record.get('owner')
+        if isinstance(worker, dict) and alive(worker):
+            own += [p for p in processes if p['pid'] == worker['pid'] and p['start_ticks'] == worker['start_ticks']]
         evidence['holders'], evidence['own'] = summary(holders), summary(own)
         if not evidence['receiver_alive']:
             if holders and {p['pid'] for p in holders} <= {p['pid'] for p in own}:
-                limit = child.get('deadline_unix') if child else None
+                limit = child.get('deadline_unix') if child else worker.get('deadline_unix') if worker else None
                 if limit is not None and time.time() < limit+STOP_SECONDS:
                     message = ('own guardian holds the production lock until its deadline %d; nothing was signalled, '
                                'reconcile after it' % limit)
