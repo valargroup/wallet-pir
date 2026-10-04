@@ -1549,116 +1549,218 @@ qualification has been performed.
 #### Native gate execution
 
 `schema-candidate-execute-*` produces the raw inputs of the two reports above.
-Run it from root's workstation with the remote-lock inventory and pinned SSH:
+Run it from root's workstation. It needs the remote-lock inventory, pinned SSH,
+and a `machine_id` pin and a root or sudo identity for every inventory host:
 
 - `schema-candidate-execute-{plan,preflight,stage} --source-sha REV --mode MODE
-  --attempt N --preparation-request-sha256 H`; stage also requires
+  --attempt N --preparation-request-sha256 H`. Stage also needs
   `--expect-plan-sha256` from the reviewed plan.
 - `schema-candidate-execute-{status,reconcile} --source-sha REV
-  --request-sha256 H`.
+  --request-sha256 H`. Reconcile reads the retained request through status. It
+  refuses if this inventory's hosts differ from that request's hosts.
 
-The closed request is `{version: 1, kind, mode, source_sha, candidate_sha,
-candidate_identity, preparation_request_sha256, publication_sha256, machine_id,
-attempt}`. It names the staged CandidatePreparation owner, the candidate
-provenance digest and the pinned publication map `34e3ebe3...`. Historical,
-partial or foreign identities refuse. There are only two modes:
+The closed request (version 2) contains `kind`, `mode`, `source_sha`,
+`candidate_sha`, `candidate_identity`, `preparation_request_sha256`,
+`publication_sha256`, `coordinator`, `machine_id`, `hosts` and `attempt`.
+`hosts` is the sorted list of every inventory host and its machine ID, and must
+include the coordinator. The request names the staged CandidatePreparation
+owner, the candidate provenance digest and the pinned publication map
+`34e3ebe3...`. It refuses historical, partial or foreign identities, and a
+partial, duplicated or coordinator-less host list. There are only two modes:
 
 | Mode | Children |
 | --- | --- |
 | `artifact-verification` | One `shard-verify --shard-dir /srv/transparent-activity/full-v11/publications/initial` with `--expect-start 0`, `--expect-through 3500738`, `--expect-anchor-hash 00000000007b5488...`, `--expect-recent-from 3289805`, both geometries, `--expect-map-sha256 34e3ebe3...` and `--source-sha c3c66b9b...`. No `--data-dir`, journal, rebuild or `--out`. |
-| `native-certificates` | One `native_certificate segment --geometry G --table T --rows-bin <publication>/<manifest digest>/<table>.<index>.bin` per manifest table segment: all 180, derived from the 90 checksum-bound manifests. No synthetic mode, no `--public`. |
+| `native-certificates` | One `native_certificate segment --geometry G --table T --rows-bin <publication>/<manifest digest>/<table>.<index>.bin` for each manifest table segment: all 180, derived from the 90 checksum-bound manifests. No synthetic mode and no `--public`. |
 
-The remote argv is the staged wrapper's fixed
-`schema-candidate-execute-receive --action ACTION --request-sha256 HASH`, run as
-`/usr/bin/python3 -B`. The request travels as one bounded header line. Plan,
-executable, argv and paths derive from the request; nothing is caller-chosen.
+Each remote call runs the staged wrapper's fixed `schema-candidate-execute-receive
+--action ACTION --request-sha256 HASH` as `/usr/bin/python3 -B`. The actions are
+`plan`, `preflight`, `stage`, `status`, `reconcile` and the read-only `survey`.
+The plan, executable, argv and paths all derive from the request; the caller
+chooses none of them.
 
-Before any child, the receiver checks:
+Before any child starts, the receiver checks:
 
 - Root, the coordinator machine ID and the staged source receipt.
 - The staged CandidatePreparation owner and request, then the whole 18-artifact
   bundle.
 - The runtime host ABI: x86-64, `glibc 2.39`, and the `x86-64-v3` and
   `pclmulqdq` CPU flags.
-- The publication: root-owned, not group- or other-writable, no links, exactly
-  `shards.json` plus 90 manifest directories. Each holds exactly `manifest.json`,
-  `filter.bin` and its segment files. The map hash, coverage, anchor, tiers,
-  every manifest hash and every table file size equal to rows × 4096 must agree.
+- The publication. It must be root-owned, not group- or other-writable, with no
+  links. It holds exactly `shards.json` and 90 manifest directories. Each
+  directory holds exactly `manifest.json`, `filter.bin` and its segment files.
+  These must all agree: the map hash, coverage, anchor and tiers, every manifest
+  hash, and every table file size (rows × 4096).
 
-Stage holds the production lock in the executing process and runs the
-schema/input fence. It requires the reviewed plan digest. It writes the request
-and a `running` owner to `/srv/transparent-activity/ops/input-staging/`, then
-points `latest.json` at it, all before any child starts.
+##### All-host reconciliation under the lock
 
-Children run one at a time. Each one gets:
+Stage and reconcile take the global production lock in the receiving process.
+They then emit a lock line carrying a fresh nonce and the receiver's PID, start
+ticks and boot ID. Root's client then runs the read-only `survey` over pinned
+SSH on every other inventory host. The receiver surveys the coordinator itself.
+Each survey records:
 
-- Its own session (`start_new_session`), the lock descriptor, and a closed
-  environment.
-- A fresh check of the binary hash, ELF ABI and host ABI. For certificates, the
-  table's identity, size and hash are checked before the child reads it, and its
-  identity is checked again after.
-- A health sample before spawn, at least every 2 seconds, and after exit. A
-  sample records memory and disk fractions and the session's RSS.
+- Machine ID, boot ID, effective UID and the staged operations source.
+- The schema, host-action and input-staging fence.
+- Every process holding that host's production lock.
+- Every live process that carries a launch token or runs a stage or reconcile
+  receiver.
+- Every candidate execution owner, with the liveness of its recorded receiver
+  and child.
 
-The child is stopped and the run fails on any of:
+Before any owner exists, the receiver checks the nonce, the host set, every
+machine ID and the source. It refuses on any of:
+
+- A host that is missing, extra, stale or foreign, or a transport failure.
+- A missing operations source, an unreadable machine ID, owner or process.
+- An unfinished fence or owner.
+- A lock holder other than the receiver.
+- Any live candidate process or other receiver.
+
+Every reply is retained as raw immutable bytes, pass or fail, under
+`/srv/transparent-activity/candidates/executions/surveys/<request SHA>/<nonce>/`.
+The `index.json` there is referenced from the owner record. Surveys never write
+on any host.
+
+##### Launch, limits and sampling
+
+After a clear survey, stage writes the request and a `running` owner to
+`/srv/transparent-activity/ops/input-staging/`, then points `latest.json` at it.
+Children then run one at a time. For each child, the receiver:
+
+1. Re-checks the binary hash, ELF ABI and host ABI. For certificates, it hashes
+   the table in chunks, sampling between chunks, and checks its identity again
+   after the child exits.
+2. Records a durable launch intent with a random launch token.
+3. Starts a fixed launcher (`LAUNCHER_SHA256` is in the plan) in its own session.
+   The launcher inherits the lock descriptor and a gate pipe, and carries the
+   token in its environment.
+4. The launcher sets the hard limits `RLIMIT_AS`, `RLIMIT_CPU` (with a 5-second
+   grace before SIGKILL) and `RLIMIT_CORE=0`. It then waits on the gate.
+5. The receiver writes `owner.json` and the child record durably, with PID,
+   start ticks, boot ID and token. Only then does it send `go`, and the
+   launcher executes the closed native argv in place.
+
+If the receiver dies before `go`, the launcher sees end-of-file and exits 125
+without executing anything.
+
+The per-mode budgets are in the plan, with their basis:
+
+| Mode | Wall | CPU | Address space | Aggregate per stage |
+| --- | --- | --- | --- | --- |
+| `native-certificates` | 600 s | 600 s | 14 GiB | 180 × 600 s + 3600 s = 111600 s |
+| `artifact-verification` | 1800 s | 1800 s | 14 GiB | 1800 s + 3600 s = 5400 s |
+
+- The certificate limits are root's conservative closed choice. They match the
+  prepared certificate driver's `RLIMIT_AS` and its per-segment CPU and wall.
+- The artifact wall time is the unchanged 1800-second report-contract ceiling.
+- The artifact CPU and address-space values are not separately reviewed
+  measurements of `shard-verify`. Root must accept or replace them before
+  production.
+- The aggregate budget covers one stage on the coordinator, from lock
+  acquisition to the terminal owner record. That includes surveys, candidate
+  and publication checks, table hashing, input retention, every child and the
+  sampling between children. The 3600 seconds outside children is a wrapper
+  choice that also awaits root's review.
+- The receiver refuses to start a child the remaining aggregate budget cannot
+  cover.
+- The client's SSH wait is the aggregate plus 900 seconds. It is transport
+  only and bounds nothing remote.
+- Sampled RSS is recorded as an observation, never as a limit.
+
+The receiver takes one health sample at lock acquisition, then at least every 2
+seconds through all locked work: checks, hashing, the wait for surveys, each
+child and the gaps between children. It also samples before each spawn and
+after each exit. All samples go to `health.ndjson` in the execution directory.
+The run stops, its own child is stopped, and the owner fails on any of:
 
 - Memory or disk below 20 percent.
 - A sampling gap over 10 seconds.
-- Session RSS above 16 GiB.
-- More than 1800 seconds.
+- The aggregate deadline.
+- A child past its wall deadline, or killed by its hard limits.
 - stdout above 16 MiB or stderr above 1 MiB.
-- A nonzero exit, or a descendant still alive after exit.
-
-These budgets reuse existing reviewed bounds: the report contract's 1800
-seconds per execution and the publication job's 16 GiB `MemoryMax`. Retained 12ce
-runs took 149 seconds to load the set and 1275 seconds for all 180 certificates.
-Root decides any other budget.
+- A nonzero exit, a refused launch, or a token-bearing descendant still alive
+  after exit.
 
 Each child's private directory under
-`/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` retains
+`/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` keeps
 these files, all 0400 with a single link:
 
-- `owner.json`: actual binary, argv, PID, start ticks, source, candidate and
-  publication.
+- `owner.json`: actual binary, argv, launcher digest, token, PID, start ticks,
+  boot ID, source, candidate, publication and limits.
 - `native.json` (raw stdout) and `stderr.log`.
-- `health.ndjson`, plus `health.json` as an array.
-- `result.json`.
+- `health.json`: that child's samples, from before spawn to after exit.
+- `result.json`: status, exit code or signal, PID, times and limits.
 
-Owner and result follow the `activity_candidate_reports.capture` contract; each
-successful capture is checked against it. Private copies of the map and
-manifests sit under `inputs/`. A complete run writes `references.json`. It is the
-report producer's input, apart from the root-supplied `certifier` path for
-certificates.
+Owner and result follow the `activity_candidate_reports.capture` contract, and
+each successful capture is checked against it. Private copies of the map and
+manifests sit under `inputs/`. A complete run writes `references.json` and the
+owner becomes `staged` with `gate: unevaluated`. Native exit zero is not a gate
+pass until `activity-candidate-report.py` accepts the retained bytes.
 
-The owner becomes `staged` with `gate: unevaluated`. Native exit zero is not a
-gate pass until `activity-candidate-report.py` accepts the retained bytes.
+Two constraints remain:
+
+- The references are absolute coordinator paths. The report producer reads them
+  there, or from an exact copy at the same paths. Its compact report and
+  raw-evidence index are unchanged.
+- The certificate report still needs the root-supplied `certifier` path.
+
+##### Failure and recovery
 
 A failure stops the run at that child and keeps every byte, including the failed
-attempt. The owner fences all other mutation until
-`schema-candidate-execute-reconcile`. Reconciliation works in this order:
+attempt. The `latest.json` owner fences every other mutation until
+`schema-candidate-execute-reconcile` succeeds. SIGHUP (including SSH loss),
+SIGTERM or SIGINT makes the receiver stop its own child, record `interrupted`
+and exit 75. If the transport is lost while the receiver lives, the client
+reports an unknown outcome (exit 75), and root runs status and then reconcile.
 
-1. It requires that the recorded receiver, identified by PID and kernel start
-   time, has exited.
-2. If the recorded child still has its PID and start time and leads its own
-   session, it signals only that session's members, TERM then KILL. A reused PID
-   or a process outside its own session is never signalled.
-3. It then acquires the production lock afresh. Children inherit that lock, so
-   acquiring it proves no descendant survives; a held lock refuses.
-4. It marks the owner `reconciled` and keeps the evidence. A retry needs a new
-   attempt.
+Reconciliation works in this order:
 
-SIGHUP, SIGTERM or SIGINT makes the receiver stop its own child, record
-`interrupted` and exit 75. A lost SSH session leaves the remote owner running and
-the client reports an unknown outcome (exit 75). Root then runs status and
-reconcile explicitly. The receiver writes only this private qualification
-evidence. It never touches a live service, cache, unit, route or journal writer.
+1. Take an exclusive recovery claim: a non-blocking flock on
+   `<request SHA>.recovery.lock`. A competing reconciler refuses before
+   observing or signalling anything.
+2. Append the claim (claimant PID, start ticks and boot ID) to the owner's
+   `recoveries` and save it durably, before any signal.
+3. Refuse while the recorded receiver is alive. Identity is boot ID, PID and
+   start ticks.
+4. Prove lock ownership. Scan every process for the launch token, the recorded
+   child's session and holders of the production-lock inode. Own processes carry
+   the exact token inside the recorded child's session. In the launch window,
+   that is the token-bearing launcher that leads its own session. If a token
+   escaped that session, a session member lacks it, or any lock holder is not
+   own, refuse and signal nothing.
+5. Signal only own processes, each through a pidfd opened and re-checked against
+   its start ticks: TERM, then KILL. A reused PID is never signalled.
+6. Acquire the production lock, waiting at most 30 seconds. Children inherited
+   it, so holding it proves no own descendant survives.
+7. Under the lock, run the fence and an all-host survey, as stage does. This
+   one allows only this owner to be unfinished. Then mark the owner
+   `reconciled`.
 
-Fixture tests use real child processes, a real flock lock and real signals.
-They cover receiver SIGKILL, signals, lost transport, PID reuse, a foreign
-process, floors, sampling gaps, budgets, output bounds, nonzero exits,
-descendants, drift and 180-segment coverage. No production execution has
-occurred. Installed and canonical setup agreement remains a separate cutover
-gate.
+Every attempt, blocked or not, writes an immutable `reconciliation-<n>.json`
+with the claim, the observations, the holders, the signals and the survey
+reference. A blocked attempt leaves the owner unfinished and the fence in place.
+A retry needs a new attempt. If the receiver dies between fork and `go`, the
+launcher's end-of-file exit means recovery finishes within the lock wait.
+
+The receiver writes only this private qualification evidence. It never touches
+a live service, cache, unit, route or journal writer.
+
+Fixture tests use real child processes, flock locks, rlimits, pidfd signals,
+signals and a second surveyed host process. They cover:
+
+- Receiver death mid-child, before the child owner write and before `go`.
+- SIGHUP, lost transport, competing reconcilers, a reused PID, a foreign session
+  and a foreign lock holder.
+- Escaped descendants, and live or missing remote owners, sources and lock
+  holders.
+- Partial, stale and foreign surveys.
+- Floors, gaps, the aggregate budget, wall deadlines, hard memory and CPU
+  limits, output bounds and nonzero exits.
+- Drift and 180-segment coverage.
+
+No production execution has occurred, and the budgets above still need root's
+review. Installed and canonical setup agreement remains a separate cutover gate.
 
 Root's ordered path, without rebuilding the old CI or native chain:
 

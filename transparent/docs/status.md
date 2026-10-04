@@ -71,9 +71,14 @@ acceptance gate below remain as recorded.
 
 Operations source then added the locked `schema-candidate-execute-*` path for
 the artifact-verification and native-certificate executions. It retains raw
-captures for the offline report producer. Fixture tests and single-guard
-mutations passed on the development hub. No candidate native program ran on a
-production host, and no gate report exists.
+captures for the offline report producer. Root rejected the first version.
+The revision adds three controls: an all-host survey under the lock before
+mutation, kernel-enforced per-child limits within a finite per-stage budget,
+and recovery through a claim with pidfd signals. Fixture tests and single-guard
+mutations passed on the development hub. The certificate limits are root's.
+The artifact CPU and address-space limits and the time allowed outside children
+still await root's review. No candidate native program ran on a production host,
+and no gate report exists.
 
 ## Activity metadata candidate, 2026-09-30
 

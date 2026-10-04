@@ -67,9 +67,10 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       --mode artifact-verification|native-certificates --attempt N
       --preparation-request-sha256 H [--expect-plan-sha256 H]
   schema-candidate-execute-{status,reconcile} --source-sha REV --request-sha256 H
-      From root's workstation (remote-lock inventory, pinned SSH): run the closed candidate
-      shard-verify or all 180 native certificate segments on the coordinator and retain
-      private raw evidence. Native exit zero is not a gate pass.
+      From root's workstation (remote-lock inventory, pinned SSH, every host machine_id-pinned):
+      under the coordinator lock, survey every host, then run the closed candidate shard-verify
+      or all 180 native certificate segments and retain private raw evidence. Native exit zero
+      is not a gate pass.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
@@ -148,7 +149,7 @@ def parser():
         command.add_argument('--preparation-request-sha256', required=True)
         if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
     command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
-    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile'), required=True)
+    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile','survey'), required=True)
     command.add_argument('--request-sha256', required=True)
     command.add_argument('--expect-plan-sha256')
     command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
