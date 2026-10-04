@@ -9,6 +9,9 @@ import json
 from pathlib import Path
 import subprocess
 import time
+import math
+import random
+from statistics import NormalDist
 import analyze as a
 import census
 import survey
@@ -259,9 +262,47 @@ def report(data):
         result['domains'][name]['totals']={k:survey.estimate(vals(lambda b:b['totals'].get(k,0) if inside(b) else 0),design) for k in ('all_transactions','eligible','shielded_only','outputs','input_only','raw_escape_outputs')}
     routed_thresholds=sorted(set(THRESHOLDS)|{v for pair in result['codecs']['display-v1']['frontier_size_bounds_bytes'].values() for v in pair if v<=4044})
     result['routing']=route_report(data,routed_thresholds)
-    result['ci_limitations']='HT totals; block-cluster ratio linearization with stratum FPC; pointwise normal 95%, not simultaneous or formal guarantees. Sparse/extreme tails and heavy block counts can have poor coverage. Zero-observed tails unresolved.'
+    # Select from the seven prespecified cutoffs with a one-sided Bonferroni
+    # normal lower bound, using worst-case fee membership. Still asymptotic.
+    z=NormalDist().inv_cdf(1-.05/len(THRESHOLDS))
+    selected=None;selection={}
+    for t in THRESHOLDS:
+        coverage=result['codecs']['display-v1']['thresholds'][str(t)]['upper_size_population']['coverage']
+        lower=max(0,coverage['estimate']-z*coverage['standard_error'])
+        selection[str(t)]=dict(worst_case_estimate=coverage['estimate'],familywise_normal_lower95=lower)
+        if selected is None and lower>.8:selected=t
+    result['threshold_decision']=dict(selected_bytes=selected,requirement='strictly greater than 80% of distinct eligible records',candidates=selection,z=z,method='one-sided 95% Bonferroni normal lower bounds over seven prespecified cutoffs; block clustering/FPC; conservative unknown-fee membership; asymptotic, not a full census guarantee')
+    result['ci_limitations']='HT totals; block-cluster ratio linearization with stratum FPC; pointwise normal 95% except explicit seven-cutoff Bonferroni selection. Asymptotic, not formal guarantees. Sparse/extreme tails and heavy block counts can have poor coverage. Zero-observed tails unresolved.'
     result['packing_limitations']='Additive payload/envelope/fragment estimates, not a full-chain packing replay. packing_bounds evaluates per-record fee-length possibilities including the nonmonotone inline jump. No measured native latency/RSS.'
     return result
+
+def bootstrap_selection(data,repetitions=2000):
+    """Sensitivity check: stratified rescaled cluster bootstrap, no tx IID draws."""
+    design=data['design'];groups=survey.group_blocks(data['blocks'],design)
+    clusters=[]
+    for s in design['strata']:
+        vectors=[]
+        for b in groups[s['name']]:
+            hist=b['hist']['display-v1/upper']['all']
+            vectors.append([b['totals']['eligible']]+[sum(n for size,n in hist if size<=t) for t in THRESHOLDS])
+        means=[sum(v[k] for v in vectors)/s['n'] for k in range(8)]
+        clusters.append((s,vectors,means,math.sqrt(1-s['n']/s['N'])))
+    rng=random.Random('wallet-pir/day/cluster-bootstrap/v1')
+    ratios=[[] for _ in THRESHOLDS]
+    for _ in range(repetitions):
+        totals=[0.0]*8
+        for s,vectors,means,fpc in clusters:
+            sums=[0]*8
+            for i in rng.choices(range(s['n']),k=s['n']):
+                vector=vectors[i]
+                for k in range(8):sums[k]+=vector[k]
+            for k in range(8):totals[k]+=s['N']*(means[k]+fpc*(sums[k]/s['n']-means[k]))
+        for k in range(7):ratios[k].append(totals[k+1]/totals[0])
+    out={}
+    for t,rs in zip(THRESHOLDS,ratios):
+        rs.sort()
+        out[str(t)]=dict(ci95=[rs[int(.025*repetitions)],rs[min(repetitions-1,int(.975*repetitions))]],bonferroni_lower95=rs[int(.05/7*repetitions)])
+    return dict(schema='txid-sizing-cluster-bootstrap-v1',seed='wallet-pir/day/cluster-bootstrap/v1',repetitions=repetitions,method='resample whole blocks within original strata; centered stratum means rescaled by sqrt(1-f); percentile sensitivity, asymptotic',worst_case_fee_coverage=out)
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
@@ -269,8 +310,10 @@ if __name__=='__main__':
     re=sub.add_parser('report');re.add_argument('input',type=Path);re.add_argument('output',type=Path)
     st=sub.add_parser('statistics');st.add_argument('checkpoint',type=Path);st.add_argument('output',type=Path)
     sm=sub.add_parser('summarize');sm.add_argument('checkpoint',type=Path)
+    bs=sub.add_parser('bootstrap');bs.add_argument('input',type=Path);bs.add_argument('output',type=Path)
     args=p.parse_args()
     if args.command=='extract':print(json.dumps(extract(args.checkpoint,args.binary,args.status)))
     elif args.command=='summarize':summarize(args.checkpoint)
+    elif args.command=='bootstrap':census.atomic_json(args.output,bootstrap_selection(read(args.input)))
     elif args.command=='statistics':json_gz(args.output,statistics(args.checkpoint))
     else:census.atomic_json(args.output,report(read(args.input)))
