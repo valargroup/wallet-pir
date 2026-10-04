@@ -1506,6 +1506,45 @@ The following refuse:
 
 Recovery samples keep their historical `tool_sha` 12ce.
 
+#### Reports from retained native output
+
+`transparent/ops/scripts/activity-candidate-report.py` produces a new local
+`artifact-verification` or `native-certificates` report. Supply a private input
+JSON file with `--input`, its reviewed `--input-sha256`, and a new `--out` path.
+It never overwrites a prior attempt or executes a production program.
+
+The artifact input contains `mapping` and `execution`. The certificate input
+contains `mapping`, `manifests`, `executions` and the retained `certifier` path.
+Every byte reference is `{path: absolute-local-path, sha256: reviewed-digest}`.
+References must resolve to bounded independent regular files without symlinks
+or hard links. Duplicate JSON fields and nonfinite values refuse.
+
+Each execution contains references named `owner`, `result`, `native`, `stderr`
+and `health`. The trusted locked execution observer must record the actual PID,
+start time, candidate/source/publication and binary hashes in the owner. The
+terminal result binds that PID/start time, exit zero and a positive elapsed time
+within its recorded bound (at most 1800 seconds). Resource samples include
+`observed_unix`, `memory_available` and nonempty `disk_available` fractions,
+cover the entire execution with no gap over ten seconds, and meet the existing
+20 percent floor. Retaining these bytes does not replace production ownership,
+installed-binary observation or interrupted-owner reconciliation.
+
+Artifact reports require every coverage, anchor, tier and map-hash expectation
+in the actual `shard-verify` output, with no failed or duplicate checks. Native
+`tool_sha`, the complete shard count, genesis start, terminal height/hash and
+publication file hash must agree. Certificate coverage is derived from every
+checksum-bound v11 manifest; all 180 segment executions must occur exactly
+once. Synthetic databases, missing/foreign segments and table-hash disagreement
+refuse. The producer checks the retained certifier and frozen sampler file
+hashes, reevaluates each native output with the exact-rational certifier, and
+applies 83 bits only to archive-wide pages and 128 bits elsewhere. It retains
+the measured table/public setup bindings and the raw evidence references.
+Installed warm-worker and canonical setup agreement remains a separate gate.
+
+The independent-chain oracle producer and the production execution controls
+still require implementation. These offline producers and their fixture tests
+are source evidence; no candidate native qualification has been performed.
+
 Root's ordered path, without rebuilding the old CI or native chain:
 
 1. Stage the reviewed operations source.
