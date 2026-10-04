@@ -900,6 +900,10 @@ class OwnerFindingTests(unittest.TestCase):
         self.assertTrue(survivors)
         with self.assertRaisesRegex(ValueError, "'escaped', %d" % survivors[0]):
             Q.owner_findings(FakeCommands())
+        record = self.root/'host-actions/transparent-schema-1/r1.json'
+        os.utime(record, (0, Q.started_unix(survivors[0])-60))
+        Q.owner_findings(FakeCommands())  # a session member started after the owner's last record is not its descendant
+        os.utime(record, None)
         for pid in survivors:
             os.kill(pid, signal.SIGKILL)
         for _ in range(100):

@@ -1164,7 +1164,7 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
     exempt = ancestry(table, os.getpid())
     own_units = PRODUCT_UNITS + ((own_unit+'.service',) if own_unit else ())
     findings = {'records':[], 'units':{}, 'live':[], 'processes':{'scanned':len(table)}}
-    recorded_pids = []
+    recorded_pids = {}
     for record in owner_records():
         value = record['value']
         entry = {'namespace':record['namespace'], 'path':str(record['path']), 'sha256':record['sha256'],
@@ -1174,16 +1174,17 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
             for item in recorded_processes(value, record['mtime']):
                 live = process_live(table.get(item['pid']), item)
                 entry['processes'].append(dict(item, live=live))
-                recorded_pids.append(item['pid'])
+                recorded_pids[item['pid']] = max(recorded_pids.get(item['pid'], 0), record['mtime'])
                 if live and item['pid'] not in exempt:
                     findings['live'].append(('owner', record['namespace'], item['pid']))
         findings['records'].append(entry)
     escaped = []
-    for pid in sorted(set(recorded_pids)):
+    for pid, last in sorted(recorded_pids.items()):
         if pid in table:
             continue  # alive (judged above) or reused, which no surviving group of the old PID permits
+        # Only a member started before the owner's record was last written can descend from it.
         escaped += [p for p in table.values() if (p['session'] == pid or p['pgid'] == pid) and p['state'] != 'Z'
-                    and p['pid'] not in exempt and not in_units(p, own_units)]
+                    and p['pid'] not in exempt and not in_units(p, own_units) and started_unix_from(p['start_ticks']) <= last+2]
     roots = [p for p in table.values() if p['state'] != 'Z' and p['pid'] not in exempt and under_owned_roots(p)
              and not in_units(p, own_units)]
     for process in {p['pid']:p for p in escaped+roots}.values():
