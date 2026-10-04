@@ -1,0 +1,33 @@
+{
+ "schema": "transparent-prewarm-hint-assurance-v1",
+ "run_id": "prewarm-hint-assurance-2026-10-04",
+ "captured_utc": "2026-10-04",
+ "classification": "source and test assurance on the development hub; no timing re-measured; not a production, fleet or freshness qualification; nothing deployed",
+ "sources": {
+  "base": "4c85b6c20ced1e2077245491e77d3afc98bfd644",
+  "predecessor": "fd2029e5e22f98bc0d32d5aa5a808869abd39e98 (attempt 2, merged fast-forward)",
+  "final": "see results.md for the exact tested commit",
+  "source_sha256": {
+   "transparent/crates/transparent-native/src/batched_hint.rs": "41952ec52872456627fadc9b2797ced921421b6c1dddab74ead7d1225fd2cc65",
+   "transparent/crates/transparent-native/src/lib.rs": "4ed737085a28a52f13b365ed9436f7c11cfecb24f1998cb3e9d4b84dff8e0b0c",
+   "transparent/crates/transparent-native/Cargo.toml": "1937891af7493218c7c5b9737f9ddb10568d694c4d0cd6b1c500deb1ca05edf4",
+   "transparent/crates/transparent-native/testdata/batched_hint_kat.py": "99a2736eabc253d2c1cfe573eb0e1925cf745362fe5e4a178ea5af1db7315fe3",
+   "transparent/crates/transparent-native/testdata/batched_hint_kat.json": "fde5f38a601777e86d17ba0766ad34a83986a360718984ae18de5d380342ebdb",
+   "transparent/services/transparent-shard-server/src/runtime.rs": "6f76e0982334ac860cedc4cae7ac121f6c771ad883a48bf2a50daf1eb3afdeff",
+   "Cargo.lock": "bf3559f2ad10f1fe91a9e729b8c9f3dbff7c68ca1d17f65a25b68c8837956377"
+  },
+  "unchanged": "ipir-sp/reinspiring v0.1.0-rc.6 (1f2aec6), shared/pir-native, native parameters, seeds, geometry, seal policy, wire and runtime snapshot formats, build threads, slots and reservations"
+ },
+ "build": {
+  "profile": "release-fast via tool-exec task-owned target lane; no deploy artifact built"
+ },
+ "commands": {
+  "kat_generation": "python3 transparent/crates/transparent-native/testdata/batched_hint_kat.py (Python 3.12.3, 3 min 23 s)",
+  "unit": "tool-exec --repo wallet-pir -- cargo test --locked --profile release-fast -p transparent-native --lib batched_hint",
+  "focused": "tool-exec --repo wallet-pir -- cargo test --locked --profile release-fast -p transparent-native -p transparent-shard-server --lib --test round_trip --test revisions_and_cache",
+  "clippy": "tool-exec --repo wallet-pir -- cargo clippy --locked --profile release-fast -p transparent-native -p transparent-shard-server --all-targets -- -D warnings",
+  "check_fast": "tool-exec --repo wallet-pir -- make check-fast BASE=4c85b6c20ced1e2077245491e77d3afc98bfd644",
+  "mutations": "mutations.log: sed one line, run unit (or shard-server --lib batched_hint) tests, git checkout"
+ },
+ "host": "../prewarm-hint-2026-10-03/host.json (same shared development hub); task cgroup memory.max 12 GiB, 3 CPUs"
+}

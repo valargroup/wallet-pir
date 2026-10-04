@@ -1,0 +1,43 @@
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== forward table in natural order (psi^k, not psi^brv(k))
+test batched_hint::tests::forward_evaluates_at_odd_powers_in_bit_reversed_order ... FAILED
+test batched_hint::tests::extreme_operands_match_schoolbook_products ... FAILED
+test batched_hint::tests::known_answer_vectors ... FAILED
+test batched_hint::tests::primes_and_roots_satisfy_the_derivation ... FAILED
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... FAILED
+test batched_hint::tests::matches_the_reference_hint_and_its_shape_refusals ... FAILED
+test result: FAILED. 4 passed; 6 failed; 0 ignored; 0 measured; 5 filtered out; finished in 4.52s
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== D^-1 not folded into mask transforms
+test batched_hint::tests::extreme_operands_match_schoolbook_products ... FAILED
+test batched_hint::tests::known_answer_vectors ... FAILED
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... FAILED
+test batched_hint::tests::matches_the_reference_hint_and_its_shape_refusals ... FAILED
+test result: FAILED. 6 passed; 4 failed; 0 ignored; 0 measured; 5 filtered out; finished in 5.00s
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== Shoup product without the final conditional subtraction
+test batched_hint::tests::forward_evaluates_at_odd_powers_in_bit_reversed_order ... FAILED
+test batched_hint::tests::extreme_operands_match_schoolbook_products ... FAILED
+test batched_hint::tests::known_answer_vectors ... FAILED
+test batched_hint::tests::shoup_products_are_canonical ... FAILED
+test batched_hint::tests::transforms_invert_exactly ... FAILED
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... FAILED
+test batched_hint::tests::matches_the_reference_hint_and_its_shape_refusals ... FAILED
+test result: FAILED. 3 passed; 7 failed; 0 ignored; 0 measured; 5 filtered out; finished in 4.56s
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== CRT never maps to negative (threshold = product)
+test batched_hint::tests::crt_reconstructs_signed_values_at_the_capacity_edges ... FAILED
+test batched_hint::tests::extreme_operands_match_schoolbook_products ... FAILED
+test batched_hint::tests::known_answer_vectors ... FAILED
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... FAILED
+test batched_hint::tests::matches_the_reference_hint_and_its_shape_refusals ... FAILED
+test result: FAILED. 5 passed; 5 failed; 0 ignored; 0 measured; 5 filtered out; finished in 4.65s
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+== capacity seam ignored: always batched
+test batched_hint::tests::known_answer_vectors ... FAILED
+test batched_hint::tests::over_capacity_falls_back_to_the_reference ... FAILED
+test result: FAILED. 8 passed; 2 failed; 0 ignored; 0 measured; 5 filtered out; finished in 2.55s
+== runtime: batched hint for every geometry
+test runtime::tests::the_batched_hint_is_dispatched_for_recent_geometries_only ... FAILED
+test runtime::tests::the_batched_hint_runtime_is_the_reference_runtime ... ok
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 50 filtered out; finished in 8.63s

@@ -31,6 +31,15 @@ build fell from 4.81 s to 3.05 s at 97% fill, and from 4.19 s to 2.91 s at
 acceptance stays open.
 [Evidence](../evidence/prewarm-hint-2026-10-03/README.md).
 
+Review on 2026-10-04 asked for assurance before approval. The batched hint is
+now dispatched for recent geometries only; archives keep the reference
+product. Its source documents reference provenance and a derivation of root
+and evaluation order, residue ranges, the signed CRT bound and the reduction
+modulo `q`. Fixed known-answer vectors computed in Python without NTT or CRT
+pass through both the batched path and a forced reference fallback. Recent
+timing is unchanged from the record above and was not re-measured.
+[Evidence](../evidence/prewarm-hint-assurance-2026-10-04/README.md).
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

@@ -281,6 +281,9 @@ fn fits(maxima: u128, capacity: u128) -> bool {
         .is_some_and(|b| b < capacity)
 }
 
+/// A hint: per `D`-column group, per column, `D` coefficients modulo `q`.
+type Hint = Vec<Vec<Vec<u64>>>;
+
 /// Which implementation computes a hint.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Path {
@@ -336,7 +339,7 @@ fn hint_within<'a>(
     cols: usize,
     column: impl Fn(usize) -> &'a [u16] + Sync,
     capacity: u128,
-) -> Result<(Vec<Vec<Vec<u64>>>, Path), String> {
+) -> Result<(Hint, Path), String> {
     if rows == 0 || !rows.is_multiple_of(D) || !cols.is_multiple_of(D) || masks.len() != rows / D {
         return Err("native hint shape".into());
     }
@@ -551,7 +554,10 @@ mod tests {
     }
 
     fn is_prime(n: u64) -> bool {
-        n >= 2 && (2..).take_while(|f| f * f <= n).all(|f| n % f != 0)
+        n >= 2
+            && (2..)
+                .take_while(|f| f * f <= n)
+                .all(|f| !n.is_multiple_of(f))
     }
 
     /// The numeric premises of the derivation in the module documentation.
@@ -559,7 +565,7 @@ mod tests {
     fn primes_and_roots_satisfy_the_derivation() {
         for prime in primes() {
             let p = prime.p as u64;
-            assert!(is_prime(p) && p < 1 << 30 && (p - 1) % (2 * D as u64) == 0);
+            assert!(is_prime(p) && p < 1 << 30 && (p - 1).is_multiple_of(2 * D as u64));
             let psi = prime.forward[1 << (LOG_D - 1)].0 as u64;
             // forward[brv(1)] = psi^1; its order is exactly 2D.
             assert_eq!(pow_mod(psi, D as u64, p), p - 1);
