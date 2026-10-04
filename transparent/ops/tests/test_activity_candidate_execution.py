@@ -520,6 +520,16 @@ class Closed(Fixture):
         self.assertEqual(real.process(mine['pid'])['start_ticks'], mine['start_ticks'])
         self.assertTrue(real.alive(mine)); self.assertFalse(real.alive(dict(mine, boot_id='0')))
 
+    def test_pidfd_signal_refuses_a_reused_pid_and_hits_the_exact_process(self):
+        process = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(lambda: (process.poll() is None and process.kill(), process.wait()))
+        ticks = E.process(process.pid)['start_ticks']
+        self.assertFalse(E.signal_exact(process.pid, ticks-1, signal.SIGKILL))
+        time.sleep(.2); self.assertIsNone(process.poll())
+        self.assertTrue(E.signal_exact(process.pid, ticks, signal.SIGKILL))
+        self.assertEqual(process.wait(10), -signal.SIGKILL)
+        self.assertFalse(E.signal_exact(process.pid, ticks, signal.SIGKILL))
+
     def test_launcher_without_go_exits_before_exec_and_with_go_applies_hard_limits(self):
         target = self.root/'target.sh'
         target.write_text('#!/bin/sh\nulimit -v > %s\nulimit -t >> %s\n' % (self.root/'limits', self.root/'limits'))
@@ -767,7 +777,10 @@ class Survey(Fixture):
         self.assertIn('unfinished candidate execution owner', ' '.join(json.loads((attempts[-1]/'worker-a.json').read_text())['blocked']))
         (owners/('b'*64+'.json')).unlink()
         self.worker_source = None
-        self.refused('worker-a')
+        attempts = self.refused('worker-a')
+        survey = json.loads((attempts[-1]/'worker-a.json').read_text())
+        self.assertEqual((survey['status'], survey['source_sha']), ('blocked', None))
+        self.assertIn('operations source missing', ' '.join(survey['blocked']))
         self.worker_source = 'f'*40
         self.refused('worker-a')
         self.worker_source = 'e'*40
