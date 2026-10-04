@@ -259,9 +259,10 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   - After the candidate transaction commits, run staged load, then freshness,
     then 3+ trials per level, then the six faults, one request at a time.
   - Close the missing-assurance gaps the interface records: quality-alert
-    shadow state, continuation of retained heavy and interrupted stores,
-    cache-corruption injection, and an owner-run probe of the rolled-back v10
-    service.
+    shadow state, cache-corruption injection, and an owner-run probe of the
+    rolled-back v10 service. Heavy and interrupted-store continuation use the
+    existing `--scenario-worker` protocol, but stay unqualified until real runs
+    are reviewed.
   - An owner killed during a fault effect leaves the unit stopped and fenced
     until `schema-qualify-reconcile` restores it.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.

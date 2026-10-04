@@ -1623,6 +1623,8 @@ The closed request has `version=1`, `kind`, `source_sha`, `attempt`,
   object of at most 8 MiB.
 - `fault` adds `fault`.
 - A fault that targets a worker also needs `target`.
+- `client-reopen` also needs `seed_trial`, the request SHA of a reconciled
+  capacity trial of the same transaction.
 - `rollback-redeploy` also needs `rolled_back_transaction`.
 
 Requests cannot carry URLs, argv, paths, units, signals, thresholds or timing.
@@ -1661,15 +1663,28 @@ every pinned host, none exempt, reconciliation:
 - takes the host's production lock without waiting (on the coordinator, the
   owner already holds it), so no lock-inheriting owner or descendant lives;
 - passes the shared schema, host-action and input fences;
-- reads the latest owner of the host-action, input-staging and
-  qualification-action namespaces, and fails if a recorded owner or child
-  identity (PID, start ticks, boot) is alive, or a recorded bare PID names a
-  process that started before its record;
+- reads every retained record, not only the latest, of the schema, host-action,
+  input-staging, qualification-action and publication-job namespaces. It
+  refuses if there are more than 4096 records, a record over 4 MiB, more than
+  128 MiB in total, a link, or an unparseable record, because the scope would
+  be incomplete or unknown;
+- fails if any recorded owner or child is alive. Recorded identities are PID,
+  start ticks and boot. A PID with kernel start ticks is matched exactly. A bare
+  PID counts as alive if its process started before its record;
+- reads one table of every live process, and refuses if it cannot read one.
+  It fails if a live process is in the session or process group of a dead
+  recorded owner and started before that owner's record was last written. Such
+  a process is an escaped descendant;
+- fails if a live process runs an executable or argument from
+  `/srv/transparent-activity` or `/srv/transparent-pir/v11/candidates` outside a
+  product unit's cgroup, this owner's unit or the caller's own ancestry. This
+  catches a descendant that left its session and never inherited the lock;
 - lists every `transparent-activity-*` and `transparent-full-burst-*` unit, and
   fails if one has a main PID, is transitioning or has a non-empty cgroup.
 
 Only this owner's own record and unit are exempt, and only on the coordinator.
-Raw findings are retained. Reconciliation runs at preflight, every 60 seconds
+Each record's path, SHA-256 and per-process verdicts, and the escaped-process
+lists, are retained. Reconciliation runs at preflight, every 60 seconds
 during load, freshness and capacity, and immediately before and after each
 fault effect.
 
@@ -1701,7 +1716,7 @@ then seals the result.
 | --- | --- |
 | staged load | 2400 |
 | freshness | 45000 |
-| capacity | 10800 |
+| capacity | 13680 |
 | fault | 3600 |
 
 Health is checked every 1 to 2 seconds on the coordinator. Remote reconciliation runs
@@ -1814,11 +1829,36 @@ Pooled p95 targets are:
 The heavy class has no latency target. Supported capacity is 50% of the lowest
 load-window exact-sync rate at the highest passing level.
 
+**Continuation.** The candidate `transparent-loadtest` has a hidden
+`--scenario-worker` mode that reads one JSON job per line and reopens an
+existing SQLite store. A closed adapter builds that job only from the retained
+scenario, one sample wallet, its retained prepared-history seed and the
+retained store. The job has no other fields. The adapter then:
+
+1. copies the store and its WAL sidecars untouched (`pre-resume`);
+2. reopens a second copy and refuses unless it passes an integrity check,
+   carries a schema version, holds only wallet scripts, and holds only prior
+   history (below `required_from`) that is in the seed. The worker re-imports
+   the seed, and the native store accepts only identical events;
+3. resumes a third copy in an owned child that inherits the lock, within
+   600 seconds;
+4. retains the job, every worker line and the native outcome.
+
+A continuation passes only if the worker exits 0 with an `exact` outcome and
+exact events, and if its digest and event count equal the sample's. An exact
+outcome deletes the resumed store natively, so no completed database is
+retained or claimed. Pre-resume evidence and the native outcome are kept apart.
+
+After a trial that the owner did not stop, each heavy wallet whose outcome was
+not `exact` resumes once, at most four per trial. Each is checked for health
+first. A heavy wallet that is not exact after its continuation, missing seeds
+or stores, or more than four incomplete heavy stores fail the trial.
+
 **Faults**, one per request:
 
 | Fault | Fixed action |
 | --- | --- |
-| `client-reopen` | Kills the owner's own loadtest client mid-sync, then integrity-checks its store |
+| `client-reopen` | Starts one seeded worker-protocol wallet from `seed_trial`, terminates it after its first request and once its store exists, then resumes that store through the continuation adapter |
 | `publication-interruption` | Waits up to 300 s for a recent replica to report a preparation, then stops and restarts the coordinator publish controller; recovery also needs the public map to reach the pre-fault node tip |
 | `recent-worker-loss` | Stops the target recent replica's worker, waits 60 s, then starts it |
 | `archive-restart` | Restarts the target archive owner |
@@ -1854,6 +1894,12 @@ action stays fenced, and every later mutation refuses, until reconcile.
 Remote reconcile waits for that host's lock, then either restores and proves the
 owned service or, if no intent was ever recorded, writes a permanent `refused`
 record so a delayed request can never act.
+
+`client-reopen` uses the first scheduled wallet of `restore-old`,
+`restore-6m`, `catch-up-30d` or `multi-script`, in that order, whose seed the
+trial retains. It fails if the wallet finishes before it is interrupted. It
+also fails if the client leaves a descendant, or if the store fails its
+pre-resume audit or does not continue to an exact outcome.
 
 `publication-interruption` counts only if a recent replica's native control
 status reported `preparing` with a candidate map before the stop, and the same
@@ -1897,9 +1943,10 @@ external interfaces, not weaker gates:
 
 - **Quality alerts.** Their shadow state is APM configuration. The coordinator
   verifies only that the quality supervisor is stopped.
-- **Continuation.** No native interface resumes a retained heavy or interrupted
-  SQLite store. Capacity and `client-reopen` therefore keep that store as
-  explicit incomplete evidence, and continuation stays unmeasured.
+- **Continuation.** Heavy and interrupted stores resume through the existing
+  `--scenario-worker` protocol of the pinned loadtest. No native code changed.
+  The adapter is an unproven interface candidate until real measurements are
+  reviewed. Whether a resume reuses partial work is recorded, not asserted.
 - **Cache corruption.** No reviewed, non-destructive way exists to inject cache
   corruption. `archive-restart` exercises only an archive-owner restart and
   cache reload.

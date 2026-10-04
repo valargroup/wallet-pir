@@ -132,7 +132,8 @@ class ValidationTests(unittest.TestCase):
             self.assertLess(Q.QUERY_PROBE_SECONDS+Q.WALLET_PROBE_SECONDS+seconds+Q.RECOVERY_SECONDS+Q.POST_SECONDS+600,
                             Q.RUNTIME['fault']-Q.OWNER_MARGIN, fault)
         longest = sum(Q.CAPACITY[k] for k in ('preparation_deadline_seconds', 'duration_seconds', 'recovery_deadline_seconds'))
-        self.assertLess(longest+300+Q.CHILD_STOP_SECONDS+600, Q.RUNTIME['capacity']-Q.OWNER_MARGIN)
+        self.assertLess(longest+300+Q.CHILD_STOP_SECONDS+600+Q.MAX_CONTINUATIONS*(Q.CONTINUATION_SECONDS+120),
+                        Q.RUNTIME['capacity']-Q.OWNER_MARGIN)
         self.assertLess(sum(s['seconds']+120 for s in Q.LOAD_STAGES)+Q.FRESHNESS['permit_seconds']+600,
                         Q.RUNTIME['staged-load']-Q.OWNER_MARGIN)
         self.assertGreater(Q.STOP_TIMEOUT, Q.CHILD_STOP_SECONDS)
