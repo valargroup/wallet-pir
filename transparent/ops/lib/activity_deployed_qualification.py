@@ -1020,62 +1020,175 @@ def rollback_identity(transaction):
 
 # --- all-host owner reconciliation ----------------------------------------------
 
-def owner_namespaces():
-    """Latest owner record of every mutation namespace on this host."""
-    found = {}
-    pointer = schema_fence.HOST_ACTIONS/'latest.json'
-    if pointer.exists():
-        value = json.loads(pointer.read_bytes())
-        found['host-actions'] = schema_fence.HOST_ACTIONS/value['transaction']/(value['request_id']+'.json')
-    for name, root in (('input-staging', schema_fence.INPUT_STAGING), ('qualification-actions', REMOTE)):
-        pointer = root/'latest.json'
-        if pointer.exists():
-            found[name] = root/(json.loads(pointer.read_bytes())['request_sha256']+'.json')
+PUBLICATION_JOB = Path('/srv/transparent-activity/full-v11/preparation')
+# Executables and wrapper sources of every wrapper owner live under these roots;
+# a live process there outside a product unit or this owner is an escaped owner.
+OWNED_ROOTS = (Path('/srv/transparent-activity'), Path('/srv/transparent-pir/v11/candidates'))
+PRODUCT_UNITS = tuple(sorted({u for units in H.UNITS.values() for u in units}))
+MAX_OWNER_RECORDS = 4096
+MAX_OWNER_RECORD_BYTES = 4 << 20
+MAX_OWNER_BYTES = 128 << 20
+PID_KEY = re.compile(r'(?:^|_)pid$')
+
+
+def namespaces():
+    """Every retained owner namespace a wrapper writes on a host, with its record pattern."""
+    return (('schema', SCHEMA, '*.json'), ('host-actions', schema_fence.HOST_ACTIONS, '*/*.json'),
+            ('input-staging', schema_fence.INPUT_STAGING, '*.json'), ('qualification-actions', REMOTE, '*.json'),
+            ('publication-job', PUBLICATION_JOB, '*.json'))
+
+
+def owner_records():
+    """Every retained owner record, not only the latest; incomplete or unknown scope refuses."""
+    records, total = [], 0
+    for name, root, pattern in namespaces():
+        if not root.exists() and not root.is_symlink():
+            continue
+        require(root.is_dir() and not root.is_symlink(), 'owner namespace is not a plain directory: '+name)
+        for path in sorted(root.glob(pattern)):
+            if path.name == 'latest.json' or path.name.endswith('.request.json'):
+                continue  # pointers and retained requests name no process
+            require(path.is_file() and not path.is_symlink(), 'owner record is not a plain file: '+str(path))
+            size = path.stat().st_size
+            total += size
+            require(len(records) < MAX_OWNER_RECORDS and size <= MAX_OWNER_RECORD_BYTES and total <= MAX_OWNER_BYTES,
+                    'owner namespaces exceed the reconciliation bound; scope is incomplete')
+            raw = path.read_bytes()
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                raise ValueError('unreadable owner record; scope is unknown: '+str(path)) from None
+            records.append({'namespace':name, 'path':path, 'sha256':hashlib.sha256(raw).hexdigest(),
+                            'value':value, 'mtime':path.stat().st_mtime})
+    return records
+
+
+def recorded_processes(value, fallback):
+    """Every process a record names: exact identities, and bare PIDs with a start bound."""
+    found, stack, nodes = [], [(value, fallback)], 0
+    while stack:
+        item, bound = stack.pop()
+        nodes += 1
+        require(nodes <= 200000, 'owner record exceeds the reconciliation bound')
+        if isinstance(item, list):
+            stack += [(v, bound) for v in item]
+            continue
+        if not isinstance(item, dict):
+            continue
+        own = next((item[k] for k in ('started_unix', 'started', 'started_at') if number(item.get(k))), bound)
+        if type(item.get('pid')) is int and type(item.get('start_ticks')) is int and 'boot_id' in item:
+            found.append({'key':'identity', 'pid':item['pid'], 'start_ticks':item['start_ticks'], 'boot_id':item['boot_id']})
+        else:
+            for key, pid in item.items():
+                if PID_KEY.search(key) and type(pid) is int and pid > 1:
+                    ticks = item.get('process_start') if key == 'pid' and type(item.get('process_start')) is int else None
+                    found.append({'key':key, 'pid':pid, 'start_ticks':ticks, 'before_unix':own})
+        stack += [(v, own) for v in item.values() if isinstance(v, (dict, list))]
     return found
 
 
-def owner_processes(record):
-    """Recorded owner and child identities, plus bare PIDs with their start time."""
-    identities, bare = [], []
-    for key in ('owner', 'launcher'):
-        if isinstance(record.get(key), dict):
-            identities.append(record[key])
-    for child in record.get('children', []):
-        if isinstance(child, dict) and isinstance(child.get('identity'), dict):
-            identities.append(child['identity'])
-    if type(record.get('pid')) is int and number(record.get('started_unix')):
-        bare.append((record['pid'], record['started_unix']))
-    return identities, bare
+def process_table():
+    """Every live process: state, parentage, session, group, start, executable, argv and cgroup."""
+    table, boot = {}, boot_id()
+    for entry in PROC.iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            fields = stat_fields(pid)
+            argv = (entry/'cmdline').read_bytes()[:65536].split(b'\0')
+            try:
+                exe = os.readlink(entry/'exe')
+            except FileNotFoundError:
+                exe = None  # kernel thread or just exited
+            cgroup = (entry/'cgroup').read_text()
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+        except PermissionError:
+            raise ValueError('process table is unreadable; reconciliation scope is unknown') from None
+        table[pid] = {'pid':pid, 'state':fields[0], 'ppid':int(fields[1]), 'pgid':int(fields[2]), 'session':int(fields[3]),
+                      'start_ticks':int(fields[19]), 'boot_id':boot, 'exe':exe,
+                      'argv':[a.decode(errors='replace') for a in argv if a][:32], 'cgroup':cgroup}
+    return table
+
+
+def process_live(process, recorded):
+    """Whether a table entry is the recorded process, never a later reuse of its PID."""
+    if process is None or process['state'] == 'Z':
+        return False
+    if recorded.get('boot_id') is not None:
+        return recorded['boot_id'] == process['boot_id'] and recorded['start_ticks'] == process['start_ticks']
+    if recorded.get('start_ticks') is not None:
+        return recorded['start_ticks'] == process['start_ticks']
+    return started_unix_from(process['start_ticks']) <= recorded['before_unix']+2
+
+
+def started_unix_from(ticks):
+    boot = next(int(line.split()[1]) for line in (PROC/'stat').read_text().splitlines() if line.startswith('btime '))
+    return boot+ticks/os.sysconf('SC_CLK_TCK')
+
+
+def ancestry(table, pid):
+    found = set()
+    while pid in table and pid not in found and pid > 1:
+        found.add(pid)
+        pid = table[pid]['ppid']
+    return found
+
+
+def under_owned_roots(process):
+    paths = [process['exe'] or ''] + process['argv']
+    return any(p.startswith('/') and any(Path(p) == r or r in Path(p).parents for r in OWNED_ROOTS) for p in paths)
+
+
+def in_units(process, units):
+    return any(line.rstrip().endswith('/'+u) or '/'+u+'/' in line for line in process['cgroup'].splitlines() for u in units)
 
 
 def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=None):
-    """Raw quiescence evidence of every owner namespace and transient owner unit.
+    """Raw quiescence evidence of every retained owner and every live process on this host.
 
-    The shared fence proves each latest owner reached a terminal status. That is
-    not process quiescence, so every recorded identity must also be dead, a bare
-    recorded PID must not name a process that started before its record, and
-    every transient owner unit must have no main PID and an empty cgroup. Only
-    this qualification's own record and unit are exempt, and only on the owner.
+    The shared fence proves only that each latest owner reached a terminal
+    status. Every retained record of every owner namespace is therefore read,
+    within a fixed bound that refuses incomplete scope: a recorded identity or
+    bare PID must not be alive, and no live process may remain in the session
+    or process group of a dead recorded owner (an escaped descendant). Every
+    live process running from an owner root outside a product unit, this owner
+    or the caller's own ancestry is also an escaped owner, which covers a
+    descendant that left its session and never inherited the lock. Transient
+    owner units need no main PID and an empty cgroup. Only this qualification's
+    own record and unit are exempt, and only on the owner.
     """
     schema_fence.local_schema_fence(skip_input=skip_input)
-    findings = {'namespaces':{}, 'units':{}, 'live':[]}
-    for name, path in owner_namespaces().items():
-        require(not path.is_symlink() and path.stat().st_size <= 4 << 20, 'invalid owner record: '+name)
-        record = json.loads(path.read_bytes())
-        entry = {'path':str(path), 'status':record.get('status'), 'phase':record.get('phase'), 'live':[]}
-        if not (own_request is not None and record.get('request_sha256') == own_request):
-            identities, bare = owner_processes(record)
-            for identity in identities:
-                if alive(identity):
-                    entry['live'].append(identity)
-            for pid, start in bare:
-                try:
-                    if stat_fields(pid)[0] != 'Z' and started_unix(pid) <= start+2:
-                        entry['live'].append({'pid':pid, 'started_unix':start})
-                except (OSError, ValueError, IndexError):
-                    pass
-        findings['namespaces'][name] = entry
-        findings['live'] += [(name, item) for item in entry['live']]
+    table = process_table()
+    exempt = ancestry(table, os.getpid())
+    own_units = PRODUCT_UNITS + ((own_unit+'.service',) if own_unit else ())
+    findings = {'records':[], 'units':{}, 'live':[], 'processes':{'scanned':len(table)}}
+    recorded_pids = []
+    for record in owner_records():
+        value = record['value']
+        entry = {'namespace':record['namespace'], 'path':str(record['path']), 'sha256':record['sha256'],
+                 'status':value.get('status') if isinstance(value, dict) else None, 'processes':[]}
+        own = own_request is not None and isinstance(value, dict) and value.get('request_sha256') == own_request
+        if not own:
+            for item in recorded_processes(value, record['mtime']):
+                live = process_live(table.get(item['pid']), item)
+                entry['processes'].append(dict(item, live=live))
+                recorded_pids.append(item['pid'])
+                if live and item['pid'] not in exempt:
+                    findings['live'].append(('owner', record['namespace'], item['pid']))
+        findings['records'].append(entry)
+    escaped = []
+    for pid in sorted(set(recorded_pids)):
+        if pid in table:
+            continue  # alive (judged above) or reused, which no surviving group of the old PID permits
+        escaped += [p for p in table.values() if (p['session'] == pid or p['pgid'] == pid) and p['state'] != 'Z'
+                    and p['pid'] not in exempt and not in_units(p, own_units)]
+    roots = [p for p in table.values() if p['state'] != 'Z' and p['pid'] not in exempt and under_owned_roots(p)
+             and not in_units(p, own_units)]
+    for process in {p['pid']:p for p in escaped+roots}.values():
+        findings['live'].append(('escaped', process['pid'], process['exe'], process['argv'][:4]))
+    findings['processes'].update(escaped=[p['pid'] for p in escaped], owned_roots=[p['pid'] for p in roots])
     listing = commands_.run(['systemctl', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full',
                              'transparent-activity-*', 'transparent-full-burst-*'], timeout=10).decode()
     for line in listing.splitlines():
@@ -1088,8 +1201,8 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
                 and commands_.empty_cgroup(state))
         findings['units'][unit] = {k:state.get(k) for k in ('ActiveState', 'SubState', 'MainPID', 'Result', 'ControlGroup')}
         if not idle:
-            findings['live'].append((unit, findings['units'][unit]))
-    require(not findings['live'], 'owner processes or units are not quiescent: %s' % [n for n, _ in findings['live']][:8])
+            findings['live'].append(('unit', unit))
+    require(not findings['live'], 'owner processes or units are not quiescent: %s' % findings['live'][:8])
     return findings
 
 

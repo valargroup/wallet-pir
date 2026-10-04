@@ -585,6 +585,19 @@ class FakeSystem:
         return self.control_status
 
 
+REAL_READLINK = os.readlink
+
+
+def readable_processes():
+    """Tests run unprivileged: another user's executable link reads as absent, never as owned."""
+    def readlink(path, *args, **kwargs):
+        try:
+            return REAL_READLINK(path, *args, **kwargs)
+        except PermissionError:
+            raise FileNotFoundError(path) from None
+    return patch.object(Q.os, 'readlink', readlink)
+
+
 def fake_processes(system):
     """Process identity and executables from the in-memory system, not /proc."""
     return (patch.object(Q, 'process_identity', lambda pid: {'pid':pid, 'start_ticks':pid, 'session':pid, 'boot_id':'fake'}),
@@ -807,7 +820,9 @@ class OwnerFindingTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         for item in (patch.object(schema_fence, 'INPUT_STAGING', self.root/'owners'),
                      patch.object(schema_fence, 'HOST_ACTIONS', self.root/'host-actions'),
-                     patch.object(Q, 'REMOTE', self.root/'actions')):
+                     patch.object(Q, 'REMOTE', self.root/'actions'), patch.object(Q, 'SCHEMA', self.root/'schema'),
+                     patch.object(Q, 'PUBLICATION_JOB', self.root/'publication'),
+                     patch.object(Q, 'OWNED_ROOTS', (self.root/'owned',)), readable_processes()):
             item.start(); self.addCleanup(item.stop)
         self.child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
         self.addCleanup(lambda: self.child.poll() is None and self.child.kill())
@@ -832,7 +847,101 @@ class OwnerFindingTests(unittest.TestCase):
             Q.owner_findings(system)
         self.child.kill(); self.child.wait()
         findings = Q.owner_findings(system)
-        self.assertEqual(set(findings['namespaces']), {'host-actions', 'qualification-actions'})
+        self.assertEqual({r['namespace'] for r in findings['records']}, {'host-actions', 'qualification-actions'})
+
+    def test_every_retained_record_not_only_the_latest_is_reconciled(self):
+        system = FakeCommands()
+        (self.root/'host-actions/transparent-schema-0').mkdir(parents=True)
+        durable.atomic_json(self.root/'host-actions/transparent-schema-0/old.json',
+                            {'status':'reconciled', 'pid':self.child.pid, 'started_unix':time.time()+1})
+        self.host_action({'status':'passed'})  # the latest owner is terminal and dead
+        with self.assertRaisesRegex(ValueError, "'owner', 'host-actions', %d" % self.child.pid):
+            Q.owner_findings(system)
+        durable.atomic_json(self.root/'host-actions/transparent-schema-0/old.json', {'status':'reconciled'})
+        (self.root/'owners').mkdir()
+        durable.atomic_json(self.root/('owners/'+'e'*64+'.json'), {'request_sha256':'e'*64, 'status':'staged',
+                            'children':[{'name':'native', 'identity':Q.process_identity(self.child.pid)}]})
+        durable.atomic_json(self.root/('owners/'+'f'*64+'.json'), {'request_sha256':'f'*64, 'status':'staged'})
+        durable.atomic_json(self.root/'owners/latest.json', {'request_sha256':'f'*64})
+        with self.assertRaisesRegex(ValueError, "'owner', 'input-staging'"):
+            Q.owner_findings(system)
+        durable.atomic_json(self.root/('owners/'+'e'*64+'.json'), {'request_sha256':'e'*64, 'status':'staged',
+                            'pid':self.child.pid, 'process_start':Q.process_identity(self.child.pid)['start_ticks']})
+        with self.assertRaisesRegex(ValueError, 'not quiescent'):
+            Q.owner_findings(system)  # the upload owner format: PID with kernel start ticks
+        (self.root/'schema').mkdir()
+        durable.atomic_json(self.root/'schema/transparent-schema-1.json', {'journal_version':1, 'status':'committed',
+                            'v10_reconciliation':{'preparations':[{'status':'running', 'pid':self.child.pid, 'started':time.time()}]}})
+        os.unlink(self.root/('owners/'+'e'*64+'.json'))
+        with self.assertRaisesRegex(ValueError, "'owner', 'schema'"):
+            Q.owner_findings(system)  # a nested owner inside a terminal journal
+        self.child.kill(); self.child.wait()
+        findings = Q.owner_findings(system)
+        self.assertEqual({r['namespace'] for r in findings['records']}, {'host-actions', 'input-staging', 'schema'})
+        self.assertTrue(all(r['sha256'] for r in findings['records']))
+        schema = next(r for r in findings['records'] if r['namespace'] == 'schema')
+        self.assertEqual(schema['processes'][0]['live'], False)  # retained raw verdicts
+
+    def test_escaped_descendant_of_a_dead_terminal_owner(self):
+        self.child.kill(); self.child.wait()
+        ready = self.root/'grandchild'
+        parent = subprocess.Popen([sys.executable, '-c', 'import subprocess, sys, time; '
+                                   'subprocess.Popen([sys.executable, "-c", "import pathlib, time; pathlib.Path(%r).write_text(\'x\'); time.sleep(60)"])' % str(ready)],
+                                  start_new_session=True)
+        identity = Q.process_identity(parent.pid)
+        parent.wait()
+        for _ in range(100):
+            if ready.exists():
+                break
+            time.sleep(.05)
+        self.host_action({'status':'passed', 'owner':identity})  # terminal, and its owner is dead
+        survivors = Q.session_members([identity['session']])
+        self.addCleanup(lambda: [os.kill(p, signal.SIGKILL) for p in Q.session_members([identity['session']])])
+        self.assertTrue(survivors)
+        with self.assertRaisesRegex(ValueError, "'escaped', %d" % survivors[0]):
+            Q.owner_findings(FakeCommands())
+        for pid in survivors:
+            os.kill(pid, signal.SIGKILL)
+        for _ in range(100):
+            if not Q.session_members([identity['session']]):
+                break
+            time.sleep(.05)
+        Q.owner_findings(FakeCommands())
+
+    def test_a_process_from_an_owner_root_outside_any_unit_is_escaped(self):
+        self.child.kill(); self.child.wait()
+        (self.root/'owned').mkdir()
+        (self.root/'owned/native.py').write_text('import time; time.sleep(60)')
+        stray = subprocess.Popen([sys.executable, str(self.root/'owned/native.py')], start_new_session=True)
+        self.addCleanup(lambda: stray.poll() is None and stray.kill())
+        with self.assertRaisesRegex(ValueError, "'escaped', %d" % stray.pid):
+            Q.owner_findings(FakeCommands())  # no record names it and it holds no lock
+        stray.kill(); stray.wait()
+        findings = Q.owner_findings(FakeCommands())
+        self.assertEqual(findings['processes']['owned_roots'], [])
+
+    def test_incomplete_or_unknown_scope_refuses(self):
+        self.child.kill(); self.child.wait()
+        (self.root/'owners').mkdir()
+        for name in ('a', 'b'):
+            durable.atomic_json(self.root/('owners/%s.json' % (name*64)), {'request_sha256':name*64, 'status':'staged'})
+        with patch.object(Q, 'MAX_OWNER_RECORDS', 1):
+            with self.assertRaisesRegex(ValueError, 'scope is incomplete'):
+                Q.owner_findings(FakeCommands())
+        (self.root/'owners/garbled.json').write_text('{not json')
+        with self.assertRaisesRegex(ValueError, 'scope is unknown'):
+            Q.owner_findings(FakeCommands())
+        os.unlink(self.root/'owners/garbled.json')
+        os.symlink(self.root/('owners/'+'a'*64+'.json'), self.root/'owners/link.json')
+        with self.assertRaisesRegex(ValueError, 'not a plain file'):
+            Q.owner_findings(FakeCommands())
+        os.unlink(self.root/'owners/link.json')
+        def denied(path, *args, **kwargs):
+            raise PermissionError(path)
+        with patch.object(Q.os, 'readlink', denied):
+            with self.assertRaisesRegex(ValueError, 'process table is unreadable'):
+                Q.owner_findings(FakeCommands())
+        Q.owner_findings(FakeCommands())
 
     def test_unfinished_fence_and_live_owner_units(self):
         self.host_action({'status':'running'})
@@ -885,7 +994,9 @@ class RemoteTests(unittest.TestCase):
                      patch.object(Q.ProductionLock, 'PATH', self.root/'lock'),
                      patch.object(Q.ProductionLock, 'MACHINE_ID', self.root/'machine'),
                      patch.object(Q.ProductionLock, 'ROOT_UID', os.geteuid()), patch.object(Q, 'LOSS_HOLD_SECONDS', 0),
-                     patch.object(Q.RemoteActor, 'identity', lambda self: None), *fake_processes(self.system)):
+                     patch.object(Q.RemoteActor, 'identity', lambda self: None), *fake_processes(self.system),
+                     patch.object(Q, 'SCHEMA', self.root/'schema'), patch.object(Q, 'PUBLICATION_JOB', self.root/'publication'),
+                     readable_processes()):
             item.start(); self.addCleanup(item.stop)
 
     def remote(self, operation='restart', role='worker', **extra):
