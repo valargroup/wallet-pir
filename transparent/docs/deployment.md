@@ -1596,6 +1596,224 @@ Root's ordered path, without rebuilding the old CI or native chain:
 
 None of this has been executed. Fixture tests are source evidence only.
 
+#### Deployed candidate qualification
+
+After the version-2 product transaction commits, `schema-qualify-*` measures
+the deployed candidate. Its module is
+`transparent/ops/lib/activity_deployed_qualification.py`. Run it on the pinned
+root coordinator from a staged operations source that contains the module.
+That source can be newer than the product transaction's source.
+
+- `schema-qualify-plan --request F --request-sha256 H` prints the plan and its
+  digest. It does not read hosts.
+- `schema-qualify-preflight` uses the same arguments.
+- `schema-qualify-run` adds `--expect-plan-sha256 H` and launches the owner.
+- `schema-qualify-status --request-sha256 H` reports the owner.
+- `schema-qualify-reconcile --request-sha256 H` reconciles the owner after it
+  stops.
+- `schema-qualify-summary --transaction ID` is read-only. It prints the
+  capacity decision from that transaction's reconciled trials.
+
+The closed request has `version=1`, `kind`, `source_sha`, `attempt`,
+`transaction` and `recipe_sha256`. Some kinds take more fields:
+
+- `capacity` adds `level`, `trial` and the reviewed `sample`, a loadtest sample
+  object of at most 8 MiB.
+- `fault` adds `fault`.
+- A fault that targets a worker also needs `target`.
+- `rollback-redeploy` also needs `rolled_back_transaction`.
+
+Requests cannot carry URLs, argv, paths, units, signals or thresholds.
+
+Every action rechecks the same deployment:
+
+- The latest schema transaction is exactly `transaction`. Its status is
+  `committed`, and every forward phase passed under `recipe_sha256`.
+- The recipe's product specification is version 2 for candidate `c3c66b9b`.
+- The rollback budgets are unchanged.
+- The candidate `rate-query` and `transparent-loadtest` match their pins.
+- The load fixture, recovery sample, assignment and inventory match their
+  checksums.
+- The scaler policy is `observe`, and the quality supervisor is stopped with an
+  empty cgroup.
+- The coordinator has at least 20% memory and disk headroom.
+- Every router and worker answers a read-only SSH probe through the staged
+  wrapper. The probe checks that host's schema, host-action and input fences and
+  its unfinished qualification actions. It also checks 20% headroom and records
+  restart and OOM counters.
+- Every worker is ready on the candidate executable.
+
+The historical 12ce publication, assignment, samples and rollback reader stay
+unchanged; only the forward v11 recovery reader is the candidate client.
+
+Launch then works in this order:
+
+1. It records durable intent under the shared input-staging fence
+   (`latest.json`). Every other wrapper mutation and a second qualification
+   refuse until reconcile, so freshness and capacity never overlap.
+2. It retains the request, plan and preflight as read-only files under
+   `/srv/transparent-activity/qualification/<request SHA>`.
+3. It starts the fixed transient unit `transparent-activity-qualification-<prefix>`
+   with `Restart=no`, `KillMode=control-group` and `RuntimeMaxSec`.
+
+The unit's owner reacquires the production lock. Clients start in their own
+sessions and inherit the lock. Each process's PID, start ticks and boot ID are
+recorded before and after it starts.
+
+Health is checked every 5 seconds on the coordinator and every 60 seconds on
+remote hosts. Any of these stops the activity:
+
+- headroom below 20%
+- an OOM
+- a changed `MainPID` or `NRestarts` outside the fault under test
+- a quality supervisor that starts
+- a lost lock
+
+The owner writes `result.json` exactly once and seals all raw files read-only.
+Reconcile requires all of the following:
+
+- the lock is free
+- the unit has no main PID and its cgroup is empty
+- no recorded process or owned session is alive
+- every remote action has finished
+
+An interrupted run gets an `interrupted` result, and its partial raw files are
+kept. If SSH drops, run status and reconcile again; never repeat a request.
+
+**Staged load.** Freshness must permit the run first: within 300 seconds, one
+new canonical block must be visible at both public origins within 30 seconds and
+at every recent replica within 60 seconds.
+
+The owner then runs five candidate `rate-query` clients against
+`https://transparent-pir.valargroup.dev`: 5 QPS for 120 seconds, then 20 QPS for
+600 seconds. Each query uses fresh keys, and the fixture splits queries
+40/40/10/10 across recent directory, recent pages, archive directory and archive
+pages, so recent/archive is 80/20.
+
+A stage passes only on raw output, with:
+
+- zero logical failures
+- at least 95% of the requested rate completed
+- p50 below 0.7 seconds and p99 below 2 seconds
+- transport attempt failures below 1%
+- a measured 75–85% recent share
+
+A freshness or health violation, or a failed stage, refuses escalation and keeps
+the failed stage.
+
+**Freshness.** The owner timestamps each new node height, then checks when the
+public map and every recent replica serve it. Every served tail must be the
+canonical block hash. Public must be within 30 seconds and recent within 60
+seconds.
+
+A violation or reorganization closes the current interval as failed, records it
+in `intervals.jsonl` and starts a new interval with no inherited credit. The run
+passes after 6 hours and 300 blocks in one interval; it fails after 12 hours
+without one. Sampling every second can only lengthen measured latency.
+
+**Capacity.** One request is one sustained 60-minute candidate
+`transparent-loadtest` scenario at level 8, 20 or 40. The scenario fixes:
+
+- three measured HTTP attempts per call
+- a 600-second recovery deadline, which covers the heavy class
+- SQLite stores
+- every worker's `/metrics` scrape
+- a preparation cache in the qualification namespace
+- the trial number as its seed
+
+The 20-wallet composition is the supplied mixed-20 scenario, and 40 doubles it.
+Eight slots cannot hold all nine classes; they omit `catch-up-7d` and keep the
+heavy `reused-tail` class. **Review this composition before the first run.**
+
+The evaluator reads `wallets.ndjson`, `requests.ndjson` and `metrics.ndjson`:
+
+- Only `exact` outcomes with exact events count as completed syncs.
+  `scheduled` wallets and request counts never count.
+- A trial fails if:
+  - any wallet lacks a terminal outcome
+  - failed or incomplete outcomes exceed 5%, heavy attempts included
+  - 503 attempts exceed 10%
+  - the window did not complete
+  - a worker restarted
+  - a worker's cgroup memory exceeded 80% of its limit
+  - freshness or health stopped it
+- Payload bytes, peak queue depth, revisions held, body bytes and overloads are
+  retained.
+
+Trials run in sequence, three per level. Up to three more are allowed only when
+an ordinary profile has fewer than 100 exact observations. Level 20 requires a
+passed level 8, and 40 requires 20. A failed trial ends the level.
+
+Pooled p95 targets are:
+
+- 5 seconds for small-active and the three catch-up classes
+- 10 seconds for `restore-6m`
+- 60 seconds for `restore-old` and the forty-script `multi-script`
+- 15 seconds for `unused`
+
+The heavy class has no latency target. Supported capacity is 50% of the lowest
+load-window exact-sync rate at the highest passing level.
+
+**Faults**, one per request:
+
+| Fault | Fixed action |
+| --- | --- |
+| `client-reopen` | Kills the owner's own loadtest client mid-sync, then integrity-checks its store |
+| `publication-interruption` | Restarts the coordinator publish controller |
+| `recent-worker-loss` | Stops the target recent replica's worker, waits 60 s, then starts it |
+| `archive-restart` | Restarts the target archive owner |
+| `router-restart` | Restarts router Caddy |
+| `rollback-redeploy` | Changes nothing; verifies retained journals |
+
+Remote actions run through hidden `schema-qualify-remote` under that host's own
+production lock. Each records durable intent before its single `systemctl`
+transition, and is never replayed.
+
+`rollback-redeploy` performs no effect. Root runs the reviewed `schema-rollback`
+and then `schema-deploy` of the same recipe. The fault then verifies the
+retained journals:
+
+- The original transaction is `rolled-back`, with no repair or v10 adoption.
+- All eight forward phases and the five rollback phases passed.
+- Each rollback phase stayed within 60/140/300/100/140 seconds, and the whole
+  rollback within 740 seconds.
+- The forward timeouts are still 1800 seconds.
+- The redeploy is the latest committed transaction of the same recipe, created
+  after rollback. An unchanged recipe digest keeps cache preparation 1200,
+  candidate warm 300 and restored-start 250 bound.
+
+Every fault requires the following:
+
+- The canonical query and reopened-wallet probes pass before the fault.
+- Within 900 seconds of the fault, the owner gets exact canonical encrypted
+  queries, the existing reopened-SQLite recovery proof, and worker
+  binary/map identity equal to the original baseline.
+- After recovery, a fresh health check passes, and the remote action and owned
+  clients have ended.
+
+**Missing assurance.** No result sets `qualified`. These gaps need native or
+external interfaces, not weaker gates:
+
+- **Quality alerts.** Their shadow state is APM configuration. The coordinator
+  verifies only that the quality supervisor is stopped.
+- **Continuation.** No native interface resumes a retained heavy or interrupted
+  SQLite store. Capacity and `client-reopen` therefore keep that store as
+  explicit incomplete evidence, and continuation stays unmeasured.
+- **Mid-preparation timing.** No native status shows a preparation in progress,
+  so the publication restart is not proven to land inside one.
+- **Cache corruption.** No reviewed, non-destructive way exists to inject cache
+  corruption. `archive-restart` exercises only an owner restart and cache
+  reload.
+- **`transparent-measure`.** It serves its own local shard set, so it cannot
+  measure a deployment and is not used.
+
+The capacity owner is limited to 10 GiB high and 12 GiB maximum memory. Other
+owners are limited to 4/6 GiB. CPU is 200% and swap is zero. The host-wide 20%
+floors still apply. These are proposed budgets for review, not measurements.
+
+Nothing here has run against production. The focused fixture tests are source
+evidence only.
+
 ### Failed-transaction source repair
 
 For an interrupted or failed rollback, immutable source staging may bind

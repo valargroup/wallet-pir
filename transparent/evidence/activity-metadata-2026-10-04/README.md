@@ -24,6 +24,8 @@ The earlier activity record is
 | [mutations.log](mutations.log) | Nineteen single-guard mutations of the new checks. Each made `test_activity_candidate.py` fail, and each source was restored. |
 | [upload-focused.log](upload-focused.log) | Focused suites on the guarded archive transfer change, run on the committed working tree: the new `test_activity_candidate_upload.py`, the candidate, input, preparation, product, lock, schema runner, baseline and host suites, and the deploy wrapper tests. All passed. |
 | [upload-mutations.log](upload-mutations.log) | Fourteen single-guard mutations of the transfer checks. Each made `test_activity_candidate_upload.py` fail, and each source was restored. |
+| [qualification-focused.log](qualification-focused.log) | The new 39-test `test_activity_deployed_qualification.py` suite for the [deployed qualification interface](../../docs/deployment.md#deployed-candidate-qualification), plus every `test_activity_*` suite. It records the module, test and wrapper digests. All passed. The evaluators ran on synthetic receipts in the native output formats; no client, host, HTTPS origin or systemd unit was used. |
+| [qualification-mutations.log](qualification-mutations.log) | Seventeen single-guard mutations of the qualification gates, ordering and recovery checks. Each made the new suite fail, and each source was restored. |
 
 ## How the pieces fit
 

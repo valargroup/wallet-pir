@@ -631,6 +631,34 @@ class FlowTests(unittest.TestCase):
         self.assertIn('original baseline identity not preserved', error['error'])
 
 
+class HealthTests(unittest.TestCase):
+    def sample(self, memory=.5, restarts='0', oom=0):
+        return {'unix':1, 'memory_available':memory, 'disk_available':{'/':.5},
+                'units':{Q.PUBLISHER:{'MainPID':'7', 'NRestarts':restarts, 'oom':oom, 'oom_kill':0}}}
+
+    def test_headroom_restarts_oom_and_quality_supervisor(self):
+        value = request()
+        q = Q.Qualification(SimpleNamespace(lock={}), value, durable.digest(value))
+        q.lock = SimpleNamespace(verify=lambda: None)
+        q.baseline = {'local':self.sample(), 'remote':{'router':{'oom':0, 'oom_kill':0, 'restarts':'0', 'pid':'9'}}}
+        q.probe_all = lambda: {'router':{'oom':0, 'oom_kill':0, 'restarts':'0', 'pid':'9'}}
+        stream = open(os.devnull, 'w'); self.addCleanup(stream.close)
+        class Running(FakeCommands):
+            main_pid, active = '5', 'active'
+        cases = ((self.sample(memory=.19), FakeCommands, 'headroom'), (self.sample(restarts='1'), FakeCommands, 'NRestarts'),
+                 (self.sample(oom=1), FakeCommands, 'oom'), (self.sample(), Running, 'quality supervisor'))
+        for current, commands, message in cases:
+            with patch.object(Q, 'local_resources', lambda: current), patch.object(Q.H, 'Commands', commands):
+                with self.assertRaisesRegex(ValueError, message):
+                    q.health(stream)
+        with patch.object(Q, 'local_resources', lambda: self.sample(restarts='1')), patch.object(Q.H, 'Commands', FakeCommands):
+            q.health(stream, allowed=(Q.PUBLISHER,))
+            q.next_remote = 0
+            q.probe_all = lambda: {'router':{'oom':0, 'oom_kill':1, 'restarts':'0', 'pid':'9'}}
+            with self.assertRaisesRegex(ValueError, 'remote restart or OOM'):
+                q.health(stream, allowed=(Q.PUBLISHER,))
+
+
 class DeploymentTests(unittest.TestCase):
     """Binding to the exact committed candidate transaction."""
     def setUp(self):
