@@ -236,7 +236,7 @@ def report(data):
         cutoffs=sorted(set(THRESHOLDS)|{v for pair in frontiers.values() for v in pair})
         rows={}
         for t in cutoffs:
-            row={}
+            row={'single_row_inline_feasible':t+4+(48 if c=='display-v1' else 35+len(a.uleb(t)))<=a.ROW}
             for bound in ('lower','upper'):
                 def metric(b,kind):
                     value=0
