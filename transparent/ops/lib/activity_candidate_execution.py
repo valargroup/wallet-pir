@@ -130,6 +130,10 @@ MAX_STDERR = 1 << 20
 MAX_HEADER = 8192
 MAX_REPLY = 4 << 20
 MAX_HOSTS = 32
+# This qualification is for the retained five-host production fleet. A pinned
+# inventory is still partial if it omits an entire host; surveying every entry
+# in such an inventory does not reconcile the production fleet.
+FLEET_HOSTS = ('coordinator', 'router', 'worker-1', 'worker-2', 'worker-3')
 MAX_SURVEY = 1 << 20
 MAX_LISTED = 64
 # Owner namespace enumeration bounds; reaching any refuses the survey.
@@ -356,6 +360,9 @@ def validate(request):
             {'host': request['coordinator'], 'machine_id': request['machine_id']} in hosts,
             'candidate execution host inventory is partial, duplicated or omits the coordinator')
     require(len(durable.canonical(request)) <= MAX_HEADER, 'candidate execution request exceeds bound')
+    require(request['coordinator'] == 'coordinator' and
+            [h['host'] for h in hosts] == list(FLEET_HOSTS),
+            'candidate execution requires the complete five-host production fleet')
     return request
 
 
@@ -1537,6 +1544,8 @@ class Execution:
         require(inventory.lock.get('type') == 'remote', 'candidate execution requires a remote coordinator inventory')
         require(inventory.ssh.get('mode') == 'pinned', 'candidate execution requires pinned SSH host keys')
         self.host = inventory.lock['host']
+        require(self.host == 'coordinator' and sorted(inventory.hosts) == list(FLEET_HOSTS),
+                'candidate execution requires the complete five-host production fleet')
         require(1 <= len(inventory.hosts) <= MAX_HOSTS, 'candidate execution inventory host count is out of bounds')
         for name, entry in inventory.hosts.items():
             require(NAME.fullmatch(name) and isinstance(entry.get('machine_id'), str) and

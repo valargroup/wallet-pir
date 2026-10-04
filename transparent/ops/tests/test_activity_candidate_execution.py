@@ -210,6 +210,55 @@ class Channel:
         return line
 
 
+class ProductionFleet(unittest.TestCase):
+    """Use the actual production host set, without local-fixture overrides."""
+
+    def request(self):
+        return {'version': 2, 'kind': E.KIND, 'mode': 'artifact-verification',
+                'source_sha': 'e'*40, 'candidate_sha': C.SOURCE_SHA,
+                'candidate_identity': C.identity(), 'preparation_request_sha256': 'a'*64,
+                'publication_sha256': E.MAP_SHA256, 'coordinator': 'coordinator',
+                'machine_id': '1'*32, 'hosts': [
+                    {'host': name, 'machine_id': str(index+1)*32}
+                    for index, name in enumerate(E.FLEET_HOSTS)], 'attempt': 1}
+
+    def test_receiver_refuses_every_omitted_host_and_same_size_foreign_fleet(self):
+        original = self.request()
+        self.assertEqual(len(original['hosts']), 5)
+        self.assertIs(E.validate(original), original)
+        for omitted in E.FLEET_HOSTS:
+            request = copy.deepcopy(original)
+            request['hosts'] = [h for h in request['hosts'] if h['host'] != omitted]
+            with self.subTest(omitted=omitted), self.assertRaises(ValueError):
+                E.validate(request)
+        request = copy.deepcopy(original)
+        request['hosts'][-1]['host'] = 'worker-4'
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            E.validate(request)
+        request = copy.deepcopy(original)
+        request.update(coordinator='router', machine_id='2'*32)
+        with self.assertRaisesRegex(ValueError, 'complete five-host'):
+            E.validate(request)
+
+    def test_client_refuses_partial_inventory_before_constructing_transport(self):
+        request = self.request()
+        base = SimpleNamespace(lock={'type': 'remote', 'host': 'coordinator'},
+            ssh={'mode': 'pinned'}, services={}, hosts={
+                h['host']: {'machine_id': h['machine_id']} for h in request['hosts']})
+        with patch.object(E, 'SSHExecutor', return_value=object()) as transport:
+            client = E.Execution(base, 'e'*40, mode='artifact-verification',
+                                 attempt=1, preparation='a'*64)
+            self.assertEqual(client.request(), request)
+            transport.assert_called_once()
+        for omitted in E.FLEET_HOSTS:
+            inventory = copy.deepcopy(base)
+            del inventory.hosts[omitted]
+            with self.subTest(omitted=omitted), patch.object(E, 'SSHExecutor') as transport:
+                with self.assertRaisesRegex(ValueError, 'complete five-host'):
+                    E.Execution(inventory, 'e'*40)
+                transport.assert_not_called()
+
+
 class Fixture(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory(); self.addCleanup(tmp.cleanup)
@@ -234,6 +283,7 @@ class Fixture(unittest.TestCase):
                                    (E, 'staged_source', lambda: 'e'*40), (E, 'SAMPLE_SECONDS', .1),
                                    (E, 'host_abi', lambda: {'machine': 'x86_64', 'libc': E.GLIBC, 'cpu_flags': sorted(E.CPU_FLAGS)}),
                                    (E, 'resources', lambda paths: dict(HEALTHY, observed_unix=time.time())),
+                                   (E, 'FLEET_HOSTS', ('coordinator', 'worker-a')),
                                    (E.schema_fence, 'INPUT_STAGING', self.owners), (E, 'SCHEMA', self.fence/'schema'),
                                    (E.schema_fence, 'HOST_ACTIONS', self.fence/'host-actions')):
             p = patch.object(thing, name, value); p.start(); self.addCleanup(p.stop)
@@ -249,7 +299,9 @@ class Fixture(unittest.TestCase):
         self.publication = self.root/'publication'
         self.publish()
         p = patch.object(E, 'PUBLICATION', self.publication); p.start(); self.addCleanup(p.stop)
-        self.constants, self.budgets = {}, {}
+        # Two local fixture hosts only. The production module has no option to
+        # relax its fixed five-host set; subprocess fixtures patch it too.
+        self.constants, self.budgets = {'FLEET_HOSTS': ['coordinator', 'worker-a']}, {}
 
     def tearDown(self):
         # Never leave fixture processes behind, even after a failed assertion.
