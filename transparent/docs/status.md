@@ -101,10 +101,21 @@ write no sidecar. The path therefore:
   every committed block's sidecar and block hash under quiescence;
 - refuses controller units with stop-propagating or restarting dependents.
 
-Fifty-four focused tests passed, and all 33 single-guard mutations were caught. A
-hub-only probe projects about 4.5 minutes of copying while the controller is
-stopped. That projection is not a coordinator measurement. No host was contacted
-and no snapshot was taken; see
+A hub-only probe projects about 4.5 minutes of copying while the controller is
+stopped. That projection is not a coordinator measurement.
+
+Root's provisional review then asked for more assurance, and the path now:
+
+- reads every pinned host afresh before any effect, with exact machine pins, the
+  shared owner fence, source-staging receipts and recorded live owner or
+  descendant processes, keeping raw receipts;
+- carries one total deadline, with sampled floors, through every scan, hash,
+  remote read, anchor RPC and the final re-verification;
+- reserves disk for the exact bytes still to be copied under quiescence;
+- re-runs the record-boundary and anchor checks over the copied blocks.
+
+Sixty-seven focused tests passed, and all 50 single-guard mutations were caught.
+No host was contacted and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
 
 ## Activity metadata candidate, 2026-09-30

@@ -33,6 +33,7 @@ S = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(S)
 REAL_FENCE = S.schema_fence.local_schema_fence
 MACHINE = 'c'*32
+WORKER = 'd'*32
 PYTHON = os.path.realpath(sys.executable)
 UNIT = 'fixture-journal-writer.service'
 THROUGH = 3
@@ -234,11 +235,33 @@ class FakeSystemd:
         self.write(state)
 
 
+class FakeExecutor:
+    """Pinned SSH stand-in: every remote host is a private tree under hosts/<name>."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+
+    def call(self, host, op, deadline=120, **arguments):
+        assert 0 < deadline
+        failure = self.root/('hosts/%s.unreachable' % host)
+        if failure.exists():
+            raise S.RemoteError('%s: %s failed (exit 255): connection refused' % (host, op))
+        base = self.root/'hosts'/host
+        local = lambda path: str(base/str(path).lstrip('/'))
+        if op == 'read_many':
+            found = S.host_helper.read_many([local(p) for p in arguments['paths']])
+            return {p:found[local(p)] for p in arguments['paths']}
+        if op == 'list_json':
+            return S.host_helper.list_json(local(arguments['path']))
+        return S.host_helper.OPERATIONS[op](**arguments)
+
+
 class FakeNode:
     def __init__(self, root):
         self.file = Path(root)/'node.json'
 
-    def block_hash(self, height):
+    def block_hash(self, height, timeout):
+        assert 0 < timeout <= 10
         overrides = json.loads(self.file.read_text()) if self.file.exists() else {}
         return overrides.get(str(height), display(height))
 
@@ -249,7 +272,9 @@ def configure(config, assign):
     for name, value in (('JOURNAL', root/'journal'), ('SNAPSHOTS', root/'snapshots/journal'),
                         ('OWNERS', root/'owners'), ('MAP', root/'publication/shards.json'),
                         ('RESULT', root/'publication/result.json'), ('CUTOFF', root/'publication/cutoff.json'),
-                        ('MEMINFO', root/'meminfo'), ('OWNER', os.getuid()), ('statvfs', disk(root))):
+                        ('MEMINFO', root/'meminfo'), ('OWNER', os.getuid()), ('statvfs', disk(root)),
+                        ('SOURCE', root/'ops/sources'), ('MACHINE_ID', root/'machine-id'),
+                        ('SSHExecutor', lambda inventory: FakeExecutor(root))):
         assign(S, name, value)
     assign(S.P, 'THROUGH', THROUGH)
     assign(S.schema_fence, 'INPUT_STAGING', root/'owners')
@@ -298,7 +323,8 @@ def entry(action, expected, config):
             S.owner_main(expected, systemd=systemd, node=node)
         else:
             request = json.loads((root/'request.json').read_text())
-            snapshot = S.Snapshot(None, request, expected, systemd=systemd, node=node)
+            inventory = S.descriptors.load_inventory(root/'inventory.json')
+            snapshot = S.Snapshot(inventory, request, expected, systemd=systemd, node=node)
             snapshot.stage(config['plan'])
     except S.Interrupted:
         return 75
@@ -321,6 +347,9 @@ class Fixture(unittest.TestCase):
         def patcher(thing, name, value):
             p = patch.object(thing, name, value); p.start(); self.addCleanup(p.stop)
         configure(self.config, patcher)
+        # In-process owners are this test process; real live-owner checks use others.
+        real_live = S.live
+        patcher(S, 'live', lambda text, *rest: (text is None or int(text.split()[0]) != os.getpid()) and real_live(text, *rest))
         (self.root/'config.json').write_text(json.dumps(self.config))
         (self.root/'child.py').write_text(CHILD)
         (self.root/'writer.py').write_text(WRITER)
@@ -352,7 +381,21 @@ class Fixture(unittest.TestCase):
         self.addCleanup(self.kill_writer)
         self.node = FakeNode(self.root)
         self.start_writer()
-        self.inventory = SimpleNamespace(lock={'type':'pinned_host', 'machine_id':MACHINE})
+        self.worker = self.root/'hosts/worker-01'
+        self.remote(S.MACHINE_ID).parent.mkdir(parents=True)
+        self.remote(S.MACHINE_ID).write_text(WORKER+'\n')
+        self.inventory = S.descriptors.load_inventory(self.write_inventory())
+
+    def write_inventory(self, **hosts):
+        path = self.root/'inventory.json'
+        path.write_text(json.dumps({'hosts':{'coordinator':{'machine_id':MACHINE}, 'worker-01':{'machine_id':WORKER}, **hosts},
+                                    'ssh':{'mode':'config'}, 'lock':{'type':'pinned_host', 'machine_id':MACHINE},
+                                    'services':{}}))
+        return path
+
+    def remote(self, path):
+        """The worker's copy of an absolute production-shaped path."""
+        return self.worker/str(path).lstrip('/')
 
     def kill_writer(self):
         pid = self.systemd.state()['pid']
@@ -800,7 +843,7 @@ class Stage(Fixture):
             info = path.lstat()
             self.assertEqual(stat.S_IMODE(info.st_mode), 0o700 if path.is_dir() else 0o400)
             self.assertTrue(path.is_dir() or info.st_nlink == 1)
-        manifest = S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request)
+        manifest = S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request, budget=S.Budget(time.monotonic()+60, 'test'))
         self.assertEqual(manifest['qualification'], S.NOT_QUALIFICATION)
         self.assertEqual(snapshot.status()['status'], 'staged')
         S.schema_fence.local_schema_fence()  # A staged owner no longer fences.
@@ -935,10 +978,10 @@ class Failures(Fixture):
         real = S.copy_file
         calls = [0]
 
-        def copy_file(source, destination, length, sample, progress):
+        def copy_file(source, destination, length, budget):
             calls[0] += 1
             hook(Path(source).name, calls[0])
-            return real(source, destination, length, sample, progress)
+            return real(source, destination, length, budget)
         with patch.object(S, 'copy_file', copy_file):
             record = self.owner_failure(snapshot, exception, message)
         self.failed(snapshot, record, status)
@@ -981,9 +1024,9 @@ class Failures(Fixture):
         snapshot = self.snapshot()
         real = S.copy_file
 
-        def copy_file(source, destination, length, sample, progress):
+        def copy_file(source, destination, length, budget):
             hook(Path(source).name, 0)
-            return real(source, destination, length, sample, progress)
+            return real(source, destination, length, budget)
         with patch.object(S, 'copy_file', copy_file):
             record = self.owner_failure(snapshot, S.Foreign, 'restarted during the snapshot')
         self.assertEqual(record['status'], 'restore-failed')
@@ -1153,8 +1196,10 @@ class Failures(Fixture):
         S.OWNERS.mkdir(exist_ok=True)
         durable = S.durable
         durable.atomic_json(other.retained, other.request)
+        inventory = other.pinned(self.inventory)
+        durable.atomic_json(other.retained_inventory, inventory)
         durable.atomic_json(other.owner, {'kind':S.KIND, 'request_sha256':other.identifier, 'status':'failed',
-                                          'phase':'adopted', 'events':[]})
+                                          'phase':'adopted', 'events':[], 'inventory_sha256':durable.digest(inventory)})
         durable.atomic_json(S.OWNERS/'latest.json', {'request_sha256':other.identifier})
         self.systemd.stop(UNIT, 5)
         with self.assertRaisesRegex(ValueError, 'stopped outside this owner'):
@@ -1185,7 +1230,7 @@ class Sidecars(Fixture):
             self.inprocess(snapshot)
         record = self.record(snapshot)
         self.assertEqual(record['status'], 'failed')
-        self.assertTrue(snapshot.partial.is_dir() and snapshot.inventory.exists())
+        self.assertTrue(snapshot.partial.is_dir() and snapshot.sidecar_inventory.exists())
         self.fenced()
         return snapshot, record
 
@@ -1206,7 +1251,7 @@ class Sidecars(Fixture):
         summary = record['snapshot']['display']
         self.assertEqual((summary['policy'], summary['sidecars'], summary['sidecars_absent_in_source']),
                          ('mirror-source', (BLOCKS+1)//2, BLOCKS//2))
-        manifest = S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request)
+        manifest = S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request, budget=S.Budget(time.monotonic()+60, 'test'))
         self.assertEqual([c['height'] for c in manifest['journal']['display']['coverage']], [0, 2])
         self.assertEqual(manifest['journal']['display']['coverage'][1]['hash'], display(2))
         self.assertEqual(manifest['contents']['sidecars'], (BLOCKS+1)//2)
@@ -1302,6 +1347,228 @@ def display_file(height):
     return display(height)+'.bin'
 
 
+class Fleet(Fixture):
+    """Fresh exact owner and process reads of every pinned host before effects."""
+
+    def worker_record(self, path, value):
+        target = self.remote(path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(value))
+
+    def worker_input(self, record):
+        identifier = 'b'*64
+        self.worker_record(S.schema_fence.INPUT_STAGING/'latest.json', {'request_sha256':identifier})
+        self.worker_record(S.schema_fence.INPUT_STAGING/(identifier+'.json'), {'request_sha256':identifier, **record})
+
+    def receipts(self, snapshot, label):
+        runs = sorted(snapshot.fleet_receipts.glob(label+'-*'))
+        self.assertTrue(runs)
+        return {p.stem:json.loads(p.read_text()) for p in runs[-1].iterdir()}
+
+    def test_the_host_inventory_stays_pinned_to_the_coordinator(self):
+        snapshot = self.snapshot()
+        self.assertIs(snapshot.inventory, self.inventory)  # Never shadowed by a private path.
+        self.assertEqual(snapshot.pinned(self.inventory)['lock'], {'type':'pinned_host', 'machine_id':MACHINE})
+        for lock in ({'type':'remote', 'host':'worker-01'}, {'type':'pinned_host', 'machine_id':WORKER}):
+            with self.assertRaisesRegex(ValueError, 'pinned coordinator inventory'):
+                snapshot.pinned(SimpleNamespace(hosts={}, ssh={}, lock=lock, services={}))
+        with self.assertRaisesRegex(ValueError, 'pinned coordinator inventory'):
+            snapshot.pinned(None)
+
+    def test_every_pinned_host_is_read_and_receipts_are_retained(self):
+        snapshot = self.snapshot()
+        record = self.inprocess(snapshot)
+        self.assertEqual([h['host'] for h in record['hosts']], ['coordinator', 'worker-01'])
+        for label in ('stage', 'owner'):
+            receipts = self.receipts(snapshot, label)
+            self.assertEqual({k:v['result'] for k, v in receipts.items()}, {'coordinator':'passed', 'worker-01':'passed'})
+            self.assertEqual(receipts['worker-01']['reads'][str(S.MACHINE_ID)].strip(), WORKER)
+        manifest = S.verify_tree(snapshot.target, record['manifest'], full=False)
+        self.assertEqual(manifest['hosts'], record['hosts'])
+
+    def test_pins_and_reachability_fail_closed_with_retained_receipts(self):
+        self.remote(S.MACHINE_ID).write_text('e'*32+'\n')
+        snapshot = self.snapshot()
+        with self.assertRaisesRegex(ValueError, 'worker-01 machine identity differs'):
+            snapshot.stage(self.plan(snapshot))
+        self.assertFalse(snapshot.owner.exists())
+        self.assertEqual(self.receipts(snapshot, 'stage')['worker-01']['result'], 'refused')
+        self.remote(S.MACHINE_ID).write_text(WORKER+'\n')
+        (self.root/'hosts/worker-01.unreachable').touch()
+        with self.assertRaisesRegex(S.RemoteError, 'connection refused'):
+            self.snapshot().preflight()
+        (self.root/'hosts/worker-01.unreachable').unlink()
+        self.inventory = S.descriptors.load_inventory(self.write_inventory(router={}))
+        with self.assertRaisesRegex(ValueError, 'router has no machine pin'):
+            self.snapshot().preflight()
+
+    def test_unfinished_remote_owners_and_source_staging_refuse(self):
+        self.worker_input({'status':'receiving', 'started_unix':time.time()})
+        with self.assertRaisesRegex(ValueError, 'unfinished input staging owner'):
+            self.snapshot().preflight()
+        self.worker_input({'status':'staged', 'finished_unix':time.time()-60})
+        self.worker_record(S.schema_fence.HOST_ACTIONS/'latest.json', {'transaction':'transparent-schema-x', 'request_id':'r'})
+        self.worker_record(S.schema_fence.HOST_ACTIONS/'transparent-schema-x/r.json', {'status':'running'})
+        with self.assertRaisesRegex(ValueError, 'unfinished remote host owner'):
+            self.snapshot().preflight()
+        self.worker_record(S.schema_fence.HOST_ACTIONS/'transparent-schema-x/r.json', {'status':'passed'})
+        self.worker_record(S.SOURCE.parent/'staging'/('a'*40+'.json'), {'version':1, 'status':'receiving', 'pid':1})
+        with self.assertRaisesRegex(ValueError, 'unfinished source staging'):
+            self.snapshot().preflight()
+        self.worker_record(S.SOURCE.parent/'staging'/('a'*40+'.json'), {'version':1, 'status':'failed'})
+        self.snapshot().preflight()
+        self.worker_record(S.schema_fence.INPUT_STAGING/'latest.json', {'request_sha256':'c'*64})
+        with self.assertRaisesRegex(ValueError, 'missing input staging owner|was not read'):
+            self.snapshot().preflight()
+
+    def test_live_recorded_descendants_refuse_and_reused_pids_do_not(self):
+        child = subprocess.Popen(['sleep', '30'])
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        time.sleep(.05)
+        start = S.process_start(child.pid)
+        self.worker_input({'status':'staged', 'pid':999999, 'child_pid':child.pid, 'finished_unix':time.time()})
+        with self.assertRaisesRegex(ValueError, 'live recorded owner or descendant: PID %d' % child.pid):
+            self.snapshot().preflight()
+        # The record was finished before this process started: a reused PID.
+        self.worker_input({'status':'staged', 'child_pid':child.pid, 'finished_unix':time.time()-3600})
+        self.snapshot().preflight()
+        self.worker_input({'status':'reconciled', 'owner':{'pid':child.pid, 'process_start':start}})
+        with self.assertRaisesRegex(ValueError, 'live recorded owner'):
+            self.snapshot().preflight()
+        self.worker_input({'status':'reconciled', 'owner':{'pid':child.pid, 'process_start':start+1}})
+        self.snapshot().preflight()
+        self.worker_input({'status':'staged', 'child_pid':child.pid})  # No record time fails closed.
+        with self.assertRaisesRegex(ValueError, 'live recorded owner'):
+            self.snapshot().preflight()
+
+    def test_owner_rechecks_every_host_before_any_effect(self):
+        snapshot = self.snapshot()
+        original = self.systemd.state()['pid']
+        with self.assertRaisesRegex(ValueError, 'unfinished input staging owner'):
+            self.inprocess(snapshot, lambda: self.worker_input({'status':'receiving', 'started_unix':time.time()}))
+        record = self.record(snapshot)
+        self.assertEqual((record['status'], record['phase']), ('failed', 'adopted'))
+        self.assertEqual((record['restoration']['started'], record['restoration']['writer']['pid']), (False, original))
+        self.assertFalse(snapshot.partial.exists())
+        self.assertEqual(self.receipts(snapshot, 'owner')['worker-01']['result'], 'refused')
+
+    def test_reconcile_rechecks_every_host_and_its_inventory(self):
+        state = self.systemd.state(); state['stop_error'] = True; self.systemd.write(state)
+        snapshot = self.snapshot()
+        with self.assertRaises(subprocess.CalledProcessError):
+            self.inprocess(snapshot)
+        (self.root/'hosts/worker-01.unreachable').touch()
+        with self.assertRaises(S.RemoteError):
+            self.reconcile(snapshot)
+        self.assertEqual(self.record(snapshot)['status'], 'failed')
+        self.assertEqual(self.receipts(snapshot, 'reconcile')['worker-01']['result'], 'refused')
+        (self.root/'hosts/worker-01.unreachable').unlink()
+        snapshot.inventory = S.descriptors.load_inventory(self.write_inventory(extra={'machine_id':'f'*32}))
+        with self.assertRaisesRegex(ValueError, 'reconcile inventory differs'):
+            self.reconcile(snapshot)
+        snapshot.inventory = S.descriptors.load_inventory(self.write_inventory())
+        self.assertEqual(self.reconcile(snapshot)['status'], 'reconciled')
+        self.assertEqual(self.receipts(snapshot, 'reconcile')['worker-01']['result'], 'passed')
+
+
+class Bounds(Fixture):
+    """One total deadline and sampled floors reach every long step."""
+
+    def test_every_long_step_refuses_an_expired_budget(self):
+        expired = S.Budget(time.monotonic()-1, 'expired')
+        request = self.request()
+        _, blocks = lengths(self.journal)
+        steps = [lambda: S.sidecar_estimate(self.journal, blocks, request['sidecars'], expired),
+                 lambda: list(S.iterate_records(self.journal/'blocks.bin', blocks, expired)),
+                 lambda: S.hash_file(self.journal/'events.bin', expired),
+                 lambda: self.snapshot().anchors(expired, 0, display(0)),
+                 lambda: S.fleet(self.inventory, expired, S.SSHExecutor),
+                 lambda: self.snapshot().preflight(expired)]
+        for number, step in enumerate(steps):
+            with self.subTest(step=number), self.assertRaises(subprocess.TimeoutExpired):
+                step()
+
+    def test_plan_scans_are_bounded_by_the_total(self):
+        with patch.object(S.Snapshot, 'budget', lambda self, label: S.Budget(time.monotonic()-1, label)):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.snapshot().plan()
+
+    def test_verification_samples_resources(self):
+        snapshot = self.snapshot()
+        real = S.inspect
+
+        def inspect(*args):
+            (self.root/'meminfo').write_text('MemTotal: 1000 kB\nMemAvailable: 100 kB\n')
+            return real(*args)
+        with patch.object(S, 'inspect', inspect):
+            with self.assertRaisesRegex(ValueError, 'memory headroom'):
+                self.inprocess(snapshot)
+        record = self.record(snapshot)
+        self.assertEqual((record['status'], record['restoration']['status']), ('failed', 'proven'))
+        self.assertTrue(snapshot.partial.is_dir() and not snapshot.target.exists())
+        samples = [json.loads(line) for line in snapshot.health.read_text().splitlines()]
+        refused = [s for s in samples if 'refused' in s]
+        self.assertEqual([s['phase'] for s in refused], ['journal snapshot verification'])
+        self.assertIn('memory headroom', refused[0]['error'])
+
+    def test_total_deadline_reaches_verification(self):
+        bounds = {'precopy_seconds':1, 'stop_seconds':1, 'copy_seconds':1, 'restart_seconds':2,
+                  'restart_attempts':1, 'total_seconds':6}
+        snapshot = self.snapshot(self.request(bounds=bounds))
+        real = S.hash_file
+
+        def slow(path, budget):
+            if budget.label == 'journal snapshot verification':
+                time.sleep(max(0, budget.remaining())+.05)
+            return real(path, budget)
+        with patch.object(S, 'hash_file', slow):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                self.inprocess(snapshot)
+        record = self.record(snapshot)
+        self.assertEqual((record['status'], record['restoration']['status']), ('interrupted', 'proven'))
+        self.assertTrue(snapshot.partial.is_dir() and not snapshot.target.exists())
+
+    def test_quiesced_reserve_counts_sidecars_added_before_quiescence(self):
+        big = internal(3)
+        body = b'TPIRTX01'+big+(0).to_bytes(4, 'little')+b'\x00'+bytes(5 << 20)
+
+        def late():
+            (self.journal/'display-v1'/display_file(3)).write_bytes(body+hashlib.sha256(body).digest())
+            (self.root/'disk.json').write_text(json.dumps({'bavail':204, 'blocks':1000}))
+        real = S.Snapshot.precopy
+
+        def precopy(self_, *args):
+            result = real(self_, *args)
+            late()
+            return result
+        snapshot = self.snapshot()
+        with patch.object(S.Snapshot, 'precopy', precopy):
+            with self.assertRaisesRegex(ValueError, 'disk headroom'):
+                self.inprocess(snapshot)
+        record = self.record(snapshot)
+        self.assertEqual((record['status'], record['phase'], record['restoration']['status']),
+                         ('failed', 'restored', 'proven'))
+        self.assertFalse((snapshot.partial/'journal/events.bin').exists())  # Refused before writing.
+
+    def test_full_verification_rederives_boundaries_and_anchors(self):
+        snapshot = self.snapshot()
+        record = self.inprocess(snapshot)
+        manifest = S.verify_tree(snapshot.target, record['manifest'], full=False)
+        budget = S.Budget(time.monotonic()+60, 'test')
+        expected = S.expected_hashes(snapshot.request, manifest)
+        self.assertTrue({0, THROUGH, BLOCKS-1} <= set(expected))
+        self.assertEqual(S.inspect(snapshot.target, snapshot.request, expected, budget), manifest['contents'])
+        with self.assertRaisesRegex(ValueError, 'differs at height 2'):
+            S.inspect(snapshot.target, snapshot.request, {**expected, 2:'0'*64}, budget)
+        blocks = snapshot.target/'journal/blocks.bin'
+        blocks.chmod(0o600)
+        with open(blocks, 'r+b') as stream:
+            stream.seek(2*48+32); stream.write((10**6).to_bytes(8, 'little'))
+        blocks.chmod(0o400)
+        with self.assertRaisesRegex(ValueError, 'boundary|decrease|past the committed'):
+            S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request, budget=budget)
+
+
 class Tree(Fixture):
     def test_staged_snapshot_status_detects_namespace_misuse(self):
         snapshot = self.snapshot()
@@ -1322,7 +1589,7 @@ class Tree(Fixture):
         side = next((snapshot.target/'journal/display-v1').iterdir())
         side.unlink(); side.symlink_to(self.root/'elsewhere')
         with self.assertRaisesRegex(ValueError, 'private single-link'):
-            S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request)
+            S.verify_tree(snapshot.target, record['manifest'], full=True, request=snapshot.request, budget=S.Budget(time.monotonic()+60, 'test'))
 
 
 class Wrapper(unittest.TestCase):

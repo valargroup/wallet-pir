@@ -1617,9 +1617,48 @@ The contention attempt runs only after the holder is listed. A listed holder tha
 does not contend refuses, because that would mean the protocols differ. A POSIX
 `lockf` holder also refuses. Plan does not contend.
 
+**Every pinned host.** Before any effect, preflight, stage, the owner and
+reconcile each read every pinned inventory host afresh, including the
+coordinator. Remote hosts are read through three read-only deploy-helper
+operations over pinned SSH: `read_many`, `list_json` and `proc_stats`. Each
+read is bounded and never follows a link. On each host:
+
+- `/etc/machine-id` must equal the host's pin. A host without a pin, or one that
+  cannot be reached or read, refuses.
+- The shared schema fence runs over that host's schema, host-action and
+  input-staging owner pointers and records. A missing, malformed or unfinished
+  owner refuses; only this snapshot's own coordinator owner is exempt.
+- Every source-staging receipt must be `staged` or `failed`.
+- Every PID a pointed owner or source receipt records must not still be running.
+  Only top-level PID fields and its `launcher` and `owner` objects count. A
+  recorded kernel start time must not match a live process. Without one, a live
+  process started no later than the record's last update refuses, because it
+  could be the owner or a descendant; a missing record time fails closed. A
+  restored writer that a proof merely observed is not an owner.
+
+Under a lock, the raw reads, process observations and result for each host are
+kept at mode 0400 under
+`/srv/transparent-activity/ops/input-staging/<request SHA>.snapshot-fleet/<stage|owner|reconcile>-<time>/<host>.json`.
+A refused host keeps its receipt too. Records the pointers do not name, other
+than source receipts, are outside this check.
+
+**One total bound.** `total_seconds` starts when stage begins. It runs through
+the owner's adoption, pre-copy, copy, anchors and full re-verification; the owner
+inherits the absolute deadline from its durable record. Each phase bound is
+capped by what remains of the total.
+
+Every long step checks the deadline before each bounded chunk, record batch,
+file, remote call and node RPC. That covers sidecar scans, record passes,
+hashing, sidecar copies, anchors, the all-host reads and the final
+verification. At most once a second it also re-observes the 20% memory and disk
+floors after reserving the bytes still to be written. Each sample, including a
+refusal, goes to the private health log. Restoring the writer is never cut short
+by the total; it has its own reviewed attempt bounds.
+
 **Stage.** Under the production lock, stage first reruns the input-staging and
 schema fences and the full preflight. Preflight checks:
 
+- every pinned host, as above;
 - the writer identity, unit interplay, cgroup, running executable and lock
   protocol;
 - the committed prefix and the sidecar policy and coverage;
@@ -1627,55 +1666,62 @@ schema fences and the full preflight. Preflight checks:
 - the namespace, and memory and disk at or above 20% after reserving the copy's
   bytes.
 
-Stage then writes the request (0400) and a `running` owner to
-`/srv/transparent-activity/ops/input-staging/`, and points `latest.json` at that
-owner.
+Stage then writes the request and the exact inventory (both 0400) and a
+`running` owner to `/srv/transparent-activity/ops/input-staging/`, and points
+`latest.json` at that owner. The owner records the inventory digest and the
+absolute deadline.
 
 Stage then launches `schema-snapshot-owner` in a new session. The owner inherits
 the production lock descriptor, and its output goes to a private log. If the SSH
 session is lost, the launcher dies but the owner keeps both the lock and its
-durable record. A launcher that waits past `total_seconds` exits 75 with an
-unknown outcome; root observes status. The owner then:
+durable record. A launcher still waiting when the total runs out exits 75 with
+an unknown outcome; root observes status. The owner then:
 
 1. Readopts the record once; a replay refuses.
-2. Repeats the identity, lock, prefix, policy and anchor checks.
-3. **Pre-copies sidecars while the writer still runs**, within
+2. Loads the retained inventory, which must match the recorded digest. It then
+   reads every pinned host afresh, keeping receipts.
+3. Repeats the identity, lock, prefix, policy and anchor checks.
+4. **Pre-copies sidecars while the writer still runs**, within
    `precopy_seconds`. Sidecars are immutable: the writer renames each into place
    before committing the block that names it, never rewrites one, and each
    carries its block hash and a trailing SHA-256 that the copy checks. For each
    block of the committed prefix, a private inventory
    (`<request SHA>.snapshot-sidecars.bin`, 64 bytes per block) records the block
    hash and the source sidecar's inode, size and times, or its absence.
-4. Proves the writer identity again, records `quiescing`, then stops only the
+5. Proves the writer identity again, records `quiescing`, then stops only the
    reviewed unit within `stop_seconds`. The unit must be inactive with an empty
    cgroup, and the old PID and start time must be gone.
-5. Takes `writer.lock` itself, so no writer can reopen the journal during the
+6. Takes `writer.lock` itself, so no writer can reopen the journal during the
    copy. Any remaining holder refuses.
-6. Within `copy_seconds`, copies `meta.json`, `checkpoint.bin`, and exactly the
-   checkpoint-committed prefixes of `blocks.bin` and `events.bin`, hashing as it
-   copies. Every source must be a single-link regular file opened without
-   following links. Destinations are created exclusively at mode 0400, inside
-   0700 directories.
-7. Observes every committed block's source sidecar again under quiescence:
+7. Within `copy_seconds`, before writing anything, observes the source's
+   committed prefix and every committed block's sidecar again under quiescence:
    - **Unchanged prefix.** Each pre-copied block hash must be unchanged. This is
      the independent check that the whole pre-quiescence prefix survived, not just
      its tip.
    - **Unchanged sidecars.** Each pre-copied sidecar must keep its inode, size and
-     times.
+     times; every sidecar must be a single-link regular file.
    - **Newer sidecars.** Sidecars that appeared or belong to newer blocks are
-     copied now.
+     listed with their exact sizes.
    - **Policy and coverage** apply to what is observed here.
-
-   Then one `syncfs` flushes the whole copy.
-8. Checks continuously against the active bound, the resource floors, the
-   inherited lock and, while stopped, the unit staying stopped. A foreign restart
-   refuses.
-9. Validates the copy's format, genesis, start height and exact checkpoint
-   lengths, and its complete 48-byte records. Offsets must start at zero and
-   never decrease, and each record's event span must fit its count within the
-   native entry bounds. The copy must still contain the pre-quiescence tip and
-   the publication anchor with their recorded hashes. Event payloads are
-   decoded by the native reader that consumes the snapshot, not here.
+8. Reserves the exact remaining bytes: the committed `events.bin` and
+   `blocks.bin` prefixes plus those newer sidecars. Memory and disk must stay at
+   or above 20% after that reservation, or nothing is written.
+9. Copies `meta.json`, `checkpoint.bin`, and exactly the checkpoint-committed
+   prefixes of `blocks.bin` and `events.bin`, hashing as it copies. The copied
+   `blocks.bin` must hash to the prefix just observed. Every source must be a
+   single-link regular file opened without following links. Destinations are
+   created exclusively at mode 0400, inside 0700 directories.
+10. Copies the newer sidecars, each of which must still have its observed
+    identity. Then one `syncfs` flushes the whole copy.
+11. Checks continuously against the active bound, the resource floors, the
+    inherited lock and, while stopped, the unit staying stopped. A foreign restart
+    refuses.
+12. Validates the copy's format, genesis, start height and exact checkpoint
+    lengths, and its complete 48-byte records. Offsets must start at zero and
+    never decrease, and each record's event span must fit its count within the
+    native entry bounds. The copy's genesis block, pre-quiescence tip and
+    publication anchor must keep their recorded hashes. Event payloads are
+    decoded by the native reader that consumes the snapshot, not here.
 
 **Restoration and completion.** Every handled exit, including failures, timeouts
 and SIGTERM, SIGINT or SIGHUP, releases `writer.lock` and restores the writer.
@@ -1687,10 +1733,20 @@ the same identity, interplay, cgroup, executable and lock checks, does not
 restart during the proof, and memory and disk meet the floors.
 
 After restoration, the owner checks the node anchors again at genesis, the
-publication anchor, the pre-quiescence tip and the snapshot tip. It then re-reads
-the private copy alone and re-derives:
+publication anchor, the pre-quiescence tip and the snapshot tip. Within the
+remaining total, with sampled floors, it then re-reads the private copy alone. It
+re-runs the record-boundary pass over the copied `blocks.bin`, requiring every
+independently observed or reviewed hash:
+
+- genesis and the publication anchor;
+- the pre-quiescence tip;
+- both node anchor sets;
+- every coverage height.
+
+It also re-derives:
 
 - every main file digest, which must equal the digests taken while copying;
+- the event count and tip, which must equal those found under quiescence;
 - the sidecar count, which must equal the count observed under quiescence;
 - each sidecar's block binding and digest;
 - an aggregate sidecar digest.
@@ -1698,24 +1754,32 @@ the private copy alone and re-derives:
 The copy must hold no sidecar for any block that is not committed.
 
 The owner writes `manifest.json` (0400) with those contents, the prefix, the
-sidecar policy summary and coverage, the writer identities and the anchors. Only
-then, and only within `total_seconds`, does it rename the partial directory to
-`/srv/transparent-activity/snapshots/journal/<request SHA>/` and record
-`staged`. Status checks the private single-link file set, sizes and the manifest
-digest.
+sidecar policy summary and coverage, the host receipts' digests, the writer
+identities and the anchors. Only then, and only within the total, does it rename
+the partial directory to
+`/srv/transparent-activity/snapshots/journal/<request SHA>/` and record `staged`.
+Status checks the private single-link file set, sizes and the manifest digest.
+A full re-verification of a retained snapshot requires an explicit budget and
+repeats the same record and anchor checks.
 
 **Failure and reconciliation.** Any other outcome records `failed`,
-`interrupted` or `restore-failed`. The owner, the inventory, the partial
-`<request SHA>.copying` directory and its health samples are kept, and the owner
-fences other mutations. The same applies if a killed owner leaves `running`.
+`interrupted` or `restore-failed`. The owner, the sidecar inventory, the host
+receipts, the partial `<request SHA>.copying` directory and its health samples
+are kept, and the owner fences other mutations. The same applies if a killed
+owner leaves `running`.
 
 `schema-snapshot-reconcile` runs under the production lock. A live owner still
-holds that lock, so reconcile refuses while it runs. Reconcile also refuses while
-the recorded launcher or owner PID and start time are alive. It accepts a running
-writer only if it is the original process or one this owner recorded starting,
-and then proves it again. An unknown or restarted writer refuses. A writer
-stopped before this owner recorded `quiescing` refuses. Changed unit or binary
-bytes refuse.
+holds that lock, so reconcile refuses while it runs. Reconcile also refuses
+while:
+
+- the recorded launcher or owner PID and start time are alive;
+- the given inventory differs from the retained one;
+- any pinned host fails its fresh owner and process reads.
+
+It accepts a running writer only if it is the original process or one this owner
+recorded starting, and then proves it again. An unknown or restarted writer
+refuses. A writer stopped before this owner recorded `quiescing` refuses.
+Changed unit or binary bytes refuse.
 
 Otherwise reconcile restarts the exact reviewed writer and proves it. It then
 renames any partial or unpublished target to a same-directory
@@ -1756,7 +1820,8 @@ The following questions remain open for root:
 
 - The actual controller identity, and acceptance of controller downtime for
   load, scaler and reconciler.
-- The values of all six bounds.
+- The values of all six bounds. Remote host reads are bounded only by the
+  remaining total; their latency is unmeasured.
 - The sidecar policy, and the coverage heights to bind.
 - The live sidecar count and bytes against the 20% disk floor.
 - Whether full event decoding should also run during the stopped window.

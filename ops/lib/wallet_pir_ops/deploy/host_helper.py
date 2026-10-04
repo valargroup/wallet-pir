@@ -12,6 +12,7 @@ safe to repeat, which is what lets a rollback be re-run after an interruption.
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -148,7 +149,60 @@ def run(argv, timeout):
     return {'returncode': result.returncode, 'output': (result.stdout + result.stderr)[-4000:]}
 
 
+def read_many(paths, limit=1 << 20):
+    """Bounded texts of up to 512 files: None when absent, never through a link."""
+    if not isinstance(paths, list) or len(paths) > 512:
+        raise ValueError('read_many takes at most 512 paths')
+    result = {}
+    for path in paths:
+        try:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            result[path] = None
+            continue
+        with os.fdopen(descriptor, 'rb') as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise ValueError('not a regular file: ' + path)
+            data = handle.read(limit + 1)
+        if len(data) > limit:
+            raise ValueError('file exceeds read bound: ' + path)
+        result[path] = data.decode()
+    return result
+
+
+def list_json(path, limit=512):
+    """Sorted `*.json` names of a real directory, or None when it is absent."""
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError('not a directory: ' + path)
+    names = sorted(name for name in os.listdir(path) if name.endswith('.json'))
+    if len(names) > limit:
+        raise ValueError('too many records in ' + path)
+    return names
+
+
+def proc_stats(pids):
+    """`/proc/PID/stat` of up to 512 PIDs, boot time and clock ticks per second."""
+    if not isinstance(pids, list) or len(pids) > 512 or not all(isinstance(p, int) and p > 0 for p in pids):
+        raise ValueError('proc_stats takes at most 512 positive PIDs')
+    boot = next(int(line.split()[1]) for line in open('/proc/stat') if line.startswith('btime '))
+    stats = {}
+    for pid in pids:
+        try:
+            with open('/proc/%d/stat' % pid) as handle:
+                stats[str(pid)] = handle.read()
+        except (FileNotFoundError, ProcessLookupError):
+            stats[str(pid)] = None
+    return {'boot_unix': boot, 'ticks': os.sysconf('SC_CLK_TCK'), 'stats': stats}
+
+
 OPERATIONS = {
+    'read_many': read_many,
+    'list_json': list_json,
+    'proc_stats': proc_stats,
     'ping': lambda: None,
     'sha256': sha256,
     'read': read,
