@@ -137,6 +137,7 @@ MAX_OWNER_ENTRIES = 100000
 MAX_OWNER_FILE = 16 << 20
 MAX_OWNER_BYTES = 512 << 20
 MAX_REFERENCES = 100000
+MAX_SELECTED = 10000
 # Operational classes: a live process whose executable or argv basename is one of
 # these, or any tool name of the candidate, or whose executable or argv lies under
 # these roots, refuses unless systemd placed it in a baseline unit's cgroup.
@@ -724,7 +725,7 @@ def lock_path(factory):
 
 def bounds():
     return dict(S.BOUNDS, entries=MAX_OWNER_ENTRIES, file_bytes=MAX_OWNER_FILE, json_bytes=MAX_OWNER_BYTES,
-                references=MAX_REFERENCES, listed=MAX_LISTED)
+                references=MAX_REFERENCES, listed=MAX_LISTED, selected=MAX_SELECTED)
 
 
 def classes():
@@ -766,15 +767,16 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
     def select(label, name, record, sha):
         if label == 'input-staging' and HEX.fullmatch(name[:-5]) and isinstance(record, dict) and record.get('kind') == KIND:
             return {'name': name, 'sha256': sha, 'status': record.get('status')}
+
+    def refuse(item):
+        if item['status'] not in ('staged', 'reconciled') and item['name'] != '%s.json' % skip:
+            return 'unfinished candidate execution owner: '+item['name']
     observed = S.observe((('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS),
                           ('input-staging', Path(owners or OWNERS))),
                          classes=classes(), baseline=BASELINE_UNITS,
                          binding={'request_sha256': identifier, 'nonce': nonce, 'host': host, 'skip': skip},
                          lock_path=path, holder=holder, marker=MARKER, receiver=RECEIVE, tick=tick, bounds=bounds(),
-                         select=select)
-    for item in observed['selected']:
-        if item['status'] not in ('staged', 'reconciled') and item['name'] != '%s.json' % skip:
-            reasons.append('unfinished candidate execution owner: '+item['name'])
+                         select=select, refuse=refuse)
     reasons = observed['blocked']+reasons
     observed.update(kind=SURVEY_KIND, survey=S.KIND, request_sha256=identifier, nonce=nonce, host=host,
                     observed_unix=time.time(), observer=me(), skip=skip, machine_id=machine, source_sha=source,
@@ -809,7 +811,9 @@ def verify_survey(raw, request, identifier, nonce, host, skip, holder=None):
             [h.get('pid') for h in value['lock']['holders']] == ([holder['pid']] if holder else []) and
             isinstance(value.get('owners'), list) and
             all(o.get('status') in ('staged', 'reconciled') or skip and o.get('name') == skip+'.json'
-                for o in value['owners']),
+                for o in value['owners']) and
+            type(value.get('selected_count')) is int and len(value['owners']) == min(value['selected_count'], MAX_LISTED) and
+            isinstance(value.get('selected_sha256'), str),
             'host survey shows a missing, unfinished or live owner: %s %s' % (host, value.get('blocked')))
     return value
 

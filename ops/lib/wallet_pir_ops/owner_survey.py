@@ -33,7 +33,7 @@ import stat
 VERSION = 1
 KIND = 'owner-process-survey'
 BOUNDS = {'entries': 100000, 'file_bytes': 16 << 20, 'json_bytes': 512 << 20, 'references': 100000,
-          'listed': 64, 'argv_bytes': 4096, 'hashed_executables': 16, 'hashed_bytes': 1 << 30}
+          'listed': 64, 'selected': 10000, 'argv_bytes': 4096, 'hashed_executables': 16, 'hashed_bytes': 1 << 30}
 # Clock granularity between kernel start times (btime is whole seconds) and file mtimes.
 TOLERANCE_SECONDS = 2
 PF_KTHREAD = 0x00200000
@@ -294,6 +294,9 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None):
                         item = select(label, entry.name, record, sha)
                         if item is not None:
                             selected.append(item)
+                            if len(selected) > bounds['selected']:
+                                reasons.append('selected owner records exceed %d' % bounds['selected'])
+                                return
     walk()
     inventory = dict(counts, references=len(references), sha256=hashlib.sha256(canonical(listing)).hexdigest())
     return inventory, references, selected, reasons, digests
@@ -458,16 +461,23 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
 
 
 def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=None, marker=None, receiver=None,
-            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None):
+            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None):
     """One complete read-only survey of this host; the raw dict is the evidence.
 
     `namespaces` is [(label, path)], `classes` {'names': [...], 'roots': [...]},
     `baseline` a list of exact systemd unit names, `binding` any JSON value the
     caller binds (nonce, request digest, host). `holder` is the only process
-    allowed to hold the lock, or None for none.
+    allowed to hold the lock, or None for none. `refuse(item)` returns a reason
+    or None for every record `select` chose, before the listed display is cut
+    to `bounds['listed']`; more than `bounds['selected']` refuses outright.
     """
     listed = bounds['listed']
     inventory, references, selected, reasons, digests = owner_inventory(namespaces, tick, bounds, select)
+    # Decisions use every selected record; only the display below is compacted.
+    for item in selected if refuse is not None else ():
+        reason = refuse(item)
+        if reason:
+            reasons.append(reason)
     processes = scan(lock_path, marker, receiver, bounds['argv_bytes'])
     tick()
     excluded = set(ancestors() if excluded is None else excluded)
@@ -494,7 +504,8 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
             'classes': classes, 'classes_sha256': hashlib.sha256(canonical(classes)).hexdigest(),
             'baseline': list(baseline), 'boot_id': boot_id(), 'booted_unix': booted_unix(), 'euid': os.geteuid(),
             'namespaces': [[label, str(path)] for label, path in namespaces], 'inventory': inventory,
-            'selected': selected[-listed:], 'scanned': len(processes),
+            'selected': selected[-listed:], 'selected_count': len(selected),
+            'selected_sha256': hashlib.sha256(canonical(selected)).hexdigest(), 'scanned': len(processes),
             'lock': {'path': str(lock_path) if lock_path is not None else None, 'holders': summary(holders, listed)},
             'processes': summary(marked, listed),
             'associated': summary(associated, listed), 'associated_count': len(associated),

@@ -1660,7 +1660,10 @@ digest and the digests of the records behind each association. The receiver
 refuses a reply whose bounds, classes, baseline or binding differ from its own.
   On the coordinator this walk keeps the 2-second health sampling, and a
   failure there still retains every reply already received.
-- Every candidate execution owner and its status.
+- Every candidate execution owner and its status. The unfinished check runs on
+  every selected owner. Only the listed display is cut to 64, and the reply
+  carries the complete count and a digest of the whole selection. More than
+  10000 selected owners refuses.
 
 Before any owner exists, the receiver checks the nonce, the host set, every
 machine ID and the source. It refuses on any of:

@@ -1217,6 +1217,42 @@ class Survey(Fixture):
         self.assertEqual(value['bounds'], owner_survey.BOUNDS)
         self.assertEqual(json.loads(json.dumps(value)), value)
 
+    def executions(self, statuses):
+        """Retained candidate execution owners named in sort order: index 0 sorts first (oldest)."""
+        names = []
+        for index, status in enumerate(statuses):
+            name = '%064x' % (index+1)
+            I.durable.atomic_json(self.owners/(name+'.json'), {'kind': E.KIND, 'request_sha256': name, 'status': status})
+            names.append(name+'.json')
+        return names
+
+    def test_unfinished_owner_beyond_the_listed_display_still_refuses(self):
+        # 65 records: the oldest unfinished, the newer 64 staged. The display keeps 64; the decision keeps all.
+        names = self.executions(['running']+['staged']*64)
+        attempts = self.refused('unfinished candidate execution owner: '+names[0])
+        survey = json.loads((attempts[-1]/'coordinator.json').read_text())
+        self.assertEqual((survey['selected_count'], len(survey['owners'])), (65, 64))
+        self.assertNotIn(names[0], [o['name'] for o in survey['owners']])
+        self.assertEqual(survey['blocked_count'], 1)
+        # The same population all finished is clear, and its count and digest are bound in the reply.
+        I.durable.atomic_json(self.owners/names[0], {'kind': E.KIND, 'request_sha256': names[0][:-5], 'status': 'staged'})
+        record = self.stage(self.receiver(attempt=2))
+        clear = R.value(R.value(record['survey'])['hosts']['coordinator'])
+        self.assertEqual((clear['status'], clear['selected_count'], len(clear['owners'])), ('clear', 65, 64))
+        self.assertEqual(len(clear['selected_sha256']), 64)
+
+    def test_selection_overflow_refuses_with_its_complete_bound(self):
+        self.executions(['staged']*4)
+        with patch.object(E, 'MAX_SELECTED', 3):
+            attempts = self.refused('selected owner records exceed 3')
+        survey = json.loads((attempts[-1]/'coordinator.json').read_text())
+        self.assertEqual((survey['bounds']['selected'], survey['selected_count']), (3, 4))
+        # A worker reply that hides selected records behind a short display is refused too.
+        def hidden(surveys, line):
+            value = json.loads(surveys['worker-a']); value['selected_count'] += 1
+            return {'worker-a': json.dumps(value)}
+        self.refused('worker-a', self.receiver(attempt=2), Channel(self, mutate=hidden))
+
     def test_owner_namespace_overflow_unreadable_records_and_links_refuse(self):
         with patch.object(E, 'MAX_OWNER_ENTRIES', 2):
             attempts = self.refused('exceed 2 entries')
