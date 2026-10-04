@@ -1513,13 +1513,156 @@ Root's ordered path, without rebuilding the old CI or native chain:
    Then run candidate plan, preflight, stage and status against the retained
    `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
-   immutable publication. Bind each report from retained raw results; a document
-   shaped like a passing report is not evidence.
+   immutable publication. Gates that read the journal can use a
+   [journal snapshot](#candidate-journal-snapshot) instead of the live journal.
+   Bind each report from retained raw results; a document shaped like a passing
+   report is not evidence.
 4. Stage the candidate worker pair on every worker.
 5. Render version-2 service, proof and product inputs, then follow the existing
    schema plan, preflight and deploy path.
 
 None of this has been executed. Fixture tests are source evidence only.
+
+#### Candidate journal snapshot
+
+Candidate gates that read the full journal
+`/srv/transparent-activity/full-v3/journal` need bytes that do not move while they
+run. While a writer owns the journal it can append, and a reorganization can
+truncate it. `schema-snapshot-{plan,preflight,stage,status,reconcile} --request
+FILE --request-sha256 HASH` copies a committed prefix into an immutable private
+snapshot. Stage also requires `--expect-plan-sha256`. All five actions run on the
+pinned root coordinator from staged immutable operations source, in
+`transparent/ops/lib/activity_journal_snapshot.py`.
+
+**Request.** The closed request is `{version: 1, kind:
+"activity-journal-snapshot", source_sha, attempt, machine_id, candidate,
+publication, journal, writer, bounds}`. It names no paths except the writer's
+own unit files and binary. Its fields bind:
+
+- **Candidate.** `candidate` is `c3c66b9b` and its provenance digest.
+- **Publication.** `publication` is the full map digest plus the cutoff anchor at
+  3500738. It must match the retained `shards.json`, `result.json` and
+  `cutoff.json`.
+- **Journal.** `journal` is format version 3, start height 0 and the genesis hash.
+  `meta.json` must equal these exactly.
+- **Writer.** `writer` is the reviewed unit name, fragment path and digest, the
+  ordered drop-ins and their digests, the ExecStart binary path and digest, the
+  main PID and its kernel start time. The live writer must match all of them.
+  The plan reports any drift without refusing, so root can review the live
+  identity. Preflight and stage refuse drift.
+- **Bounds.** `bounds` holds `stop_seconds`, `copy_seconds`, `restart_seconds`,
+  `restart_attempts` and `total_seconds`. Root chooses every value; the module
+  has no defaults. It only requires positive integers, with the total at least
+  the sum of the phases. The plan digest covers the request-derived plan only.
+
+**Lock protocol.** The native `EventStore::open` holds `writer.lock` with Rust
+`File::try_lock` for the journal's whole writable lifetime. On Linux, Rust 1.97.1
+implements it as `flock(LOCK_EX|LOCK_NB)`. A fixture probe compiled with the pinned
+`rustc` checks the protocol in both directions: Python `flock` is refused while
+Rust holds the lock, and Rust `try_lock` is refused while Python holds it.
+
+The module proves the protocol on the existing `writer.lock`. It never creates,
+replaces or follows that file. Three checks must hold:
+
+1. `/proc/locks` lists exactly one `FLOCK ADVISORY WRITE` holder for the inode,
+   and it is the reviewed PID.
+2. That PID holds the file open.
+3. A non-blocking `flock` from the module is refused.
+
+The contention attempt runs only after the holder is listed. A listed holder that
+does not contend refuses, because that would mean the protocols differ. A POSIX
+`lockf` holder also refuses. Plan does not contend.
+
+**Stage.** Under the production lock, stage first reruns the input-staging and
+schema fences and the full preflight. Preflight checks the writer identity, cgroup
+and running executable, and the lock protocol. It also checks the committed
+prefix, the node anchors at genesis, 3500738 and the current tip, the namespace,
+and memory and disk at or above 20% after reserving the copy's bytes. Stage then
+writes the request (0400) and a `running` owner to
+`/srv/transparent-activity/ops/input-staging/`, and points `latest.json` at that
+owner.
+
+Stage then launches `schema-snapshot-owner` in a new session. The owner inherits
+the production lock descriptor, and its output goes to a private log. If the SSH
+session is lost, the launcher dies but the owner keeps both the lock and its
+durable record. A launcher that waits past `total_seconds` exits 75 with an
+unknown outcome; root observes status. The owner then:
+
+1. Readopts the record once; a replay refuses.
+2. Repeats the identity, lock, prefix and anchor checks.
+3. Records `quiescing`, then stops only the reviewed unit within
+   `stop_seconds`. The unit must be inactive with an empty cgroup, and the old PID
+   and start time must be gone.
+4. Takes `writer.lock` itself, so no writer can reopen the journal during the
+   copy. Any remaining holder refuses.
+5. Copies `meta.json`, `checkpoint.bin`, and exactly the checkpoint-committed
+   prefixes of `blocks.bin` and `events.bin`. It then copies the
+   `display-v1/<hash>.bin` sidecar of each committed block that has one. Every
+   source must be a single-link regular file opened without following links.
+   Each destination is created exclusively and fsynced at mode 0400, inside
+   0700 directories.
+6. Checks continuously against `copy_seconds`, the resource floors, the
+   inherited lock and the unit staying stopped. A foreign restart refuses. The
+   bytes past the checkpoint and sidecars of uncommitted or reorganized blocks
+   stay behind.
+7. Validates the copy's format, genesis, start height and exact checkpoint
+   lengths, and its complete 48-byte records. Offsets must start at zero and
+   never decrease, and each record's event span must fit its count within the
+   native entry bounds. Every sidecar must carry its block hash and trailing
+   digest. The copy must still contain the pre-quiescence tip and the
+   publication anchor with their recorded hashes, so a shorter or different fork
+   refuses. Event payloads are decoded by the native reader that consumes the
+   snapshot, not here.
+
+**Restoration and completion.** Every handled exit, including failures, timeouts
+and SIGTERM, SIGINT or SIGHUP, releases `writer.lock` and restores the writer.
+Later signals are recorded but do not interrupt the owner. The owner checks the unit,
+drop-in and binary bytes again, then starts the unit for at most
+`restart_attempts` attempts of `restart_seconds` each. It records each started
+PID and start time durably. Restoration is proven only when the new PID passes
+the same identity, cgroup, executable and lock checks, does not restart during
+the proof, and memory and disk meet the floors.
+
+After restoration, the owner checks the node anchors again at genesis, the
+publication anchor, the pre-quiescence tip and the snapshot tip. It then writes
+`manifest.json` (0400) and re-hashes every file. The manifest records the
+request, prefix, file digests, aggregate sidecar digest, writer identities and
+anchors. Only then, and only within `total_seconds`, does the owner rename the
+partial directory to
+`/srv/transparent-activity/snapshots/journal/<request SHA>/` and record
+`staged`. Status checks the private single-link file set, sizes and the manifest
+digest.
+
+**Failure and reconciliation.** Any other outcome records `failed`, `interrupted`
+or `restore-failed`. The owner, the partial
+`<request SHA>.copying` directory and its health samples are kept, and the owner
+fences other mutations. The same applies if a killed owner leaves `running`.
+
+`schema-snapshot-reconcile` runs under the production lock. A live owner still
+holds that lock, so reconcile refuses while it runs. Reconcile also refuses while
+the recorded launcher or owner PID and start time are alive. It accepts a running
+writer only if it is the original process or one this owner recorded starting,
+and then proves it again. An unknown or restarted writer refuses. A writer
+stopped before this owner recorded `quiescing` refuses. Changed unit or binary
+bytes refuse.
+
+Otherwise reconcile restarts the exact reviewed writer and proves it. It then
+renames any partial or unpublished target to a same-directory
+`.abandoned-<request SHA>` sibling, and records `reconciled`. A retry needs a new
+attempt.
+
+A staged snapshot is an input for root's chain-oracle and other candidate gates.
+It is not oracle, certificate, candidate, serving or capacity qualification, and
+its manifest says so. Fixture tests use real flock processes, a file-backed fake
+systemd and a fixture node. Nothing has been run against the coordinator.
+
+The following questions remain open for root:
+
+- The actual writer unit and its identity.
+- The values of all five bounds.
+- The journal and sidecar byte counts against volume headroom.
+- Whether a committed block without a display sidecar should refuse.
+- Whether full event decoding should also run during the stopped window.
 
 ### Failed-transaction source repair
 

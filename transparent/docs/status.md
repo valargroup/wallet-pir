@@ -69,6 +69,22 @@ or deployed, and no candidate gate was run. Freshness, capacity and every other
 acceptance gate below remain as recorded.
 [Evidence](../evidence/activity-metadata-2026-10-04/README.md).
 
+Operations source then added a guarded `schema-snapshot-*` path for an immutable
+snapshot of the full journal. It stops only the reviewed writer, takes the
+existing `writer.lock` itself, copies the committed prefix and committed display
+sidecars, and restores the same writer with proof. Fixture tests covered:
+
+- the Rust `try_lock` lock protocol, with a probe built by the pinned `rustc`;
+- malformed, truncated, checkpoint and reorganization cases;
+- writer identity drift and active writer refusal;
+- interruption, transport loss and every stop, copy and restore failure;
+- resource floors and namespace misuse.
+
+Twenty-five single-guard mutations were each caught. No host was contacted and
+no snapshot was taken. The writer identity, bounds and journal size remain
+root's to measure and decide; see
+[the snapshot path](deployment.md#candidate-journal-snapshot).
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,
