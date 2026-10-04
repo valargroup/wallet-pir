@@ -613,10 +613,14 @@ class FlowTests(unittest.TestCase):
                 effects.append((action, units, json.loads(q.owner_path.read_text())['effect']['status']))
         q.probe = lambda directory: {'query':'passed'}
         q.readiness = lambda: {'recent-1':{'binary_sha256':'x', 'map_sha256':'y'}}
+        tips = [{'end_height':99}, {'end_height':100}]
         with patch.object(Q.H, 'Commands', Commands), patch.object(Q, 'local_resources', lambda: {}), \
-                patch.object(q, 'probe_all', lambda: {}):
+                patch.object(q, 'probe_all', lambda: {}), patch.object(Q, 'node', lambda method, params: 100), \
+                patch.object(Q, 'tail', lambda url: tips.pop(0)), patch.object(Q.time, 'sleep', lambda _: None):
             result = q.fault()
         self.assertEqual(effects, [('restart', (Q.PUBLISHER,), 'starting')])
+        self.assertEqual(result['recovery']['attempts'], 2)
+        self.assertIn('caught up', json.loads((q.directory/'raw/recovery-01.error.json').read_text())['error'])
         self.assertEqual(result['status'], 'passed')
         self.assertLess(result['recovery']['recovered_seconds'], 900)
         late = self.owner(dict(value, attempt=2))
@@ -624,7 +628,7 @@ class FlowTests(unittest.TestCase):
         late.readiness = lambda: {'recent-1':{'binary_sha256':'changed', 'map_sha256':'y'}}
         late.probe = lambda directory: {'query':'passed'}
         with patch.object(Q.H, 'Commands', Commands), patch.object(Q, 'RECOVERY_SECONDS', 0), \
-                patch.object(Q.time, 'sleep', lambda _: None):
+                patch.object(Q.time, 'sleep', lambda _: None), patch.object(Q, 'node', lambda method, params: 100):
             with self.assertRaisesRegex(ValueError, 'within 900 seconds'):
                 late.fault()
         error = json.loads((late.directory/'raw/recovery-01.error.json').read_text())

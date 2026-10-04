@@ -14,5 +14,6 @@ reconcile liveness             killed (suite failed)
 reviewed plan digest           killed (suite failed)
 quality supervisor tick        killed (suite failed)
 recovery deadline              killed (suite failed)
+publication catch-up           killed (suite failed)
 observe-only scaler            killed (suite failed)
-mutations: 17, survived: 0
+mutations: 18, survived: 0

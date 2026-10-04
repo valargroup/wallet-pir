@@ -1465,6 +1465,9 @@ class Qualification:
                         old = self.baseline['ready'][worker]
                         require(identity['binary_sha256'] == old['binary_sha256'] and identity['map_sha256'] == old['map_sha256'],
                                 'original baseline identity not preserved: '+worker)
+                    if 'node_height' in self.record.get('effect', {}):
+                        require(tail(SHARD_ORIGIN+'/v1/shards')['end_height'] >= self.record['effect']['node_height'],
+                                'publication has not caught up to the pre-fault tip')
                     return {'recovered_seconds':time.time()-started, 'attempts':attempts, 'probe':result, 'ready':ready}
                 except Exception as error:
                     with (raw/('recovery-%02d.error.json' % attempts)).open('x') as stream:
@@ -1488,6 +1491,8 @@ class Qualification:
             effect.update(self.client_reopen(raw))
         elif fault == 'publication-interruption':
             allowed = (PUBLISHER,)
+            effect['node_height'] = node('getblockcount', [])
+            self.save(self.record)
             self.lock.verify()
             H.Commands().unit('restart', PUBLISHER)
         elif fault == 'rollback-redeploy':

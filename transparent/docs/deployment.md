@@ -1759,7 +1759,7 @@ load-window exact-sync rate at the highest passing level.
 | Fault | Fixed action |
 | --- | --- |
 | `client-reopen` | Kills the owner's own loadtest client mid-sync, then integrity-checks its store |
-| `publication-interruption` | Restarts the coordinator publish controller |
+| `publication-interruption` | Restarts the coordinator publish controller; recovery also needs the public map to reach the pre-fault node tip |
 | `recent-worker-loss` | Stops the target recent replica's worker, waits 60 s, then starts it |
 | `archive-restart` | Restarts the target archive owner |
 | `router-restart` | Restarts router Caddy |

@@ -1,6 +1,6 @@
-# Deployed qualification focused checks, 2026-10-04T18:32:57Z, development hub, no host access
-# base 0b0f96fc7f85c611a0c117ab9dad2b48c3e1a7d8; module sha256 71b89301001bb997cc24347cc7b5ba0129b30717408724fc3cb75af60b0301d1
-# test sha256 1379240093b7c1c689891c7ff4f5064151e534f911922a3361b769ec90c891c6; cli sha256 589f447ce9970818cb162bd26bcee685e909137d8e3a40b85a963e39b6bc986d
+# Deployed qualification focused checks, 2026-10-04T18:40:36Z, development hub, no host access
+# base 0b0f96fc7f85c611a0c117ab9dad2b48c3e1a7d8; module sha256 6e2b333fea9cbc4b25ffc91517f80e4f793700d3d265be9d742f818df52ca01a
+# test sha256 abe76f272427bd464c1e3374fe83c3029832ccc71548c2ca9c6ff28acb45d789; cli sha256 589f447ce9970818cb162bd26bcee685e909137d8e3a40b85a963e39b6bc986d
 $ python3 -B transparent/ops/tests/test_activity_deployed_qualification.py -v
 test_503_restarts_memory_and_window_gates (__main__.CapacityTests.test_503_restarts_memory_and_window_gates) ... ok
 test_completed_exact_outcomes_only_count (__main__.CapacityTests.test_completed_exact_outcomes_only_count) ... ok
@@ -43,23 +43,23 @@ test_sample_scripts_and_identities_are_bounded (__main__.ValidationTests.test_sa
 test_targets_and_compositions_are_the_reviewed_values (__main__.ValidationTests.test_targets_and_compositions_are_the_reviewed_values) ... ok
 
 ----------------------------------------------------------------------
-Ran 39 tests in 17.916s
+Ran 39 tests in 17.774s
 
 OK
 $ for each transparent/ops/tests/test_activity_*.py: python3 -B <suite>
-test_activity_candidate.py: Ran 25 tests in 0.592s OK
-test_activity_candidate_inputs.py: Ran 9 tests in 0.124s OK
-test_activity_candidate_reports.py: Ran 10 tests in 1.526s OK
-test_activity_candidate_upload.py: Ran 21 tests in 4.780s OK
-test_activity_deployed_qualification.py: Ran 39 tests in 17.778s OK
-test_activity_input_preparation.py: Ran 7 tests in 0.154s OK
-test_activity_input_stage.py: Ran 33 tests in 4.612s OK
-test_activity_lock_qualification.py: Ran 8 tests in 6.738s OK
-test_activity_publication_job.py: Ran 9 tests in 0.111s OK
-test_activity_recovery_proof.py: Ran 7 tests in 0.419s OK
-test_activity_schema_baseline.py: Ran 32 tests in 1.178s OK
-test_activity_schema_host.py: Ran 39 tests in 1.051s OK
-test_activity_schema_operation.py: Ran 212 tests in 19.333s OK
-test_activity_schema_product.py: Ran 42 tests in 0.472s OK
-test_activity_schema_reconcile.py: Ran 13 tests in 1.158s OK
-test_activity_schema_routing.py: Ran 33 tests in 2.243s OK
+test_activity_candidate.py: Ran 25 tests in 0.533s OK
+test_activity_candidate_inputs.py: Ran 9 tests in 0.115s OK
+test_activity_candidate_reports.py: Ran 10 tests in 1.448s OK
+test_activity_candidate_upload.py: Ran 21 tests in 4.650s OK
+test_activity_deployed_qualification.py: Ran 39 tests in 17.822s OK
+test_activity_input_preparation.py: Ran 7 tests in 0.123s OK
+test_activity_input_stage.py: Ran 33 tests in 4.500s OK
+test_activity_lock_qualification.py: Ran 8 tests in 6.595s OK
+test_activity_publication_job.py: Ran 9 tests in 0.066s OK
+test_activity_recovery_proof.py: Ran 7 tests in 0.197s OK
+test_activity_schema_baseline.py: Ran 32 tests in 0.582s OK
+test_activity_schema_host.py: Ran 39 tests in 0.639s OK
+test_activity_schema_operation.py: Ran 212 tests in 15.746s OK
+test_activity_schema_product.py: Ran 42 tests in 0.343s OK
+test_activity_schema_reconcile.py: Ran 13 tests in 1.122s OK
+test_activity_schema_routing.py: Ran 33 tests in 1.443s OK
