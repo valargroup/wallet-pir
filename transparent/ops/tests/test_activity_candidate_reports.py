@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -99,7 +100,8 @@ class Reports(unittest.TestCase):
     def test_artifact_missing_checks_duplicate_checks_and_wrong_coverage_refuse(self):
         mapping, execution = self.artifact()
         for mutation in (lambda v: v['checks'].pop(), lambda v: v['checks'].append(v['checks'][0]),
-                         lambda v: v['set'].update(through=99), lambda v: v['checks'][0].update(ok=False)):
+                         lambda v: v['set'].update(through=99), lambda v: v['checks'][0].update(ok=False),
+                         lambda v: v['set'].update(shards=True)):
             refs = copy.deepcopy(execution); self.replace(refs, 'native', mutation)
             with self.assertRaises(ValueError): M.artifact_report(mapping, refs)
 
@@ -109,6 +111,7 @@ class Reports(unittest.TestCase):
                               ('owner', lambda v: v.update(binary_sha256='0'*64)),
                               ('owner', lambda v: v.update(publication_sha256='0'*64)),
                               ('result', lambda v: v.update(pid=43)),
+                              ('result', lambda v: v.update(pid=42.0)),
                               ('result', lambda v: v.update(exit_code=1)),
                               ('result', lambda v: v.update(status='running')),
                               ('result', lambda v: v.update(ended_unix=40)),
@@ -166,9 +169,46 @@ class Reports(unittest.TestCase):
         with self.assertRaises(ValueError): M.certifier(raw['path'])
         mapping, execution = self.artifact(); report = M.artifact_report(mapping, execution)
         out = self.root/'report.json'; M.write_report(out, report)
-        self.assertEqual(M.value({'path': str(out), 'sha256': M.C.checksum(out)}), report)
+        retained = M.value({'path': str(out), 'sha256': M.C.checksum(out)})
+        self.assertEqual(M.value(retained['raw_evidence']), report['raw_evidence'])
+        self.assertEqual({k:v for k,v in retained.items() if k != 'raw_evidence'},
+                         {k:v for k,v in report.items() if k != 'raw_evidence'})
         self.assertEqual(out.stat().st_mode & 0o777, 0o400)
+        with self.assertRaises(ValueError): M.write_report(out, report)
+
+    def test_full_certificate_evidence_stays_bound_outside_compact_gate(self):
+        mapping, manifests, executions = self.certificates()
+        report = self.certificate_report(mapping, manifests, executions)
+        self.assertEqual(len(report['raw_evidence']['evaluations']), 180)
+        # Model the full certifier's per-block arithmetic details; they must
+        # remain auditable without widening the 256 KiB cutover gate limit.
+        for evaluation in report['raw_evidence']['evaluations']:
+            evaluation['certificate']['arithmetic_details'] = 'x'*4096
+        out = self.root/'certificates.json'; M.write_report(out, report)
+        self.assertLessEqual(out.stat().st_size, 256*1024)
+        retained = M.value({'path': str(out), 'sha256': M.C.checksum(out)})
+        self.assertEqual(M.value(retained['raw_evidence']), report['raw_evidence'])
+        self.assertGreater(Path(retained['raw_evidence']['path']).stat().st_size, 256*1024)
+        M.C.verify_gate(retained, 'native-certificates', mapping['sha256'])
+        out = self.root/'partial.json'; Path(str(out)+'.raw-evidence.json').write_bytes(b'prior attempt')
         with self.assertRaises(FileExistsError): M.write_report(out, report)
+        self.assertFalse(out.exists())
+
+    def test_real_cli_retains_bound_evidence_and_compact_report(self):
+        mapping, execution = self.artifact()
+        inputs = self.ref({'mapping': mapping, 'execution': execution})
+        out = self.root/'cli-report.json'
+        command = [sys.executable, '-B', str(HERE.parent/'scripts/activity-candidate-report.py'),
+                   'artifact-verification', '--input', inputs['path'], '--input-sha256', inputs['sha256'],
+                   '--out', str(out)]
+        run = subprocess.run(command, capture_output=True, text=True)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        report = M.value({'path': str(out), 'sha256': M.C.checksum(out)})
+        self.assertEqual(report['gate'], 'artifact-verification')
+        self.assertEqual(M.value(report['raw_evidence'])['execution'], execution)
+        run = subprocess.run(command, capture_output=True, text=True)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(M.value(report['raw_evidence'])['execution'], execution)
 
 
 if __name__ == '__main__':

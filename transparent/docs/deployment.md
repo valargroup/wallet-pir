@@ -1540,6 +1540,11 @@ hashes, reevaluates each native output with the exact-rational certifier, and
 applies 83 bits only to archive-wide pages and 128 bits elsewhere. It retains
 the measured table/public setup bindings and the raw evidence references.
 Installed warm-worker and canonical setup agreement remains a separate gate.
+The producer writes the full raw references and evaluated certificates to
+`<out>.raw-evidence.json` first, then binds that immutable file by path and hash
+in the compact report. Retain both files. The staged report keeps scalar
+certificate scores and all setup bindings within the existing 256 KiB cutover
+input bound; neither source evidence nor arithmetic detail is discarded.
 
 The independent-chain oracle producer and the production execution controls
 still require implementation. These offline producers and their fixture tests

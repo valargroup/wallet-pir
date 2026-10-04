@@ -10,6 +10,7 @@ import hashlib
 import importlib.util
 import json
 import math
+import os
 from pathlib import Path
 import stat
 
@@ -88,7 +89,8 @@ def capture(references, executable, publication):
             owner['pid'] > 0 and number(owner.get('started_unix')), 'native owner identity differs')
     require(isinstance(result, dict) and result.get('status') == 'passed' and
             type(result.get('exit_code')) is int and result['exit_code'] == 0 and
-            result.get('pid') == owner['pid'] and result.get('started_unix') == owner['started_unix'] and
+            type(result.get('pid')) is int and result['pid'] == owner['pid'] and
+            result.get('started_unix') == owner['started_unix'] and
             number(result.get('ended_unix')) and number(result.get('timeout_seconds')) and
             0 < result['ended_unix'] - owner['started_unix'] <= result['timeout_seconds'] <= 1800,
             'native result is not terminal success within its bound')
@@ -133,7 +135,8 @@ def artifact_report(mapping_ref, execution):
             'artifact publication does not cover genesis')
     summary = native.get('set')
     require(isinstance(summary, dict) and summary.get('map_file_sha256') == publication and
-            summary.get('shards') == len(rows) and summary.get('start_height') == 0 and
+            all(type(summary.get(k)) is int for k in ('shards', 'start_height', 'through')) and
+            summary['shards'] == len(rows) and summary['start_height'] == 0 and
             summary.get('through') == rows[-1]['end_height'] and
             summary.get('terminal_block_hash') == rows[-1]['terminal_block_hash'] and
             set(summary.get('geometries', [])) == {'archive-wide', 'recent-4k-8k'},
@@ -150,6 +153,7 @@ def segments(mapping_ref, manifests):
             set(manifests) == {r['manifest_digest'] for r in rows}, 'manifest coverage differs')
     expected = {}
     for row in rows:
+        require(type(row.get('shard_id')) is int and row['shard_id'] >= 0, 'invalid manifest shard identifier')
         digest = row['manifest_digest']
         require(manifests[digest]['sha256'] == digest, 'manifest is not bound to publication')
         manifest = value(manifests[digest])
@@ -187,7 +191,7 @@ def certificate_report(mapping_ref, manifests, executions, certifier_path):
     require(isinstance(executions, list) and len(executions) == len(expected),
             'certificate execution coverage differs')
     evaluator = certifier(certifier_path)
-    seen, bindings = set(), []
+    seen, bindings, evaluations = set(), [], []
     for item in executions:
         require(isinstance(item, dict) and set(item) == {'shard_id', 'table', 'segment', 'execution'} and
                 type(item['shard_id']) is int and type(item['segment']) is int and
@@ -206,25 +210,51 @@ def certificate_report(mapping_ref, manifests, executions, certifier_path):
         bits = measured['actual_profile']['certified_failure_bits']
         floor = 83 if target['geometry'] == 'archive-wide' and item['table'] == 'pages' else 128
         require(type(bits) is int and bits >= floor, 'native certificate is below the required floor')
+        evaluations.append({'shard_id': key[0], 'table': key[1], 'segment': key[2], 'certificate': measured})
         bindings.append({'shard_id': key[0], 'table': key[1], 'segment': key[2],
                          'manifest_digest': target['manifest_digest'], 'geometry': target['geometry'],
                          'table_sha256': target['sha256'], 'public_sha256': native['served_public_sha256'],
-                         'certificate': measured, 'required_failure_bits': floor})
+                         'certified_failure_bits': bits, 'required_failure_bits': floor})
     result = base('native-certificates', publication,
                   {'mapping': mapping_ref, 'manifests': manifests, 'executions': executions,
-                   'certifier_sha256': CERTIFIER_SHA256, 'sampler_file_sha256': CDF_SHA256})
+                   'evaluations': evaluations, 'certifier_sha256': CERTIFIER_SHA256,
+                   'sampler_file_sha256': CDF_SHA256})
     result.update(floors=C.FLOORS, segments=len(bindings), setup_bindings=bindings,
                   limitations=['Installed warm worker and canonical setup agreement remains a separate cutover gate.'])
     return C.verify_gate(result, 'native-certificates', publication)
 
 
-def write_report(path, report):
-    """Create one independent immutable local report; never replace an attempt."""
+def immutable_json(path, value):
     path = Path(path)
     C.no_links(path)
     with path.open('xb') as stream:
-        import os
         os.fchmod(stream.fileno(), 0o400)
-        stream.write(durable.canonical(report)+b'\n')
+        stream.write(durable.canonical(value)+b'\n')
         stream.flush()
         os.fsync(stream.fileno())
+    directory = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def write_report(path, report):
+    """Keep raw/evaluated evidence separately, within the existing gate bound.
+
+    Failure after evidence creation preserves it; another attempt needs a new
+    output name. No completed report is visible before its evidence is durable.
+    """
+    path = Path(path).absolute()
+    C.no_links(path)
+    require(not path.exists(), 'report output already exists')
+    compact = dict(report)
+    evidence = compact.pop('raw_evidence')
+    require(isinstance(evidence, dict), 'report evidence index is missing')
+    evidence_path = path.with_name(path.name+'.raw-evidence.json')
+    compact['raw_evidence'] = {'path': str(evidence_path),
+                              'sha256': hashlib.sha256(durable.canonical(evidence)+b'\n').hexdigest()}
+    require(len(durable.canonical(compact))+1 <= 256*1024, 'report exceeds existing cutover input bound')
+    require(len(durable.canonical(evidence))+1 <= MAX_JSON, 'raw evidence index exceeds bound')
+    immutable_json(evidence_path, evidence)
+    immutable_json(path, compact)
