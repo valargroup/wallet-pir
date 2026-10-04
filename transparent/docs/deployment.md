@@ -1638,7 +1638,12 @@ Each survey records:
   `transparent-fleet-scaler`, `transparent-replica-reconciler` and
   `transparent-quality-rollout`. The survey records each bound process's unit,
   PID, start ticks, executable and executable SHA-256. Any other match is
-  unattributed and refuses, whatever its session, parent or token.
+  unattributed and refuses, whatever its session, parent or token. That
+  includes an active unit outside this baseline running an operational
+  executable, even a deleted one (the `(deleted)` suffix is stripped before
+  matching). The survey keeps its exact PID, start ticks, executable and
+  cgroup. It never stops, signals or allowlists it; adding a unit to the
+  baseline needs root's reviewed provenance.
 
 These rules are fixed heuristics, not proof that no descendant survives. A
 detached process with an unclassified name, started outside every recorded

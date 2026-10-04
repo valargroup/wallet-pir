@@ -1124,6 +1124,32 @@ class Survey(Fixture):
                     self.assertEqual(bound[0]['unit'], 'transparent-shard-server.service')
         self.assertEqual(E.S.operational([proc('/x/shard-verify')], {os.getpid()}, names, baseline), ([], [], []))
 
+    def test_known_unreviewed_native_service_on_the_coordinator_stays_an_unattributed_refusal(self):
+        # Root's read-only observation (2026-10-04 21:08): an active prototype unit outside the managed
+        # baseline runs a deleted shard-server build under the activity root. Nothing may accept it
+        # until root reviews its provenance; the survey keeps its exact identity as evidence.
+        survivor = {'pid': 1512286, 'start_ticks': 244751095, 'session': 1512286, 'pgid': 1512286, 'ppid': 1,
+                    'uid': 0, 'comm': 'transparent-sha',
+                    'exe': '/srv/transparent-activity/build/target/release-fast/transparent-shard-server',
+                    'argv': ['/srv/transparent-activity/build/target/release-fast/transparent-shard-server'],
+                    'cgroup': '0::/system.slice/transparent-activity-prototype-server-e47bdf79.service'}
+        self.assertTrue(E.S.matches(survivor, E.classes()))
+        self.assertIsNone(E.S.unit_of(survivor['cgroup'], E.BASELINE_UNITS))
+        self.assertNotIn('transparent-activity-prototype-server-e47bdf79.service', E.BASELINE_UNITS)
+        bound, unattributed, reasons = E.S.operational([survivor], set(), E.classes(), E.BASELINE_UNITS)
+        self.assertEqual((bound, reasons), ([], []))
+        [kept] = E.S.summary(unattributed)
+        self.assertEqual({k: kept[k] for k in ('pid', 'start_ticks', 'exe', 'cgroup')},
+                         {k: survivor[k] for k in ('pid', 'start_ticks', 'exe', 'cgroup')})
+        # Through a whole survey: refused, with the exact unit, PID, start ticks and executable retained.
+        with patch.object(E.S, 'scan', lambda *a, **k: REAL_SCAN(*a, **k)+[dict(survivor, token=None, holds=False,
+                                                                                 receiver=False, unreadable=False)]):
+            attempts = self.refused('not bound to a baseline service')
+        survey = json.loads((attempts[-1]/'coordinator.json').read_text())
+        self.assertEqual([(p['pid'], p['start_ticks'], p['exe'], p['cgroup']) for p in survey['unattributed']],
+                         [(1512286, 244751095, survivor['exe'], survivor['cgroup'])])
+        self.assertEqual(survey['baseline_bound'], [])
+
     def legacy(self, name, record=True):
         """A legacy native child that made its own session; its parent then exited."""
         executable = self.root/name
