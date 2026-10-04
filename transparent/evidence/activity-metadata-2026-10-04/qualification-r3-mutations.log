@@ -1,4 +1,4 @@
-# Single-guard mutations of transparent/ops/lib/activity_deployed_qualification.py at tree bf62300d3b7ef94d8cdee749d3b6f9ca9dfb69fb, 2026-10-04T19:56:11Z
+# Single-guard mutations of transparent/ops/lib/activity_deployed_qualification.py at tree f0488eb5011d746fed9be23e5c79b3a2c466fc85, 2026-10-04T20:41:48Z
 # each mutation replaced one guard, ran test_activity_deployed_qualification.py, then restored the source (sha256 checked)
 recovery elapsed after success       killed (suite failed)
 recovery attempt fits deadline       killed (suite failed)
@@ -40,5 +40,20 @@ rollback phase budget                killed (suite failed)
 reviewed plan digest                 killed (suite failed)
 quality supervisor stopped           killed (suite failed)
 observe-only scaler                  killed (suite failed)
-mutations: 40, survived: 0
+every retained owner record          killed (suite failed)
+owner record bound                   killed (suite failed)
+unknown owner record refuses         killed (suite failed)
+unreadable process table refuses     killed (suite failed)
+nested recorded owners               killed (suite failed)
+escaped session member               killed (suite failed)
+escaped predates owner record        killed (suite failed)
+owner-root escape                    killed (suite failed)
+pre-resume audit                     killed (suite failed)
+continuation exactness               killed (suite failed)
+heavy continuation fails trial       killed (suite failed)
+continuation bound                   killed (suite failed)
+interrupted mid-sync                 killed (suite failed)
+seed anchor binding                  killed (suite failed)
+seed trial reconciled                killed (suite failed)
+mutations: 55, survived: 0
 transparent/ops/lib/activity_deployed_qualification.py: OK

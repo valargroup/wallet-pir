@@ -1,7 +1,7 @@
-# Deployed qualification focused checks (revision of attempt-1 66f56ee9), 2026-10-04T19:54:38Z, development hub, no host access
-# tree bf62300d3b7ef94d8cdee749d3b6f9ca9dfb69fb (base 0b0f96fc7f85c611a0c117ab9dad2b48c3e1a7d8)
-# module sha256 3d14819f45bb70ec55f77b29100b210041736570610fb9815b558b46df396836
-# test sha256 52770550265235cfc878fa0ce126dd62130eff16e1547420612e19389f2abd82; cli sha256 5ab98526496cbddd61a67249f6978e424937bbb28012767512109ad682429fe5
+# Deployed qualification focused checks, attempt-2 round 2, 2026-10-04T20:40:01Z, development hub, no host access
+# tree f0488eb5011d746fed9be23e5c79b3a2c466fc85 (base 0b0f96fc7f85c611a0c117ab9dad2b48c3e1a7d8)
+# module sha256 4fbfddcf3b362e2f178427008795251c48adf2772580a6999a2ec97c4cdbe176
+# test sha256 0b24abcee3f910165291f53d7100f399c57bfb864e1f8cef4266ac80599e896c; cli sha256 5ab98526496cbddd61a67249f6978e424937bbb28012767512109ad682429fe5
 $ python3 -B transparent/ops/tests/test_activity_deployed_qualification.py -v
 test_503_restarts_memory_and_window_gates (__main__.CapacityTests.test_503_restarts_memory_and_window_gates) ... ok
 test_completed_exact_outcomes_only_count (__main__.CapacityTests.test_completed_exact_outcomes_only_count) ... ok
@@ -10,6 +10,11 @@ test_nonzero_or_stopped_exit_fails_despite_complete_rows (__main__.CapacityTests
 test_scheduled_without_outcome_and_heavy_timeouts_fail (__main__.CapacityTests.test_scheduled_without_outcome_and_heavy_timeouts_fail) ... ok
 test_closed_wrapper_commands (__main__.CliTests.test_closed_wrapper_commands) ... ok
 test_plan_through_wrapper_without_live_access (__main__.CliTests.test_plan_through_wrapper_without_live_access) ... ok
+test_client_reopen_interrupts_mid_sync_and_resumes_exactly (__main__.ContinuationTests.test_client_reopen_interrupts_mid_sync_and_resumes_exactly) ... ok
+test_heavy_continuation_failures_fail_the_trial (__main__.ContinuationTests.test_heavy_continuation_failures_fail_the_trial) ... ok
+test_heavy_store_resumes_to_an_exact_native_outcome (__main__.ContinuationTests.test_heavy_store_resumes_to_an_exact_native_outcome) ... ok
+test_resume_audits_prior_history_and_bounds_the_worker (__main__.ContinuationTests.test_resume_audits_prior_history_and_bounds_the_worker) ... ok
+test_seed_trial_must_be_a_reconciled_trial_of_this_transaction (__main__.ContinuationTests.test_seed_trial_must_be_a_reconciled_trial_of_this_transaction) ... ok
 test_commands_are_capped_by_the_deadline (__main__.DeadlineTests.test_commands_are_capped_by_the_deadline) ... ok
 test_one_shared_monotonic_bound (__main__.DeadlineTests.test_one_shared_monotonic_bound) ... ok
 test_escalation_and_extension_are_fail_closed (__main__.DecisionTests.test_escalation_and_extension_are_fail_closed) ... ok
@@ -35,13 +40,17 @@ test_overdue_replica_and_reorganization (__main__.FreshnessTests.test_overdue_re
 test_requires_six_hours_and_three_hundred_blocks (__main__.FreshnessTests.test_requires_six_hours_and_three_hundred_blocks) ... ok
 test_violation_resets_credit_and_preserves_failed_interval (__main__.FreshnessTests.test_violation_resets_credit_and_preserves_failed_interval) ... ok
 test_headroom_restarts_oom_and_quality_supervisor (__main__.HealthTests.test_headroom_restarts_oom_and_quality_supervisor) ... ok
+test_a_process_from_an_owner_root_outside_any_unit_is_escaped (__main__.OwnerFindingTests.test_a_process_from_an_owner_root_outside_any_unit_is_escaped) ... ok
+test_escaped_descendant_of_a_dead_terminal_owner (__main__.OwnerFindingTests.test_escaped_descendant_of_a_dead_terminal_owner) ... ok
 test_every_remote_host_is_reconciled_and_none_exempt (__main__.OwnerFindingTests.test_every_remote_host_is_reconciled_and_none_exempt) ... ok
-/usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3565807 is still running
+/usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3608602 is still running
   _warn("subprocess %s is still running" % self.pid,
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
+test_every_retained_record_not_only_the_latest_is_reconciled (__main__.OwnerFindingTests.test_every_retained_record_not_only_the_latest_is_reconciled) ... ok
+test_incomplete_or_unknown_scope_refuses (__main__.OwnerFindingTests.test_incomplete_or_unknown_scope_refuses) ... ok
 test_terminal_record_with_a_live_recorded_owner_is_not_quiescent (__main__.OwnerFindingTests.test_terminal_record_with_a_live_recorded_owner_is_not_quiescent) ... ok
 test_unfinished_fence_and_live_owner_units (__main__.OwnerFindingTests.test_unfinished_fence_and_live_owner_units) ... ok
-/usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3565814 is still running
+/usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3608615 is still running
   _warn("subprocess %s is still running" % self.pid,
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 test_an_unrestored_effect_fails_and_fences_the_result (__main__.OwnerTests.test_an_unrestored_effect_fails_and_fences_the_result) ... ok
@@ -65,7 +74,7 @@ test_absent_action_is_refused_for_good_and_lock_holders_fence (__main__.RemoteTe
 test_failed_start_is_restored_within_the_bound_or_stays_fenced (__main__.RemoteTests.test_failed_start_is_restored_within_the_bound_or_stays_fenced) ... ok
 test_intent_and_exact_service_precede_each_phase_and_never_replay (__main__.RemoteTests.test_intent_and_exact_service_precede_each_phase_and_never_replay) ... ok
 test_read_only_preparation_and_identity_probes (__main__.RemoteTests.test_read_only_preparation_and_identity_probes) ... ok
-test_reconcile_restores_only_owned_state_and_fences_foreign_state (__main__.RemoteTests.test_reconcile_restores_only_owned_state_and_fences_foreign_state) ... /usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3565838 is still running
+test_reconcile_restores_only_owned_state_and_fences_foreign_state (__main__.RemoteTests.test_reconcile_restores_only_owned_state_and_fences_foreign_state) ... /usr/lib/python3.12/subprocess.py:1127: ResourceWarning: subprocess 3608644 is still running
   _warn("subprocess %s is still running" % self.pid,
 ResourceWarning: Enable tracemalloc to get the object allocation traceback
 ok
@@ -81,7 +90,7 @@ test_sample_scripts_and_identities_are_bounded (__main__.ValidationTests.test_sa
 test_targets_and_compositions_are_the_reviewed_values (__main__.ValidationTests.test_targets_and_compositions_are_the_reviewed_values) ... ok
 
 ----------------------------------------------------------------------
-Ran 67 tests in <elapsed>
+Ran 76 tests in <elapsed>
 
 OK
 $ python3 -B -m unittest discover -s ops/tests/deploy -p test_*.py
@@ -92,7 +101,7 @@ test_activity_candidate.py: Ran 25 tests in <elapsed> OK
 test_activity_candidate_inputs.py: Ran 9 tests in <elapsed> OK
 test_activity_candidate_reports.py: Ran 10 tests in <elapsed> OK
 test_activity_candidate_upload.py: Ran 21 tests in <elapsed> OK
-test_activity_deployed_qualification.py: Ran 67 tests in <elapsed> OK
+test_activity_deployed_qualification.py: Ran 76 tests in <elapsed> OK
 test_activity_input_preparation.py: Ran 7 tests in <elapsed> OK
 test_activity_input_stage.py: Ran 33 tests in <elapsed> OK
 test_activity_lock_qualification.py: Ran 8 tests in <elapsed> OK
@@ -104,3 +113,5 @@ test_activity_schema_operation.py: Ran 212 tests in <elapsed> OK
 test_activity_schema_product.py: Ran 42 tests in <elapsed> OK
 test_activity_schema_reconcile.py: Ran 13 tests in <elapsed> OK
 test_activity_schema_routing.py: Ran 33 tests in <elapsed> OK
+$ tools/check-doc-links.sh
+check-doc-links: 242 files, no broken links
