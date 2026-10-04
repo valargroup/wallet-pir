@@ -1541,9 +1541,124 @@ applies 83 bits only to archive-wide pages and 128 bits elsewhere. It retains
 the measured table/public setup bindings and the raw evidence references.
 Installed warm-worker and canonical setup agreement remains a separate gate.
 
-The independent-chain oracle producer and the production execution controls
-still require implementation. These offline producers and their fixture tests
-are source evidence; no candidate native qualification has been performed.
+The independent-chain oracle producer and its execution controls still require
+implementation, as do load, capacity and fault controls. These offline
+producers and their fixture tests are source evidence; no candidate native
+qualification has been performed.
+
+#### Native gate execution
+
+`schema-candidate-execute-*` produces the raw inputs of the two reports above.
+Run it from root's workstation with the remote-lock inventory and pinned SSH:
+
+- `schema-candidate-execute-{plan,preflight,stage} --source-sha REV --mode MODE
+  --attempt N --preparation-request-sha256 H`; stage also requires
+  `--expect-plan-sha256` from the reviewed plan.
+- `schema-candidate-execute-{status,reconcile} --source-sha REV
+  --request-sha256 H`.
+
+The closed request is `{version: 1, kind, mode, source_sha, candidate_sha,
+candidate_identity, preparation_request_sha256, publication_sha256, machine_id,
+attempt}`. It names the staged CandidatePreparation owner, the candidate
+provenance digest and the pinned publication map `34e3ebe3...`. Historical,
+partial or foreign identities refuse. There are only two modes:
+
+| Mode | Children |
+| --- | --- |
+| `artifact-verification` | One `shard-verify --shard-dir /srv/transparent-activity/full-v11/publications/initial` with `--expect-start 0`, `--expect-through 3500738`, `--expect-anchor-hash 00000000007b5488...`, `--expect-recent-from 3289805`, both geometries, `--expect-map-sha256 34e3ebe3...` and `--source-sha c3c66b9b...`. No `--data-dir`, journal, rebuild or `--out`. |
+| `native-certificates` | One `native_certificate segment --geometry G --table T --rows-bin <publication>/<manifest digest>/<table>.<index>.bin` per manifest table segment: all 180, derived from the 90 checksum-bound manifests. No synthetic mode, no `--public`. |
+
+The remote argv is the staged wrapper's fixed
+`schema-candidate-execute-receive --action ACTION --request-sha256 HASH`, run as
+`/usr/bin/python3 -B`. The request travels as one bounded header line. Plan,
+executable, argv and paths derive from the request; nothing is caller-chosen.
+
+Before any child, the receiver checks:
+
+- Root, the coordinator machine ID and the staged source receipt.
+- The staged CandidatePreparation owner and request, then the whole 18-artifact
+  bundle.
+- The runtime host ABI: x86-64, `glibc 2.39`, and the `x86-64-v3` and
+  `pclmulqdq` CPU flags.
+- The publication: root-owned, not group- or other-writable, no links, exactly
+  `shards.json` plus 90 manifest directories. Each holds exactly `manifest.json`,
+  `filter.bin` and its segment files. The map hash, coverage, anchor, tiers,
+  every manifest hash and every table file size equal to rows × 4096 must agree.
+
+Stage holds the production lock in the executing process and runs the
+schema/input fence. It requires the reviewed plan digest. It writes the request
+and a `running` owner to `/srv/transparent-activity/ops/input-staging/`, then
+points `latest.json` at it, all before any child starts.
+
+Children run one at a time. Each one gets:
+
+- Its own session (`start_new_session`), the lock descriptor, and a closed
+  environment.
+- A fresh check of the binary hash, ELF ABI and host ABI. For certificates, the
+  table's identity, size and hash are checked before the child reads it, and its
+  identity is checked again after.
+- A health sample before spawn, at least every 2 seconds, and after exit. A
+  sample records memory and disk fractions and the session's RSS.
+
+The child is stopped and the run fails on any of:
+
+- Memory or disk below 20 percent.
+- A sampling gap over 10 seconds.
+- Session RSS above 16 GiB.
+- More than 1800 seconds.
+- stdout above 16 MiB or stderr above 1 MiB.
+- A nonzero exit, or a descendant still alive after exit.
+
+These budgets reuse existing reviewed bounds: the report contract's 1800
+seconds per execution and the publication job's 16 GiB `MemoryMax`. Retained 12ce
+runs took 149 seconds to load the set and 1275 seconds for all 180 certificates.
+Root decides any other budget.
+
+Each child's private directory under
+`/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` retains
+these files, all 0400 with a single link:
+
+- `owner.json`: actual binary, argv, PID, start ticks, source, candidate and
+  publication.
+- `native.json` (raw stdout) and `stderr.log`.
+- `health.ndjson`, plus `health.json` as an array.
+- `result.json`.
+
+Owner and result follow the `activity_candidate_reports.capture` contract; each
+successful capture is checked against it. Private copies of the map and
+manifests sit under `inputs/`. A complete run writes `references.json`. It is the
+report producer's input, apart from the root-supplied `certifier` path for
+certificates.
+
+The owner becomes `staged` with `gate: unevaluated`. Native exit zero is not a
+gate pass until `activity-candidate-report.py` accepts the retained bytes.
+
+A failure stops the run at that child and keeps every byte, including the failed
+attempt. The owner fences all other mutation until
+`schema-candidate-execute-reconcile`. Reconciliation works in this order:
+
+1. It requires that the recorded receiver, identified by PID and kernel start
+   time, has exited.
+2. If the recorded child still has its PID and start time and leads its own
+   session, it signals only that session's members, TERM then KILL. A reused PID
+   or a process outside its own session is never signalled.
+3. It then acquires the production lock afresh. Children inherit that lock, so
+   acquiring it proves no descendant survives; a held lock refuses.
+4. It marks the owner `reconciled` and keeps the evidence. A retry needs a new
+   attempt.
+
+SIGHUP, SIGTERM or SIGINT makes the receiver stop its own child, record
+`interrupted` and exit 75. A lost SSH session leaves the remote owner running and
+the client reports an unknown outcome (exit 75). Root then runs status and
+reconcile explicitly. The receiver writes only this private qualification
+evidence. It never touches a live service, cache, unit, route or journal writer.
+
+Fixture tests use real child processes, a real flock lock and real signals.
+They cover receiver SIGKILL, signals, lost transport, PID reuse, a foreign
+process, floors, sampling gaps, budgets, output bounds, nonzero exits,
+descendants, drift and 180-segment coverage. No production execution has
+occurred. Installed and canonical setup agreement remains a separate cutover
+gate.
 
 Root's ordered path, without rebuilding the old CI or native chain:
 
@@ -1552,8 +1667,10 @@ Root's ordered path, without rebuilding the old CI or native chain:
    Then run candidate plan, preflight, stage and status against the retained
    `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
-   immutable publication. Bind each report from retained raw results; a document
-   shaped like a passing report is not evidence.
+   immutable publication: `schema-candidate-execute-*` for artifact verification
+   and native certificates. Bind each report from retained raw results with
+   `activity-candidate-report.py`; a document shaped like a passing report is not
+   evidence.
 4. Stage the candidate worker pair on every worker.
 5. Render version-2 service, proof and product inputs, then follow the existing
    schema plan, preflight and deploy path.

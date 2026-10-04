@@ -69,6 +69,12 @@ or deployed, and no candidate gate was run. Freshness, capacity and every other
 acceptance gate below remain as recorded.
 [Evidence](../evidence/activity-metadata-2026-10-04/README.md).
 
+Operations source then added the locked `schema-candidate-execute-*` path for
+the artifact-verification and native-certificate executions. It retains raw
+captures for the offline report producer. Fixture tests and single-guard
+mutations passed on the development hub. No candidate native program ran on a
+production host, and no gate report exists.
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

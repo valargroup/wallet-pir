@@ -63,6 +63,13 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       pinned candidate archives to the coordinator's fixed candidate archive namespace.
   schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
       Render the candidate worker executable pair for schema-input-{plan,...,stage}.
+  schema-candidate-execute-{plan,preflight,stage} --source-sha REV
+      --mode artifact-verification|native-certificates --attempt N
+      --preparation-request-sha256 H [--expect-plan-sha256 H]
+  schema-candidate-execute-{status,reconcile} --source-sha REV --request-sha256 H
+      From root's workstation (remote-lock inventory, pinned SSH): run the closed candidate
+      shard-verify or all 180 native certificate segments on the coordinator and retain
+      private raw evidence. Native exit zero is not a gate pass.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
@@ -130,6 +137,20 @@ def parser():
         for kind in ('transparent-filter','transparent-publisher','supplemental'):
             command.add_argument('--'+kind, required=True, metavar='ARCHIVE')
         if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-execute-'+name, help='closed candidate native gate execution on the coordinator')
+        command.add_argument('--source-sha', required=True)
+        if name in ('status','reconcile'):
+            command.add_argument('--request-sha256', required=True)
+            continue
+        command.add_argument('--mode', choices=('artifact-verification','native-certificates'), required=True)
+        command.add_argument('--attempt', type=int, required=True)
+        command.add_argument('--preparation-request-sha256', required=True)
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
+    command.add_argument('--expect-plan-sha256')
     command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
     command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
     command.add_argument('--request-sha256', required=True)
@@ -276,6 +297,10 @@ def main(argv=None, executor=None, out=print, **options):
                 return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
             out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
             return 0
+        if args.command == 'schema-candidate-execute-receive':
+            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out, args.expect_plan_sha256)
         if args.command == 'schema-candidate-receive':
             spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -302,6 +327,23 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-candidate-execute-'):
+            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            action = args.command.removeprefix('schema-candidate-execute-')
+            execution = module.Execution(descriptors.load_inventory(args.inventory), args.source_sha,
+                                         mode=getattr(args,'mode',None), attempt=getattr(args,'attempt',None),
+                                         preparation=getattr(args,'preparation_request_sha256',None),
+                                         request_sha256=getattr(args,'request_sha256',None))
+            try:
+                result = execution.run(action, getattr(args,'expect_plan_sha256',None))
+            except module.Unknown as error:
+                out('error: outcome unknown: %s' % error)
+                return 75
+            out(json.dumps(result,sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+result['plan_sha256'])
+            return 0
         if args.command.startswith('schema-candidate-upload-'):
             spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
