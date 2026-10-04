@@ -89,7 +89,7 @@ class DaySizingTests(unittest.TestCase):
             ('directory_entry_bytes_min',100_000_000),('directory_entry_bytes_max',100_000_000),
             ('overflow_entry_bytes',200_000_000),('covered_page_requests',3000),('fragments',100))}
         report={'threshold_decision':{'selected_bytes':128},'totals':{'eligible':{'estimate':1000}},
-            'codecs':{'display-v1':{'thresholds':{'128':{'packing_bounds':metrics}}}}}
+            'codecs':{'display-v1':{'thresholds':{str(t):{'packing_bounds':metrics} for t in d.THRESHOLDS}}}}
         scenarios=d.geometry_projection(report)['scenarios']
         rows=[s for s in scenarios if s['fee_size_bound']=='upper' and s['lookup_rows']==4096 and s['overflow_rows']==4096]
         global_row=next(s for s in rows if s['lookup_buckets']==1 and s['overflow_buckets']==1)

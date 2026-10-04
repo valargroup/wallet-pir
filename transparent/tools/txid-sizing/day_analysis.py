@@ -342,7 +342,18 @@ def geometry_projection(report):
     population=report['totals']['eligible']['estimate']
     covered=totals['covered_page_requests']['upper']['estimate']/population
     fragments=totals['fragments']['upper']['estimate']/population
-    density=.75;scenarios=[]
+    density=.75;scenarios=[];sweep={}
+    for cutoff in THRESHOLDS:
+        m=report['codecs']['display-v1']['thresholds'][str(cutoff)]['packing_bounds']
+        db=m['directory_entry_bytes_max']['upper']['estimate'];pb=m['overflow_entry_bytes']['upper']['estimate']
+        q=m['covered_page_requests']['upper']['estimate']/population
+        ls=max(1,math.ceil(db/(4*density*8192*a.ROW)));ps=max(1,math.ceil(pb/(density*32768*a.ROW)))
+        sweep[str(cutoff)]=dict(directory_entry_bytes_upper_point=db,overflow_entry_bytes_upper_point=pb,
+            assumed_lookup_buckets=4,assumed_overflow_buckets=1,assumed_lookup_rows=8192,assumed_overflow_rows=32768,
+            lookup_segments_per_bucket=ls,overflow_segments=ps,
+            cover3_upload_bytes_per_open=2*(27648+8192*49//8)+q*(27648+32768*49//8),
+            cover3_response_body_bytes_per_open=(2*ls+q*ps)*5632,
+            cover3_scan_bytes_proxy_per_open=2*ls*8192*a.ROW+q*ps*32768*a.ROW)
     for size_bound in ('lower','upper'):
         directory=totals['directory_entry_bytes_'+('max' if size_bound=='upper' else 'min')][size_bound]['estimate']
         overflow=totals['overflow_entry_bytes'][size_bound]['estimate']
@@ -364,8 +375,8 @@ def geometry_projection(report):
                     uncovered_response_body_bytes_per_open=(2*ls+fragments*ps)*5632,
                     scan_byte_proxy_per_covered_open=2*ls*lr*a.ROW+covered*ps*pr*a.ROW,
                     measured_native_rss_bytes=None,measured_latency_seconds=None))
-    return dict(schema='txid-sizing-one-day-geometry-v1',threshold=t,projected_directory_entry_bytes=[totals['directory_entry_bytes_min']['lower']['estimate'],totals['directory_entry_bytes_max']['upper']['estimate']],projected_overflow_entry_bytes=[totals['overflow_entry_bytes']['lower']['estimate'],totals['overflow_entry_bytes']['upper']['estimate']],scenarios=scenarios,
-        limits='Sample-derived additive entry bytes. Density/equal bucket load and uniform tx openings assumed; no full population packing, row slack, segment placement, measured RSS/latency or hardware qualification. Native reservation is the existing source formula including setup scratch, not measured resident memory. Uploads are per row query and do not multiply by segments; response bodies/evaluations do. Fixed segment vectors within buckets assumed for routing; changing epochs/vectors needs replay.')
+    return dict(schema='txid-sizing-one-day-geometry-v1',threshold=t,projected_directory_entry_bytes=[totals['directory_entry_bytes_min']['lower']['estimate'],totals['directory_entry_bytes_max']['upper']['estimate']],projected_overflow_entry_bytes=[totals['overflow_entry_bytes']['lower']['estimate'],totals['overflow_entry_bytes']['upper']['estimate']],scenarios=scenarios,threshold_sweep=sweep,
+        limits='Sample-derived additive entry bytes, fee bounds at HT point totals; statistical uncertainty remains in the analysis, not these illustrative segment ceilings. Density/equal bucket load and uniform tx openings assumed; no full population packing, row slack, segment placement, measured RSS/latency or hardware qualification. Native reservation is the existing source formula including setup scratch, not measured resident memory. Uploads are per row query and do not multiply by segments; response bodies/evaluations do. All costs assume two initial queries; current coincidence deduplication can reduce uncovered uploads while exposing that class. Fixed segment vectors within buckets assumed for routing; changing epochs/vectors needs replay.')
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
