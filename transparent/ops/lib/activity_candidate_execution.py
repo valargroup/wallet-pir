@@ -469,6 +469,9 @@ def verify_host(observed):
     return observed
 
 
+PF_KTHREAD = 0x00200000
+
+
 def boot_id():
     return BOOT_ID.read_text().strip()
 
@@ -481,7 +484,7 @@ def process(pid):
         return None
     fields = raw.rsplit(')', 1)[1].split()
     return {'pid': pid, 'state': fields[0], 'ppid': int(fields[1]), 'pgid': int(fields[2]), 'session': int(fields[3]),
-            'start_ticks': int(fields[19])}
+            'start_ticks': int(fields[19]), 'kernel': bool(int(fields[6]) & PF_KTHREAD)}
 
 
 def booted_unix():
@@ -547,7 +550,7 @@ def scan(lock_path=None):
             continue
         pid = int(entry.name)
         current = process(pid)
-        if current is None or current['state'] == 'Z':
+        if current is None or current['state'] == 'Z' or current['kernel']:
             continue
         try:
             owner = os.stat('/proc/%d' % pid).st_uid
@@ -840,7 +843,7 @@ def recorded(record, name, mtime):
     return found
 
 
-def owner_inventory(roots):
+def owner_inventory(roots, tick=lambda: None):
     """Every entry of the retained owner namespaces, bounded and complete.
 
     Every regular `.json` file is parsed, latest or not and of any kind, and
@@ -869,6 +872,7 @@ def owner_inventory(roots):
                     reasons.append('owner namespace unreadable: %s %s' % (label, type(error).__name__))
                     continue
                 for entry in entries:
+                    tick()
                     counts['entries'] += 1
                     if counts['entries'] > MAX_OWNER_ENTRIES:
                         reasons.append('owner namespaces exceed %d entries' % MAX_OWNER_ENTRIES)
@@ -934,6 +938,7 @@ def associate(references, processes, excluded, observer_cgroup, booted):
       that started within the record's start window and last write.
 
     Records last written before this boot or naming another boot are skipped.
+    Kernel threads never reach here: `scan` leaves them out.
     """
     current = boot_id()
     live = {p['pid']: p for p in processes if p['pid'] not in excluded}
@@ -945,7 +950,9 @@ def associate(references, processes, excluded, observer_cgroup, booted):
             groups.setdefault(value, []).append(p)
         if p.get('cgroup') and p['cgroup'] != observer_cgroup:
             groups.setdefault(('cgroup', p['cgroup']), []).append(p)
-    orphans = [p for p in live.values() if p['session'] not in present or p['pgid'] not in present]
+    # Kernel-spawned helpers have session and group 0: never an operation's orphan.
+    orphans = [p for p in live.values() if p['session'] > 0 and p['pgid'] > 0 and
+               (p['session'] not in present or p['pgid'] not in present)]
     found = {}
 
     def flag(item, reason, ref):
@@ -971,7 +978,7 @@ def associate(references, processes, excluded, observer_cgroup, booted):
     return sorted(found.values(), key=lambda p: p['pid'])
 
 
-def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=None, owners=None):
+def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=None, owners=None, tick=lambda: None):
     """One host's owner/process reconciliation; read-only, bounded, raw JSON.
 
     `holder` is the receiver on the coordinator, the only process allowed to
@@ -1005,7 +1012,7 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
     path = path or lock_path(lambda: ProductionLock({'type': 'pinned_host', 'machine_id': request['machine_id']}))
     owners = Path(owners or OWNERS)
     inventory, references, executions, problems = owner_inventory(
-        (('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS), ('input-staging', owners)))
+        (('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS), ('input-staging', owners)), tick)
     reasons.extend(problems)
     observed['inventory'] = inventory
     processes = scan(path)
@@ -1240,12 +1247,20 @@ class Receiver:
             raise ValueError('host survey bundle is not JSON; nothing was mutated') from None
         expected = sorted(h['host'] for h in self.request['hosts'] if h['host'] != self.request['coordinator'])
         surveys = remote.get('surveys') if isinstance(remote, dict) and set(remote) == {'surveys'} else None
-        local = survey(self.request, self.identifier, nonce, self.request['coordinator'], skip=skip, holder=holder,
-                       path=lock_path(self.lock_factory), owners=self.owners)
-        tick()
         raw = dict(surveys) if isinstance(surveys, dict) else {}
+        phase = 'reconcile' if skip else 'stage'
+        try:
+            local = survey(self.request, self.identifier, nonce, self.request['coordinator'], skip=skip, holder=holder,
+                           path=lock_path(self.lock_factory), owners=self.owners, tick=tick)
+            tick()
+        except BaseException as error:
+            # The remote replies already received are retained with the local failure.
+            raw[self.request['coordinator']] = json.dumps({'host': self.request['coordinator'], 'nonce': nonce,
+                                                           'error_type': type(error).__name__, 'error': str(error)[:300]})
+            self.retain_surveys(nonce, raw, phase)
+            raise
         raw[self.request['coordinator']] = json.dumps(local, sort_keys=True)
-        retained = self.retain_surveys(nonce, raw, 'reconcile' if skip else 'stage')
+        retained = self.retain_surveys(nonce, raw, phase)
         require(isinstance(surveys, dict) and sorted(surveys) == expected,
                 'host survey set is partial or foreign; retained at %s' % retained['path'])
         for host in sorted(raw):

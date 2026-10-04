@@ -31,6 +31,13 @@ from wallet_pir_ops.deploy import cli  # noqa: E402
 MODULE = HERE.parent/'lib/activity_candidate_execution.py'
 
 
+def _frames():
+    frame = sys._getframe(1)
+    while frame is not None:
+        yield frame
+        frame = frame.f_back
+
+
 def load():
     import importlib.util
     spec = importlib.util.spec_from_file_location('candidate_execution_test', MODULE)
@@ -1010,6 +1017,10 @@ class Survey(Fixture):
         self.assertEqual(found([ref(12, window=1400.0)], [proc(22, 1500, session=99)]), [(22, 'orphan-in-recorded-window')])
         self.assertEqual(found([ref(12, window=1600.0)], [proc(22, 1500, session=99)]), [])
         self.assertEqual(found([ref(12, window=1400.0)], [proc(99, 1000), proc(22, 1500, session=99)]), [])
+        self.assertEqual(found([ref(12, window=1400.0)], [proc(23, 1500, session=0)]), [])
+        kthreadd = E.process(2)
+        if kthreadd is not None:
+            self.assertTrue(kthreadd['kernel']); self.assertNotIn(2, [p['pid'] for p in E.scan()])
         records = E.recorded({'started_unix': 5.0, 'pid': 3, 'start_ticks': 4, 'boot_id': 'b',
                               'events': [{'relay_pid': 6, 'ssh_pid': 7}, {'ppid': 8, 'pid': True}],
                               'child': {'pid': 9, 'process_start': 10, 'started': 11.0}}, 'x.json', 12.0)
@@ -1030,6 +1041,19 @@ class Survey(Fixture):
             I.durable.atomic_json(self.fence/'schema/transparent-schema-ok.json', {'status': 'committed', 'pid': 1})
             self.refused('more than 0 processes', self.receiver(attempt=5))
         self.assertEqual(self.stage(self.receiver(attempt=6))['status'], 'staged')
+
+    def test_a_floor_or_gap_during_the_local_survey_still_retains_every_received_reply(self):
+        # Healthy until the coordinator's own owner inventory runs, then below the floor.
+        def floor(paths):
+            surveying = any(f.f_code.co_name == 'owner_inventory' for f in _frames())
+            return dict(HEALTHY, observed_unix=time.time(), memory_available=.1 if surveying else .5)
+        with patch.object(E, 'resources', floor), patch.object(E, 'SAMPLE_SECONDS', 0):
+            attempts = self.refused('20 percent')
+        index = json.loads((attempts[-1]/'index.json').read_text())
+        self.assertEqual(sorted(index['hosts']), ['coordinator', 'worker-a'])
+        self.assertEqual(json.loads((attempts[-1]/'coordinator.json').read_text())['error_type'], 'Budget')
+        self.assertEqual(json.loads((attempts[-1]/'worker-a.json').read_text())['status'], 'clear')
+        self.assertEqual(self.stage(self.receiver(attempt=2))['status'], 'staged')
 
     def test_surveys_that_never_arrive_refuse_before_mutation(self):
         class Silent(Channel):
