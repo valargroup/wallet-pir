@@ -175,9 +175,9 @@ unknown records are never labeled actual exact-fee measurements.
 `day_analysis.py` independently checks RPC identities, input counts, shielded
 presence, exact values/scripts and Rust/Python codec bytes. It uses block-cluster
 HT totals, ratios and FPC uncertainty. The smallest of seven prespecified cutoffs
-is eligible for recommendation only when the conservative one-sided Bonferroni
-normal lower bound exceeds 80%; a stratified rescaled block bootstrap checks
-sensitivity. These are asymptotic sizing estimates, not formal guarantees.
+is eligible for recommendation only when both the conservative one-sided
+Bonferroni normal lower bound and the stratified rescaled block-bootstrap
+Bonferroni lower bound exceed 80%. These are asymptotic sizing estimates, not formal guarantees.
 
 Fee-size ambiguity is retained in joint routing as guaranteed/possible distinct
 candidate membership. Three page requests and two initial queries cover ordinary
@@ -197,10 +197,12 @@ when a record crosses the inline boundary.
 ../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py summarize /outside/git/day-sample
 ../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py statistics \
   /outside/git/day-sample /outside/git/day-statistics.json.gz
-../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py report \
-  /outside/git/day-statistics.json.gz /outside/git/day-analysis.json
 ../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py bootstrap \
   /outside/git/day-statistics.json.gz /outside/git/day-bootstrap.json
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py report \
+  /outside/git/day-statistics.json.gz /outside/git/day-analysis.json --bootstrap /outside/git/day-bootstrap.json
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py geometry \
+  /outside/git/day-analysis.json /outside/git/day-geometry.json
 ```
 
 Raw source frames and canonical record inventories are retained outside Git and
