@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import signal
 import subprocess
 import sys
@@ -25,10 +26,11 @@ from unittest.mock import patch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[2]/'ops/lib'))
-from wallet_pir_ops import hostlock  # noqa: E402
+from wallet_pir_ops import hostlock, owner_survey  # noqa: E402
 from wallet_pir_ops.deploy import cli  # noqa: E402
 
 MODULE = HERE.parent/'lib/activity_candidate_execution.py'
+REAL_SCAN = owner_survey.scan
 
 
 def _frames():
@@ -136,6 +138,9 @@ def source():
     return config['source']
 E.staged_source = source
 E.host_abi = lambda: {'machine': 'x86_64', 'libc': E.GLIBC, 'cpu_flags': sorted(E.CPU_FLAGS)}
+# The fixture host is this task's cgroup: other hub tasks' processes are not on it.
+scan, own = E.S.scan, E.cgroup(os.getpid())
+E.S.scan = lambda *args, **kwargs: [p for p in scan(*args, **kwargs) if p['cgroup'] == own]
 E.resources = lambda paths: {'observed_unix': time.time(), 'memory_available': .5, 'disk_available': {'/': .5}}
 E.SAMPLE_SECONDS = .1
 for name, value in config.get('constants', {}).items():
@@ -233,6 +238,10 @@ class Fixture(unittest.TestCase):
                                    (E.schema_fence, 'HOST_ACTIONS', self.fence/'host-actions')):
             p = patch.object(thing, name, value); p.start(); self.addCleanup(p.stop)
         p = patch.dict(C.ARTIFACTS, self.pins); p.start(); self.addCleanup(p.stop)
+        # The fixture host is this task's cgroup: other hub tasks' processes are not on it.
+        own = E.cgroup(os.getpid())
+        p = patch.object(E.S, 'scan', lambda *a, **k: [x for x in REAL_SCAN(*a, **k) if x['cgroup'] == own])
+        p.start(); self.addCleanup(p.stop)
         real = E.schema_fence.local_schema_fence
         p = patch.object(E.schema_fence, 'local_schema_fence', lambda **o: real(self.fence/'schema', **o))
         p.start(); self.addCleanup(p.stop)
@@ -1000,15 +1009,17 @@ class Survey(Fixture):
 
     def test_association_rules_bind_start_identity_session_cgroup_window_and_boot(self):
         hz, booted = os.sysconf('SC_CLK_TCK'), 1000.0
-        def proc(pid, at, session=None, cgroup='0::/observer'):
+        def proc(pid, at, session=None, cgroup='0::/observer', ppid=5, comm='x'):
             session = pid if session is None else session
-            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session, 'pgid': session, 'cgroup': cgroup}
+            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session, 'pgid': session, 'cgroup': cgroup,
+                    'ppid': ppid, 'comm': comm}
         def ref(pid, **change):
             return dict({'record': 'r.json', 'key': 'pid', 'pid': pid, 'window': None, 'mtime': 2000.0,
                          'start_ticks': None, 'boot_id': None, 'cgroup': None}, **change)
+        parent = proc(5, 1000)  # one long-lived visible parent: nothing here was reparented
         def found(references, processes, excluded=()):
             return [(p['pid'], p['association']) for p in
-                    E.associate(references, processes, set(excluded), '0::/observer', booted)]
+                    E.associate(references, [parent, *processes], set(excluded), '0::/observer', booted)]
         early, late = proc(10, 1500), proc(10, 2500)
         self.assertEqual(found([ref(10)], [early]), [(10, 'recorded-process')])
         self.assertEqual(found([ref(10)], [late]), [])
@@ -1029,13 +1040,145 @@ class Survey(Fixture):
         kthreadd = E.process(2)
         self.assertTrue(kthreadd['kernel'])
         with patch.object(E.os, 'geteuid', lambda: 0):
-            scanned = E.scan()
+            scanned = REAL_SCAN()
         self.assertNotIn(2, [p['pid'] for p in scanned]); self.assertIn(os.getpid(), [p['pid'] for p in scanned])
         records = E.recorded({'started_unix': 5.0, 'pid': 3, 'start_ticks': 4, 'boot_id': 'b',
                               'events': [{'relay_pid': 6, 'ssh_pid': 7}, {'ppid': 8, 'pid': True}],
                               'child': {'pid': 9, 'process_start': 10, 'started': 11.0}}, 'x.json', 12.0)
         self.assertEqual(sorted((r['pid'], r['key'], r['start_ticks'], r['window']) for r in records),
                          [(3, 'pid', 4, 5.0), (6, 'relay_pid', None, 5.0), (7, 'ssh_pid', None, 5.0), (9, 'pid', 10, 11.0)])
+
+    def test_reparented_detached_children_and_descendants_are_associated(self):
+        hz, booted = os.sysconf('SC_CLK_TCK'), 1000.0
+        def proc(pid, at, ppid, session=None, cgroup='0::/observer', comm='x'):
+            session = pid if session is None else session
+            return {'pid': pid, 'start_ticks': int((at-booted)*hz), 'session': session, 'pgid': session,
+                    'cgroup': cgroup, 'ppid': ppid, 'comm': comm}
+        def found(references, processes):
+            return [(p['pid'], p['association']) for p in E.associate(references, processes, set(), '0::/observer', booted)]
+        window = {'record': 'r.json', 'key': 'pid', 'pid': 100, 'window': 1400.0, 'mtime': 2000.0,
+                  'start_ticks': None, 'boot_id': None, 'cgroup': None}
+        init = proc(1, 1000, 0, comm='systemd')
+        # Root's case: parent 100 gone; child 101 made its own session, now under PID 1, no token.
+        self.assertEqual(found([window], [init, proc(101, 1500, 1)]), [(101, 'reparented-in-recorded-window')])
+        self.assertEqual(found([window], [init, proc(101, 2500, 1)]), [])
+        # Adopted by a younger parent or a systemd manager counts too; a live original parent does not.
+        self.assertEqual(found([window], [init, proc(50, 2500, 1), proc(102, 1500, 50)]),
+                         [(102, 'reparented-in-recorded-window')])
+        self.assertEqual(found([window], [proc(102, 1500, 40)]), [(102, 'reparented-in-recorded-window')])
+        self.assertEqual(found([window], [proc(102, 1500, 2, session=0)]), [])
+        self.assertEqual(found([window], [init, proc(7, 1100, 1, comm='systemd'), proc(103, 1500, 7)]),
+                         [(103, 'reparented-in-recorded-window')])
+        self.assertEqual(found([window], [init, proc(50, 1300, 1, cgroup='0::/system.slice/a.service'),
+                                          proc(104, 1500, 50)]), [])
+        # A service's main process (oldest of its .service cgroup) is not an orphan; a younger adoptee there is.
+        service = '0::/system.slice/transparent-shard-server.service'
+        self.assertEqual(found([window], [init, proc(60, 1500, 1, cgroup=service)]), [])
+        self.assertEqual(found([window], [init, proc(60, 1450, 1, cgroup=service), proc(61, 1500, 1, cgroup=service)]),
+                         [(61, 'reparented-in-recorded-window')])
+        # Live descendants of anything associated, by parent PID, at any depth.
+        owner = dict(window, pid=70, window=None)
+        self.assertEqual(found([owner], [proc(70, 1500, 1), proc(71, 2500, 70, session=71), proc(72, 2600, 71, session=72)]),
+                         [(70, 'recorded-process'), (71, 'descendant-of-associated'), (72, 'descendant-of-associated')])
+        self.assertEqual(found([window], [init, proc(101, 1500, 1), proc(105, 2500, 101, session=105)]),
+                         [(101, 'reparented-in-recorded-window'), (105, 'descendant-of-associated')])
+
+    def test_operational_classes_refuse_unless_bound_to_an_exact_baseline_unit(self):
+        names = E.classes()
+        self.assertIn('shard-verify', names['names']); self.assertIn('native_certificate', names['names'])
+        self.assertIn('wallet-pir-deploy.py', names['names']); self.assertIn('/srv/transparent-activity/', names['roots'])
+        baseline = E.BASELINE_UNITS
+        def proc(exe, argv=(), cgroup='0::/user.slice/session-4.scope'):
+            return {'pid': os.getpid(), 'start_ticks': 1, 'exe': exe, 'argv': list(argv), 'cgroup': cgroup}
+        cases = [
+            (proc('/usr/local/bin/transparent-shard-server', cgroup='0::/system.slice/transparent-shard-server.service'), 'bound'),
+            (proc('/usr/local/bin/transparent-shard-server', cgroup='0::/system.slice/transparent-shard-server.service/x'), 'bound'),
+            (proc('/usr/local/bin/transparent-shard-server',
+                  cgroup='12:name=systemd:/system.slice/transparent-shard-server.service\n0::/'), 'bound'),
+            (proc('/usr/local/bin/transparent-shard-server', cgroup='0::/system.slice/transparent-shard-server.service-x'), 'unattributed'),
+            (proc('/usr/local/bin/transparent-shard-server', cgroup='0::/system.slice/caddy.service'), 'unattributed'),
+            (proc('/tmp/legacy/shard-verify'), 'unattributed'),
+            (proc('/usr/bin/python3', ['python3', '/srv/transparent-activity/ops/sources/x/ops/scripts/wallet-pir-deploy.py']),
+             'unattributed'),
+            (proc('/usr/bin/python3', ['python3', 'tool.py', '--data-dir', '/srv/transparent-pir/v11']), 'unattributed'),
+            (proc('/usr/bin/sleep', ['sleep', '30']), None),
+        ]
+        for item, expected in cases:
+            with self.subTest(item):
+                bound, unattributed, reasons = E.S.operational([item], set(), names, baseline)
+                self.assertEqual(reasons, [])
+                self.assertEqual('bound' if bound else 'unattributed' if unattributed else None, expected)
+                if bound:
+                    self.assertEqual(bound[0]['exe_sha256'], hashlib.sha256(Path('/proc/self/exe').read_bytes()).hexdigest())
+                    self.assertEqual(bound[0]['unit'], 'transparent-shard-server.service')
+        self.assertEqual(E.S.operational([proc('/x/shard-verify')], {os.getpid()}, names, baseline), ([], [], []))
+
+    def legacy(self, name, record=True):
+        """A legacy native child that made its own session; its parent then exited."""
+        executable = self.root/name
+        shutil.copy('/bin/sleep', executable)
+        tree = self.root/'legacy.py'
+        tree.write_text('import json, os, subprocess, sys, time\n'
+                        'started = time.time()\n'
+                        'child = subprocess.Popen([sys.argv[1], "30"], start_new_session=True)\n'
+                        'print(json.dumps({"parent": os.getpid(), "started": started, "child": child.pid}), flush=True)\n')
+        parent = subprocess.Popen([sys.executable, str(tree), str(executable)], stdout=subprocess.PIPE)
+        value = json.loads(parent.stdout.readline())
+        parent.wait(); parent.stdout.close()
+        child = value['child']
+        self.addCleanup(self.kill, child, E.process(child)['start_ticks'])
+        current = self.wait_for(lambda: E.process(child)['ppid'] != parent.pid and E.process(child))
+        self.assertEqual((current['session'], current['pgid']), (child, child))
+        self.assertIsNone(E.process(value['parent']))
+        path = self.fence/'host-actions/transparent-schema-l'/(name+'.json')
+        if record:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            I.durable.atomic_json(path, {'status': 'failed', 'pid': value['parent'], 'started_unix': value['started']})
+        return child, path
+
+    def test_detached_reparented_legacy_child_without_token_or_missing_leader_refuses(self):
+        # Known class, recorded parent: both the window and the class refuse.
+        child, record = self.legacy('shard-control')
+        attempts = self.refused('associated with a retained owner record', self.receiver(attempt=1))
+        survey = json.loads((attempts[-1]/'coordinator.json').read_text())
+        self.assertEqual(self.associated(attempts), [(child, 'reparented-in-recorded-window')])
+        self.assertEqual([p['pid'] for p in survey['unattributed']], [child])
+        self.assertIn('not bound to a baseline service', ' '.join(survey['blocked']))
+        self.assertIn(next(iter(survey['associated_records'])), survey['associated_records'])
+        self.kill(child, E.process(child)['start_ticks']); self.wait_for(lambda: self.gone(child)); record.unlink()
+        # Known class, no record at all: the class alone refuses.
+        child, _ = self.legacy('native_certificate', record=False)
+        attempts = self.refused('not bound to a baseline service', self.receiver(attempt=2))
+        self.assertEqual(self.associated(attempts), [])
+        self.kill(child, E.process(child)['start_ticks']); self.wait_for(lambda: self.gone(child))
+        # Unknown name, recorded parent: the reparented window alone refuses.
+        child, _ = self.legacy('legacy-helper')
+        attempts = self.refused('associated with a retained owner record', self.receiver(attempt=3))
+        self.assertEqual(self.associated(attempts), [(child, 'reparented-in-recorded-window')])
+        self.assertEqual(json.loads((attempts[-1]/'coordinator.json').read_text())['unattributed'], [])
+
+    def test_survey_component_is_stdlib_only_and_runs_from_its_embedded_text(self):
+        import ast
+        source = Path(owner_survey.__file__).read_text()
+        imported = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported |= {a.name.split('.')[0] for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                self.assertEqual(node.level, 0); imported.add(node.module.split('.')[0])
+        self.assertEqual(imported, {'hashlib', 'json', 'os', 'pathlib', 're', 'stat'})
+        namespace = {'__name__': 'embedded_owner_survey'}
+        exec(compile(source, 'owner_survey.py', 'exec'), namespace)
+        (self.root/'ns').mkdir()
+        # 4194304 is above the kernel's maximum PID: recorded, never live.
+        I.durable.atomic_json(self.root/'ns/a.json', {'child_pid': 4194304, 'status': 'passed'})
+        binding = {'nonce': 'f'*64, 'host': 'bootstrap', 'request_sha256': 'a'*64}
+        value = namespace['observe']([('ns', self.root/'ns')], classes={'names': ['shard-verify'], 'roots': []},
+                                     baseline=['transparent-shard-server.service'], binding=binding)
+        self.assertEqual((value['kind'], value['binding'], value['inventory']['json_files'], value['inventory']['references']),
+                         ('owner-process-survey', binding, 1, 1))
+        self.assertEqual(value['bounds'], owner_survey.BOUNDS)
+        self.assertEqual(json.loads(json.dumps(value)), value)
 
     def test_owner_namespace_overflow_unreadable_records_and_links_refuse(self):
         with patch.object(E, 'MAX_OWNER_ENTRIES', 2):

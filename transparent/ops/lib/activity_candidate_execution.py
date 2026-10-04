@@ -61,7 +61,7 @@ import subprocess
 import sys
 import time
 
-from wallet_pir_ops import durable, inherited_lock, schema_fence
+from wallet_pir_ops import durable, inherited_lock, owner_survey as S, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HERE = Path(__file__).parent
@@ -137,8 +137,17 @@ MAX_OWNER_ENTRIES = 100000
 MAX_OWNER_FILE = 16 << 20
 MAX_OWNER_BYTES = 512 << 20
 MAX_REFERENCES = 100000
-# Clock granularity between kernel start times (btime is whole seconds) and file mtimes.
-TOLERANCE_SECONDS = 2
+# Operational classes: a live process whose executable or argv basename is one of
+# these, or any tool name of the candidate, or whose executable or argv lies under
+# these roots, refuses unless systemd placed it in a baseline unit's cgroup.
+OPERATIONAL_NAMES = ('wallet-pir-deploy.py', 'transparent-block-server')
+OPERATIONAL_ROOTS = ('/srv/transparent-activity/', '/srv/transparent-pir/')
+# The real services that may run them, bound by exact unit cgroup and recorded
+# with PID, start ticks, executable and its SHA-256.
+BASELINE_UNITS = ('transparent-shard-server.service', 'transparent-filter-server.service',
+                  'transparent-publish-controller.service', 'transparent-control-sessions.service',
+                  'transparent-fleet-scaler.service', 'transparent-replica-reconciler.service',
+                  'transparent-quality-rollout.service')
 SURVEY_HOST_SECONDS = 120
 SURVEY_WAIT_SECONDS = MAX_HOSTS*SURVEY_HOST_SECONDS + 120
 HANDSHAKE_SECONDS = 300
@@ -469,41 +478,9 @@ def verify_host(observed):
     return observed
 
 
-PF_KTHREAD = 0x00200000
-
-
-def boot_id():
-    return BOOT_ID.read_text().strip()
-
-
-def process(pid):
-    """Kernel state, parent, process group, session and start ticks; None when absent."""
-    try:
-        raw = Path('/proc/%d/stat' % pid).read_text()
-    except (FileNotFoundError, ProcessLookupError):
-        return None
-    fields = raw.rsplit(')', 1)[1].split()
-    return {'pid': pid, 'state': fields[0], 'ppid': int(fields[1]), 'pgid': int(fields[2]), 'session': int(fields[3]),
-            'start_ticks': int(fields[19]), 'kernel': bool(int(fields[6]) & PF_KTHREAD)}
-
-
-def booted_unix():
-    for line in Path('/proc/stat').read_text().splitlines():
-        if line.startswith('btime '):
-            return int(line.split()[1])
-    raise ValueError('kernel boot time unavailable')
-
-
-def started_unix(start_ticks, booted=None):
-    """Wall-clock start of a process from its kernel start ticks."""
-    return (booted_unix() if booted is None else booted)+start_ticks/os.sysconf('SC_CLK_TCK')
-
-
-def cgroup(pid):
-    try:
-        return Path('/proc/%d/cgroup' % pid).read_text().strip()[:512]
-    except (FileNotFoundError, ProcessLookupError):
-        return None
+# Process identity and the owner/process survey are the shared read-only component.
+boot_id, process, booted_unix, started_unix, cgroup = S.boot_id, S.process, S.booted_unix, S.started_unix, S.cgroup
+ancestors, recorded, associate = S.ancestors, S.recorded, S.associate
 
 
 def me():
@@ -520,68 +497,9 @@ def alive(recorded):
     return current is not None and current['state'] != 'Z' and current['start_ticks'] == recorded['start_ticks']
 
 
-def ancestors():
-    found, pid = set(), os.getpid()
-    while pid > 1 and pid not in found:
-        found.add(pid)
-        current = process(pid)
-        pid = current['ppid'] if current else 0
-    return found
-
-
 def scan(lock_path=None):
-    """Every live process with its launch token, lock use and receiver role.
-
-    Root reads every process; one it cannot read is reported unreadable and
-    fails every survey closed. Unprivileged observers (fixtures only) skip
-    processes they cannot read: production receivers and surveys run as root.
-    """
-    target = None
-    if lock_path is not None:
-        try:
-            info = Path(lock_path).lstat()
-            target = (info.st_dev, info.st_ino)
-        except FileNotFoundError:
-            pass
-    privileged = os.geteuid() == 0
-    found = []
-    for entry in os.scandir('/proc'):
-        if not entry.name.isdigit():
-            continue
-        pid = int(entry.name)
-        current = process(pid)
-        if current is None or current['state'] == 'Z' or current['kernel']:
-            continue
-        try:
-            owner = os.stat('/proc/%d' % pid).st_uid
-        except FileNotFoundError:
-            continue
-        if not privileged and owner != os.geteuid():
-            continue
-        current.update(uid=owner, token=None, holds=False, receiver=False, unreadable=False, cgroup=cgroup(pid))
-        try:
-            for item in Path('/proc/%d/environ' % pid).read_bytes().split(b'\0'):
-                if item.startswith(MARKER.encode()+b'='):
-                    current['token'] = item.split(b'=', 1)[1].decode(errors='replace')[:200]
-            arguments = Path('/proc/%d/cmdline' % pid).read_bytes().split(b'\0')
-            current['receiver'] = (RECEIVE in arguments and '--action' in [a.decode(errors='replace') for a in arguments] and
-                                   any(a in (b'stage', b'reconcile') for a in arguments))
-            if target is not None:
-                for fd in os.listdir('/proc/%d/fd' % pid):
-                    try:
-                        held = os.stat('/proc/%d/fd/%s' % (pid, fd))
-                    except (FileNotFoundError, ProcessLookupError):
-                        continue
-                    if (held.st_dev, held.st_ino) == target:
-                        current['holds'] = True
-        except (FileNotFoundError, ProcessLookupError):
-            continue
-        except PermissionError:
-            if not privileged:
-                continue
-            current['unreadable'] = True
-        found.append(current)
-    return found
+    """Every live process with its launch token, lock use and receiver role (see `owner_survey.scan`)."""
+    return S.scan(lock_path, MARKER, RECEIVE)
 
 
 def classify(processes, token, leader=None):
@@ -616,9 +534,7 @@ def classify(processes, token, leader=None):
 
 
 def summary(items):
-    return [{k: item[k] for k in ('pid', 'start_ticks', 'session', 'pgid', 'ppid', 'uid', 'token', 'holds',
-                                  'receiver', 'unreadable', 'cgroup', 'association', 'record', 'key')
-             if k in item} for item in items[:MAX_LISTED]]
+    return S.summary(items, MAX_LISTED)
 
 
 def signal_exact(pid, start_ticks, sig):
@@ -806,176 +722,15 @@ def lock_path(factory):
     return Path(factory().PATH)
 
 
-PID_KEY = re.compile('(?:^|_)pid$')
+def bounds():
+    return dict(S.BOUNDS, entries=MAX_OWNER_ENTRIES, file_bytes=MAX_OWNER_FILE, json_bytes=MAX_OWNER_BYTES,
+                references=MAX_REFERENCES, listed=MAX_LISTED)
 
 
-def recorded(record, name, mtime):
-    """Every process a retained record names, with whatever identity it kept.
-
-    Any integer `pid` or `*_pid` value counts. Start ticks (`start_ticks`, or
-    `process_start` of the upload owner), boot ID and cgroup bind only a `pid`
-    in the same object. The start window is that object's, else the record's
-    `started_unix`/`started`; the record's mtime closes it.
-    """
-    found = []
-    def window(value, default=None):
-        return next((value[k] for k in ('started_unix', 'started') if R.number(value.get(k))), default)
-    top = window(record) if isinstance(record, dict) else None
-    stack = [record]
-    while stack:
-        value = stack.pop()
-        if isinstance(value, list):
-            stack.extend(value)
-            continue
-        if not isinstance(value, dict):
-            continue
-        start = window(value, top)
-        for key, item in value.items():
-            if isinstance(item, (dict, list)):
-                stack.append(item)
-            elif type(item) is int and item > 0 and PID_KEY.search(key):
-                own = key == 'pid'
-                found.append({'record': name, 'key': key, 'pid': item, 'window': start, 'mtime': mtime,
-                              'start_ticks': next((value[k] for k in ('start_ticks', 'process_start')
-                                                   if own and type(value.get(k)) is int), None),
-                              'boot_id': value.get('boot_id') if own and isinstance(value.get('boot_id'), str) else None,
-                              'cgroup': value.get('cgroup') if own and isinstance(value.get('cgroup'), str) else None})
-    return found
-
-
-def owner_inventory(roots, tick=lambda: None):
-    """Every entry of the retained owner namespaces, bounded and complete.
-
-    Every regular `.json` file is parsed, latest or not and of any kind, and
-    yields its recorded processes; other files are listed. Symlinks, special
-    files, unreadable or oversized records and any bound overflow are reasons
-    to refuse, never skipped silently.
-    """
-    reasons, references, executions, listing = [], [], [], []
-    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0}
-
-    def walk():
-        for label, root in roots:
-            root = Path(root)
-            if root.is_symlink():
-                reasons.append('owner namespace is a symlink: '+label)
-                continue
-            if not root.exists():
-                listing.append([label, 'absent'])
-                continue
-            pending = [root]
-            while pending:
-                directory = pending.pop()
-                try:
-                    entries = sorted(os.scandir(directory), key=lambda e: e.name)
-                except OSError as error:
-                    reasons.append('owner namespace unreadable: %s %s' % (label, type(error).__name__))
-                    continue
-                for entry in entries:
-                    tick()
-                    counts['entries'] += 1
-                    if counts['entries'] > MAX_OWNER_ENTRIES:
-                        reasons.append('owner namespaces exceed %d entries' % MAX_OWNER_ENTRIES)
-                        return
-                    relative = label+'/'+os.path.relpath(entry.path, root)
-                    try:
-                        info = entry.stat(follow_symlinks=False)
-                    except OSError as error:
-                        reasons.append('owner entry unreadable: %s %s' % (relative, type(error).__name__))
-                        continue
-                    if stat.S_ISDIR(info.st_mode):
-                        pending.append(Path(entry.path))
-                        listing.append([relative, 'directory'])
-                        continue
-                    if not stat.S_ISREG(info.st_mode):
-                        reasons.append('owner namespace holds a link or special file: '+relative)
-                        continue
-                    if not entry.name.endswith('.json'):
-                        listing.append([relative, 'file', info.st_size, info.st_mtime_ns])
-                        continue
-                    if info.st_size > MAX_OWNER_FILE:
-                        reasons.append('owner record exceeds bound: '+relative)
-                        continue
-                    counts['json_files'] += 1
-                    counts['json_bytes'] += info.st_size
-                    if counts['json_bytes'] > MAX_OWNER_BYTES:
-                        reasons.append('owner records exceed %d bytes' % MAX_OWNER_BYTES)
-                        return
-                    try:
-                        with open(entry.path, 'rb') as stream:
-                            raw = stream.read(MAX_OWNER_FILE+1)
-                        require(len(raw) <= MAX_OWNER_FILE, 'owner record exceeds bound')
-                        record = json.loads(raw, object_pairs_hook=I.unique)
-                    except (OSError, ValueError) as error:
-                        reasons.append('owner record unreadable: %s %s' % (relative, type(error).__name__))
-                        continue
-                    sha = hashlib.sha256(raw).hexdigest()
-                    listing.append([relative, 'json', len(raw), info.st_mtime_ns, sha])
-                    references.extend(recorded(record, relative, info.st_mtime_ns/1e9))
-                    if len(references) > MAX_REFERENCES:
-                        reasons.append('owner records name more than %d processes' % MAX_REFERENCES)
-                        return
-                    if (label == 'input-staging' and directory == root and HEX.fullmatch(entry.name[:-5]) and
-                            isinstance(record, dict) and record.get('kind') == KIND):
-                        executions.append({'name': entry.name, 'sha256': sha, 'status': record.get('status')})
-    walk()
-    inventory = dict(counts, references=len(references),
-                     sha256=hashlib.sha256(durable.canonical(listing)).hexdigest())
-    return inventory, references, executions, reasons
-
-
-def associate(references, processes, excluded, observer_cgroup, booted):
-    """Live processes a retained record may still own; read-only.
-
-    - recorded process: the PID is live and matches the kept start ticks, or,
-      without them, started no later than the record was last written;
-    - session or process group: when the recorded process is gone or still its
-      owner, every live member of a session or group it led (Linux never reuses
-      a PID while such a session or group exists);
-    - cgroup: likewise, every live process in a kept cgroup other than the
-      observer's own;
-    - orphan window: a live process whose session or group leader is gone and
-      that started within the record's start window and last write.
-
-    Records last written before this boot or naming another boot are skipped.
-    Kernel threads never reach here: `scan` leaves them out.
-    """
-    current = boot_id()
-    live = {p['pid']: p for p in processes if p['pid'] not in excluded}
-    present = {p['pid'] for p in processes}
-    started = {pid: started_unix(p['start_ticks'], booted) for pid, p in live.items()}
-    groups = {}
-    for p in live.values():
-        for value in {p['session'], p['pgid']}:
-            groups.setdefault(value, []).append(p)
-        if p.get('cgroup') and p['cgroup'] != observer_cgroup:
-            groups.setdefault(('cgroup', p['cgroup']), []).append(p)
-    # Kernel-spawned helpers have session and group 0: never an operation's orphan.
-    orphans = [p for p in live.values() if p['session'] > 0 and p['pgid'] > 0 and
-               (p['session'] not in present or p['pgid'] not in present)]
-    found = {}
-
-    def flag(item, reason, ref):
-        found.setdefault(item['pid'], dict(item, association=reason, record=ref['record'], key=ref['key']))
-    for ref in references:
-        if ref['mtime'] < booted-TOLERANCE_SECONDS or ref['boot_id'] not in (None, current) or ref['pid'] in excluded:
-            continue
-        item = live.get(ref['pid'])
-        owner = item is not None and (item['start_ticks'] == ref['start_ticks'] if ref['start_ticks'] is not None
-                                      else started[item['pid']] <= ref['mtime']+TOLERANCE_SECONDS)
-        if owner:
-            flag(item, 'recorded-process', ref)
-        if owner or ref['pid'] not in present:
-            for member in groups.get(ref['pid'], []):
-                flag(member, 'recorded-session-or-group', ref)
-            if ref['cgroup'] and ref['cgroup'] != observer_cgroup:
-                for member in groups.get(('cgroup', ref['cgroup']), []):
-                    flag(member, 'recorded-cgroup', ref)
-        if ref['window'] is not None:
-            for member in orphans:
-                if ref['window']-TOLERANCE_SECONDS <= started[member['pid']] <= ref['mtime']+TOLERANCE_SECONDS:
-                    flag(member, 'orphan-in-recorded-window', ref)
-    return sorted(found.values(), key=lambda p: p['pid'])
+def classes():
+    """The closed operational classes: every candidate and historical tool name, the wrapper, the roots."""
+    return {'names': sorted({name.rsplit('/', 1)[-1] for name in C.ARTIFACTS} | set(OPERATIONAL_NAMES)),
+            'roots': list(OPERATIONAL_ROOTS)}
 
 
 def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=None, owners=None, tick=lambda: None):
@@ -985,61 +740,47 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
     hold the production lock there. Other hosts must show no holder at all.
     """
     reasons = []
-    observed = {'version': 1, 'kind': SURVEY_KIND, 'request_sha256': identifier, 'nonce': nonce, 'host': host,
-                'observed_unix': time.time(), 'euid': os.geteuid(), 'observer': me(), 'skip': skip}
     entry = next((h for h in request['hosts'] if h['host'] == host), None)
     try:
-        observed['machine_id'] = MACHINE_ID.read_text().strip()
+        machine = MACHINE_ID.read_text().strip()
     except OSError as error:
-        observed['machine_id'] = None
+        machine = None
         reasons.append('machine identity unreadable: %s' % type(error).__name__)
-    observed['boot_id'] = boot_id()
-    if entry is None or observed['machine_id'] != entry['machine_id'] or os.geteuid() != C.OWNER:
+    if entry is None or machine != entry['machine_id'] or os.geteuid() != C.OWNER:
         reasons.append('host is not the pinned root machine')
     try:
-        observed['source_sha'] = staged_source()
+        source = staged_source()
     except (OSError, ValueError, KeyError) as error:
-        observed['source_sha'] = None
+        source = None
         reasons.append('operations source missing or unverified: %s' % str(error)[:120])
-    if observed['source_sha'] not in (None, request['source_sha']):
+    if source not in (None, request['source_sha']):
         reasons.append('host runs another operations source')
     try:
         schema_fence.local_schema_fence(skip_input=skip)
-        observed['fence'] = 'clear'
+        fence = 'clear'
     except (OSError, ValueError) as error:
-        observed['fence'] = str(error)[:200]
-        reasons.append('fence: '+observed['fence'])
+        fence = str(error)[:200]
+        reasons.append('fence: '+fence)
     path = path or lock_path(lambda: ProductionLock({'type': 'pinned_host', 'machine_id': request['machine_id']}))
-    owners = Path(owners or OWNERS)
-    inventory, references, executions, problems = owner_inventory(
-        (('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS), ('input-staging', owners)), tick)
-    reasons.extend(problems)
-    observed['inventory'] = inventory
-    processes = scan(path)
-    excluded = ancestors()
-    holders = [p for p in processes if p['holds']]
-    allowed = {holder['pid']} if holder else set()
-    observed['lock'] = {'path': str(path), 'holders': summary(holders)}
-    if any(p['pid'] not in allowed for p in holders) or holder and holder['pid'] not in {p['pid'] for p in holders}:
-        reasons.append('production lock holder differs from the expected owner')
-    live = [p for p in processes if p['pid'] not in excluded and (p['token'] or p['receiver'] or p['unreadable'])]
-    observed['processes'] = summary(live)
-    observed['scanned'] = len(processes)
-    if live:
-        reasons.append('live, unreadable or foreign candidate execution process')
-    associated = associate(references, processes, excluded, cgroup(os.getpid()), booted_unix())
-    observed['associated'] = summary(associated)
-    observed['associated_count'] = len(associated)
-    if associated:
-        reasons.append('live process associated with a retained owner record: '+', '.join(
-            '%d %s %s' % (p['pid'], p['association'], p['record']) for p in associated[:4]))
-    for item in executions:
+
+    def select(label, name, record, sha):
+        if label == 'input-staging' and HEX.fullmatch(name[:-5]) and isinstance(record, dict) and record.get('kind') == KIND:
+            return {'name': name, 'sha256': sha, 'status': record.get('status')}
+    observed = S.observe((('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS),
+                          ('input-staging', Path(owners or OWNERS))),
+                         classes=classes(), baseline=BASELINE_UNITS,
+                         binding={'request_sha256': identifier, 'nonce': nonce, 'host': host, 'skip': skip},
+                         lock_path=path, holder=holder, marker=MARKER, receiver=RECEIVE, tick=tick, bounds=bounds(),
+                         select=select)
+    for item in observed['selected']:
         if item['status'] not in ('staged', 'reconciled') and item['name'] != '%s.json' % skip:
             reasons.append('unfinished candidate execution owner: '+item['name'])
-    observed['owners'] = executions[-MAX_LISTED:]
-    observed['blocked'] = [reason[:300] for reason in reasons[:MAX_LISTED]]
-    observed['blocked_count'] = len(reasons)
-    observed['status'] = 'blocked' if reasons else 'clear'
+    reasons = observed['blocked']+reasons
+    observed.update(kind=SURVEY_KIND, survey=S.KIND, request_sha256=identifier, nonce=nonce, host=host,
+                    observed_unix=time.time(), observer=me(), skip=skip, machine_id=machine, source_sha=source,
+                    fence=fence, owners=observed.pop('selected'), blocked=[r[:300] for r in reasons[:MAX_LISTED]],
+                    blocked_count=observed['blocked_count']+len(reasons)-len(observed['blocked']),
+                    status='blocked' if reasons else 'clear')
     return observed
 
 
@@ -1057,7 +798,12 @@ def verify_survey(raw, request, identifier, nonce, host, skip, holder=None):
             value.get('euid') == C.OWNER, 'host survey identity is foreign, stale or partial: '+host)
     require(value.get('status') == 'clear' and value.get('blocked') == [] and value.get('blocked_count') == 0 and
             value.get('fence') == 'clear' and value.get('processes') == [] and value.get('associated') == [] and
-            value.get('associated_count') == 0 and isinstance(value.get('inventory'), dict) and
+            value.get('associated_count') == 0 and value.get('unattributed') == [] and
+            value.get('unattributed_count') == 0 and value.get('survey') == S.KIND and
+            value.get('classes_sha256') == hashlib.sha256(S.canonical(classes())).hexdigest() and
+            value.get('baseline') == list(BASELINE_UNITS) and value.get('bounds') == bounds() and
+            value.get('binding') == {'request_sha256': identifier, 'nonce': nonce, 'host': host, 'skip': skip} and
+            isinstance(value.get('inventory'), dict) and
             isinstance(value['inventory'].get('sha256'), str) and isinstance(value.get('lock'), dict) and
             isinstance(value['lock'].get('holders'), list) and
             [h.get('pid') for h in value['lock']['holders']] == ([holder['pid']] if holder else []) and
