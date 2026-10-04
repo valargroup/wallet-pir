@@ -917,10 +917,21 @@ class Survey(Fixture):
             value = json.loads(surveys['worker-a']); value['machine_id'] = 'e'*32
             return {'worker-a': json.dumps(value)}
         def transport(surveys, line): return {'worker-a': json.dumps({'host': 'worker-a', 'transport': 'timeout'})}
+        def pinned(change):
+            def mutate(surveys, line):
+                value = json.loads(surveys['worker-a']); change(value)
+                return {'worker-a': json.dumps(value)}
+            return mutate
+        def narrower(value): value['classes']['names'] = []; value['classes_sha256'] = '0'*64
+        def widened(value): value['baseline'] = value['baseline']+['caddy.service']
+        def bounded(value): value['bounds']['entries'] += 1
+        def rebound(value): value['binding']['request_sha256'] = '0'*64
         def garbage(surveys, line): return {'worker-a': 'not json'}
         for name, mutate, message in (('drop', drop, 'partial or foreign'), ('extra', extra, 'partial or foreign'),
                                       ('stale', stale, 'stale'), ('foreign', foreign, 'foreign'),
-                                      ('transport', transport, 'foreign, stale or partial'), ('garbage', garbage, 'not JSON')):
+                                      ('transport', transport, 'foreign, stale or partial'), ('garbage', garbage, 'not JSON'),
+                                      ('classes', pinned(narrower), 'worker-a'), ('baseline', pinned(widened), 'worker-a'),
+                                      ('bounds', pinned(bounded), 'worker-a'), ('binding', pinned(rebound), 'worker-a')):
             with self.subTest(name):
                 self.refused(message, self.receiver(attempt=len(name)), Channel(self, mutate=mutate))
 
