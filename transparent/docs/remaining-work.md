@@ -254,6 +254,28 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Txid display sizing and independent routing
+
+Findings and evidence: [sizing and anonymity](../../docs/transparent-txid-sizing-and-anonymity-findings.md).
+The boundary is strictly more than 80% of eligible confirmed records inline.
+The probability study supports a 128-byte sizing recommendation above 80%;
+full-population census and anonymity minima remain **UNQUALIFIED**.
+
+The completed one-working-day study supersedes the exhaustive UTXO/fee/native-capacity
+qualification in task `t-01dd8f7354154bb8`. Its 0–30,811 biased-prefix checkpoint,
+raw inputs and branches remain preserved; its historical 72-hour stop/resume
+procedure is not a prerequisite for this study. The live node executable source
+pin remains unavailable through the sanctioned read-only RPC interface.
+
+- [x] Discover documented node/export sources and retain sanitized access/selection outcomes; preserve PR #124's vectors and controls with exact provenance.
+- [x] Build a parent-free canonical export path with complete eligibility, shared shielded flags, raw outputs and current display bytes; bound unknown exact-fee encoded length using canonical monetary limits.
+- [x] Complete the fixed-anchor, era-stratified whole-range probability sample within the one-day budget; publish clustered uncertainty, all requested cutoffs, 85/90/95/99 frontiers and conservative fee-size membership.
+- [x] Select a useful cutoff strictly above 80% from that bounded study and assess independent coarse/hash lookup with global/broad overflow, joint routes, excess counts, thin revisions and timing. Sample estimates do not qualify population anonymity minima.
+- [ ] Remaining full-data gate: obtain sanctioned bulk/archive-local extraction and reconcile canonical genesis-to-anchor eligibility, exact identity and membership. Resolve exact fees only when their encoded-size uncertainty can change a decision. No full UTXO reconstruction is required for display sizing.
+- [ ] Before changing production geometry, replay all observable joint routes across retained revisions, segment/request counts, refresh boundaries and relevant timing/history conditioning. Require distinct-real-candidate policy decisions for K=1000/10000; padding, fragments and a global overflow route cannot widen a narrow lookup class.
+- [ ] Measure a small representative native workload only where it can change the geometry choice; report reservations and uploaded/returned bytes separately from measured RSS/latency. Exhaustive concurrency/hardware qualification and wallet recovery belong to separate release work.
+- [ ] Implement any selected threshold, independent sharding, compact codec/envelope or manifest change in a subsequent authorized production-code task. Keep one logical coordinator and independent display/history geometry; require explicit residual-correlation and policy decisions.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

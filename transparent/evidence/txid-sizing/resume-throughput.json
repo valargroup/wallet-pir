@@ -1,0 +1,1 @@
+{"schema":"txid-full-chain-end-to-end-rate-v1","initial_scanned_blocks":27812,"scanned_blocks":30812,"seconds":228.2621254567057,"blocks_per_second":13.142784831244409,"projected_remaining_hours":73.37889708601752,"exceeds_limit":true,"transport":"single SSH session; getblockhash then raw getblock by hash; 45 requests/s shared ceiling","coverage":"INCOMPLETE"}

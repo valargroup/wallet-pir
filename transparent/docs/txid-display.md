@@ -128,6 +128,16 @@ Accepted leakage remains range, table kind, page count, and timing. This does no
 hide size or authenticate metadata against consensus. It is a trusted-publisher
 service qualified against independent facts.
 
+## Sizing and routing qualification
+
+The [sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md)
+compare implemented bytes with compact proposals and independent lookup/overflow
+routing. The whole-range probability study supports a sizing recommendation with
+clustered uncertainty; it does not qualify a population anonymity minimum. In particular, global overflow does
+not erase the containing lookup range exposed by the current reference helper.
+Future measurement and implementation gates remain in
+[remaining work](remaining-work.md#txid-display-sizing-and-independent-routing).
+
 ## Reproduce the native demo
 
 Run from the repository root:
