@@ -1658,15 +1658,23 @@ The coordinator then refuses if any of these hold:
 - a source-staging receipt is not `staged` or `failed`;
 - **any** owner record names a live owned process. A record owns:
   - its top-level PID fields;
-  - its `launch`, `launcher`, `owner` and `child` objects and its `children`
-    list, each with an optional nested `identity` and further owned containers.
+  - its `launch`, `launcher`, `owner`, `guardian`, `child` and `native`
+    objects and its `children` list, each with an optional nested `identity`
+    and further owned containers. A candidate child's guardian and the native
+    process nested under its `native` key are both owned.
+  - Owned containers nested more than four levels deep refuse rather than being
+    dropped.
 
   Observations such as a restored writer inside a proof are not owners. A
   recorded `process_start` or `start_ticks` must not match a live process.
   Without one, a process started no later than the record's last update could
-  be the owner, and a missing record time fails closed. An identity with a
-  different `boot_id` or `boot_unix` is from an earlier boot and names nothing
-  live;
+  be the owner, and a missing record time fails closed. A container without its
+  own boot fields is in its enclosing container's boot. Only well-formed boot
+  evidence proves an earlier boot: a lowercase UUID `boot_id` that differs from
+  the live one, or, without comparable boot IDs, a finite `boot_unix` more than
+  one second from the live boot time. Matching boot IDs are the same boot.
+  Missing, null or malformed recorded or live boot evidence proves nothing, and
+  the identity is checked against live processes;
 - a live process shares the session or process group of a recorded owner PID.
   A dead recorded parent with a live orphaned child in its session refuses. Only
   a reused PID whose newer leader started every such member is accepted;

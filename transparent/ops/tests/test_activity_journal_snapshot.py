@@ -262,6 +262,7 @@ class FakeExecutor:
 BOOT = int(time.time())-100000
 TICKS = os.sysconf('SC_CLK_TCK')
 BOOT_ID = '6f0c1d6e-0000-4000-8000-000000000001'
+EARLIER_BOOT_ID = '6f0c1d6e-0000-4000-8000-000000000000'
 
 
 def fake_proc(proc):
@@ -1581,10 +1582,64 @@ class Fleet(Fixture):
         self.snapshot().preflight()
         # An identity from an earlier boot names no live process.
         fake_process(self.proc, 103, started=BOOT+102.5/TICKS)
-        self.worker_input(dict(record, launch={'owner':{'pid':103, 'process_start':102, 'boot_id':'earlier-boot'}}))
+        self.worker_input(dict(record, launch={'owner':{'pid':103, 'process_start':102, 'boot_id':EARLIER_BOOT_ID}}))
         self.snapshot().preflight()
         self.worker_input(record)
         self.refuses('live recorded owner PID 103')
+        # Null, malformed or contradictory boot evidence proves no other boot.
+        for boot in ({'boot_id':None}, {'boot_id':'earlier-boot'}, {'boot_id':BOOT_ID.upper()}, {'boot_id':7},
+                     {'boot_unix':None}, {'boot_unix':'0'}, {'boot_unix':float('nan')},
+                     {'boot_id':BOOT_ID, 'boot_unix':BOOT-3600}, {'boot_id':None, 'boot_unix':BOOT-3600},
+                     {'boot_id':EARLIER_BOOT_ID, 'boot_unix':None}):
+            owner = dict({'pid':103, 'process_start':102}, **boot)
+            self.worker_input(dict(record, launch={'owner':owner}))
+            with self.subTest(boot=boot):
+                self.refuses('live recorded owner PID 103')
+        self.worker_input(dict(record, launch={'owner':{'pid':103, 'process_start':102, 'boot_unix':BOOT-3600}}))
+        self.snapshot().preflight()
+        # Without readable live boot evidence a recorded boot ID proves nothing.
+        (self.proc/'sys/kernel/random/boot_id').unlink()
+        self.worker_input(dict(record, launch={'owner':{'pid':103, 'process_start':102, 'boot_id':EARLIER_BOOT_ID}}))
+        self.refuses('live recorded owner PID 103')
+        (self.proc/'sys/kernel/random/boot_id').write_text(BOOT_ID+'\n')
+
+    def test_guardian_child_native_identities_are_owned(self):
+        # The candidate execution record's child is its guardian's identity,
+        # with the forked native process nested under `native` in the same boot.
+        record = {'status':'running', 'started_unix':time.time()-60, 'launch':None,
+                  'child':{'key':'k', 'token':'t', 'pid':201, 'start_ticks':200, 'boot_id':BOOT_ID,
+                           'native':{'pid':202, 'start_ticks':201}, 'deadline_unix':time.time()+60}}
+        owner = {'pid':202, 'start_ticks':201, 'boot_id':BOOT_ID, 'session':201, 'pgid':201,
+                 'guardian':{'pid':201, 'start_ticks':200, 'boot_id':BOOT_ID}, 'started_unix':time.time()-60}
+        self.assertEqual(sorted(p[:2] for p in S.owner_processes(record)), [(201, 200), (202, 201)])
+        self.assertEqual(sorted(p[:2] for p in S.owner_processes(owner)), [(201, 200), (202, 201)])
+        # The native process survives in its own session after its guardian exits.
+        base = fake_process(self.proc, 202, started=BOOT+201.5/TICKS, ppid=1, session=202, pgrp=202)
+        for value in (record, owner):
+            self.worker_input(dict(value, status='staged'))
+            with self.subTest(value=sorted(value)):
+                self.refuses('live recorded owner PID 202')
+        # The native identity inherits its guardian's boot.
+        self.worker_input(dict(record, status='staged', child=dict(record['child'], boot_id=EARLIER_BOOT_ID)))
+        self.snapshot().preflight()
+        shutil.rmtree(base)
+        fake_process(self.proc, 201, started=BOOT+200.5/TICKS)
+        self.worker_input(dict(owner, status='staged'))
+        self.refuses('live recorded owner PID 201')
+
+    def test_owned_containers_beyond_the_depth_bound_refuse(self):
+        nested = {'pid':301, 'start_ticks':300}
+        for _ in range(S.OWNED_DEPTH):
+            nested = {'child':nested}
+        self.assertEqual([p[:2] for p in S.owner_processes(nested)], [(301, 300)])
+        for deeper in ({'child':nested}, {'children':[{'identity':nested}]}, {'native':{'guardian':nested}}):
+            with self.subTest(deeper=list(deeper)):
+                with self.assertRaisesRegex(ValueError, 'beyond the depth bound'):
+                    S.owner_processes(deeper)
+        self.worker_input({'status':'staged', 'finished_unix':time.time()-60, **nested})
+        self.snapshot().preflight()
+        self.worker_input({'status':'staged', 'finished_unix':time.time()-60, 'launch':nested})
+        self.refuses('nests owned processes beyond the depth bound')
 
     def test_detached_native_survivor_without_markers_refuses(self):
         # Own session, reparented, lock descriptor and environment gone, no wrapper argv.

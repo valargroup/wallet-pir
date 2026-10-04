@@ -138,7 +138,19 @@ A third provisional review then added further requirements, and the path now:
 - refuses non-finite deadlines.
 
 Eighty-three focused tests passed, and all 81 single-guard mutations, including
-the helper's, were caught. No host was contacted and no snapshot was taken; see
+the helper's, were caught.
+
+Root's fourth review found three owner-contract gaps, and the path now:
+
+- owns a candidate child's `guardian` and the native process nested under
+  `native`, which inherits its container's boot;
+- treats missing, null or malformed boot evidence as the current boot, so it
+  can no longer suppress a matching live-owner refusal;
+- refuses owned containers nested beyond the depth bound instead of dropping
+  them.
+
+Eighty-five focused tests passed; each new case failed against the previous
+source. No host was contacted and no snapshot was taken; see
 [the snapshot path](deployment.md#candidate-journal-snapshot).
 
 ## Activity metadata candidate, 2026-09-30

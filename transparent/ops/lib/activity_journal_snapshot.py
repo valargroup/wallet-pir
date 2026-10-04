@@ -620,26 +620,31 @@ class RemoteHost:
         return self.executor.call(self.host, 'ownership_probe', deadline=budget.seconds(), **arguments)
 
 
-OWNED = ('launch', 'launcher', 'owner', 'child', 'children')
+OWNED = ('launch', 'launcher', 'owner', 'guardian', 'child', 'children', 'native')
+OWNED_DEPTH = 4
+BOOT_KEYS = ('boot_id', 'boot_unix')
 
 
-def owned_holders(value, depth=0):
-    """A record's own process identities: itself and its owned containers.
+def owned_holders(value, depth=0, boot=None):
+    """A record's own process identities, each with its boot identity.
 
-    `launch`, `launcher`, `owner`, `child` and `children` (a list) name processes
-    the record started or ran as; each may carry an `identity` object and nest
-    further owned containers. Anything else, such as a restored writer inside a
-    proof, is an observation, not an owner.
+    `launch`, `launcher`, `owner`, `guardian`, `child`, `native` and `children`
+    (a list) name processes the record started or ran as, such as a candidate
+    child's guardian and the native process it forked; each may carry an
+    `identity` object and nest further owned containers. A container without
+    its own boot fields is in its enclosing container's boot. Anything else,
+    such as a restored writer inside a proof, is an observation, not an owner.
+    Owned containers nested deeper than the bound refuse rather than drop.
     """
-    if not isinstance(value, dict) or depth > 4:
+    if not isinstance(value, dict):
         return []
-    found = [value]
-    if isinstance(value.get('identity'), dict):
-        found.append(value['identity'])
-    for key in OWNED:
+    require(depth <= OWNED_DEPTH, 'owner record nests owned processes beyond the depth bound')
+    boot = {k:value[k] for k in BOOT_KEYS if k in value} or boot or {}
+    found = [(value, boot)]
+    for key in ('identity', *OWNED):
         items = value.get(key)
         for item in items if isinstance(items, list) else [items]:
-            found += owned_holders(item, depth+1)
+            found += owned_holders(item, depth+1, boot)
     return found
 
 
@@ -650,16 +655,38 @@ def owner_processes(record):
     times = [v for k, v in record.items() if k.endswith('_unix') and type(v) in (int, float) and math.isfinite(v)]
     latest = max(times) if times else None
     found = []
-    for holder in owned_holders(record):
+    for holder, boot in owned_holders(record):
         for key in PID_FIELDS:
             pid = holder.get(key)
             if type(pid) is int and pid > 0:
                 start = None
                 if key == 'pid':
                     start = next((holder[k] for k in ('process_start', 'start_ticks') if type(holder.get(k)) is int), None)
-                boot = {k:holder[k] for k in ('boot_id', 'boot_unix') if k in holder}
                 found.append((pid, start, latest, boot))
     return found
+
+
+def valid_boot_id(value):
+    return isinstance(value, str) and re.fullmatch('[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', value)
+
+
+def finite(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def earlier_boot(table, boot):
+    """Whether well-formed boot evidence proves an identity is from another boot.
+
+    Missing, null or malformed recorded or live boot evidence proves nothing:
+    the identity is then treated as current and checked against live processes.
+    Matching well-formed boot IDs are the same boot whatever `boot_unix` says.
+    """
+    if not boot or ('boot_id' in boot and not valid_boot_id(boot['boot_id'])) or \
+            ('boot_unix' in boot and not finite(boot['boot_unix'])):
+        return False
+    if 'boot_id' in boot and valid_boot_id(table.boot_id):
+        return boot['boot_id'] != table.boot_id
+    return 'boot_unix' in boot and finite(table.boot) and abs(boot['boot_unix']-table.boot) > 1
 
 
 class Table:
@@ -700,9 +727,7 @@ def owned(table, pid, start, latest, boot=None):
     exits and they are reparented, so a live member of either refuses unless
     the PID was demonstrably reused by a newer leader that started them all.
     """
-    if boot and any((key == 'boot_id' and value != table.boot_id) or
-                    (key == 'boot_unix' and (type(value) not in (int, float) or abs(value-table.boot) > 1))
-                    for key, value in boot.items()):
+    if earlier_boot(table, boot):
         return  # Recorded in an earlier boot: neither it nor its descendants survive.
     leader = table.entries.get(pid)
     reused = False
@@ -744,11 +769,11 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
                     'host %s has unfinished source staging' % name)
         if path == own:
             continue
-        for pid, start, latest, boot in owner_processes(value):
-            try:
+        try:
+            for pid, start, latest, boot in owner_processes(value):
                 owned(table, pid, start, latest, boot)
-            except ValueError as error:
-                raise ValueError('host %s: %s (%s)' % (name, error, Path(path).name)) from None
+        except ValueError as error:
+            raise ValueError('host %s: %s (%s)' % (name, error, Path(path).name)) from None
     others = {pid:e for pid, e in table.entries.items() if not e.get('self')}
     for entry in others.values():
         require(not entry.get('unknown'), 'host %s process %d ownership is unreadable' % (name, entry['pid']))
