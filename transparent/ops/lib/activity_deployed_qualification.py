@@ -1252,6 +1252,7 @@ class Qualification:
         stream.write(json.dumps({'local':sample})+'\n')
         stream.flush()
         floors(sample)
+        quality_stopped()
         changes = unit_changes(self.baseline['local'], sample, allowed)
         require(not changes, 'unexpected restart or OOM: '+', '.join(changes))
         now = time.monotonic()
