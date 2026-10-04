@@ -7,8 +7,10 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -582,6 +584,10 @@ class RealCargoOracleTests(unittest.TestCase):
         # The temporary crate is outside ROOT, so rustup cannot inherit its pin.
         # Use the repository toolchain for the real Cargo configuration oracle.
         shutil.copyfile(ROOT / 'rust-toolchain.toml', self.root / 'rust-toolchain.toml')
+        self.toolchain = tomllib.loads((ROOT / 'rust-toolchain.toml').read_text())['toolchain']['channel']
+        # A bare Cargo earlier on PATH bypasses rustup's directory override.
+        self.cargo_command = (['rustup', 'run', self.toolchain, 'cargo']
+                              if shutil.which('rustup') else ['cargo'])
         self.env = {key: value for key, value in os.environ.items()
                     if key not in {'RUSTC', 'RUSTC_WRAPPER', 'RUSTC_WORKSPACE_WRAPPER', 'CARGO_BUILD_RUSTC',
                                    'CARGO_BUILD_RUSTC_WRAPPER', 'CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER',
@@ -592,8 +598,7 @@ class RealCargoOracleTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def cargo(self, *args):
-        import subprocess
-        result = subprocess.run(['cargo', *args, '--offline', '--message-format=json'], cwd=self.root, env=self.env,
+        result = subprocess.run([*self.cargo_command, *args, '--offline', '--message-format=json'], cwd=self.root, env=self.env,
                                 capture_output=True, text=True, timeout=300)
         self.assertEqual(result.returncode, 0, result.stderr[-2000:])
         return [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
@@ -611,6 +616,9 @@ class RealCargoOracleTests(unittest.TestCase):
 
     def test_identity_names_the_compiler_cargo_runs_from_later_include(self):
         real = shutil.which('rustc')
+        if shutil.which('rustup'):
+            real = subprocess.check_output(['rustup', 'which', '--toolchain', self.toolchain, 'rustc'],
+                                           env=self.env, text=True).strip()
         tools = Path(self.tmp.name) / 'tools'
         tools.mkdir()
         for name in ('one', 'two'):
