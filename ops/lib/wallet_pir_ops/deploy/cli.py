@@ -63,6 +63,13 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       pinned candidate archives to the coordinator's fixed candidate archive namespace.
   schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
       Render the candidate worker executable pair for schema-input-{plan,...,stage}.
+  schema-qualify-{plan,preflight,run} --request F --request-sha256 H [--expect-plan-sha256 H]
+  schema-qualify-{status,reconcile} --request-sha256 H
+      Deployed candidate staged load, freshness, capacity trial or one lifecycle fault,
+      run as one detached owner under the lock; run requires the reviewed plan digest.
+      Reconcile restores an owned unit effect that did not finish before releasing the fence.
+  schema-qualify-summary --transaction ID
+      Read-only capacity decision from reconciled trials of one transaction.
 
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
@@ -138,6 +145,19 @@ def parser():
     command.add_argument('--source-sha', required=True)
     command.add_argument('--publication-request-sha256', required=True)
     command.add_argument('--attempt', type=int, default=1)
+    for name in ('plan','preflight','run','status','reconcile'):
+        command = commands.add_parser('schema-qualify-'+name, help='deployed candidate load/freshness/capacity/fault qualification')
+        if name in ('plan','preflight','run'):
+            command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'run': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-qualify-summary', help='read-only capacity decision from reconciled trials')
+    command.add_argument('--transaction', required=True)
+    command = commands.add_parser('schema-qualify-exec', help=argparse.SUPPRESS)
+    command.add_argument('--request-sha256', required=True)
+    command = commands.add_parser('schema-qualify-remote', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('probe','act','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
     for name in ('plan','preflight','stage','status','reconcile'):
         command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
         command.add_argument('--request', required=True)
@@ -280,6 +300,35 @@ def main(argv=None, executor=None, out=print, **options):
             spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
             return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out)
+        if args.command.startswith('schema-qualify-'):
+            spec = importlib.util.spec_from_file_location('activity_deployed_qualification', ROOT/'transparent/ops/lib/activity_deployed_qualification.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            if args.command == 'schema-qualify-remote':
+                data = sys.stdin.buffer.read(8193)
+                if len(data) > 8192: raise ValueError('remote qualification request exceeds bound')
+                request = module.remote_validate(json.loads(data))
+                if module.digest(request) != args.request_sha256: raise ValueError('remote qualification request checksum differs')
+                out(json.dumps(module.remote_run(request, args.action), sort_keys=True))
+                return 0
+            if args.command == 'schema-qualify-summary':
+                out(json.dumps(module.summary_report(args.transaction), sort_keys=True))
+                return 0
+            if not args.inventory: raise ValueError('qualification requires the pinned coordinator inventory')
+            inventory = descriptors.load_inventory(args.inventory)
+            if args.command in ('schema-qualify-plan','schema-qualify-preflight','schema-qualify-run'):
+                with Path(args.request).open('rb') as stream: request = module.read_request(stream, args.request_sha256)
+            else:
+                request = module.retained_request(args.request_sha256)
+            qualification = module.Qualification(inventory, request, args.request_sha256)
+            if args.command == 'schema-qualify-exec':
+                qualification.execute()
+                return 0
+            action = args.command.removeprefix('schema-qualify-')
+            result = qualification.run(action, getattr(args,'expect_plan_sha256',None))
+            out(json.dumps(result, sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+module.digest(result))
+            return 0
         if args.command.startswith('schema-host-'):
             spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
             module = importlib.util.module_from_spec(spec)
