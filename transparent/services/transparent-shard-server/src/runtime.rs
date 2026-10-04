@@ -225,6 +225,20 @@ impl Iterator for RowCoefficients<'_> {
     }
 }
 
+/// Geometries whose runtime hint skips trailing zero blocks and is computed
+/// by [`native::batched_hint`]: the recent tails rebuilt at every publication.
+/// Every other geometry, the archives included, keeps the reference product
+/// over every block.
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
+    &transparent_shard::layout::RECENT_8K,
+    &transparent_shard::layout::RECENT_4K,
+    &transparent_shard::layout::RECENT_4K_8K,
+];
+
+fn uses_batched_hint(geometry: &Geometry) -> bool {
+    BATCHED_HINT_GEOMETRIES.contains(&geometry)
+}
+
 /// Leading `D`-row blocks of a `table_rows`-row plaintext that hold any
 /// nonzero byte, and at least one.
 fn used_blocks(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
@@ -323,18 +337,25 @@ impl TableRuntime {
         // database, exactly lifted.
         let padded = server.db_rows_padded();
         let db = server.db();
-        // Zero rows add nothing to `masks * database`, so trailing blocks of
-        // them are left out of the product. A growing tail's page table fills
-        // from its first row and is mostly empty for much of its life; the
-        // hint, and every byte published from it, is the same. The batched
-        // hint computes the reference's exact integers several times faster.
-        let used = used_blocks(rows, profile.row_bytes, profile.rows);
-        let hint = native::batched_hint::hint(
-            &profile.masks[..used],
-            used * native::D,
-            profile.cols,
-            |col| &db[col * padded..col * padded + used * native::D],
-        )?;
+        let hint = if uses_batched_hint(shared.geometry) {
+            // Zero rows add nothing to `masks * database`, so trailing blocks
+            // of them are left out of the product. A growing tail's page table
+            // fills from its first row and is mostly empty for much of its
+            // life; the hint, and every byte published from it, is the same.
+            // The batched hint computes the reference's exact integers several
+            // times faster.
+            let used = used_blocks(rows, profile.row_bytes, profile.rows);
+            native::batched_hint::hint(
+                &profile.masks[..used],
+                used * native::D,
+                profile.cols,
+                |col| &db[col * padded..col * padded + used * native::D],
+            )?
+        } else {
+            native::hint(&profile.masks, profile.rows, profile.cols, |col| {
+                &db[col * padded..col * padded + profile.rows]
+            })?
+        };
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -1031,6 +1052,37 @@ mod tests {
                     row,
                     &rows[at..at + profile.row_bytes],
                     "{table:?} row {selected}"
+                );
+            }
+        }
+    }
+
+    /// Only the recent geometries take the batched hint, and their deployed
+    /// masks are within its capacity, so it never silently falls back there.
+    /// Both archive geometries, and any geometry added later, keep the
+    /// reference product over every block.
+    #[test]
+    fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
+        use transparent_shard::layout::{ARCHIVE_32K, PROFILES};
+        for geometry in PROFILES {
+            assert_eq!(
+                uses_batched_hint(geometry),
+                geometry.name.starts_with("recent-"),
+                "{}",
+                geometry.name
+            );
+        }
+        assert!(!uses_batched_hint(&ARCHIVE_32K));
+        assert!(!uses_batched_hint(&ARCHIVE_WIDE));
+        assert!(uses_batched_hint(&RECENT_8K));
+        for geometry in BATCHED_HINT_GEOMETRIES {
+            for table in [Table::Directory, Table::Pages] {
+                let shared = SharedParams::build(geometry, table).unwrap();
+                assert_eq!(
+                    native::batched_hint::path(&shared.profile.masks).unwrap(),
+                    native::batched_hint::Path::Batched,
+                    "{} {table:?}",
+                    geometry.name
                 );
             }
         }
