@@ -118,7 +118,7 @@ latency. The old bounded vector reports remain retained as conformance oracles;
 they are never pooled into probability-population estimates.
 
 
-## Full-chain census continuation
+## Retained prior full-chain pipeline (inactive in the one-day study)
 
 `fullchain.py` is the full-chain acquisition path. Its raw preflight verifies
 retained inputs. The inherited raw-only preflight used height-string
@@ -148,7 +148,62 @@ anchored scan and final aggregate/replay validation finish.
 The resumed acquisition pins each height using `getblockhash` before fetching
 `getblock(hash, 0)`. Both phases share a 45 request/s ceiling on one SSH session.
 The first 3,000 new blocks measure end-to-end raw acquisition, canonical extraction
-and checkpoint persistence; subsequent batches contain 10,000 blocks. A measured
-remaining projection above 72 hours stops the scan and records a Roman blocker.
+and checkpoint persistence; subsequent batches contain 10,000 blocks. The prior task used a 72-hour projection stop. That historical procedure is
+not inherited by the one-day study, and `fullchain.py` is not run here.
 `resume-throughput.json` records this measurement separately from the inherited
 raw-only preflight. Verified retained raw blocks are reused without refetching.
+
+
+## One-working-day parent-free study
+
+`day_sample.py` selects 1,024 blocks by SRSWOR in each of nine disjoint strata
+across genesis through the fixed anchor. Its separate seed, exact selected
+heights and inclusion probabilities are retained. It opens one existing gateway
+session at <=40 requests/s after checking process identity, uses height/hash pins,
+raw and verbose blocks, and rechecks every selected height/hash plus the anchor.
+It requests no parent transactions, does not change services or access, and never
+writes the previous census cache. Credentials use the inherited temporary-key
+lifecycle outside Git.
+
+`--shape-stream` canonically parses every transaction and includes all any-input/
+output transactions. Shared flags and the current display encoder are authoritative.
+Coinbase is non-applicable; no-transparent-input eligible transactions reuse the
+canonical extractor for exact fees. Other fees remain unknown. Their hypothetical
+exact-fee population sizes add 1..8 actual LEB128 bytes, bounded by MAX_MONEY;
+unknown records are never labeled actual exact-fee measurements.
+
+`day_analysis.py` independently checks RPC identities, input counts, shielded
+presence, exact values/scripts and Rust/Python codec bytes. It uses block-cluster
+HT totals, ratios and FPC uncertainty. The smallest of seven prespecified cutoffs
+is eligible for recommendation only when the conservative one-sided Bonferroni
+normal lower bound exceeds 80%; a stratified rescaled block bootstrap checks
+sensitivity. These are asymptotic sizing estimates, not formal guarantees.
+
+Fee-size ambiguity is retained in joint routing as guaranteed/possible distinct
+candidate membership. Three page requests and two initial queries cover ordinary
+count differences, while excess pages, narrow lookup, refresh/time and unmodeled
+history remain limitations. Uniform segment vectors are an analytical assumption;
+no actual full-chain layout, true anonymity minimum or native hardware capacity
+is claimed. Per-record packing bounds explicitly handle the directory-byte drop
+when a record crosses the inline boundary.
+
+```bash
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_sample.py \
+  /outside/git/day-sample --status /outside/git/status.json
+../../tool-exec --repo wallet-pir -- cargo build --locked --offline --profile release-fast \
+  --manifest-path transparent/tools/txid-sizing/export/Cargo.toml
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py extract \
+  /outside/git/day-sample /assigned/target/release-fast/txid-sizing-export --status /outside/git/status.json
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py summarize /outside/git/day-sample
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py statistics \
+  /outside/git/day-sample /outside/git/day-statistics.json.gz
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py report \
+  /outside/git/day-statistics.json.gz /outside/git/day-analysis.json
+../../tool-exec --repo wallet-pir -- python3 transparent/tools/txid-sizing/day_analysis.py bootstrap \
+  /outside/git/day-statistics.json.gz /outside/git/day-bootstrap.json
+```
+
+Raw source frames and canonical record inventories are retained outside Git and
+checksum-pinned. Only sanitized compact statistics, public source inventories,
+reports and provenance belong in the evidence directory. Prior vector and prefix
+reports are not pooled into probability estimates.

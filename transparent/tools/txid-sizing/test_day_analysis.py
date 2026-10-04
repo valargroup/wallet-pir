@@ -30,6 +30,12 @@ class DaySizingTests(unittest.TestCase):
         self.assertEqual(d.fee_size_bounds(cb),(len(a.payload(cb)),)*2)
         self.assertEqual(a.script_decode(a.script_encode(bytes.fromhex('6a00'))),bytes.fromhex('6a00'))
 
+    def test_shielded_oracle_includes_ironwood_and_enabled_flags(self):
+        self.assertTrue(d.rpc_shielded_presence({'ironwood':{'actions':[{}], 'flags':{'enableSpends':True,'enableOutputs':False}}}))
+        self.assertFalse(d.rpc_shielded_presence({'ironwood':{'actions':[{}], 'flags':{'enableSpends':False,'enableOutputs':False}}}))
+        self.assertFalse(d.rpc_shielded_presence({'orchard':{'actions':[]},'ironwood':None}))
+        self.assertTrue(d.rpc_shielded_presence({'orchard':{'actions':[{}]}}))
+
     def test_probability_design_is_disjoint_reproducible_and_whole_range(self):
         design=day_sample.plan(8)
         self.assertEqual(design,day_sample.plan(8));self.assertEqual(design['strata'][0]['lo'],0)

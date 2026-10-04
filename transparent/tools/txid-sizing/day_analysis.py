@@ -32,6 +32,18 @@ def read(path):
     b=path.read_bytes()
     return json.loads(gzip.decompress(b) if path.suffix=='.gz' else b)
 
+def rpc_shielded_presence(tx):
+    if tx.get('vjoinsplit') or tx.get('vShieldedSpend') or tx.get('vShieldedOutput'):return True
+    for pool in ('orchard','ironwood'):
+        bundle=tx.get(pool) or {}
+        if not bundle.get('actions'):continue
+        flags=bundle.get('flags')
+        # Older RPC Orchard objects omit flags. Canonical confirmed actions
+        # require at least ENABLE_SPENDS or ENABLE_OUTPUTS; parser flags remain
+        # authoritative. Ironwood includes flags in the current RPC response.
+        if flags is None or flags.get('enableSpends') or flags.get('enableOutputs'):return True
+    return False
+
 def block_summary(frame, extracted):
     block=frame['rpc_block'];records=extracted['records']
     if (extracted['height'],extracted['hash'])!=(frame['height'],frame['hash']):raise ValueError('block pin')
@@ -52,7 +64,7 @@ def block_summary(frame, extracted):
         if outputs!=r['outputs']:raise ValueError('exact raw outputs')
         if a.payload(r).hex()!=r['display_v1_hex']:raise ValueError('Rust/Python codec bytes')
         # RPC pool fields independently check presence, without decoding raw txs.
-        shielded=bool(t.get('vjoinsplit') or t.get('vShieldedSpend') or t.get('vShieldedOutput') or t.get('orchard',{}).get('actions'))
+        shielded=rpc_shielded_presence(t)
         if shielded!=r['shielded_components']:raise ValueError('shared shielded-component flag')
         g='coinbase' if cb else 'non_coinbase'
         totals[g]+=1;totals['outputs']+=len(outputs);totals['transparent_inputs']+=ni
@@ -98,8 +110,10 @@ def extract(root,binary,status):
                 if rp.exists() and read(rp)!=out:raise ValueError('canonical replay changed')
                 if not rp.exists():census.atomic_json(rp,out)
                 b['canonical_records_sha256']=census.digest(rp)
-                if dest.exists() and read(dest)!=b:raise ValueError('summary replay changed')
-                if not dest.exists():census.atomic_json(dest,b)
+                if dest.exists():
+                    old=read(dest)
+                    if (old['source_sha256'],old['canonical_records_sha256'])!=(sha,b['canonical_records_sha256']):raise ValueError('summary source pins changed')
+                census.atomic_json(dest,b)
                 pins.append({'height':h,'canonical_records_sha256':b['canonical_records_sha256'],'summary_sha256':census.digest(dest)})
                 completed+=1
                 if completed%256==0:print(json.dumps({'extracted_blocks':completed,'transactions':len(seen),'seconds':round(time.monotonic()-start,2)}),flush=True)

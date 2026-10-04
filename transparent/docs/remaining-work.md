@@ -179,21 +179,20 @@ Findings and evidence: [sizing and anonymity](../../docs/transparent-txid-sizing
 The boundary is strictly more than 80% of eligible confirmed records inline.
 Full-chain threshold and minimum-population qualification remain **UNQUALIFIED**.
 
-The 2026-10-04 resumed census stopped at the required throughput gate: genesis
-through height 30,811 is parsed and checkpointed; 3,000 new blocks measured
-13.14 blocks/s and projected 73.38 hours remaining, exceeding the 72-hour ceiling.
-Roman's revised scan-plan decision is required before continuing. See the
-[resume receipt](../evidence/txid-sizing/resume-receipt.json). The gateway's live
-node executable source pin, full-chain coverage, joint routing and native cost
-qualification remain open. A contiguous prefix does not complete these gates.
+The active one-working-day study supersedes the exhaustive UTXO/fee/native-capacity
+qualification in task `t-01dd8f7354154bb8`. Its 0–30,811 biased-prefix checkpoint,
+raw inputs and branches remain preserved; its historical 72-hour stop/resume
+procedure is not a prerequisite for this study. The live node executable source
+pin remains unavailable through the sanctioned read-only RPC interface.
 
-- [x] Discover documented node/export sources and retain sanitized access/selection outcomes.
-- [x] Retain a bounded canonical upstream-vector sample, missing-prevout exclusions, exact pins, byte/packing comparisons and routing negative controls.
-- [ ] Obtain a sanctioned immutable complete canonical export or read-only archive selector through one accepted anchor/hash; include complete raw outputs, prevouts/shared metadata, coinbase, mixed pools, external unshielding, unusual scripts and transparent-input/no-output records. Verify eligibility, continuity and checksums independently of supported-script history.
-- [ ] Build a streaming census runner over that source; reconcile all eligible txids and retain era/coinbase/raw-script/input-only strata, output and fragment counts, occupied/slack bytes and reproducible 85/90/95/99/higher coverage frontiers at all requested cutoffs.
-- [ ] Replay joint lookup/overflow routing at every retained revision and refresh/tail boundary. Intersect bucket, revision/time, segment/query counts, modeled timing and prior-history transcript. Count distinct real candidates; evaluate policy floors 1000 and 10000 without formal anonymity claims. Preserve five-candidate, dummy/repeat, excess-query, thin-tail and timing negative controls.
-- [ ] Measure native preprocessing reservations, RSS, uploaded/returned bytes, row/segment evaluations and query latency/throughput on existing sanctioned resources for independent lookup/overflow geometries and cover schedules. Pin workload weights/cache assumptions; no provisioning or production mutation is implied.
-- [ ] Select a joint inline threshold and independent lookup/overflow design strictly above 80% from the measured cost/privacy frontier. Require an explicit population/cover policy and residual-correlation decision before implementing a new manifest/codec or sharding scheme. Keep one logical coordinator; do not couple display to script-history table geometry.
+- [x] Discover documented node/export sources and retain sanitized access/selection outcomes; preserve PR #124's vectors and controls with exact provenance.
+- [x] Build a parent-free canonical export path with complete eligibility, shared shielded flags, raw outputs and current display bytes; bound unknown exact-fee encoded length using canonical monetary limits.
+- [ ] Complete the fixed-anchor, era-stratified whole-range probability sample within the one-day budget; publish clustered uncertainty, all requested cutoffs, 85/90/95/99 frontiers and conservative fee-size membership.
+- [ ] Select a useful cutoff strictly above 80% from that bounded study and assess independent coarse/hash lookup with global/broad overflow, joint routes, excess counts, thin revisions and timing. Sample estimates do not qualify population anonymity minima.
+- [ ] Remaining full-data gate: obtain sanctioned bulk/archive-local extraction and reconcile canonical genesis-to-anchor eligibility, exact identity and membership. Resolve exact fees only when their encoded-size uncertainty can change a decision. No full UTXO reconstruction is required for display sizing.
+- [ ] Before changing production geometry, replay all observable joint routes across retained revisions, segment/request counts, refresh boundaries and relevant timing/history conditioning. Require distinct-real-candidate policy decisions for K=1000/10000; padding, fragments and a global overflow route cannot widen a narrow lookup class.
+- [ ] Measure a small representative native workload only where it can change the geometry choice; report reservations and uploaded/returned bytes separately from measured RSS/latency. Exhaustive concurrency/hardware qualification and wallet recovery belong to separate release work.
+- [ ] Implement any selected threshold, independent sharding, compact codec/envelope or manifest change in a subsequent authorized production-code task. Keep one logical coordinator and independent display/history geometry; require explicit residual-correlation and policy decisions.
 
 ## Release boundary
 
