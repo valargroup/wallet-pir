@@ -1618,10 +1618,41 @@ Each survey records:
     session or group exists);
   - a process in the recorded cgroup, when that cgroup is not the observer's;
   - a process whose session or group leader is gone and that started between
-    the record's `started_unix`/`started` and its last write.
+    the record's `started_unix`/`started` and its last write;
+  - a process started in that window whose parent is PID 1, a `systemd`
+    manager, unscanned or younger than itself: a reparented child, including
+    one that made its own session. The oldest process of a `.service` cgroup
+    is that service's main process and is exempt;
+  - every live descendant, by parent PID, of any process above, including the
+    children of a recorded process that is still running.
 
   Records last written before this boot, or naming another boot, are skipped.
   Kernel threads and kernel-spawned helpers (session 0) are never associated.
+- Every live process of a closed operational class: its executable or an argv
+  element has the basename of a candidate tool, `wallet-pir-deploy.py` or
+  `transparent-block-server`, or lies under `/srv/transparent-activity/` or
+  `/srv/transparent-pir/`. Such a process is allowed only when systemd placed
+  it in the cgroup of an exact baseline unit:
+  `transparent-shard-server`, `transparent-filter-server`,
+  `transparent-publish-controller`, `transparent-control-sessions`,
+  `transparent-fleet-scaler`, `transparent-replica-reconciler` and
+  `transparent-quality-rollout`. The survey records each bound process's unit,
+  PID, start ticks, executable and executable SHA-256. Any other match is
+  unattributed and refuses, whatever its session, parent or token.
+
+These rules are fixed heuristics, not proof that no descendant survives. A
+detached process with an unclassified name, started outside every recorded
+window, is not seen. A refusal can also be a false positive, for example a
+daemon that double-forked during a recorded operation. Root reviews the
+retained raw survey in either case.
+
+The survey is the stdlib-only `ops/lib/wallet_pir_ops/owner_survey.py`. It has
+no package imports, so a source bootstrap can embed its exact text, as it does
+`hostlock` and `schema_fence`. The caller passes every input: namespaces,
+bounds, classes, baseline units, lock path, allowed holder and a binding of
+nonce, request and host. The raw result echoes all of them, with the class
+digest and the digests of the records behind each association. The receiver
+refuses a reply whose bounds, classes, baseline or binding differ from its own.
   On the coordinator this walk keeps the 2-second health sampling, and a
   failure there still retains every reply already received.
 - Every candidate execution owner and its status.
@@ -1636,6 +1667,7 @@ machine ID and the source. It refuses on any of:
   100000 recorded processes; one record over 16 MiB; a symlink or special file.
 - An unfinished fence or candidate execution owner.
 - Any live process associated with any retained owner record, terminal or not.
+- Any unattributed live operational-class process.
 - A lock holder other than the receiver.
 - Any live candidate process or other receiver.
 
@@ -1811,6 +1843,10 @@ signals and a second surveyed host process. They cover:
 - Nonlatest owners of any kind in every namespace with a live process, a
   terminal owner whose process died while a descendant lives, PID reuse,
   namespace overflow, unreadable records and links, and each association rule.
+- A legacy child that made its own session and was reparented after its parent
+  exited, with no token and a live session leader: refused by its recorded
+  window, by its executable class, or both. Baseline binding by exact unit
+  cgroup, and the survey run from its embedded text.
 - Partial, stale and foreign surveys.
 - Floors, gaps, the aggregate budget, wall deadlines, hard memory and CPU
   limits, output bounds and nonzero exits.

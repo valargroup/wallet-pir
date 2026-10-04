@@ -78,7 +78,11 @@ and recovery through a claim with pidfd signals. Root rejected that revision
 too: the survey read only candidate owners and latest fences, and recovery
 signalled before holding the production lock. The second revision surveys every
 retained record of every owner namespace and associates recorded processes with
-live ones by start identity, session, group, cgroup and orphan window. Each
+live ones by start identity, session, group, cgroup, orphan and reparented
+windows and descendants. It refuses unattributed processes of the closed
+operational classes outside baseline service cgroups. These are fixed
+heuristics, not complete descendant clearance. The survey is a reusable
+stdlib-only component for root's source bootstrap. Each
 child now runs under a guardian with its own deadline that kills an IO-blocked
 child and its descendants after receiver death. Reconciliation acquires the
 production lock before any owner write or signal. Fixture tests and
