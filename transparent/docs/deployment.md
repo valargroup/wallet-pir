@@ -1618,8 +1618,10 @@ Root's ordered path, without rebuilding the old CI or native chain:
    Then run candidate plan, preflight, stage and status against the retained
    `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
-   immutable publication. Bind each report from retained raw results; a document
-   shaped like a passing report is not evidence.
+   immutable publication. Gates that read the journal can use a
+   [journal snapshot](#candidate-journal-snapshot) instead of the live journal.
+   Bind each report from retained raw results; a document shaped like a passing
+   report is not evidence.
 4. Stage the candidate worker pair on every worker.
 5. Render version-2 service, proof and product inputs, then follow the existing
    schema plan, preflight and deploy path.
@@ -2028,6 +2030,394 @@ floors still apply. These are proposed budgets for review, not measurements.
 
 Nothing here has run against production. The focused fixture tests are source
 evidence only.
+
+#### Candidate journal snapshot
+
+Candidate gates that read the full journal
+`/srv/transparent-activity/full-v3/journal` need bytes that do not move while they
+run. The journal's writer is the publication controller: `controller.rs` opens
+`EventStore::open` on its configured `data_dir` and keeps it for its whole run.
+While it runs it appends, and a reorganization can truncate the journal.
+
+`schema-snapshot-{plan,preflight,stage,status,reconcile} --request FILE
+--request-sha256 HASH` copies a committed prefix into an immutable private
+snapshot. Stage also requires `--expect-plan-sha256`. All five actions run on the
+pinned root coordinator from staged immutable operations source, in
+`transparent/ops/lib/activity_journal_snapshot.py`.
+
+**What a faithful copy contains.** Native `EventStore::open_existing` reads four
+files: `meta.json`, `checkpoint.bin`, `blocks.bin` and `events.bin`. `events_at`
+then always appends the oversized-script events from
+`display-v1/<block display hash>.bin`, and `display_at` reads display records from
+the same file.
+
+When a sidecar file is missing, the native reader returns no oversized events and
+no error. A journal copy without sidecars would therefore silently drop events.
+
+Sidecars are not written for every block. Both writers call
+`append_block_with_display` only in display mode. For `event-ingest` that means
+`--txid-display`; for the controller, an active publication with txid segments.
+Otherwise the writer calls plain `append_block`, which writes no sidecar. The
+journal alone cannot tell a block written without display apart from a lost
+sidecar.
+
+**Request.** The closed request is `{version: 1, kind:
+"activity-journal-snapshot", source_sha, attempt, machine_id, candidate,
+publication, journal, sidecars, writer, bounds}`. It names no paths except the
+writer's own unit files and binary. Its fields bind:
+
+- **Candidate.** `candidate` is `c3c66b9b` and its provenance digest.
+- **Publication.** `publication` is the full map digest plus the cutoff anchor at
+  3500738. It must match the retained `shards.json`, `result.json` and
+  `cutoff.json`.
+- **Journal.** `journal` is format version 3, start height 0 and the genesis hash.
+  `meta.json` must equal these exactly.
+- **Sidecars.** `sidecars` is `{policy, coverage_heights}`.
+  - `every-committed-block` refuses if any committed block lacks a sidecar.
+  - `mirror-source` copies every committed block's sidecar that exists. It records
+    the rest as absent in the source, which is what the native reader would see.
+    That count is never evidence that those blocks have no oversized events.
+  - `coverage_heights` lists up to 64 sorted heights, such as the oracle's sampled
+    blocks. Each must be committed and have a sidecar under either policy, and
+    the manifest itemizes them.
+- **Writer.** `writer` is the reviewed unit name, fragment path and digest, the
+  ordered drop-ins and their digests, the ExecStart binary path and digest, the
+  main PID and its kernel start time. The live writer must match all of them.
+  The plan reports any drift without refusing, so root can review the live
+  identity. Preflight and stage refuse drift.
+- **Bounds.** `bounds` holds `precopy_seconds`, `stop_seconds`, `copy_seconds`,
+  `restart_seconds`, `restart_attempts` and `total_seconds`. Root chooses every
+  value; the module has no defaults. It only requires positive integers, with the
+  total at least the sum of the phases. The plan digest covers the
+  request-derived plan only.
+
+**Unit interplay.** The writer's unit must have no `RequiredBy`, `RequisiteOf`,
+`BoundBy`, `ConsistsOf`, `UpheldBy`, `TriggeredBy` or `PropagatesStopTo`. Any of
+these would let stopping the writer stop another unit, or let systemd start it
+again while it is quiesced. The check runs at every identity proof.
+
+The repository's controller template is `Restart=on-failure`, which an explicit
+stop does not trigger. No template unit depends on the controller, and the
+elastic actuator timer acts only on workers. Other wrapper paths that start the
+controller need the production lock, which the snapshot owner holds. The installed
+unit is checked live, not assumed.
+
+While the controller is stopped it publishes nothing new and its status endpoint
+is absent. Workers keep serving their active publication. Root decides whether
+the downtime is acceptable for the continuous load, scaler and reconciler, which
+observe the controller.
+
+**Lock protocol.** The native `EventStore::open` holds `writer.lock` with Rust
+`File::try_lock` for the journal's whole writable lifetime. On Linux, Rust 1.97.1
+implements it as `flock(LOCK_EX|LOCK_NB)`. A fixture probe compiled with the pinned
+`rustc` checks the protocol in both directions: Python `flock` is refused while
+Rust holds the lock, and Rust `try_lock` is refused while Python holds it.
+
+The module proves the protocol on the existing `writer.lock`. It never creates,
+replaces or follows that file. Three checks must hold:
+
+1. `/proc/locks` lists exactly one `FLOCK ADVISORY WRITE` holder for the inode,
+   and it is the reviewed PID.
+2. That PID holds the file open.
+3. A non-blocking `flock` from the module is refused.
+
+The contention attempt runs only after the holder is listed. A listed holder that
+does not contend refuses, because that would mean the protocols differ. A POSIX
+`lockf` holder also refuses. Plan does not contend.
+
+**Every pinned host.** Before any effect, preflight, stage, the owner and
+reconcile each probe every pinned inventory host afresh, including the
+coordinator. Remote hosts are probed through one read-only deploy-helper
+operation, `ownership_probe`, over pinned SSH. On each host the probe returns:
+
+- `/etc/machine-id`, which must equal the host's pin. A host without a pin, or
+  one that cannot be reached or read, refuses.
+- **The whole owner namespace.** The schema state, host-action, input-staging and
+  source-staging trees are walked to any depth within finite bounds: depth 8,
+  65,536 entries, 64 MiB of records and 1 MiB per record. Exceeding a bound, any
+  link and any special file refuse; nothing is skipped silently. Every
+  non-request `*.json` is parsed as an owner record. Every file is listed by
+  name, size and kind: record, request, receipt or other, such as a schema
+  phase log. This module's own `*.snapshot-fleet` receipt trees hold copies of
+  records, not owners, so they are listed and type-checked but not parsed.
+- **Every live process,** up to 65,536 processes and 2^20 descriptors in total;
+  more refuses. For each it returns:
+  - its stat line: PID, parent, process group, session and kernel start time;
+  - its executable path and unified cgroup;
+  - whether it holds the production lock file open, its environment carries
+    `WALLET_PIR_PRODUCTION_LOCK_FDS`, or its command line runs
+    `wallet-pir-deploy.py`;
+  - whether its executable or arguments belong to an operation class.
+
+  Operation classes are executables or absolute arguments under
+  `/srv/transparent-activity/build`, `/srv/transparent-activity/candidates`, the
+  portable worker releases, `/srv/transparent-pir/v11/candidates` and the staged
+  operation sources. They also include an executable or `argv[0]` named for a
+  native tool: the 13 supplemental tools, `shard-assign` and `shard-control`.
+  Environment and command-line contents are never returned or retained.
+  Unreadable evidence is reported as unknown. Only the probing process and its
+  ancestors are exempt.
+- **The boot identity,** and the production lock's kernel holders from
+  `/proc/locks`.
+
+The coordinator then refuses if any of these hold:
+
+- the shared schema fence fails over that host's latest owner pointers;
+- a source-staging receipt is not `staged` or `failed`;
+- **any** owner record names a live owned process. A record owns:
+  - its top-level PID fields;
+  - its `launch`, `launcher`, `owner`, `guardian`, `child` and `native`
+    objects and its `children` list, each with an optional nested `identity`
+    and further owned containers. A candidate child's guardian and the native
+    process nested under its `native` key are both owned.
+  - Owned containers nested more than four levels deep refuse rather than being
+    dropped.
+
+  Observations such as a restored writer inside a proof are not owners. A
+  recorded `process_start` or `start_ticks` must not match a live process.
+  Without one, a process started no later than the record's last update could
+  be the owner, and a missing record time fails closed. A container without its
+  own boot fields is in its enclosing container's boot. Only well-formed boot
+  evidence proves an earlier boot: a lowercase UUID `boot_id` that differs from
+  the live one, or, without comparable boot IDs, a finite `boot_unix` more than
+  one second from the live boot time. Matching boot IDs are the same boot.
+  Missing, null or malformed recorded or live boot evidence proves nothing, and
+  the identity is checked against live processes;
+- a live process shares the session or process group of a recorded owner PID.
+  A dead recorded parent with a live orphaned child in its session refuses. Only
+  a reused PID whose newer leader started every such member is accepted;
+- any other live process holds the production lock, carries the inherited-lock
+  variable or runs the deploy wrapper. The refusal names its whole live
+  parent-PID descendant closure;
+- a live process of an operation class is not inside a reviewed long-running
+  service unit. These units are `activity_schema_host.UNITS` and the quality
+  rollout unit. This finds survivors after their parent exits, even in their own
+  session with the lock descriptor closed, the environment cleared and no
+  wrapper argument. A transient operation unit, such as the publication job, is
+  not a reviewed service;
+- any process's ownership evidence is unreadable;
+- a remote host's production lock has any kernel holder. The coordinator's lock
+  is this operation's own.
+
+The snapshot records its own launcher and owner as `pid`, `process_start` and
+`boot_id`. On the coordinator only this snapshot's own owner record is exempt.
+Each host's raw probe and result, including refusals, are kept at mode 0400
+under
+`/srv/transparent-activity/ops/input-staging/<request SHA>.snapshot-fleet/<stage|owner|reconcile>-<time>/<host>.json`.
+
+The remaining limit is attribution. A process outside every operation class, in
+a new session, with no lock descriptor, environment marker or wrapper argument,
+and whose recorded parent has exited cannot be attributed from `/proc`.
+
+**One total bound.** `total_seconds` starts when stage begins. It runs through
+the owner's adoption, pre-copy, copy, anchors and full re-verification; the owner
+inherits the absolute deadline from its durable record. Each phase bound is
+capped by what remains of the total.
+
+Every long step checks the deadline before each bounded chunk, record batch,
+file, remote call and node RPC. That covers sidecar scans, record passes,
+hashing, sidecar copies, anchors, the all-host reads and the final
+verification. At most once a second it also re-observes the 20% memory and disk
+floors after reserving the bytes still to be written. Each sample, including a
+refusal, goes to the private health log. Restoring the writer is never cut short
+by the total; it has its own reviewed attempt bounds.
+
+**Stage.** Under the production lock, stage first reruns the input-staging and
+schema fences and the full preflight. Preflight checks:
+
+- every pinned host, as above;
+- the writer identity, unit interplay, cgroup, running executable and lock
+  protocol;
+- the committed prefix and the sidecar policy and coverage;
+- node anchors at genesis, 3500738 and the current tip;
+- the namespace, and memory and disk at or above 20% after reserving the copy's
+  bytes.
+
+Stage then writes the request and the exact inventory (both 0400) and a
+`running` owner to `/srv/transparent-activity/ops/input-staging/`, and points
+`latest.json` at that owner. The owner records the inventory digest and the
+absolute deadline.
+
+Stage then launches `schema-snapshot-owner` in a new session. The owner inherits
+the production lock descriptor, and its output goes to a private log. If the SSH
+session is lost, the launcher dies but the owner keeps both the lock and its
+durable record. A launcher still waiting when the total runs out exits 75 with
+an unknown outcome; root observes status. The owner then:
+
+1. Readopts the record once; a replay refuses.
+2. Loads the retained inventory, which must match the recorded digest. It then
+   reads every pinned host afresh, keeping receipts.
+3. Repeats the identity, lock, prefix, policy and anchor checks.
+4. **Pre-copies sidecars while the writer still runs**, within
+   `precopy_seconds`. Sidecars are immutable: the writer renames each into place
+   before committing the block that names it, never rewrites one, and each
+   carries its block hash and a trailing SHA-256 that the copy checks. For each
+   block of the committed prefix, a private inventory
+   (`<request SHA>.snapshot-sidecars.bin`, 64 bytes per block) records the block
+   hash and the source sidecar's inode, size and times, or its absence.
+5. Proves the writer identity again, records `quiescing`, then stops only the
+   reviewed unit within `stop_seconds`. The unit must be inactive with an empty
+   cgroup, and the old PID and start time must be gone.
+6. Takes `writer.lock` itself, so no writer can reopen the journal during the
+   copy. Any remaining holder refuses.
+7. Within `copy_seconds`, before writing anything, observes the source's
+   committed prefix and every committed block's sidecar again under quiescence:
+   - **Unchanged prefix.** Each pre-copied block hash must be unchanged. This is
+     the independent check that the whole pre-quiescence prefix survived, not just
+     its tip.
+   - **Unchanged sidecars.** Each pre-copied sidecar must keep its inode, size and
+     times; every sidecar must be a single-link regular file.
+   - **Newer sidecars.** Sidecars that appeared or belong to newer blocks are
+     listed with their exact sizes.
+   - **Policy and coverage** apply to what is observed here.
+8. Reserves the exact remaining bytes: the committed `events.bin` and
+   `blocks.bin` prefixes plus those newer sidecars. Memory and disk must stay at
+   or above 20% after that reservation, or nothing is written.
+9. Copies `meta.json`, `checkpoint.bin`, and exactly the checkpoint-committed
+   prefixes of `blocks.bin` and `events.bin`, hashing as it copies. The copied
+   `blocks.bin` must hash to the prefix just observed. Every source must be a
+   single-link regular file opened without following links. Destinations are
+   created exclusively at mode 0400, inside 0700 directories.
+10. Copies the newer sidecars, each of which must still have its observed
+    identity. Then one `syncfs` flushes the whole copy.
+11. Checks continuously against the active bound, the resource floors, the
+    inherited lock and, while stopped, the unit staying stopped. A foreign restart
+    refuses.
+12. Validates the copy's format, genesis, start height and exact checkpoint
+    lengths, and its complete 48-byte records. Offsets must start at zero and
+    never decrease, and each record's event span must fit its count within the
+    native entry bounds. The copy's genesis block, pre-quiescence tip and
+    publication anchor must keep their recorded hashes. Event payloads are
+    decoded by the native reader that consumes the snapshot, not here.
+
+**Restoration and completion.** Every handled exit, including failures, timeouts
+and SIGTERM, SIGINT or SIGHUP, releases `writer.lock` and restores the writer.
+Later signals are recorded but do not interrupt the owner. The owner checks the
+unit, drop-in and binary bytes again, then starts the unit for at most
+`restart_attempts` attempts of `restart_seconds` each. It records each started
+PID and start time durably. Restoration is proven only when the new PID passes
+the same identity, interplay, cgroup, executable and lock checks, does not
+restart during the proof, and memory and disk meet the floors.
+
+**Anchor RPC.** Each node anchor is one HTTP/1.1 JSON-RPC POST, with
+`Connection: close`, to the fixed loopback endpoint. There is no proxy. One
+aggregate deadline bounds connect, send and every receive, so trickled bytes
+cannot extend it. That deadline is the smaller of the publication job's existing
+10-second per-anchor bound and the remaining total. Only a direct `200` answer
+with a matching length or bounded chunked body up to 64 KiB is accepted, so
+redirects and errors are never followed. A failure reports only its exception
+type; the cookie never reaches a message. `Budget.seconds` returns the exact time
+remaining and never rounds up past the total.
+
+After restoration, the owner checks the node anchors again at genesis, the
+publication anchor, the pre-quiescence tip and the snapshot tip. Within the
+remaining total, with sampled floors, it then re-reads the private copy alone. It
+re-runs the record-boundary pass over the copied `blocks.bin`, requiring every
+independently observed or reviewed hash:
+
+- genesis and the publication anchor;
+- the pre-quiescence tip;
+- both node anchor sets;
+- every coverage height.
+
+It also re-derives:
+
+- every main file digest, which must equal the digests taken while copying;
+- the event count and tip, which must equal those found under quiescence;
+- the sidecar count, which must equal the count observed under quiescence;
+- each sidecar's block binding and digest;
+- an aggregate sidecar digest.
+
+The copy must hold no sidecar for any block that is not committed.
+
+The owner writes `manifest.json` (0400) with those contents, the prefix, the
+sidecar policy summary and coverage, the host receipts' digests, the writer
+identities and the anchors. Only then, and only within the total, does it rename
+the partial directory to
+`/srv/transparent-activity/snapshots/journal/<request SHA>/` and record `staged`.
+Status checks only the private single-link file set, sizes and the manifest
+digest; it is not verification.
+
+**Consumer contract.** Root's locked oracle consumer verifies a snapshot with
+`activity_journal_snapshot.verify_snapshot(request_sha256, deadline=...,
+guard=..., health=None)`; there is no manifest-only adapter. The arguments are:
+
+- `deadline` is an absolute, finite `time.monotonic()` bound the consumer
+  chooses. Infinite and NaN deadlines refuse before any read, as does a
+  non-finite deadline for any `Budget`.
+- `guard` is called before the first read, with every resource sample (at most
+  once a second) and at the end. It must raise when the consumer's production
+  lock or other preconditions no longer hold.
+- `health`, when given, receives every sample and refusal.
+
+The snapshot must be `staged` by its own owner. Within the deadline and the 20%
+floors, the call re-derives every file digest, record boundary, independently
+observed anchor, coverage hash and sidecar from the private copy, and refuses on
+any difference.
+
+**Failure and reconciliation.** Any other outcome records `failed`,
+`interrupted` or `restore-failed`. The owner, the sidecar inventory, the host
+receipts, the partial `<request SHA>.copying` directory and its health samples
+are kept, and the owner fences other mutations. The same applies if a killed
+owner leaves `running`.
+
+`schema-snapshot-reconcile` runs under the production lock. A live owner still
+holds that lock, so reconcile refuses while it runs. Reconcile also refuses
+while:
+
+- the recorded launcher or owner PID and start time are alive;
+- the given inventory differs from the retained one;
+- any pinned host fails its fresh owner and process reads.
+
+It accepts a running writer only if it is the original process or one this owner
+recorded starting, and then proves it again. An unknown or restarted writer
+refuses. A writer stopped before this owner recorded `quiescing` refuses.
+Changed unit or binary bytes refuse.
+
+Otherwise reconcile restarts the exact reviewed writer and proves it. It then
+renames any partial or unpublished target to a same-directory
+`.abandoned-<request SHA>` sibling, and records `reconciled`. A retry needs a new
+attempt.
+
+**Timing, from a hub probe only.** The probe ran on the ai-dev hub's attached
+volume, with 8 GiB and 200,000 synthetic 1.4 KB sidecars, while other tests were
+running. It measured:
+
+| Operation | Hub measurement |
+| --- | --- |
+| Copy and hash, cold source | 154.7 MiB/s |
+| Re-hash | 210.3 MiB/s |
+| Sidecar pre-copy | 115 µs each |
+| Sidecar `lstat` | 4.6 µs each |
+| `syncfs` | 3 s |
+
+Applied to root's reported sizes (`events.bin` 42,699,881,014 bytes,
+`blocks.bin` 168,301,056 bytes, so 3,506,272 blocks), arithmetic projects:
+
+- **Writer downtime: about 4.5 minutes of copying.** That is 40,882 MiB of `events.bin` and
+  `blocks.bin` copied while stopped, about 264 s, plus about 16 s of sidecar `lstat` and the
+  reconciliation loop. Add stop and restart time.
+- **Pre-copy while live: about 7 minutes.**
+- **Post-restore re-read: over 3 minutes.**
+
+These are projections, not coordinator measurements. Root chooses the bounds. If
+the coordinator cannot copy, hash or restart within them, the owner refuses with
+its partial evidence; it never widens them.
+
+A staged snapshot is an input for root's chain-oracle and other candidate gates.
+It is not oracle, certificate, candidate, serving or capacity qualification, and
+its manifest says so. Fixture tests use real flock processes, a file-backed fake
+systemd and a fixture node. Nothing has been run against the coordinator.
+
+The following questions remain open for root:
+
+- The actual controller identity, and acceptance of controller downtime for
+  load, scaler and reconciler.
+- The values of all six bounds. Remote host reads are bounded only by the
+  remaining total; their latency is unmeasured.
+- The sidecar policy, and the coverage heights to bind.
+- The live sidecar count and bytes against the 20% disk floor.
+- Whether full event decoding should also run during the stopped window.
 
 ### Failed-transaction source repair
 

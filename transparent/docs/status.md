@@ -69,6 +69,90 @@ or deployed, and no candidate gate was run. Freshness, capacity and every other
 acceptance gate below remain as recorded.
 [Evidence](../evidence/activity-metadata-2026-10-04/README.md).
 
+Operations source then added a guarded `schema-snapshot-*` path for an immutable
+snapshot of the full journal. It stops only the reviewed writer, takes the
+existing `writer.lock` itself, copies the committed prefix and committed display
+sidecars, and restores the same writer with proof. Fixture tests covered:
+
+- the Rust `try_lock` lock protocol, with a probe built by the pinned `rustc`;
+- malformed, truncated, checkpoint and reorganization cases;
+- writer identity drift and active writer refusal;
+- interruption, transport loss and every stop, copy and restore failure;
+- resource floors and namespace misuse.
+
+Root's read-only audit later on 2026-10-04 reported the following. This task
+did not observe them itself.
+
+- **Writer.** The installed `transparent-publish-controller.service` owns the
+  writable journal. Its `data_dir` is `/srv/transparent-activity/full-v3/journal`,
+  with `meta.json` at version 3 from height 0.
+- **Lock.** `/proc/locks` lists the controller PID as the `FLOCK ADVISORY WRITE`
+  holder of the existing `writer.lock`.
+- **Size.** `events.bin` is 42,699,881,014 bytes and `blocks.bin` 168,301,056
+  bytes, which is 3,506,272 blocks.
+
+The snapshot now covers display sidecars as well. Native `events_at` silently
+reads a missing sidecar as no oversized events, and writers outside display mode
+write no sidecar. The path therefore:
+
+- requires an explicit sidecar policy and sidecars at root-chosen coverage
+  heights;
+- pre-copies the immutable sidecars while the controller runs, then re-observes
+  every committed block's sidecar and block hash under quiescence;
+- refuses controller units with stop-propagating or restarting dependents.
+
+A hub-only probe projects about 4.5 minutes of copying while the controller is
+stopped. That projection is not a coordinator measurement.
+
+Root's provisional review then asked for more assurance, and the path now:
+
+- reads every pinned host afresh before any effect, with exact machine pins, the
+  shared owner fence, source-staging receipts and recorded live owner or
+  descendant processes, keeping raw receipts;
+- carries one total deadline, with sampled floors, through every scan, hash,
+  remote read, anchor RPC and the final re-verification;
+- reserves disk for the exact bytes still to be copied under quiescence;
+- re-runs the record-boundary and anchor checks over the copied blocks.
+
+A second provisional review found that the all-host check could still miss
+orphaned descendants and older owners. The path now:
+
+- probes every retained owner record and every live process on each host;
+- refuses live recorded owners and members of their sessions or process groups,
+  with an exact fixture for a dead recorded parent and its live orphaned native
+  child;
+- refuses unrecorded live processes that hold the production lock, carry the
+  inherited-lock variable or run the wrapper;
+- bounds the anchor RPC by one aggregate deadline, with no redirects and
+  sanitized errors;
+- exposes a full-verification contract for root's locked consumer.
+
+A third provisional review then added further requirements, and the path now:
+
+- counts owned `launch`, `child` and `children` identities with `start_ticks` and
+  boot identity;
+- walks the whole owner namespace within finite bounds;
+- closes over live descendants by parent PID;
+- refuses unattributable survivors of operation executable and argument classes
+  outside reviewed service units;
+- refuses non-finite deadlines.
+
+Eighty-three focused tests passed, and all 81 single-guard mutations, including
+the helper's, were caught.
+
+Root's fourth review found three owner-contract gaps, and the path now:
+
+- owns a candidate child's `guardian` and the native process nested under
+  `native`, which inherits its container's boot;
+- treats missing, null or malformed boot evidence as the current boot, so it
+  can no longer suppress a matching live-owner refusal;
+- refuses owned containers nested beyond the depth bound instead of dropping
+  them.
+
+Eighty-five focused tests passed; each new case failed against the previous
+source. No host was contacted and no snapshot was taken; see
+[the snapshot path](deployment.md#candidate-journal-snapshot).
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

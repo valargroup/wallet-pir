@@ -242,6 +242,12 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
     path exists in source; no archive has been transferred.
   - Run candidate bundle plan, preflight and stage from the retained CI 37173250956
     bundles and supplemental archive.
+  - Take an immutable journal snapshot with `schema-snapshot-*` for the gates
+    that read the journal. The path exists in source; no snapshot has been
+    taken. Before it, root must:
+    - bind the live controller identity and accept the controller downtime;
+    - choose all six bounds, the sidecar policy and the coverage heights;
+    - check the live sidecar count and bytes against the disk floor.
   - Produce the four candidate-bound artifact-verification, native-certificate,
     chain-oracle and CI reports from actual runs and retained raw results.
   - Stage and natively verify the candidate worker pair on every worker.
