@@ -6,6 +6,7 @@ fence. Unit effects run against an in-memory systemd model. Live SSH, systemd,
 HTTPS and the candidate executables are separate gates.
 """
 import copy
+import hashlib
 import importlib.util
 import json
 import os
@@ -840,6 +841,17 @@ class OwnerFindingTests(unittest.TestCase):
         durable.atomic_json(self.root/'host-actions/transparent-schema-1/r1.json', record)
         durable.atomic_json(self.root/'host-actions/latest.json', {'transaction':'transparent-schema-1', 'request_id':'r1'})
 
+    def test_invalid_boot_evidence_cannot_hide_matching_live_owner(self):
+        boot = '6f0c1d6e-0000-4000-8000-000000000001'
+        process = {'state':'S', 'boot_id':boot, 'start_ticks':123}
+        for invalid in (None, '', 'earlier-boot', 7):
+            with self.subTest(invalid=invalid):
+                self.assertTrue(Q.process_live(process, {'boot_id':invalid, 'start_ticks':123}))
+        self.assertTrue(Q.process_live(process, {'boot_id':boot, 'start_ticks':123}))
+        self.assertFalse(Q.process_live(process, {'boot_id':boot, 'start_ticks':124}))
+        self.assertFalse(Q.process_live(process, {
+            'boot_id':'6f0c1d6e-0000-4000-8000-000000000000', 'start_ticks':123}))
+
     def test_terminal_record_with_a_live_recorded_owner_is_not_quiescent(self):
         system = FakeCommands()
         self.host_action({'status':'passed', 'pid':self.child.pid, 'started_unix':time.time()+1})
@@ -939,7 +951,10 @@ class OwnerFindingTests(unittest.TestCase):
         unit = 'transparent-activity-prototype-server-e47bdf79.service'
         exe = str(self.root/'owned/build/target/release-fast/transparent-shard-server')+' (deleted)'
         survivor = {'pid':1512286, 'state':'S', 'ppid':1, 'pgid':1512286, 'session':1512286, 'start_ticks':244751095,
-                    'boot_id':'b', 'exe':exe, 'argv':[exe[:-len(' (deleted)')]], 'cgroup':'0::/system.slice/'+unit+'\n'}
+                    'boot_id':'b', 'exe':exe,
+                    'argv':[exe[:-len(' (deleted)')], '--password', 'fictional-sensitive-operand',
+                            'https://fictional-user:fictional-password@example.invalid/'],
+                    'cgroup':'0::/system.slice/'+unit+'\n'}
         class Survivor(FakeCommands):
             listing = unit+' loaded active running x\n'
             main_pid, active = '1512286', 'active'
@@ -948,6 +963,11 @@ class OwnerFindingTests(unittest.TestCase):
                 Q.owner_findings(Survivor())
             message = str(refused.exception)
             self.assertIn("('escaped', 1512286, 244751095, %r" % exe, message)
+            expected = hashlib.sha256(Q.durable.canonical(survivor['argv'])).hexdigest()
+            self.assertIn(expected, message)
+            self.assertIn('observed_argv_sha256', message)
+            for operand in survivor['argv'][1:]:
+                self.assertNotIn(operand, message)
             self.assertIn("('unit', %r, 'active', '1512286')" % unit, message)
             # Neither an owner exemption for another unit nor this owner's own identity admits it.
             with self.assertRaisesRegex(ValueError, "'escaped', 1512286"):

@@ -1146,8 +1146,14 @@ def process_live(process, recorded):
     """Whether a table entry is the recorded process, never a later reuse of its PID."""
     if process is None or process['state'] == 'Z':
         return False
-    if recorded.get('boot_id') is not None:
-        return recorded['boot_id'] == process['boot_id'] and recorded['start_ticks'] == process['start_ticks']
+    # Only two well-formed kernel boot IDs prove that the recorded owner
+    # belongs to another boot. Null or malformed evidence cannot hide a live
+    # owner with matching kernel start ticks.
+    boot_pattern = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    before, now = recorded.get('boot_id'), process.get('boot_id')
+    if isinstance(before, str) and isinstance(now, str) and \
+            re.fullmatch(boot_pattern, before) and re.fullmatch(boot_pattern, now) and before != now:
+        return False
     if recorded.get('start_ticks') is not None:
         return recorded['start_ticks'] == process['start_ticks']
     return started_unix_from(process['start_ticks']) <= recorded['before_unix']+2
@@ -1218,7 +1224,12 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
     roots = [p for p in table.values() if p['state'] != 'Z' and p['pid'] not in exempt and under_owned_roots(p)
              and not in_units(p, own_units)]
     for process in {p['pid']:p for p in escaped+roots}.values():
-        findings['live'].append(('escaped', process['pid'], process['start_ticks'], process['exe'], process['argv'][:4]))
+        # Arguments are needed to classify paths in memory, but arbitrary
+        # operands can contain credentials. Refusals are retained as evidence:
+        # persist only a hash of the observed argument vector, never operands.
+        arguments_sha256 = hashlib.sha256(durable.canonical(process['argv'])).hexdigest()
+        findings['live'].append(('escaped', process['pid'], process['start_ticks'], process['exe'],
+                                 {'observed_argv_sha256':arguments_sha256}))
     findings['processes'].update(escaped=[p['pid'] for p in escaped], owned_roots=[p['pid'] for p in roots])
     listing = commands_.run(['systemctl', 'list-units', '--all', '--plain', '--no-legend', '--no-pager', '--full',
                              'transparent-activity-*', 'transparent-full-burst-*'], timeout=10).decode()

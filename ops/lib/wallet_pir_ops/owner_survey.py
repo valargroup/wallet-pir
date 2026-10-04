@@ -151,7 +151,12 @@ def scan(lock_path=None, marker=None, receiver=None, argv_bytes=BOUNDS['argv_byt
             with open('/proc/%d/cmdline' % pid, 'rb') as stream:
                 raw = stream.read(argv_bytes+1)
             current['command_sha256'], current['command_bytes'] = hashlib.sha256(raw[:argv_bytes]).hexdigest(), len(raw)
-            current['argv'] = [a.decode(errors='replace') for a in raw[:argv_bytes].split(b'\0') if a][:64]
+            arguments = [a.decode(errors='replace') for a in raw[:argv_bytes].split(b'\0') if a]
+            # Classifying only a prefix could hide an operational path in a
+            # later operand. Keep bounded evidence, but refuse incomplete scope.
+            current['arguments_overflow'] = len(raw) > argv_bytes or len(arguments) > 64
+            current['unreadable'] = current['arguments_overflow']
+            current['argv'] = arguments[:64]
             try:
                 current['exe'] = os.readlink('/proc/%d/exe' % pid).removesuffix(' (deleted)')
             except FileNotFoundError:
@@ -183,7 +188,8 @@ def scan(lock_path=None, marker=None, receiver=None, argv_bytes=BOUNDS['argv_byt
 
 # The only process fields retained: identity, executable, digests, class and flags.
 SUMMARY = ('pid', 'start_ticks', 'session', 'pgid', 'ppid', 'uid', 'comm', 'exe', 'command_sha256', 'command_bytes',
-           'holds', 'receiver', 'unreadable', 'cgroup', 'association', 'record', 'key', 'unit', 'exe_sha256', 'class')
+           'arguments_overflow', 'holds', 'receiver', 'unreadable', 'cgroup', 'association', 'record', 'key', 'unit',
+           'exe_sha256', 'class')
 
 
 def summary(items, listed=BOUNDS['listed']):

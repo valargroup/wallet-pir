@@ -183,6 +183,16 @@ was gone or outside the fixture cgroup, the production orphan-window rule
 correctly refused it on the coordinator before worker-a. The fixture holder
 now leads its own session; production scans are unchanged.
 
+The locally integrated operations source received further ownership hardening:
+argument byte/count overflow refuses incomplete process classification;
+escaped-process refusals retain argument digests rather than arbitrary operands;
+and malformed boot IDs cannot suppress a matching live process identity. Native
+capture now records the observed monotonic start/end and repeats its kernel
+start identity in the terminal result. These fields support the oracle's temporal
+checks; they do not supply its missing whole locked execution owner, safe snapshot
+execution, canonical RPC evidence or qualification report. No candidate gate or
+production acceptance result follows from these source changes.
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

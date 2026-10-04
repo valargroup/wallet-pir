@@ -213,7 +213,7 @@ if native == 0:
         os._exit(125)
 os.close(gate)
 pidfd = os.pidfd_open(native)
-state = {'status': None, 'ended': None}
+state = {'status': None, 'ended': None, 'ended_monotonic': None}
 def stat(pid):
     try:
         with open('/proc/%d/stat' % pid) as stream:
@@ -231,6 +231,7 @@ def reap():
             return
         if pid == native:
             state['status'], state['ended'] = status, time.time()
+            state['ended_monotonic'] = time.monotonic()
 def subtree():
     children = {}
     for name in os.listdir('/proc'):
@@ -285,7 +286,8 @@ time.sleep(.05)
 reap()
 survivors = [{'pid': pid, 'start_ticks': start} for pid, start in subtree()]
 value = {'native_pid': native, 'returncode': os.waitstatus_to_exitcode(state['status']),
-         'ended_unix': state['ended'], 'expired': expired, 'stopped': stopped,
+         'ended_unix': state['ended'], 'ended_monotonic': state['ended_monotonic'],
+         'expired': expired, 'stopped': stopped,
          'killed': list(killed.values())[:64], 'killed_count': len(killed), 'survivors': survivors[:64]}
 os.write(report, json.dumps(value, sort_keys=True).encode() + b'\n')
 os.fsync(report)
@@ -587,10 +589,12 @@ def guardian_report(path, native):
     require(stat.S_ISREG(info.st_mode) and 0 < info.st_size <= MAX_GUARDIAN_REPORT,
             'candidate guardian report is missing or exceeds bound')
     value = json.loads(path.read_bytes(), object_pairs_hook=I.unique)
-    require(isinstance(value, dict) and set(value) == {'native_pid', 'returncode', 'ended_unix', 'expired', 'stopped',
+    require(isinstance(value, dict) and set(value) == {'native_pid', 'returncode', 'ended_unix', 'ended_monotonic',
+                                                       'expired', 'stopped',
                                                        'killed', 'killed_count', 'survivors'} and
             value['native_pid'] == native['pid'] and type(value['returncode']) is int and
-            R.number(value['ended_unix']) and type(value['expired']) is bool and type(value['stopped']) is bool and
+            R.number(value['ended_unix']) and R.number(value['ended_monotonic']) and
+            value['ended_monotonic'] > 0 and type(value['expired']) is bool and type(value['stopped']) is bool and
             type(value['killed_count']) is int and isinstance(value['killed'], list) and
             isinstance(value['survivors'], list), 'candidate guardian report is invalid')
     return value
@@ -1149,7 +1153,7 @@ class Receiver:
         before = self.table(item, sampler) if self.mode == 'native-certificates' else None
         files = {name: directory/name for name in ('owner.json', 'native.json', 'stderr.log', 'health.json', 'result.json',
                                                    'guardian.json')}
-        child = failure = ended = started = leader = native = report = None
+        child = failure = ended = started = started_monotonic = leader = native = report = None
         token = '%s:%s:%s' % (self.identifier, item['key'], secrets.token_hex(16))
         first = len(sampler.samples)
         gate = notify = None
@@ -1165,6 +1169,7 @@ class Receiver:
             self.critical = True
             try:
                 started = time.time()
+                started_monotonic = time.monotonic()
                 descriptors = lock.descriptors()
                 gate_read, gate = os.pipe()
                 notify, notify_write = os.pipe()
@@ -1193,6 +1198,7 @@ class Receiver:
                          'publication_sha256': MAP_SHA256, 'operations_source_sha': self.request['source_sha'],
                          **native, 'boot_id': leader['boot_id'], 'session': child.pid, 'pgid': child.pid,
                          'guardian': leader, 'guardian_deadline_unix': deadline_unix, 'started_unix': started,
+                         'started_monotonic': started_monotonic,
                          'timeout_seconds': budget['wall_seconds'], 'guardian_seconds': guardian_seconds(budget),
                          'limits': {k: budget[k] for k in ('cpu_seconds', 'address_space_bytes')},
                          'receiver': record['receiver'], 'host': plan['host'], 'segment': item.get('segment')}
@@ -1208,7 +1214,7 @@ class Receiver:
                 self.critical = False
             if self.pending:
                 raise Interrupted('candidate execution receiver interrupted')
-            deadline = time.monotonic()+budget['wall_seconds']
+            deadline = started_monotonic+budget['wall_seconds']
             while True:
                 try:
                     child.wait(timeout=SAMPLE_SECONDS)
@@ -1224,6 +1230,9 @@ class Receiver:
             sampler.sample()
             report = guardian_report(files['guardian.json'], native)
             ended = report['ended_unix']
+            require(0 < report['ended_monotonic']-started_monotonic <= budget['wall_seconds'] and
+                    report['ended_monotonic'] <= time.monotonic(),
+                    'native child exceeded the observed monotonic execution bound')
             require(os.fstat(stdout).st_size <= MAX_STDOUT and os.fstat(stderr).st_size <= MAX_STDERR,
                     'native output exceeded its bound')
             require(not report['expired'], 'native child exceeded the guardian deadline')
@@ -1268,7 +1277,9 @@ class Receiver:
             code = report['returncode'] if report else None
             result = {'status': 'passed' if failure is None else 'interrupted' if interrupted else 'failed',
                       'exit_code': code, 'pid': native['pid'] if native else None,
+                      'start_ticks': native['start_ticks'] if native else None,
                       'started_unix': started, 'ended_unix': ended, 'timeout_seconds': budget['wall_seconds'],
+                      'ended_monotonic': report['ended_monotonic'] if report else time.monotonic(),
                       'limits': {k: budget[k] for k in ('cpu_seconds', 'address_space_bytes')},
                       'max_sampled_rss_bytes': max((s.get('sampled_rss_bytes', 0) for s in sampler.samples[first:]),
                                                    default=0),

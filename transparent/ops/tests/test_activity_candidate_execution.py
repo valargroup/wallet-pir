@@ -689,6 +689,10 @@ class Run(Fixture):
                          (owner['pid'], 0, False, []))
         self.assertEqual((result['pid'], result['guardian']['pid'], result['guardian']['exit_code']),
                          (owner['pid'], owner['guardian']['pid'], 0))
+        self.assertEqual(result['start_ticks'], owner['start_ticks'])
+        self.assertEqual(result['ended_monotonic'], guardian['ended_monotonic'])
+        self.assertGreater(result['ended_monotonic'], owner['started_monotonic'])
+        self.assertLessEqual(result['ended_monotonic']-owner['started_monotonic'], result['timeout_seconds'])
         self.assertEqual({k: owner[k] for k in ('native_source_sha', 'candidate_sha256', 'binary_sha256', 'publication_sha256')},
                          {'native_source_sha': C.SOURCE_SHA, 'candidate_sha256': C.identity(),
                           'binary_sha256': self.pins['shard-verify'], 'publication_sha256': E.MAP_SHA256})
@@ -996,6 +1000,21 @@ class Survey(Fixture):
         bound = E.S.BOUNDS['argv_bytes']
         self.assertEqual((item['command_bytes'], item['command_sha256']),
                          (bound+1, hashlib.sha256(cmdline[:bound]).hexdigest()))
+        self.assertTrue(item['arguments_overflow'])
+        self.assertTrue(item['unreadable'])
+
+    def test_argument_count_overflow_refuses_before_owner_effects(self):
+        # The operational path occurs beyond the classification prefix.
+        # A partial scan must refuse even though the path is never retained.
+        process = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)',
+                                    *['fictional-padding']*64, '/srv/transparent-pir/v11'],
+                                   start_new_session=True)
+        self.addCleanup(lambda: (process.kill(), process.wait()))
+        self.wait_for(lambda: any(p['pid'] == process.pid and p.get('arguments_overflow') for p in E.scan()))
+        receiver = self.receiver()
+        with self.assertRaisesRegex(ValueError, 'live, unreadable or foreign'):
+            self.stage(receiver)
+        self.assertFalse(receiver.owner.exists())
 
     def live(self, **options):
         process = subprocess.Popen(['sleep', '30'], **options)
