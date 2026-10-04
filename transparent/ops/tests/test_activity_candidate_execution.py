@@ -423,11 +423,18 @@ class Fixture(unittest.TestCase):
         return sorted(found, key=lambda path: json.loads((path/'index.json').read_text())['retained_unix'])
 
     def holder(self, path):
-        """A separate process holding a lock, as a foreign owner would."""
+        """A separate process holding a lock, as a foreign owner would.
+
+        It leads its own session, like a real foreign owner. Inheriting the test
+        runner's session made it an orphan whenever that session's leader was
+        gone or outside the fixture cgroup (root's run under another launcher),
+        and, started within 2 s of an owner record's last write, the
+        coordinator's orphan-window rule then refused before worker-a.
+        """
         process = subprocess.Popen([sys.executable, '-c', 'import fcntl, os, sys, time\n'
                                     'fd = os.open(sys.argv[1], os.O_RDWR | os.O_CREAT, 0o600)\n'
                                     'fcntl.flock(fd, fcntl.LOCK_EX); print("held", flush=True); time.sleep(60)',
-                                    str(path)], stdout=subprocess.PIPE)
+                                    str(path)], stdout=subprocess.PIPE, start_new_session=True)
         self.assertEqual(process.stdout.readline(), b'held\n')
         self.addCleanup(lambda: (process.kill(), process.wait(), process.stdout.close()))
         return process
@@ -947,6 +954,48 @@ class Survey(Fixture):
         self.addCleanup(lambda: (other.kill(), other.wait()))
         self.wait_for(lambda: any(p['receiver'] for p in E.scan() if p['pid'] == other.pid))
         self.refused('live, unreadable or foreign', self.receiver(attempt=2))
+
+    def test_arguments_and_marker_values_never_reach_retained_surveys_or_reasons(self):
+        # Fictional reproduction of root's owner-survey-6174 review: an unattributed operational process whose
+        # inline script, flag operand, URL credential and marker value are all fictional secrets.
+        secret = 'fictional-6174-credential'
+        script = 'import time  # %s\ntime.sleep(30)' % secret
+        argv = [sys.executable, '-c', script, '/srv/transparent-pir/v11', '--password=%s' % secret,
+                'https://operator:%s@example.invalid/' % secret]
+        process = subprocess.Popen(argv, env=dict(os.environ, **{E.MARKER: secret}), start_new_session=True)
+        self.addCleanup(lambda: (process.kill(), process.wait()))
+        self.wait_for(lambda: any(p['pid'] == process.pid and p['token'] == secret for p in E.scan()))
+        receiver = self.receiver()
+        with self.assertRaises(ValueError) as refused:
+            self.stage(receiver)
+        self.assertNotIn(secret, str(refused.exception))
+        self.assertRegex(str(refused.exception), 'live, unreadable or foreign|not bound to a baseline service')
+        [attempt] = self.surveys(receiver)
+        retained = b''.join(path.read_bytes() for path in sorted(attempt.iterdir()))
+        self.assertNotIn(secret.encode(), retained)
+        self.assertNotIn(b'example.invalid', retained); self.assertNotIn(b'--password', retained)
+        survey = json.loads((attempt/'coordinator.json').read_text())
+        cmdline = Path('/proc/%d/cmdline' % process.pid).read_bytes()
+        expected = {'pid': process.pid, 'exe': os.path.realpath(sys.executable),
+                    'command_sha256': hashlib.sha256(cmdline).hexdigest(), 'command_bytes': len(cmdline),
+                    'token_sha256': hashlib.sha256(secret.encode()).hexdigest()}
+        [marked] = [p for p in survey['processes'] if p['pid'] == process.pid]
+        self.assertEqual({k: marked[k] for k in expected}, expected)
+        self.assertNotIn('argv', marked); self.assertNotIn('token', marked)
+        [unattributed] = [p for p in survey['unattributed'] if p['pid'] == process.pid]
+        self.assertEqual(unattributed['class'], ['/srv/transparent-pir/'])
+        self.assertEqual(unattributed['command_sha256'], expected['command_sha256'])
+        self.assertIn('%d %s' % (process.pid, expected['exe']), ' '.join(survey['blocked']))
+        # A command line over the bound keeps the digest of its bounded prefix and says so by its length.
+        padding = 'x'*(E.S.BOUNDS['argv_bytes']+100)
+        long = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)', padding], start_new_session=True)
+        self.addCleanup(lambda: (long.kill(), long.wait()))
+        cmdline = self.wait_for(lambda: padding.encode() in Path('/proc/%d/cmdline' % long.pid).read_bytes() and
+                                Path('/proc/%d/cmdline' % long.pid).read_bytes())
+        [item] = E.S.summary([p for p in E.scan() if p['pid'] == long.pid])
+        bound = E.S.BOUNDS['argv_bytes']
+        self.assertEqual((item['command_bytes'], item['command_sha256']),
+                         (bound+1, hashlib.sha256(cmdline[:bound]).hexdigest()))
 
     def live(self, **options):
         process = subprocess.Popen(['sleep', '30'], **options)

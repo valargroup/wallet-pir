@@ -22,6 +22,13 @@ A survey refuses (`reasons` non-empty) on any of:
 
 Association is a set of fixed rules, not proof that nothing survives: a
 detached process that matches no rule and no operational class is invisible.
+
+Arguments and environment values are inspected in memory only. A process
+summary, and every refusal reason, keeps the command line's SHA-256 and byte
+count, the executable path, identity, the matched operational class entries and
+boolean flags; never an argument value or a marker value (only its SHA-256), so
+credentials, URL credentials or inline script text in another process's
+command line never reach retained evidence.
 """
 import hashlib
 import json
@@ -110,6 +117,8 @@ def ancestors(pid=None):
 def scan(lock_path=None, marker=None, receiver=None, argv_bytes=BOUNDS['argv_bytes']):
     """Every live user process with executable, argv, marker, lock use and receiver role.
 
+    `argv` and `token` are for in-memory decisions; `summary` never emits them.
+
     Kernel threads are never listed. Root reads every process; one it cannot
     read is listed unreadable. Unprivileged observers (fixtures only) skip
     other users' processes and processes they cannot read.
@@ -137,11 +146,12 @@ def scan(lock_path=None, marker=None, receiver=None, argv_bytes=BOUNDS['argv_byt
         if not privileged and owner != os.geteuid():
             continue
         current.update(uid=owner, token=None, holds=False, receiver=False, unreadable=False, cgroup=cgroup(pid),
-                       exe=None, argv=[])
+                       exe=None, argv=[], command_sha256=None, command_bytes=None)
         try:
             with open('/proc/%d/cmdline' % pid, 'rb') as stream:
-                arguments = stream.read(argv_bytes).split(b'\0')
-            current['argv'] = [a.decode(errors='replace') for a in arguments if a][:64]
+                raw = stream.read(argv_bytes+1)
+            current['command_sha256'], current['command_bytes'] = hashlib.sha256(raw[:argv_bytes]).hexdigest(), len(raw)
+            current['argv'] = [a.decode(errors='replace') for a in raw[:argv_bytes].split(b'\0') if a][:64]
             try:
                 current['exe'] = os.readlink('/proc/%d/exe' % pid).removesuffix(' (deleted)')
             except FileNotFoundError:
@@ -171,11 +181,30 @@ def scan(lock_path=None, marker=None, receiver=None, argv_bytes=BOUNDS['argv_byt
     return found
 
 
+# The only process fields retained: identity, executable, digests, class and flags.
+SUMMARY = ('pid', 'start_ticks', 'session', 'pgid', 'ppid', 'uid', 'comm', 'exe', 'command_sha256', 'command_bytes',
+           'holds', 'receiver', 'unreadable', 'cgroup', 'association', 'record', 'key', 'unit', 'exe_sha256', 'class')
+
+
 def summary(items, listed=BOUNDS['listed']):
-    return [{k: item[k] for k in ('pid', 'start_ticks', 'session', 'pgid', 'ppid', 'uid', 'comm', 'exe', 'argv',
-                                  'token', 'holds', 'receiver', 'unreadable', 'cgroup', 'association', 'record',
-                                  'key', 'unit', 'exe_sha256')
-             if k in item} for item in items[:listed]]
+    """Retained view of processes: never an argument or a marker value.
+
+    `command_bytes` above the argv bound means the digest covers only the
+    bounded prefix. A marker is kept as its SHA-256 only.
+    """
+    found = []
+    for item in items[:listed]:
+        kept = {k: item[k] for k in SUMMARY if k in item}
+        if 'token' in item:
+            kept['token_sha256'] = (hashlib.sha256(item['token'].encode()).hexdigest()
+                                    if isinstance(item['token'], str) else None)
+        found.append(kept)
+    return found
+
+
+def label(item):
+    """A process for a refusal reason: PID and executable, or kernel name; never an argument."""
+    return '%d %s' % (item['pid'], item.get('exe') or item.get('comm') or '?')
 
 
 def recorded(record, name, mtime):
@@ -412,11 +441,20 @@ def associate(references, processes, excluded, observer_cgroup, booted, everyone
     return sorted(found.values(), key=lambda p: p['pid'])
 
 
-def matches(item, classes):
-    """True for a process of a closed operational class: executable or argv basename, or a root prefix."""
+def matched(item, classes):
+    """The closed class entries a process matches by executable or argv basename, or root prefix.
+
+    Only entries of `classes` are returned, never the argument that matched.
+    """
     paths = [x for x in (item.get('exe'), *item.get('argv', [])) if x]
-    return any(os.path.basename(x) in classes['names'] or any(x.startswith(root) for root in classes['roots'])
-               for x in paths)
+    found = {os.path.basename(x) for x in paths if os.path.basename(x) in classes['names']}
+    found |= {root for x in paths for root in classes['roots'] if x.startswith(root)}
+    return sorted(found)
+
+
+def matches(item, classes):
+    """True for a process of a closed operational class."""
+    return bool(matched(item, classes))
 
 
 def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
@@ -430,8 +468,10 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
     bound, unattributed, reasons, hashed = [], [], [], {}
     budget = bounds['hashed_bytes']
     for item in processes:
-        if item['pid'] in excluded or not matches(item, classes):
+        found = matched(item, classes) if item['pid'] not in excluded else []
+        if not found:
             continue
+        item = dict(item, **{'class': found})
         unit = unit_of(item.get('cgroup'), baseline)
         if unit is None:
             unattributed.append(item)
@@ -498,7 +538,7 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     reasons.extend(problems)
     if unattributed:
         reasons.append('live operational process not bound to a baseline service: '+', '.join(
-            '%d %s' % (p['pid'], p.get('exe') or (p['argv'] or ['?'])[0]) for p in unattributed[:4]))
+            label(p) for p in unattributed[:4]))
     records = sorted({p['record'] for p in associated if p['record'] in digests})
     return {'version': VERSION, 'kind': KIND, 'binding': binding, 'bounds': bounds,
             'classes': classes, 'classes_sha256': hashlib.sha256(canonical(classes)).hexdigest(),

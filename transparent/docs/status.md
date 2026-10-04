@@ -90,6 +90,16 @@ single-guard mutations passed on the development hub. Root set all budgets as
 explicit ceilings; the 60-second guardian launch window awaits its review. No
 candidate native program ran on a production host, and no gate report exists.
 
+Root's review of the third revision found that retained surveys kept raw
+command-line operands of unattributed processes. Two fixture tests also failed
+on root's Linux run. The revision keeps arguments and token values in memory
+only and retains the command line's SHA-256 and length, the token's SHA-256,
+the matched class entries and flags. The test failures came from a fixture
+lock holder that shared the test runner's session. When that session's leader
+was gone or outside the fixture cgroup, the production orphan-window rule
+correctly refused it on the coordinator before worker-a. The fixture holder
+now leads its own session; production scans are unchanged.
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

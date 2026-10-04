@@ -1658,6 +1658,21 @@ bounds, classes, baseline units, lock path, allowed holder and a binding of
 nonce, request and host. The raw result echoes all of them, with the class
 digest and the digests of the records behind each association. The receiver
 refuses a reply whose bounds, classes, baseline or binding differ from its own.
+
+The survey reads command lines and the launch-token variable only in memory.
+A retained process entry, and every refusal reason, keeps:
+
+- PID, start ticks, session, group, parent, UID, kernel name, cgroup and
+  executable path.
+- The SHA-256 and byte count of the command line, read to 4096 bytes. A count
+  of 4097 means the digest covers only that bounded prefix.
+- The token's SHA-256, never its value. The launch record keeps the receiver's
+  own token, so its digest identifies own processes offline.
+- The operational class entries it matched (a tool name or root), and the
+  lock, receiver and unreadable flags.
+
+No argument or environment value is retained. Credentials, URL credentials or
+inline script text in another process's command line never reach the evidence.
   On the coordinator this walk keeps the 2-second health sampling, and a
   failure there still retains every reply already received.
 - Every candidate execution owner and its status. The unfinished check runs on
