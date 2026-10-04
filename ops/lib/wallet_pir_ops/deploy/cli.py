@@ -163,9 +163,12 @@ def parser():
         if name in ('status','reconcile'):
             command.add_argument('--request-sha256', required=True)
             continue
-        command.add_argument('--mode', choices=('artifact-verification','native-certificates'), required=True)
+        command.add_argument('--mode', choices=('artifact-verification','native-certificates','independent-chain-oracle'), required=True)
         command.add_argument('--attempt', type=int, required=True)
         command.add_argument('--preparation-request-sha256', required=True)
+        command.add_argument('--snapshot-request-sha256')
+        command.add_argument('--snapshot-owner-sha256')
+        command.add_argument('--snapshot-manifest-sha256')
         if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
     command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
     command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile','survey'), required=True)
@@ -412,7 +415,11 @@ def main(argv=None, executor=None, out=print, **options):
             execution = module.Execution(descriptors.load_inventory(args.inventory), args.source_sha,
                                          mode=getattr(args,'mode',None), attempt=getattr(args,'attempt',None),
                                          preparation=getattr(args,'preparation_request_sha256',None),
-                                         request_sha256=getattr(args,'request_sha256',None))
+                                         request_sha256=getattr(args,'request_sha256',None),
+                                         snapshot={k:getattr(args,'snapshot_'+k,None) for k in
+                                                   ('request_sha256','owner_sha256','manifest_sha256')}
+                                                  if any(getattr(args,'snapshot_'+k,None) for k in
+                                                         ('request_sha256','owner_sha256','manifest_sha256')) else None)
             try:
                 result = execution.run(action, getattr(args,'expect_plan_sha256',None))
             except module.Unknown as error:

@@ -65,6 +65,36 @@ class RPC(unittest.TestCase):
         self.assertNotIn('proof', projection)
         self.assertLess(len(json.dumps(projection)), 256)
 
+    def test_large_compressed_body_checks_owned_budget_during_decompression(self):
+        raw = json.dumps({'payload': 'x'*(3 << 20)}).encode()
+        packed = gzip.compress(raw, mtime=0); path = self.root/'large.json.gz'; path.write_bytes(packed)
+        ref = {'path':str(path), 'sha256':hashlib.sha256(packed).hexdigest(),
+               'decoded_sha256':hashlib.sha256(raw).hexdigest()}
+        calls = []
+        self.assertEqual(len(M.decode(ref, check=lambda:calls.append(True))['payload']), 3 << 20)
+        self.assertGreaterEqual(len(calls), 8)
+        count = 0
+        def refuse():
+            nonlocal count
+            count += 1
+            if count == 8:
+                raise ValueError('fictional aggregate deadline')
+        with self.assertRaisesRegex(ValueError, 'fictional aggregate deadline'):
+            M.decode(ref, check=refuse)
+        with self.assertRaises(ValueError): M.decode(ref, check=False)
+
+    def test_raw_comparison_refuses_resource_loss_after_transaction_projection(self):
+        attempts, native = self.fixtures()
+        failed, original = False, M.project
+        def project(tx, *, check=None):
+            nonlocal failed
+            result = original(tx, check=check); failed = True
+            return result
+        def check():
+            if failed: raise ValueError('fictional resource floor')
+        with patch.object(M, 'project', side_effect=project), self.assertRaisesRegex(ValueError, 'fictional resource floor'):
+            M.compare(attempts, native, check=check)
+
     def test_all_17_blocks_and_indexing_counts_are_derived_from_raw(self):
         attempts, native = self.fixtures(); report = M.compare(attempts, native)
         self.assertEqual(report['events_compared'], 17)

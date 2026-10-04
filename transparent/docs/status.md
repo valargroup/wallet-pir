@@ -193,6 +193,54 @@ checks; they do not supply its missing whole locked execution owner, safe snapsh
 execution, canonical RPC evidence or qualification report. No candidate gate or
 production acceptance result follows from these source changes.
 
+Native qualification requests and client inventories now require the exact
+coordinator, router and three production worker host names. A pinned partial
+inventory refuses before transport construction or owner creation; surveying all
+entries in a partial inventory is insufficient. Local subprocess fixtures use
+an explicit test-only two-host override. Source and upload bootstrap guards still
+need the complete locked fleet handshake before staging can proceed.
+Snapshot inventory validation now requires that same complete host set and
+distinct machine pins, including a coordinator pin equal to its production
+lock identity. A partial inventory refuses before any host probe or transport;
+the snapshot rechecks this requirement when it surveys retained owners.
+
+Oracle report retention now carries the same checked owner budget through
+bounded canonical encoding, evidence hashing, chunked writes and file/directory
+fsync. Capture closure uses that checked writer too. Evidence remains preserved
+when ownership is lost after a write; such a refusal cannot finish report
+assembly. These cooperative checks now run within the gated post-handshake workflow
+worker described below, whose supervisor supplies the independent hard deadline.
+
+A local executor draft now forks one gated qualification workflow under the
+receiving process acting as a Linux child subreaper. The worker inherits the
+production lock and applies address-space, CPU and core limits; its PID/start,
+boot identity and aggregate deadline are durable before it starts. The receiver
+waits independently of workflow hashing, validation and evidence writes, and
+uses pidfds to stop and reap its owned descendants at that deadline. It refuses
+preexisting receiver children before launch. Per-native guardians remain in
+place. Its Linux suite passed 56 tests, including all 180 fixture certificate
+dispatches and interrupted-owner recovery; a subsequent additional fixture
+proved deadline cleanup of a detached child without its token or lock descriptor.
+The exact pinned native guardian code now runs from a source file, because its
+inline form exceeded the process survey's unchanged argument bound. The receiver
+restores its earlier subreaper state after cleanup. Pre-handshake planning,
+surveys and terminal owner retention still use cooperative bounds.
+
+The unpublished oracle mode now uses that worker. Its closed request pins the
+canonical snapshot request identity and exact owner and manifest bytes. The
+full snapshot verifier proves independent bytes, committed boundaries and owned
+writer restoration before the native reader starts. The reader uses only the
+verified copy, fixed 17-block selection and batch size256, and an owned ephemeral
+loopback capture whose upstream and runtime cookie pathname are fixed. Canonical
+boundaries bracket the native run; raw attempts and refusals remain retained.
+Report assembly fully verifies the snapshot again and binds native kernel and
+clock identities, original RPC bytes and capture closure. Resource checks from
+the capture thread are serialized with native sampling. Original native failures
+remain authoritative if capture closure also fails. The combined Linux source
+suite passed114tests, including existing artifact/certificate/lifecycle fixtures
+and oracle refusal/composition tests. It qualifies no candidate or production
+gate. Final source publication and actual execution remain pending.
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,

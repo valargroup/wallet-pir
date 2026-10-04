@@ -1,6 +1,6 @@
-"""Closed, locked execution of the candidate's two offline native gate programs.
+"""Closed, locked execution of the candidate's offline native gate programs.
 
-Root runs exactly two modes against the immutable initial v11 publication on
+Root runs three closed modes against the immutable initial v11 publication on
 the pinned coordinator, with the candidate executables already retained by
 CandidatePreparation:
 
@@ -9,6 +9,10 @@ CandidatePreparation:
   No journal, `--data-dir` or rebuild.
 - `native-certificates`: one `examples/native_certificate segment` per table
   segment of every pinned manifest, all 180, with fixed table paths.
+
+- `independent-chain-oracle`: fully verify the retained safe snapshot before
+  event-spotcheck, retain owned canonical RPC boundaries and raw attempts, then
+  reverify the snapshot and assemble the candidate oracle report.
 
 The executable, argv and paths derive from the closed request; nothing is
 caller-chosen. Stage and reconcile hold the global production lock in the
@@ -45,6 +49,7 @@ under the candidate namespace with a `references.json` usable by
 offline producer evaluates the retained bytes. Nothing here touches a live
 service, cache, unit, route or writer.
 """
+import base64
 import ctypes
 import hashlib
 import importlib.util
@@ -63,11 +68,16 @@ import stat
 import subprocess
 import sys
 import time
+import threading
+from types import SimpleNamespace
 
 from wallet_pir_ops import durable, inherited_lock, owner_survey as S, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HERE = Path(__file__).parent
+# Oracle components import each other from this same reviewed immutable source.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
 
 
 def module(name, path):
@@ -85,7 +95,8 @@ R.C = C
 VERSION = 2
 KIND = 'candidate-native-execution'
 SURVEY_KIND = 'candidate-execution-survey'
-MODES = {'artifact-verification': 'shard-verify', 'native-certificates': 'examples/native_certificate'}
+MODES = {'artifact-verification': 'shard-verify', 'native-certificates': 'examples/native_certificate',
+         'independent-chain-oracle': 'event-spotcheck'}
 OWNERS = I.OWNERS
 # The retained production owner namespaces every survey enumerates in full.
 SCHEMA = schema_fence.SCHEMA_STATE
@@ -108,6 +119,10 @@ GiB = 1 << 30
 # Hard per-child limits, enforced by the kernel (RLIMIT_AS, RLIMIT_CPU) and by
 # the receiver's wall deadline. Sampled RSS is an observation, never a limit.
 BUDGETS = {
+    'independent-chain-oracle': {
+        'wall_seconds': 1800, 'cpu_seconds': 1800, 'address_space_bytes': 14*GiB,
+        'basis': 'closed initial oracle ceiling of 1800 s native plus existing3600 s non-child work; '
+                 'historical native timing is context only, not candidate qualification'},
     'native-certificates': {
         'wall_seconds': 600, 'cpu_seconds': 600, 'address_space_bytes': 14*GiB,
         'basis': 'root decision on the attempt-1 review: conservative closed certificate limits of 600 s and '
@@ -337,14 +352,14 @@ def evidence_root():
 
 def aggregate_seconds(mode):
     """The finite remote budget of one stage, lock acquisition to terminal owner."""
-    children = 1 if mode == 'artifact-verification' else SEGMENTS
+    children = SEGMENTS if mode == 'native-certificates' else 1
     return children*BUDGETS[mode]['wall_seconds'] + NON_CHILD_SECONDS
 
 
 def validate(request):
-    require(isinstance(request, dict) and set(request) == {'version', 'kind', 'mode', 'source_sha', 'candidate_sha',
+    require(isinstance(request, dict) and set(request) == ({'version', 'kind', 'mode', 'source_sha', 'candidate_sha',
             'candidate_identity', 'preparation_request_sha256', 'publication_sha256', 'coordinator', 'machine_id',
-            'hosts', 'attempt'} and
+            'hosts', 'attempt'} | ({'snapshot'} if request.get('mode') == 'independent-chain-oracle' else set())) and
             type(request['version']) is int and request['version'] == VERSION and request['kind'] == KIND and
             request['mode'] in MODES, 'invalid candidate execution request')
     require(isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
@@ -354,6 +369,11 @@ def validate(request):
             isinstance(request['machine_id'], str) and MACHINE.fullmatch(request['machine_id']) and
             type(request['attempt']) is int and 1 <= request['attempt'] <= 100,
             'candidate execution identity differs from the pinned candidate and publication')
+    if request['mode'] == 'independent-chain-oracle':
+        pins = request['snapshot']
+        require(isinstance(pins, dict) and set(pins) == {'request_sha256','owner_sha256','manifest_sha256'} and
+                all(isinstance(v, str) and HEX.fullmatch(v) for v in pins.values()),
+                'oracle snapshot pins are incomplete')
     hosts = request['hosts']
     require(isinstance(hosts, list) and 1 <= len(hosts) <= MAX_HOSTS and
             all(isinstance(h, dict) and set(h) == {'host', 'machine_id'} and isinstance(h['host'], str) and
@@ -458,6 +478,7 @@ def dispatches(mode, binary, layout):
                  '--expect-recent-geometry', P.GEOMETRIES['recent_geometry'],
                  '--expect-archive-geometry', P.GEOMETRIES['archive_geometry'],
                  '--expect-map-sha256', MAP_SHA256, '--source-sha', C.SOURCE_SHA]}]
+    require(mode == 'native-certificates', 'oracle dispatch requires a fully verified snapshot and owned capture')
     return [{'key': '%03d-%s-%d' % (s['shard_id'], s['table'], s['segment']),
              'argv': [str(binary), 'segment', '--geometry', s['geometry'], '--table', s['table'], '--rows-bin', s['path']],
              'segment': {k: s[k] for k in ('shard_id', 'table', 'segment', 'geometry', 'manifest_digest',
@@ -649,6 +670,7 @@ class Sampler:
     """
 
     def __init__(self, paths, deadline):
+        self.mutex = threading.RLock()
         self.paths, self.deadline = paths, deadline
         self.samples, self.stream, self.written = [], None, 0
 
@@ -673,6 +695,10 @@ class Sampler:
             self.stream = None
 
     def sample(self, pids=(), strict=True):
+        with self.mutex:
+            return self._sample(pids, strict)
+
+    def _sample(self, pids=(), strict=True):
         try:
             sample = resources(self.paths)
         except OSError:
@@ -692,6 +718,10 @@ class Sampler:
         return sample
 
     def tick(self, pids=()):
+        with self.mutex:
+            return self._tick(pids)
+
+    def _tick(self, pids=()):
         if not self.samples or time.time()-self.samples[-1]['observed_unix'] >= SAMPLE_SECONDS:
             self.sample(pids)
 
@@ -930,9 +960,34 @@ class Receiver:
                                 'anchor_hash': ANCHOR_HASH, 'recent_from': RECENT_FROM, 'shards': SHARDS,
                                 'segments': SEGMENTS, 'manifests': sorted(layout['manifests'])},
                 'host': host, 'hosts': self.request['hosts'], 'evidence': str(self.evidence), 'budgets': budget,
-                'dispatches': dispatches(self.mode, binary, layout),
+                'dispatches': [] if self.mode == 'independent-chain-oracle' else dispatches(self.mode, binary, layout),
+                'snapshot': self.snapshot_inputs() if self.mode == 'independent-chain-oracle' else None,
+                'oracle_recipe': ({'explicit':[0,200000,419200,903000,1687104,2726400,3500738],
+                                  'top':3,'random':5,'seed':20261001,'last':3,'through':THROUGH,'batch':256,
+                                  'snapshot_verification':'full before native and again during report assembly',
+                                  'rpc_upstream':'http://127.0.0.1:8232',
+                                  'native_rpc':'owned ephemeral127.0.0.1 capture listener',
+                                  'cookie_path':'/root/.cache/zakura/.cookie'}
+                                 if self.mode == 'independent-chain-oracle' else None),
                 'effects': 'runs the closed candidate children one at a time and writes private qualification '
                            'evidence only; no service, cache, unit, route or writer changes'}
+
+    def snapshot_inputs(self):
+        """Exact existing immutable snapshot namespace; no caller paths."""
+        J = module('candidate_execution_snapshot', HERE/'activity_journal_snapshot.py')
+        pins = self.request['snapshot']; identifier = pins['request_sha256']
+        refs = {'snapshot_request':reference(J.OWNERS/(identifier+'.request.json')),
+                'snapshot_owner':reference(J.OWNERS/(identifier+'.json')),
+                'snapshot_manifest':reference(J.SNAPSHOTS/identifier/'manifest.json')}
+        require(refs['snapshot_owner']['sha256'] == pins['owner_sha256'] and
+                refs['snapshot_manifest']['sha256'] == pins['manifest_sha256'],
+                'oracle snapshot retained input pins differ')
+        request = J.validate(R.value(refs['snapshot_request']))
+        require(J.digest(request) == identifier, 'oracle snapshot request canonical digest differs')
+        require(request['publication']['map_sha256'] == MAP_SHA256 and
+                request['candidate'] == {'source_sha':C.SOURCE_SHA, 'identity':C.identity()},
+                'oracle snapshot candidate or publication differs')
+        return refs
 
     def status(self):
         no_links(self.owner)
@@ -945,9 +1000,18 @@ class Receiver:
             references = record['references']
             R.blob(references)
             self.verify_references(R.value(references))
+            if self.mode == 'independent-chain-oracle':
+                C.verify_gate(R.value(record['report']), self.mode, MAP_SHA256)
         return record
 
     def verify_references(self, references):
+        if self.mode == 'independent-chain-oracle':
+            O = module('candidate_execution_oracle_report', HERE/'activity_oracle_report.py')
+            require(set(references) == O.KEYS, 'oracle references differ')
+            for key in O.KEYS-{'execution'}:
+                R.blob(references[key])
+            R.capture(references['execution'], self.executable, MAP_SHA256)
+            return
         if self.mode == 'artifact-verification':
             require(set(references) == {'mapping', 'execution'}, 'artifact references differ')
             executions = [references['execution']]
@@ -1090,7 +1154,9 @@ class Receiver:
                     record = load(self.owner, 1 << 22)
                     require(record.get('workflow_status') == 'passed', 'qualification workflow did not finish')
                     record.update(status='staged', launch=None, child=None,
-                                  gate='unevaluated: run activity-candidate-report on the retained references')
+                                  gate=('independent-chain-oracle report verified and retained' if
+                                        self.mode == 'independent-chain-oracle' else
+                                        'unevaluated: run activity-candidate-report on the retained references'))
                 except BaseException as error:
                     record = load(self.owner, 1 << 22)
                     record.update(status='interrupted' if isinstance(error, (Interrupted, KeyboardInterrupt, SystemExit))
@@ -1113,6 +1179,9 @@ class Receiver:
     def workflow(self, lock, plan, record, sampler):
         """All post-handshake qualification work, inside the hard supervisor."""
         inputs = self.retain_inputs(plan, sampler)
+        if self.mode == 'independent-chain-oracle':
+            self.oracle_workflow(lock, plan, record, sampler, inputs)
+            return
         executions = []
         for item in plan['dispatches']:
             executions.append(self.execute(lock, plan, item, record, sampler))
@@ -1122,6 +1191,69 @@ class Receiver:
         sampler.sample()
         record['workflow_status'] = 'passed'
         record['workflow_samples'] = len(sampler.samples)
+        self.save(record)
+
+    def oracle_workflow(self, lock, plan, record, sampler, inputs):
+        """Safe snapshot first, owned raw RPC boundaries, native, then report.
+
+        This runs only in the gated workflow worker under the outer hard bound.
+        The sampler lock serializes checks from the capture server and native
+        execution; native credentials never enter argv or retained evidence.
+        """
+        O = module('candidate_execution_oracle_report', HERE/'activity_oracle_report.py')
+        Q = module('candidate_execution_oracle_capture', HERE/'activity_oracle_capture.py')
+        J = module('candidate_execution_snapshot', HERE/'activity_journal_snapshot.py')
+        def check():
+            lock.verify()
+            require(time.monotonic() < sampler.deadline, 'oracle aggregate deadline exceeded')
+            sampler.tick()
+        budget = SimpleNamespace(deadline=sampler.deadline, check=check)
+        evidence = {'mapping':inputs['mapping'], **self.snapshot_inputs()}
+        require({k:evidence[k] for k in plan['snapshot']} == plan['snapshot'],
+                'oracle snapshot changed since reviewed plan')
+        prepared = O.prepare_snapshot(evidence, budget)
+        check()
+        # Fixed runtime cookie is read only after full immutable verification.
+        # Its value remains in memory. Only the fixed cookie pathname is argv.
+        try:
+            cookie = J.read_small(J.COOKIE, 4096).decode().strip()
+        except Exception:
+            raise ValueError('oracle runtime authentication unavailable') from None
+        require(cookie and ':' in cookie and '\r' not in cookie and '\n' not in cookie,
+                'oracle runtime authentication unavailable')
+        authorization = 'Basic '+base64.b64encode(cookie.encode()).decode()
+        cookie = ''
+        capture = Q.Capture(self.evidence/'rpc', authorization, sampler.deadline, check)
+        authorization = ''
+        try:
+            capture.canonical({int(h):v for h,v in prepared['sample']['canonical_hashes'].items()}, 'before')
+            item = {'key':'oracle', 'argv':[plan['binary'], '--data-dir', str(prepared['root']/'journal'),
+                    '--zakura-rpc-url', capture.url, '--zakura-cookie', str(J.COOKIE),
+                    '--heights', ','.join(map(str,O.S.EXPLICIT)), '--top','3','--random','5',
+                    '--seed','20261001','--last','3','--through',str(THROUGH),'--batch','256',
+                    '--source-sha',C.SOURCE_SHA]}
+            evidence['execution'] = self.execute(lock, plan, item, record, sampler)
+            record['completed'] += 1
+            self.save(record)
+            capture.canonical({int(h):v for h,v in prepared['sample']['canonical_hashes'].items()}, 'after')
+        finally:
+            failed = sys.exc_info()[0] is not None
+            try:
+                capture.close()  # Refusals preserve raw bytes and cannot seal pass.
+            except BaseException:
+                if not failed:
+                    raise
+                # Keep the original native/anchor failure; capture partial bytes
+                # and absent passed closure remain evidence of the second error.
+        evidence.update(rpc_attempts=reference(capture.directory/'attempts.jsonl'),
+                        rpc_timings=reference(capture.directory/'timing.jsonl'),
+                        capture_result=reference(capture.directory/'result.json'))
+        O.produce_and_write(evidence, budget, self.evidence/'report.json')
+        R.immutable_json(self.evidence/'references.json', evidence, check=check)
+        sampler.sample()
+        record.update(references=reference(self.evidence/'references.json'),
+                      report=reference(self.evidence/'report.json'), workflow_status='passed',
+                      workflow_samples=len(sampler.samples))
         self.save(record)
 
     def workflow_family(self):
@@ -1731,7 +1863,7 @@ def receive(action, expected, stdin_fd, out, expect_plan=None):
 class Execution:
     """Root workstation client against the inventory's pinned remote coordinator."""
 
-    def __init__(self, inventory, source_sha, *, mode=None, attempt=None, preparation=None, request_sha256=None):
+    def __init__(self, inventory, source_sha, *, mode=None, attempt=None, preparation=None, request_sha256=None, snapshot=None):
         require(inventory.lock.get('type') == 'remote', 'candidate execution requires a remote coordinator inventory')
         require(inventory.ssh.get('mode') == 'pinned', 'candidate execution requires pinned SSH host keys')
         self.host = inventory.lock['host']
@@ -1749,14 +1881,20 @@ class Execution:
         self.machine = inventory.hosts[self.host]['machine_id']
         self.hosts = [{'host': name, 'machine_id': inventory.hosts[name]['machine_id']} for name in sorted(inventory.hosts)]
         self.mode, self.attempt, self.preparation, self.expected = mode, attempt, preparation, request_sha256
+        self.snapshot = snapshot
         self.executor = SSHExecutor(inventory)
 
     def request(self):
-        return validate({'version': VERSION, 'kind': KIND, 'mode': self.mode, 'source_sha': self.source,
+        request = {'version': VERSION, 'kind': KIND, 'mode': self.mode, 'source_sha': self.source,
                          'candidate_sha': C.SOURCE_SHA, 'candidate_identity': C.identity(),
                          'preparation_request_sha256': self.preparation, 'publication_sha256': MAP_SHA256,
                          'coordinator': self.host, 'machine_id': self.machine, 'hosts': self.hosts,
-                         'attempt': self.attempt})
+                         'attempt': self.attempt}
+        if self.mode == 'independent-chain-oracle':
+            request['snapshot'] = self.snapshot
+        else:
+            require(self.snapshot is None, 'snapshot pins require oracle mode')
+        return validate(request)
 
     def remote(self, host, action, identifier, expect_plan=None):
         entry = self.inventory.hosts[host]

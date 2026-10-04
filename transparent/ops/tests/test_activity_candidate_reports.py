@@ -35,6 +35,17 @@ class Reports(unittest.TestCase):
     def ref(self, value):
         return self.raw(json.dumps(value).encode())
 
+    def test_owned_blob_budget_refuses_midway_through_large_raw_bytes(self):
+        ref = self.raw(b'x'*(3 << 20)); observations = 0
+        def check():
+            nonlocal observations
+            observations += 1
+            if observations == 3:
+                raise ValueError('fictional resource floor')
+        with self.assertRaisesRegex(ValueError, 'fictional resource floor'):
+            M.blob(ref, check=check)
+        with self.assertRaises(ValueError): M.blob(ref, check=False)
+
     def capture(self, native, executable, publication):
         return {'native': self.ref(native), 'stderr': self.raw(b'native output\n'),
                 'owner': self.ref({'pid': 42, 'native_source_sha': M.C.SOURCE_SHA,
@@ -209,6 +220,42 @@ class Reports(unittest.TestCase):
         run = subprocess.run(command, capture_output=True, text=True)
         self.assertNotEqual(run.returncode, 0)
         self.assertEqual(M.value(report['raw_evidence'])['execution'], execution)
+
+    def test_checked_output_is_canonical_and_refuses_before_output_effects(self):
+        value = {'unicode': '\u00e9', 'items': [True, None, 7], 'object': {'b': 2, 'a': 1}}
+        checked = []
+        raw = M.encoded_json(value, check=lambda: checked.append(True))
+        self.assertEqual(raw, M.durable.canonical(value)+b'\n')
+        self.assertGreater(len(checked), 5)
+        with self.assertRaisesRegex(ValueError, 'output bound'):
+            M.encoded_json(value, maximum=len(raw)-1)
+        mapping, execution = self.artifact()
+        report = M.artifact_report(mapping, execution)
+        out = self.root/'checked-refusal.json'
+        def refuse(): raise ValueError('fictional lost ownership')
+        with self.assertRaisesRegex(ValueError, 'lost ownership'):
+            M.write_report(out, report, check=refuse)
+        self.assertFalse(out.exists())
+        self.assertFalse(Path(str(out)+'.raw-evidence.json').exists())
+
+    def test_loss_after_evidence_fsync_preserves_evidence_without_gate(self):
+        mapping, execution = self.artifact()
+        report = M.artifact_report(mapping, execution)
+        out = self.root/'checked-partial.json'
+        raw_path = Path(str(out)+'.raw-evidence.json')
+        real_fsync = M.os.fsync
+        durable_evidence = []
+        def fsync(fd):
+            real_fsync(fd)
+            if raw_path.exists(): durable_evidence.append(True)
+        def check():
+            if durable_evidence: raise ValueError('fictional lost ownership after evidence flush')
+        with patch.object(M.os, 'fsync', side_effect=fsync), self.assertRaisesRegex(ValueError, 'lost ownership'):
+            M.write_report(out, report, check=check)
+        self.assertFalse(out.exists())
+        self.assertTrue(raw_path.exists())
+        self.assertEqual(M.json_bytes(raw_path.read_bytes()), report['raw_evidence'])
+        with self.assertRaises(FileExistsError): M.write_report(out, report)
 
 
 if __name__ == '__main__':

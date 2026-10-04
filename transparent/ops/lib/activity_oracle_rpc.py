@@ -23,17 +23,31 @@ CATEGORIES = {'coinbase', 'non_coinbase', 'transparent_only', 'mixed_transparent
               'ironwood_component_transactions', 'multiple_shielded_pools'}
 
 
-def decode(reference):
+def decode(reference, *, check=None):
+    require(check is None or callable(check), 'invalid raw RPC budget callback')
+    check = check if check is not None else (lambda: None)
     require(isinstance(reference, dict) and set(reference) in ({'path', 'sha256'},
             {'path', 'sha256', 'decoded_sha256'}), 'invalid raw RPC body reference')
-    raw = blob({k: reference[k] for k in ('path', 'sha256')}, MAX_BODY)
+    raw = blob({k: reference[k] for k in ('path', 'sha256')}, MAX_BODY, check=check)
     if 'decoded_sha256' in reference:
         with gzip.GzipFile(fileobj=io.BytesIO(raw)) as stream:
-            raw = stream.read(MAX_BODY+1)
+            chunks, length = [], 0
+            while True:
+                check()
+                chunk = stream.read(min(1 << 20, MAX_BODY+1-length))
+                if not chunk:
+                    break
+                length += len(chunk)
+                require(length <= MAX_BODY, 'compressed RPC body exceeds bound')
+                chunks.append(chunk)
+            raw = b''.join(chunks)
         require(len(raw) <= MAX_BODY and hashlib.sha256(raw).hexdigest() == reference['decoded_sha256'],
                 'compressed RPC body size/checksum differs')
-    return json.loads(raw, object_pairs_hook=unique,
-                      parse_constant=lambda v: (_ for _ in ()).throw(ValueError('nonfinite RPC JSON')))
+    check()
+    value = json.loads(raw, object_pairs_hook=unique,
+                       parse_constant=lambda v: (_ for _ in ()).throw(ValueError('nonfinite RPC JSON')))
+    check()
+    return value
 
 
 def integer(value, minimum=0):
@@ -47,16 +61,19 @@ def text(value):
     return value
 
 
-def transactions(attempts):
+def transactions(attempts, *, check=None):
+    require(check is None or callable(check), 'invalid raw RPC budget callback')
+    check = check if check is not None else (lambda: None)
     require(isinstance(attempts, list) and 0 < len(attempts) <= MAX_ATTEMPTS, 'raw RPC attempts are missing/oversized')
     blocks, txs, anchors, refusals = {}, {}, {}, []
     counts = {method: 0 for method in METHODS}
     attempted = {method: 0 for method in METHODS}
     pending = set()
     for index, attempt in enumerate(attempts):
+        check()
         require(isinstance(attempt, dict) and set(attempt) == {'status', 'request', 'response'} and
                 type(attempt['status']) is int, 'invalid retained RPC attempt')
-        requests, responses = decode(attempt['request']), decode(attempt['response'])
+        requests, responses = decode(attempt['request'], check=check), decode(attempt['response'], check=check)
         requests = requests if isinstance(requests, list) else [requests]
         responses = responses if isinstance(responses, list) else [responses]
         require(requests and all(isinstance(call, dict) and call.get('method') in METHODS and
@@ -83,13 +100,14 @@ def transactions(attempts):
         by_id = {response['id']: response for response in responses}
         require(set(by_id) == {call['id'] for call in requests}, 'raw RPC response id mismatch')
         for call in requests:
+            check()
             method, params = call['method'], call['params']; counts[method] += 1
             result = by_id[call['id']].get('result')
             if method == 'getrawtransaction':
                 require(len(params) == 2 and type(params[1]) is int and params[1] == 1 and isinstance(result, dict) and
                         result.get('txid') == text(params[0]), 'verbose transaction identity differs')
                 identity = params[0]
-                projected = project(result)
+                projected = project(result, check=check)
                 require(identity not in txs or txs[identity] == projected, 'conflicting retained transaction')
                 txs[identity] = projected; pending.discard(identity)
             elif method == 'getblock':
@@ -113,13 +131,16 @@ def transactions(attempts):
     return blocks, txs, anchors, counts, attempted, refusals
 
 
-def outputs(tx):
+def outputs(tx, *, check=None):
+    require(check is None or callable(check), 'invalid raw RPC budget callback')
+    check = check if check is not None else (lambda: None)
     if '_scripts' in tx:
         return tx['_scripts']
     require(isinstance(tx.get('vin'), list) and isinstance(tx.get('vout'), list),
             'verbose transaction input/output arrays are missing')
     scripts = []
     for index, output in enumerate(tx['vout']):
+        check()
         require(isinstance(output, dict) and integer(output.get('n')) == index and
                 isinstance(output.get('scriptPubKey'), dict) and
                 isinstance(output['scriptPubKey'].get('hex'), str), 'verbose output is malformed')
@@ -134,12 +155,15 @@ def outputs(tx):
     return scripts
 
 
-def project(tx):
+def project(tx, *, check=None):
     # Verbose bodies retain large shielded proofs. Keep only the independent
     # indexing/category projection in memory; all original bytes stay bound.
-    scripts = outputs(tx)
+    require(check is None or callable(check), 'invalid raw RPC budget callback')
+    check = check if check is not None else (lambda: None)
+    scripts = outputs(tx, check=check)
     inputs = []
     for vin in tx['vin']:
+        check()
         require(isinstance(vin, dict), 'invalid verbose input')
         inputs.append({'coinbase': True} if 'coinbase' in vin else
                       {'txid': text(vin.get('txid')), 'vout': integer(vin.get('vout'))})
@@ -155,8 +179,10 @@ def project(tx):
     return {'txid': tx['txid'], 'vin': inputs, '_scripts': scripts, '_pools': pools}
 
 
-def compare(attempts, native):
-    blocks, txs, anchors, methods, attempted, refusals = transactions(attempts)
+def compare(attempts, native, *, check=None):
+    require(check is None or callable(check), 'invalid raw RPC budget callback')
+    check = check if check is not None else (lambda: None)
+    blocks, txs, anchors, methods, attempted, refusals = transactions(attempts, check=check)
     require(isinstance(native, dict) and isinstance(native.get('blocks'), list) and
             type(native.get('blocks_compared')) is int and native['blocks_compared'] == 17 and
             type(native.get('blocks_disagreeing')) is int and native['blocks_disagreeing'] == 0 and
@@ -165,6 +191,7 @@ def compare(attempts, native):
     require(len(set(heights)) == 17 and set(blocks) == set(heights), 'raw block/native coverage differs')
     categories = dict.fromkeys(CATEGORIES, 0); sampled = set(); events = 0
     for comparison in native['blocks']:
+        check()
         height = comparison['height']; block = blocks[height]; receives = spends = 0
         require(comparison.get('agrees') is True and comparison.get('journal_hash') == block['hash'] and
                 comparison.get('node_hash') == block['hash'] and
@@ -173,16 +200,18 @@ def compare(attempts, native):
                 comparison.get('missing_from_journal') == [] and comparison.get('extra_in_journal') == [],
                 'native block does not agree with retained RPC')
         for identity in block['tx']:
+            check()
             require(identity in txs, 'sampled verbose transaction is missing')
-            tx = txs[identity]; scripts = outputs(tx)
+            tx = txs[identity]; scripts = outputs(tx, check=check)
             coinbase = any(isinstance(vin, dict) and 'coinbase' in vin for vin in tx['vin'])
             receives += sum(scripts)
             if not coinbase:
                 for vin in tx['vin']:
+                    check()
                     require(isinstance(vin, dict), 'invalid verbose input')
                     previous = text(vin.get('txid')); index = integer(vin.get('vout'))
                     require(previous in txs, 'raw previous transaction is missing')
-                    previous_scripts = outputs(txs[previous])
+                    previous_scripts = outputs(txs[previous], check=check)
                     require(index < len(previous_scripts), 'raw previous output is missing')
                     spends += int(previous_scripts[index])
             if identity in sampled: continue
@@ -202,6 +231,7 @@ def compare(attempts, native):
             require(type(comparison.get(field)) is int and comparison[field] == expected,
                     'retained RPC/native event counts differ')
         events += receives+spends
+    check()
     return {'blocks_compared': 17, 'blocks_disagreeing': 0, 'events_compared': events,
             'raw_rpc_attempts': len(attempts), 'rpc_method_counts': methods, 'rpc_attempted_method_counts': attempted,
             'raw_rpc_application_refusals': refusals, 'raw_pool_category_coverage':

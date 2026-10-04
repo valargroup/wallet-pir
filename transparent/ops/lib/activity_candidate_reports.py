@@ -52,7 +52,15 @@ def json_bytes(raw):
                       parse_constant=lambda value: (_ for _ in ()).throw(ValueError('nonfinite JSON')))
 
 
-def blob(reference, maximum=MAX_JSON):
+def blob(reference, maximum=MAX_JSON, *, check=None):
+    """Read checksum-bound bytes; an owned runner checks its budget per chunk.
+
+    Offline callers may omit `check`. Production report assembly must supply
+    the locked owner's monotonic deadline and resource-floor callback.
+    """
+    require(check is None or callable(check), 'invalid evidence budget callback')
+    check = check if check is not None else (lambda: None)
+    check()
     require(isinstance(reference, dict) and set(reference) == {'path', 'sha256'} and
             isinstance(reference['path'], str) and Path(reference['path']).is_absolute() and
             isinstance(reference['sha256'], str) and C.HEX.fullmatch(reference['sha256']),
@@ -62,25 +70,37 @@ def blob(reference, maximum=MAX_JSON):
     info = path.stat()
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= maximum,
             'evidence must be independent bounded regular bytes')
+    chunks, length, digest = [], 0, hashlib.sha256()
     with path.open('rb') as stream:
-        raw = stream.read(maximum + 1)
-    require(len(raw) <= maximum and hashlib.sha256(raw).hexdigest() == reference['sha256'],
+        while True:
+            check()
+            chunk = stream.read(min(1 << 20, maximum+1-length))
+            if not chunk:
+                break
+            length += len(chunk)
+            require(length <= maximum, 'evidence exceeds size bound')
+            digest.update(chunk); chunks.append(chunk)
+    check()
+    require(digest.hexdigest() == reference['sha256'],
             'evidence checksum or size changed')
-    return raw
+    return b''.join(chunks)
 
 
-def value(reference):
-    return json_bytes(blob(reference))
+def value(reference, *, check=None):
+    result = json_bytes(blob(reference, check=check))
+    if check is not None:
+        check()
+    return result
 
 
 def number(item):
     return type(item) in (int, float) and math.isfinite(item)
 
 
-def capture(references, executable, publication):
+def capture(references, executable, publication, *, check=None):
     require(isinstance(references, dict) and set(references) == CAPTURE_FILES,
             'incomplete native capture')
-    raw = {name: blob(ref) for name, ref in references.items()}
+    raw = {name: blob(ref, check=check) for name, ref in references.items()}
     owner, result, health = (json_bytes(raw[name]) for name in ('owner', 'result', 'health'))
     require(isinstance(owner, dict) and owner.get('native_source_sha') == C.SOURCE_SHA and
             owner.get('candidate_sha256') == C.identity() and
@@ -97,6 +117,8 @@ def capture(references, executable, publication):
     require(isinstance(health, list) and len(health) >= 2, 'native resource coverage is missing')
     times = []
     for sample in health:
+        if check is not None:
+            check()
         require(isinstance(sample, dict) and number(sample.get('observed_unix')) and
                 number(sample.get('memory_available')) and .2 <= sample['memory_available'] <= 1 and
                 isinstance(sample.get('disk_available'), dict) and sample['disk_available'] and
@@ -106,7 +128,10 @@ def capture(references, executable, publication):
     require(times == sorted(times) and times[0] <= owner['started_unix'] and
             times[-1] >= result['ended_unix'] and
             all(b-a <= 10 for a, b in zip(times, times[1:])), 'native resource sampling has a gap')
-    return json_bytes(raw['native'])
+    native = json_bytes(raw['native'])
+    if check is not None:
+        check()
+    return native
 
 
 def base(gate, publication, evidence):
@@ -224,37 +249,75 @@ def certificate_report(mapping_ref, manifests, executions, certifier_path):
     return C.verify_gate(result, 'native-certificates', publication)
 
 
-def immutable_json(path, value):
+def encoded_json(value, maximum=MAX_JSON, *, check=None):
+    """Canonical bytes bounded while encoding, with owned checks between chunks.
+
+    An external hard owner deadline still covers a single encoder operation or
+    filesystem call. Cooperative callbacks do not replace that deadline.
+    """
+    require(check is None or callable(check), 'invalid evidence budget callback')
+    check = check if check is not None else (lambda: None)
+    check()
+    chunks, size = [], 1  # The immutable representation ends in a newline.
+    encoder = json.JSONEncoder(sort_keys=True, separators=(',', ':'), allow_nan=False)
+    for piece in encoder.iterencode(value):
+        check()
+        raw = piece.encode()
+        size += len(raw)
+        require(size <= maximum, 'evidence JSON exceeds output bound')
+        chunks.append(raw)
+    check()
+    return b''.join(chunks)+b'\n'
+
+
+def immutable_bytes(path, raw, *, check=None):
+    require(check is None or callable(check), 'invalid evidence budget callback')
+    check = check if check is not None else (lambda: None)
+    check()
     path = Path(path)
     C.no_links(path)
     with path.open('xb') as stream:
         os.fchmod(stream.fileno(), 0o400)
-        stream.write(durable.canonical(value)+b'\n')
+        for start in range(0, len(raw), 1 << 20):
+            check()
+            stream.write(raw[start:start+(1 << 20)])
         stream.flush()
+        check()
         os.fsync(stream.fileno())
+        check()
     directory = os.open(path.parent, os.O_RDONLY)
     try:
+        check()
         os.fsync(directory)
+        check()
     finally:
         os.close(directory)
 
 
-def write_report(path, report):
+def immutable_json(path, value, *, check=None):
+    immutable_bytes(path, encoded_json(value, check=check), check=check)
+
+
+def write_report(path, report, *, check=None):
     """Keep raw/evaluated evidence separately, within the existing gate bound.
 
     Failure after evidence creation preserves it; another attempt needs a new
     output name. No completed report is visible before its evidence is durable.
     """
     path = Path(path).absolute()
+    require(check is None or callable(check), 'invalid evidence budget callback')
+    check = check if check is not None else (lambda: None)
+    check()
     C.no_links(path)
     require(not path.exists(), 'report output already exists')
     compact = dict(report)
     evidence = compact.pop('raw_evidence')
     require(isinstance(evidence, dict), 'report evidence index is missing')
     evidence_path = path.with_name(path.name+'.raw-evidence.json')
+    evidence_raw = encoded_json(evidence, check=check)
+    check()
     compact['raw_evidence'] = {'path': str(evidence_path),
-                              'sha256': hashlib.sha256(durable.canonical(evidence)+b'\n').hexdigest()}
-    require(len(durable.canonical(compact))+1 <= 256*1024, 'report exceeds existing cutover input bound')
-    require(len(durable.canonical(evidence))+1 <= MAX_JSON, 'raw evidence index exceeds bound')
-    immutable_json(evidence_path, evidence)
-    immutable_json(path, compact)
+                              'sha256': hashlib.sha256(evidence_raw).hexdigest()}
+    compact_raw = encoded_json(compact, 256*1024, check=check)
+    immutable_bytes(evidence_path, evidence_raw, check=check)
+    immutable_bytes(path, compact_raw, check=check)

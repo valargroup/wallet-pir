@@ -1952,8 +1952,19 @@ Root's ordered path, without rebuilding the old CI or native chain:
    `preparation-request.json`.
 3. Run the actual gates with the staged candidate executables against the
    immutable publication: `schema-candidate-execute-*` for artifact verification
-   and native certificates. Gates that read the journal require a verified
-   [journal snapshot](#candidate-journal-snapshot), never the live journal.
+   and native certificates. The `independent-chain-oracle` mode requires
+   `--snapshot-request-sha256`, `--snapshot-owner-sha256` and
+   `--snapshot-manifest-sha256`: respectively the canonical snapshot request
+   identity and exact retained owner/manifest byte digests. These identify only
+   the fixed [journal snapshot](#candidate-journal-snapshot) namespace.
+   Plan/preflight expose the closed recipe and snapshot references. Stage uses
+   the same lock, fresh complete-fleet handshake and gated workflow supervisor;
+   it fully verifies the snapshot before the candidate reader, captures canonical
+   RPC boundaries and raw attempts around the native run, then re-verifies the
+   snapshot and writes the oracle report. Its closed limits are1800seconds native
+   plus the existing3600seconds non-child ceiling; they are operational maxima,
+   not measured candidate timings. Pre-handshake and terminal supervisor writes
+   remain cooperatively bounded. Actual qualification remains pending.
    Bind each report from retained raw results with `activity-candidate-report.py`;
    a document shaped like a passing report is not evidence.
 4. Stage the candidate worker pair on every worker.
