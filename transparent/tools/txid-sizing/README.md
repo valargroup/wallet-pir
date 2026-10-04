@@ -121,10 +121,10 @@ they are never pooled into probability-population estimates.
 ## Full-chain census continuation
 
 `fullchain.py` is the full-chain acquisition path. Its raw preflight verifies
-retained inputs and measures one persistent SSH session with height-string
+retained inputs. The inherited raw-only preflight used height-string
 `getblock(["height", 0])`, a 200-request window and a paced 45 requests/s limit.
-This single-call form was verified by the controller and replaces the
-latency-bound two-call preflight. The fixed anchor remains height 3,502,662,
+New acquisition follows the required height/hash pin followed by raw block fetch
+on the same session and shared request ceiling. The fixed anchor remains height 3,502,662,
 `0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f`.
 Raw binary bundles, per-block checksums, SQLite state and checkpoints live in
 `/home/ai-dev/.cache/wallet-pir-census/`; only sanitized receipts belong in Git.
@@ -141,7 +141,7 @@ extractor and shared value-balance fee logic. Compact codec sizes remain
 analysis proposals, separate from implemented display-v1.
 
 The retained raw preflight reached 44.51 blocks/s; this is acquisition throughput,
-not full-chain completion. The initial 7,812 parsed blocks are an incomplete
+not full-chain completion. The verified resume checkpoint contains 27,812 parsed blocks, an incomplete
 prefix. Full coverage and anonymity conclusions remain unqualified until the
 anchored scan and final aggregate/replay validation finish.
 

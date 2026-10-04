@@ -2,6 +2,7 @@
 """Verify sanitized artifacts and deterministic report regeneration offline."""
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 import analyze
 import geometry
@@ -24,7 +25,14 @@ def main():
         raise ValueError("geometry regeneration mismatch")
     pins=json.loads((evidence/"sources.json").read_bytes())
     for name,digest in pins["source_files"].items():
-        if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
+        source=(root/name).read_bytes()
+        if name == "transparent/tools/txid-sizing/export/Cargo.lock":
+            # The vector oracle predates the standalone disk-UTXO dependency.
+            # Verify its original lock at the exact retained PR #124 head;
+            # the resume receipt separately pins the current exporter lock.
+            source=subprocess.check_output(["git","show",
+                "7d46f7618b94f2a889dcfebd5b3dc9229bd98b5a:"+name],cwd=root)
+        if hashlib.sha256(source).hexdigest()!=digest:
             raise ValueError("pinned source changed: "+name)
     current=evidence/"archive-survey-statistics.json"
     if current.exists():
@@ -38,7 +46,7 @@ def main():
         for name,digest in new_pins["source_files"].items():
             if hashlib.sha256((root/name).read_bytes()).hexdigest()!=digest:
                 raise ValueError("survey source changed: "+name)
-    print("checksums, source pins and deterministic reports verified; historical vector and new probability-sample qualification limits remain explicit")
+    print("checksums, source pins and deterministic reports verified; retained vector and incomplete census qualification limits remain explicit")
 
 
 if __name__=="__main__": main()

@@ -198,7 +198,7 @@ def extract_bundle(cache,binary,bundle,rows,status):
                 count+=1
                 if count%100==0:
                     rate=count/(time.monotonic()-started)
-                    atomic_json(status,dict(summary=f'Canonical UTXO census through height {row["height"]}; local extraction {rate:.2f} blocks/s',eta="22h",needs_you="",state="working"))
+                    atomic_json(status,dict(summary=f'Canonical UTXO census through height {row["height"]}; local extraction {rate:.2f} blocks/s',eta="measuring",needs_you="",state="working"))
         finally:
             if raw_file: raw_file.close()
         process.stdin.close()
@@ -245,14 +245,19 @@ def scan(cache,binary,status,evidence):
         if gateway("getblockhash",[ANCHOR_HEIGHT]).get("result")!=ANCHOR_HASH: raise RuntimeError("canonical anchor changed")
         while current["scanned_blocks"]<=ANCHOR_HEIGHT:
             lo=current["scanned_blocks"];hi=min(lo+(3000 if lo==initial else 10000),ANCHOR_HEIGHT+1)
-            bundle=cache/f"chain-{lo:07d}-{hi-1:07d}.raw";manifest=bundle.with_suffix(".jsonl")
+            bundle=cache/f"chain-{lo:07d}-{hi-1:07d}.raw"
+            retry=0
+            while bundle.exists() or bundle.with_suffix(".jsonl").exists():
+                retry+=1
+                bundle=cache/f"chain-{lo:07d}-{hi-1:07d}-retry-{retry}.raw"
+            manifest=bundle.with_suffix(".jsonl")
             with bundle.open("xb") as raw_file,manifest.open("x") as output:
                 pipeline=Pipeline(gateway)
                 for height,raw in pipeline.blocks(lo,hi):
                     offset=raw_file.tell();raw_file.write(raw)
                     output.write(json.dumps(dict(height=height,hash=pipeline.hashes[height],offset=offset,raw_bytes=len(raw),raw_sha256=hashlib.sha256(raw).hexdigest()),separators=(",",":"))+"\n")
                     if (height-lo)%500==0:
-                        atomic_json(status,dict(summary=f'Full-chain raw acquisition at height {height}; parsed through {lo-1}',eta="22h",needs_you="",state="working"))
+                        atomic_json(status,dict(summary=f'Full-chain raw acquisition at height {height}; parsed through {lo-1}',eta="measuring",needs_you="",state="working"))
             rows=[json.loads(line) for line in manifest.read_text().splitlines()]
             extract_bundle(cache,binary,bundle,rows,status)
             current=snapshot()

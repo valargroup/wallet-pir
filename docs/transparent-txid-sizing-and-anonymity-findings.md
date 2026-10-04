@@ -31,6 +31,45 @@ The next implementation gate is a complete anchored canonical display export,
 then a joint threshold/routing/workload measurement. Executable gates are in
 [remaining work](../transparent/docs/remaining-work.md#txid-display-sizing-and-independent-routing).
 
+## Full-chain continuation checkpoint (2026-10-04)
+
+The sanctioned read-only archive gateway verified the fixed anchor at height
+**3,502,662**, hash
+`0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f`.
+The retained database checksum was verified before resuming, with raw bundle
+checksums and sequential disk UTXO extraction. The continuous parsed prefix now
+covers **0–30,811**: 30,812 blocks, 179,409 total transactions, **179,164 eligible
+records**, 245 shielded-only exclusions, 30,812 coinbase records and 5,778,850
+transparent outputs. Missing prevouts: zero in this prefix. Independent SQLite
+inventories agree with the streaming aggregates. Replaying the last raw block
+twice across exporter restarts returned identical summaries and left the database
+checksum unchanged. This remains **INCOMPLETE**, not a full-chain census or a
+probability sample; prefix counts do not qualify population frontiers or minima.
+
+The resumed first 3,000 blocks took **228.26 seconds**, including hash pinning,
+raw acquisition, canonical extraction and checkpoint persistence: **13.14
+blocks/s**, projecting **73.38 hours remaining**. The scan stopped under the
+explicit 72-hour ceiling; Roman must decide the revised scan plan before it
+continues. The inherited 44.51 blocks/s receipt measures raw-only acquisition
+with a different request sequence and cannot replace this end-to-end result.
+
+[Resume receipt](../transparent/evidence/txid-sizing/resume-receipt.json),
+[checkpoint](../transparent/evidence/txid-sizing/full-chain-checkpoint.json),
+[partial aggregates](../transparent/evidence/txid-sizing/full-chain-aggregates.json)
+and [measured throughput](../transparent/evidence/txid-sizing/resume-throughput.json)
+pin source/metadata checksums, the exporter binary, both database checkpoints,
+raw bundle/inventory checksums and full/compact export checksums. Public raw
+inputs and resumable state remain under
+`/home/ai-dev/.cache/wallet-pir-census/`. The gateway methods do not attest the
+live node executable SHA; that source pin remains a separate provenance gap.
+The earlier vector evidence below stays retained as a conformance oracle.
+Focused continuation checks passed: 17 `release-fast` Rust tests, 18 Python
+tests, documentation links, whitespace checks and evidence checksum/report
+regeneration checks. Broad affected checks are skipped: the planner expands
+these tool paths to all 21 workspace packages rather than a focused scope.
+Joint full-population routing replay, native cost qualification and replacement
+findings PR delivery remain open; PR #124 has not been superseded or closed.
+
 ## Data discovery, exact pins and coverage
 
 [Discovery evidence](../transparent/evidence/txid-sizing/discovery.json) records
@@ -387,8 +426,9 @@ raw source provenance for independent spot checks. Include coinbase, mixed pools
 external unshielding, raw/empty/OP_RETURN scripts and input-only transparent shapes.
 Pin node/data format, metadata/codec source, dependency locks, checksums and
 chain continuity. Supply revision membership and refresh/tail inputs to reproduce
-observable classes; do not send credential values. The current bounded tools
-are not a streaming full-chain census pipeline.
+observable classes; do not send credential values. The original bounded tools alone cannot complete a full-chain census. The
+continuation runner described above adds disk UTXO acquisition and aggregation;
+its stopped prefix remains incomplete.
 
 ## Validation and limits
 

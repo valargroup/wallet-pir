@@ -179,6 +179,14 @@ Findings and evidence: [sizing and anonymity](../../docs/transparent-txid-sizing
 The boundary is strictly more than 80% of eligible confirmed records inline.
 Full-chain threshold and minimum-population qualification remain **UNQUALIFIED**.
 
+The 2026-10-04 resumed census stopped at the required throughput gate: genesis
+through height 30,811 is parsed and checkpointed; 3,000 new blocks measured
+13.14 blocks/s and projected 73.38 hours remaining, exceeding the 72-hour ceiling.
+Roman's revised scan-plan decision is required before continuing. See the
+[resume receipt](../evidence/txid-sizing/resume-receipt.json). The gateway's live
+node executable source pin, full-chain coverage, joint routing and native cost
+qualification remain open. A contiguous prefix does not complete these gates.
+
 - [x] Discover documented node/export sources and retain sanitized access/selection outcomes.
 - [x] Retain a bounded canonical upstream-vector sample, missing-prevout exclusions, exact pins, byte/packing comparisons and routing negative controls.
 - [ ] Obtain a sanctioned immutable complete canonical export or read-only archive selector through one accepted anchor/hash; include complete raw outputs, prevouts/shared metadata, coinbase, mixed pools, external unshielding, unusual scripts and transparent-input/no-output records. Verify eligibility, continuity and checksums independently of supported-script history.

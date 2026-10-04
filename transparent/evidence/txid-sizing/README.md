@@ -17,3 +17,21 @@ No selected demo conclusion, private wallet data, client keys, production secret
 or encrypted query bodies are retained. The sample is biased, covers sparse
 historical heights through 1,687,121, and establishes no present full-chain census,
 production threshold, complete raw-script/no-output coverage or privacy minimum.
+
+## Incomplete full-chain continuation
+
+The [resume receipt](resume-receipt.json) and [checkpoint](full-chain-checkpoint.json)
+cover only genesis through height 30,811, targeting anchor 3,502,662. The
+[partial aggregates](full-chain-aggregates.json) retain inventories, prefix
+frontiers and thresholds; full histograms and both SQLite databases stay in
+`/home/ai-dev/.cache/wallet-pir-census/`, pinned by the receipt. These prefix
+frontiers are not chain recommendations or stratified estimates.
+
+[Resume throughput](resume-throughput.json) measured 3,000 new blocks in 228.26
+seconds (13.14/s), projecting 73.38h remaining; the required 72h gate stopped
+acquisition. [Inherited pipeline throughput](pipeline-throughput.json) is a
+raw-only, height-string preflight and is not the resumed end-to-end rate.
+The live node executable SHA is unavailable through the allowed RPC methods;
+the parser pin does not attest it. No full-chain or native privacy/cost
+qualification is claimed. The original vector exporter lock is verified at
+PR #124's exact head; the resume receipt pins the current exporter lock.
