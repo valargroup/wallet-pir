@@ -322,6 +322,18 @@ def bootstrap_selection(data,repetitions=2000):
         out[str(t)]=dict(ci95=[rs[int(.025*repetitions)],rs[min(repetitions-1,int(.975*repetitions))]],bonferroni_lower95=rs[int(.05/7*repetitions)])
     return dict(schema='txid-sizing-cluster-bootstrap-v1',seed='wallet-pir/day/cluster-bootstrap/v1',repetitions=repetitions,method='resample whole blocks within original strata; centered stratum means rescaled by sqrt(1-f); percentile sensitivity, asymptotic',worst_case_fee_coverage=out)
 
+def apply_bootstrap(report,bootstrap):
+    """Prespecified sensitivity screen: both conservative lower bounds >80%."""
+    decision=report['threshold_decision'];decision['normal_selected_bytes']=decision['selected_bytes']
+    selected=None
+    for t in THRESHOLDS:
+        row=decision['candidates'][str(t)]
+        row['bootstrap_bonferroni_lower95']=bootstrap['worst_case_fee_coverage'][str(t)]['bonferroni_lower95']
+        if selected is None and min(row['familywise_normal_lower95'],row['bootstrap_bonferroni_lower95'])>.8:selected=t
+    decision['selected_bytes']=selected
+    decision['bootstrap_screen']='Require both one-sided seven-cutoff adjusted normal and rescaled block-bootstrap lower bounds strictly above 80%; asymptotic sensitivity only.'
+    return report
+
 def geometry_projection(report):
     """Small byte/cost comparison; not measured native capacity or full packing."""
     t=report['threshold_decision']['selected_bytes']
@@ -358,7 +370,7 @@ def geometry_projection(report):
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);sub=p.add_subparsers(dest='command',required=True)
     ex=sub.add_parser('extract');ex.add_argument('checkpoint',type=Path);ex.add_argument('binary',type=Path);ex.add_argument('--status',type=Path,required=True)
-    re=sub.add_parser('report');re.add_argument('input',type=Path);re.add_argument('output',type=Path)
+    re=sub.add_parser('report');re.add_argument('input',type=Path);re.add_argument('output',type=Path);re.add_argument('--bootstrap',type=Path)
     st=sub.add_parser('statistics');st.add_argument('checkpoint',type=Path);st.add_argument('output',type=Path)
     sm=sub.add_parser('summarize');sm.add_argument('checkpoint',type=Path)
     bs=sub.add_parser('bootstrap');bs.add_argument('input',type=Path);bs.add_argument('output',type=Path)
@@ -369,4 +381,7 @@ if __name__=='__main__':
     elif args.command=='bootstrap':census.atomic_json(args.output,bootstrap_selection(read(args.input)))
     elif args.command=='geometry':census.atomic_json(args.output,geometry_projection(read(args.input)))
     elif args.command=='statistics':json_gz(args.output,statistics(args.checkpoint))
-    else:census.atomic_json(args.output,report(read(args.input)))
+    else:
+        result=report(read(args.input))
+        if args.bootstrap:apply_bootstrap(result,read(args.bootstrap))
+        census.atomic_json(args.output,result)

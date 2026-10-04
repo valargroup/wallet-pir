@@ -50,6 +50,7 @@ def main():
     day=evidence/"day-statistics.json.gz"
     if day.exists():
         report=day_analysis.report(day_analysis.read(day))
+        day_analysis.apply_bootstrap(report,day_analysis.read(evidence/"day-bootstrap.json"))
         if report!=day_analysis.read(evidence/"day-analysis.json"):
             raise ValueError("one-day report regeneration mismatch")
         if day_analysis.geometry_projection(report)!=day_analysis.read(evidence/"day-geometry.json"):

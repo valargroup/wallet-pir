@@ -98,4 +98,15 @@ class DaySizingTests(unittest.TestCase):
         self.assertGreater(global_row['cover3_response_body_bytes_per_open'],hash_row['cover3_response_body_bytes_per_open'])
         self.assertIsNone(global_row['measured_native_rss_bytes'])
 
+    def test_threshold_requires_strict_boundary_and_bootstrap_agreement(self):
+        report={'threshold_decision':{'selected_bytes':128,'candidates':{str(t):{'familywise_normal_lower95':.9} for t in d.THRESHOLDS}}}
+        bootstrap={'worst_case_fee_coverage':{str(t):{'bonferroni_lower95':.9} for t in d.THRESHOLDS}}
+        bootstrap['worst_case_fee_coverage']['128']['bonferroni_lower95']=.8
+        d.apply_bootstrap(report,bootstrap)
+        self.assertEqual(report['threshold_decision']['selected_bytes'],192)
+        self.assertEqual(report['threshold_decision']['normal_selected_bytes'],128)
+        for t in d.THRESHOLDS:report['threshold_decision']['candidates'][str(t)]['familywise_normal_lower95']=.8
+        d.apply_bootstrap(report,bootstrap)
+        self.assertIsNone(report['threshold_decision']['selected_bytes'])
+
 if __name__=='__main__':unittest.main()
