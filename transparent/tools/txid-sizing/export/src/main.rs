@@ -20,9 +20,13 @@ impl extract::PreviousOutputs for Previous {
     }
 }
 mod census;
+mod shape;
 mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--shape-stream") {
+        return shape::run();
+    }
     if args.get(1).map(String::as_str) == Some("--census") {
         return census::run(args.get(2).ok_or("census database path")?);
     }
