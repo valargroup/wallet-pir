@@ -522,7 +522,14 @@ class Interruption(Fixture):
         return argv if relay is None else [sys.executable, '-c', RELAY, *argv]
 
     def started(self, receiver):
-        return self.wait_for(lambda: receiver.owner.exists() and json.loads(receiver.owner.read_text()).get('child'))
+        """The recorded child, once it has also started its grandchild."""
+        child = self.wait_for(lambda: receiver.owner.exists() and json.loads(receiver.owner.read_text()).get('child'))
+        self.wait_for(lambda: self.mark.exists() and self.mark.stat().st_size)
+        return child
+
+    def gone(self, pid):
+        current = E.process(pid)
+        return current is None or current['state'] == 'Z'
 
     def test_receiver_killed_mid_child_leaves_lock_with_child_until_verified_reconcile(self):
         self.behave('sleep')
@@ -541,8 +548,7 @@ class Interruption(Fixture):
         record = receiver.reconcile()
         self.assertEqual(record['reconciliation']['action'], 'terminated-own-process-group')
         self.assertFalse(E.alive(child['pid'], child['start_ticks']))
-        marks = json.loads(self.mark.read_text())
-        self.assertFalse(E.process(marks['grandchild']) and E.process(marks['grandchild'])['state'] != 'Z')
+        self.wait_for(lambda: self.gone(json.loads(self.mark.read_text())['grandchild']))
         E.schema_fence.local_schema_fence()
         self.assertTrue((receiver.evidence/'artifact/health.ndjson').stat().st_size > 0)
 
@@ -557,6 +563,7 @@ class Interruption(Fixture):
         self.assertEqual(process.wait(30), 75)
         self.assertEqual(json.loads(process.stdout.read())['status'], 'interrupted'); process.stdout.close()
         self.assertFalse(E.alive(child['pid'], child['start_ticks']))
+        self.wait_for(lambda: self.gone(json.loads(self.mark.read_text())['grandchild']))
         self.assertEqual(json.loads(receiver.owner.read_text())['status'], 'interrupted')
         self.assertEqual(json.loads((receiver.evidence/'artifact/result.json').read_text())['status'], 'interrupted')
         with self.lock(): pass
