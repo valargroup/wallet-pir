@@ -20,3 +20,5 @@ pub mod controller;
 pub mod compact;
 
 pub mod display_journal;
+
+pub mod txid_display;
