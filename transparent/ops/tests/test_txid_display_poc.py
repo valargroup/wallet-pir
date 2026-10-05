@@ -127,6 +127,10 @@ class Fake(Executor):
         self.summaries = []
         self.applied = []
         self.active, self.prepared = {}, {}
+        # Prepare calls that give up before the worker finishes (txid-control's 600 s wait).
+        self.slow_prepares = 0
+        self.preparing = {}
+        self.calls = []
         self.history = {'freshness_seconds': 3, 'ready_replicas': 2}
         self.worker_binary = sha256(binary_bytes('transparent-txid-server'))
         self.reconciler_renders = True
@@ -278,11 +282,14 @@ class Fake(Executor):
     def adapter(self, host, request):
         worker = request['worker']
         name = HOSTS[worker]
+        self.calls.append((worker, request['command']['operation'] if 'command' in request else request['operation']))
         if request['operation'] == 'ship':
             assert request['source'] == CANDIDATE and request['kind'] == 'candidate'
+            assert request['deadline_seconds'] == P.SHIP_SECONDS
             directory = '%s/%s' % (P.PUBLICATIONS, request['name'])
             self.dirs.add((name, directory))
             return {'ok': True, 'directory': directory, 'seconds': 0.5}
+        assert request.get('deadline_seconds', 85) <= 600, 'beyond txid-control\'s own wait'
         command = request['command']
         if self.unit(name, P.WORKER_UNIT)['active'] != 'active':
             return {'ok': False, 'error': 'control socket refused the connection'}
@@ -292,18 +299,30 @@ class Fake(Executor):
             reply = {'ok': True, 'role': P.ROLES[worker], 'warm': active is not None, 'staged': [],
                      'binary_sha256': self.worker_binary,
                      'active': {'directory': '%s/%s' % (P.PUBLICATIONS, active), 'map_sha256': active}
-                     if active else None}
+                     if active else None,
+                     'preparing': {'map_sha256': self.preparing[worker]} if worker in self.preparing else None}
         elif operation == 'prepare':
             assert command['expected'] == (self.active.get(worker) or '')
+            if self.slow_prepares:
+                self.slow_prepares -= 1
+                self.preparing[worker] = command['publication']['map_sha256']
+                return {'ok': False, 'error': 'FleetError: worker sent no control reply'}
+            self.preparing.pop(worker, None)
             self.prepared[worker] = command['publication']['map_sha256']
             reply = {'ok': True, 'warm': True, 'built': 2, 'reused': 0, 'seconds': 1.0}
         elif operation == 'activate':
             assert self.prepared.get(worker) == command['map_sha256']
-            self.active[worker] = command['map_sha256']
+            self.serve(worker, command['map_sha256'])
             reply = {'ok': True}
         else:
             raise AssertionError(operation)
         return {'ok': reply['ok'], 'reply': reply, 'seconds': 0.1}
+
+    def serve(self, worker, map_sha256):
+        """A worker's activation, with the durable record it restarts from."""
+        self.active[worker] = map_sha256
+        self.put(HOSTS[worker], P.ACTIVE_RECORD, json.dumps({
+            'directory': '%s/%s' % (P.PUBLICATIONS, map_sha256), 'map_sha256': map_sha256}), 0o600)
 
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
@@ -917,6 +936,60 @@ class WorkerTests(DeployedFleet):
             self.assertFalse(self.fake.unit(host, P.WORKER_UNIT)['enabled'])
         self.assertIsNone(self.fake.text('coordinator', P.FLEET_JSON))
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
+
+    def test_workers_refuse_while_the_controller_runs(self):
+        self.fake.unit('coordinator', P.CONTROLLER_UNIT).update(load='loaded', active='active', sub='running')
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'controller drives the workers; stop it first'):
+            poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
+        self.assertEqual([m for m in self.fake.mutations() if not m[2].startswith(P.TRANSACTIONS)], [])
+        self.assertEqual(self.fake.active, {})
+
+    def test_a_rerun_keeps_each_workers_own_map_and_restarts_only_changed_units(self):
+        self.deploy('workers', map_sha256=self.map)
+        # The controller then advanced both workers, and was stopped.
+        newer = 'e' * 64
+        for key in P.WORKERS:
+            self.fake.serve(key, newer)
+        changed = request()
+        changed['units']['recent']['query_slots'] = 3
+        self.request = changed
+        self.fake.log.clear()
+        self.fake.calls.clear()
+        self.fake.runs.clear()
+        poc = self.deploy('workers', map_sha256=self.map)
+        # No ship, verify, prepare or activate: the bootstrap map never replaces a newer one.
+        self.assertEqual(self.fake.active, {'archive': newer, 'recent': newer})
+        self.assertEqual(self.fake.calls, [('archive', 'status'), ('recent', 'status')])
+        self.assertEqual([argv for argv in self.fake.commands() if argv[0] == 'systemd-run'], [])
+        self.assertEqual([m[2] for m in self.fake.mutations('archive-03') if m[1] == 'systemctl'], [])
+        self.assertEqual([m[2] for m in self.fake.mutations('recent-01') if m[1] == 'systemctl'],
+                         [('daemon-reload',), ('enable', P.WORKER_UNIT), ('restart', P.WORKER_UNIT)])
+        events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
+        self.assertIn('archive: unit unchanged; the worker keeps running', events)
+        self.assertIn('recent: keeps serving %s, not the requested %s' % (newer, self.map), events)
+        self.assertIn('recent: serving %s warm' % newer, events)
+
+    def test_a_prepare_longer_than_one_control_call_is_polled_to_completion(self):
+        self.fake.slow_prepares = 2
+        poc = self.deploy('workers', map_sha256=self.map)
+        self.assertEqual(self.fake.active, {'archive': self.map, 'recent': self.map})
+        events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
+        self.assertEqual(events.count('archive: still preparing %s' % self.map[:12]), 2)
+
+    def test_a_refused_prepare_is_not_repeated(self):
+        self.fake.slow_prepares = 1
+        status = self.fake.adapter
+
+        def forgetting(host, request):
+            reply = status(host, request)
+            self.fake.preparing.clear()
+            return reply
+        self.fake.adapter = forgetting
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'fleet control on archive failed: FleetError: worker sent no'):
+            poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
+        self.assertEqual(self.fake.active, {})
 
     def test_workers_need_the_reviewed_candidate_and_release_binary(self):
         poc = self.poc()

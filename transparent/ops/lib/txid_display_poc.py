@@ -121,6 +121,10 @@ MEMBERSHIP_SECONDS = 60
 LOAD_STATUS_SECONDS = 120
 STOP_TARGET_SECONDS = 60
 SELF_CHECK_SECONDS = 60
+# A cold bootstrap candidate holds every archive; per-cycle ships take seconds.
+SHIP_SECONDS = 1800
+# Under txid-control's own 600 s wait for a control reply.
+PREPARE_CALL_SECONDS = 540
 MEASURE_LIMITS = {'MemoryMax': '256M', 'CPUQuota': '25%', 'CPUWeight': '20', 'IOWeight': '20', 'Nice': '10'}
 # Ports history, Enhance, the node and the prototype already use.
 RESERVED_PORTS = (8080, 8081, 8083, 8090, 8092, 8093, 8094, 8192, 8232)
@@ -1214,6 +1218,10 @@ class Poc:
     def workers(self, transaction, map_sha256):
         require(isinstance(map_sha256, str) and HEX64.fullmatch(map_sha256),
                 '--publication-map-sha256 (the bootstrap candidate map) is required for workers')
+        # Once running, the controller owns every worker's map and `expected`;
+        # a restart or prepare here would race it or regress the served map.
+        require(not self.running('coordinator', CONTROLLER_UNIT),
+                'the controller drives the workers; stop it first (txid-display-stop)')
         source = self.candidate(map_sha256)
         files = self.render()
         self.guard()
@@ -1223,42 +1231,84 @@ class Poc:
             self.worker(transaction, key, files['unit:' + key], source, map_sha256)
 
     def worker(self, transaction, key, unit_text, source, map_sha256):
+        """Install and start one worker; only a worker with no active map takes `map_sha256`.
+
+        A worker that already serves a map (from an earlier deploy or the
+        controller) restarts onto its own active record and keeps it, since the
+        bootstrap candidate may be older; the controller advances it later.
+        The unit restarts only when its bytes (and so the release) changed.
+        """
         host = self.host(key)
         binary = self.request['release']['binaries']['transparent-txid-server']
         timeout = self.request['units'][key]['ready_timeout_seconds']
         self.guard()
         for path in (PUBLICATIONS, STAGED, RUNTIME_CACHE, WORKER_STATE):
             self.ex.mkdir(host, path, 0o700)
-        shipped = self.fleet(transaction, {'operation': 'ship', 'worker': key, 'kind': 'candidate', 'source': source,
-                                           'name': map_sha256, 'link_dest': None}, 1800)
+        record = self.read_json(key, ACTIVE_RECORD)
+        serving = record.get('map_sha256') if isinstance(record, dict) else None
         directory = '%s/%s' % (PUBLICATIONS, map_sha256)
-        require(shipped.get('directory') == directory, 'adapter shipped to %s' % shipped.get('directory'))
-        transaction.event('%s: shipped candidate %s' % (key, map_sha256), seconds=shipped.get('seconds'))
-        self.guard()
-        self.run(key, self.verify_only(key, directory), timeout)
-        transaction.event('%s: --verify-only accepted the candidate' % key)
-        if self.running(key, WORKER_UNIT):
-            transaction.undo('post', key, 'start-unit', unit=WORKER_UNIT)
-        transaction.undo('pre', key, 'stop-unit', unit=WORKER_UNIT)
-        transaction.undo('post', key, 'systemctl', args=['daemon-reload'])
-        transaction.change(key, '%s/%s' % (SYSTEM, WORKER_UNIT), unit_text, 0o644)
-        self.guard()
-        self.ex.systemctl(host, 'daemon-reload')
-        self.ex.systemctl(host, 'enable', WORKER_UNIT)
-        self.ex.systemctl(host, 'restart', WORKER_UNIT)
+        if serving is None:
+            shipped = self.fleet(transaction, {'operation': 'ship', 'worker': key, 'kind': 'candidate',
+                                               'source': source, 'name': map_sha256, 'link_dest': None,
+                                               'deadline_seconds': SHIP_SECONDS}, SHIP_SECONDS)
+            require(shipped.get('directory') == directory, 'adapter shipped to %s' % shipped.get('directory'))
+            transaction.event('%s: shipped candidate %s' % (key, map_sha256), seconds=shipped.get('seconds'))
+            self.guard()
+            self.run(key, self.verify_only(key, directory), timeout)
+            transaction.event('%s: --verify-only accepted the candidate' % key)
+        unit = '%s/%s' % (SYSTEM, WORKER_UNIT)
+        running = self.running(key, WORKER_UNIT)
+        if running and self.ex.read(host, unit) == unit_text:
+            transaction.event('%s: unit unchanged; the worker keeps running' % key)
+        else:
+            if running:
+                transaction.undo('post', key, 'start-unit', unit=WORKER_UNIT)
+            transaction.undo('pre', key, 'stop-unit', unit=WORKER_UNIT)
+            transaction.undo('post', key, 'systemctl', args=['daemon-reload'])
+            transaction.change(key, unit, unit_text, 0o644)
+            self.guard()
+            self.ex.systemctl(host, 'daemon-reload')
+            self.ex.systemctl(host, 'enable', WORKER_UNIT)
+            self.ex.systemctl(host, 'restart', WORKER_UNIT)
         status = self.wait('%s control socket' % key, lambda: self.control(transaction, key, {'operation': 'status'}),
                            300)
         require(status.get('role') == ROLES[key], '%s reports role %s' % (key, status.get('role')))
         require(status.get('binary_sha256') == binary, '%s runs %s, not the release' % (key, status.get('binary_sha256')))
         active = (status.get('active') or {}).get('map_sha256')
-        if active != map_sha256 or not status.get('warm'):
-            expected = active or ''
-            self.control(transaction, key, {'operation': 'prepare', 'expected': expected, 'publication': {
-                'directory': directory, 'map_sha256': map_sha256}}, timeout)
-            self.control(transaction, key, {'operation': 'activate', 'expected': expected, 'map_sha256': map_sha256})
-        self.wait('%s ready and warm on %s' % (key, map_sha256[:12]), lambda: self.worker_ready(key, map_sha256),
-                  timeout)
-        transaction.event('%s: serving %s warm' % (key, map_sha256))
+        require(active == serving, '%s serves %s, but its active record names %s' % (key, active, serving))
+        if active is None:
+            self.prepare(transaction, key, directory, map_sha256, timeout)
+            self.control(transaction, key, {'operation': 'activate', 'expected': '', 'map_sha256': map_sha256})
+            active = map_sha256
+        elif active != map_sha256:
+            transaction.event('%s: keeps serving %s, not the requested %s' % (key, active, map_sha256))
+        self.wait('%s ready and warm on %s' % (key, active[:12]), lambda: self.worker_ready(key, active), timeout)
+        transaction.event('%s: serving %s warm' % (key, active))
+
+    def prepare(self, transaction, key, directory, map_sha256, timeout):
+        """Prepare `map_sha256` on an empty worker within `timeout` seconds.
+
+        txid-control waits at most 600 s for a reply, and a cold archive build
+        can take longer. The worker keeps building after a call gives up, and
+        a repeated prepare waits for that build and then answers from its warm
+        candidate, so a failed call is repeated while status still shows this
+        map preparing or prepared. Any other failure is final.
+        """
+        command = {'operation': 'prepare', 'expected': '',
+                   'publication': {'directory': directory, 'map_sha256': map_sha256}}
+        deadline = self.clock() + timeout
+        while True:
+            left = deadline - self.clock()
+            try:
+                return self.control(transaction, key, command, max(1, int(min(PREPARE_CALL_SECONDS, left))))
+            except PocError:
+                if self.clock() >= deadline:
+                    raise
+                status = self.control(transaction, key, {'operation': 'status'})
+                building = {(status.get(field) or {}).get('map_sha256') for field in ('preparing', 'candidate')}
+                if map_sha256 not in building:
+                    raise
+                transaction.event('%s: still preparing %s' % (key, map_sha256[:12]))
 
     def worker_ready(self, key, map_sha256):
         status, body = self.ex.http_get(self.host(key), self.ready_url(key), 5)
