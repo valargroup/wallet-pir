@@ -1203,11 +1203,19 @@ fn verify_reproduces_a_running_root() {
 
 #[test]
 fn bench_records_follow_the_requested_size_mix() {
-    let records = synthetic_records(2_000, 7);
+    // Large enough that the 0.1% multi-page tail is countable.
+    let records = synthetic_records(20_000, 7);
     let sizes: Vec<usize> = records.iter().map(|r| r.encode().unwrap().len()).collect();
     let inline = sizes.iter().filter(|s| (50..=110).contains(*s)).count();
+    let one_page = sizes.iter().filter(|s| (129..=4_050).contains(*s)).count();
+    let near_cutoff = sizes.iter().filter(|s| (129..=528).contains(*s)).count();
     let multi_page = sizes.iter().filter(|s| **s > 4_050).count();
-    assert!((1_700..=1_900).contains(&inline), "{inline} inline");
+    assert!((17_600..=18_400).contains(&inline), "{inline} inline");
+    assert!((1_750..=2_250).contains(&one_page), "{one_page} one page");
+    assert!(
+        near_cutoff * 4 >= one_page * 3,
+        "{near_cutoff} of {one_page} near the cutoff"
+    );
     assert!((5..=50).contains(&multi_page), "{multi_page} multi-page");
     let temp = tempfile::tempdir().unwrap();
     let lines = bench_recent(&[500], "txid-2k", temp.path(), 7).unwrap();

@@ -68,7 +68,7 @@ python3 "$REPO/transparent/ops/scripts/txid-display-observe.py" mapwatch \
 pids+=($!)
 candidate=$(ls -d "$WORK"/root/candidate-* | sort | tail -1)
 "$BIN/txid-inventory" fixture --publication "$candidate" --heights "$WORK/root/tooling/heights.bin" \
-  --per-class 40 --absent 50 --out "$WORK/fixture.json"
+  --natural 400 --absent 50 --out "$WORK/fixture.json"
 echo allow >"$WORK/permit"
 ( while kill -0 "$controller" 2>/dev/null; do echo allow >"$WORK/permit"; sleep 10; done; echo deny >"$WORK/permit" ) &
 pids+=($!)
@@ -88,7 +88,7 @@ log "verify"
   && log "verify ok" || log "verify FAILED"
 log "census and audit"
 "$BIN/txid-inventory" census --publication "$WORK/root" --floor 10000 --out "$OUT/census.json" >"$OUT/census.txt"
-"$BIN/txid-inventory" audit --maps "$OUT/mapwatch" --out "$OUT/audit.json" >"$OUT/audit.txt" || log "audit FAILED"
+"$BIN/txid-inventory" audit --maps "$OUT/mapwatch/maps" --order "$OUT/mapwatch/mapwatch.jsonl" --out "$OUT/audit.json" >"$OUT/audit.txt" || log "audit FAILED"
 log "bandwidth"
 candidate=$(ls -d "$WORK"/root/candidate-* | sort | tail -1)
 "$BIN/txid-inventory" fixture --publication "$candidate" --heights "$WORK/root/tooling/heights.bin" \

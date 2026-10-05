@@ -1728,8 +1728,9 @@ pub fn synth_journal(
     Ok(total)
 }
 
-/// Records with a recent-era size mix: about 90% inline payloads of 50-110
-/// bytes, 9% one page, and 1% two to fifteen pages.
+/// Records with a recent-era size mix, after the sampled priors: about 90%
+/// inline payloads of 50-110 bytes, about 10% one page that mostly sits just
+/// above the inline cutoff, and about 0.1% two to fifteen pages.
 pub fn synthetic_records(
     count: u64,
     seed: u64,
@@ -1750,8 +1751,15 @@ pub fn synthetic_records(
             let class = next() % 1_000;
             let payload = if class < 900 {
                 50 + next() % 61
-            } else if class < 990 {
-                129 + next() % (FRAGMENT - 128)
+            } else if class < 999 {
+                // Overflow records average about 350 bytes: most just miss
+                // the cutoff, a few fill the page.
+                let small = next() % 8 != 0;
+                if small {
+                    129 + next() % 400
+                } else {
+                    129 + next() % (FRAGMENT - 128)
+                }
             } else {
                 let pages = 2 + next() % 14;
                 FRAGMENT * (pages - 1) + 1 + next() % FRAGMENT
