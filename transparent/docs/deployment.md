@@ -945,7 +945,7 @@ source implementation is not evidence of a successful cutover or rollback.
 
 After the owned full-publication preparation terminates successfully, stage the
 reviewed operations export on the coordinator. The coordinator can then use
-`schema-source-{plan,preflight,stage,status} --host HOST` with its pinned-host
+`schema-source-{plan,preflight,stage,status,reconcile} --host HOST` with its pinned-host
 inventory to stage the same export on each router/worker. This form runs only
 as root on the pinned coordinator, holds its production lock through SSH and
 makes the remote helper acquire its own host lock. New source staging retains
@@ -1033,10 +1033,10 @@ remain separate acceptance gates.
 ### Immutable operation source staging over SSH
 
 The wrapper's `schema-source-plan`, `schema-source-preflight`,
-`schema-source-stage` and `schema-source-status` commands bootstrap reviewed
+`schema-source-stage`, `schema-source-status` and `schema-source-reconcile` commands bootstrap reviewed
 operation sources on the coordinator. They require a remote-lock inventory with
 the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
-`--sha256` identities, and `--archive FILE` except for status. Create the archive
+`--sha256` identities, `--attempt N` (1–100), and `--archive FILE` except for status or reconciliation. Create the archive
 with `git archive --format=tar.gz` from that exact commit, exporting `ops`,
 `transparent/ops`, `enhance/ops`, `tools/ci` and `shared/dev`. Candidate archive
 transfer and preparation refuse a source whose receipt lacks `tools/ci/release.py`. This contains the
@@ -1047,6 +1047,40 @@ an oversized archive before hashing or making an SSH request. Run plan and prefl
 before stage; stage also repeats preflight. The helper receives the archive and
 performs every write in the same root process holding the production lock.
 It does not depend on a separate SSH lock process surviving the transfer.
+
+Source staging and candidate upload use the closed bootstrap survey in
+`activity_bootstrap_fleet.py`. It verifies the immutable retained full-v11
+inventory by its physical file hash and the existing `4c85b6c2` runtime receipt
+before importing its pinned SSH transport in an isolated package namespace.
+There are exactly five named hosts with their reviewed machine pins. The survey
+uses the shared bounded owner reader across schema, host-action, input and source
+receipts, then associates live processes and descendants. It preserves the
+existing baseline list: historical prototype and load disposition still need
+separate review. A service name alone does not authorize an exception.
+
+Read-only preflight checks every host without creating a lock or owner. Stage
+first holds the coordinator production lock and persists its request, real
+PID/start/boot identity and latest input fence. Only a new nonce bound to the
+request, complete five-host replies, absence of foreign owners and verified lock
+holder permit archive reception. Raw replies are retained privately before
+refusal; the complete survey has a 300-second ceiling with 60-second remote
+read limits. Worker source staging joins the coordinator's inherited lock,
+receives the compact fresh coordinator proof, acquires its own host lock and
+rechecks local owners. Full read-only preflight evidence is returned separately
+from the bounded forwarded request. Inline source transport is compressed,
+bounded to 512 KiB after decompression and SHA-256 verified before execution;
+the entire SSH command remains below the Linux per-argument ceiling.
+
+Transport timeout, nonzero SSH exit or invalid reply means unknown outcome
+(exit 75). Observe both source receipt and coordinator owner before reconciliation;
+no owner is signalled. Reconciliation requires its exact PID/start/boot to have
+exited and a new locked complete-fleet survey. It retains the original failed
+owner and moves only the matching failed source receipt to its immutable
+abandoned name, preserving partial archive bytes. A new attempt is required.
+A failed already-promoted source directory deliberately refuses pending an
+independent file-set recovery; this unresolved case must be closed or explicitly
+avoided by a reviewed recovery recipe before production staging. Completed
+source receipts still require full file-set verification.
 
 Sources are retained under `/srv/transparent-activity/ops/sources/<SHA>` with
 private receipts under `/srv/transparent-activity/ops/staging/`. The helper
@@ -1392,7 +1426,10 @@ checks import it. Every operations source export must therefore include
 The receiver holds the production lock in the receiving process and runs the
 schema/input fence and the 20% memory and disk checks. It writes its request and
 a `receiving` owner to `/srv/transparent-activity/ops/input-staging/` before
-reading any archive byte. It then points `latest.json` at that owner.
+reading any archive byte. It then points `latest.json` at that owner. Before consuming any archive byte,
+it completes the same fresh locked five-host bootstrap survey and saves that
+proof in the owner. Only the exact receiver input fence is skipped on the
+coordinator; remote owner fences remain enforced.
 
 Each archive is written with `O_EXCL|O_NOFOLLOW` into the private directory
 `/srv/transparent-activity/candidates/archives/<request SHA>.receiving`, in
@@ -1410,7 +1447,8 @@ fences all other mutation until
 `schema-candidate-upload-reconcile --source-sha REV --request-sha256 HASH`.
 Reconciliation observes status first. Under the lock, it refuses while the
 recorded owner process, identified by PID and kernel start time, is still active.
-The receiver starts no descendants. It then renames the partial or target to a
+The receiver starts no descendants. It repeats the locked full-fleet survey
+before reconciliation effects. It then renames the partial or target to a
 same-directory `.abandoned-<request SHA>` sibling. A retry needs a new attempt.
 
 If the local SSH session is lost, times out or returns no parseable reply, the

@@ -211,7 +211,7 @@ def retain_diagnostic_bytecode(receipt, target, source, checksum, recovery, veri
     return intent
 
 
-def stage(request, lock, incoming, root=STAGE_ROOT):
+def stage(request, lock, incoming, root=STAGE_ROOT, *, fleet_proof=None):
     source, checksum = request['source_sha'], request['sha256']
     target = root/'sources'/source
     receipt_path = root/'staging'/(source+'.json')
@@ -238,9 +238,16 @@ def stage(request, lock, incoming, root=STAGE_ROOT):
     (root/'sources').mkdir(parents=True, exist_ok=True, mode=0o700)
     (root/'staging').mkdir(parents=True, exist_ok=True, mode=0o700)
     receipt = {'version': 1, 'status': 'receiving', 'source_sha': source,
-               'archive_sha256': checksum, 'started_unix': time.time(), 'pid': os.getpid()}
+               'archive_sha256': checksum, 'started_unix': time.time(), 'pid': os.getpid(),'machine_id':request['machine_id']}
+    # Kernel identity and cross-host guard are durable before archive bytes.
+    if fleet_proof is not None:
+        current=_BOOTSTRAP_FLEET.S.process(os.getpid())
+        require(current is not None,'source receiver kernel identity missing')
+        receipt.update(process_start=current['start_ticks'],boot_id=_BOOTSTRAP_FLEET.S.boot_id(),
+                       fleet=fleet_proof)
     atomic_json(receipt_path, receipt)  # Intent before receiving or extracting.
     temporary = Path(tempfile.mkdtemp(dir=root, prefix='.source-'))
+    receipt['temporary']=str(temporary);atomic_json(receipt_path,receipt)
     try:
         archive, extraction = temporary/'source.tar.gz', temporary/'extract'
         with archive.open('xb') as stream:
@@ -295,33 +302,105 @@ def stage(request, lock, incoming, root=STAGE_ROOT):
         atomic_json(receipt_path, receipt)
         raise
     finally:
-        shutil.rmtree(temporary)
+        if receipt.get('status')=='staged':shutil.rmtree(temporary)
+
+
+def reconcile_source(request,lock,proof,root=STAGE_ROOT):
+    """Retain an exact failed receipt; never remove partial archive bytes."""
+    source=request['source_sha'];path=root/'staging'/(source+'.json');target=root/'sources'/source
+    lock.verify()
+    if not path.exists():
+        require(not target.exists(),'source target has no owner receipt')
+        return {'status':'reconciled','source_sha':source,'retained':[]}
+    require(not path.is_symlink() and path.stat().st_size<=1<<20,'source receipt invalid')
+    receipt=json.loads(path.read_text())
+    require(receipt.get('source_sha')==source and receipt.get('archive_sha256')==request['sha256'],
+            'source reconciliation identity differs')
+    if receipt.get('status')=='staged':
+        verify_receipt(receipt,target,source,request['sha256'])
+        return {'status':'reconciled','source_sha':source,'retained':[str(path)]}
+    require(receipt.get('status') in ('receiving','failed'),'source receipt does not need reconciliation')
+    current=_BOOTSTRAP_FLEET.S.process(receipt['pid'])
+    require(current is None or current['state']=='Z' or receipt.get('process_start') is not None and
+            current['start_ticks']!=receipt['process_start'],'source receiver remains alive; nothing was signalled')
+    require(not target.exists(),'failed source target requires independent file-set recovery')
+    destination=path.with_name(source+'.abandoned-'+proof['lease_request_sha256']+'.json')
+    require(not destination.exists(),'source failure already retained')
+    lock.verify();os.rename(path,destination)
+    fd=os.open(path.parent,os.O_RDONLY)
+    try:os.fsync(fd)
+    finally:os.close(fd)
+    return {'status':'reconciled','source_sha':source,'retained':[str(destination)],
+            'partial':receipt.get('temporary')}
 
 
 def main():
     request = json.loads(sys.argv[1])
     try:
-        require(set(request) in ({'mode', 'source_sha', 'sha256', 'machine_id'},
-                                {'mode', 'source_sha', 'sha256', 'machine_id', 'recovery'}), 'invalid source stage request')
-        require(request['mode'] in ('preflight', 'stage', 'status'), 'invalid source stage mode')
-        import re
+        require(set(request)-{'recovery','coordinator_fleet','guard_attempt'} ==
+                {'mode','source_sha','sha256','machine_id'} and
+                not ('recovery' in request and 'coordinator_fleet' in request), 'invalid source stage request')
+        require(type(request.get('guard_attempt',1)) is int and 1<=request.get('guard_attempt',1)<=100,
+                'invalid source fleet attempt')
+        require(request['mode'] in ('preflight', 'stage', 'status','reconcile'), 'invalid source stage mode')
         for field, size in [('source_sha', 40), ('sha256', 64), ('machine_id', 32)]:
             require(isinstance(request[field], str) and re.fullmatch('[0-9a-f]{'+str(size)+'}', request[field]),
                     'invalid source stage identity')
         config = {'type': 'pinned_host', 'machine_id': request['machine_id']}
         # PinnedHostLock comes from the exact shared hostlock source prefix.
         lock = PinnedHostLock(config, path=LOCK_PATH)
-        if request['mode'] == 'stage':
+        if request['mode'] in ('stage','reconcile'):
             with lock:
-                local_schema_fence(recovery=request.get('recovery'))  # Only checksum-bound failed-transaction source repair.
-                result = stage(request, lock, sys.stdin.buffer)
+                if request['mode']=='stage':local_schema_fence(recovery=request.get('recovery'))  # Only checksum-bound failed-transaction source repair.
+                if 'coordinator_fleet' in request:
+                    proof=request['coordinator_fleet']
+                    _BOOTSTRAP_FLEET.require(isinstance(proof,dict) and proof.get('schema')==_BOOTSTRAP_FLEET.KIND and
+                        proof.get('inventory_sha256')==_BOOTSTRAP_FLEET.INVENTORY_SHA and
+                        proof.get('hosts')==sorted(_BOOTSTRAP_FLEET.PINS) and
+                        isinstance(proof.get('nonce'),str) and re.fullmatch('[0-9a-f]{48}',proof['nonce']) and
+                        proof.get('lease_request_sha256')==_BOOTSTRAP_FLEET.lease_id(request) and
+                        proof.get('request_sha256')==hashlib.sha256(_BOOTSTRAP_FLEET.S.canonical(
+                            {k:v for k,v in dict(request,mode='stage').items() if k!='coordinator_fleet'})).hexdigest() and
+                        isinstance(proof.get('owner'),dict) and
+                        type(proof['owner'].get('pid')) is int and proof['owner']['pid']>0 and
+                        type(proof['owner'].get('start_ticks')) is int and proof['owner']['start_ticks']>0 and
+                        isinstance(proof['owner'].get('boot_id'),str) and
+                        re.fullmatch('[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',proof['owner']['boot_id']) and
+                        _BOOTSTRAP_FLEET.S.number(proof.get('observed_unix')) and
+                        0<=time.time()-proof['observed_unix']<=_BOOTSTRAP_FLEET.SECONDS,
+                        'source target lacks fresh coordinator fleet ownership')
+                    host=next((h for h,pin in _BOOTSTRAP_FLEET.PINS.items() if pin==request['machine_id']),None)
+                    binding={'request_sha256':proof['request_sha256'],'nonce':proof['nonce'],'host':host,'skip':None}
+                    current=_BOOTSTRAP_FLEET.S.process(os.getpid())
+                    holder={'pid':current['pid'],'start_ticks':current['start_ticks']}
+                    local=_BOOTSTRAP_FLEET.local(binding,host,holder=holder,deadline=time.monotonic()+60,
+                            source_skip=request if request['mode']=='reconcile' else None)
+                    _BOOTSTRAP_FLEET.verify(local,binding,host,holder)
+                else:
+                    require(request['machine_id']==_BOOTSTRAP_FLEET.PINS['coordinator'],
+                            'source bootstrap requires retained coordinator identity')
+                    def operation(proof):
+                        return reconcile_source(request,lock,proof) if request['mode']=='reconcile' else \
+                               stage(request,lock,sys.stdin.buffer,fleet_proof=proof)
+                    runner=_BOOTSTRAP_FLEET.reconciled if request['mode']=='reconcile' else _BOOTSTRAP_FLEET.leased
+                    result=runner(request,lock,verify_receipt,_BOOTSTRAP_REMOTE_CODE,operation,atomic_json)
+                if 'coordinator_fleet' in request:
+                    result=reconcile_source(request,lock,proof) if request['mode']=='reconcile' else \
+                           stage(request,lock,sys.stdin.buffer,fleet_proof=proof)
         else:
             require(os.geteuid() == 0 and lock.MACHINE_ID.read_text().strip() == request['machine_id'],
                     'source staging is not on the pinned root coordinator')
             # Read-only preflight/status must not even create a lock file.
             if request.get('recovery') is not None:
                 local_schema_fence(recovery=request['recovery'])
+            if request['mode']=='preflight' and 'coordinator_fleet' not in request:
+                proof=_BOOTSTRAP_FLEET.fleet(request,None,verify_receipt,_BOOTSTRAP_REMOTE_CODE,
+                                       recovery=request.get('recovery'))
+            else:proof=request.get('coordinator_fleet')
             result = stage(request, PinnedHostLock(None), sys.stdin.buffer)
+            if request['mode']=='preflight':result['fleet']=proof
+        if request['mode']=='status' and request['machine_id']==_BOOTSTRAP_FLEET.PINS['coordinator']:
+            result['coordinator_owner']=_BOOTSTRAP_FLEET.status(request)
         print(json.dumps({'ok': True, 'result': result}))
     except Exception as error:
         # No raw paths, request arguments, stderr or archive contents in errors.

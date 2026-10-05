@@ -72,3 +72,21 @@ contains no passing gate report and none may be inferred from it.
 - **Open gates.** Installed-setup agreement, warm serving, canonical recovery,
   rollback timing, freshness, sustained capacity and lifecycle all remain open,
   with unchanged floors and deadlines.
+
+
+## Root bootstrap review status
+
+The source and archive receivers now share a complete retained-inventory fleet
+survey before archive reception. The coordinator holds the lock and retains a
+durable request/PID/start/boot fence before surveying; worker source staging
+joins that owner and rechecks local ownership under its own lock. Source transfer
+uses bounded decompression with exact reviewed-code hash verification to fit
+Linux's per-argument ceiling. Unknown transport outcomes require explicit owner
+observation and reconciliation. Failed owners and partial bytes remain retained.
+
+These are source assurance interfaces, not actual production passes. Root keeps
+exact source hashes, Linux fixture logs and all failed checks in the private
+qualification evidence directory. Prototype/load baseline disposition and the
+failed already-promoted source recovery case remain separate prerequisites.
+No candidate hardware, snapshot/oracle, cutover, freshness, capacity or lifecycle
+acceptance follows from these fixture checks.

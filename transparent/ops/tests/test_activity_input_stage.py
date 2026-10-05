@@ -224,7 +224,7 @@ class Inputs(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('input_source_target',M.HERE/'activity_source_stage.py')
         source=importlib.util.module_from_spec(spec);spec.loader.exec_module(source)
         client=object.__new__(source.SourceStage)
-        client.recovery=None
+        client.recovery=None;client.attempt=1
         client.target='worker';client.host='worker';client.machine='c'*32;client.out=lambda _:None
         client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32},hosts={'worker':{}},ssh={'mode':'config'})
         client.executor=SimpleNamespace(transport=lambda host:['ssh','worker'])
@@ -236,7 +236,8 @@ class Inputs(unittest.TestCase):
             self.assertEqual(options['env']['PYTHONDONTWRITEBYTECODE'],'1')
             calls.append(argv)
             return SimpleNamespace(returncode=0,stdout=b'{"ok":true,"result":{"status":"staged"}}')
-        with patch.object(source,'ProductionLock',return_value=self.lock),patch.object(source.subprocess,'run',side_effect=run):
+        with patch.object(source,'ProductionLock',return_value=self.lock),patch.object(source.subprocess,'run',side_effect=run), \
+             patch.object(source.FLEET,'leased',side_effect=lambda r,l,v,c,operation,s:operation({'schema':'fictional-fleet-proof'})):
             client.run('stage','b'*40,M.P.checksum(archive),archive)
         self.assertEqual(len(calls),2)
 

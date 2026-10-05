@@ -244,14 +244,15 @@ def parser():
         command.add_argument('--release-result-sha256', required=True)
         if name == 'start':
             command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan', 'preflight', 'stage', 'status'):
+    for name in ('plan', 'preflight', 'stage', 'status','reconcile'):
         command = commands.add_parser('schema-source-'+name)
         command.add_argument('--source-sha', required=True)
+        command.add_argument('--attempt',type=int,default=1)
         command.add_argument('--sha256', required=True)
         command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
         command.add_argument('--recovery-transaction', help='inert source repair for this failed transaction only')
         command.add_argument('--recovery-recipe-sha256')
-        if name != 'status':
+        if name not in ('status','reconcile'):
             command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
         command = commands.add_parser(name, help='Transparent multi-component schema transaction')
@@ -528,8 +529,12 @@ def main(argv=None, executor=None, out=print, **options):
                 raise ValueError('recovery source staging needs both transaction and recipe identity')
             recovery = ({'transaction':args.recovery_transaction,'recipe_sha256':args.recovery_recipe_sha256}
                         if args.recovery_transaction else None)
-            module.SourceStage(inventory, out, target=args.host, recovery=recovery).run(args.command.removeprefix('schema-source-'),
-                args.source_sha, args.sha256, getattr(args, 'archive', None))
+            try:
+                module.SourceStage(inventory, out, target=args.host, recovery=recovery,attempt=args.attempt).run(args.command.removeprefix('schema-source-'),
+                    args.source_sha, args.sha256, getattr(args, 'archive', None))
+            except module.Unknown as error:
+                out(str(error))
+                return 75
             return 0
         if args.command.startswith('schema-'):
             spec = importlib.util.spec_from_file_location('activity_schema_operation',

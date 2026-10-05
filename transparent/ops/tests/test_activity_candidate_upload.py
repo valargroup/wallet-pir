@@ -51,6 +51,9 @@ fence = U.schema_fence.local_schema_fence
 U.schema_fence.local_schema_fence = lambda **options: fence(Path(config['fence'])/'schema', **options)
 U.Receiver.identity = lambda self: None
 U.staged_source = lambda: None
+# This transport fixture isolates archive ownership; fleet logic has its own suite.
+U.G.fleet = lambda *a, **kw: {'schema':'fictional-fleet-proof'}
+U.G.S.boot_id = lambda: '00000000-0000-0000-0000-000000000001'
 class Lock:
     def __enter__(self): self.fd = os.open(config['lock'], os.O_CREAT | os.O_RDWR, 0o600); return self
     def __exit__(self, *_): os.close(self.fd)
@@ -78,6 +81,8 @@ def writer(fd, data, close=True):
 class Upload(T.Fixture):
     def setUp(self):
         super().setUp()
+        p=patch.object(U.G,'fleet',return_value={'schema':'fictional-fleet-proof'});p.start();self.addCleanup(p.stop)
+        p=patch.object(U.G.S,'boot_id',return_value='00000000-0000-0000-0000-000000000001');p.start();self.addCleanup(p.stop)
         pins = {kind:C.checksum(path) for kind, path in self.archives.items()}
         for thing, name, value in ((U, 'UPLOADS', C.ROOT/'archives'), (U, 'OWNERS', self.root/'owners'),
                                    (I, 'OWNERS', self.root/'owners'), (I, 'resources', lambda *_: {})):
@@ -205,6 +210,16 @@ class Local(Upload):
 
 
 class Receive(Upload):
+    def test_fleet_refusal_keeps_durable_failed_owner_and_reads_no_archive_bytes(self):
+        receiver=self.receiver()
+        with patch.object(U.G,'fleet',side_effect=ValueError('fictional stale fleet')), \
+             patch.object(receiver,'receive',side_effect=AssertionError('archive bytes must wait')):
+            with self.assertRaisesRegex(ValueError,'stale fleet'):receiver.stage(None)
+        self.assertEqual(receiver.status()['status'],'failed')
+        self.assertEqual(receiver.status()['received_bytes'],0)
+        self.assertFalse(receiver.partial.exists());self.fenced()
+
+
     def test_real_pipe_stage_retains_private_exact_archives_then_existing_preparation_reads_them(self):
         with patch.object(subprocess, 'Popen', side_effect=AssertionError('no process')), \
                 patch.object(subprocess, 'run', side_effect=AssertionError('no process')):
@@ -380,10 +395,11 @@ class Transport(Upload):
             stream = original(archive)
             yield next(stream)
             if archive.kind == 'supplemental':
-                # Lose the transport only once the child's owner exists.
+                # Lose transport after the guard and partial namespace exist.
+                # The durable intent now precedes the fleet survey.
                 owner = self.root/'owners'/(plan['request_sha256']+'.json')
                 for _ in range(200):
-                    if owner.exists(): break
+                    if owner.exists() and (U.UPLOADS/(plan['request_sha256']+'.receiving')).exists(): break
                     threading.Event().wait(.05)
                 os.utime(archive.path, ns=(1, 1))
             yield from stream

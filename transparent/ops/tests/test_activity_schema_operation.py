@@ -548,11 +548,15 @@ class SourceStageTests(unittest.TestCase):
         machine = self.root/'machine-id'
         machine.write_text(self.request['machine_id'])
         lock_path = self.root/'production.lock'
-        # Only fixture paths/UID differ from the exact transmitted helper.
+        # This fixture tests the real lock/extraction; fleet decisions are mocked
+        # explicitly and exercised independently in the bootstrap-fleet suite.
         prefix = Path(source_stage.hostlock.__file__).read_text()
         prefix += '\n'+Path(source_stage.schema_fence.__file__).read_text()
         prefix += '\nPinnedHostLock.MACHINE_ID = Path('+repr(str(machine))+')\n'
         prefix += 'PinnedHostLock.ROOT_UID = os.geteuid()\n'
+        prefix += 'from types import SimpleNamespace\n'
+        prefix += '_BOOTSTRAP_FLEET=SimpleNamespace(PINS={"coordinator":'+repr(self.request['machine_id'])+'}, leased=lambda r,l,v,c,operation,s:operation({}), S=SimpleNamespace(process=lambda p:{"pid":p,"start_ticks":1},boot_id=lambda:"00000000-0000-0000-0000-000000000001"))\n'
+        prefix += '_BOOTSTRAP_REMOTE_CODE="fictional isolated lock fixture"\n'
         helper = source_stage.HELPER_PATH.read_text().replace(
             "STAGE_ROOT = Path('/srv/transparent-activity/ops')", 'STAGE_ROOT = Path('+repr(str(self.root/'ops'))+')').replace(
             "LOCK_PATH = Path('/run/lock/wallet-pir-production.lock')", 'LOCK_PATH = Path('+repr(str(lock_path))+')')

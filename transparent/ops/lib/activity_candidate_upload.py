@@ -42,6 +42,8 @@ def module(name, path):
 
 I = module('candidate_upload_input_stage', HERE/'activity_input_stage.py')
 C = I.C
+B = module('candidate_upload_bootstrap', HERE/'activity_source_stage.py')
+G = B.FLEET
 KIND = 'candidate-archive-upload'
 # Root-reviewed archive bytes. The two CI bundles are run 37173250956's exact-head
 # release artifacts; the supplemental digest is the manifest's.
@@ -163,7 +165,7 @@ class Incoming:
         return bool(data)
 
     def readline(self, limit):
-        while b'\n' not in self.buffer and len(self.buffer) <= limit and self.fill(4096):
+        while b'\n' not in self.buffer and len(self.buffer) <= limit and self.fill(1):
             pass
         line, newline, rest = self.buffer.partition(b'\n')
         require(newline and len(line) < limit, 'invalid candidate upload header')
@@ -217,14 +219,16 @@ class Receiver:
             self.verify(self.target, complete=True)
         return record
 
-    def preflight(self):
+    def preflight(self, *, fleet=True):
         schema_fence.local_schema_fence()
         for path in (self.owners, self.uploads, self.owner, self.target, self.partial):
             I.no_links(path)
         require(self.status()['status'] == 'absent' and not self.target.exists() and not self.partial.exists(),
                 'candidate upload already owned; inspect status or reconcile')
         I.resources(self.uploads, sum(item['size'] for item in self.request['archives'].values()))
-        return {'status':'preflight-passed', 'request_sha256':self.identifier}
+        result={'status':'preflight-passed', 'request_sha256':self.identifier}
+        if fleet:result['fleet']=G.fleet(self.request,None,I.S.verify_receipt,B.SURVEY_HELPER)
+        return result
 
     def verify(self, root, complete):
         """Exact private regular files: no links, hard links, drift or extras."""
@@ -282,17 +286,19 @@ class Receiver:
 
     def stage(self, incoming):
         with self.lock_factory() as lock:
-            lock.verify(); self.preflight()
+            lock.verify(); self.preflight(fleet=False)
             self.owners.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.uploads.mkdir(parents=True, exist_ok=True, mode=0o700)
             durable.atomic_json(self.retained, self.request, mode=0o400)
             record = {'version':1, 'kind':KIND, 'status':'receiving', 'request_sha256':self.identifier,
-                      'pid':os.getpid(), 'process_start':process_start(os.getpid()), 'started_unix':time.time(),
-                      'received_bytes':0, 'target':str(self.target)}
+                      'pid':os.getpid(), 'process_start':process_start(os.getpid()), 'boot_id':G.S.boot_id(), 'started_unix':time.time(),
+                      'received_bytes':0, 'target':str(self.target),'machine_id':self.request['machine_id']}
             # Intent and the shared fence pointer exist before any byte.
             self.save(record)
             durable.atomic_json(self.owners/'latest.json', {'request_sha256':self.identifier}, mode=0o600)
             try:
+                record['fleet']=G.fleet(self.request,lock,I.S.verify_receipt,B.SURVEY_HELPER,skip=self.identifier)
+                self.save(record)
                 self.partial.mkdir(mode=0o700)
                 (self.owners/(self.identifier+'.health.ndjson')).touch(mode=0o600, exist_ok=False)
                 self.receive(incoming, record, lock)
@@ -333,6 +339,7 @@ class Receiver:
             # retains its descriptor; the recorded owner must also have exited.
             require(not process_active(record['pid'], record.get('process_start')),
                     'candidate upload owner process is still active; observe it before reconciliation')
+            record['reconciliation_fleet']=G.fleet(self.request,lock,I.S.verify_receipt,B.SURVEY_HELPER,skip=self.identifier)
             moves = []
             for path in (self.partial, self.target):
                 I.no_links(path)
@@ -385,7 +392,7 @@ def receive(action, expected, stdin_fd, out):
         return 75 if interrupted else 1
     out(json.dumps({k:v for k, v in result.items() if k in ('request_sha256', 'status', 'received_bytes', 'target',
                     'candidate_identity', 'artifacts', 'preparation_request', 'preparation_request_sha256',
-                    'error_type', 'retained')}, sort_keys=True))
+                    'error_type', 'retained','fleet')}, sort_keys=True))
     return 0
 
 
@@ -473,6 +480,8 @@ class Upload:
                 'candidate_identity':checked['identity'], 'artifacts':checked['artifacts'],
                 'preparation_request':prepared, 'preparation_request_path':prepared_path(request),
                 'preparation_request_sha256':digest(prepared),
+                'bootstrap_fleet':{'inventory_sha256':G.INVENTORY_SHA,'runtime_source_sha':G.RUNTIME_SHA,
+                                   'hosts':sorted(G.PINS),'survey_wall_seconds':G.SECONDS},
                 'effects':'retains three verified archives under the candidate upload namespace; installs and runs nothing',
                 'coordinator_next':[wrapper+['schema-candidate-plan', *files], wrapper+['schema-candidate-preflight', *files],
                                     wrapper+['schema-candidate-stage', *files, '--expect-plan-sha256', '<candidate plan digest>'],
