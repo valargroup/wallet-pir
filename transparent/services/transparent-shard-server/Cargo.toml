@@ -19,6 +19,10 @@ path = "src/bin/shard-scaling.rs"
 name = "shard-residency"
 path = "src/bin/shard-residency.rs"
 
+[[bin]]
+name = "transparent-txid-server"
+path = "src/bin/txid-server.rs"
+
 [features]
 # Reproduce the existing non-AVX-512 backend on newer benchmark CPUs.
 portable-kernel = []
@@ -51,6 +55,8 @@ transparent-filter = { path = "../../crates/transparent-filter" }
 # feature unification.
 transparent-native = { path = "../../crates/transparent-native" }
 transparent-shard = { path = "../../crates/transparent-shard" }
+# Record types for the display tooling's synthetic publications.
+transparent-events = { path = "../../crates/transparent-events" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix = { version = "1.1", features = ["fs", "process", "thread"] }

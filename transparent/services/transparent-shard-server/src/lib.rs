@@ -9,6 +9,7 @@
 
 pub mod admission;
 pub mod assignment;
+pub mod display;
 mod filecache;
 pub mod memory;
 pub mod metrics;
