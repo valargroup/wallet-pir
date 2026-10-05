@@ -465,6 +465,10 @@ class RetainedSurvey(unittest.TestCase):
                (place+'router.json',moved(coordinator,nonce=other)),
                (place+'worker-1.json',moved(coordinator,nonce=other,host='worker-1')),
                (place+'sub/coordinator.json',moved(coordinator,nonce=other)),
+               ('x/'+place+'coordinator.json',moved(coordinator,nonce=other)),
+               (place+'coordinator.json',dict(moved(coordinator,nonce=other),machine_id=G.PINS['worker-1'],
+                                               ancillary=dict(coordinator['ancillary'],machine_id=G.PINS['worker-1']))),
+               (place+'worker-2.attribution.json',dict(moved(attribution,nonce=other),host='worker-1')),
                ('d'*64+'.json',coordinator),
                (place+'worker-2.attribution.json',dict(moved(attribution,nonce=other),snapshots=[
                    dict(v,clients=[dict(c,extra=1) for c in v['clients']]) for v in attribution['snapshots']])),
