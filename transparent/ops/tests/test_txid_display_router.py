@@ -37,7 +37,7 @@ GOLDEN = {
 }
 
 
-def render(internal, guarded, **extra):
+def render(internal, guarded, live=True, **extra):
     """The live and withdrawn routers the adapter would send for a fixed fleet."""
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
@@ -65,7 +65,8 @@ def render(internal, guarded, **extra):
         assignment['workers'][1]['shards'] = [3]
 
         async def both():
-            await fleet.route(roster, assignment)
+            if live:
+                await fleet.route(roster, assignment)
             await fleet.route([])
         asyncio.run(both())
         return captured
@@ -102,6 +103,12 @@ class RouterHookTests(unittest.TestCase):
                       ['/etc/caddy/x/*.caddy\n\trespond 200'], ['/etc/caddy/../Caddyfile.caddy'], [7]):
             with self.subTest(value=value), self.assertRaisesRegex(ValueError, 'invalid route imports'):
                 render(False, False, route_imports=value)
+
+    def test_an_invalid_key_never_blocks_withdrawal(self):
+        for (internal, guarded), digests in GOLDEN.items():
+            with self.subTest(internal=internal, guarded=guarded):
+                withdrawn, = render(internal, guarded, live=False, route_imports=['/etc/caddy/../x.caddy'])
+                self.assertEqual(hashlib.sha256(withdrawn).hexdigest(), digests[1])
 
     def test_publisher_redeploys_carry_the_key(self):
         self.assertIn('route_imports', LIVE.OPERATIONAL_KEYS)

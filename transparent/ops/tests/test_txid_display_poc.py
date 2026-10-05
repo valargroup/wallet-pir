@@ -461,6 +461,21 @@ class RequestTests(Base):
         with self.assertRaisesRegex(P.PocError, 'lock host'):
             P.validate(self.request, remote_elsewhere)
 
+    def test_an_accepted_import_glob_is_one_the_history_adapter_renders(self):
+        accepted = []
+        for glob in (GLOB, '/etc/caddy/display.d/*.caddy', '/etc/caddy/a..b/*.caddy', '/etc/caddy/../*.caddy',
+                     '/etc/caddy/./*.caddy', '/etc/caddy/..x/*.caddy', '/etc/caddy/x/../*.caddy'):
+            changed = request()
+            changed['router']['import_glob'] = glob
+            try:
+                P.validate(changed, inventory())
+            except P.PocError:
+                continue
+            # A glob the adapter refused would fail every history router render.
+            self.assertEqual(LIVE.route_import_lines({'route_imports': [glob]}), ['\timport ' + glob])
+            accepted.append(glob)
+        self.assertEqual(accepted, [GLOB, '/etc/caddy/display.d/*.caddy'])
+
     def test_request_file_must_match_reviewed_digest_and_have_unique_keys(self):
         path = Path(self.tmp.name) / 'request.json'
         path.write_text(json.dumps(self.request))

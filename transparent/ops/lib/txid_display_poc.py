@@ -130,7 +130,9 @@ HEX64 = re.compile('[0-9a-f]{64}')
 PLAIN_PATH = re.compile(r'/[A-Za-z0-9._/-]+')
 MEMORY = re.compile(r'([0-9]+(?:\.[0-9]+)?)([KMGT])')
 QUOTA = re.compile(r'[1-9][0-9]{0,3}%')
-GLOB = re.compile(r'(/etc/caddy/[A-Za-z0-9._-]+)/\*\.caddy')
+# No `.`, `..` or hidden directory. validate() also refuses any `..`, as the
+# history adapter's route_import_lines does: a glob it refuses fails its render.
+GLOB = re.compile(r'(/etc/caddy/[A-Za-z0-9_-][A-Za-z0-9._-]*)/\*\.caddy')
 PUBLIC_URL = re.compile(r'https://[A-Za-z0-9.-]+')
 RPC_URL = re.compile(r'http://127\.0\.0\.1:[0-9]{2,5}')
 TRANSACTION = re.compile(r'txid-display-[a-z-]+-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{6}')
@@ -277,8 +279,8 @@ def validate(request, inventory):
     plain_path(controller['rpc_cookie'], 'controller.rpc_cookie')
 
     router = exact(request['router'], ('import_glob', 'live_fleet_sha256'), 'router')
-    require(isinstance(router['import_glob'], str) and GLOB.fullmatch(router['import_glob']),
-            'router.import_glob must be /etc/caddy/<dir>/*.caddy')
+    require(isinstance(router['import_glob'], str) and GLOB.fullmatch(router['import_glob'])
+            and '..' not in router['import_glob'], 'router.import_glob must be /etc/caddy/<dir>/*.caddy')
     require(isinstance(router['live_fleet_sha256'], str) and HEX64.fullmatch(router['live_fleet_sha256']),
             'router.live_fleet_sha256 must be the reviewed deployed history adapter digest')
     terraform = exact(request['terraform'], ('wrapper', 'root'), 'terraform')

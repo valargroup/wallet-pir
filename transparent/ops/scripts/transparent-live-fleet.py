@@ -673,9 +673,10 @@ class Fleet:
         authority = self.c['authority_upstream']
         if not re.fullmatch(r'[A-Za-z0-9_.:-]+', host) or not re.fullmatch(r'(https://)?[A-Za-z0-9_.:-]+', authority):
             raise ValueError('invalid router addresses')
-        imports = route_import_lines(self.c)
         body = ['\trequest_body {\n\t\tmax_size 1MB\n\t}']
         if workers:
+            # Only serving sites import, so a bad key can never block withdrawal.
+            imports = route_import_lines(self.c)
             workers = self.render_set(workers, assignment)
             groups = []
             recent = [w for w in workers if w['role'] == 'recent-replica']
