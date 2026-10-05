@@ -531,7 +531,8 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     or None for every record `select` chose, before the listed display is cut
     to `bounds['listed']`; more than `bounds['selected']` refuses outright.
 
-    `pending` ({pid: start_ticks, exe, command_sha256, cgroup}) names
+    `pending` ({pid: start_ticks, exe, command_sha256, cgroup}, or a trusted
+    callable taking this exact scan and returning that mapping) names
     operational processes whose owner another host must attribute. An exact
     match is listed under `pending` instead of `unattributed`; it still
     counts for markers, the lock and association, and the caller must refuse
@@ -547,6 +548,8 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
             reasons.append(reason)
     processes = scan(lock_path, marker, receiver, bounds['argv_bytes'])
     tick()
+    if callable(pending):
+        pending = pending(processes)
     excluded = set(ancestors() if excluded is None else excluded)
     holders = [p for p in processes if p['holds']]
     allowed = {holder['pid']} if holder else set()

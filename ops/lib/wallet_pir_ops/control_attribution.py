@@ -229,15 +229,17 @@ def chain(pid, proc, shell, sessions, tick=lambda: None):
             'sshd': {'pid': r['pid'], 'start_ticks': r['start_ticks']}, 'connection': link}
 
 
-def controls(*, proc=Path('/proc'), tick=lambda: None, shell=None):
+def controls(*, proc=Path('/proc'), tick=lambda: None, shell=None, pids=None):
     """Worker side: (exact control chains, rejected candidates) for every live shard-control.
 
     A rejected candidate keeps only its PID and the mismatch; the owner survey
-    still refuses it as unattributed.
+    still refuses it as unattributed. When `pids` is supplied, these are the
+    exact processes already observed by the complete owner scan, so a control
+    starting during that scan cannot fall between two candidate listings.
     """
     shell = root_shell(shell)
     found, rejected, sessions, candidates = [], [], set(), 0
-    for entry in sorted(os.listdir(proc)):
+    for entry in sorted(os.listdir(proc) if pids is None else (str(p) for p in pids)):
         if not entry.isdigit():
             continue
         tick()

@@ -97,12 +97,12 @@ class Worker(unittest.TestCase):
         if not p.rows:
             p.tcp(555, (WORKER_IP, 22), (COORDINATOR_IP, 40000))
 
-    def observe(self, digest=None):
+    def observe(self, digest=None, pids=None):
         def bytes_of(pid, proc, tick):
             return hashlib.sha256(self.binary.read_bytes()).hexdigest()
         with patch.object(CA, 'CONTROL_EXE_SHA256', digest or hashlib.sha256(b'fictional shard-control').hexdigest()), \
                 patch.object(CA, 'executable_sha256', bytes_of):
-            return CA.controls(proc=self.proc.root, shell='/usr/bin/bash')
+            return CA.controls(proc=self.proc.root, shell='/usr/bin/bash',pids=pids)
 
     def rejected(self, reason):
         found, rejected = self.observe()
@@ -118,6 +118,11 @@ class Worker(unittest.TestCase):
                                   'shell': {'pid': 101, 'start_ticks': 1001}, 'sshd': {'pid': 100, 'start_ticks': 1000},
                                   'connection': {'local': [WORKER_IP, 22], 'remote': [COORDINATOR_IP, 40000]}}])
         CA.verify_controls(found)
+
+    def test_controls_use_the_processes_from_the_complete_owner_scan(self):
+        # This client may have started after a preliminary candidate listing.
+        found,rejected=self.observe(pids=[102])
+        self.assertEqual(([c['pid'] for c in found],rejected),([102],[]))
 
     def test_extra_or_changed_control_argv_is_rejected(self):
         self.build(control=[*CA.CONTROL, '--extra'])
@@ -375,6 +380,15 @@ class Survey(unittest.TestCase):
                 patch.object(S, 'booted_unix', return_value=time.time()-3600):
             return S.observe((('owners', Path(directory)/'absent'),), classes={'names': ['shard-control'], 'roots': []},
                              baseline=('transparent-shard-server.service',), binding={}, pending=pending)
+
+    def test_pending_callback_receives_this_scan_not_an_earlier_listing(self):
+        item=self.process();observed=[]
+        def candidates(processes):
+            observed.extend(processes)
+            return {p['pid']:{k:p[k] for k in ('start_ticks','exe','command_sha256','cgroup')} for p in processes}
+        value=self.observe(item,candidates)
+        self.assertEqual(observed,[item])
+        self.assertEqual((value['pending_count'],value['unattributed_count']),(1,0))
 
     def test_exact_pending_is_listed_apart_and_any_difference_is_unattributed(self):
         item = self.process()

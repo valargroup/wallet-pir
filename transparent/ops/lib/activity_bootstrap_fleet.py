@@ -149,12 +149,17 @@ def local(binding,host,*,holder=None,skip=None,recovery=None,deadline=None,sourc
     authorities=A.authorities(ancillary,machine)
     # Only workers receive reconciler controls; the coordinator binds its own
     # clients to the baseline unit cgroup.
-    found,rejected=CA.controls(tick=tick) if host.startswith('worker-') else ([],[])
+    found,rejected=[],[]
+    def control_candidates(processes):
+        if host.startswith('worker-'):
+            controls,failures=CA.controls(tick=tick,pids=[p['pid'] for p in processes])
+            found.extend(controls);rejected.extend(failures)
+        return {c['pid']:c for c in found}
     result=S.observe((('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
                       ('input-staging',INPUTS),('source-staging',ROOT/'staging')),
                      classes=CLASSES,baseline=BASELINE,binding=binding,lock_path=LOCK,holder=holder,
                      tick=tick,select=select,refuse=refuse,ancillary=authorities,
-                     pending={c['pid']:c for c in found})
+                     pending=control_candidates)
     tick()
     # A control that exited between the two scans is gone, not pending.
     live={(p['pid'],p['start_ticks']) for p in result['pending']}

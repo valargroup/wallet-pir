@@ -1068,7 +1068,8 @@ executable bytes (`6dfe78fa…`, the staged portable worker pin), root's login s
 running exactly the reconciler's `-c` command as its session leader with no other
 child, an sshd session process in the same root `session-N.scope` holding exactly
 one established TCP connection, and stable start ticks. Everything else stays
-unattributed. Before each worker survey and after a reply with pending controls,
+unattributed. Candidates come from the same complete process scan used by the
+ownership survey, rather than an earlier PID listing. Before each worker survey and after a reply with pending controls,
 the coordinating survey snapshots the reconciler: unit active, pinned fragment
 `869e2606…`, no drop-ins, main argv equal to the fragment's literal `ExecStart`,
 pinned script `f3df5c53…` at the immutable `4c85b6c2` source path
