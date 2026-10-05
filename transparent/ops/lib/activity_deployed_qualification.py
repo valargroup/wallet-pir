@@ -44,6 +44,7 @@ import time
 import urllib.error
 import urllib.request
 
+from wallet_pir_ops import ancillary_baseline as A
 from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_map
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
@@ -1126,7 +1127,8 @@ def process_table():
         pid = int(entry.name)
         try:
             fields = stat_fields(pid)
-            argv = (entry/'cmdline').read_bytes()[:65536].split(b'\0')
+            command = (entry/'cmdline').read_bytes()[:65536]
+            argv = command.split(b'\0')
             try:
                 exe = os.readlink(entry/'exe')
             except FileNotFoundError:
@@ -1138,6 +1140,7 @@ def process_table():
             raise ValueError('process table is unreadable; reconciliation scope is unknown') from None
         table[pid] = {'pid':pid, 'state':fields[0], 'ppid':int(fields[1]), 'pgid':int(fields[2]), 'session':int(fields[3]),
                       'start_ticks':int(fields[19]), 'boot_id':boot, 'exe':exe,
+                      'command_sha256':hashlib.sha256(command).hexdigest(),
                       'argv':[a.decode(errors='replace') for a in argv if a][:32], 'cgroup':cgroup}
     return table
 
@@ -1181,6 +1184,10 @@ def in_units(process, units):
     return any(line.rstrip().endswith('/'+u) or '/'+u+'/' in line for line in process['cgroup'].splitlines() for u in units)
 
 
+def ancillary_findings():
+    return A.observe(ProductionLock.MACHINE_ID.read_text().strip())
+
+
 def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=None):
     """Raw quiescence evidence of every retained owner and every live process on this host.
 
@@ -1198,8 +1205,14 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
     schema_fence.local_schema_fence(skip_input=skip_input)
     table = process_table()
     exempt = ancestry(table, os.getpid())
+    ancillary=ancillary_findings()
+    machine=ancillary['machine_id']
+    A.verify(ancillary,machine)
     own_units = PRODUCT_UNITS + ((own_unit+'.service',) if own_unit else ())
-    findings = {'records':[], 'units':{}, 'live':[], 'processes':{'scanned':len(table)}}
+    def attributable(process):
+        if in_units(process,A.UNITS):return A.authorized(ancillary,machine,process)
+        return in_units(process,own_units)
+    findings = {'records':[], 'units':{}, 'live':[], 'processes':{'scanned':len(table)},'ancillary':ancillary}
     recorded_pids = {}
     for record in owner_records():
         value = record['value']
@@ -1220,9 +1233,9 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
             continue  # alive (judged above) or reused, which no surviving group of the old PID permits
         # Only a member started before the owner's record was last written can descend from it.
         escaped += [p for p in table.values() if (p['session'] == pid or p['pgid'] == pid) and p['state'] != 'Z'
-                    and p['pid'] not in exempt and not in_units(p, own_units) and started_unix_from(p['start_ticks']) <= last+2]
+                    and p['pid'] not in exempt and not attributable(p) and started_unix_from(p['start_ticks']) <= last+2]
     roots = [p for p in table.values() if p['state'] != 'Z' and p['pid'] not in exempt and under_owned_roots(p)
-             and not in_units(p, own_units)]
+             and not attributable(p)]
     for process in {p['pid']:p for p in escaped+roots}.values():
         # Arguments are needed to classify paths in memory, but arbitrary
         # operands can contain credentials. Refusals are retained as evidence:
@@ -1239,6 +1252,15 @@ def owner_findings(commands_, *, own_unit=None, own_request=None, skip_input=Non
             continue
         unit = match.group(0)
         state = commands_.state(unit)
+        retained=ancillary['units'].get(unit)
+        if retained is not None and retained['status']=='verified':
+            require(state.get('ActiveState')=='active' and state.get('SubState')=='running' and
+                    state.get('MainPID')==str(retained['pid']) and
+                    state.get('ControlGroup')==retained['cgroup'] and
+                    A.authorized(ancillary,machine,table.get(retained['pid'],{'pid':retained['pid']})),
+                    'ancillary unit changed after complete process survey')
+            findings['units'][unit]={'ancillary':True,'pid':retained['pid'],'start_ticks':retained['start_ticks']}
+            continue
         idle = (state.get('MainPID') in ('0', '', None) and state.get('ActiveState') not in ('activating', 'deactivating', 'reloading')
                 and commands_.empty_cgroup(state))
         findings['units'][unit] = {k:state.get(k) for k in ('ActiveState', 'SubState', 'MainPID', 'Result', 'ControlGroup')}

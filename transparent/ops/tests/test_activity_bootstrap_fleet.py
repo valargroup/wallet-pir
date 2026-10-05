@@ -25,7 +25,11 @@ class Fleet(unittest.TestCase):
                         ('input-staging',G.INPUTS),('source-staging',G.ROOT/'staging'))],
             inventory={'sha256':'1'*64},selected=[],selected_count=0,selected_sha256='2'*64,
             blocked=[],blocked_count=0,associated=[],associated_count=0,unattributed=[],unattributed_count=0,
-            processes=[],lock={'holders':[holder] if holder else []})
+            processes=[],lock={'holders':[holder] if holder else []},ancillary={
+                'kind':G.A.KIND,'pins_sha256':G.A.PINS_SHA256,'machine_id':G.PINS[host],
+                'boot_id':'00000000-0000-0000-0000-000000000001' if host in ('coordinator','router') else None,
+                'observed_unix':time.time(),'units':{u:{'status':'absent'} for u in G.A.UNITS} if host=='coordinator' else {},
+                'route':{'sha256':'1'*64,'bytes':10,'prototype_port_excluded':True} if host in ('coordinator','router') else None})
 
     def test_partial_duplicate_or_substituted_inventory_refuses(self):
         inventory=SimpleNamespace(hosts={h:{'machine_id':p} for h,p in G.PINS.items()},ssh={'mode':'pinned'})

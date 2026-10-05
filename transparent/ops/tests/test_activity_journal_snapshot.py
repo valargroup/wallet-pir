@@ -248,11 +248,11 @@ class FakeExecutor:
         failure = self.root/('hosts/%s.unreachable' % host)
         if failure.exists():
             raise S.RemoteError('%s: %s failed (exit 255): connection refused' % (host, op))
-        assert op == 'ownership_probe' and set(arguments) == {'roots', 'lock_path', 'machine_id_path', 'classes'}
+        assert op == 'ownership_probe' and set(arguments) == {'roots', 'lock_path', 'machine_id_path', 'classes','ancillary'}
         base = self.root/'hosts'/host
         local = lambda path: str(base/str(path).lstrip('/'))
         probe = S.host_helper.ownership_probe([local(r) for r in arguments['roots']], local(arguments['lock_path']),
-                                              local(arguments['machine_id_path']), arguments['classes'], proc=str(base/'proc'))
+                                              local(arguments['machine_id_path']), arguments['classes'], proc=str(base/'proc'),ancillary=arguments['ancillary'])
         # Names as the remote host reports them, in its own namespace.
         probe['records'] = {'/'+str(Path(k).relative_to(base)):v for k, v in probe['records'].items()}
         probe['files'] = [['/'+str(Path(k).relative_to(base)), size, kind] for k, size, kind in probe['files']]

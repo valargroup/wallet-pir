@@ -604,7 +604,28 @@ def readable_processes():
             return REAL_READLINK(path, *args, **kwargs)
         except PermissionError:
             raise FileNotFoundError(path) from None
-    return patch.object(Q.os, 'readlink', readlink)
+    class Fixture:
+        def start(self):
+            from contextlib import ExitStack
+            self.stack = ExitStack()
+            try:
+                self.stack.enter_context(patch.object(Q.os, 'readlink', readlink))
+                self.stack.enter_context(patch.object(Q, 'ancillary_findings', lambda: Q.A.observe('f'*32)))
+            except BaseException:
+                self.stack.close()
+                raise
+            return self
+
+        def stop(self):
+            self.stack.close()
+
+        def __enter__(self):
+            return self.start()
+
+        def __exit__(self, *exc):
+            return self.stack.__exit__(*exc)
+
+    return Fixture()
 
 
 def fake_processes(system):
@@ -973,6 +994,29 @@ class OwnerFindingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "'escaped', 1512286"):
                 Q.owner_findings(Survivor(), own_unit='transparent-activity-qualification-'+'0'*16, own_request='a'*64)
             self.assertNotIn(unit, Q.PRODUCT_UNITS)
+
+    def test_verified_ancillary_main_process_requires_later_command_and_unit_identity(self):
+        self.child.kill(); self.child.wait()
+        A=Q.A;unit=A.PROTOTYPE;pin=A.PINS[unit]
+        cap=dict(pin,status='verified',unit=unit,state='S',cgroup='/system.slice/'+unit,
+                 exe=str(self.root/'owned/native'),listeners=[['tcp','0100007F',8192]])
+        proof=dict(kind=A.KIND,pins_sha256=A.PINS_SHA256,machine_id=A.COORDINATOR,
+                   boot_id=pin['boot_id'],observed_unix=time.time(),
+                   units={unit:cap,A.LOAD:{'status':'absent'}},
+                   route={'sha256':'f'*64,'bytes':50,'prototype_port_excluded':True})
+        process=dict(cap,ppid=1,pgid=pin['pid'],session=pin['pid'],argv=[],cgroup='0::'+cap['cgroup'])
+        class Verified(FakeCommands):
+            listing=unit+' loaded active running x\n'
+            def state(self,name):
+                return {'ActiveState':'active','SubState':'running','MainPID':str(pin['pid']),
+                        'ControlGroup':cap['cgroup']}
+        with patch.object(Q,'ancillary_findings',lambda:proof),patch.object(Q,'process_table',lambda:{pin['pid']:process}):
+            result=Q.owner_findings(Verified())
+            self.assertTrue(result['units'][unit]['ancillary'])
+            process['command_sha256']='0'*64
+            with self.assertRaises(ValueError):Q.owner_findings(Verified())
+            process['command_sha256']=pin['command_sha256'];process['pid']+=1
+            with self.assertRaises(ValueError):Q.owner_findings(Verified())
 
     def test_incomplete_or_unknown_scope_refuses(self):
         self.child.kill(); self.child.wait()

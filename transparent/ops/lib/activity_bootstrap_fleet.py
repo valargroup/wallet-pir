@@ -22,6 +22,11 @@ try:
 except NameError:
     from wallet_pir_ops import owner_survey as S
 
+try:
+    A
+except NameError:
+    from wallet_pir_ops import ancillary_baseline as A
+
 ROOT = Path('/srv/transparent-activity/ops')
 INPUTS = ROOT/'input-staging'
 LOCK = Path('/run/lock/wallet-pir-production.lock')
@@ -129,13 +134,15 @@ def local(binding,host,*,holder=None,skip=None,recovery=None,deadline=None,sourc
         if source_skip and item.get('source')==source_skip.get('source_sha') and \
                 item.get('archive')==source_skip.get('sha256') and item['name']==source_skip['source_sha']+'.json':return None
         return 'unfinished retained bootstrap owner: '+item['name']
+    ancillary=A.observe(machine,tick=tick)
+    authorities=A.authorities(ancillary,machine)
     result=S.observe((('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
                       ('input-staging',INPUTS),('source-staging',ROOT/'staging')),
                      classes=CLASSES,baseline=BASELINE,binding=binding,lock_path=LOCK,holder=holder,
-                     tick=tick,select=select,refuse=refuse)
+                     tick=tick,select=select,refuse=refuse,ancillary=authorities)
     tick()
     result.update(bootstrap=KIND,machine_id=machine,observed_unix=time.time(),
-                  inventory_sha256=INVENTORY_SHA)
+                  inventory_sha256=INVENTORY_SHA,ancillary=ancillary)
     return result
 
 
@@ -156,6 +163,7 @@ def verify(value,binding,host,holder=None):
             len(value['selected'])==min(value['selected_count'],S.BOUNDS['listed']) and
             isinstance(value.get('selected_sha256'),str) and re.fullmatch('[0-9a-f]{64}',value['selected_sha256']),
             'bootstrap survey binding is partial, stale or foreign')
+    A.verify(value.get('ancillary'),PINS[host])
     require(value.get('blocked_count')==0 and value.get('blocked')==[] and
             value.get('associated_count')==0 and value.get('associated')==[] and
             value.get('unattributed_count')==0 and value.get('unattributed')==[] and value.get('processes')==[] and

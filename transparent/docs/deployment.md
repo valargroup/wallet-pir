@@ -1055,8 +1055,8 @@ before importing its pinned SSH transport in an isolated package namespace.
 There are exactly five named hosts with their reviewed machine pins. The survey
 uses the shared bounded owner reader across schema, host-action, input and source
 receipts, then associates live processes and descendants. It preserves the
-existing baseline list: historical prototype and load disposition still need
-separate review. A service name alone does not authorize an exception.
+existing baseline list plus the exact ancillary reader described below. A
+service name alone does not authorize an exception.
 
 Read-only preflight checks every host without creating a lock or owner. Stage
 first holds the coordinator production lock and persists its request, real
@@ -2105,9 +2105,10 @@ lists, are retained. A refusal names each survivor exactly: an escaped process
 by PID, start ticks, executable (including a ` (deleted)` suffix) and leading
 arguments, and a live unit by name, active state and main PID. A survivor that
 no retained record or product unit accounts for, such as a historical
-prototype service still running a deleted build from an owner root, refuses
-every preflight and effect. This owner never stops, kills or exempts it; root
-reviews and disposes of it separately. Reconciliation runs at preflight, every 60 seconds
+prototype service with unverified code or identity, refuses every preflight and
+effect. The exact ancillary reader below can attribute only its reviewed main
+process; it never authorizes descendants or overrides retained-owner association.
+Reconciliation runs at preflight, every 60 seconds
 during load, freshness and capacity, and immediately before and after each
 fault effect.
 
@@ -2965,3 +2966,34 @@ identities, complete map manifests and independent canonical anchors still pass
 before private and each public recovery proof. Bounded private worker control
 and HTTP observations are retained before a refusal. Initial candidate activation
 still uses its separate strict warm proof and unchanged deadlines.
+
+
+### Exact retained ancillary process attribution
+
+`ops/lib/wallet_pir_ops/ancillary_baseline.py` is a read-only, standard-library
+reader shared by source/upload bootstrap, native qualification, journal snapshot
+and deployed qualification. On the pinned coordinator it verifies the historical
+`transparent-activity-prototype-server-e47bdf79.service` and existing
+`transparent-5qps-continuous.service`. The prototype is fixed to its reviewed
+PID/start/boot identity; its loaded executable, raw command and unit fragment
+must match the immutable hashes in the reader. The load service can have a new
+PID/start after an owned restart, but requires the same reviewed executable,
+command and fragment. Neither unit can gain ordinary name-only baseline status.
+
+Active units require exact systemd identity, no drop-ins, no pending reload,
+zero automatic restarts and the exact main-process cgroup. Hashing and process
+observation are bounded and repeated identity checks reject changes during the
+read. The prototype must have only the loopback TCP listener on port 8192. Both
+coordinator and router must independently supply a fresh hash of their loaded
+Caddy configuration excluding that port. Raw command and configuration values
+are not retained. A stopped unit grants no process authority. Other hosts grant
+none; their machine pins and complete owner surveys remain mandatory.
+
+The outer owner guards still reject processes associated with retained owners,
+unattributed operational processes, descendants, partial or stale fleet replies
+and resource floors below 20 percent. An ancillary capsule authorizes only the
+exact surveyed main PID/start/executable/cgroup and command identity. It does
+not stop a service, change routes, qualify the historical prototype as the new
+candidate, or prove deployed freshness. The reader's 30-second bound is inside
+the existing host/fleet timing budgets, which remain unchanged. A full five-host
+locked survey must run freshly before any production effect.

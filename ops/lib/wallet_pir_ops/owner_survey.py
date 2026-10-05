@@ -37,6 +37,7 @@ from pathlib import Path
 import re
 import stat
 
+ANCILLARY_UNITS = ('transparent-activity-prototype-server-e47bdf79.service','transparent-5qps-continuous.service')
 VERSION = 1
 KIND = 'owner-process-survey'
 BOUNDS = {'entries': 100000, 'file_bytes': 16 << 20, 'json_bytes': 512 << 20, 'references': 100000,
@@ -463,7 +464,7 @@ def matches(item, classes):
     return bool(matched(item, classes))
 
 
-def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
+def operational(processes, excluded, classes, baseline, bounds=BOUNDS, ancillary=None):
     """Operational-class processes: bound to a baseline service, or unattributed.
 
     A match is bound only when systemd placed it in the cgroup of an exact
@@ -479,6 +480,16 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
             continue
         item = dict(item, **{'class': found})
         unit = unit_of(item.get('cgroup'), baseline)
+        if unit in ANCILLARY_UNITS:unit=None
+        retained = (ancillary or {}).get(item['pid'])
+        if retained is not None:
+            if retained['unit'] in ANCILLARY_UNITS and item.get('start_ticks')==retained['start_ticks'] and item.get('exe')==retained['exe'] and \
+                    item.get('cgroup','').strip() in (retained['cgroup'],'0::'+retained['cgroup']) and \
+                    item.get('command_sha256')==retained['command_sha256']:
+                bound.append(dict(item,unit=retained['unit'],exe_sha256=retained['exe_sha256'],ancillary=True))
+                continue
+            unattributed.append(item)
+            continue
         if unit is None:
             unattributed.append(item)
             continue
@@ -507,7 +518,7 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS):
 
 
 def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=None, marker=None, receiver=None,
-            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None):
+            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None, ancillary=None):
     """One complete read-only survey of this host; the raw dict is the evidence.
 
     `namespaces` is [(label, path)], `classes` {'names': [...], 'roots': [...]},
@@ -540,7 +551,7 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     if associated:
         reasons.append('live process associated with a retained owner record: '+', '.join(
             '%d %s %s' % (p['pid'], p['association'], p['record']) for p in associated[:4]))
-    bound, unattributed, problems = operational(processes, excluded, classes, baseline, bounds)
+    bound, unattributed, problems = operational(processes, excluded, classes, baseline, bounds, ancillary)
     reasons.extend(problems)
     if unattributed:
         reasons.append('live operational process not bound to a baseline service: '+', '.join(

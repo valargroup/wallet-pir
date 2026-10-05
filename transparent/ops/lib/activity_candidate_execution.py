@@ -71,6 +71,7 @@ import time
 import threading
 from types import SimpleNamespace
 
+from wallet_pir_ops import ancillary_baseline as A
 from wallet_pir_ops import durable, inherited_lock, owner_survey as S, schema_fence
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
@@ -818,16 +819,17 @@ def survey(request, identifier, nonce, host, *, skip=None, holder=None, path=Non
     def refuse(item):
         if item['status'] not in ('staged', 'reconciled') and item['name'] != '%s.json' % skip:
             return 'unfinished candidate execution owner: '+item['name']
+    ancillary=A.observe(machine,tick=tick)
     observed = S.observe((('schema', SCHEMA), ('host-actions', schema_fence.HOST_ACTIONS),
                           ('input-staging', Path(owners or OWNERS))),
                          classes=classes(), baseline=BASELINE_UNITS,
                          binding={'request_sha256': identifier, 'nonce': nonce, 'host': host, 'skip': skip},
                          lock_path=path, holder=holder, marker=MARKER, receiver=RECEIVE, tick=tick, bounds=bounds(),
-                         select=select, refuse=refuse)
+                         select=select, refuse=refuse,ancillary=A.authorities(ancillary,machine))
     reasons = observed['blocked']+reasons
     observed.update(kind=SURVEY_KIND, survey=S.KIND, request_sha256=identifier, nonce=nonce, host=host,
                     observed_unix=time.time(), observer=me(), skip=skip, machine_id=machine, source_sha=source,
-                    fence=fence, owners=observed.pop('selected'), blocked=[r[:300] for r in reasons[:MAX_LISTED]],
+                    fence=fence, ancillary=ancillary, owners=observed.pop('selected'), blocked=[r[:300] for r in reasons[:MAX_LISTED]],
                     blocked_count=observed['blocked_count']+len(reasons)-len(observed['blocked']),
                     status='blocked' if reasons else 'clear')
     return observed
@@ -845,6 +847,7 @@ def verify_survey(raw, request, identifier, nonce, host, skip, holder=None):
             value.get('nonce') == nonce and value.get('host') == host and value.get('skip') == skip and
             value.get('machine_id') == entry['machine_id'] and value.get('source_sha') == request['source_sha'] and
             value.get('euid') == C.OWNER, 'host survey identity is foreign, stale or partial: '+host)
+    A.verify(value.get('ancillary'),entry['machine_id'])
     require(value.get('status') == 'clear' and value.get('blocked') == [] and value.get('blocked_count') == 0 and
             value.get('fence') == 'clear' and value.get('processes') == [] and value.get('associated') == [] and
             value.get('associated_count') == 0 and value.get('unattributed') == [] and

@@ -14,7 +14,7 @@ import re
 import shlex
 import subprocess
 
-from wallet_pir_ops import hostlock, inherited_lock, schema_fence, owner_survey
+from wallet_pir_ops import hostlock, inherited_lock, schema_fence, owner_survey, ancillary_baseline
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HERE = Path(__file__).parent
@@ -28,11 +28,11 @@ HOST = importlib.util.module_from_spec(_host_spec); _host_spec.loader.exec_modul
 # Each prefixed component keeps its own globals; their similarly named helpers
 # and bounds must never overwrite those of the source receiver.
 EMBEDDED_FLEET = "import types\n"
-for name, path in (('_SURVEY', Path(owner_survey.__file__)), ('_FENCE', Path(schema_fence.__file__)),
+for name, path in (('_ANCILLARY',Path(ancillary_baseline.__file__)),('_SURVEY', Path(owner_survey.__file__)), ('_FENCE', Path(schema_fence.__file__)),
                    ('_BOOTSTRAP_FLEET', FLEET_PATH)):
     EMBEDDED_FLEET += name+"=types.ModuleType("+repr(name)+")\n"
     if name == '_BOOTSTRAP_FLEET':
-        EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.S=_SURVEY\n"
+        EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.S=_SURVEY\n_BOOTSTRAP_FLEET.A=_ANCILLARY\n"
     EMBEDDED_FLEET += "exec("+repr(path.read_text())+", "+name+".__dict__)\n"
 EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.FENCE=_FENCE.local_schema_fence\n"
 SURVEY_HELPER = EMBEDDED_FLEET+r"""

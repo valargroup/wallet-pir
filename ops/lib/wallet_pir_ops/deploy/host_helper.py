@@ -12,11 +12,17 @@ safe to repeat, which is what lets a rollback be re-run after an interruption.
 import hashlib
 import json
 import os
+from pathlib import Path
 import stat
 import subprocess
 import sys
 import urllib.error
 import urllib.request
+
+try:
+    _ANCILLARY
+except NameError:
+    from wallet_pir_ops import ancillary_baseline as _ANCILLARY
 
 CHUNK = 1 << 20
 SHOW = 'LoadState,ActiveState,SubState,MainPID,NeedDaemonReload,FragmentPath,DropInPaths'
@@ -241,7 +247,7 @@ def process_chain(proc, pid):
 
 
 def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', entry_limit=65536, byte_limit=64 << 20,
-                    process_limit=65536, fd_limit=1 << 20):
+                    process_limit=65536, fd_limit=1 << 20, ancillary=False):
     """Read-only owner and process evidence of one host, in one bounded pass.
 
     Returns the owner namespace inventory and records, the production lock's
@@ -253,6 +259,7 @@ def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', en
     Unreadable evidence is reported, and every bound refuses.
     """
     machine = bounded(machine_id_path, 4096).decode()
+    proof=_ANCILLARY.observe(machine.strip(),proc=Path(proc)) if ancillary else None
     records, files = owner_records(roots, entry_limit, byte_limit)
     try:
         with open(os.path.join(proc, 'sys/kernel/random/boot_id')) as handle:
@@ -316,6 +323,8 @@ def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', en
                     unknown.append(name)
                 entry[key] = marker in data
                 if name == 'cmdline':
+                    entry['command_sha256']=hashlib.sha256(data).hexdigest()
+                    entry['command_bytes']=len(data)
                     argv = [a.decode(errors='replace') for a in data.split(b'\0') if a]
                     entry['class_argv'] = any(matches(a, roots_class, tools) for a in argv[:1]) or \
                         any(a.startswith('/') and matches(a, roots_class, ()) for a in argv)
@@ -343,7 +352,7 @@ def ownership_probe(roots, lock_path, machine_id_path, classes, proc='/proc', en
         processes.append(entry)
     return {'machine_id': machine, 'records': records, 'files': files, 'lock_holders': holders, 'boot_unix': boot,
             'boot_id': boot_id,
-            'ticks': os.sysconf('SC_CLK_TCK'), 'processes': processes}
+            'ticks': os.sysconf('SC_CLK_TCK'), 'processes': processes,'ancillary':proof}
 
 
 OPERATIONS = {

@@ -54,6 +54,7 @@ import socket
 import ctypes
 import struct
 
+from wallet_pir_ops import ancillary_baseline as A
 from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_unit
 from wallet_pir_ops.deploy import descriptors, host_helper
 from wallet_pir_ops.deploy.remote import ProductionLock, RemoteError, SSHExecutor  # noqa: F401
@@ -751,9 +752,10 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
     roots = [str(schema_fence.SCHEMA_STATE), str(schema_fence.HOST_ACTIONS), str(schema_fence.INPUT_STAGING),
              str(SOURCE.parent/'staging')]
     probe = reader.probe(budget, roots=roots, lock_path=str(lock_path), machine_id_path=str(MACHINE_ID),
-                         classes={'roots':[str(r) for r in CLASS_ROOTS], 'tools':sorted(TOOLS)})
+                         classes={'roots':[str(r) for r in CLASS_ROOTS], 'tools':sorted(TOOLS)},ancillary=True)
     receipt = {'host':name, 'machine_id':machine_id, 'probe':probe}
     require(probe['machine_id'].strip() == machine_id, 'host %s machine identity differs from its pin' % name)
+    A.verify(probe.get('ancillary'),machine_id)
     records = probe['records']
     skip = skip_input[0] if skip_input and machine_id == skip_input[1] else None
     schema_fence.schema_mutation_fence(records.get, schema_fence.SCHEMA_STATE, skip_input=skip)
@@ -790,6 +792,9 @@ def fleet_host(name, machine_id, reader, budget, lock_path, *, skip_input=None):
         if pid in own or not (entry.get('class_exe') or entry.get('class_argv')):
             continue
         unit = Path(entry.get('cgroup') or '/').name
+        if unit in A.UNITS:
+            require(A.authorized(probe['ancillary'],machine_id,entry),'host %s ancillary process identity differs: PID %d'%(name,pid))
+            continue
         require(unit in SERVICES, 'host %s has an unattributable live mutation or native process: PID %d (%s)'
                 % (name, pid, entry.get('exe')))
     if isinstance(reader, RemoteHost):
