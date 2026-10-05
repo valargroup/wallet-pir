@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "source_sha": "435beb48601132626ed0fff88021dde3385e8071",
+  "owner": "7c798ec156b243b8bd2f2d96952a5bc5",
+  "prepare_plan": "passed",
+  "prepare_preflight": "passed",
+  "prepare_deploy": "failed",
+  "cause": "Corrected Caddy guard reloaded and public503 checks passed; initial authority HTTP connection refusal was treated as terminal instead of bounded startup readiness. Catch stopped coordinator writers.",
+  "raw_sha256": {
+    "prepare-deploy.log": "50f2c83d7b0708c920a1c3a84cc1c296b6ff035b6a9f67aacfff0efc5d35c5db",
+    "prepare-deploy.stderr": "dd73785e0cee9f5f467ca84aaf2722307f73b0abd012849a1074d05b4bce9ce8",
+    "prepare-preflight.log": "e7303a4a16ae9fc693050c28a8559cbb73ff8c57dca9adf6db0e15e4319f83c1",
+    "prepare-preflight.stderr": "95c0fa6d14385656be897d0093a7062fc2666555f0de329ad2db7f845720875c",
+    "prepare-plan.stderr": "c9c29a0349e47fdb06bd87671d96d3368dbee9d32a69542b42efde5162126502",
+    "prepare-plan.log": "e7303a4a16ae9fc693050c28a8559cbb73ff8c57dca9adf6db0e15e4319f83c1"
+  },
+  "original_rollback_and_deadline": "failed-not-relabelled",
+  "acceptance": "No recovery or v11 qualification accepted"
+}

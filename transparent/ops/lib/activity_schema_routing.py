@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import time
+import urllib.error
 import urllib.request
 
 from wallet_pir_ops import inherited_lock
@@ -32,6 +33,9 @@ H = module('routing_host', HERE/'lib/activity_schema_host.py')
 L = module('routing_fleet', HERE/'scripts/transparent-live-fleet.py')
 U = module('routing_upgrade', HERE/'scripts/upgrade-transparent-fleet.py')
 P = module('routing_recovery_proof', HERE/'lib/activity_recovery_proof.py')
+C = module('routing_candidate', HERE/'lib/activity_candidate.py')
+READER = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
+CANDIDATE_READER = str(C.path('transparent-loadtest'))
 LOOPBACK = 'http://127.0.0.1:18193'
 MAX_REPLY = 16 * 1024 * 1024
 
@@ -42,16 +46,30 @@ def require(ok, message):
 
 
 def read_json(url, expected_digest=None):
-    with urllib.request.urlopen(urllib.request.Request(url, headers={'Cache-Control':'no-cache'}), timeout=10) as response:
-        data = response.read(MAX_REPLY+1)
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={'Cache-Control':'no-cache'}), timeout=10) as response:
+            data = response.read(MAX_REPLY+1)
+    except urllib.error.HTTPError as error:
+        # The owning private product phase may retain this bounded context.
+        # Preserve the public exception text and never retry arbitrary refusals.
+        error.activity_body = error.read(2049)
+        error.close()
+        raise
     require(len(data) <= MAX_REPLY, 'service metadata exceeds bound')
     if expected_digest is not None:
         require(hashlib.sha256(data).hexdigest() == expected_digest, 'canonical manifest bytes differ from their map digest')
     return json.loads(data, object_pairs_hook=H.unique)
 
 
-def relay(router):
-    require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:8093', router), 'invalid private verification router')
+def warm_active(status, digest, *, continuous=False):
+    """Future preparation does not invalidate an attested current warm map."""
+    return (status.get('warm') is True and status.get('invalidated') is False and
+            status.get('active',{}).get('map_sha256') == digest and
+            (continuous or status.get('candidate') is None and status.get('preparing') is None))
+
+
+def relay(router, *, rewrite_host=True):
+    require(isinstance(router, str) and re.fullmatch(r'10\.142\.\d{1,3}\.\d{1,3}:(?:8080|8093)', router), 'invalid private verification router')
     require(ipaddress.ip_address(router.rsplit(':', 1)[0]) in ipaddress.ip_network('10.142.0.0/16'),
             'verification router is outside the reviewed private network')
     return '''\nhttp://127.0.0.1:18193 {
@@ -60,7 +78,7 @@ def relay(router):
         reverse_proxy 127.0.0.1:8094
     }
     handle {
-        reverse_proxy '''+router+'''
+        reverse_proxy '''+router+(' {\n            header_up Host {upstream_hostport}\n        }' if rewrite_host else '')+'''
     }
 }\n'''
 
@@ -88,7 +106,9 @@ def validate(plan):
                 H.HEX.fullmatch(entry['binary_sha256']) and H.HEX.fullmatch(entry['sample_sha256']), 'invalid recovery identities')
         # The current reader handles migrated stores and legacy unavailable
         # metadata. Never invoke an obsolete store reader for client rollback.
-        require(entry['binary'] == '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest',
+        # Rollback (v10) keeps the retained 12ce reader; a forward v11 proof may
+        # use the separately prepared candidate client, which the product binds.
+        require(entry['binary'] in ((READER, CANDIDATE_READER) if kind == 'v11' else (READER,)),
                 'recovery must use the retained compatible fat-LTO reader')
     return plan
 
@@ -135,10 +155,31 @@ class Routing:
 
     def identity(self, mutate=False):
         require(os.geteuid() == 0 and Path('/etc/machine-id').read_text().strip() == self.plan['machine_id'], 'routing requires pinned root coordinator')
-        require(Path(__file__).resolve().parents[3] == Path('/srv/transparent-activity/ops/sources')/self.plan['source_sha'],
-                'routing requires the immutable reviewed operations source')
+        self.source_identity(Path(__file__).resolve().parents[3])
         if mutate:
             inherited_lock.descriptors(required=True, path=H.LOCK)
+
+    def source_identity(self, source):
+        original = Path('/srv/transparent-activity/ops/sources')/self.plan['source_sha']
+        if source == original:
+            return
+        inherited_lock.descriptors(required=True, path=H.LOCK)
+        repair = getattr(self, 'recovery_program', None)
+        record = H.load(self.root.parent.with_suffix('.json'))
+        require(repair is not None and record.get('status') == 'rolling-back' and
+                record.get('id') == self.plan['transaction'] and
+                record.get('recipe', {}).get('source_sha') == self.plan['source_sha'] and
+                record.get('recovery_programs', [])[-1:] == [repair] and
+                record.get('events') and record['events'][-1].get('group') == 'rollback' and
+                record['events'][-1].get('status') == 'running',
+                'routing requires current rollback repair intent')
+        expected = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
+        require(source == expected and repair['wrapper'] == str(expected/'ops/scripts/wallet-pir-deploy.py'),
+                'routing repair source differs')
+        receipt = H.load(Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json'))
+        require(receipt['archive_sha256'] == repair['archive_sha256'], 'routing repair receipt differs')
+        stage = module('routing_repair_source', HERE/'lib/activity_source_stage_host.py')
+        stage.verify_receipt(receipt, source, repair['source_sha'], repair['archive_sha256'])
 
     @staticmethod
     def direct_fleet(path, read_only=False):
@@ -155,6 +196,21 @@ class Routing:
         require(H.checksum(value['path']) == value['sha256'], 'fleet configuration changed')
         return self.fleet_factory(Path(value['path']), read_only=read_only)
 
+    def partial_guard(self, host):
+        """Prove the owned public withdrawal without reopening an incomplete capture."""
+        require(host.role=='coordinator' and str(host.root)==self.plan['coordinator_baseline'] and
+                not (host.root/'complete.json').exists(), 'partial routing requires owning coordinator capture')
+        index=next(i for i,item in enumerate(host.plan['baseline']['files']) if item['path']=='/etc/caddy/Caddyfile')
+        saved=host.root/'files'/str(index)
+        original=saved.read_bytes()
+        require(hashlib.sha256(original).hexdigest()==self.plan['original_coordinator_sha256'],
+                'partial captured original routing identity changed')
+        current=Path('/etc/caddy/Caddyfile')
+        expected=(U.guard_coordinator(original.decode())+relay(self.plan['private_router'])).encode()
+        require(current.read_bytes()==expected and all(self.commands.metadata_status(url)==503 for url in H.PUBLIC_METADATA),
+                'partial public routing is not exact owned withdrawal')
+        return {'captured':H.B.entries(saved),'guarded':H.B.entries(current)}
+
     def original(self):
         baseline = Path(self.plan['coordinator_baseline'])
         if not (baseline/'complete.json').exists():
@@ -168,18 +224,53 @@ class Routing:
         require(hashlib.sha256(original).hexdigest() == self.plan['original_coordinator_sha256'], 'original routing identity changed')
         return original
 
-    def guarded(self):
-        return (U.guard_coordinator(self.original().decode())+relay(self.plan['private_router'])).encode()
+    def private_router(self):
+        value = self.plan['old_fleet']
+        require(H.checksum(value['path']) == value['sha256'], 'fleet configuration changed')
+        config = H.load(value['path'])
+        endpoint = config.get('internal_listen')
+        relay(endpoint)
+        require(endpoint.rsplit(':',1)[0] == self.plan['private_router'].rsplit(':',1)[0] ==
+                config.get('router_host'), 'captured private router identity changed')
+        return endpoint
 
-    def check_guard(self):
-        require(Path('/etc/caddy/Caddyfile').read_bytes() == self.guarded(), 'coordinator routing differs from owned maintenance state')
+    def canonical(self):
+        # The captured Enhance site already serves transparent metadata, but
+        # its default backend is not the transparent shard router. Bind only
+        # revision setup/query paths to the same captured private router.
+        text = self.original().decode()
+        endpoint = self.private_router() if getattr(self,'predecessor_continuous',False) else self.plan['private_router']
+        relay(endpoint)  # Closed private endpoint validation; no arbitrary proxy.
+        marker = 'handle @transparent_publication {'
+        require(text.count(marker)==1, 'canonical query routing lacks one owned transparent handler')
+        block = ('@transparent_queries path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{64}/(setup|query)/\n'
+                 '\thandle @transparent_queries {\n\t\treverse_proxy '+endpoint+
+                 ' {\n\t\t\theader_up Host {upstream_hostport}\n\t\t}\n\t}\n\t')
+        if '@transparent_queries' in text:
+            require(text.count(block)==1 and text.count('handle @transparent_queries {')==1,
+                    'captured transparent query handler differs from the bound router')
+            return text.encode()
+        return text.replace(marker,block+marker,1).encode()
+
+    def guarded(self, original_endpoint=False, legacy_header=False):
+        endpoint = self.plan['private_router']
+        if getattr(self,'predecessor_continuous',False) and not original_endpoint:
+            endpoint = self.private_router()
+        return (U.guard_coordinator(self.original().decode())+relay(endpoint,rewrite_host=not legacy_header)).encode()
+
+    def check_guard(self, allow_original=False):
+        allowed = [self.guarded()]
+        if allow_original and getattr(self,'predecessor_continuous',False):
+            allowed.extend([self.guarded(original_endpoint=True),self.guarded(legacy_header=True),
+                            self.guarded(original_endpoint=True,legacy_header=True)])
+        require(Path('/etc/caddy/Caddyfile').read_bytes() in allowed, 'coordinator routing differs from owned maintenance state')
         require(all(self.commands.metadata_status(url) == 503 for url in H.PUBLIC_METADATA), 'both public metadata origins must remain withdrawn')
 
     async def withdraw(self, kind):
         fleet = self.fleet(kind)
         original, guarded = self.original(), self.guarded()
         current = Path('/etc/caddy/Caddyfile').read_bytes()
-        require(current in (original, guarded), 'unrelated coordinator routing update requires reconciliation')
+        require(current in (original, guarded, self.canonical()), 'unrelated coordinator routing update requires reconciliation')
         # Guard the authority first. A router reload cannot expose metadata
         # until the only metadata authority has passed independent verification.
         U.apply_coordinator(guarded)
@@ -202,8 +293,12 @@ class Routing:
             await fleet.route(workers, assignment)
         self.check_guard()
 
-    async def live(self, kind, fleet):
-        mapping = self.fetch('http://127.0.0.1:8094/v1/shards')
+    async def live(self, kind, fleet, retained=False):
+        require(not retained or kind == 'v10' and getattr(self,'predecessor_continuous',False),
+                'retained proof is only for explicit predecessor preparation')
+        target = fleet.reconciliation_target() if retained else None
+        require(not retained or target is not None, 'retained fleet activation record is absent')
+        mapping = H.load(Path(target[1]['directory'])/'shards.json') if retained else self.fetch('http://127.0.0.1:8094/v1/shards')
         require(mapping.get('start_height') == 0 and mapping.get('shards'), 'authority is not a complete genesis publication')
         fleet.canonical.clear()
         require(await fleet.canonical_hash(0) == mapping.get('genesis_hash'), 'authority genesis differs from accepted node')
@@ -232,10 +327,23 @@ class Routing:
         manifests = set()
         for worker in workers:
             status = await fleet.control(worker, {'operation':'status'})
-            require(status.get('warm') is True and status.get('invalidated') is False and
-                    status.get('candidate') is None and status.get('preparing') is None and
-                    status.get('active', {}).get('map_sha256') == active['map_sha256'], 'worker does not attest the complete warm publication')
-            ready = self.fetch('http://'+worker['upstream']+'/v1/ready')
+            self.worker_observation(kind, worker, active['map_sha256'], 'control', status)
+            # Native warm/invalidated describe the active serving state. Future
+            # preparation is separate; every current map, HTTP, assignment,
+            # release and independently canonical revision check still follows.
+            require(warm_active(status, active['map_sha256'], continuous=kind == 'v11' or
+                    kind == 'v10' and getattr(self,'predecessor_continuous',False)),
+                    'worker does not attest the complete warm publication')
+            url = 'http://'+worker['upstream']+'/v1/ready'
+            try:
+                ready = self.fetch(url)
+            except urllib.error.HTTPError as error:
+                body = getattr(error, 'activity_body', b'')
+                self.worker_observation(kind, worker, active['map_sha256'], 'http',
+                    {'url':url, 'status':error.code, 'body':body[:2048].decode('utf-8', errors='replace'),
+                     'truncated':len(body)>2048})
+                raise
+            self.worker_observation(kind, worker, active['map_sha256'], 'http', ready)
             require(ready.get('ready') is True and ready.get('mode') == 'warm' and ready.get('map_sha256') == active['map_sha256'],
                     'HTTP readiness does not agree with native control')
             require(rows[worker['id']]['role'] == worker['role'] and rows[worker['id']]['upstream'] == worker['upstream'] and
@@ -267,7 +375,13 @@ class Routing:
                     'authority publication ranges are malformed or discontinuous')
             digest = entry['manifest_digest']
             require(isinstance(digest, str) and H.HEX.fullmatch(digest), 'invalid manifest digest')
-            manifest = self.fetch('http://127.0.0.1:8094/v1/shards/'+str(entry['shard_id'])+'/revisions/'+digest+'/manifest', digest)
+            if retained:
+                path = Path(request['directory'])/digest/'manifest.json'
+                require(path.is_file() and not path.is_symlink() and H.checksum(path) == digest,
+                        'retained manifest identity changed')
+                manifest = H.load(path)
+            else:
+                manifest = self.fetch('http://127.0.0.1:8094/v1/shards/'+str(entry['shard_id'])+'/revisions/'+digest+'/manifest', digest)
             require(manifest.get('schema') == 'transparent-shard-'+kind and not manifest.get('txid_display') and
                     all(manifest.get(k) == entry[k] for k in ('shard_id','start_height','end_height','geometry',
                                                              'parent_block_hash','terminal_block_hash','revision','sealed')) and
@@ -280,6 +394,15 @@ class Routing:
         lineage = {k:mapping.get(k) for k in ('genesis_hash','network','profile','range_envelope_version','start_height','seal')}
         return {'kind':kind, 'lineage':lineage, 'history':mapping['shards'], 'map_sha256':active['map_sha256'], 'assignment_sha256':assignment_sha,
                 'manifests':sorted(manifests), 'workers':observations}
+
+    def worker_observation(self, kind, worker, digest, channel, value):
+        """Retain bounded private evidence before a serving attestation refuses."""
+        data = H.encode({'source_sha':self.plan['source_sha'], 'transaction':self.plan['transaction'],
+                         'kind':kind, 'worker':worker['id'], 'expected_map_sha256':digest,
+                         'channel':channel, 'observation':value})
+        require(len(data) <= MAX_REPLY, 'worker observation exceeds bound')
+        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        H.B.atomic(self.root/('worker-observation-'+str(time.time_ns())+'.private.json'), data)
 
     def pins(self, kind):
         # Public binary identities only; derive v10 pins from independently
@@ -351,7 +474,7 @@ class Routing:
                     require(kind == 'v10', 'original router restoration is rollback-only')
                     restore_router()
                 # Keep the authority guarded through the router handoff.
-                U.apply_coordinator(self.original())
+                U.apply_coordinator(self.canonical())
                 await self.public(kind, fleet)
             except BaseException:
                 U.apply_coordinator(self.guarded())
@@ -370,11 +493,16 @@ class Routing:
         sample = H.load(input_['sample'])
         require(await fleet.canonical_hash(sample['anchor_height']) == sample['anchor_hash'], 'public recovery anchor changed')
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        output = self.root/(kind+'-public-recovery-'+str(time.time_ns()))
-        recovery = self.proof(input_['binary'], input_['binary_sha256'], input_['sample'], input_['sample_sha256'],
-                              'transparent-shard-'+kind, 'https://transparent-pir.valargroup.dev',
-                              'https://enhance-pir.valargroup.dev', output, self.plan['source_sha'])
-        require(recovery.get('status') == 'passed' and recovery.get('observations'), 'public HTTP recovery did not reopen nonempty stores')
+        recoveries = []
+        origins = ('https://transparent-pir.valargroup.dev', 'https://enhance-pir.valargroup.dev')
+        for index, origin in enumerate(origins):
+            output = self.root/(kind+'-public-recovery-'+str(index)+'-'+str(time.time_ns()))
+            recovery = self.proof(input_['binary'], input_['binary_sha256'], input_['sample'], input_['sample_sha256'],
+                                  'transparent-shard-'+kind, origin, origins[1-index], output, self.plan['source_sha'])
+            require(recovery.get('status') == 'passed' and recovery.get('observations'),
+                    'public HTTP recovery did not reopen nonempty stores through '+origin)
+            recoveries.append({'query_origin':origin, 'filter_origin':origins[1-index],
+                               'result':str(output/'result.json'), 'sha256':H.checksum(output/'result.json')})
         after = await self.live(kind, fleet)
         continuation(live, after)
         checked_map = {**after['lineage'], 'shards':after['history']}
@@ -383,7 +511,7 @@ class Routing:
                 self.fetch('http://127.0.0.1:8094/v1/shards') == checked_map,
                 'canonical origins or accepted anchor changed during public recovery')
         record = {'source_sha':self.plan['source_sha'], 'transaction':self.plan['transaction'], 'kind':kind,
-                  'verified_unix':time.time(), 'live':after, 'recovery_result':str(output/'result.json'),
-                  'recovery_sha256':H.checksum(output/'result.json'), 'sample_sha256':input_['sample_sha256']}
+                  'verified_unix':time.time(), 'live':after, 'recoveries':recoveries,
+                  'sample_sha256':input_['sample_sha256']}
         H.B.atomic(self.root/('verified-public-'+kind+'.json'), H.encode(record))
         return record

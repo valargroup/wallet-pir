@@ -1,11 +1,83 @@
 # Remaining work for the transparent PIR recovery beta
 
+Attempt 12 activated a fresh v11 publication after the archive roster correction,
+then canonical verification refused a worker warm-publication attestation.
+The failed native status body was not retained, so future preparation is a
+possible cause, not a confirmed historical diagnosis. Local SSH transport failed
+separately; the remote owner completed automatic cold rollback in 389.565 seconds.
+Independent private/both canonical native proofs, five reopened SQLite stores
+and owner exit checks passed. V11 serving verification now checks the exact
+warm, non-invalidated active map while a future candidate prepares, as the native
+status producer distinguishes these states. HTTP readiness, assignment, release,
+all workers and every independently canonical advertised anchor remain required.
+Control and HTTP observations are retained privately before refusal. Initial
+candidate prewarm, all phase bounds and all final qualification gates remain
+unchanged and open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt12-warm-refusal-cold-rollback-6f37db70.json).
+
+Attempt 11 passed candidate preparation and activation, then the closed startup
+guard refused a real publication error: the cloned predecessor roster pinned
+archive shards 0–76 while the v11 map requires 0–81. Native `shard-assign`
+confirmed the mismatch. Automatic cold rollback passed all five phases in
+390.229 seconds; independent private/both canonical native proofs and five
+reopened SQLite stores passed, and all owners exited. Service preparation now
+requires pinned archive ranges to cover the qualified map exactly, rejecting
+stale ranges, gaps, overlap, foreign shards, invalid endpoints and changed roles.
+The private generator derives this fleet's single owner's range from the
+checksum-verified qualified v11 map. Corrected cutover and all final gates remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt11-archive-roster-refusal-cold-rollback-7bdbcbb9.json).
+
+Attempt 10 passed candidate preparation and independent worker activation, but
+canonical verification failed with HTTP 503. Automatic cold rollback passed in
+379.941 seconds; private and each canonical native/query/SQLite proof passed,
+and all owners exited. The historical response endpoint/body were not retained;
+controller startup reconciliation is an inference. A closed startup observation
+now permits only the native controller's exact local reconciliation refusal,
+with pinned unit/PID/binary, no restart/OOM, 20% resource floors and both public
+origins still withdrawn. It is bounded to 300 seconds inside the unchanged
+canonical phase; all full canonical gates still follow. Actual corrected cutover
+and all final qualification remain open.
+[Evidence](../evidence/activity-metadata-2026-09-30/attempt10-canonical-refusal-cold-rollback-9164c2c7.json).
+
+Attempt 9 completed the remote v11 cutover and exact private/both canonical
+query proofs, but continuous publication failed: operations inputs used `v2`
+instead of the native profile name `zcash-transparent-range-v2`. Load remained
+paused with zero completed queries. Explicit ordinary cold rollback passed in
+377.309 seconds; private and both canonical queries and reopened SQLite stores
+passed, and all remote owners exited. The forward SSH reset and subsequent local
+rollback transport timeout remain failures, separately reconciled against the
+remote journal. The service-input guard now binds the canonical profile from the
+reviewed publication geometry and rejects shorthand/foreign names. Corrected
+redeployment and every final sustained/freshness/capacity/lifecycle gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
+
+
 Updated 2026-09-28. This owns milestone definitions, execution order and the
 authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [Status](status.md) summarizes accepted
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
 
 ## Activity metadata v3/v11 delivery (2026-09-30)
+
+Attempt 7 failed the candidate cache reader, then the locked wrapper completed
+actual automatic cold rollback in 376.654 seconds. Correct native readiness
+persistence counters before the next guarded preparation attempt. The transaction is
+`rolled-back`; private and each canonical encrypted-query/reopened SQLite proofs
+passed. Earlier cold failures remain failed. Complete bounded locked candidate
+runtime-cache preparation before another independent activation attempt; a
+successful v11 redeployment and every sustained/lifecycle acceptance gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json).
+
+Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
+started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10
+baselines were captured, but the coordinator timed out waiting for the archive
+capture's repeated native verification. Remote owners subsequently completed and
+exited. Recovery restored v10 bytes and services, then failed warm verification:
+authority had restarted publication before workers were proved. Public origins
+remain guarded; the transaction is `rollback-failed`. The 15-minute recovery
+acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
+preserves original recipe/baseline bytes and all failures. Its focused check
+passed; source staging and actual repaired recovery are still pending. This is
+not a completed v11 deployment.
 
 Owner: this implementation chat. Scope is wallet-pir and zakura-core/wallet-libraries;
 Vizor, sending and distribution remain excluded. [Starting observations](../evidence/activity-metadata-2026-09-30/README.md).
@@ -40,6 +112,24 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   and final receipt revalidation. Actual worker host templates bind refreshed
   live rollback state and candidate inputs. Coordinator/router plans, complete
   recovery samples and the full reviewed recipe remain open; no live service transition occurred.
+  Subsequent bounded SSH qualification passed on both recent workers, archive
+  and router at `ccbfd35f`, after reproducing and correcting OpenSSH's closing
+  of inherited descriptors. The keeper retained coordinator locks across parent
+  exit; every remote lock and interruption fence passed before reconciliation.
+  [Evidence](../evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
+  is scoped to this boundary. Complete nonempty samples and coordinator inputs
+  are ready. The user authorized proceeding with pending operations CI while retaining
+  passing native CI and exact provenance; finish fresh source staging and actual
+  recipe/preflight after the reproduced bytecode integrity defect, then cut over.
+  Source preflight refused worker `shard-control` clients issued by the running
+  replica reconciler. Reconciler control attribution
+  ([deployment](deployment.md#immutable-operation-source-staging-over-ssh)) is fixture-tested only. Before
+  relying on it, check read-only on the coordinator that the reconciler snapshot is
+  `verified` with the root-observed fragment/script pins, then rerun source
+  preflight and keep the private evidence. A refusal whose controls are carried
+  by the control-session master, or outlive their client, needs a separate
+  reviewed design; candidate execution and deployed qualification surveys do not
+  use this attribution.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency
@@ -153,7 +243,43 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   Earlier full CI found stale operator fixtures and three reference-wallet lint
   findings; the fixture refresh and equivalent lint corrections passed focused
   operator, deployed-jq contract and Clippy checks. Repaired full CI remains open.
+- [ ] Qualify and prepare the changed-native candidate `c3c66b9b` through the [candidate path](deployment.md#changed-native-activity-candidate-c3c66b9b).
+  Source guards and focused fixture checks are [retained](../evidence/activity-metadata-2026-10-04/README.md).
+  The following remain open:
+  - Stage the reviewed operations source.
+  - Transfer the three retained archives with `schema-candidate-upload-*`. The
+    path exists in source; no archive has been transferred.
+  - Run candidate bundle plan, preflight and stage from the retained CI 37173250956
+    bundles and supplemental archive.
+  - Take an immutable journal snapshot with `schema-snapshot-*` for the gates
+    that read the journal. The path exists in source; no snapshot has been
+    taken. Before it, root must:
+    - bind the live controller identity and accept the controller downtime;
+    - choose all six bounds, the sidecar policy and the coverage heights;
+    - check the live sidecar count and bytes against the disk floor.
+  - Produce the four candidate-bound artifact-verification, native-certificate,
+    chain-oracle and CI reports from actual runs and retained raw results.
+  - Stage and natively verify the candidate worker pair on every worker.
+  - Run version-2 product preflight, including installed setups on both recent
+    replicas, warm serving proof and the unchanged rollback to captured
+    predecessor executables.
+  The historical 12ce publication, assignment, samples and receipts stay
+  unchanged; no floor or deadline changes.
 - [ ] Complete broad verification, six hours and 300 new blocks, nine hours of 8/20/40-wallet capacity runs, and controlled lifecycle/recovery exercises.
+  The closed [deployed qualification](deployment.md#deployed-candidate-qualification)
+  interface exists in source with focused fixture tests; nothing has run. The
+  following remain open:
+  - Review the eight-wallet composition, the owner memory budgets and the
+    fixed timing bounds.
+  - After the candidate transaction commits, run staged load, then freshness,
+    then 3+ trials per level, then the six faults, one request at a time.
+  - Close the missing-assurance gaps the interface records: quality-alert
+    shadow state, cache-corruption injection, and an owner-run probe of the
+    rolled-back v10 service. Heavy and interrupted-store continuation use the
+    existing `--scenario-worker` protocol, but stay unqualified until real runs
+    are reviewed.
+  - An owner killed during a fault effect leaves the unit stopped and fenced
+    until `schema-qualify-reconcile` restores it.
 - [ ] Retain an acceptance decision and capacity recommendation at no more than 50% of measured sustainable completed-sync throughput.
 
 ## Server txid display stage (2026-10-01)

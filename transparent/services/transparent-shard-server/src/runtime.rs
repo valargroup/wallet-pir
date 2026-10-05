@@ -225,6 +225,30 @@ impl Iterator for RowCoefficients<'_> {
     }
 }
 
+/// Geometries whose runtime hint skips trailing zero blocks and is computed
+/// by [`native::batched_hint`]: the recent tails rebuilt at every publication.
+/// Every other geometry, the archives included, keeps the reference product
+/// over every block.
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
+    &transparent_shard::layout::RECENT_8K,
+    &transparent_shard::layout::RECENT_4K,
+    &transparent_shard::layout::RECENT_4K_8K,
+];
+
+fn uses_batched_hint(geometry: &Geometry) -> bool {
+    BATCHED_HINT_GEOMETRIES.contains(&geometry)
+}
+
+/// Leading `D`-row blocks of a `table_rows`-row plaintext that hold any
+/// nonzero byte, and at least one.
+fn used_blocks(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
+    let last = rows
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |at| at / row_bytes);
+    (last / native::D + 1).min(table_rows / native::D)
+}
+
 /// One segment of one shard revision's table, prepared to answer queries.
 pub struct TableRuntime {
     pub(crate) preprocessed: Vec<NativePreprocessed>,
@@ -313,9 +337,25 @@ impl TableRuntime {
         // database, exactly lifted.
         let padded = server.db_rows_padded();
         let db = server.db();
-        let hint = native::hint(&profile.masks, profile.rows, profile.cols, |col| {
-            &db[col * padded..col * padded + profile.rows]
-        })?;
+        let hint = if uses_batched_hint(shared.geometry) {
+            // Zero rows add nothing to `masks * database`, so trailing blocks
+            // of them are left out of the product. A growing tail's page table
+            // fills from its first row and is mostly empty for much of its
+            // life; the hint, and every byte published from it, is the same.
+            // The batched hint computes the reference's exact integers several
+            // times faster.
+            let used = used_blocks(rows, profile.row_bytes, profile.rows);
+            native::batched_hint::hint(
+                &profile.masks[..used],
+                used * native::D,
+                profile.cols,
+                |col| &db[col * padded..col * padded + used * native::D],
+            )?
+        } else {
+            native::hint(&profile.masks, profile.rows, profile.cols, |col| {
+                &db[col * padded..col * padded + profile.rows]
+            })?
+        };
         tracing::debug!(
             geometry = shared.geometry.name,
             table = shared.table.as_str(),
@@ -915,6 +955,137 @@ mod tests {
             rebuilt,
             TableRuntime::build(&shared, &rows).unwrap().public_params
         );
+    }
+
+    /// Leaving trailing zero blocks out of the hint publishes exactly the
+    /// masks the whole-table product does: an empty table, content ending
+    /// on either side of a block boundary, and content in the last row.
+    #[test]
+    fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
+        let shared =
+            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+        let profile = &shared.profile;
+        let full = |rows: &[u8]| {
+            let columns: Vec<Vec<u16>> = (0..profile.cols)
+                .map(|col| {
+                    (0..profile.rows)
+                        .map(|row| native::row_coefficient(rows, profile.row_bytes, row, col))
+                        .collect()
+                })
+                .collect();
+            let hint =
+                native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
+            native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap()
+        };
+        let bytes = profile.rows * profile.row_bytes;
+        for (filled, expected_blocks) in [
+            (0, 1),
+            (1, 1),
+            (native::D * profile.row_bytes, 1),
+            (native::D * profile.row_bytes + 1, 2),
+            (bytes, 2),
+        ] {
+            let mut rows = vec![0u8; bytes];
+            for (i, byte) in rows[..filled].iter_mut().enumerate() {
+                *byte = (i.wrapping_mul(2_654_435_761) >> 7) as u8 | 1;
+            }
+            assert_eq!(
+                used_blocks(&rows, profile.row_bytes, profile.rows),
+                expected_blocks
+            );
+            assert_eq!(
+                TableRuntime::build(&shared, &rows).unwrap().public_params,
+                full(&rows),
+                "{filled} leading bytes"
+            );
+        }
+    }
+
+    /// The batched hint changes nothing a client or the disk cache sees. At
+    /// the deployed geometry, for a full directory and a partly filled page
+    /// table, the runtime publishes the masks of one prepared from the
+    /// reference hint over every block, answers byte for byte as it does, and
+    /// decodes to the selected row.
+    #[test]
+    fn the_batched_hint_runtime_is_the_reference_runtime() {
+        for (table, filled) in [(Table::Directory, 8_192), (Table::Pages, 5_000)] {
+            let shared = SharedParams::build(&RECENT_8K, table).unwrap();
+            let profile = &shared.profile;
+            let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+            for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
+                *byte = (i.wrapping_mul(2_654_435_761) >> 9) as u8;
+            }
+            let fast = TableRuntime::build(&shared, &rows).unwrap();
+            let server = database_server(
+                &shared,
+                (0..profile.rows * profile.cols).map(|i| {
+                    native::row_coefficient(
+                        &rows,
+                        profile.row_bytes,
+                        i / profile.cols,
+                        i % profile.cols,
+                    )
+                }),
+                false,
+            );
+            let (padded, db) = (server.db_rows_padded(), server.db());
+            let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                &db[c * padded..c * padded + profile.rows]
+            })
+            .unwrap();
+            let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+            let reference = TableRuntime::assemble(server, preprocessed).unwrap();
+            assert_eq!(fast.public_params, reference.public_params);
+            assert_eq!(fast.public_params_epoch, reference.public_params_epoch);
+            let binding = [7u8; 8];
+            for selected in [0, filled - 1, profile.rows - 1] {
+                let (secret, upload) = profile.prepare(selected).unwrap();
+                let mut body = binding.to_vec();
+                body.extend(upload);
+                let answer = fast.evaluate(&shared, binding, &body).unwrap();
+                assert_eq!(answer, reference.evaluate(&shared, binding, &body).unwrap());
+                let row = profile
+                    .decode(&secret, &fast.public_params, &answer[16..])
+                    .unwrap();
+                let at = selected * profile.row_bytes;
+                assert_eq!(
+                    row,
+                    &rows[at..at + profile.row_bytes],
+                    "{table:?} row {selected}"
+                );
+            }
+        }
+    }
+
+    /// Only the recent geometries take the batched hint, and their deployed
+    /// masks are within its capacity, so it never silently falls back there.
+    /// Both archive geometries, and any geometry added later, keep the
+    /// reference product over every block.
+    #[test]
+    fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
+        use transparent_shard::layout::{ARCHIVE_32K, PROFILES};
+        for geometry in PROFILES {
+            assert_eq!(
+                uses_batched_hint(geometry),
+                geometry.name.starts_with("recent-"),
+                "{}",
+                geometry.name
+            );
+        }
+        assert!(!uses_batched_hint(&ARCHIVE_32K));
+        assert!(!uses_batched_hint(&ARCHIVE_WIDE));
+        assert!(uses_batched_hint(&RECENT_8K));
+        for geometry in BATCHED_HINT_GEOMETRIES {
+            for table in [Table::Directory, Table::Pages] {
+                let shared = SharedParams::build(geometry, table).unwrap();
+                assert_eq!(
+                    native::batched_hint::path(&shared.profile.masks).unwrap(),
+                    native::batched_hint::Path::Batched,
+                    "{} {table:?}",
+                    geometry.name
+                );
+            }
+        }
     }
 
     /// Every registry geometry must have parameters and a reservation that

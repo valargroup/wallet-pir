@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "gate": "focused-guarded-start-readiness",
+  "owner": "2936f6cfc60247e0837f353b3d7ce15e",
+  "base_sha": "435beb48601132626ed0fff88021dde3385e8071",
+  "seconds": 17.711798708071,
+  "inputs": {
+    "transparent/ops/lib/activity_schema_reconcile.py": "9e81028a56156bba0c1ff801641df837b194f098c20d78893e2f71de92d76f6a",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "bb0170273c5522b0cd76b4b251f5b7fa7e05fec59a0a980de6e1d2115863b770"
+  },
+  "log_sha256": "de12ca251207191a8a004133f3073d67a10da3a70f622813a8514f83c7cd914b",
+  "limit": "Focused evidence; actual startup/recovery still required; no CI pass claimed"
+}

@@ -316,6 +316,134 @@ STAGE_SPEC.loader.exec_module(source_stage)
 
 
 class SourceStageTests(unittest.TestCase):
+    def failed_promotion(self, after_archive=False):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        data=self.archive();root=self.root.resolve()/'ops';real=source_host.os.rename
+        kernel=SimpleNamespace(process=lambda pid:{'pid':pid,'start_ticks':123,'state':'S'},
+                               boot_id=lambda:'00000000-0000-0000-0000-000000000001')
+        fleet=SimpleNamespace(S=kernel)
+        def rename(original,destination):
+            if str(destination).endswith('.tar.gz'):
+                if after_archive:real(original,destination)
+                raise OSError('fictional promotion loss')
+            return real(original,destination)
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',fleet,create=True),patch.object(source_host.os,'rename',side_effect=rename):
+            with self.lock,self.assertRaises(OSError):
+                source_host.stage(self.request,self.lock,io.BytesIO(data),root,fleet_proof={'fictional':True})
+        return root,data
+
+    def reconcile_failed_source(self,root):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        fleet=SimpleNamespace(S=SimpleNamespace(process=lambda pid:None,
+                             boot_id=lambda:'00000000-0000-0000-0000-000000000001'))
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',fleet,create=True),self.lock:
+            return source_host.reconcile_source(self.request,self.lock,{'lease_request_sha256':'c'*64},root)
+
+    def test_failed_promotion_quarantines_verified_source_and_preserves_archive_bytes(self):
+        for after_archive in (False,True):
+            # Each promotion failure uses an independent private namespace.
+            self.request['source_sha']=('a' if after_archive else 'b')*40
+            root,data=self.failed_promotion(after_archive)
+            receipt=root/'staging'/(self.request['source_sha']+'.json')
+            original=receipt.read_bytes();owner=json.loads(original)
+            self.assertEqual(owner['status'],'failed');self.assertEqual(set(owner['files']),set(self.files))
+            result=self.reconcile_failed_source(root)
+            self.assertFalse(receipt.exists());self.assertEqual(Path(result['retained'][0]).read_bytes(),original)
+            quarantined=Path(result['quarantined_source'])
+            self.assertFalse((root/'sources'/self.request['source_sha']).exists())
+            for name,raw in self.files.items():self.assertEqual((quarantined/name).read_bytes(),raw)
+            archive=Path(result['quarantined_archive']) if after_archive else Path(result['partial'])/'source.tar.gz'
+            self.assertEqual(archive.read_bytes(),data)
+            self.assertTrue(Path(result['recovery_intent']).exists())
+
+    def test_source_recovery_refuses_live_or_incomplete_kernel_identity(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        root,data=self.failed_promotion(True);source=self.request['source_sha']
+        receipt=root/'staging'/(source+'.json');original=receipt.read_bytes();owner=json.loads(original)
+        kernel=SimpleNamespace(process=lambda pid:{'pid':pid,'start_ticks':owner['process_start'],'state':'S'},
+                               boot_id=lambda:owner['boot_id'])
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',SimpleNamespace(S=kernel),create=True),self.lock:
+            with self.assertRaisesRegex(ValueError,'remains alive'):
+                source_host.reconcile_source(self.request,self.lock,{'lease_request_sha256':'c'*64},root)
+        self.assertEqual(receipt.read_bytes(),original)
+        owner['boot_id']=None;receipt.write_text(json.dumps(owner))
+        with self.assertRaisesRegex(ValueError,'identity is incomplete'):self.reconcile_failed_source(root)
+        self.assertTrue((root/'sources'/source).exists())
+        self.assertFalse(list((root/'staging').glob('*.recovery-*')))
+
+    def test_source_quarantine_resumes_after_rename_and_refuses_drift_or_missing_manifest(self):
+        from unittest.mock import patch
+        root,data=self.failed_promotion(True);source=self.request['source_sha']
+        target=root/'sources'/source;receipt=root/'staging'/(source+'.json');original=receipt.read_bytes()
+        file=target/'ops/scripts/wallet-pir-deploy.py';file.write_bytes(b'drift')
+        with self.assertRaisesRegex(ValueError,'checksum'):self.reconcile_failed_source(root)
+        self.assertEqual(receipt.read_bytes(),original);self.assertTrue(target.exists())
+        file.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
+        owner=json.loads(original);owner.pop('files');receipt.write_text(json.dumps(owner))
+        with self.assertRaisesRegex(ValueError,'pre-promotion'):self.reconcile_failed_source(root)
+        receipt.write_bytes(original)
+        rename=source_host.os.rename
+        def crash(original,destination):
+            rename(original,destination)
+            if Path(original)==target:raise OSError('fictional post-rename loss')
+        with patch.object(source_host.os,'rename',side_effect=crash),self.assertRaises(OSError):
+            self.reconcile_failed_source(root)
+        self.assertTrue(receipt.exists());self.assertFalse(target.exists())
+        result=self.reconcile_failed_source(root)
+        self.assertEqual(Path(result['retained'][0]).read_bytes(),original)
+        self.assertEqual(Path(result['quarantined_archive']).read_bytes(),data)
+
+    def test_repair_retains_only_exact_compiler_proved_bytecode(self):
+        import py_compile
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        before = cache.stat()
+        raw = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        with self.lock:
+            result = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+            again = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertEqual(result, again)
+        retained = target.parent.parent/'diagnostic-bytecode'/('transparent-schema-test-'+self.request['source_sha'])
+        saved = retained/'files'/cache.relative_to(target)
+        self.assertEqual(saved.read_bytes(), raw)
+        self.assertEqual(saved.stat().st_ino, before.st_ino)
+        self.assertEqual(payload.read_bytes(), self.files['ops/lib/probe.py'])
+        self.assertFalse(cache.exists())
+        source_host.verify_receipt(receipt, target, self.request['source_sha'], self.request['sha256'])
+
+    def test_bytecode_retention_refuses_foreign_code_and_payload_drift(self):
+        import py_compile
+        import marshal
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        original = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        cache.write_bytes(original[:16]+marshal.dumps(compile('value = 99', str(payload), 'exec')))
+        with self.lock, self.assertRaisesRegex(ValueError, 'does not compile'):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+        cache.write_bytes(original)
+        payload.write_bytes(b'value = 99\n')
+        with self.lock, self.assertRaises(ValueError):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -424,9 +552,13 @@ class SourceStageTests(unittest.TestCase):
             self.stage(data)
         path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
         (target/'unreviewed.py').write_bytes(b'extra')
-        with self.assertRaisesRegex(ValueError, 'file set changed'):
+        with self.assertRaisesRegex(ValueError, r'file set changed \(1 unexpected, 0 missing\)'):
             self.stage(data)
         (target/'unreviewed.py').unlink()
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, r'file set changed \(0 unexpected, 1 missing\)'):
+            self.stage(data)
+        path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
         (target/'outside').symlink_to(self.root, target_is_directory=True)
         with self.assertRaisesRegex(ValueError, 'symlink'):
             self.stage(data)
@@ -496,11 +628,15 @@ class SourceStageTests(unittest.TestCase):
         machine = self.root/'machine-id'
         machine.write_text(self.request['machine_id'])
         lock_path = self.root/'production.lock'
-        # Only fixture paths/UID differ from the exact transmitted helper.
+        # This fixture tests the real lock/extraction; fleet decisions are mocked
+        # explicitly and exercised independently in the bootstrap-fleet suite.
         prefix = Path(source_stage.hostlock.__file__).read_text()
         prefix += '\n'+Path(source_stage.schema_fence.__file__).read_text()
         prefix += '\nPinnedHostLock.MACHINE_ID = Path('+repr(str(machine))+')\n'
         prefix += 'PinnedHostLock.ROOT_UID = os.geteuid()\n'
+        prefix += 'from types import SimpleNamespace\n'
+        prefix += '_BOOTSTRAP_FLEET=SimpleNamespace(PINS={"coordinator":'+repr(self.request['machine_id'])+'}, leased=lambda r,l,v,c,operation,s:operation({}), S=SimpleNamespace(process=lambda p:{"pid":p,"start_ticks":1},boot_id=lambda:"00000000-0000-0000-0000-000000000001"))\n'
+        prefix += '_BOOTSTRAP_REMOTE_CODE="fictional isolated lock fixture"\n'
         helper = source_stage.HELPER_PATH.read_text().replace(
             "STAGE_ROOT = Path('/srv/transparent-activity/ops')", 'STAGE_ROOT = Path('+repr(str(self.root/'ops'))+')').replace(
             "LOCK_PATH = Path('/run/lock/wallet-pir-production.lock')", 'LOCK_PATH = Path('+repr(str(lock_path))+')')

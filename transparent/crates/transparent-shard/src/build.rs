@@ -166,7 +166,21 @@ pub fn bucket_for(salt: &[u8; 32], script: &[u8], rows: u64) -> u64 {
 
 /// Both candidate rows for a script in this shard.
 pub fn candidate_rows(shard_id: u64, script: &[u8], rows: u64) -> [u64; DIRECTORY_CHOICES] {
-    std::array::from_fn(|choice| bucket_for(&bucket_salt(shard_id, choice), script, rows))
+    candidates(&bucket_salts(shard_id), script, rows)
+}
+
+/// A shard's bucket salts, for deriving many scripts' candidate rows.
+fn bucket_salts(shard_id: u64) -> [[u8; 32]; DIRECTORY_CHOICES] {
+    std::array::from_fn(|choice| bucket_salt(shard_id, choice))
+}
+
+/// [`candidate_rows`] under salts already derived for the shard.
+fn candidates(
+    salts: &[[u8; 32]; DIRECTORY_CHOICES],
+    script: &[u8],
+    rows: u64,
+) -> [u64; DIRECTORY_CHOICES] {
+    std::array::from_fn(|choice| bucket_for(&salts[choice], script, rows))
 }
 
 /// Descending encoded directory size, with raw script bytes breaking ties.
@@ -205,7 +219,7 @@ pub fn build_shard(
         .map_err(BuildError::Invalid)?;
     // Group by script, in a sorted map so the walk order is the scripts' own
     // order rather than a hash map's.
-    let mut by_script: BTreeMap<Vec<u8>, Vec<TransparentEvent>> = BTreeMap::new();
+    let mut by_script: BTreeMap<&[u8], Vec<TransparentEvent>> = BTreeMap::new();
     for (script, event) in events {
         if event.height() < start_height as u32 || event.height() > end_height as u32 {
             return Err(BuildError::Invalid(format!(
@@ -213,10 +227,7 @@ pub fn build_shard(
                 event.height()
             )));
         }
-        by_script
-            .entry(script.as_slice().to_vec())
-            .or_default()
-            .push(*event);
+        by_script.entry(script.as_slice()).or_default().push(*event);
     }
 
     // The filter covers every element, including scripts the private tables
@@ -225,7 +236,7 @@ pub fn build_shard(
     // outside coverage.
     let filter_elements: Vec<ScriptBytes> = by_script
         .keys()
-        .map(|script| ScriptBytes::new(script.clone()))
+        .map(|script| ScriptBytes::new(script.to_vec()))
         .collect();
     let key = ShardKey::derive(
         profile,
@@ -247,20 +258,19 @@ pub fn build_shard(
     let mut total_events = 0u64;
     let mut demand = PackedDemand::default();
     let mut histories = BTreeMap::new();
-    for (script, history) in &by_script {
+    for (script, mut history) in by_script {
         total_events += history.len() as u64;
         if script.len() > MAX_SCRIPT_BYTES {
             excluded_scripts += 1;
             continue;
         }
-        let mut history = history.clone();
         history.sort_by_key(TransparentEvent::sort_key);
         let mut summary = HistoryLayout::default();
         for event in &history {
             summary.push(*event, INLINE_EVENTS);
         }
         demand.shift(&HistoryLayout::default(), &summary);
-        histories.insert(script.as_slice(), (history, summary));
+        histories.insert(script, (history, summary));
     }
     let indexed: Vec<&[u8]> = histories.keys().copied().collect();
     let (tag_salt_counter, salt) =
@@ -419,6 +429,7 @@ pub fn place_scripts(
     if let Some(i) = sizes.iter().position(|size| *size == 0 || *size > capacity) {
         return Err(hex::encode(scripts[i]));
     }
+    let salts = bucket_salts(shard_id);
     let mut segments = 1;
     loop {
         let rows = (rows_per_segment * u64::from(segments)) as usize;
@@ -427,15 +438,14 @@ pub fn place_scripts(
         let mut assignment = vec![u32::MAX; scripts.len()];
         let mut overflowed = None;
         for (index, script) in scripts.iter().enumerate() {
-            let candidates = candidate_rows(shard_id, script, rows as u64);
-            let [a, b] = [candidates[0] as usize, candidates[1] as usize];
+            let [a, b] = candidates(&salts, script, rows as u64).map(|row| row as usize);
             let direct = if used[a] <= used[b] { [a, b] } else { [b, a] };
             let row = direct
                 .into_iter()
                 .find(|row| used[*row] + sizes[index] <= capacity)
                 .or_else(|| {
                     relocate(
-                        shard_id,
+                        &salts,
                         scripts,
                         sizes,
                         &mut occupants,
@@ -484,11 +494,12 @@ pub fn choice_table(
     assignment: &[u32],
     rows: u64,
 ) -> Result<crate::choice::ChoiceTable, crate::choice::ChoiceError> {
+    let salts = bucket_salts(shard_id);
     let entries: Vec<(&[u8], u8)> = scripts
         .iter()
         .zip(assignment)
         .map(|(script, row)| {
-            let [first, _] = candidate_rows(shard_id, script, rows);
+            let [first, _] = candidates(&salts, script, rows);
             (*script, u8::from(u64::from(*row) != first))
         })
         .collect();
@@ -507,8 +518,9 @@ pub fn verify_choice(
     rows: u64,
     row_of: impl Fn(usize) -> u64,
 ) -> Option<usize> {
+    let salts = bucket_salts(shard_id);
     scripts.iter().enumerate().position(|(index, script)| {
-        candidate_rows(shard_id, script, rows)[table.choice(shard_id, script)] != row_of(index)
+        candidates(&salts, script, rows)[table.choice(shard_id, script)] != row_of(index)
     })
 }
 
@@ -533,7 +545,7 @@ const MAX_RELOCATION_VISITS: usize = 512;
 /// Returns the row left with space, having applied every move on the path.
 #[allow(clippy::too_many_arguments)]
 fn relocate(
-    shard_id: u64,
+    salts: &[[u8; 32]; DIRECTORY_CHOICES],
     scripts: &[&[u8]],
     sizes: &[usize],
     occupants: &mut [Vec<u32>],
@@ -588,11 +600,10 @@ fn relocate(
             if used[row] - size + need > capacity {
                 continue;
             }
-            let alternate =
-                candidate_rows(shard_id, scripts[resident as usize], occupants.len() as u64)
-                    .into_iter()
-                    .map(|r| r as usize)
-                    .find(|r| *r != row);
+            let alternate = candidates(salts, scripts[resident as usize], occupants.len() as u64)
+                .into_iter()
+                .map(|r| r as usize)
+                .find(|r| *r != row);
             let Some(alternate) = alternate else {
                 continue;
             };

@@ -1,0 +1,16 @@
+{
+  "comparison_sha": "7bdbcbb90200794a3e987ba35cfd8ebf7c802ce7",
+  "owner": "d234a8f183f047be9ed10fd7e131d639",
+  "status": "passed",
+  "seconds": 20.383380542043597,
+  "command": "make check-fast BASE=7bdbcbb90200794a3e987ba35cfd8ebf7c802ce7",
+  "input_sha256": {
+    "transparent/ops/lib/activity_input_stage.py": "4e89f39695537ff0abf19bc801b8335166eeaf99be4d595adfd89f43f6b16018",
+    "transparent/ops/lib/activity_schema_product.py": "33215fbf8eb19dabeaefa7eb0afbae38bb4092b87484f35a6143ed693628b505",
+    "transparent/ops/tests/test_activity_input_stage.py": "89281c3184b946a6c9494039be08a6e842c16aeb14b1a958cccd08ca151a7249",
+    "transparent/ops/tests/test_activity_schema_product.py": "9b9acb4f73748da06bbab99afe87e088fec9f95d458ae87a58bcdc8441ef486e",
+    "transparent/services/transparent-shard-server/src/router.rs": "8d4fb6a747a5e14e9ed83a0d9e2d7e3118e22da4172c99883bbeefd7a286364a"
+  },
+  "native_inputs_changed": false,
+  "scope": "Exact archive ownership and retained startup error context; real corrected cutover and all final qualification still required."
+}

@@ -1,0 +1,17 @@
+{
+  "base_sha": "762e81f3deea245cb223934f2614cb89dff97ea4",
+  "owner": "ff0eae0bce5949d2a9e725cb2a749532",
+  "duration_seconds": 21.0696863749763,
+  "status": "passed",
+  "command": "make check-fast BASE=762e81f3deea245cb223934f2614cb89dff97ea4",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_host.py": "9938fd2ef309a502f611092c010dce3dd6c4d9680402951b9d2b358222325da7",
+    "transparent/ops/lib/activity_schema_dispatch.py": "9c28f386b5d75ea569a98591787d8bc1d331cd9b4db39567291503ea90e10c58",
+    "transparent/ops/tests/test_activity_schema_host.py": "e85b69f4b601f1237722c216f13f28ced97dc1e58aa3b3b7b49faa39460b838f",
+    "transparent/ops/tests/test_activity_schema_product.py": "bf2aa0a0146b032c458c8710e64158e715ed583a734d6cd184884a9f5057d7d8"
+  },
+  "scope": "Native readiness persistence counters with strict bounded/duplicate/type checks and private validation failure detail. Independent activation300, rollback250/740 and resource floors20 unchanged. Actual corrected production preparation remains pending.",
+  "native_inputs": "unchanged12ce; no new native build",
+  "candidate_ci": "separately recorded; user expressly waived waiting",
+  "native_ci": "CI801/run36827719155/original all12 passed"
+}

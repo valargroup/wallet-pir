@@ -2,14 +2,17 @@
 from contextlib import asynccontextmanager
 import copy
 import hashlib
+import http.server
 import importlib.util
 import io
 import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import time
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]/'ops/lib'))
@@ -17,6 +20,52 @@ SPEC = importlib.util.spec_from_file_location('schema_routing', Path(__file__).p
 M = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(M)
 BINARY = '/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-loadtest'
+
+
+class HttpRefusal(unittest.TestCase):
+    def test_real_http_refusal_preserves_native_reconciliation_body(self):
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(503);self.end_headers()
+                self.wfile.write(b'transparent publication is being reconciled')
+            def log_message(self,*_):pass
+        with http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler) as server:
+            thread=threading.Thread(target=server.serve_forever);thread.start()
+            try:
+                with self.assertRaises(urllib.error.HTTPError) as caught:
+                    M.read_json('http://127.0.0.1:'+str(server.server_port)+'/v1/shards')
+                self.assertEqual(caught.exception.activity_body,b'transparent publication is being reconciled')
+            finally:
+                server.shutdown();thread.join()
+
+    def test_private_response_context_is_bounded_and_public_exception_unchanged(self):
+        url='http://127.0.0.1:8094/v1/shards'
+        error=urllib.error.HTTPError(url,503,'Service Unavailable',{},io.BytesIO(b'x'*9000))
+        with patch.object(M.urllib.request,'urlopen',side_effect=error):
+            with self.assertRaises(urllib.error.HTTPError) as caught:M.read_json(url)
+        self.assertEqual(str(caught.exception),'HTTP Error 503: Service Unavailable')
+        self.assertEqual(len(caught.exception.activity_body),2049)
+
+
+class RepairIdentity(unittest.TestCase):
+    def test_repair_routing_requires_owning_journal_and_checksum_bound_source(self):
+        p=object.__new__(M.Routing);p.plan={'source_sha':'a'*40,'transaction':'tx'}
+        p.root=Path('/srv/transparent-activity/ops/schema/tx/routing')
+        source=Path('/srv/transparent-activity/ops/sources')/('b'*40)
+        repair={'source_sha':'b'*40,'archive_sha256':'c'*64,'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py')}
+        p.recovery_program=repair
+        record={'status':'rolling-back','id':'tx','recipe':{'source_sha':'a'*40},'recovery_programs':[repair],
+                'events':[{'group':'rollback','status':'running'}]}
+        from types import SimpleNamespace
+        seen=[]
+        stage=SimpleNamespace(verify_receipt=lambda *args:seen.append(args))
+        with patch.object(M.inherited_lock,'descriptors'),patch.object(M.H,'load',side_effect=lambda path:
+                record if str(path).endswith('/tx.json') else {'archive_sha256':'c'*64}),patch.object(M,'module',return_value=stage):
+            p.source_identity(source);self.assertEqual(len(seen),1)
+            record['status']='applying'
+            with self.assertRaisesRegex(ValueError,'rollback repair intent'):p.source_identity(source)
+            record['status']='rolling-back';repair['wrapper']='wrong'
+            with self.assertRaisesRegex(ValueError,'source differs'):p.source_identity(source)
 
 
 class Fleet:
@@ -57,6 +106,23 @@ class Fleet:
 
 
 class RoutingTests(unittest.IsolatedAsyncioTestCase):
+    def test_partial_guard_binds_copied_original_and_keeps_both_origins_closed(self):
+        from unittest.mock import Mock
+        baseline=self.root/'partial';(baseline/'files').mkdir(parents=True)
+        (baseline/'files/0').write_bytes(self.original)
+        current=self.root/'guard';current.write_bytes(self.current)
+        host=Mock(role='coordinator',root=baseline,plan={'baseline':{'files':[{'path':'/etc/caddy/Caddyfile'}]}})
+        self.routing.plan['coordinator_baseline']=str(baseline)
+        original_path=M.Path
+        with patch.object(M,'Path',side_effect=lambda p:current if str(p)=='/etc/caddy/Caddyfile' else original_path(p)):
+            value=self.routing.partial_guard(host)
+            self.assertEqual(value['captured'],M.H.B.entries(baseline/'files/0'))
+            self.assertEqual(current.read_bytes(),self.current)
+            current.write_bytes(self.current+b'foreign')
+            with self.assertRaisesRegex(ValueError,'exact owned'):self.routing.partial_guard(host)
+            current.write_bytes(self.current);(baseline/'files/0').write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError,'original routing'):self.routing.partial_guard(host)
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup)
         self.root=Path(self.tmp.name)
@@ -81,7 +147,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
             'private_router':'10.142.0.11:8093','recovery':{'v10':copy.deepcopy(inp),'v11':inp}}
         self.current=(M.U.guard_coordinator(self.original.decode())+M.relay(self.plan['private_router'])).encode()
         self.schema='transparent-shard-v11';self.bad_binary=False;self.other_origin=False;self.bad_assignment=False
-        commands=type('Commands',(),{'metadata_status':lambda _,url:503 if self.current!=self.original else 200})()
+        commands=type('Commands',(),{'metadata_status':lambda _,url:503 if b'transparent fleet maintenance' in self.current else 200})()
         def proof(*args):
             output=Path(args[7]);output.mkdir(parents=True)
             result={'status':'passed','observations':[{'events':1}]}
@@ -113,6 +179,48 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         if self.other_origin and url==M.H.PUBLIC_METADATA[1]:result['profile']='foreign'
         return result
 
+    def test_canonical_queries_bind_only_transparent_revision_paths(self):
+        original=self.original+b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }\n'
+        self.routing.original=lambda:original
+        result=self.routing.canonical()
+        self.assertIn(b'/revisions/[0-9a-f]{64}/(setup|query)/',result)
+        self.assertIn(b'header_up Host {upstream_hostport}',result)
+        self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
+        self.routing.original=lambda:result
+        self.assertEqual(self.routing.canonical(),result)
+        guarded=M.U.guard_coordinator(result.decode())
+        self.assertNotIn('reverse_proxy '+self.plan['private_router'],guarded)
+        self.routing.original=lambda:result.replace(b'10.142.0.11:8093',b'10.142.0.12:8093')
+        with self.assertRaisesRegex(ValueError,'bound router'):self.routing.canonical()
+        self.routing.original=lambda:original;self.plan['private_router']='127.0.0.1:8080'
+        with self.assertRaises(ValueError):self.routing.canonical()
+
+    def test_canonical_queries_refuse_missing_or_duplicate_owned_handler(self):
+        for original in (b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',
+                         self.original+self.original):
+            self.routing.original=lambda:original
+            with self.assertRaisesRegex(ValueError,'one owned transparent handler'):
+                self.routing.canonical()
+
+    def test_canonical_queries_preserve_site_and_existing_producer_handlers(self):
+        original=(b'enhance-pir.valargroup.dev {\n'
+                  b' @transparent_publication path /v1/shards /v1/shards/*/manifest\n'
+                  b' handle @transparent_publication { reverse_proxy 127.0.0.1:8094 }\n'
+                  b' @legacy_transparent_filters path /v1/transparent/filters/*\n'
+                  b' handle @legacy_transparent_filters { reverse_proxy 127.0.0.1:8090 }\n'
+                  b' handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }\n'
+                  b' handle { reverse_proxy 127.0.0.1:8080 }\n}\n')
+        self.routing.original=lambda:original;self.plan['private_router']='10.142.0.11:8080'
+        result=self.routing.canonical()
+        self.assertEqual(result.count(b'reverse_proxy 10.142.0.11:8080'),1)
+        self.assertTrue(result.startswith(b'enhance-pir.valargroup.dev {'))
+        self.assertTrue(result.endswith(b' handle { reverse_proxy 127.0.0.1:8080 }\n}\n'))
+        self.assertIn(b'handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',result)
+        self.assertIn(b'handle @transparent_publication { reverse_proxy 127.0.0.1:8094 }',result)
+        guarded=M.U.guard_coordinator(result.decode())
+        self.assertNotIn('reverse_proxy 10.142.0.11:8080',guarded)
+        self.assertIn('handle /v1/enhance/query { reverse_proxy 127.0.0.1:8082 }',guarded)
+
     async def test_withdraw_guard_authority_then_router_and_keep_private_relay(self):
         self.current=self.original
         await self.routing.withdraw('v11')
@@ -130,7 +238,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         await self.routing.verify('v11')
         self.assertNotEqual(self.current,self.original)
         await self.routing.reopen('v11')
-        self.assertEqual(self.current,self.original)
+        self.assertEqual(self.current,self.routing.canonical())
         self.assertEqual(self.fleet.actions,[['recent1','recent2','archive1']])
         self.assertFalse(json.loads((self.root/'maintenance.json').read_text())['enabled'])
         self.assertTrue((self.routing.root/'verified-public-v11.json').exists())
@@ -141,6 +249,62 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
             await self.routing.verify('v11')
         self.assertFalse((self.routing.root/'verified-v11.json').exists())
         self.assertNotEqual(self.current,self.original)
+
+    async def test_future_preparation_preserves_exact_current_v11_proof(self):
+        self.fleet.status['preparing']={'map_sha256':'1'*64}
+        self.fleet.status['candidate']={'map_sha256':'2'*64,'warm':False}
+        await self.routing.verify('v11')
+        for key,value in [('warm',False),('invalidated',True),('active',{'map_sha256':'3'*64})]:
+            original=self.fleet.status[key];self.fleet.status[key]=value
+            with self.assertRaisesRegex(ValueError,'warm publication'):await self.routing.verify('v11')
+            self.fleet.status[key]=original
+        self.bad_assignment=True
+        with self.assertRaisesRegex(ValueError,'scope'):await self.routing.verify('v11')
+        self.bad_assignment=False;self.bad_binary=True
+        with self.assertRaisesRegex(ValueError,'binary'):await self.routing.verify('v11')
+        self.bad_binary=False;self.fleet.bad_anchor=True
+        with self.assertRaisesRegex(ValueError,'canonical'):await self.routing.verify('v11')
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
+
+    async def test_future_preparation_does_not_permit_wrong_http_serving_map(self):
+        self.fleet.status['preparing']={'map_sha256':'1'*64}
+        fetch=self.routing.fetch
+        def changed(url,expected_digest=None):
+            result=fetch(url,expected_digest)
+            if url.endswith('/v1/ready'):result['map_sha256']='2'*64
+            return result
+        self.routing.fetch=changed
+        with self.assertRaisesRegex(ValueError,'HTTP readiness'):await self.routing.verify('v11')
+        records=[json.loads(p.read_text()) for p in self.routing.root.glob('worker-observation-*.private.json')]
+        self.assertTrue(any(r['channel']=='http' and r['observation']['map_sha256']=='2'*64 for r in records))
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
+
+    async def test_worker_http_error_is_retained_without_retry_or_public_text_change(self):
+        fetch=self.routing.fetch
+        error=urllib.error.HTTPError('http://10.142.0.1:8093/v1/ready',503,'Service Unavailable',{},None)
+        error.activity_body=b'warming'
+        calls=[]
+        def refused(url,expected_digest=None):
+            if url.endswith('/v1/ready'):calls.append(url);raise error
+            return fetch(url,expected_digest)
+        self.routing.fetch=refused
+        with self.assertRaises(urllib.error.HTTPError) as caught:await self.routing.verify('v11')
+        self.assertEqual(str(caught.exception),'HTTP Error 503: Service Unavailable')
+        self.assertEqual(len(calls),1)
+        records=[json.loads(p.read_text()) for p in self.routing.root.glob('worker-observation-*.private.json')]
+        self.assertTrue(any(r['channel']=='http' and r['observation']['body']=='warming' for r in records))
+
+    async def test_refused_control_status_is_retained_privately_before_failure(self):
+        self.fleet.status['warm']=False
+        with self.assertRaisesRegex(ValueError,'warm publication'):await self.routing.verify('v11')
+        paths=list(self.routing.root.glob('worker-observation-*.private.json'))
+        self.assertEqual(len(paths),1)
+        record=json.loads(paths[0].read_text())
+        self.assertEqual(record['observation'],self.fleet.status)
+        self.assertEqual(record['expected_map_sha256'],self.fleet.digest)
+        self.assertEqual(record['channel'],'control')
+        self.assertEqual(paths[0].stat().st_mode & 0o777,0o600)
+        self.assertFalse((self.routing.root/'verified-v11.json').exists())
 
     async def test_unwarm_replica_binary_drift_wrong_schema_and_retired_fork_refuse(self):
         for field,value in [('bad_worker','recent2'),('bad_anchor',True)]:
@@ -182,6 +346,35 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError,'canonical HTTPS'):
             await self.routing.reopen('v11')
         self.routing.check_guard();self.assertEqual(self.fleet.actions[-1],[])
+        self.assertFalse((self.routing.root/'verified-public-v11.json').exists())
+
+    async def test_each_public_origin_queries_and_reopens_its_own_store(self):
+        calls=[]
+        proof=self.routing.proof
+        def track(*args):
+            calls.append((args[5],args[6],args[7]))
+            return proof(*args)
+        self.routing.proof=track
+        record=await self.routing.public('v11')
+        self.assertEqual([c[:2] for c in calls],[
+            ('https://transparent-pir.valargroup.dev','https://enhance-pir.valargroup.dev'),
+            ('https://enhance-pir.valargroup.dev','https://transparent-pir.valargroup.dev')])
+        self.assertNotEqual(calls[0][2],calls[1][2])
+        self.assertEqual(len(record['recoveries']),2)
+        for result in record['recoveries']:
+            self.assertEqual(M.H.checksum(result['result']),result['sha256'])
+
+    async def test_second_public_query_failure_rewithdraws_even_if_first_passed(self):
+        await self.routing.verify('v11')
+        proof=self.routing.proof
+        def fail_second(*args):
+            if args[5]=='https://enhance-pir.valargroup.dev':
+                raise ValueError('second encrypted query origin failed')
+            return proof(*args)
+        self.routing.proof=fail_second
+        with self.assertRaisesRegex(ValueError,'second encrypted'):
+            await self.routing.reopen('v11')
+        self.routing.check_guard()
         self.assertFalse((self.routing.root/'verified-public-v11.json').exists())
 
     async def test_failed_new_verification_cannot_reuse_previous_passing_proof(self):
@@ -277,7 +470,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
         tail.update(end_height=11,revision=1)
         self.publish()
         await self.routing.reopen('v11')
-        self.assertEqual(self.current,self.original)
+        self.assertEqual(self.current,self.routing.canonical())
 
     async def test_recovery_rewrite_does_not_create_passing_proof(self):
         original=self.routing.proof

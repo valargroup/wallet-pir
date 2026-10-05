@@ -1,0 +1,68 @@
+{
+  "status": "passed",
+  "scope": "Brief coherent v10 warm recovery, private and both canonical encrypted-query/reopened SQLite proofs; not v11 or sustained qualification",
+  "source_sha": "a8e6b63b5b4c66311780d1d98c076409553afac6",
+  "owner": "166443c458934c589b054da1ecf25c08",
+  "duration_seconds": 92.91179083299357,
+  "result_sha256": "80f40caa5fe392f6decc4444ff1bcd4dab1fbba21abf25a7b82c79165e167b9a",
+  "transaction": "transparent-schema-20261001T154349Z-50fbcb9efe77-3fbe95",
+  "recipe_sha256": "50fbcb9efe7795038bb5d7d7a96c779fdcd6f7bc8f3ffbc0f2bd6b01545b94e6",
+  "journal_status": "rolled-back",
+  "proofs": [
+    {
+      "query_origin": "http://127.0.0.1:18193",
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "stop_reason": null,
+      "http_503_rate": 0,
+      "reopened_sqlite_checked": true
+    },
+    {
+      "query_origin": "https://transparent-pir.valargroup.dev",
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "stop_reason": null,
+      "http_503_rate": 0,
+      "reopened_sqlite_checked": true
+    },
+    {
+      "query_origin": "https://enhance-pir.valargroup.dev",
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "stop_reason": null,
+      "http_503_rate": 0,
+      "reopened_sqlite_checked": true
+    }
+  ],
+  "metadata_observations": [
+    {
+      "origin": "https://transparent-pir.valargroup.dev",
+      "status": 200,
+      "sha256": "79d5dc927ae2fce76955c4b513ccfa98459afc44db9b34f25ff8ab0b4748796f",
+      "start_height": 0,
+      "shards": 86,
+      "covered_through": 3502797
+    },
+    {
+      "origin": "https://enhance-pir.valargroup.dev",
+      "status": 200,
+      "sha256": "79d5dc927ae2fce76955c4b513ccfa98459afc44db9b34f25ff8ab0b4748796f",
+      "start_height": 0,
+      "shards": 86,
+      "covered_through": 3502797
+    }
+  ],
+  "private_proof_archive_sha256": "e30b6a3a0c3d37b1b6299ea54617f2f44d7611b87a9840dcd84d1242f7ed968d",
+  "quality": "failed/MainPID0; alerts shadow",
+  "limitations": [
+    "Warm retry only; prior cold recovery deadlines remain failed",
+    "No accepted v11 cutover",
+    "All sustained performance, freshness, capacity and fault acceptance remain open"
+  ]
+}

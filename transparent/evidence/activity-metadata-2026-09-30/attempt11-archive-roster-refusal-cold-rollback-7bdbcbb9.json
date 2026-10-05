@@ -1,0 +1,54 @@
+{
+  "source_sha": "7bdbcbb90200794a3e987ba35cfd8ebf7c802ce7",
+  "owner": "366c7496ad0845db9f8c8fd44c1a9ff0",
+  "local_status": "failed",
+  "local_seconds": 1188.8816102918936,
+  "transaction": "transparent-schema-20261002T102356Z-d2ef21d62739-1a028c",
+  "recipe_sha256": "d2ef21d627397549740b606d8c8de8b5370d64dfe2adad7c25518975a9c4420b",
+  "forward_failure": "publisher bootstrap failed or left startup reconciliation",
+  "confirmed_cause": "Native shard-assign rejected predecessor roster archive_range 0-76 against v11 archive 0-81.",
+  "http_refusal": {
+    "endpoint": "http://127.0.0.1:8094/v1/shards",
+    "status": 503,
+    "body": "transparent publication is being reconciled"
+  },
+  "rollback_status": "rolled-back",
+  "rollback_phase_seconds": [
+    12.451833950355649,
+    121.89376108208671,
+    225.76438820408657,
+    23.88477793801576,
+    6.234303159639239
+  ],
+  "all_owners_exited": true,
+  "recovered_workers_warm": [
+    18,
+    18,
+    154
+  ],
+  "recovered_map_sha256": "ce9fb91c6389453c8547c27d75e36c803ad3a3bf5b0b5cc567bdd648729ff867",
+  "native_reports": 5,
+  "each_native": {
+    "syncs": 1,
+    "completed": 1,
+    "exact": 1,
+    "failed": 0,
+    "stop_reason": null,
+    "http_503_rate": 0
+  },
+  "sqlite_reopened": 5,
+  "each_sqlite": {
+    "integrity": "ok",
+    "receives": 1,
+    "spends": 1,
+    "pending_work": 0
+  },
+  "both_canonical_metadata": {
+    "status": 200,
+    "shards": 86,
+    "first_height": 0
+  },
+  "private_proof_sha256": "c0eac6950ecbdba6d5213b22fcde4d12ff4f529a0ab08cd7ed136448f438e48f",
+  "qualification": "v10 cold recovery only; v11 and all final qualification remain open",
+  "rollback_seconds": 390.22906433418393
+}

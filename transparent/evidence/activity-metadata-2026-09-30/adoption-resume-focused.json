@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "owner": "6cf876f42c224c829da159a8536ad6df",
+  "source_base": "c7ae28e9cd1178b51cec45ae1ae6796bebf5d581",
+  "seconds": 23.576196208014153,
+  "result_sha256": "422aeacb6144cb3ed5cecfdb93070dadb5663b9f068fba4dc600fa27f67bafb4",
+  "implementation_inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "f336e445fbbb36281e1d0971000b1ea2724a4b53eca7a1293526d820571b36a8",
+    "ops/lib/wallet_pir_ops/schema_fence.py": "dea504510bf00a6d437cb3270f09fc920f05eb5205e8937cd67a96c2c9d4a317",
+    "transparent/ops/lib/activity_schema_operation.py": "36db6aa49fd662a40bee4286ee4bf6dd8669b6b2e5a94f2f701360e9364451be",
+    "transparent/ops/lib/activity_schema_product.py": "643679eeb99e2b5189c951f43ddfe8eeaa60e90bbf5a704f8f461f50b4947392",
+    "transparent/ops/lib/activity_schema_reconcile.py": "31afe7cdf61150baba9f364397905d1350eadb55a90a9de5f8fcf6bf234c52e1",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "43008323b3822bccd8b7d5d1a4b7ff8aa43e088d936f776f5acd26c123a8487d"
+  },
+  "validation": [
+    "make check-fast",
+    "Eight real-file, negative resume/fence, and actual bare-upstream HTTP URL tests"
+  ],
+  "limitations": [
+    "Actual guarded resume has not run.",
+    "Original rollback and recovery deadline remain failed."
+  ]
+}

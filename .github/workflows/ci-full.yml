@@ -13,6 +13,8 @@ on:
 
 permissions:
   contents: read
+  # Read-only lookup of which ref holds a hosted Cargo cache entry.
+  actions: read
 
 concurrency:
   group: full-${{ github.event.pull_request.number || github.sha }}
@@ -56,7 +58,7 @@ jobs:
     needs: select
     if: needs.select.outputs.transparent == 'true'
     name: Transparent lint
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       # librocksdb-sys turns on SSE4.2 for its CRC32C code from the host's
@@ -69,6 +71,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
+          scope: transparent
       - run: cargo fmt --all --check
       - name: Test simulation report helpers
         run: |
@@ -76,12 +79,16 @@ jobs:
           python3 transparent/tools/transparent-loadtest/tests/test_open_report.py
           python3 transparent/tools/transparent-loadtest/tests/test_compare.py
       - run: python3 tools/ci/full_packages.py --group transparent --lint
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
   transparent-test:
     needs: select
     if: needs.select.outputs.transparent == 'true'
     name: Transparent tests
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       # Bound concurrent fixtures; each simulation still exercises internal concurrency.
@@ -93,10 +100,15 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
+          scope: transparent
       # release-fast: the full-shard cryptographic tests need optimized code,
       # not the fat-LTO single-codegen-unit link the deploy profile pays for,
       # which on a two-vCPU runner is most of the wall time.
       - run: python3 tools/ci/full_packages.py --group transparent
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
   validate-enhance-infra:
     needs: select
@@ -140,7 +152,7 @@ jobs:
     needs: select
     if: needs.select.outputs.ops == 'true'
     name: Validate selected helper checks
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
       # Parses and lints every ops script, compiles every jq program the deploy
@@ -233,7 +245,7 @@ jobs:
     needs: select
     if: needs.select.outputs.enhance == 'true'
     name: Enhance lint
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       CXXFLAGS: -mpclmul
@@ -243,13 +255,18 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-lint
+          scope: enhance
       - run: python3 tools/ci/full_packages.py --group enhance --lint
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
   enhance-test:
     needs: select
     if: needs.select.outputs.enhance == 'true'
     name: Enhance tests
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       # Full-size integration fixtures each retain multiple six-instance shard
@@ -263,6 +280,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
+          scope: enhance
       - name: Run Enhance release tests
         run: |
           # Full-size embedded/topology fixtures exceed the CI runner's memory
@@ -276,23 +294,27 @@ jobs:
           QUALIFY_QUERY_LANES: "2"
           QUALIFY_QUERIES_PER_LANE: "3"
         run: |
-          cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
+          python3 tools/ci/stage.py compile:native-cuda-check -- cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
           tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --test packing_http --test status_wallet --test enhance_wallet_native
-          cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
-          cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib status::
-          cargo test --locked --profile release-fast -p pir-native
+          python3 tools/ci/stage.py tests:native-lib -- cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
+          python3 tools/ci/stage.py tests:native-status -- cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib status::
+          python3 tools/ci/stage.py tests:pir-native -- cargo test --locked --profile release-fast -p pir-native
 
       - name: Check optional CUDA worker without a GPU
         run: |
-          cargo check --locked -p enhance-pir-server --all-targets --features cuda
-          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
-          cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
+          python3 tools/ci/stage.py compile:cuda-check -- cargo check --locked -p enhance-pir-server --all-targets --features cuda
+          python3 tools/ci/stage.py tests:cuda-config -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --test matvec_config
+          python3 tools/ci/stage.py tests:cuda-load -- cargo test --locked --profile release-fast -p enhance-pir-server --features cuda --lib backend_load_failure_does_not_rebuild_or_replace_published_units
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
   shared-test:
     name: Shared lint and tests
     needs: select
     if: needs.select.outputs.shared == 'true'
-    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     timeout-minutes: 60
     env:
       RUST_TEST_THREADS: "1"
@@ -301,8 +323,13 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: full-test
+          scope: shared
       - run: python3 tools/ci/full_packages.py --group shared --lint
       - run: python3 tools/ci/full_packages.py --group shared
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
 
   complete:
     name: Full checks complete
@@ -346,6 +373,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: release
+          scope: q48
       - name: Build optimized release binaries once
         run: >-
           python3 tools/ci/stage.py compile:release -- cargo build --locked --release
@@ -364,6 +392,7 @@ jobs:
       - uses: ./.github/actions/rust-setup
         with:
           lane: release-native
+          scope: native
       - name: Build native Enhance binaries
         run: >-
           python3 tools/ci/stage.py compile:native -- cargo build --locked --release
@@ -379,6 +408,10 @@ jobs:
         env:
           SHA: ${{ github.sha }}
         run: python3 tools/ci/stage.py artifact -- python3 tools/ci/release.py assemble --sha "$SHA" --kind status-pir --target "$CARGO_TARGET_DIR" --output release-bundles-status
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
           name: status-pir-${{ github.sha }}
@@ -436,6 +469,10 @@ jobs:
     timeout-minutes: 120
     env:
       RUSTUP_TOOLCHAIN: 1.91.0
+      # The flags tools/ci/build-cuda.sh exports, visible to the cache identity.
+      RUSTFLAGS: -C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq
+      CFLAGS: -mpclmul
+      CXXFLAGS: -mpclmul
     # Pin the build ABI independently of the existing Ubuntu 24.04 CPU lane.
     container:
       image: ubuntu:22.04@sha256:b8b6ee6aa931ecd9d0d952abc34dc0e5f7c6a30c6bb71b079fe399fde0329c02
@@ -453,12 +490,26 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.91.0
-      - uses: Swatinem/rust-cache@v2
+      - name: Identify native CUDA Cargo cache
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/ci/cargo_cache.py prepare --lane native-cuda --scope cuda --target-dir target/native-cuda
+      # Main-only job: these entries are trusted and never read PR output.
+      - name: Restore native CUDA Cargo cache
+        id: restore
+        uses: Swatinem/rust-cache@v2
         with:
-          shared-key: native-cuda-ubuntu22.04-rust1.91-v3-pclmul-v1
+          prefix-key: v1-wallet-pir
+          shared-key: ${{ steps.identity.outputs.shared-key }}
+          add-rust-environment-hash-key: 'false'
           workspaces: ". -> target/native-cuda"
           cache-workspace-crates: true
           cache-on-failure: true
+      - name: Record restored Cargo state
+        env:
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: python3 tools/ci/cargo_cache.py restored --lane native-cuda --cache-hit "$CACHE_HIT"
       - name: Build isolated native CUDA binaries and record ABI
         run: tools/ci/build-cuda.sh
       - name: Assemble checksummed native CUDA bundle
@@ -473,6 +524,10 @@ jobs:
           python3 tools/ci/stage.py artifact:cuda -- python3 tools/ci/release.py assemble --sha "$SHA"
           --kind enhance-pir-native-cuda --target target/native-cuda
           --build-metadata target/native-cuda/build.json --output release-bundles-native-cuda
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
       - uses: actions/upload-artifact@v4
         with:
           name: enhance-pir-native-cuda-${{ github.sha }}

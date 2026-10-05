@@ -1,0 +1,16 @@
+# Single-guard mutations of activity_candidate_upload.py; each run restored the source.
+# Suite: python3 -B transparent/ops/tests/test_activity_candidate_upload.py
+truncation check                 caught (suite timed out on an unbounded loop)
+extra-byte check                 caught (FAILED (failures=2))
+received checksum                caught (FAILED (failures=1, errors=1))
+owner before bytes               caught (FAILED (failures=1, errors=1))
+revalidate 18 before rename      caught (FAILED (failures=1))
+reconcile owner-exit check       caught (FAILED (failures=3))
+archive pins                     caught (FAILED (failures=1))
+local nlink                      caught (FAILED (failures=1))
+stream stability                 caught (FAILED (failures=2))
+status file-set                  caught (FAILED (failures=1))
+hardlink on staged               caught (FAILED (failures=1))
+unknown on unfinished reply      caught (FAILED (failures=1))
+plan digest                      caught (FAILED (failures=1))
+fence in preflight               caught (FAILED (failures=4))

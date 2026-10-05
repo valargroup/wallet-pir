@@ -272,7 +272,12 @@ class SupervisorTest(unittest.TestCase):
                                  for k, v in saved.items()])
         self.known_hosts = self.directory / 'known_hosts'
         self.known_hosts.write_text('10.124.0.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHostKeyFixture\n')
-        self.ports = [free_port(), free_port(), free_port()]
+        # Keep each reservation bound until all three distinct ports are chosen.
+        with contextlib.ExitStack() as reservations:
+            probes = [reservations.enter_context(socket.socket()) for _ in range(3)]
+            for probe in probes:
+                probe.bind(('127.0.0.1', 0))
+            self.ports = [probe.getsockname()[1] for probe in probes]
 
     def config(self, **changes):
         run = self.directory / 'run'

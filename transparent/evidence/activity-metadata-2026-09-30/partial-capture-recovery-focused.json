@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "owner": "ac35dc7e48804bc894db1f03f9b71f80",
+  "base_source_sha": "7401ac979da6ad4dcf4a012f8ee155c74c59d06e",
+  "duration_seconds": 15.605653541977517,
+  "result_sha256": "9da91b18d96e41e093f530ea5722f58f458821ff971ec6c9ced844d7c587ad18",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_baseline.py": "68420821051316c14e065897d924d4171cdc8a879f2d3e397a9004ad3016534b",
+    "transparent/ops/lib/activity_schema_host.py": "afd6cc9d51350d7fd8b0df5cd1071cefc536f07624c623112dcddb5c1a138a98",
+    "transparent/ops/lib/activity_schema_dispatch.py": "9b371f7106830c5e08155011c4dc67e96fa9d2ccda9b4affa8663e781cf30193",
+    "transparent/ops/lib/activity_schema_product.py": "d7b7dbcc35ccd4e71414644a8f1654a1d601c34b15dacae02f58a29461a514da",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "a39246b18c9f0f1591a945be5f8785451fd5e75ad764e249270032de9b21dd0b"
+  },
+  "scope": "Closed candidate bookkeeping classification; explicit unchanged partial capture completion without recopy, drift/extra payload refusal; failed-preserve-only owned repair",
+  "limitations": "Actual repaired capture and private/both canonical recovery still required"
+}

@@ -1,0 +1,19 @@
+{
+  "status": "passed",
+  "focused_owner": "5303710b66fb4192950a3bfdd30564b7",
+  "seconds": 15.713715916965157,
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "386b7867aa18028300b5f36b9775798a9244a0654f4b5492f464f5c99c04c8a0",
+    "transparent/ops/lib/activity_schema_product.py": "7e7010bea1896943c2ac07dd39de7db8d43fae5cc584948ec4dad11750f17b19",
+    "transparent/ops/tests/test_activity_schema_product.py": "66cee8b046a951ad43077310f7fe7897aa3fb452f15a27ca175e81d8bc66527f"
+  },
+  "actual_recovery_owner": "23ba5c52575e46edb8f33810e7bae230",
+  "actual_recovery_status": "failed",
+  "phase": "withdraw-origins",
+  "cause": "CLI rejected reviewed repair source before service effects",
+  "limits": [
+    "Source and fixture validation only; repaired live recovery remains pending",
+    "Original 15 minute recovery acceptance missed; public origins guarded",
+    "Current main CI may remain pending under explicit user authorization"
+  ]
+}

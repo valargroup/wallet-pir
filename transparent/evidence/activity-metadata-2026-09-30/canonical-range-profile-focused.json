@@ -1,0 +1,21 @@
+{
+  "comparison_sha": "57e71be15dd78a732497af7995851dddbd0500a4",
+  "owner": "cfcc9e1fa8de48a98ab9709c3ec9ea63",
+  "status": "passed",
+  "seconds": 23.285472625051625,
+  "command": "make check-fast BASE=57e71be15dd78a732497af7995851dddbd0500a4",
+  "input_sha256": {
+    "transparent/ops/lib/activity_input_stage.py": "a444050db50ee522b420a2f61d7b5377ab35741f6b8fb1d800cdc2f1b409d8f8",
+    "transparent/ops/tests/test_activity_input_stage.py": "758ac6539b7aa35babf0ceef190f17a1485e24b6960696b6839b138b21d0e553",
+    "transparent/ops/lib/activity_publication_job.py": "87282c568153e140a381eff04061ede25dde1726a6ffe3c1306211b90a464bfe",
+    "transparent/crates/transparent-filter/src/profile.rs": "d26a55c738128fdf4a43d8d0e684860a4bf1b39941de9432660ed9d7e19f7945"
+  },
+  "profile": "zcash-transparent-range-v2",
+  "negative_profiles": [
+    "v1",
+    "v2",
+    "zcash-transparent-range-v99"
+  ],
+  "native_inputs_changed": false,
+  "scope": "Operations input validation and affected checks only; actual corrected continuous publication and every final qualification gate remain open."
+}

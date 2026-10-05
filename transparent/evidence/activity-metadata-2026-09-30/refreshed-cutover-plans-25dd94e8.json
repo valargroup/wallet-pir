@@ -1,0 +1,23 @@
+{
+  "status": "preflight-passed",
+  "source_sha": "25dd94e8a8fef6dfa7b7c46ab2320790235b2ebf",
+  "failed_attempts": [
+    {
+      "owner": "1a8afd371b074102a76068d8f7c93859",
+      "cause": "Collected old active-map sentinel a2cd2a53; read-only trace located missing retained data."
+    },
+    {
+      "owner": "07600fc24da044cea6592c2364b5e404",
+      "cause": "Baseline omitted actual recent predecessor static assignments in /opt/transparent-pir/assignments."
+    }
+  ],
+  "correction": "All three active publication sentinels refreshed from pinned actual machine active records; both recent static assignment files included as required copied baseline files. Whole predecessor publication/cache namespaces retained.",
+  "observed_active_map": "6d12149ad51e0e89b7dc84bfecdf3fb808b691210b4dff93200bc518649cec7d",
+  "observed_map_file_sha256": "74ca0a414e45a631ce41ed7b31b9efe4fea22a3b13076fb45074e24f1bcec49e",
+  "active_preflight_owner": "62480b900f3f4efd88bd53da490b106a",
+  "proof_request_sha256": "3e7ec45cb69f20f0efd56a5277d48c7a4f7803925f1d069041b8e237e8bdfb8e",
+  "product_request_sha256": "c7dcd282a5e0ae60d249d7f1fe07988c95db9a3bed0c70bd9fb587b13cf323e8",
+  "recipe_sha256": "78c92ae25bd2bb0e972624aba7b5fb6c95b1ca799ede85b753d6533c1a41473c",
+  "scope": "Actual five-host plan/preflight passed including native verification. No baseline or service transaction yet. Pending current CI explicitly deferred by user; passing original native CI retained with original identity. Installed setup/reader-pin followup requires a new bound recipe.",
+  "preflight_duration_seconds": 224.9714963750448
+}

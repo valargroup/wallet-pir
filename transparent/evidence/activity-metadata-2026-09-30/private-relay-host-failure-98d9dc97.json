@@ -1,0 +1,19 @@
+{
+  "status": "failed",
+  "source_sha": "98d9dc97b8669c8763a410a9d98ac603af48bd0a",
+  "owner": "f6135eacd5c54eff9924a4cc67d044fb",
+  "preparation": "passed with captured permissions and retained startup attempts",
+  "native_report": {
+    "syncs": 6,
+    "completed": 0,
+    "exact": 0,
+    "http_503": 0,
+    "failure": "transport: EOF while parsing a value at line 1 column 0",
+    "stop_reason": "error rate 1.000 above 0"
+  },
+  "confirmed_diagnostic": "Direct private router8080 and worker8093 returned identical20121setupbytes; same router with Host127.0.0.1:18193 and loopback relay returned HTTP200/emptybody. Private relay preserved wrong Host header.",
+  "raw_proof_archive_sha256": "23bbf36f9455317894085929c5a22e3ae6037d18112447c7a765ec4dcbaf320f",
+  "host_header_observation_sha256": "eaaa08883654d92bcb0955912e5fdb071127b1b06b03fa49c8717ff080d94310",
+  "original_rollback_and_deadline": "failed-not-relabelled",
+  "acceptance": "No recovery or v11 acceptance"
+}

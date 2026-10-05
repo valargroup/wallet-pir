@@ -1,0 +1,33 @@
+{
+  "status": "failed",
+  "gate": "guarded-cutover",
+  "operations_source_sha": "c28901b48d0d9dfb120f3d0dc5780ea216a032b0",
+  "owner": "f1243c887e224932abaa3979413755c8",
+  "duration_seconds": 1043.5923474999145,
+  "result_sha256": "67216a23edc959538c4c1e96d7ec70d6b6de3ef4d991bf100dbca96f7fc54798",
+  "transaction": "transparent-schema-20261001T154349Z-50fbcb9efe77-3fbe95",
+  "recipe_sha256": "50fbcb9efe7795038bb5d7d7a96c779fdcd6f7bc8f3ffbc0f2bd6b01545b94e6",
+  "passed": [
+    "Mandatory locked five-host/native preflight",
+    "Protected actual coherent v10 baseline capture: 237.048697 seconds",
+    "Maintenance: 7.532312 seconds",
+    "V11 staging: 222.212275 seconds",
+    "Rollback withdraw: 7.433396 seconds",
+    "Rollback restore v10: 18.952672 seconds"
+  ],
+  "failed": [
+    "Candidate activation/prewarm: 62.990593 seconds",
+    "Rollback verify: 250.827395 seconds; readiness deadline exceeded"
+  ],
+  "later_observation": "All three restored workers subsequently warm on captured map 530ab8efe55eeaeaeec3c27e09588e90ab42e9c8d79deddd630e5008b77ec3f6; zero restarts. This does not pass the failed deadline or canonical recovery proof.",
+  "raw_inputs": {
+    "activate-prewarm-failure-c289.log": "f5fb22b7017eedb3ffe3d252cc7f8f2a3f50f77b08e7fabee0223ab8d578ef3a",
+    "cutover-c289-native-journals-1.jsonl": "a3044dd370ac1584e3c33373d8e70e798280eb7becb545c2ca3dea6e4b5e91d0",
+    "cutover-c289-restored-worker-status-1.jsonl": "0a5ede4c06bb513d1f61d87b7eeaf1e36e10a0d6d4e14d51997e3663360e3b6b"
+  },
+  "limitations": [
+    "Public origins remain guarded; no successful v11 cutover or canonical recovery claim",
+    "Original failed rollback/15-minute acceptance remains failed",
+    "Candidate operations CI waived by explicit user instruction; native baseline CI retains original successful identity"
+  ]
+}

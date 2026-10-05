@@ -6,7 +6,441 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Publication freshness profile, 2026-10-03
+
+A local benchmark profiled attempt 14's failed freshness, measured at serial
+cycles of 23–25 s. The tail used is a deterministic synthetic `recent-8k` tail
+derived from the retained mainnet day. Most native publication time was the
+sealer's exact page-row count, recomputed over cloned maps for every tail block
+at every publication.
+
+Source `921e1642` keeps output byte-identical and cuts release-fast publication
+at 97% fill from 9.67 s to 3.78 s on the hub. Recent workers also skip empty
+page-hint blocks: 0–0.7 s locally, depending on fill.
+
+A projection still left burst visibility above 30 s for full tails, because
+the recent workers' two sequential native tail builds remained.
+[Evidence](../evidence/publication-freshness-2026-10-03/README.md).
+
+Those builds now compute the public hint in column-batched exact NTTs. The
+hint is unchanged byte for byte, and the published masks and query answers
+are identical. On the same retained tails, a two-thread directory-plus-pages
+build fell from 4.81 s to 3.05 s at 97% fill, and from 4.19 s to 2.91 s at
+24%. Peak memory is unchanged. Arithmetic puts burst visibility at about
+23–29 s, with little margin at the top. Nothing is deployed, and freshness
+acceptance stays open.
+[Evidence](../evidence/prewarm-hint-2026-10-03/README.md).
+
+Review on 2026-10-04 asked for assurance before approval. The batched hint is
+now dispatched for recent geometries only; archives keep the reference
+product. Its source documents reference provenance and a derivation of root
+and evaluation order, residue ranges, the signed CRT bound and the reduction
+modulo `q`. Fixed known-answer vectors computed in Python without NTT or CRT
+pass through both the batched path and a forced reference fallback. Recent
+timing is unchanged from the record above and was not re-measured.
+[Evidence](../evidence/prewarm-hint-assurance-2026-10-04/README.md).
+
+## Changed-native activity candidate `c3c66b9b`, 2026-10-04
+
+Operations source now prepares and guards the changed-native candidate
+`c3c66b9b` separately from the historical 12ce publication, assignment, samples,
+journal and rollback identities. The 18 artifacts are pinned: five roles from
+comprehensive CI 37173250956, and 13 supplemental fat-LTO tools whose archive
+digest is in the manifest.
+
+A wrapper-only `schema-candidate-*` path verifies those artifacts and retains them
+inertly in a separate coordinator namespace. Candidate worker executables stage
+beside, not into, the immutable worker publication.
+
+Version-2 service, cutover and product inputs bind candidate bytes. They require
+four new candidate-bound gate reports, and they refuse 12ce reports, relabelled or
+mixed reports, and changed certificate floors.
+
+The supplemental reader accepted the retained archive read-only. Focused fixture
+tests and mutations passed.
+
+Later on 2026-10-04, operations source added a guarded
+`schema-candidate-upload-*` path. It moves the three root-held archives to the
+coordinator's fixed candidate archive namespace. Fixture tests covered real
+pipes, truncation, extra bytes, changed sources, foreign archives, interruption
+and explicit reconciliation. No archive was transferred and no host was
+contacted. No production host was accessed. Nothing was staged
+or deployed, and no candidate gate was run. Freshness, capacity and every other
+acceptance gate below remain as recorded.
+[Evidence](../evidence/activity-metadata-2026-10-04/README.md).
+
+Operations source then added a guarded `schema-snapshot-*` path for an immutable
+snapshot of the full journal. It stops only the reviewed writer, takes the
+existing `writer.lock` itself, copies the committed prefix and committed display
+sidecars, and restores the same writer with proof. Fixture tests covered:
+
+- the Rust `try_lock` lock protocol, with a probe built by the pinned `rustc`;
+- malformed, truncated, checkpoint and reorganization cases;
+- writer identity drift and active writer refusal;
+- interruption, transport loss and every stop, copy and restore failure;
+- resource floors and namespace misuse.
+
+Root's read-only audit later on 2026-10-04 reported the following. This task
+did not observe them itself.
+
+- **Writer.** The installed `transparent-publish-controller.service` owns the
+  writable journal. Its `data_dir` is `/srv/transparent-activity/full-v3/journal`,
+  with `meta.json` at version 3 from height 0.
+- **Lock.** `/proc/locks` lists the controller PID as the `FLOCK ADVISORY WRITE`
+  holder of the existing `writer.lock`.
+- **Size.** `events.bin` is 42,699,881,014 bytes and `blocks.bin` 168,301,056
+  bytes, which is 3,506,272 blocks.
+
+The snapshot now covers display sidecars as well. Native `events_at` silently
+reads a missing sidecar as no oversized events, and writers outside display mode
+write no sidecar. The path therefore:
+
+- requires an explicit sidecar policy and sidecars at root-chosen coverage
+  heights;
+- pre-copies the immutable sidecars while the controller runs, then re-observes
+  every committed block's sidecar and block hash under quiescence;
+- refuses controller units with stop-propagating or restarting dependents.
+
+A hub-only probe projects about 4.5 minutes of copying while the controller is
+stopped. That projection is not a coordinator measurement.
+
+Root's provisional review then asked for more assurance, and the path now:
+
+- reads every pinned host afresh before any effect, with exact machine pins, the
+  shared owner fence, source-staging receipts and recorded live owner or
+  descendant processes, keeping raw receipts;
+- carries one total deadline, with sampled floors, through every scan, hash,
+  remote read, anchor RPC and the final re-verification;
+- reserves disk for the exact bytes still to be copied under quiescence;
+- re-runs the record-boundary and anchor checks over the copied blocks.
+
+A second provisional review found that the all-host check could still miss
+orphaned descendants and older owners. The path now:
+
+- probes every retained owner record and every live process on each host;
+- refuses live recorded owners and members of their sessions or process groups,
+  with an exact fixture for a dead recorded parent and its live orphaned native
+  child;
+- refuses unrecorded live processes that hold the production lock, carry the
+  inherited-lock variable or run the wrapper;
+- bounds the anchor RPC by one aggregate deadline, with no redirects and
+  sanitized errors;
+- exposes a full-verification contract for root's locked consumer.
+
+A third provisional review then added further requirements, and the path now:
+
+- counts owned `launch`, `child` and `children` identities with `start_ticks` and
+  boot identity;
+- walks the whole owner namespace within finite bounds;
+- closes over live descendants by parent PID;
+- refuses unattributable survivors of operation executable and argument classes
+  outside reviewed service units;
+- refuses non-finite deadlines.
+
+Eighty-three focused tests passed, and all 81 single-guard mutations, including
+the helper's, were caught.
+
+Root's fourth review found three owner-contract gaps, and the path now:
+
+- owns a candidate child's `guardian` and the native process nested under
+  `native`, which inherits its container's boot;
+- treats missing, null or malformed boot evidence as the current boot, so it
+  can no longer suppress a matching live-owner refusal;
+- refuses owned containers nested beyond the depth bound instead of dropping
+  them.
+
+Eighty-five focused tests passed; each new case failed against the previous
+source. No host was contacted and no snapshot was taken; see
+[the snapshot path](deployment.md#candidate-journal-snapshot).
+Operations source then added the locked `schema-candidate-execute-*` path for
+the artifact-verification and native-certificate executions. It retains raw
+captures for the offline report producer. Root rejected the first version.
+The revision adds three controls: an all-host survey under the lock before
+mutation, kernel-enforced per-child limits within a finite per-stage budget,
+and recovery through a claim with pidfd signals. Root rejected that revision
+too: the survey read only candidate owners and latest fences, and recovery
+signalled before holding the production lock. The second revision surveys every
+retained record of every owner namespace and associates recorded processes with
+live ones by start identity, session, group, cgroup, orphan and reparented
+windows and descendants. It refuses unattributed processes of the closed
+operational classes outside baseline service cgroups. These are fixed
+heuristics, not complete descendant clearance. The survey is a reusable
+stdlib-only component for root's source bootstrap. Each
+child now runs under a guardian with its own deadline that kills an IO-blocked
+child and its descendants after receiver death. Reconciliation acquires the
+production lock before any owner write or signal. Fixture tests and
+single-guard mutations passed on the development hub. Root set all budgets as
+explicit ceilings; the 60-second guardian launch window awaits its review. No
+candidate native program ran on a production host, and no gate report exists.
+
+Root's review of the third revision found that retained surveys kept raw
+command-line operands of unattributed processes. Two fixture tests also failed
+on root's Linux run. The revision keeps arguments and token values in memory
+only and retains the command line's SHA-256 and length, the token's SHA-256,
+the matched class entries and flags. The test failures came from a fixture
+lock holder that shared the test runner's session. When that session's leader
+was gone or outside the fixture cgroup, the production orphan-window rule
+correctly refused it on the coordinator before worker-a. The fixture holder
+now leads its own session; production scans are unchanged.
+
+The locally integrated operations source received further ownership hardening:
+argument byte/count overflow refuses incomplete process classification;
+escaped-process refusals retain argument digests rather than arbitrary operands;
+and malformed boot IDs cannot suppress a matching live process identity. Native
+capture now records the observed monotonic start/end and repeats its kernel
+start identity in the terminal result. These fields support the oracle's temporal
+checks; they do not supply its missing whole locked execution owner, safe snapshot
+execution, canonical RPC evidence or qualification report. No candidate gate or
+production acceptance result follows from these source changes.
+
+Native qualification requests and client inventories now require the exact
+coordinator, router and three production worker host names. A pinned partial
+inventory refuses before transport construction or owner creation; surveying all
+entries in a partial inventory is insufficient. Local subprocess fixtures use
+an explicit test-only two-host override. Source and upload bootstrap guards still
+need the complete locked fleet handshake before staging can proceed.
+Snapshot inventory validation now requires that same complete host set and
+distinct machine pins, including a coordinator pin equal to its production
+lock identity. A partial inventory refuses before any host probe or transport;
+the snapshot rechecks this requirement when it surveys retained owners.
+
+Oracle report retention now carries the same checked owner budget through
+bounded canonical encoding, evidence hashing, chunked writes and file/directory
+fsync. Capture closure uses that checked writer too. Evidence remains preserved
+when ownership is lost after a write; such a refusal cannot finish report
+assembly. These cooperative checks now run within the gated post-handshake workflow
+worker described below, whose supervisor supplies the independent hard deadline.
+
+A local executor draft now forks one gated qualification workflow under the
+receiving process acting as a Linux child subreaper. The worker inherits the
+production lock and applies address-space, CPU and core limits; its PID/start,
+boot identity and aggregate deadline are durable before it starts. The receiver
+waits independently of workflow hashing, validation and evidence writes, and
+uses pidfds to stop and reap its owned descendants at that deadline. It refuses
+preexisting receiver children before launch. Per-native guardians remain in
+place. Its Linux suite passed 56 tests, including all 180 fixture certificate
+dispatches and interrupted-owner recovery; a subsequent additional fixture
+proved deadline cleanup of a detached child without its token or lock descriptor.
+The exact pinned native guardian code now runs from a source file, because its
+inline form exceeded the process survey's unchanged argument bound. The receiver
+restores its earlier subreaper state after cleanup. Pre-handshake planning,
+surveys and terminal owner retention still use cooperative bounds.
+
+The unpublished oracle mode now uses that worker. Its closed request pins the
+canonical snapshot request identity and exact owner and manifest bytes. The
+full snapshot verifier proves independent bytes, committed boundaries and owned
+writer restoration before the native reader starts. The reader uses only the
+verified copy, fixed 17-block selection and batch size256, and an owned ephemeral
+loopback capture whose upstream and runtime cookie pathname are fixed. Canonical
+boundaries bracket the native run; raw attempts and refusals remain retained.
+Report assembly fully verifies the snapshot again and binds native kernel and
+clock identities, original RPC bytes and capture closure. Resource checks from
+the capture thread are serialized with native sampling. Original native failures
+remain authoritative if capture closure also fails. The combined Linux source
+suite passed114tests, including existing artifact/certificate/lifecycle fixtures
+and oracle refusal/composition tests. It qualifies no candidate or production
+gate. Final source publication and actual execution remain pending.
+
 ## Activity metadata candidate, 2026-09-30
+
+Attempt 12 activated a fresh v11 publication after the archive roster correction,
+then canonical verification refused a worker warm-publication attestation.
+The failed native status body was not retained, so future preparation is a
+possible cause, not a confirmed historical diagnosis. Local SSH transport failed
+separately; the remote owner completed automatic cold rollback in 389.565 seconds.
+Independent private/both canonical native proofs, five reopened SQLite stores
+and owner exit checks passed. V11 serving verification now checks the exact
+warm, non-invalidated active map while a future candidate prepares, as the native
+status producer distinguishes these states. HTTP readiness, assignment, release,
+all workers and every independently canonical advertised anchor remain required.
+Control and HTTP observations are retained privately before refusal. Initial
+candidate prewarm, all phase bounds and all final qualification gates remain
+unchanged and open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt12-warm-refusal-cold-rollback-6f37db70.json).
+
+Attempt 11 passed candidate preparation and activation, then the closed startup
+guard refused a real publication error: the cloned predecessor roster pinned
+archive shards 0–76 while the v11 map requires 0–81. Native `shard-assign`
+confirmed the mismatch. Automatic cold rollback passed all five phases in
+390.229 seconds; independent private/both canonical native proofs and five
+reopened SQLite stores passed, and all owners exited. Service preparation now
+requires pinned archive ranges to cover the qualified map exactly, rejecting
+stale ranges, gaps, overlap, foreign shards, invalid endpoints and changed roles.
+The private generator derives this fleet's single owner's range from the
+checksum-verified qualified v11 map. Corrected cutover and all final gates remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt11-archive-roster-refusal-cold-rollback-7bdbcbb9.json).
+
+Attempt 10 passed candidate preparation and independent worker activation, but
+canonical verification failed with HTTP 503. Automatic cold rollback passed in
+379.941 seconds; private and each canonical native/query/SQLite proof passed,
+and all owners exited. The historical response endpoint/body were not retained;
+controller startup reconciliation is an inference. A closed startup observation
+now permits only the native controller's exact local reconciliation refusal,
+with pinned unit/PID/binary, no restart/OOM, 20% resource floors and both public
+origins still withdrawn. It is bounded to 300 seconds inside the unchanged
+canonical phase; all full canonical gates still follow. Actual corrected cutover
+and all final qualification remain open.
+[Evidence](../evidence/activity-metadata-2026-09-30/attempt10-canonical-refusal-cold-rollback-9164c2c7.json).
+
+Attempt 9 completed the remote v11 cutover and exact private/both canonical
+query proofs, but continuous publication failed: operations inputs used `v2`
+instead of the native profile name `zcash-transparent-range-v2`. Load remained
+paused with zero completed queries. Explicit ordinary cold rollback passed in
+377.309 seconds; private and both canonical queries and reopened SQLite stores
+passed, and all remote owners exited. The forward SSH reset and subsequent local
+rollback transport timeout remain failures, separately reconciled against the
+remote journal. The service-input guard now binds the canonical profile from the
+reviewed publication geometry and rejects shorthand/foreign names. Corrected
+redeployment and every final sustained/freshness/capacity/lifecycle gate remain
+open. [Evidence](../evidence/activity-metadata-2026-09-30/attempt9-cutover-freshness-failure-cold-rollback-57e71be1.json).
+
+Attempt 8 failed archive cache preparation at its unchanged 1,200-second bound.
+Automatic rollback then refused eight unexpected Python bytecode files created
+by a read-only diagnostic that omitted `-B`; all retained source payload hashes
+are unchanged. The original automatic rollback failed before restoration; a subsequent
+closed repair completed cold recovery in 382.237 seconds, with exact private and
+both canonical query/SQLite proofs and all remote owners exited. The first fresh-source repair also refused the original source inventory before
+withdrawal; that failure remains recorded. A closed rollback repair now retains
+only bounded compiler-proved import caches outside the source tree with private
+intent/completion, then requires the original strict source check. The retained attempt-8 recovery evidence records this separately from the
+failed forward deadline. [Focused evidence](../evidence/activity-metadata-2026-09-30/closed-bytecode-retention-focused.json).
+Diagnostics must use `python3 -B` before importing retained libraries. Source
+file refusal now reports unexpected and missing file counts without exposing
+paths. The exact guard remains intact; prior source receipts are preserved.
+[Failure evidence](../evidence/activity-metadata-2026-09-30/attempt8-cache-deadline-source-drift-139a54f3.json).
+
+Attempt 7 at `762e81f3` failed guarded candidate cache preparation. The new
+reader expected bare Prometheus metric names, while the native exporter attaches
+worker labels. Host owners retained `ValueError` without exception text; that
+exact exception is not inferred. Automatic cold rollback passed all phases in
+376.654 seconds and the transaction is `rolled-back`. Private and each canonical
+encrypted-query/reopened SQLite proofs passed; both independently observed
+metadata responses were HTTP 200. All remote host owners exited and quality
+remains failed with PID 0. [Evidence](../evidence/activity-metadata-2026-09-30/attempt7-cache-reader-failure-cold-rollback-762e81f3.json)
+preserves the failed forward gate separately from passing recovery.
+
+The corrected reader uses persistence counters from the native readiness
+`runtime_cache` object, with bounded JSON, duplicate-field rejection and strict
+nonnegative integer counters. Missing/unavailable observations refuse progress.
+Private host owners now retain bounded validation failure details for diagnosis;
+public replies retain their existing minimal shape. Actual candidate preparation,
+independent activation, successful v11 redeployment and all sustained/lifecycle
+gates remain open. All earlier failures below remain historical failures.
+
+
+Attempt 6 at `721dac6a` failed candidate archive prewarming after 402.587
+seconds. Its local SSH transport failed separately, while the locked remote
+wrapper survived and completed automatic cold rollback. Transaction
+`transparent-schema-20261001T191953Z-73028c5af3dd-c36dd1` is `rolled-back`;
+all rollback phases passed in 376.247 seconds, within the 15-minute ceiling.
+The private and each canonical origin's encrypted-query/reopened SQLite proofs
+completed exact syncs with zero failures. Fresh metadata returned HTTP 200 on
+both origins. All remote host owners exited; quality remains failed with PID 0.
+[Retained evidence](../evidence/activity-metadata-2026-09-30/attempt6-cold-rollback-721dac6a.json)
+preserves the failed forward gate and separate local transport outcome.
+This cold rollback result does not accept v11, successful redeployment, sustained
+capacity, freshness or the remaining lifecycle faults. Earlier failures below
+remain failed history.
+
+Archive candidate runtime-cache preparation was incomplete. The next reviewed
+wrapper prepares missing runtimes only after staging while both origins are
+withdrawn and the predecessor is stopped, then stops the candidate after cache
+writes finish. Its bounded preparation is separate from the unchanged
+300-second independent activation warm gate. Actual preparation and v11 cutover
+remain pending.
+
+
+Latest attempt `7401ac97` passed locked preflight, then failed coordinator
+baseline capture: the retained v11 activation pointer was misclassified as a
+v10 predecessor generation. Coordinator writers stopped; no remote capture or
+new candidate staging was reached. The new transaction is `rollback-failed`
+because withdrawal required a complete baseline. The reviewed partial-capture
+repair verifies unchanged copies and stopped live state before completion;
+actual guarded recovery is pending. The `16f806df` repair refused two changed
+v11 routing audit files written by the earlier owned withdrawal. Its
+[failure](../evidence/activity-metadata-2026-09-30/partial-guard-drift-failure-16f806df.json)
+remains failed. A closed reconciliation retains those withdrawn audit bytes and
+restores only the independently captured originals before completing capture;
+unrelated drift refuses. No new recovery has passed. The next repair also refused the owned public
+Caddy guard against the copied original. Its [failure](../evidence/activity-metadata-2026-09-30/partial-public-guard-failure-0dcc7d02.json)
+is retained; exact captured guard derivation now permits completing capture
+while both origins remain closed, with the original copied bytes unchanged.
+Actual `9abd2381` recovery then completed capture/withdrawal, restoration and
+private verification, but canonical reopen failed HTTP 503. The late router
+capture already contained withdrawn handlers; restoring it overwrote the
+regenerated healthy routing. The [failure](../evidence/activity-metadata-2026-09-30/late-router-capture-reopen-failure-9abd2381.json)
+is retained. Separate exact captured-guard handling and actual paired canonical
+proof remain required. The [failure](../evidence/activity-metadata-2026-09-30/partial-capture-failure-7401ac97.json)
+remains recorded.
+
+The [owned warm v10 recovery](../evidence/activity-metadata-2026-09-30/paired-origin-coherent-recovery-a8e6b63b.json)
+passed in 92.912 seconds at `a8e6b63b`. The journal is `rolled-back`. Separate
+private and both canonical encrypted-query proofs each completed one exact sync
+with reopened SQLite stores and no failures. Both fresh canonical metadata
+observations returned HTTP 200 through height 3502797. Quality remains stopped.
+This is a brief recovery proof, not v11 or sustained acceptance. The preceding
+[cold archive deadline failure](../evidence/activity-metadata-2026-09-30/protected-policy-cold-deadline-a8e6b63b.json)
+and every original timing failure remain failed. The next fresh attempt failed preflight on a retained candidate publication pointer,
+before creating a transaction. Its exact presence and byte capture must be reconciled
+before a fresh reviewed v11 deployment.
+
+Latest actual cutover `c28901b4` captured protected coherent baselines on all
+five hosts and passed maintenance and v11 staging, then failed candidate warm
+verification. Automatic rollback restored v10 but missed its cold archive
+readiness deadline. The reviewed `4b474d21` repair subsequently passed exact
+restoration and the private native/reopened SQLite proof. The Transparent-origin
+native proof also passed, but the Enhance-origin proof failed: transparent
+revision setup requests reached its default backend and returned HTTP 404.
+Both origins were re-guarded. The [paired-origin failure](../evidence/activity-metadata-2026-09-30/paired-origin-recovery-failure-4b474d21.json)
+retains the failed native report, logs and SQLite archive hashes. A closed
+checksum-bound routing correction now sends only transparent revision setup/query
+paths to the captured private shard router, preserving the Enhance query handler.
+Focused validation and actual guarded recovery must precede reopening. No v11
+cutover or rollback timing acceptance has passed.
+
+Latest observed recovery on 2026-10-01: the reviewed `09a9f140` relay correction
+completed [coherent recovery at a newer v10 revision](../evidence/activity-metadata-2026-09-30/coherent-newer-v10-recovery-09a9f140.json).
+The journal is `reconciled-v10`; private verification, reopen and service
+verification passed. The owned preparation/resume took 120.465 seconds. Each
+of its three native reference reports completed one exact sync with no failures
+and no stop reason, with reopened SQLite stores. Both canonical metadata origins
+returned HTTP 200, genesis through height 3502677, with 86 shards. This restored
+predecessor service at that earlier observation. The public client proof currently
+queries Transparent while fetching filters from Enhance. Separate encrypted
+query proofs through each canonical origin remain required. The original
+rollback and missed 15-minute acceptance remain failed; a fresh protected
+baseline and actual rollback/redeploy rehearsal remain mandatory. The failures
+below are retained history, not the latest service state.
+
+Actual transaction `transparent-schema-20261001T112410Z-15d5de8189d2-c99edc`
+started after locked preflight on 2026-10-01 at 11:24 UTC. All five complete v10
+baselines were captured, but the coordinator timed out waiting for the archive
+capture's repeated native verification. Remote owners subsequently completed and
+exited. Recovery restored v10 bytes and services, then failed warm verification:
+authority had restarted publication before workers were proved. Public origins
+remained guarded at that failed attempt; the transaction was `rollback-failed`. The 15-minute recovery
+acceptance was missed and must be rerun. The [reviewed recovery repair](../evidence/activity-metadata-2026-09-30/interrupted-cutover-recovery-repair-focused.json)
+preserves original recipe/baseline bytes and all failures. Its focused check
+passed. The repair source was staged on all five hosts, but its first actual
+rollback refused at the CLI source identity check before service effects. The
+[entrypoint correction](../evidence/activity-metadata-2026-09-30/repair-entrypoint-focused.json)
+passed focused checks. Its actual retry also refused at routing source identity
+before service effects; the [routing repair binding](../evidence/activity-metadata-2026-09-30/repair-routing-focused.json)
+passed focused checks. The [actual repaired attempt](../evidence/activity-metadata-2026-09-30/repair-retention-failure-16f2077d.json)
+passed withdrawal but refused restoration because the captured publication was
+collected on all three workers. All remote owners exited. The workers are warm
+on one newer v10 publication and its coordinator activation bytes remain in
+preserved displacements. Guarded adoption of the newer activation completed,
+but client reconciliation initially failed. The readiness URL and continuous
+current-map verification defects were fixed with focused evidence. The earlier
+[real client attempt](../evidence/activity-metadata-2026-09-30/private-recovery-port-failure-ef6f7d59.json)
+made two incomplete syncs with ten HTTP 503 responses; it did not pass despite
+native process exit 0. The recovery relay incorrectly names private router port
+8093 while the retained fleet listens on 8080. Direct worker and private 8080
+setup requests returned 200; the relay returned 502. Both public origins were then
+503 and coordinator writers were stopped. The original failed recipe/baselines
+remain immutable; a reviewed relay correction and guarded predecessor authority
+restart must precede the full HTTP/SQLite/HTTPS proof. This is not a completed
+v11 deployment or a passing rollback timing qualification.
 
 At 03:31 UTC the full v3 journal committed genesis through 3500738 and its
 independent ingestion guard passed. The v11 publication then completed at
@@ -69,7 +503,32 @@ process tests cover remote-parent and relay survival. Actual SSH qualification
 reproduced that OpenSSH closes inherited descriptors, losing the coordinator
 lock after the relay exited. Both failed owners were explicitly reconciled;
 no service changed. A separate timeout-safe transport keeper now retains the
-lock outside SSH. The corrected real gate is required before cutover.
+lock outside SSH. The corrected real gate then passed on both recent workers,
+the archive worker and the router at `ccbfd35f`, including both lock refusals,
+interrupted-owner fences and reconciliation. [Retained evidence](../evidence/activity-metadata-2026-09-30/ssh-lock-qualified-ccbfd35f.json)
+binds each actual process and request. Matching immutable coordinator inputs are
+also [staged and reverified](../evidence/activity-metadata-2026-09-30/ready-coordinator-inputs-ccbfd35f.json).
+The user subsequently authorized proceeding without waiting for queued operations
+CI. The prepared proof retains successful full CI at `801d7a62` with its actual
+head and all 12 jobs, explicitly records the current candidate CI as pending,
+and verifies unchanged native inputs. The five-host specification and complete
+740-second rollback recipe were staged. Service preflight refused before any
+baseline or maintenance; its detailed error was discarded. A subsequent plain
+Python diagnostic invocation exposed bytecode writes inside immutable operation
+sources; that diagnostic failure does not establish the original failure cause. The deployment entry point now disables
+bytecode before imports; a real subprocess regression reproduces 14 cache files
+before the fix and zero afterward. The failed source is retained and a fresh
+source export is required. See the [failed preflight and correction](../evidence/activity-metadata-2026-09-30/accelerated-cutover-preflight-ccbfd35f.json).
+A later corrected five-host preflight passed, including native verification on
+all three workers, after refreshing collected active-map sentinels and retaining
+the two recent workers' actual static assignment files. The followup now binds
+all 180 measured setup hashes and refuses authority startup until every assigned
+installed setup's bytes and identity agree, including both recent replicas.
+Recovery samples also require complete predecessor/candidate executable pins.
+The [focused evidence](../evidence/activity-metadata-2026-09-30/installed-setup-binding-focused.json)
+is source evidence; installed agreement and the rebound live recipe still need
+execution. Canonical service remains v10; guarded deployment and all final
+qualification remain open.
 
 October 1 input preparation review found and reproduced a raw-file/protocol
 map identity mismatch. The corrected protocol serializer matches the retained
@@ -621,3 +1080,12 @@ A sub-ten-minute compatible fleet update and failed-batch rollback still need
 separate timing/recovery evidence. The optional
 [parent-filter artifact rollout](../evidence/parent-filters-production-2026-09-08/README.md)
 passed a bounded canary; its heavy-wallet performance comparison did not finish.
+
+On 2026-10-01, the attempt5 transaction `transparent-schema-20261001T184408Z-a3a74bbb161e-491857`
+passed coherent capture, maintenance and staging, then failed candidate prewarm
+at 303.431 seconds. Automatic restoration passed, but its 250.862-second cold
+readiness check failed. A distinct exact warm-restored repair passed in 81.087
+seconds, including private and separate canonical encrypted-query proofs with
+reopened SQLite stores. Those cold failures remain failed; this brief repair
+does not qualify v11, capacity or cold recovery. The bounded startup allocation
+fix has focused evidence; a fresh actual cutover and all final gates remain open.

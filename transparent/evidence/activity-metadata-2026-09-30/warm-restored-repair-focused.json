@@ -1,0 +1,26 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "c28901b48d0d9dfb120f3d0dc5780ea216a032b0",
+  "owner": "ce305f564e8b4f629c7175c1bf1d27b1",
+  "duration_seconds": 16.875945833977312,
+  "result_sha256": "91d929f03ce9da512866f57d665bd7171325174bede7bb4a7a3083b56982eff6",
+  "inputs": {
+    "transparent/docs/deployment.md": "26ec631ae5c2f533273570ce942d747efb720abdb338303634355ea3443470ce",
+    "transparent/ops/lib/activity_schema_dispatch.py": "cc19796b78fc8f7248e9563029dc2a685fb540b5674d953e8751958439fbfa9f",
+    "transparent/ops/lib/activity_schema_host.py": "e5529253036e56f103e1eec3f33e2acbf8d9911c156acb9e329fa23ae4e12e1f",
+    "transparent/ops/lib/activity_schema_product.py": "31787f9f3f8e2f24c70eaeb44151828ffe48886df33c36794f2aa444e667958a",
+    "transparent/ops/tests/test_activity_schema_host.py": "e787a42692386e2060ad32f137b4d3e4a39f82f9a4cb0e8c5a1a7a6c032d3d63",
+    "transparent/ops/tests/test_activity_schema_product.py": "2dcbac9681c0f710c0cdcaf5c87852fbadb99d3e401841d7020da42853b5db82"
+  },
+  "observations": [
+    "Reviewed repair avoids restarting a warm worker only after every captured live file matches and exact native binary/assignment/publication proof passes",
+    "File drift uses ordinary restore; mismatched native proof refuses reuse; ordinary restore never skips stop",
+    "Candidate warm deadline 300/transport330; rollback readiness/probe budgets unchanged"
+  ],
+  "limitations": [
+    "Initial malformed warm fixture failed and was corrected; failed focused owner84d91 retained",
+    "Actual production repair and canonical reopening still required",
+    "No failed recovery deadline is relabeled passing"
+  ]
+}

@@ -1,0 +1,211 @@
+{
+  "source_sha": "762e81f3deea245cb223934f2614cb89dff97ea4",
+  "transaction": "transparent-schema-20261001T200823Z-af2caa1d9f3f-77bcae",
+  "recipe_sha256": "af2caa1d9f3f522b8f5c5b1ec280e0a778446096da7abcd100c50d6300ea7c33",
+  "remote_status": "rolled-back",
+  "local_pipeline_status": "failed",
+  "events": [
+    {
+      "group": "steps",
+      "name": "preserve-v10",
+      "status": "passed",
+      "seconds": 233.62486442085356
+    },
+    {
+      "group": "steps",
+      "name": "maintenance",
+      "status": "passed",
+      "seconds": 10.340111202094704
+    },
+    {
+      "group": "steps",
+      "name": "stage-v11",
+      "status": "failed",
+      "seconds": 449.0413029259071
+    },
+    {
+      "group": "rollback",
+      "name": "withdraw-origins",
+      "status": "passed",
+      "seconds": 10.490464637987316
+    },
+    {
+      "group": "rollback",
+      "name": "restore-v10",
+      "status": "passed",
+      "seconds": 115.3759909439832
+    },
+    {
+      "group": "rollback",
+      "name": "verify-rollback",
+      "status": "passed",
+      "seconds": 221.28012398583815
+    },
+    {
+      "group": "rollback",
+      "name": "reopen-v10",
+      "status": "passed",
+      "seconds": 23.87350303400308
+    },
+    {
+      "group": "rollback",
+      "name": "verify-service",
+      "status": "passed",
+      "seconds": 5.634065454825759
+    }
+  ],
+  "cold_rollback_seconds": 376.6541480566375,
+  "native_proofs": [
+    {
+      "report": "routing/v10-public-recovery-0-1790886363863218321/native.json",
+      "sha256": "ebc642b53dec5bc51ecfc6ed06b57fe37c6ad5ccc18ebb80983d36f9612180fc",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-0-1790886372020351257/native.json",
+      "sha256": "4f4aeb86595a864c3ee63b498ce592593a0dfafc637eecb2b06f02311caef020",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-1-1790886364058145731/native.json",
+      "sha256": "b873ac921a08d364efbf15ac30700ccd998eb2b9c39fdd81d3dd32be5d31c0d0",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-public-recovery-1-1790886372214666877/native.json",
+      "sha256": "6853967a98dee7e9539d50e08051f77893ba26d59acc333f5edf23920a30fc6f",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "report": "routing/v10-recovery-1790886340389079419/native.json",
+      "sha256": "9956448d9b3b51517b0c6e4622f5c21bc167aeda99d6ab9c6104983347dfab4d",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    }
+  ],
+  "sqlite_results": [
+    {
+      "result": "routing/v10-public-recovery-0-1790886363863218321/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "ebc642b53dec5bc51ecfc6ed06b57fe37c6ad5ccc18ebb80983d36f9612180fc",
+      "reopened_events": [
+        {
+          "events": 2,
+          "transactions": 2
+        }
+      ]
+    },
+    {
+      "result": "routing/v10-public-recovery-0-1790886372020351257/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "4f4aeb86595a864c3ee63b498ce592593a0dfafc637eecb2b06f02311caef020",
+      "reopened_events": [
+        {
+          "events": 2,
+          "transactions": 2
+        }
+      ]
+    },
+    {
+      "result": "routing/v10-public-recovery-1-1790886364058145731/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "b873ac921a08d364efbf15ac30700ccd998eb2b9c39fdd81d3dd32be5d31c0d0",
+      "reopened_events": [
+        {
+          "events": 2,
+          "transactions": 2
+        }
+      ]
+    },
+    {
+      "result": "routing/v10-public-recovery-1-1790886372214666877/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "6853967a98dee7e9539d50e08051f77893ba26d59acc333f5edf23920a30fc6f",
+      "reopened_events": [
+        {
+          "events": 2,
+          "transactions": 2
+        }
+      ]
+    },
+    {
+      "result": "routing/v10-recovery-1790886340389079419/result.json",
+      "status": "passed",
+      "schema": "transparent-shard-v10",
+      "native_report_sha256": "9956448d9b3b51517b0c6e4622f5c21bc167aeda99d6ab9c6104983347dfab4d",
+      "reopened_events": [
+        {
+          "events": 2,
+          "transactions": 2
+        }
+      ]
+    }
+  ],
+  "metadata": [
+    {
+      "origin": "transparent",
+      "http_status": 200,
+      "start_height": 0,
+      "shards": 86,
+      "raw_sha256": "b94521614a47622343e773807e9f2d6f6b16d7c180677a57cd109a4e815c6da4"
+    },
+    {
+      "origin": "enhance",
+      "http_status": 200,
+      "start_height": 0,
+      "shards": 86,
+      "raw_sha256": "b94521614a47622343e773807e9f2d6f6b16d7c180677a57cd109a4e815c6da4"
+    }
+  ],
+  "archive_sha256": "a3630884cb471d5c8d5616d4925922b34b0f523357e027fd0cfca63811efccf3",
+  "failure_diagnosis": "Source-level confirmed naked Prometheus-name mismatch with native worker labels. Actual owners retained ValueError type, not exception text; exact exception text is not claimed.",
+  "scope": "Failed candidate cache preparation remains failed. Actual subsequent automatic cold v10 rollback passed; v11, redeployment, sustained and remaining lifecycle qualification remain open."
+}

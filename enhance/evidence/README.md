@@ -11,6 +11,10 @@ release and must not be read as current source paths.
 - [Development-speed follow-up to PR 122](development-speed-2026-09-30/README.md) —
   exact-SHA CI verification, automatic local Cargo leases, actual concurrent
   checks and comparable warm feedback measurements; separate from qualification.
+- [CI Cargo cache identity and reuse](ci-cache-reuse-2026-10-01/README.md) —
+  cold, restore and workflow/env-only CI runs with sanitized restore status and
+  Cargo's own fresh/compiled unit counts; primed-main comparison pending
+  integration; no savings claimed.
 
 ## Current protocol and release inputs
 

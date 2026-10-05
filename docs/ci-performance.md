@@ -77,8 +77,8 @@ Use separate Unix users and 0700 homes for the two services:
 `wallet-pir-fast` and `wallet-pir-build`. Neither has sudo or a deployment SSH key.
 Fast runners execute same-repository PR code and have no production access or
 access to the build user's release caches or runner credentials. Fork PRs always use disposable
-hosted runners. Full CI on PRs also uses hosted runners; only main builds use the
-trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
+hosted runners. Full CI on PRs, and manual runs from any branch other than main,
+also use hosted runners; only main builds use the trusted persistent build pool. The fast service has CPU/I/O weight 1000 and a 6-GiB memory ceiling; the build
 service has weight 100, nice level 10 and a 9-GiB ceiling. Both use
 `MemoryHigh=infinity`: a soft threshold previously trapped tests and the runner
 listener in memory reclaim for hours without reaching the hard limit. The hard
@@ -107,15 +107,53 @@ private home directory.
 
 Runner prerequisites: Ubuntu 24.04 x86-64 with x86-64-v3 CPU support, Git, Python
 3.11+, Node, make, jq, shellcheck, Clang/libclang-dev, protobuf-compiler, standard
-native build tools, and Rust **1.91.0** with rustfmt and clippy. The setup action
+native build tools, and Rust **1.97.1** with rustfmt and clippy. The setup action
 checks the pinned tools and OS instead of reinstalling them each run.
 
+## Cargo cache identity and reuse
+
+[`tools/ci/cargo_cache.py`](../tools/ci/cargo_cache.py) computes each job's
+compatibility identity from the actual compiler (`rustc -vV`, including its
+commit), Cargo version, OS/glibc, CPU architecture and target, native C/C++,
+clang and protoc versions, compile-affecting environment (`RUSTFLAGS`, `CFLAGS`,
+`CARGO_PROFILE_*`, `CARGO_BUILD_*` and similar), the version of any `rustc`
+wrapper, toolchain files, and every Cargo configuration file Cargo reads: the
+checkout's and each ancestor directory's `.cargo/config(.toml)`, `CARGO_HOME`'s,
+and files they `include`, recorded by relative position. The compiler and
+wrapper are probed as Cargo selects them: environment first, then `[build]`
+settings by Cargo's precedence (deeper directory over ancestor over `CARGO_HOME`;
+an including file over its includes; a later include over an earlier one), with
+config-relative paths resolved as Cargo does. The full identity
+also covers the lane, its package/feature scope and profile, the root manifest's
+`[profile.*]` definitions, and `Cargo.lock`. Without Python's `tomllib` (the
+Ubuntu 22.04 CUDA container), the whole `Cargo.toml` is hashed instead and
+`include`s and `[build]` tool settings in config files are not followed. It excludes the checkout SHA, workflow text and runtime-only
+variables such as `RUST_TEST_THREADS` and `CARGO_TERM_COLOR`. Every
+`rust-setup` use names a lane and scope; an unclassified pair fails the job.
+
 Persistent Cargo output lives outside checkout at
-`~/.cache/wallet-pir/<runner-name>/<lane>/<compiler-flags-hash>/`. Fast, lint, full
-test, q48 release and native CPU release lanes cannot contend for the same Cargo target lock. Cargo
-tracks source, lockfile, features and profile changes; changes to compilation
-flags also get separate directories. Prune unused lane directories only while
-the runner is idle. Do not share writable caches between trust boundaries.
+`~/.cache/wallet-pir/<runner-name>/<lane>/<toolchain-identity>/`, where the
+toolchain identity omits scope, profile definitions and lockfile. Fast, lint, full test, q48 release
+and native CPU release lanes cannot contend for the same Cargo target lock.
+Cargo tracks source, lockfile, features and profile changes inside a lane.
+Prune unused lane directories only while the runner is idle. Do not share
+writable caches between trust boundaries.
+
+Hosted jobs restore one exact key, `v1-wallet-pir-<lane>-<scope>-<identity>-Linux-x64`,
+with no partial fallback to another identity. Lanes, scopes, CPU, native CPU and
+Ubuntu 22.04 CUDA builds therefore never share entries. GitHub scopes a PR's saves
+to its merge ref; a PR restores its own entry first and otherwise main's. Main
+never reads PR entries. Because main CI full runs on the persistent pool, the
+main-only [Prime hosted Cargo caches](../.github/workflows/ci-cache.yml) workflow
+saves the full lint and test entries from main code. It checks for the exact
+entry without downloading it and compiles only when it is missing. It runs no
+tests and is not a gate. It does not prime fast-lane entries (used only by fork
+PRs) or the Enhance native/CUDA feature checks; those units compile in the job.
+
+A restored cache can only save work. Cargo still checks every unit; a fresh
+checkout's workspace sources are newer than cached outputs, so workspace crates
+rebuild on hosted runners, while unchanged third-party units can be fresh.
+A missing cache is a valid cold build.
 
 ## Prepared-artifact deployment
 
@@ -156,9 +194,38 @@ start, not the original workflow creation; the report includes its attempt numbe
 
 ```sh
 python3 tools/ci/timings.py --run <run-id>
+python3 tools/ci/timings.py --run <run-id> --cache-records
 python3 tools/ci/timings.py --workflow ci.yml --limit 20
 python3 tools/ci/timings.py --workflow deploy-transparent-shard.yml --limit 20
 ```
+
+`dispatch_to_job_start_seconds` is measured from the current attempt's start and
+includes waiting for `needs`, concurrency groups and environments; it is not
+pure runner queue time. Each job's `phases` groups its steps into setup (including
+Rust setup and hosted cache restore), work, post steps (including cache save) and
+reporting. With `--cache-records`, the tool also reads each job's sanitized
+`CI_CACHE_IDENTITY`, `CI_CACHE_RESTORE`, `CI_CACHE_REPORT`, `CI_CARGO_ARTIFACTS`
+and `CI_STAGE_REPORT` lines. They record the identity digest and key, restore
+status (`miss`, `hit-current-ref`, `hit-main`, `primed`, or
+`persistent-new`/`persistent-existing`), the refs that held the key before
+restore, and setup and restore seconds (null when not recorded).
+
+`CI_CARGO_ARTIFACTS` is the attribution of Cargo work. In CI, `tools/ci/stage.py`
+adds `--message-format=json-diagnostic-rendered-ansi` to every Cargo
+build/check/clippy/test command it runs, prints diagnostics and other output as
+before, and logs each `compiler-artifact` message's package name, version,
+source kind and `fresh` flag. A unit is a package target with its profile,
+features and output file names (basenames only), so `cargo check` (`.rmeta`) and
+`cargo build` (`.rlib`) of one target are separate units. A unit is compiled if
+any command reported it not fresh. Units no command needed are not counted. Cargo commands outside
+`stage.py` (for example `make` helper targets) are not attributed.
+`fingerprint_inventory` in `CI_CACHE_REPORT` compares fingerprint directories at
+restore and job end by content; it is an inventory, not attribution.
+
+`CI_STAGE_REPORT` sums leaf stage wall time: `compile_stage_seconds` covers whole
+compile/lint Cargo commands, including resolution, downloads, build scripts and
+linking. Test stages may also build units no compile stage needed. A class with
+no stage is null. Records contain no environment values, tokens or absolute paths.
 
 Reused jobs in partial reruns have a null current-attempt queue time and an
 explicit reuse flag. Total workflow and current-attempt elapsed times are separate.

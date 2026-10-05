@@ -1,0 +1,14 @@
+{
+  "base_sha": "e2ac2379dcaba6a2370ae76bef08587ac4aeb0a7",
+  "owner": "916b6855f39442bc800c0742bd1db68c",
+  "status": "pass",
+  "seconds": 21.183798834099434,
+  "command": "make check-fast BASE=e2ac2379dcaba6a2370ae76bef08587ac4aeb0a7",
+  "files": {
+    "transparent/ops/lib/activity_source_stage_host.py": "afa32d2f485ca8e48faf24cc58ca226e582e808bea36e7ecb506fc98a49c1e58",
+    "transparent/ops/lib/activity_schema_product.py": "6a7e1f5abb08b63cd8fbd1a786d8d59b793a48c26d33799c714ea05ec96ebde8",
+    "transparent/ops/tests/test_activity_schema_operation.py": "fb148687037dbc11d22bb3be57f95ac525f11b7a3ad5cbc51f69a77f63de930f"
+  },
+  "scope": "Closed rollback repair retains only bounded bytecode proved to compile original reviewed source; original payload hashes, source receipts and ordinary guards unchanged. Actual recovery still required.",
+  "prior_failed_fixture": "57e5e7e122954356b146ce61dbde254d failed resolved namespace validation on macOS temporary-path alias; fixture now uses resolved source path."
+}

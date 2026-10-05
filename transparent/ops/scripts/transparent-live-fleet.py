@@ -20,6 +20,17 @@ import time
 import uuid
 
 
+def withdrawn_router(config, guarded=True):
+    """Exact empty-fleet routing bytes, also used to attest late rollback captures."""
+    host=config['public_host'];internal=config.get('internal_listen')
+    if not re.fullmatch(r'[A-Za-z0-9_.:-]+',host) or internal and not re.fullmatch(r'[A-Za-z0-9_.:-]+',internal):
+        raise ValueError('invalid withdrawn router addresses')
+    body='\trequest_body {\n\t\tmax_size 1MB\n\t}\n\thandle {\n\t\theader Retry-After 1\n\t\trespond "transparent publication reconciling" 503\n\t}'
+    maintenance='\thandle {\n\t\theader Retry-After 1\n\t\trespond "transparent fleet maintenance" 503\n\t}'
+    sites=[host]+(['http://'+internal] if internal else [])
+    return '{\n\tservers {\n\t\tmetrics\n\t}\n}\n'+'\n'.join(site+' {\n'+(maintenance if guarded and site==host else body)+'\n}\n' for site in sites)
+
+
 def inherited_options():
     # Standalone daemons predate the checkout library. Only wrapper descendants
     # need it; operations sources retain ops/lib alongside this script.
@@ -679,6 +690,8 @@ class Fleet:
         # while controller retries cannot accidentally reopen the public site.
         text = '\n'.join(site+' {\n'+(unavailable if guarded and site == host else '\n'.join(body))+'\n}\n' for site in sites)
         text = '{\n\tservers {\n\t\tmetrics\n\t}\n}\n' + text
+        if not workers:
+            text = withdrawn_router(self.c, guarded)
         target = self.c.get('router_file','/etc/caddy/Caddyfile')
         quoted = shlex.quote(target)
         # Record successful application separately: a crash after rename but before

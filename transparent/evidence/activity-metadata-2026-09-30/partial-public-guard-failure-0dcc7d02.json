@@ -1,0 +1,14 @@
+{
+  "status": "failed",
+  "source_sha": "0dcc7d02b083b9efc2009c9067c4d8df3c35f409",
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "owner": "540f97b5a0a34df6ac06a7065a8b2be3",
+  "repair_seconds": 2.236109249992296,
+  "stdout_sha256": "efdfeeb368def82ec426d71de8e02e19f2b269d5e618c8ce68e8255f027bcb54",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure": "Partial copied baseline comparison refused the public Caddy guard installed by the earlier owned withdrawal",
+  "effects": "All five sources staged; repair failed before baseline completion or any reconciliation writes",
+  "diagnosis": "Read-only exact derivation confirmed current Caddy bytes equal captured configuration guarded with bound private10.142.0.11:8080; only Caddy and two candidate audit files differ",
+  "limitations": "Full private and both canonical recovery and v11 qualification remain required"
+}

@@ -1,0 +1,13 @@
+{
+  "status": "failed",
+  "source_sha": "16f806dfb229b1afb7418528fc50abdfd8c59288",
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "owner": "89175f846eba439eac9c02af88c4657a",
+  "repair_seconds": 2.162590416963212,
+  "stdout_sha256": "efdfeeb368def82ec426d71de8e02e19f2b269d5e618c8ce68e8255f027bcb54",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure": "withdraw-origins refused changed partial captured candidate inventory: two owned routing bookkeeping writes after capture",
+  "effects": "Source staged on five hosts; baseline incomplete; no repaired restore or reopen accepted",
+  "limitations": "Current public service and full v11 qualification remain unaccepted"
+}

@@ -1,0 +1,30 @@
+{
+  "status": "passed",
+  "owner": "74ded6b5e9504980b29f5da0649de8f3",
+  "source_base": "10911d3c067be00e6ce72ea03664c78a11f2bdba",
+  "seconds": 15.609471292002127,
+  "result_sha256": "7f2f980fa552770ec3cef01bf8034867baa7999c10766f74f7c71333636449e1",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_routing.py": "31d3fbae082ece780feb976db634dfffe06818207dc72d21463629591f43b8b0",
+    "transparent/ops/lib/activity_schema_product.py": "7f5f0a8460397ccb83259ee81662924fd88bd1fd860b582244f29e8d1aa0b742",
+    "transparent/ops/lib/activity_schema_reconcile.py": "c18c9e369647a34f5e687408184f17c7ab55ac2e862a7fa329801cea21fbbbb6",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "93d3bb3b33dadc44cdc346aa0fd03b6bd02a62f29a04b3e59b3d3e635375d109"
+  },
+  "scope": "Explicit newer-v10 recovery permits future preparation while current native warm/invalidated/map and HTTP binary/assignment/anchor/client gates stay required. Static capture and forward v11 gates are unchanged.",
+  "retained_preflight_failures": [
+    {
+      "owner": "f4ad77555cd74c549c1b7d73144168db",
+      "status": "failed",
+      "cause": "future preparation rejected by static current-map verifier"
+    },
+    {
+      "owner": "e420742671ff447c98a4e26a702fa2fe",
+      "status": "failed",
+      "cause": "same static current-map verifier"
+    }
+  ],
+  "limitations": [
+    "Actual resume and canonical client proof have not executed.",
+    "Original rollback and 15-minute acceptance remain failed."
+  ]
+}

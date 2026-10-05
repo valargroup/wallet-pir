@@ -1,0 +1,18 @@
+{
+  "status": "passed",
+  "owner": "02876fdaa67842c0a87dc7723b9002e6",
+  "base_source_sha": "9abd23818c5156f8d454247ac09ce9a4df397520",
+  "duration_seconds": 15.787304083933122,
+  "result_sha256": "7cfbfe2bfe6fe61de2af60d21f40a0ab383f7d337dd936715164bcb3b35915f2",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_dispatch.py": "c60e949ced2eb80880d1de03bbf14c722f510831a9162b509fd810286e730e03",
+    "transparent/ops/lib/activity_schema_host.py": "57b0e5909f920774dfc120f74c83cbb008dcd75df373fdf86c848ab912c84bc5",
+    "transparent/ops/lib/activity_schema_product.py": "3b7928bfc2ca968b1614238a67bf348b97d5f24545add1efe13627554e31e8c2",
+    "transparent/ops/scripts/transparent-live-fleet.py": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083",
+    "transparent/ops/tests/test_activity_schema_host.py": "8d3fd36d28d287dd2301102b53e473e943982ba986c2e89cae1af319c9374781",
+    "transparent/ops/tests/test_activity_schema_product.py": "bed9952b5f3103320fe816e1a41fe383676df687a2c2c822035c58e3e7bfd5e0"
+  },
+  "scope": "Late failed-preserve router guard attestation from exact captured predecessor config and shared native producer; remote pinned complete baseline/source binding; keep regenerated routing only after attestation; ordinary rollback restore unchanged",
+  "retained_initial_failure": "New product fixture initially lacked archive_sha256, raised KeyError; corrected fixture then focused pass. No host action occurred in fixture.",
+  "limitations": "Actual guarded recovery and paired canonical encrypted-query/reopened SQLite acceptance remain required"
+}

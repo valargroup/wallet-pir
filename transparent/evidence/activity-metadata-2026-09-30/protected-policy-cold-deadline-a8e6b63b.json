@@ -1,0 +1,9 @@
+{
+  "status": "failed",
+  "source_sha": "a8e6b63b5b4c66311780d1d98c076409553afac6",
+  "owner": "4e0d831d71834ee2afd4a5872130f857",
+  "duration_seconds": 335.16047591599636,
+  "result_sha256": "ab07deef66bdbb19940f0772025ff794f7055fc2ca5ed36606359ead4c6ee6ab",
+  "failure": "Cold archive did not meet the 250-second restored readiness deadline",
+  "later_warm_retry": "Distinct owner 166443c458934c589b054da1ecf25c08 passed; does not relabel this failure"
+}

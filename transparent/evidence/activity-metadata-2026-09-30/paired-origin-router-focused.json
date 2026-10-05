@@ -1,0 +1,32 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "4b474d216039caf77133c9daa126e3ee092efeeb",
+  "owner": "aedbf02feb2146479b486fd1a94a354e",
+  "duration_seconds": 17.778661207994446,
+  "result_sha256": "6b27ec639854068102f873e1fcc88b15f48b85ad682603f88506031b18b01608",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_routing.py": "5faa01500203b1543f086a97c44be2cddeaf7842800db054510cc4dd4f489bc3",
+    "transparent/ops/scripts/upgrade-transparent-fleet.py": "b89983e2a19bfbe5c26ef688be37d3562840fff67431da5b203e81203b0ec5d4",
+    "transparent/ops/tests/test_activity_schema_routing.py": "f62c5a72f120ad1038a559df1101a40d039a5bda294a91f89989ee75bf15abb6",
+    "transparent/docs/deployment.md": "aae2c234f898c44d53d51f511cc1d471d71239d60c7fc00f93e79a083fd54250",
+    "transparent/docs/status.md": "10e1279ab0b0a6b5fc880e0fbe068ef3545f92b06cfa6918512ea7f86f1ac559",
+    "transparent/docs/remaining-work.md": "dc203b44cbf9c9fddbb02d17369bdcb8505f75cb3182289af84a2688db16d69c"
+  },
+  "captured_config_regression": {
+    "captured_input_sha256": "cb8b18bb11a7973717deafe58eb8cf4c9693c807d30446a11774e7351372689e",
+    "canonical_sha256": "e0f87153b16fd75868fc437845e4d7ac21b27a57e29d6eedf836625aed1ae881",
+    "guarded_sha256": "611b04a618a9a1a1b8871f20e4bae8bc1b4a2dcfb2d4c99aa57cda88f6a9decd",
+    "status": "passed",
+    "failed_proof_archive_sha256": "d116d26d1615df4408a8bf0314a53f95e84cf2cad5229e401ed9c8015fdf1e92"
+  },
+  "observations": [
+    "26 routing tests passed including producer handler preservation/idempotence/mismatched and invalid router refusal",
+    "Only transparent revision setup/query handler added; maintenance guards it; both native/reopened SQLite proofs remain mandatory"
+  ],
+  "limitations": [
+    "Actual Caddy validation and paired canonical recovery still required",
+    "Earlier failed native reports and deadlines remain failed",
+    "Candidate comprehensive CI not claimed passing; explicit user acceleration waiver persists"
+  ]
+}

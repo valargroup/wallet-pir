@@ -94,6 +94,32 @@ def required_files(role):
     return result
 
 
+def candidate_paths(role):
+    if role == 'worker':
+        return (ROOT/'v11',)
+    if role == 'coordinator':
+        return (ROOT/'v11', Path('/srv/transparent-activity/canonical-load/v11'))
+    return ()
+
+
+def candidate_inventory(path):
+    require(path.parent.resolve() == path.parent, 'candidate namespace ancestor aliases are refused')
+    if not path.exists() and not path.is_symlink():
+        return None
+    require(path.is_dir() and not path.is_symlink(), 'candidate namespace must be a regular directory')
+    result = {}
+    remaining = 64*1024*1024
+    for current, directories, files in os.walk(path, followlinks=False):
+        for name in ['.']+sorted(directories+files):
+            item = Path(current) if name == '.' else Path(current)/name
+            value = B.describe(item, remaining)
+            require(value['kind'] in ('file','directory'), 'candidate namespace refuses links and special files')
+            result[str(item.relative_to(path))] = value
+            remaining -= value.get('size',0)
+            require(len(result) <= 512, 'candidate namespace inventory exceeds bound')
+    return result
+
+
 def deferred(role, path):
     """Recovery may not reopen routing, resume load or re-enable scaling."""
     return (path == '/etc/caddy/Caddyfile' or path.startswith('/etc/caddy/Caddyfile.') or
@@ -219,6 +245,65 @@ class Commands:
         return reply['result']
 
 
+    def cache_observation(self):
+        # Fixed installed worker endpoint, never an operator-selected URL.
+        try:
+            response = urllib.request.urlopen('http://127.0.0.1:8093/v1/ready', timeout=5)
+        except urllib.error.HTTPError as error:
+            require(error.code == 503, 'unexpected cache readiness HTTP status')
+            response = error
+        with response:
+            data = response.read(256*1024+1)
+        require(len(data) <= 256*1024, 'cache readiness exceeds bound')
+        ready = json.loads(data, object_pairs_hook=unique)
+        require(isinstance(ready,dict), 'invalid cache readiness')
+        # Readiness reports these persistence counters from the same pinned
+        # native snapshot. Prometheus also exports them, but adds worker labels;
+        # naked-name matching silently misses the actual fleet exposition.
+        cache = ready.get('runtime_cache')
+        require(isinstance(cache,dict), 'worker omitted runtime cache observations')
+        metrics = {}
+        for field, name in (('pending_saves','transparent_shard_disk_save_pending'),
+                            ('write_failures','transparent_shard_disk_write_failures_total')):
+            value = cache.get(field)
+            require(type(value) is int and value >= 0, 'worker omitted or malformed cache persistence counter')
+            metrics[name] = value
+        ready = {k:ready.get(k) for k in ('ready','mode','map_sha256','binary_sha256','warm_runtimes',
+                                        'target_runtimes','prewarm_failed','prewarm_finished','role','worker_id')}
+        return {'ready':ready, 'metrics':metrics, 'runtime_cache':{k:cache.get(k) for k in
+                ('hits','misses','pending_saves','write_failures','bytes','limit_bytes')}}
+
+    def cache_resources(self):
+        return self.service_resources(WORKER, CACHE)
+
+    def service_resources(self, unit, root):
+        memory = {line.split(':',1)[0]:int(line.split()[1])*1024
+                  for line in Path('/proc/meminfo').read_text().splitlines()
+                  if line.startswith(('MemTotal:', 'MemAvailable:'))}
+        require(set(memory) == {'MemTotal','MemAvailable'} and memory['MemTotal'] > 0,
+                'memory floor observation unavailable')
+        require(root.is_dir() and not root.is_symlink() and root.parent.resolve() == root.parent,
+                'cache resource namespace is aliased')
+        disk = os.statvfs(root)
+        require(disk.f_blocks > 0, 'disk floor observation unavailable')
+        state = self.state(unit)
+        group = state.get('ControlGroup','')
+        events = {}
+        if group:
+            require(group.startswith('/') and '..' not in Path(group).parts, 'unsafe worker cgroup')
+            path = Path('/sys/fs/cgroup')/group.lstrip('/')/'memory.events'
+            if state.get('MainPID') not in (None,'0'):
+                require(path.is_file(), 'worker OOM observation unavailable')
+            if path.exists():
+                events = {k:int(v) for k,v in (line.split() for line in path.read_text().splitlines())}
+        if state.get('MainPID') not in (None,'0'):
+            require(group and {'oom','oom_kill'} <= set(events), 'worker OOM observation incomplete')
+        return {'memory_available':memory['MemAvailable'], 'memory_total':memory['MemTotal'],
+                'disk_available':disk.f_bavail*disk.f_frsize, 'disk_total':disk.f_blocks*disk.f_frsize,
+                'oom':events.get('oom',0), 'oom_kill':events.get('oom_kill',0),
+                'restarts':state.get('NRestarts'), 'pid':state.get('MainPID')}
+
+
 class Host:
     def __init__(self, plan, commands=None):
         self.plan = validate(plan)
@@ -244,6 +329,11 @@ class Host:
             require(self.commands.empty_cgroup(s), 'product writer has surviving descendants: '+unit)
 
     def preflight(self):
+        names = {i['path'] for i in self.plan['baseline']['files']}
+        require({str(p) for p in candidate_paths(self.role)} <= names,
+                'baseline omits candidate namespace presence/absence')
+        for path in candidate_paths(self.role):
+            candidate_inventory(path)
         # Every source is checked before stopping anything or copying state.
         for item in self.plan['installs']:
             source = Path(item['source'])
@@ -252,8 +342,7 @@ class Host:
         for item in self.plan['baseline']['files']:
             path = Path(item['path'])
             require(not item['required'] or path.exists() or path.is_symlink(), 'required predecessor file is absent')
-        for item in self.plan['baseline']['retained']:
-            B.retained_identity(item)
+        B.preflight_retained(self.plan['baseline'])
         self.effective_units()
         if self.role == 'coordinator':
             self.quiet((QUALITY,))
@@ -373,8 +462,84 @@ class Host:
                 require(len(starts) == 1 and str(ROOT/'v11/fleet.json') in shlex.split(starts[0][10:]),
                         'fleet service still refers to old controller configuration')
 
-    def capture(self):
-        self.preflight()
+    def reconcile_partial_guard(self, *, owned_guard=None):
+        """Retain and undo only the owned failed withdrawal's two audit writes."""
+        require(self.role == 'coordinator' and not (self.root/'complete.json').exists(),
+                'guard bookkeeping reconciliation requires partial coordinator capture')
+        intent=self.root.with_suffix('.units.json')
+        require(intent.is_file() and not intent.is_symlink() and intent.stat().st_uid==os.geteuid() and
+                intent.stat().st_mode & 0o077 == 0, 'partial capture intent must be private and owned')
+        state=load(intent)
+        require(state['plan_sha256']==hashlib.sha256(encode(self.plan)).hexdigest(), 'partial capture intent differs')
+        candidate=ROOT/'v11';old=state['candidate'][str(candidate)]
+        current=candidate_inventory(candidate)
+        names={'state/routing-availability.json','state/rendered.json'}
+        require(old is not None and current is not None and old.keys()==current.keys() and
+                {k for k in old if old[k]!=current[k]}==names,
+                'partial guard repair refuses unrelated candidate drift')
+        index=next(i for i,p in enumerate(self.plan['baseline']['files']) if p['path']==str(candidate))
+        saved=self.root/'files'/str(index)
+        for i,item in enumerate(self.plan['baseline']['files']):
+            live=Path(item['path']);copy=self.root/'files'/str(i)
+            a=B.entries(live) if live.exists() or live.is_symlink() else None
+            b=B.entries(copy) if copy.exists() or copy.is_symlink() else None
+            if live==candidate:
+                require(b is not None and a is not None and a.keys()==b.keys() and
+                        all(a[k]==b[k] for k in b if k not in names), 'partial copied candidate differs')
+            elif item['path']=='/etc/caddy/Caddyfile' and owned_guard is not None:
+                require(b==owned_guard['captured'] and a==owned_guard['guarded'], 'partial public guard differs')
+            else:require(a==b and (b is not None or not item['required']), 'partial copied baseline differs')
+        for name in names:
+            require(B.describe(saved/name)==old[name] and old[name]['kind']==current[name]['kind']=='file' and
+                    all(old[name][k]==current[name][k] for k in ('mode','uid','gid')),
+                    'partial guard file identity changed')
+        before=load(saved/'state/routing-availability.json');after=load(candidate/'state/routing-availability.json')
+        require(set(before)==set(after)=={'schema','epoch','unavailable_events','available'} and
+                before['schema']==after['schema']==1 and isinstance(before['epoch'],str) and
+                __import__('re').fullmatch('[0-9a-f]{32}',before['epoch']) and before['epoch']==after['epoch'] and
+                type(before['unavailable_events']) is int and before['unavailable_events']>=0 and
+                type(after['unavailable_events']) is int and after['unavailable_events']==before['unavailable_events']+1 and
+                type(before['available']) is bool and after['available'] is False,
+                'partial guard audit is not one owned withdrawal')
+        prior=load(saved/'state/rendered.json');rendered=load(candidate/'state/rendered.json')
+        require(set(prior)==set(rendered)=={'workers','unix'} and prior['workers']==rendered['workers']==[] and
+                type(prior['unix']) in (int,float) and type(rendered['unix']) in (int,float) and
+                0<=prior['unix']<=rendered['unix']<=time.time(), 'partial guard rendering is not withdrawn')
+        receipt=self.root.with_name(self.root.name+'.partial-guard')
+        require(not receipt.exists() and not receipt.is_symlink(), 'partial guard repair intent exists; reconcile before retry')
+        receipt.mkdir(mode=0o700)
+        value={'status':'intent','plan_sha256':state['plan_sha256'],'captured':{n:old[n] for n in names},
+               'displaced':{n:current[n] for n in names}}
+        if owned_guard is not None:value['public_guard']=owned_guard
+        B.atomic(receipt/'intent.json',encode(value))
+        for name in sorted(names):
+            live=candidate/name;copy=saved/name
+            require(B.describe(live)==current[name] and B.describe(copy)==old[name], 'partial guard changed after intent')
+            os.rename(live,receipt/live.name);B.sync_dir(live.parent);B.sync_dir(receipt)
+            B.atomic(live,copy.read_bytes(),old[name]['mode']);os.chown(live,old[name]['uid'],old[name]['gid'])
+        require(candidate_inventory(candidate)==old, 'partial guard restored inventory differs')
+        B.atomic(receipt/'complete.json',encode(dict(value,status='complete')))
+
+    def capture(self, *, repair_token=None, owned_guard=None):
+        require(owned_guard is None or repair_token is not None and self.role=='coordinator',
+                'owned partial guard requires coordinator repair')
+        if repair_token is not None:
+            # Only the owning failed-preserve recovery calls this after the
+            # original locked full preflight, before any install/activation.
+            self.effective_units()
+            if self.root.exists():
+                if (self.root/'complete.json').exists():return self.saved()[0]['plan_sha256']
+                state_path=self.root.with_suffix('.units.json')
+                require(state_path.is_file() and not state_path.is_symlink() and state_path.stat().st_uid==os.geteuid() and
+                        state_path.stat().st_mode & 0o077 == 0,'partial capture intent must be private and owned')
+                state=load(state_path)
+                require(state['plan_sha256']==hashlib.sha256(encode(self.plan)).hexdigest(), 'partial capture intent differs')
+                require(state.get('candidate')=={str(p):candidate_inventory(p) for p in candidate_paths(self.role)},
+                        'partial captured candidate inventory changed')
+                self.quiet(WRITERS[self.role])
+                return B.reconcile_capture(self.root,self.plan['baseline'],owned_guard=owned_guard)['plan_sha256']
+        else:
+            self.preflight()
         require(not self.root.exists(), 'baseline already exists; verify/reconcile instead of recapturing')
         states = {unit: self.commands.state(unit) for unit in UNITS[self.role]}
         state_path = self.root.with_suffix('.units.json')
@@ -389,7 +554,9 @@ class Host:
             proof = {'active': active, 'assignment_sha256': checksum(active['assignment'])}
         # Preserve original service states BEFORE the first stop. An interrupted
         # copy must not lose whether publication/load/scaling were active.
-        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof}
+        state = {'plan_sha256': hashlib.sha256(encode(self.plan)).hexdigest(), 'units': states, 'worker': proof,
+                 'candidate':{str(p):candidate_inventory(p) for p in candidate_paths(self.role)}}
+        require(len(encode(state)) <= 256*1024, 'candidate capture receipt exceeds bound')
         state_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         B.atomic(state_path, encode(state))
         # A failure here intentionally leaves stopped writers stopped. The outer
@@ -398,19 +565,70 @@ class Host:
             self.commands.unit('stop', *WRITERS[self.role])
             self.quiet(WRITERS[self.role])
         receipt = B.capture(self.root, self.plan['baseline'])
+        if proof is not None:
+            require(any(Path(p['source']) == Path(proof['active']['directory']).resolve()
+                        for p in receipt['protected_publications']), 'captured warm worker publication is not protected')
         # State is outside the baseline payload inventory; never add unrecorded
         # files to a baseline whose complete.json is the final copy receipt.
         return receipt['plan_sha256']
 
+    def protect_publications(self):
+        """Pin only reviewed immutable publication children; no service effects."""
+        self.identity(mutation=True)
+        require(self.role in ('coordinator','worker'), 'router has no publication to pin')
+        plan = self.plan['baseline']
+        sha = hashlib.sha256(__import__('json').dumps(plan,sort_keys=True).encode()).hexdigest()
+        protections = B.protect_publications(plan,sha)
+        require(protections, 'reviewed host plan does not name a collector-owned publication')
+        return {'status':'protected','baseline_plan_sha256':sha,
+                'sources':[p['source'] for p in protections]}
+
     def saved(self):
-        record = B.verify(self.root)
+        record = B.verify(self.root,repair_retained=getattr(self,'repair_retained',False))
         state_path = self.root.with_suffix('.units.json')
         require(state_path.is_file() and not state_path.is_symlink() and state_path.stat().st_uid == os.geteuid() and
                 state_path.stat().st_mode & 0o077 == 0, 'baseline unit state must be a private owned file')
         state = load(state_path)
-        require(set(state) == {'plan_sha256', 'units', 'worker'} and state['plan_sha256'] == hashlib.sha256(encode(self.plan)).hexdigest() and
+        require(set(state) in ({'plan_sha256', 'units', 'worker'}, {'plan_sha256', 'units', 'worker', 'candidate'}) and state['plan_sha256'] == hashlib.sha256(encode(self.plan)).hexdigest() and
                 set(state['units']) == set(UNITS[self.role]), 'baseline unit state is incomplete or belongs to another plan')
         return record, state
+
+    def reconcile_candidates(self):
+        record, state = self.saved()
+        paths = candidate_paths(self.role)
+        require(isinstance(state.get('candidate'),dict) and set(state['candidate'])=={str(p) for p in paths},
+                'candidate reconciliation requires a complete captured inventory')
+        names = {i['path'] for i in record['plan']['files']}
+        require({str(p) for p in paths} <= names, 'baseline omits candidate namespace presence/absence')
+        moves = []
+        for path in paths:
+            current = candidate_inventory(path)
+            captured = record['files'][str(path)]
+            require(current == state['candidate'][str(path)], 'candidate inventory changed after capture')
+            require((B.entries(path) if current is not None else None) == captured,
+                    'candidate namespace changed after capture')
+            if current is None:
+                continue
+            retained = path.with_name(path.name+'.schema-before-'+self.plan['transaction'])
+            require(not retained.exists() and not retained.is_symlink(), 'prior candidate namespace needs reconciliation')
+            require(path.stat().st_dev == retained.parent.stat().st_dev, 'candidate retention crosses filesystems')
+            if self.role == 'worker' and len(current)>1:
+                active = path/'active.json'
+                require(set(current)=={'.','active.json'} and active.is_file() and
+                        load(active)=={k:self.plan['worker'][k] for k in ('directory','assignment','map_sha256')},
+                        'stale worker candidate differs from reviewed target')
+            moves.append({'source':str(path),'retained':str(retained),'inventory':current})
+        receipt = self.root.with_suffix('.candidate.json')
+        require(not receipt.exists() and not receipt.is_symlink(), 'candidate reconciliation intent already exists')
+        intent = {'transaction':self.plan['transaction'],'source_sha':self.plan['source_sha'],
+                  'baseline_plan_sha256':record['plan_sha256'],'status':'intent','moves':moves}
+        B.atomic(receipt, encode(intent))
+        for move in moves:
+            source, retained = Path(move['source']),Path(move['retained'])
+            require(candidate_inventory(source)==move['inventory'], 'candidate changed after reconciliation intent')
+            os.rename(source,retained);B.sync_dir(source.parent)
+            require(candidate_inventory(retained)==move['inventory'], 'retained candidate bytes changed')
+        intent['status']='complete';B.atomic(receipt,encode(intent))
 
     def stage(self):
         self.saved()
@@ -419,6 +637,7 @@ class Host:
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)
+        self.reconcile_candidates()
         for item in self.plan['installs']:
             path = Path(item['target'])
             require(not path.is_symlink() and path.parent.resolve() == path.parent, 'candidate target has a symlink ancestor')
@@ -447,6 +666,74 @@ class Host:
             B.atomic(active, encode({k:self.plan['worker'][k] for k in ('directory', 'assignment', 'map_sha256')}))
         self.commands.run(['systemctl', 'daemon-reload'])
 
+    def prepare_worker_cache(self):
+        """Prepare pinned public runtimes while guarded; activation still proves warm."""
+        require(self.role == 'worker', 'cache preparation requires a worker plan')
+        self.saved()
+        self.withdrawn()
+        self.quiet((WORKER,))
+        self.effective_units()
+        unit = self.commands.state(WORKER)
+        require(not shlex.split(unit.get('DropInPaths','')), 'candidate cache unit has unexpected drop-ins')
+        for item in self.plan['installs']:
+            path = Path(item['target'])
+            require(path.is_file() and not path.is_symlink() and checksum(path) == item['sha256'],
+                    'installed cache candidate changed')
+        expected = {k:self.plan['worker'][k] for k in ('directory','assignment','map_sha256')}
+        require(load(ROOT/'v11/active.json') == expected and not (ROOT/'v11/active.invalid.json').exists(),
+                'cache preparation candidate activation differs')
+        require(checksum(expected['assignment']) == self.plan['worker']['assignment_sha256'],
+                'cache preparation assignment changed')
+        started = time.monotonic()
+        observations = []
+        initial = self.commands.cache_resources()
+        def floors(value):
+            require(value['memory_available']*5 >= value['memory_total'] and
+                    value['disk_available']*5 >= value['disk_total'], 'cache preparation resource floor failed')
+            require(value['oom'] == 0 and value['oom_kill'] == 0 and
+                    value['restarts'] == initial['restarts'], 'cache preparation OOM or unexpected restart')
+        floors(initial)
+        # This action owns the staged unit under the remote production lock.
+        # No predecessor and candidate process coexist. Even failed startup must
+        # be stopped before releasing this owner, or remain fenced as interrupted.
+        try:
+            self.commands.unit('start', WORKER)
+            while True:
+                require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                self.withdrawn()
+                resources = self.commands.cache_resources()
+                floors(resources)
+                require(resources['pid'] not in (None,'0'), 'cache preparation worker exited')
+                try:
+                    observation = self.commands.cache_observation()
+                except (OSError, subprocess.SubprocessError) as error:
+                    observation = {'error_type':type(error).__name__}
+                observation['resources'] = resources
+                observation['elapsed_seconds'] = time.monotonic()-started
+                observations.append(observation)
+                ready = observation.get('ready',{})
+                if ready:
+                    require(ready.get('map_sha256') == expected['map_sha256'] and
+                            ready.get('binary_sha256') == self.plan['worker']['binary_sha256'],
+                            'cache preparation live candidate differs')
+                    require(ready.get('prewarm_failed') == 0, 'cache preparation native runtime failed')
+                    require(observation['metrics']['transparent_shard_disk_write_failures_total'] == 0,
+                            'cache preparation persistence failed')
+                    if (ready.get('ready') is True and ready.get('prewarm_finished') is True and
+                            ready.get('mode') == 'warm' and
+                            observation['metrics']['transparent_shard_disk_save_pending'] == 0):
+                        proof = self.verify_worker()
+                        require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                        break
+                require(time.monotonic()-started < 1200, 'candidate cache preparation deadline exceeded')
+                time.sleep(min(5, max(0,1200-(time.monotonic()-started))))
+        finally:
+            self.commands.unit('stop', WORKER)
+            self.quiet((WORKER,))
+        return {'status':'prepared', 'qualification':'cache preparation only; independent activation and query proofs required',
+                'source_sha':self.plan['source_sha'], 'plan_sha256':hashlib.sha256(encode(self.plan)).hexdigest(),
+                'worker':proof, 'observations':observations, 'seconds':time.monotonic()-started}
+
     def activate(self):
         self.saved()
         self.withdrawn()
@@ -457,15 +744,50 @@ class Host:
         self.commands.unit('start', *START[self.role])
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
+        if self.role == 'worker':
+            return {'startup':self.settle_restored_worker()}
 
-    def restore(self):
+    def settle_restored_worker(self):
+        # Allocate startup observation before the independent warm proof. Native
+        # archive loading precedes cache prewarm. The restore phase still has
+        # its approved 140-second budget; warm gates and total 740 stay fixed.
+        started=time.monotonic();observations=[]
+        while time.monotonic()-started < 100:
+            try:
+                status=self.commands.control()
+                observation={'warm':status.get('warm'),'map_sha256':status.get('active',{}).get('map_sha256')}
+            except (OSError,ValueError,subprocess.SubprocessError) as error:
+                observation={'error_type':type(error).__name__}
+            observations.append(observation)
+            if observation.get('warm') is True:
+                break
+            remaining=100-(time.monotonic()-started)
+            if remaining>0:time.sleep(min(2,remaining))
+        return {'seconds':time.monotonic()-started,'observations':observations,
+                'qualification':'startup observations only; exact worker proof remains mandatory'}
+
+    def restore(self, *, repair_token=None):
         self.withdrawn()
-        _, state = self.saved()  # Validate all rollback bytes before stopping.
+        record, state = self.saved()  # Validate all rollback bytes before stopping.
+        if repair_token is not None and self.role == 'worker':
+            # A failed cold-start deadline may leave the exact restored worker
+            # warm later. Never reset that cache in a reviewed repair when every
+            # captured file and the live binary/assignment still prove v10.
+            current = {item['path']: B.entries(Path(item['path']))
+                       if Path(item['path']).exists() or Path(item['path']).is_symlink() else None
+                       for item in record['plan']['files']}
+            if current == record['files'] and self.commands.control().get('warm') is True:
+                self.effective_units()
+                proof = self.verify_worker(rollback=True)
+                return {'status':'already-restored', 'worker':proof}
         stop = UNITS[self.role] if self.role != 'router' else ()
         self.commands.unit('stop', *stop)
         self.quiet(stop)
+        B.restore_publications(self.root)
         include = [i['path'] for i in self.plan['baseline']['files'] if not deferred(self.role, i['path'])]
-        B.restore(self.root, include)
+        if repair_token is not None:
+            B.reconcile_displacements(self.root, include, repair_token,repair_retained=getattr(self,'repair_retained',False))
+        B.restore(self.root, include,repair_retained=getattr(self,'repair_retained',False))
         if self.role == 'coordinator':
             # Restoring the old fleet state may restore maintenance=false. Fence
             # controller/reconciler route retries before restarting either one.
@@ -474,10 +796,16 @@ class Host:
         self.commands.run(['systemctl', 'daemon-reload'])
         # Restore only previously active product units. Load/scaler/Caddy remain
         # governed by the outer verify/reopen phases and the total 900s budget.
-        start = [u for u in START[self.role] if state['units'][u].get('ActiveState') == 'active']
+        # Authority remains paused until every restored worker proves the
+        # captured exact assignment. Starting it here can publish and collect
+        # generations while other hosts are still restoring.
+        eligible = (FILTER,) if self.role == 'coordinator' else START[self.role]
+        start = [u for u in eligible if state['units'][u].get('ActiveState') == 'active']
         self.commands.unit('start', *start)
         if self.role == 'coordinator':
             self.quiet((SCALER, LOAD))
+        return {'status':'restored','startup':self.settle_restored_worker()
+                if self.role=='worker' and WORKER in start else None}
 
     def verify_worker(self, *, rollback=False):
         require(self.role == 'worker', 'warm worker verification requires a worker plan')
@@ -515,7 +843,15 @@ class Host:
                     isinstance(r.get('terminal_block_hash'), str) and HEX.fullmatch(r['terminal_block_hash']),
                     'malformed advertised revision anchor')
         return {'worker_id': self.plan['worker']['id'], 'active': active, 'binary_sha256': binary_hash,
-                'revisions': revisions, 'checked_unix': time.time()}
+                'assignment_sha256':assignment_hash, 'revisions': revisions, 'checked_unix': time.time()}
+
+    def attest_captured_router_guard(self, expected):
+        require(self.role=='router' and isinstance(expected,str) and HEX.fullmatch(expected), 'invalid captured router guard request')
+        self.withdrawn()
+        record,_=self.saved()
+        index=next(i for i,item in enumerate(record['plan']['files']) if item['path']=='/etc/caddy/Caddyfile')
+        require(checksum(self.root/'files'/str(index))==expected, 'late captured router is not the exact owned guard')
+        return {'status':'passed','captured_router_sha256':expected,'baseline_plan_sha256':record['plan_sha256']}
 
     def restore_routing(self):
         require(self.role == 'router', 'original routing restore requires the router plan')

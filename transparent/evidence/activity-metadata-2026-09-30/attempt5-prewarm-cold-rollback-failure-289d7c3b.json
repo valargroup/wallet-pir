@@ -1,0 +1,22 @@
+{
+  "source_sha": "289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "owner": "763280b37fd34337a62b83909df63179",
+  "transaction": "transparent-schema-20261001T184408Z-a3a74bbb161e-491857",
+  "recipe_sha256": "a3a74bbb161e5713b3d2b4dd5aa319f107d1c987d441a86675b6492070cdbf2c",
+  "status": "failed",
+  "duration_seconds": 1320.8918619579636,
+  "failed_phases": [
+    {
+      "name": "activate-prewarm",
+      "seconds": 303.4307617289014,
+      "exit_code": 1
+    },
+    {
+      "name": "verify-rollback",
+      "seconds": 250.86171927815303,
+      "exit_code": 1
+    }
+  ],
+  "journal_sha256": "c312fef336092bc61557d8791dde1a09d57cc2b3f569d4d63c1e720528341d2d",
+  "scope": "Actual v11 prewarm and automatic cold rollback readiness gates failed. Later warm readiness and a distinct repair do not relabel these failures. No v11 acceptance."
+}

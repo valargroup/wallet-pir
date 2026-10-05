@@ -1,0 +1,69 @@
+# Focused suites on candidate native execution attempt 3, committed tree cce8a3cf43063c010ed16df972b5ae35497605c6, development hub, unprivileged.
+
+== python3 -B transparent/ops/tests/test_activity_candidate_execution.py
+Ran 42 tests in 93.550s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate_reports.py
+Ran 8 tests in 0.776s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate_upload.py
+Ran 21 tests in 5.601s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_candidate.py
+Ran 25 tests in 0.733s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_input_stage.py
+Ran 33 tests in 4.731s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_input_preparation.py
+Ran 7 tests in 0.112s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_product.py
+Ran 42 tests in 0.329s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_lock_qualification.py
+Ran 8 tests in 6.789s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_operation.py
+Ran 212 tests in 16.774s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_baseline.py
+Ran 32 tests in 0.643s
+OK
+exit 0
+
+== python3 -B transparent/ops/tests/test_activity_schema_host.py
+Ran 39 tests in 0.777s
+OK
+exit 0
+
+== python3 -B -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+Ran 46 tests in 5.035s
+OK
+exit 0
+
+== make check-fast BASE=286b8c0cf15db08e59c20bef581da8919cce49fc
+(An earlier run on the same tree failed only check-doc-links: the README already linked these two logs before they were copied in.)
+CHECK_STAGE {"stage": "helpers", "seconds": 25.922, "exit": 0}
+exit 0
+
+== git diff --check 286b8c0cf15db08e59c20bef581da8919cce49fc HEAD
+clean

@@ -1,0 +1,50 @@
+{
+  "status": "failed",
+  "source_sha": "16f2077d245f5e358d4628a9d1cc6ccb6ffaa194",
+  "owner": "784627109c2e4f6c942400a158c23d0a",
+  "seconds": 26.184484792058356,
+  "withdraw": "passed",
+  "restore": "failed",
+  "failure": "captured active publication is not retained on all three workers",
+  "original_active_map": "696c82a1f7133d5b965982df92322ba609ccb9ee0aa68895e037ef85b23a4d01",
+  "current_active_map": "19b36902a3e31b6e51216ad245178c2d6b44f79d426e12838512c9ff1fd7011d",
+  "worker_observations": [
+    {
+      "host": "worker-1",
+      "warm": true,
+      "invalidated": false,
+      "candidate": null,
+      "preparing": null,
+      "running_binary_sha256": "291cd5043e3549e587b48d01f14009040422a1fec4e6c2aa9c2fd814f2ec1652",
+      "assignment_sha256": "680f82e2913e76a697b33d183779df0a6e4909f77e5efd17feef52f3535703b2"
+    },
+    {
+      "host": "worker-2",
+      "warm": true,
+      "invalidated": false,
+      "candidate": null,
+      "preparing": null,
+      "running_binary_sha256": "291cd5043e3549e587b48d01f14009040422a1fec4e6c2aa9c2fd814f2ec1652",
+      "assignment_sha256": "680f82e2913e76a697b33d183779df0a6e4909f77e5efd17feef52f3535703b2"
+    },
+    {
+      "host": "worker-3",
+      "warm": true,
+      "invalidated": false,
+      "candidate": null,
+      "preparing": null,
+      "running_binary_sha256": "4e3f8d9d8eb881bd3b3dc1450be52a1f9cf7a63987ae7e05986a2feebd64e81c",
+      "assignment_sha256": "680f82e2913e76a697b33d183779df0a6e4909f77e5efd17feef52f3535703b2"
+    }
+  ],
+  "raw_observation_sha256": "25457966df528b5ab1b6396de21c61a87419ac5d3dbb2fb3f1f562e7aacc18bc",
+  "origins": {
+    "transparent": "503",
+    "enhance": "503"
+  },
+  "limitations": [
+    "Warm consistent state is not canonical, private client or public recovery qualification",
+    "Original captured v10 rollback bytes were collected; 15 minute deadline missed",
+    "No v11 live unit or binary installation; no running recovery owner"
+  ]
+}

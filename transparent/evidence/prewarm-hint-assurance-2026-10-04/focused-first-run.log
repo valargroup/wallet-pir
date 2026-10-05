@@ -1,0 +1,20 @@
+# source 576e756f; command: tool-exec --repo wallet-pir -- cargo test --locked --profile release-fast -p transparent-native -p transparent-shard-server --lib --test round_trip --test revisions_and_cache (grep of non-ok lines)
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+     Running unittests src/lib.rs (<target>/release-fast/deps/transparent_native-a8a366e736bc79fe)
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.37s
+     Running unittests src/lib.rs (<target>/release-fast/deps/transparent_shard_server-4ad7f9c9d2c9ff33)
+test runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget ... FAILED
+test runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory ... FAILED
+test runtime::disk::tests::restored_runtimes_answer_identically_at_deployed_geometries has been running for over 60 seconds
+thread 'runtime::disk::cache_integration_tests::restart_coalesces_restore_and_corruption_falls_back_without_losing_budget' (2758650) panicked at transparent/services/transparent-shard-server/src/runtime/disk.rs:840:14:
+thread 'runtime::disk::cache_integration_tests::blocked_snapshot_does_not_delay_serving_or_release_owned_memory' (2758649) panicked at transparent/services/transparent-shard-server/src/runtime/disk.rs:782:14:
+test result: FAILED. 50 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 103.32s
+error: test failed, to rerun pass `-p transparent-shard-server --lib`
+
+real	16m50.961s
+user	43m35.544s
+sys	2m40.018s
+
+[exited with code 0]
+# rerun of the first failing test alone: Err(Overloaded) at disk.rs:865 (task cgroup memory.current 11121401856 of 12884901888)
+# after memory.reclaim 8G (memory.current 2362007552): cargo test ... -p transparent-shard-server --lib runtime::disk -> test result: ok. 7 passed; 0 failed

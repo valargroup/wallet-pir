@@ -1,0 +1,107 @@
+{
+  "source_sha": "9164c2c71fb957b9a01677f202ae7296e9271168",
+  "transaction": "transparent-schema-20261001T231559Z-a1392f94008a-cfa3b2",
+  "recipe_sha256": "a1392f94008a4d4ab5236c7e174d4c060e089904de95db61909a0712624dd76d",
+  "local_owner": "bbaf7465c63049ab8c74712bee474c39",
+  "local_status": "failed",
+  "local_seconds": 1857.1583907080349,
+  "remote_status": "rolled-back",
+  "phases": [
+    {
+      "group": "steps",
+      "name": "preserve-v10",
+      "status": "passed",
+      "seconds": 233.69169477792457
+    },
+    {
+      "group": "steps",
+      "name": "maintenance",
+      "status": "passed",
+      "seconds": 10.736006986815482
+    },
+    {
+      "group": "steps",
+      "name": "stage-v11",
+      "status": "passed",
+      "seconds": 559.3637666399591
+    },
+    {
+      "group": "steps",
+      "name": "activate-prewarm",
+      "status": "passed",
+      "seconds": 335.6752110491507
+    },
+    {
+      "group": "steps",
+      "name": "align-origins",
+      "status": "passed",
+      "seconds": 6.033659479115158
+    },
+    {
+      "group": "steps",
+      "name": "verify-canonical",
+      "status": "failed",
+      "seconds": 2.873822486959398
+    },
+    {
+      "group": "rollback",
+      "name": "withdraw-origins",
+      "status": "passed",
+      "seconds": 11.290761823300272
+    },
+    {
+      "group": "rollback",
+      "name": "restore-v10",
+      "status": "passed",
+      "seconds": 119.4257360547781
+    },
+    {
+      "group": "rollback",
+      "name": "verify-rollback",
+      "status": "passed",
+      "seconds": 223.073581433855
+    },
+    {
+      "group": "rollback",
+      "name": "reopen-v10",
+      "status": "passed",
+      "seconds": 20.464044772088528
+    },
+    {
+      "group": "rollback",
+      "name": "verify-service",
+      "status": "passed",
+      "seconds": 5.686568185687065
+    }
+  ],
+  "forward_error": "HTTP Error 503: Service Unavailable",
+  "error_endpoint_and_body": "not retained; startup reconciliation is an inference, not a confirmed historical response",
+  "rollback_seconds": 379.94069226970896,
+  "proof_archive_sha256": "8d1f25965e090bb01aa4b12593b0ebf231e735f2a8e5a59d5efeb60486ddd0d6",
+  "recovery": {
+    "native_reports": 5,
+    "each": {
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0,
+      "stop_reason": null,
+      "http_503_rate": 0
+    },
+    "independently_reopened_sqlite_stores": 5,
+    "each_store": {
+      "integrity": "ok",
+      "receives": 1,
+      "spends": 1,
+      "pending_work": 0
+    },
+    "both_canonical_metadata": {
+      "http_status": 200,
+      "shards": 86,
+      "start_height": 0
+    },
+    "all_remote_owners_exited": true
+  },
+  "native_inputs_changed": false,
+  "scope": "Failed v11 forward verification and separately passed cold v10 recovery; no v11 freshness, sustained load, capacity or lifecycle acceptance."
+}

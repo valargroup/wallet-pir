@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "base_sha": "25dd94e8a8fef6dfa7b7c46ab2320790235b2ebf",
+  "owner": "b3134f0943de4e349fa8ae0bad97d239",
+  "duration_seconds": 21.837226832984015,
+  "scope": "Affected helper/docs checks; 25 product tests including actual setup bytes, every assigned replica, missing/duplicate certificate coverage, altered bytes/response scope and refusal before authority startup; recovery pin absence/mismatch refuses before host preflight. Not installed service evidence.",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_product.py": "f076489cd9016876e9bf38c4c7f52fbd9121eb1a4fe17b77c1934fea985f6e65",
+    "transparent/ops/tests/test_activity_schema_product.py": "dc11dd3962abc14283fcf5746678914a45b5d15a78b38a5d8e0fec3e18af9a21"
+  },
+  "actual_certificate_segments": 180,
+  "raw_result_sha256": "9f6cc3e260e738b19ff536fb7f03d2183732c547eb3e97c581263d0daaec3068",
+  "limits_unchanged": true
+}

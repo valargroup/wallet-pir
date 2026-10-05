@@ -4,6 +4,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -57,13 +58,157 @@ class BaselineTests(unittest.TestCase):
     def capture(self):
         return B.capture(self.backup, self.plan)
 
+    def test_explicit_partial_capture_completion_never_recopies(self):
+        with patch.object(B,'captured_publications',side_effect=ValueError('after all copies')):
+            with self.assertRaises(ValueError):self.capture()
+        saved=self.backup/'files/0';inode=saved.stat().st_ino
+        record=B.reconcile_capture(self.backup,self.plan)
+        self.assertEqual(saved.stat().st_ino,inode)
+        self.assertEqual(record['files'][str(self.file)],B.entries(self.file))
+        with self.assertRaises(ValueError):B.reconcile_capture(self.backup,self.plan)
+
+    def test_partial_capture_drift_and_unrecorded_payload_refuse(self):
+        with patch.object(B,'captured_publications',side_effect=ValueError('after all copies')):
+            with self.assertRaises(ValueError):self.capture()
+        self.file.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'stopped live state'):B.reconcile_capture(self.backup,self.plan)
+        self.file.write_text('v10');(self.backup/'unexpected').write_text('extra')
+        with self.assertRaisesRegex(ValueError,'unexpected'):B.reconcile_capture(self.backup,self.plan)
+        self.assertFalse((self.backup/'complete.json').exists())
+
+    def test_owned_public_guard_completes_copies_without_reopening_or_recopying(self):
+        with patch.object(B,'captured_publications',side_effect=ValueError('after all copies')):
+            with self.assertRaises(ValueError):self.capture()
+        saved=self.backup/'files/0';inode=saved.stat().st_ino
+        captured=B.entries(saved);self.file.write_text('exact guarded bytes');guarded=B.entries(self.file)
+        with patch.object(B,'COORDINATOR_ROUTING_FILE',str(self.file)):
+            bad={'captured':captured,'guarded':dict(guarded)};bad['guarded']['.']=dict(guarded['.'],sha256='a'*64)
+            with self.assertRaisesRegex(ValueError,'guard transition'):B.reconcile_capture(self.backup,self.plan,owned_guard=bad)
+            self.state.joinpath('request.json').write_text('unrelated')
+            with self.assertRaisesRegex(ValueError,'stopped live state'):
+                B.reconcile_capture(self.backup,self.plan,owned_guard={'captured':captured,'guarded':guarded})
+            self.state.joinpath('request.json').write_text('v10 request')
+            record=B.reconcile_capture(self.backup,self.plan,owned_guard={'captured':captured,'guarded':guarded})
+        self.assertEqual(self.file.read_text(),'exact guarded bytes')
+        self.assertEqual(saved.read_text(),'v10');self.assertEqual(saved.stat().st_ino,inode)
+        self.assertEqual(record['files'][str(self.file)],captured)
+
+    def test_closed_candidate_pointer_is_not_a_predecessor_generation(self):
+        candidate=self.live/'active.json'
+        candidate.write_text(json.dumps({'directory':'/srv/transparent-activity/full-v11/publications/initial',
+            'map_sha256':'a'*64,'height':1,'hash':'b'*64,'upstreams':['10.142.0.7:8093']}))
+        self.plan['files'].append({'path':str(candidate),'required':True})
+        with patch.object(B,'CANDIDATE_ACTIVE_RECORD',str(candidate)):
+            record=self.capture();self.assertEqual(record['captured_publications'],[])
+            self.assertEqual(record['files'][str(candidate)],B.entries(candidate))
+
+    def collected_publication(self):
+        child=self.retained/('a'*64);child.mkdir()
+        (child/'shards.json').write_text('captured map')
+        (child/'0').mkdir();(child/'0/table.bin').write_bytes(b'immutable table')
+        self.plan['retained'][0].update(sentinel=str(child/'shards.json'),sha256=B.checksum(child/'shards.json'))
+        return child
+
+    def test_collector_unlink_cannot_destroy_captured_publication(self):
+        child=self.collected_publication()
+        record=self.capture()
+        protected=Path(record['protected_publications'][0]['protected'])/'publication'
+        self.assertEqual((child/'0/table.bin').stat().st_ino,(protected/'0/table.bin').stat().st_ino)
+        self.assertNotEqual(protected.parent.parent,self.retained)
+        shutil.rmtree(child)
+        B.verify(self.backup)
+        B.restore_publications(self.backup)
+        self.assertEqual((child/'0/table.bin').read_bytes(),b'immutable table')
+        self.assertEqual(B.publication_tree(child),B.publication_tree(protected))
+        B.restore_publications(self.backup)
+
+    def test_protected_publication_changes_and_partial_restore_refuse(self):
+        child=self.collected_publication();record=self.capture()
+        protected=Path(record['protected_publications'][0]['protected'])/'publication'
+        shutil.rmtree(child)
+        temporary=child.with_name(child.name+'.schema-restore-next');temporary.mkdir()
+        with self.assertRaisesRegex(ValueError,'unfinished publication'):
+            B.restore_publications(self.backup)
+        temporary.rmdir()
+        (protected/'0/table.bin').write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError,'protected publication changed'):
+            B.restore_publications(self.backup)
+        self.assertFalse(child.exists())
+
+    def test_publication_symlink_is_not_followed_or_protected(self):
+        child=self.collected_publication()
+        (child/'linked-table').symlink_to(self.file)
+        with self.assertRaisesRegex(ValueError,'refuses links'):
+            self.capture()
+        self.assertFalse((self.backup/'complete.json').exists())
+
+    def test_explicit_repair_preserves_both_prior_and_new_displaced_state(self):
+        record=self.capture();self.file.write_text('first candidate')
+        B.restore(self.backup);self.file.write_text('restarted old writer state')
+        with self.assertRaisesRegex(ValueError,'reconciliation'):B.restore(self.backup)
+        B.reconcile_displacements(self.backup,[str(self.file)],'repair-1')
+        B.restore(self.backup)
+        self.assertEqual(self.file.read_text(),'v10')
+        displaced=self.file.with_name(self.file.name+'.schema-displaced-'+record['plan_sha256'][:12])
+        self.assertEqual(displaced.read_text(),'restarted old writer state')
+        self.assertEqual(displaced.with_name(displaced.name+'.repair-repair-1').read_text(),'first candidate')
+        B.verify(self.backup)
+        with self.assertRaisesRegex(ValueError,'intent'):B.reconcile_displacements(self.backup,[str(self.file)],'repair-1')
+
+    def test_collected_sentinel_repair_requires_the_captured_active_protocol_map(self):
+        from wallet_pir_ops import transparent_map
+        mapping={'genesis_hash':'a'*64,'network':'Main','profile':'fixture','range_envelope_version':1,'start_height':0,'seal':{},'shards':[]}
+        digest=transparent_map.served_sha256(mapping);directory=self.retained/digest;directory.mkdir()
+        sentinel=directory/'shards.json';sentinel.write_text(json.dumps(mapping))
+        self.file.write_text(json.dumps({'directory':str(directory),'assignment':str(directory/'assignment.json'),'map_sha256':digest}))
+        with patch.object(B,'WORKER_ACTIVE_RECORD',str(self.file)):
+            self.capture();(self.retained/'shards.json').unlink()
+            with self.assertRaises(ValueError):B.verify(self.backup)
+            record=B.verify(self.backup,repair_retained=True)
+            self.assertEqual(record['retention_recovery'][0]['captured_active']['sentinel'],str(sentinel))
+            mapping['start_height']=1;sentinel.write_text(json.dumps(mapping))
+            with self.assertRaisesRegex(ValueError,'protocol identity'):B.verify(self.backup,repair_retained=True)
+
     def test_publication_control_records_restore_without_copying_retained_tables(self):
-        active=self.retained/'active.json';active.write_text('v10 active')
+        child=self.collected_publication()
+        active=self.retained/'active.json';original=json.dumps({'directory':str(child)})
+        active.write_text(original)
         self.plan['files'].append({'path':str(active),'required':True})
         self.capture();active.write_text('v11 active')
         B.restore(self.backup)
-        self.assertEqual(active.read_text(),'v10 active')
+        self.assertEqual(active.read_text(),original)
         self.assertEqual((self.retained/'shards.json').read_text(),'v10 map')
+
+    def test_preflight_pin_survives_gc_and_capture_protects_new_actual_active(self):
+        old=self.collected_publication()
+        active=self.retained/'active.json';active.write_text(json.dumps({'directory':str(old)}))
+        self.plan['files'].append({'path':str(active),'required':True})
+        sha=__import__('hashlib').sha256(json.dumps(self.plan,sort_keys=True).encode()).hexdigest()
+        B.protect_publications(self.plan,sha)
+        shutil.rmtree(old)
+        B.preflight_retained(self.plan)
+        newer=self.retained/('b'*64);newer.mkdir()
+        (newer/'shards.json').write_text('new accepted map')
+        (newer/'table').write_bytes(b'new immutable table')
+        active.write_text(json.dumps({'directory':str(newer)}))
+        record=self.capture()
+        self.assertEqual(record['captured_publications'][0]['sentinel'],str(newer/'shards.json'))
+        shutil.rmtree(newer)
+        B.restore_publications(self.backup)
+        self.assertEqual((newer/'table').read_bytes(),b'new immutable table')
+        tampered=json.loads((self.backup/'complete.json').read_text())
+        tampered['captured_publications']=[]
+        (self.backup/'complete.json').write_text(json.dumps(tampered))
+        with self.assertRaisesRegex(ValueError,'captured activation'):
+            B.verify(self.backup)
+
+    def test_missing_preflight_sentinel_requires_completed_exact_pin(self):
+        child=self.collected_publication();sha=__import__('hashlib').sha256(json.dumps(self.plan,sort_keys=True).encode()).hexdigest()
+        protected=self.retained.parent/('.schema-protected-'+sha+'-'+child.name)
+        shutil.rmtree(child)
+        with self.assertRaisesRegex(ValueError,'complete early pin'):B.preflight_retained(self.plan)
+        protected.mkdir(mode=0o700);(protected/'intent.json').write_text('{}')
+        with self.assertRaisesRegex(ValueError,'complete early pin'):B.preflight_retained(self.plan)
 
     def test_only_regular_direct_publication_control_records_may_overlap_retention(self):
         for relative in ('shards.json','nested/active.json','active.json'):

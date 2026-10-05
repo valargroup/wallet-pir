@@ -53,6 +53,37 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Prepare the approved full v11 publication on the pinned coordinator.
       Requires completed ingestion; preserves canonical service and all partial output.
 
+  schema-candidate-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
+      [--expect-plan-sha256 H]  Verify and retain the changed-native candidate's 18
+      artifacts under /srv/transparent-activity/candidates; installs and runs nothing.
+  schema-candidate-upload-{plan,preflight,stage} --source-sha REV --attempt N
+      --transparent-filter F --transparent-publisher F --supplemental F [--expect-plan-sha256 H]
+  schema-candidate-upload-{status,reconcile} --source-sha REV --request-sha256 H
+      From root's workstation (remote-lock inventory, pinned SSH): stream exactly the three
+      pinned candidate archives to the coordinator's fixed candidate archive namespace.
+  schema-candidate-worker-build --host H --source-sha REV --publication-request-sha256 H
+      Render the candidate worker executable pair for schema-input-{plan,...,stage}.
+  schema-qualify-{plan,preflight,run} --request F --request-sha256 H [--expect-plan-sha256 H]
+  schema-qualify-{status,reconcile} --request-sha256 H
+      Deployed candidate staged load, freshness, capacity trial or one lifecycle fault,
+      run as one detached owner under the lock; run requires the reviewed plan digest.
+      Reconcile restores an owned unit effect that did not finish before releasing the fence.
+  schema-qualify-summary --transaction ID
+      Read-only capacity decision from reconciled trials of one transaction.
+
+  schema-snapshot-{plan,preflight,stage,status,reconcile} --request F --request-sha256 H
+      [--expect-plan-sha256 H]  On the pinned coordinator, quiesce only the reviewed
+      full-journal writer, copy its committed prefix to a private immutable snapshot
+      and restore that writer. The snapshot qualifies no oracle or candidate gate.
+  schema-candidate-execute-{plan,preflight,stage} --source-sha REV
+      --mode artifact-verification|native-certificates --attempt N
+      --preparation-request-sha256 H [--expect-plan-sha256 H]
+  schema-candidate-execute-{status,reconcile} --source-sha REV --request-sha256 H
+      From root's workstation (remote-lock inventory, pinned SSH, every host machine_id-pinned):
+      under the coordinator lock, survey every host, then run the closed candidate shard-verify
+      or all 180 native certificate segments and retain private raw evidence. Native exit zero
+      is not a gate pass.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
 
@@ -105,6 +136,66 @@ def parser():
             command.add_argument('--request-sha256', required=True)
             if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-'+name, help='retain the verified changed-native candidate bundle without installation')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-upload-'+name, help='transfer the three pinned candidate archives to the coordinator')
+        command.add_argument('--source-sha', required=True)
+        if name in ('status','reconcile'):
+            command.add_argument('--request-sha256', required=True)
+            continue
+        command.add_argument('--attempt', type=int, required=True)
+        for kind in ('transparent-filter','transparent-publisher','supplemental'):
+            command.add_argument('--'+kind, required=True, metavar='ARCHIVE')
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-snapshot-'+name, help='immutable full-journal snapshot for candidate qualification')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-snapshot-owner', help=argparse.SUPPRESS)
+    command.add_argument('--request-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
+        command = commands.add_parser('schema-candidate-execute-'+name, help='closed candidate native gate execution on the coordinator')
+        command.add_argument('--source-sha', required=True)
+        if name in ('status','reconcile'):
+            command.add_argument('--request-sha256', required=True)
+            continue
+        command.add_argument('--mode', choices=('artifact-verification','native-certificates','independent-chain-oracle'), required=True)
+        command.add_argument('--attempt', type=int, required=True)
+        command.add_argument('--preparation-request-sha256', required=True)
+        command.add_argument('--snapshot-request-sha256')
+        command.add_argument('--snapshot-owner-sha256')
+        command.add_argument('--snapshot-manifest-sha256')
+        if name == 'stage': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-candidate-execute-receive', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('plan','preflight','stage','status','reconcile','survey'), required=True)
+    command.add_argument('--request-sha256', required=True)
+    command.add_argument('--expect-plan-sha256')
+    command = commands.add_parser('schema-candidate-receive', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('preflight','stage','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
+    command = commands.add_parser('schema-candidate-worker-build', help='render candidate worker executables for an already staged publication')
+    command.add_argument('--host', required=True)
+    command.add_argument('--source-sha', required=True)
+    command.add_argument('--publication-request-sha256', required=True)
+    command.add_argument('--attempt', type=int, default=1)
+    for name in ('plan','preflight','run','status','reconcile'):
+        command = commands.add_parser('schema-qualify-'+name, help='deployed candidate load/freshness/capacity/fault qualification')
+        if name in ('plan','preflight','run'):
+            command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name == 'run': command.add_argument('--expect-plan-sha256', required=True)
+    command = commands.add_parser('schema-qualify-summary', help='read-only capacity decision from reconciled trials')
+    command.add_argument('--transaction', required=True)
+    command = commands.add_parser('schema-qualify-exec', help=argparse.SUPPRESS)
+    command.add_argument('--request-sha256', required=True)
+    command = commands.add_parser('schema-qualify-remote', help=argparse.SUPPRESS)
+    command.add_argument('--action', choices=('probe','act','status','reconcile'), required=True)
+    command.add_argument('--request-sha256', required=True)
+    for name in ('plan','preflight','stage','status','reconcile'):
         command = commands.add_parser('schema-input-prepare-'+name, help='prepare native assignment and immutable worker units on coordinator')
         command.add_argument('--request', required=True)
         command.add_argument('--request-sha256', required=True)
@@ -153,12 +244,17 @@ def parser():
         command.add_argument('--release-result-sha256', required=True)
         if name == 'start':
             command.add_argument('--expect-plan-sha256', required=True)
-    for name in ('plan', 'preflight', 'stage', 'status'):
+    for name in ('plan', 'preflight', 'stage', 'status','reconcile'):
         command = commands.add_parser('schema-source-'+name)
         command.add_argument('--source-sha', required=True)
+        command.add_argument('--attempt',type=int,default=1)
         command.add_argument('--sha256', required=True)
         command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
-        if name != 'status':
+        command.add_argument('--recovery-transaction', help='inert source repair for this failed transaction only')
+        command.add_argument('--recovery-recipe-sha256')
+        if name == 'preflight':
+            command.add_argument('--private-evidence-file', help='exclusive local private file for exact fleet replies, including refusal')
+        if name not in ('status','reconcile'):
             command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
         command = commands.add_parser(name, help='Transparent multi-component schema transaction')
@@ -168,6 +264,16 @@ def parser():
     for name in ('schema-rollback', 'schema-status'):
         command = commands.add_parser(name)
         command.add_argument('--transaction')
+    command = commands.add_parser('schema-repair-rollback', help='reviewed source repair of a failed product rollback')
+    command.add_argument('--transaction', required=True)
+    command.add_argument('--expect-recipe-sha256', required=True)
+    for name in ('plan','preflight','deploy','resume-plan','resume-preflight','resume-deploy','resume-prepare-plan','resume-prepare-preflight','resume-prepare-deploy','resume-prepare-reconcile'):
+        command = commands.add_parser('schema-reconcile-'+name, help='recover a retained newer v10 activation after an unstaged cutover')
+        command.add_argument('--transaction', required=True)
+        command.add_argument('--expect-recipe-sha256', required=True)
+        command.add_argument('--map-sha256', required=True, help='map digest, or original adoption plan digest for resume')
+        if name in ('deploy','resume-deploy','resume-prepare-deploy'):
+            command.add_argument('--expect-plan-sha256', required=True)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -230,6 +336,56 @@ def main(argv=None, executor=None, out=print, **options):
                 return 75 if isinstance(error,(subprocess.TimeoutExpired,KeyboardInterrupt,SystemExit)) else 1
             out(json.dumps({k:v for k,v in result.items() if k != 'request'}, sort_keys=True))
             return 0
+        if args.command.startswith('schema-snapshot-'):
+            spec = importlib.util.spec_from_file_location('activity_journal_snapshot', ROOT/'transparent/ops/lib/activity_journal_snapshot.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            try:
+                if args.command == 'schema-snapshot-owner':
+                    result = module.owner_main(args.request_sha256)
+                else:
+                    if not args.inventory: raise ValueError('journal snapshot requires the pinned coordinator inventory')
+                    request = module.read_request(args.request, args.request_sha256)
+                    result = module.Snapshot(descriptors.load_inventory(args.inventory), request, args.request_sha256).run(
+                        args.command.removeprefix('schema-snapshot-'), getattr(args,'expect_plan_sha256',None))
+            except (module.Unknown, module.Interrupted) as error:
+                out('error: outcome unknown or interrupted; observe schema-snapshot-status, then reconcile: %s' % error)
+                return 75
+            out(json.dumps(result, sort_keys=True))
+            return 0
+        if args.command == 'schema-candidate-execute-receive':
+            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out, args.expect_plan_sha256)
+        if args.command == 'schema-candidate-receive':
+            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module.receive(args.action, args.request_sha256, sys.stdin.fileno(), out)
+        if args.command.startswith('schema-qualify-'):
+            spec = importlib.util.spec_from_file_location('activity_deployed_qualification', ROOT/'transparent/ops/lib/activity_deployed_qualification.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            if args.command == 'schema-qualify-remote':
+                request = module.read_remote_request(sys.stdin.buffer,args.request_sha256)
+                out(json.dumps(module.remote_run(request, args.action), sort_keys=True))
+                return 0
+            if args.command == 'schema-qualify-summary':
+                out(json.dumps(module.summary_report(args.transaction), sort_keys=True))
+                return 0
+            if not args.inventory: raise ValueError('qualification requires the pinned coordinator inventory')
+            inventory = descriptors.load_inventory(args.inventory)
+            if args.command in ('schema-qualify-plan','schema-qualify-preflight','schema-qualify-run'):
+                with Path(args.request).open('rb') as stream: request = module.read_request(stream, args.request_sha256)
+            else:
+                request = module.retained_request(args.request_sha256)
+            qualification = module.Qualification(inventory, request, args.request_sha256)
+            if args.command == 'schema-qualify-exec':
+                qualification.execute()
+                return 0
+            action = args.command.removeprefix('schema-qualify-')
+            result = qualification.run(action, getattr(args,'expect_plan_sha256',None))
+            out(json.dumps(result, sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+module.digest(result))
+            return 0
         if args.command.startswith('schema-host-'):
             spec = importlib.util.spec_from_file_location('activity_schema_dispatch', ROOT/'transparent/ops/lib/activity_schema_dispatch.py')
             module = importlib.util.module_from_spec(spec)
@@ -252,6 +408,59 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('schema-candidate-execute-'):
+            spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            action = args.command.removeprefix('schema-candidate-execute-')
+            execution = module.Execution(descriptors.load_inventory(args.inventory), args.source_sha,
+                                         mode=getattr(args,'mode',None), attempt=getattr(args,'attempt',None),
+                                         preparation=getattr(args,'preparation_request_sha256',None),
+                                         request_sha256=getattr(args,'request_sha256',None),
+                                         snapshot={k:getattr(args,'snapshot_'+k,None) for k in
+                                                   ('request_sha256','owner_sha256','manifest_sha256')}
+                                                  if any(getattr(args,'snapshot_'+k,None) for k in
+                                                         ('request_sha256','owner_sha256','manifest_sha256')) else None)
+            try:
+                result = execution.run(action, getattr(args,'expect_plan_sha256',None))
+            except module.Unknown as error:
+                out('error: outcome unknown: %s' % error)
+                return 75
+            out(json.dumps(result,sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+result['plan_sha256'])
+            return 0
+        if args.command.startswith('schema-candidate-upload-'):
+            spec = importlib.util.spec_from_file_location('activity_candidate_upload', ROOT/'transparent/ops/lib/activity_candidate_upload.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            action = args.command.removeprefix('schema-candidate-upload-')
+            archives = ({kind:getattr(args, kind.replace('-','_')) for kind in module.ORDER}
+                        if action not in ('status','reconcile') else None)
+            upload = module.Upload(descriptors.load_inventory(args.inventory), args.source_sha,
+                                   attempt=getattr(args,'attempt',None), archives=archives,
+                                   request_sha256=getattr(args,'request_sha256',None))
+            try:
+                result = upload.run(action, getattr(args,'expect_plan_sha256',None))
+            except module.Unknown as error:
+                out('error: outcome unknown: %s' % error)
+                return 75
+            out(json.dumps(result,sort_keys=True))
+            if action == 'plan':
+                out('plan sha256: '+module.digest(result))
+            return 0
+        if args.command.startswith('schema-candidate-'):
+            spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            inventory = descriptors.load_inventory(args.inventory)
+            if args.command == 'schema-candidate-worker-build':
+                result = module.build_candidate(inventory,args.host,args.source_sha,args.publication_request_sha256,args.attempt)
+            else:
+                with Path(args.request).open('rb') as stream: raw=stream.read(module.MAX_REQUEST+1)
+                if len(raw)>module.MAX_REQUEST: raise ValueError('candidate request exceeds bound')
+                request=json.loads(raw,object_pairs_hook=module.unique)
+                result=module.CandidatePreparation(inventory,request,args.request_sha256).run(
+                    args.command.removeprefix('schema-candidate-'),getattr(args,'expect_plan_sha256',None))
+            out(json.dumps(result,sort_keys=True))
+            return 0
         if args.command.startswith('schema-input-'):
             spec = importlib.util.spec_from_file_location('activity_input_stage', ROOT/'transparent/ops/lib/activity_input_stage.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
@@ -280,12 +489,13 @@ def main(argv=None, executor=None, out=print, **options):
             spec.loader.exec_module(module)
             path = module.checked({'path':args.spec, 'sha256':args.spec_sha256})
             specification = module.validate(module.H.load(path))
-            if ROOT != Path('/srv/transparent-activity/ops/sources')/specification['source_sha']:
-                raise ValueError('product phases require the pinned immutable operations source')
+            product = module.Product(specification, spec_sha256=args.spec_sha256)
+            product.source_identity(ROOT, args.transaction if args.command == 'schema-product-phase' else None,
+                                    args.phase if args.command == 'schema-product-phase' else None,
+                                    args.journal if args.command == 'schema-product-phase' else None)
             if args.command == 'schema-product-recipe':
                 out(json.dumps(module.recipe(path, args.spec_sha256), sort_keys=True))
                 return 0
-            product = module.Product(specification, spec_sha256=args.spec_sha256)
             if args.command == 'schema-product-preflight':
                 result = product.preflight()
             else:
@@ -314,8 +524,17 @@ def main(argv=None, executor=None, out=print, **options):
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
             inventory = descriptors.load_inventory(args.inventory)
-            module.SourceStage(inventory, out, target=args.host).run(args.command.removeprefix('schema-source-'),
-                args.source_sha, args.sha256, getattr(args, 'archive', None))
+            if bool(args.recovery_transaction) != bool(args.recovery_recipe_sha256):
+                raise ValueError('recovery source staging needs both transaction and recipe identity')
+            recovery = ({'transaction':args.recovery_transaction,'recipe_sha256':args.recovery_recipe_sha256}
+                        if args.recovery_transaction else None)
+            try:
+                module.SourceStage(inventory, out, target=args.host, recovery=recovery,attempt=args.attempt,
+                    private_evidence_file=getattr(args,'private_evidence_file',None)).run(args.command.removeprefix('schema-source-'),
+                    args.source_sha, args.sha256, getattr(args, 'archive', None))
+            except module.Unknown as error:
+                out(str(error))
+                return 75
             return 0
         if args.command.startswith('schema-'):
             spec = importlib.util.spec_from_file_location('activity_schema_operation',
@@ -328,6 +547,11 @@ def main(argv=None, executor=None, out=print, **options):
                 runner.status(args.transaction)
             elif args.command == 'schema-rollback':
                 runner.rollback(args.transaction)
+            elif args.command == 'schema-repair-rollback':
+                runner.repair_rollback(args.transaction, args.expect_recipe_sha256)
+            elif args.command.startswith('schema-reconcile-'):
+                runner.reconcile(args.command.removeprefix('schema-reconcile-'), args.transaction,
+                                 args.expect_recipe_sha256, args.map_sha256, getattr(args,'expect_plan_sha256',None))
             else:
                 recipe = module.load_recipe(args.recipe)
                 if args.command == 'schema-plan':

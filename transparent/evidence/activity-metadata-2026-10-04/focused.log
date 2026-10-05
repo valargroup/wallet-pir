@@ -1,0 +1,40 @@
+== python3 -B transparent/ops/tests/test_activity_candidate.py
+Ran 25 tests in 0.708s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_input_stage.py
+Ran 33 tests in 4.152s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_input_preparation.py
+Ran 7 tests in 0.241s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_schema_product.py
+Ran 42 tests in 0.322s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_schema_routing.py
+Ran 33 tests in 1.438s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_publication_job.py
+Ran 9 tests in 0.099s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_schema_operation.py
+Ran 212 tests in 16.012s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_schema_baseline.py
+Ran 32 tests in 0.575s
+
+OK
+== python3 -B transparent/ops/tests/test_activity_schema_host.py
+Ran 39 tests in 0.644s
+
+OK
+== python3 -B -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+Ran 46 tests in 4.670s
+
+OK

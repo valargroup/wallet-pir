@@ -1,0 +1,13 @@
+{
+  "base_sha": "139a54f3d4b9ee5687dbec25c293296d1628177c",
+  "owner": "afba0e7c215d4fc19c2b048666756d2a",
+  "command": "make check-fast BASE=139a54f3d4b9ee5687dbec25c293296d1628177c",
+  "status": "pass",
+  "seconds": 15.774443082977086,
+  "files": {
+    "transparent/ops/lib/activity_source_stage_host.py": "fd85a5226685a2bed7dc7d2643baa83e0a3e85fc4298a2d9d69bfa05dbeee746",
+    "transparent/ops/tests/test_activity_schema_operation.py": "10e873b5b78612d01e800dbfd313dd9b6de947a1cebe4f67f0dd5ec890daf7aa"
+  },
+  "scope": "Exact source inventory refusal remains mandatory; unexpected/missing counts aid private diagnosis. Recovery via fresh reviewed source remains separately required.",
+  "prior_failed_check": "5f39f97eb7714677a75e1c8af628123e failed attempted library self-suppression; that implementation was reverted and is not part of this source."
+}

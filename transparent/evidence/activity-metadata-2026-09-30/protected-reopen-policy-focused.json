@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "9f802f71625e80337afc710f98e5dd62ee7cdf83",
+  "owner": "ac871f630d2741939be1ff9e69b36681",
+  "duration_seconds": 16.341497665969655,
+  "result_sha256": "250dc2c025f25afd8dfa09892712733d53984fcbe14efdf3d742aeaedf41b1e5",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_product.py": "fd2d15ed1746cbef9fd325175d520ad124c669c265c1768b11da587b0fb57c56",
+    "transparent/ops/tests/test_activity_schema_product.py": "7119d6e3e77ee712e6051f27fc4f2bfaef980318399964aea4201e97533c54b0",
+    "transparent/docs/deployment.md": "97bc01ff83332f53d863abd43e7fec3277b6ec1a7b6c486eebafc8ce3a7ae8ad",
+    "transparent/docs/status.md": "cf0b6d9d46e70c2c82022db57d4ab4cd16d66954876d9e85c4139ed0591d13f5"
+  },
+  "observations": [
+    "Independent reopen and service processes re-establish continuation only from validated protected rollback baseline",
+    "Forward/unprotected phases stay static; current warm map/invalidated/binary/assignment/HTTP/canonical anchor checks stay mandatory",
+    "33 product tests passed; existing negative future-preparation tests retain strict current-map proof"
+  ],
+  "limitations": [
+    "Actual paired canonical recovery remains required",
+    "All failed deadlines/native reports retained"
+  ]
+}

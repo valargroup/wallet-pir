@@ -224,6 +224,7 @@ class Inputs(unittest.TestCase):
         spec=importlib.util.spec_from_file_location('input_source_target',M.HERE/'activity_source_stage.py')
         source=importlib.util.module_from_spec(spec);spec.loader.exec_module(source)
         client=object.__new__(source.SourceStage)
+        client.recovery=None;client.attempt=1
         client.target='worker';client.host='worker';client.machine='c'*32;client.out=lambda _:None
         client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32},hosts={'worker':{}},ssh={'mode':'config'})
         client.executor=SimpleNamespace(transport=lambda host:['ssh','worker'])
@@ -235,7 +236,8 @@ class Inputs(unittest.TestCase):
             self.assertEqual(options['env']['PYTHONDONTWRITEBYTECODE'],'1')
             calls.append(argv)
             return SimpleNamespace(returncode=0,stdout=b'{"ok":true,"result":{"status":"staged"}}')
-        with patch.object(source,'ProductionLock',return_value=self.lock),patch.object(source.subprocess,'run',side_effect=run):
+        with patch.object(source,'ProductionLock',return_value=self.lock),patch.object(source.subprocess,'run',side_effect=run), \
+             patch.object(source.FLEET,'leased',side_effect=lambda r,l,v,c,operation,s:operation({'schema':'fictional-fleet-proof'})):
             client.run('stage','b'*40,M.P.checksum(archive),archive)
         self.assertEqual(len(calls),2)
 
@@ -332,6 +334,24 @@ class CutoverInputs(unittest.TestCase):
         self.request['files']={'product.json':json.dumps({'shell':'execute unreviewed command'})}
         with self.assertRaisesRegex(ValueError,'specification'):self.preparation().render()
 
+    def test_product_preparation_pins_coordinator_and_all_workers_without_service_actions(self):
+        self.request['files']={'product.json':'{}'}
+        prep=self.preparation();actions=[]
+        async def workers(action,attempt):
+            actions.append((action,attempt))
+        product=SimpleNamespace(bound=lambda tx:actions.append(('bound',tx)),
+            local=SimpleNamespace(protect_publications=lambda:actions.append(('coordinator-pin',))),
+            all_workers=workers)
+        module=SimpleNamespace(Product=lambda _:product,T=SimpleNamespace(VALIDATION_ID='reviewed-inputs'))
+        with patch.object(M,'module',return_value=module):
+            prep.prepare_payload({'product.json':b'{}'})
+        self.assertEqual(actions,[('bound','reviewed-inputs'),('coordinator-pin',),
+                                  ('protect-publications',prep.identifier[:16])])
+        async def unknown(*_):raise subprocess.TimeoutExpired('owned SSH',90)
+        product.all_workers=unknown
+        with patch.object(M,'module',return_value=module),self.assertRaises(subprocess.TimeoutExpired):
+            prep.prepare_payload({'product.json':b'{}'})
+
 
 class ServiceInputs(unittest.TestCase):
     def setUp(self):
@@ -351,12 +371,14 @@ class ServiceInputs(unittest.TestCase):
             'controller.json':json.dumps({'data_dir':str(M.P.JOURNAL),'publication_root':str(self.output.parent),
                 'initial_publication':str(self.output),'fleet_config':'/opt/transparent-publisher/v11/fleet.json',
                 'source_sha':M.P.RELEASE_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
-                'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'v2',
+                'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'zcash-transparent-range-v2',
                 'fleet_command':str(M.SOURCE/source/'transparent/ops/scripts/transparent-live-fleet.py')}),
             'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
                 'worker_schema':'transparent-shard-v11','worker_active_record':'/opt/transparent-publisher/v11/active.json',
                 'worker_runtime_cache_dir':'/srv/transparent-pir/v11/runtime-cache','worker_root':'/srv/transparent-pir/v11/publications'}),
-            'roster.json':json.dumps([{'id':'worker-'+str(i)} for i in range(3)]),
+            'roster.json':json.dumps([{'id':'worker-'+str(i),
+                'role':'archive-owner' if i == 2 else 'recent-replica',
+                **({'archive_range':[0,0]} if i == 2 else {})} for i in range(3)]),
             'pins.json':json.dumps({'worker-'+str(i):M.WORKER_HASHES['transparent-shard-server'] for i in range(3)}),
             'policy.json':json.dumps({'mode':'observe'}),
             'fixture.json':json.dumps({'schema':'transparent-shard-v11','tables':[{'shard_id':s['shard_id'],
@@ -384,6 +406,8 @@ class ServiceInputs(unittest.TestCase):
     def test_namespace_scaler_pin_and_traffic_group_rejections(self):
         cases=[('controller.json','shadow',True),('controller.json','data_dir','/old/journal'),
                ('controller.json','recent_from',999),('controller.json','range_profile','v1'),
+               ('controller.json','range_profile','v2'),
+               ('controller.json','range_profile','zcash-transparent-range-v99'),
                ('controller.json','fleet_command','/old/live-fleet.py'),
                ('fleet.json','state_dir','/opt/transparent-publisher/state'),('policy.json','mode','active'),
                ('pins.json','worker-0','0'*64)]
@@ -393,6 +417,43 @@ class ServiceInputs(unittest.TestCase):
                 with self.assertRaises(ValueError):self.preparation(r).render()
         r=copy.deepcopy(self.request);v=json.loads(r['files']['fixture.json']);v['tables'].pop();r['files']['fixture.json']=json.dumps(v)
         with self.assertRaisesRegex(ValueError,'traffic group'):self.preparation(r).render()
+
+    def test_archive_ownership_is_bound_to_publication_before_staging(self):
+        for span in (None, [], [0], [True,0], [0,False], [0,1], [1,1], [-1,0],
+                     [0,'0'], [0,2**64], [1,0]):
+            r=copy.deepcopy(self.request); roster=json.loads(r['files']['roster.json'])
+            roster[2]['archive_range']=span; r['files']['roster.json']=json.dumps(roster)
+            with self.subTest(span=span),self.assertRaises(ValueError):self.preparation(r).render()
+        for change in ('recent-range','foreign-role','overlap','missing-owner'):
+            r=copy.deepcopy(self.request); roster=json.loads(r['files']['roster.json'])
+            if change=='recent-range':roster[0]['archive_range']=[0,0]
+            elif change=='foreign-role':roster[2]['role']='foreign'
+            elif change=='missing-owner':roster[2]['role']='recent-replica';roster[2].pop('archive_range')
+            else:roster.append({'id':'extra','role':'archive-owner','archive_range':[0,0]})
+            r['files']['roster.json']=json.dumps(roster)
+            r['files']['pins.json']=json.dumps({w['id']:M.WORKER_HASHES['transparent-shard-server'] for w in roster})
+            with self.subTest(change=change),self.assertRaises(ValueError):self.preparation(r).render()
+
+    def test_split_archive_ranges_cover_the_same_native_boundary(self):
+        mapping=json.loads((self.output/'shards.json').read_text())
+        mapping['shards'].insert(1,{'shard_id':1,'manifest_digest':'2'*64,'geometry':'archive-wide','start_height':0})
+        mapping['shards'][-1]['shard_id']=2
+        (self.output/'shards.json').write_text(json.dumps(mapping))
+        (self.evidence/'result.json').write_text(json.dumps({'status':'passed','map_sha256':M.P.checksum(self.output/'shards.json')}))
+        r=copy.deepcopy(self.request);roster=json.loads(r['files']['roster.json'])
+        roster.append({'id':'extra','role':'archive-owner','archive_range':[1,1]})
+        r['files']['roster.json']=json.dumps(roster)
+        r['files']['pins.json']=json.dumps({w['id']:M.WORKER_HASHES['transparent-shard-server'] for w in roster})
+        fixture=json.loads(r['files']['fixture.json'])
+        for target in fixture['tables']:
+            if target['geometry']=='recent-4k-8k':target['shard_id']=2
+        r['files']['fixture.json']=json.dumps(fixture)
+        self.preparation(r).render()
+        roster[-1]['archive_range']=[0,1];r['files']['roster.json']=json.dumps(roster)
+        with self.assertRaisesRegex(ValueError,'gap, overlap'):self.preparation(r).render()
+        native=(Path(__file__).parents[2]/'services/transparent-shard-server/src/router.rs').read_text()
+        self.assertIn('next != recent_from_shard',native)
+        self.assertIn('pinned archive ranges must be contiguous from shard 0',native)
 
     def test_closed_files_digest_bounds_and_duplicate_configuration_keys(self):
         for name in ('../../Caddyfile','credentials','unknown.json'):

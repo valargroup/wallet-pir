@@ -1,0 +1,163 @@
+{
+  "evidence": "ci-cache-reuse-2026-10-01",
+  "finding": "p0mvn/ai-runbook PR #30 finding 4a4fd347a4012a81e5b3d13d",
+  "status": "round 3 (final code) validated on task branch; not integrated; not addressed",
+  "repository": "valargroup/wallet-pir",
+  "branch": "ai-dev/t-76147dba2c4c47d1/a1/wallet-pir",
+  "base": "2d245476c6a969a86830e26e2ef63e75ebbe74b0",
+  "source_commits": {
+    "round1": {
+      "implementation": "856a419aac03d3531d3e19380df95146e1b18281",
+      "log_reader_fix": "3fb732d2e56d7be6f79f52923a7688f1ece06718",
+      "env_only_probe": "4167c3cef840e63a088be9e86f00d339a31506e6",
+      "probe_revert": "ba8ad735b39101dd94e6f5559b7a196a27e7fcd2"
+    },
+    "round2": {
+      "implementation_fix": "e56d818ff29699f5afa2ab39aa9e237e0de4129b",
+      "env_only_probe": "f826bf42305d31010d47a1a086c89b432c8a2ef1",
+      "probe_revert": "fc84e9b8ec2bd0c3af5906fe5608e854ccf8f9f7"
+    },
+    "round3": {
+      "final_code": "8d6d613a4ac853bae81a99754bdbe1f2a3349809"
+    }
+  },
+  "collection_command": "python3 tools/ci/timings.py --run <run> --cache-records",
+  "runs": [
+    {
+      "run": 36834774107,
+      "workflow": "ci.yml",
+      "sha": "856a419a",
+      "case": "persistent first build",
+      "gate": "Fast checks",
+      "conclusion": "success",
+      "round": 1
+    },
+    {
+      "run": 36834777102,
+      "workflow": "ci-full.yml",
+      "sha": "856a419a",
+      "case": "cold / missing cache",
+      "gate": "Full checks complete",
+      "conclusion": "success",
+      "round": 1
+    },
+    {
+      "run": 36837792640,
+      "workflow": "ci.yml",
+      "sha": "3fb732d2",
+      "case": "persistent restore",
+      "gate": "Fast checks",
+      "conclusion": "success",
+      "round": 1
+    },
+    {
+      "run": 36837789214,
+      "workflow": "ci-full.yml",
+      "sha": "3fb732d2",
+      "case": "hosted restore",
+      "gate": "Full checks complete",
+      "conclusion": "success",
+      "round": 1
+    },
+    {
+      "run": 36837847229,
+      "workflow": "ci-full.yml",
+      "sha": "4167c3ce",
+      "case": "workflow text and runtime-only env change",
+      "gate": "Full checks complete",
+      "conclusion": "success",
+      "round": 1
+    },
+    {
+      "round": 2,
+      "run": 36845912455,
+      "workflow": "ci-full.yml",
+      "sha": "e56d818f",
+      "case": "cold / missing cache",
+      "gate": "Full checks complete",
+      "conclusion": "success"
+    },
+    {
+      "round": 2,
+      "run": 36845915560,
+      "workflow": "ci.yml",
+      "sha": "e56d818f",
+      "case": "persistent first build",
+      "gate": "Fast checks",
+      "conclusion": "success"
+    },
+    {
+      "round": 2,
+      "run": 36848898795,
+      "workflow": "ci-full.yml",
+      "sha": "f826bf42",
+      "case": "workflow text and runtime-only env change",
+      "gate": "Full checks complete",
+      "conclusion": "success"
+    },
+    {
+      "round": 2,
+      "run": 36848927411,
+      "workflow": "ci-full.yml",
+      "sha": "fc84e9b8",
+      "case": "hosted restore",
+      "gate": "Full checks complete",
+      "conclusion": "success"
+    },
+    {
+      "round": 2,
+      "run": 36848930204,
+      "workflow": "ci.yml",
+      "sha": "fc84e9b8",
+      "case": "persistent restore",
+      "gate": "Fast checks",
+      "conclusion": "success"
+    },
+    {
+      "round": 3,
+      "run": 36854240061,
+      "workflow": "ci-full.yml",
+      "sha": "8d6d613a",
+      "case": "hosted restore with final unit key",
+      "gate": "Full checks complete",
+      "conclusion": "success"
+    },
+    {
+      "round": 3,
+      "run": 36854242979,
+      "workflow": "ci.yml",
+      "sha": "8d6d613a",
+      "case": "persistent restore with final unit key",
+      "gate": "Fast checks",
+      "conclusion": "success"
+    }
+  ],
+  "event": "workflow_dispatch on the task branch",
+  "hosted_runner": "ubuntu-24.04 (GitHub-hosted)",
+  "persistent_runner": "wallet-pir-ci-fast",
+  "toolchain": "Rust 1.97.1, cargo 1.97.1, Ubuntu 24.04, glibc 2.39, x86_64-unknown-linux-gnu",
+  "profiles": {
+    "full-test": "release-fast",
+    "full-lint": "clippy --all-targets --all-features"
+  },
+  "baseline_inputs": [
+    "raw/baseline-restore.json",
+    "raw/baseline-caches.json",
+    "raw/baseline-timings-36728359128.json",
+    "raw/baseline-timings-36729873650.json"
+  ],
+  "savings_claimed": false,
+  "pending": [
+    "primed main cache comparison after reviewed integration",
+    "self-hosted old directory pruning"
+  ],
+  "attribution": {
+    "round1": "fingerprint mtime comparison; superseded, not Cargo attribution",
+    "round2": "CI_CARGO_ARTIFACTS from Cargo compiler-artifact fresh flags of commands run through tools/ci/stage.py; unit key merged check and build of one target (Enhance tests and Fast checks totals undercount)",
+    "round3": "as round 2 with output basenames in the unit key; current"
+  },
+  "cache_lists": {
+    "round1": "raw/v1-caches.json",
+    "round2": "raw/v1-caches-round2.json"
+  }
+}

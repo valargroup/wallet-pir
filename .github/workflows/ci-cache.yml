@@ -1,0 +1,68 @@
+name: Prime hosted Cargo caches
+
+# Main CI full runs on the trusted persistent build runner, so it never saves
+# the hosted caches that PR full jobs can restore. This main-only workflow
+# saves them from main code. It is not a gate: it runs no tests, does not affect
+# CI full's conclusion or artifacts, and only compiles when the exact entry for
+# a compatibility identity is missing.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: prime-cargo-cache
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -Dwarnings -C target-cpu=x86-64-v3
+  CFLAGS: -mpclmul
+  CXXFLAGS: -mpclmul
+
+jobs:
+  prime:
+    # Only main entries are readable by PRs; a branch dispatch would only
+    # populate its own ref.
+    if: github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER != ''
+    name: Prime ${{ matrix.lane }} ${{ matrix.scope }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {lane: full-lint, scope: transparent, command: --group transparent --lint}
+          - {lane: full-lint, scope: enhance, command: --group enhance --lint}
+          - {lane: full-test, scope: transparent, command: --group transparent --compile-only}
+          - {lane: full-test, scope: enhance, command: --group enhance --compile-only}
+          - {lane: full-test, scope: shared, command: --group shared --compile-only}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: setup
+        uses: ./.github/actions/rust-setup
+        with:
+          lane: ${{ matrix.lane }}
+          scope: ${{ matrix.scope }}
+          lookup-only: 'true'
+      - name: Compile the units PR full jobs use
+        if: steps.setup.outputs.cache-hit != 'true'
+        env:
+          COMMAND: ${{ matrix.command }}
+        run: |
+          # shellcheck disable=SC2086
+          python3 tools/ci/full_packages.py $COMMAND
+          if [[ "$COMMAND" == '--group shared --compile-only' ]]; then
+            python3 tools/ci/full_packages.py --group shared --lint
+          fi
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report

@@ -34,6 +34,195 @@ def worker_plan():
                    'map_sha256': 'e'*64, 'map_file_sha256':'f'*64, 'binary_sha256': 'd'*64, 'assignment_sha256': 'd'*64}}
 
 
+class CachePreparationTests(unittest.TestCase):
+    def fixture(self, directory):
+        from unittest.mock import Mock
+        root=Path(directory);(root/'v11').mkdir()
+        host=M.Host.__new__(M.Host);host.role='worker';host.root=root/'saved'
+        host.plan=worker_plan();host.plan['installs']=[]
+        expected={k:host.plan['worker'][k] for k in ('directory','assignment','map_sha256')}
+        (root/'v11/active.json').write_text(json.dumps(expected))
+        host.saved=Mock();host.withdrawn=Mock();host.quiet=Mock();host.effective_units=Mock()
+        host.verify_worker=Mock(return_value={'active':expected})
+        host.commands=Mock();host.commands.state.return_value={'DropInPaths':''}
+        host.commands.cache_resources.return_value={'memory_available':80,'memory_total':100,
+            'disk_available':80,'disk_total':100,'oom':0,'oom_kill':0,'restarts':'0','pid':'42'}
+        host.commands.cache_observation.return_value={'ready':{'ready':True,'mode':'warm',
+            'map_sha256':expected['map_sha256'],'binary_sha256':host.plan['worker']['binary_sha256'],
+            'prewarm_failed':0,'prewarm_finished':True},'metrics':{
+            'transparent_shard_disk_save_pending':0,'transparent_shard_disk_write_failures_total':0}}
+        return host
+
+    def test_native_readiness_cache_shape_reports_warming_and_persistence(self):
+        import io
+        # The native DiskCache status object contains counters, not Prometheus
+        # sample names. Extra census fields remain native observations.
+        ready={'ready':False,'prewarm_failed':0,'warm_runtimes':11,'target_runtimes':164,
+               'runtime_cache':{'bytes':7206197840,'limit_bytes':52613349376,'hits':11,'misses':4,
+                                'write_failures':0,'pending_saves':1,'restore_slots':4}}
+        error=M.urllib.error.HTTPError('fixed-ready',503,'warming',{},io.BytesIO(json.dumps(ready).encode()))
+        with patch.object(M.urllib.request,'urlopen',return_value=error) as fetch:
+            value=M.Commands().cache_observation()
+        self.assertEqual(fetch.call_count,1)
+        self.assertEqual(value['ready']['warm_runtimes'],11)
+        self.assertEqual(value['metrics']['transparent_shard_disk_save_pending'],1)
+        self.assertEqual(value['metrics']['transparent_shard_disk_write_failures_total'],0)
+        ready['ready']=True;ready['runtime_cache']['pending_saves']=0
+        with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(json.dumps(ready).encode())):
+            self.assertEqual(M.Commands().cache_observation()['metrics']['transparent_shard_disk_save_pending'],0)
+
+    def test_missing_unavailable_negative_and_noninteger_cache_counters_refuse(self):
+        import io
+        for cache in (None,{}, {'status':'unavailable: the cache directory was slow to list'},
+                      {'pending_saves':0}, {'pending_saves':-1,'write_failures':0},
+                      {'pending_saves':True,'write_failures':0}, {'pending_saves':1.0,'write_failures':0},
+                      {'pending_saves':0,'write_failures':'0'}):
+            with self.subTest(cache=cache),patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(
+                    json.dumps({'runtime_cache':cache}).encode())),self.assertRaises(ValueError):
+                M.Commands().cache_observation()
+        duplicate=b'{"runtime_cache":{"pending_saves":1,"pending_saves":0,"write_failures":0}}'
+        with patch.object(M.urllib.request,'urlopen',return_value=io.BytesIO(duplicate)),self.assertRaisesRegex(ValueError,'duplicate'):
+            M.Commands().cache_observation()
+
+    def test_preparation_waits_for_persistence_then_stops_before_independent_activation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            host=self.fixture(directory)
+            pending=copy.deepcopy(host.commands.cache_observation.return_value)
+            pending['metrics']['transparent_shard_disk_save_pending']=1
+            host.commands.cache_observation.side_effect=[pending,host.commands.cache_observation.return_value]
+            with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value='d'*64),patch.object(M.time,'sleep'):
+                result=host.prepare_worker_cache()
+            self.assertEqual([c.args for c in host.commands.unit.call_args_list],[('start',M.WORKER),('stop',M.WORKER)])
+            host.verify_worker.assert_called_once_with()
+            self.assertEqual(len(result['observations']),2)
+            self.assertEqual(result['status'],'prepared');self.assertIn('independent activation',result['qualification'])
+
+    def test_foreign_candidate_or_unguarded_origin_never_starts_worker(self):
+        for defect in ('role','map','assignment','guard','dropin'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host=self.fixture(directory)
+                if defect=='role':host.role='router'
+                if defect=='map':(Path(directory)/'v11/active.json').write_text('{}')
+                if defect=='guard':host.withdrawn.side_effect=ValueError('origin open')
+                if defect=='dropin':host.commands.state.return_value={'DropInPaths':'/foreign/drop.conf'}
+                digest='f'*64 if defect=='assignment' else 'd'*64
+                with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value=digest),self.assertRaises(ValueError):
+                    host.prepare_worker_cache()
+                host.commands.unit.assert_not_called()
+
+    def test_resource_native_persistence_and_live_identity_failures_stop_owned_unit(self):
+        for defect in ('memory','disk','oom','restart','exit','map','binary','prewarm','write','deadline'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host=self.fixture(directory)
+                initial=copy.deepcopy(host.commands.cache_resources.return_value);bad=copy.deepcopy(initial)
+                field={'memory':'memory_available','disk':'disk_available','oom':'oom','restart':'restarts','exit':'pid'}.get(defect)
+                if field:bad[field]={'memory':19,'disk':19,'oom':1,'restart':'1','exit':'0'}[defect]
+                host.commands.cache_resources.side_effect=[initial,bad]
+                ready=host.commands.cache_observation.return_value['ready'];metrics=host.commands.cache_observation.return_value['metrics']
+                if defect in ('map','binary'):ready['map_sha256' if defect=='map' else 'binary_sha256']='f'*64
+                if defect=='prewarm':ready['prewarm_failed']=1
+                if defect=='write':metrics['transparent_shard_disk_write_failures_total']=1
+                if defect=='deadline':ready['ready']=False
+                clock=M.time.monotonic
+                with patch.object(M,'ROOT',Path(directory)),patch.object(M,'checksum',return_value='d'*64), \
+                     patch.object(M.time,'monotonic',side_effect=[0,1201,1201] if defect=='deadline' else clock),self.assertRaises(ValueError):
+                    host.prepare_worker_cache()
+                self.assertEqual([c.args for c in host.commands.unit.call_args_list],[('start',M.WORKER),('stop',M.WORKER)])
+                host.verify_worker.assert_not_called()
+
+
+class RepairReuseTests(unittest.TestCase):
+    def test_candidate_activation_observes_startup_before_separate_warm_proof(self):
+        from unittest.mock import Mock
+        host=M.Host.__new__(M.Host);host.role='worker';host.plan={'installs':[]}
+        host.saved=Mock();host.withdrawn=Mock();host.quiet=Mock();host.commands=Mock()
+        host.settle_restored_worker=Mock(return_value={'qualification':'startup only'})
+        value=host.activate()
+        host.commands.unit.assert_called_once_with('start',*M.START['worker'])
+        host.settle_restored_worker.assert_called_once_with()
+        self.assertNotEqual(value.get('status'),'passed')
+        self.assertEqual(value['startup']['qualification'],'startup only')
+
+    def test_captured_router_guard_attestation_preserves_snapshot_and_refuses_foreign_bytes(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as directory:
+            host=M.Host.__new__(M.Host);host.root=Path(directory);host.role='router'
+            (host.root/'files').mkdir();saved=host.root/'files/0';saved.write_bytes(b'withdrawn exact configuration')
+            host.saved=Mock(return_value=({'plan_sha256':'a'*64,'plan':{'files':[{'path':'/etc/caddy/Caddyfile'}]}},{}))
+            host.withdrawn=Mock();inode=saved.stat().st_ino
+            value=host.attest_captured_router_guard(M.checksum(saved))
+            self.assertEqual(value['status'],'passed');self.assertEqual(saved.stat().st_ino,inode)
+            with self.assertRaisesRegex(ValueError,'exact owned'):host.attest_captured_router_guard('b'*64)
+            host.role='worker'
+            with self.assertRaises(ValueError):host.attest_captured_router_guard(M.checksum(saved))
+
+    def partial_guard(self, directory):
+        root=Path(directory).resolve();candidate=root/'v11';(candidate/'state').mkdir(parents=True)
+        audit=candidate/'state/routing-availability.json';render=candidate/'state/rendered.json'
+        audit.write_text(json.dumps(dict(schema=1,epoch='a'*32,unavailable_events=6,available=False)))
+        render.write_text(json.dumps(dict(workers=[],unix=1)))
+        host=M.Host.__new__(M.Host);host.role='coordinator';host.root=root/'backup'
+        host.plan={'baseline':{'files':[{'path':str(candidate),'required':True}]}}
+        old=M.candidate_inventory(candidate)
+        import shutil
+        (host.root/'files').mkdir(parents=True);shutil.copytree(candidate,host.root/'files/0')
+        M.B.atomic(host.root.with_suffix('.units.json'),M.encode({'plan_sha256':M.hashlib.sha256(M.encode(host.plan)).hexdigest(),
+                     'candidate':{str(candidate):old}}))
+        audit.write_text(json.dumps(dict(schema=1,epoch='a'*32,unavailable_events=7,available=False)))
+        render.write_text(json.dumps(dict(workers=[],unix=2)))
+        return host,candidate,old
+
+    def test_partial_guard_reconciliation_preserves_both_byte_sets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            host,candidate,old=self.partial_guard(directory)
+            copied=host.root/'files/0/state/rendered.json';inode=copied.stat().st_ino
+            with patch.object(M,'ROOT',candidate.parent):host.reconcile_partial_guard()
+            self.assertEqual(M.candidate_inventory(candidate),old)
+            self.assertEqual(copied.stat().st_ino,inode)
+            receipt=host.root.with_name(host.root.name+'.partial-guard')
+            self.assertEqual(M.load(receipt/'routing-availability.json')['unavailable_events'],7)
+            self.assertEqual(M.load(receipt/'rendered.json')['unix'],2)
+            self.assertEqual(M.load(receipt/'complete.json')['status'],'complete')
+
+    def test_partial_guard_refuses_extra_drift_and_arbitrary_audit(self):
+        for defect in ('extra','epoch','available','counter','worker','copy','prior'):
+            with self.subTest(defect=defect),tempfile.TemporaryDirectory() as directory:
+                host,candidate,old=self.partial_guard(directory)
+                audit=candidate/'state/routing-availability.json';value=M.load(audit)
+                if defect=='extra':(candidate/'foreign').write_text('unowned')
+                elif defect=='copy':(host.root/'files/0/state/rendered.json').write_text('{}')
+                elif defect=='prior':host.root.with_name(host.root.name+'.partial-guard').mkdir()
+                elif defect=='worker':(candidate/'state/rendered.json').write_text(json.dumps(dict(workers=['foreign'],unix=2)))
+                else:
+                    value.update({'epoch':'b'*32} if defect=='epoch' else {'available':True} if defect=='available' else {'unavailable_events':8})
+                    audit.write_text(json.dumps(value))
+                before=M.candidate_inventory(candidate)
+                with patch.object(M,'ROOT',candidate.parent),self.assertRaises(ValueError):host.reconcile_partial_guard()
+                self.assertEqual(M.candidate_inventory(candidate),before)
+
+    def test_only_reviewed_repair_reuses_exact_warm_restored_worker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path=Path(directory)/'captured-unit';path.write_text('v10')
+            record={'plan':{'files':[{'path':str(path),'required':True}]},
+                    'files':{str(path):M.B.entries(path)}}
+            host=M.Host.__new__(M.Host);host.role='worker'
+            from unittest.mock import Mock
+            host.commands=Mock();host.commands.control.return_value={'warm':True}
+            host.saved=Mock(return_value=(record,{}));host.withdrawn=Mock()
+            host.effective_units=Mock();host.verify_worker=Mock(return_value={'worker_id':'exact'})
+            self.assertEqual(host.restore(repair_token='reviewed')['status'],'already-restored')
+            host.commands.unit.assert_not_called();host.verify_worker.assert_called_once_with(rollback=True)
+            host.verify_worker.side_effect=ValueError('binary differs')
+            with self.assertRaisesRegex(ValueError,'binary differs'):host.restore(repair_token='reviewed')
+            host.commands.unit.assert_not_called()
+            path.write_text('changed')
+            host.commands.unit.side_effect=RuntimeError('normal restore stops first')
+            with self.assertRaisesRegex(RuntimeError,'normal restore'):host.restore(repair_token='reviewed')
+            path.write_text('v10');host.commands.unit.reset_mock()
+            with self.assertRaisesRegex(RuntimeError,'normal restore'):host.restore()
+            host.commands.unit.assert_called_once()
+
+
 class PlanTests(unittest.TestCase):
     def test_coordinator_captures_optional_local_control_helper_absence(self):
         plan=worker_plan();plan.update(role='coordinator',worker=None)
@@ -237,11 +426,15 @@ class HostFilesTests(unittest.TestCase):
         self.cache = self.dir/'v10-cache'
         self.cache.mkdir()
         (self.cache/'sentinel').write_text('retained warm bytes')
-        self.plan = {'transaction': 'transparent-schema-local-fixture', 'role': 'coordinator',
+        self.plan = {'source_sha':'b'*40, 'transaction': 'transparent-schema-local-fixture', 'role': 'coordinator',
             'baseline_root': str(self.dir/'baseline'), 'baseline': {'version': 1,
             'files': [{'path': str(p), 'required': True} for p in (self.unit, self.binary, self.routing)],
             'retained': [{'path': str(self.cache), 'sentinel': str(self.cache/'sentinel'),
                           'sha256': M.checksum(self.cache/'sentinel')}]}, 'installs': []}
+        self.candidate_load_patch=patch.object(M, 'candidate_paths', side_effect=lambda role:
+            (M.ROOT/'v11', self.dir/'candidate-load') if role=='coordinator' else (M.ROOT/'v11',) if role=='worker' else ())
+        self.candidate_load_patch.start();self.addCleanup(self.candidate_load_patch.stop)
+        self.plan['baseline']['files'] += [{'path':str(p),'required':False} for p in M.candidate_paths('coordinator')]
         # Plan validation has separate production-path tests above. Bind the
         # actual transition implementation to fixture paths, not a fake copy.
         with patch.object(M, 'validate', side_effect=lambda p: p):
@@ -250,6 +443,78 @@ class HostFilesTests(unittest.TestCase):
         self.route_patch = patch.object(M, 'deferred', side_effect=lambda _, p: p == str(self.routing))
         self.route_patch.start()
         self.addCleanup(self.route_patch.stop)
+
+    def test_candidate_reconciliation_preserves_whole_captured_tree_and_receipt(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        (candidate/'active.json').write_text('private stale candidate bytes')
+        (candidate/'owner.lock').write_bytes(b'')
+        self.host.capture()
+        self.host.reconcile_candidates()
+        retained=candidate.with_name(candidate.name+'.schema-before-'+self.plan['transaction'])
+        self.assertFalse(candidate.exists())
+        self.assertEqual((retained/'active.json').read_text(),'private stale candidate bytes')
+        self.assertTrue((retained/'owner.lock').is_file())
+        receipt=json.loads(self.host.root.with_suffix('.candidate.json').read_text())
+        self.assertEqual(receipt['status'],'complete')
+        self.assertEqual(receipt['moves'][0]['inventory']['owner.lock']['kind'],'file')
+        with self.assertRaises(ValueError):self.host.reconcile_candidates()
+
+    def test_candidate_inventory_binds_even_lock_bytes_and_absent_namespaces(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        lock=candidate/'owner.lock';lock.write_text('before')
+        self.host.capture();lock.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+
+    def test_worker_candidate_requires_exact_reviewed_activation(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        target=worker_plan()['worker']
+        active={k:target[k] for k in ('directory','assignment','map_sha256')}
+        (candidate/'active.json').write_text(json.dumps(active))
+        self.host.capture()
+        record,state=self.host.saved()
+        state['candidate']={str(candidate):state['candidate'][str(candidate)]}
+        self.host.role='worker';self.host.plan['worker']=target
+        self.host.saved=lambda:(record,state)
+        self.host.plan['worker']=dict(target,map_sha256='0'*64)
+        with self.assertRaisesRegex(ValueError,'reviewed target'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+        self.host.plan['worker']=target
+        self.host.reconcile_candidates()
+        self.assertFalse(candidate.exists())
+
+    def test_candidate_uncaptured_presence_and_ancestor_alias_refuse(self):
+        self.host.capture()
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        alias=self.dir/'alias';alias.symlink_to(M.ROOT,target_is_directory=True)
+        with self.assertRaisesRegex(ValueError,'ancestor aliases'):M.candidate_inventory(alias/'v11')
+        self.assertTrue(candidate.exists())
+
+    def test_startup_settle_is_bounded_and_does_not_claim_qualification(self):
+        from unittest.mock import Mock
+        self.host.commands.control=Mock(side_effect=[ValueError('starting'),{'warm':False},{'warm':True}])
+        ticks=iter([0,0,2,2,4,4,6])
+        with patch.object(M.time,'monotonic',side_effect=lambda:next(ticks)),patch.object(M.time,'sleep'):
+            result=self.host.settle_restored_worker()
+        self.assertEqual(len(result['observations']),3)
+        self.assertEqual(result['observations'][0]['error_type'],'ValueError')
+        self.assertIn('exact worker proof remains mandatory',result['qualification'])
+        self.host.commands.control=Mock(return_value={'warm':False})
+        ticks=iter([0,0,101,101,101])
+        with patch.object(M.time,'monotonic',side_effect=lambda:next(ticks)),patch.object(M.time,'sleep'):
+            result=self.host.settle_restored_worker()
+        self.assertFalse(result['observations'][-1]['warm'])
+        self.assertNotEqual(result.get('status'),'passed')
+
+    def test_candidate_reconciliation_refuses_drift_symlink_and_uncaptured_state(self):
+        candidate=M.ROOT/'v11';candidate.mkdir(parents=True)
+        payload=candidate/'state.json';payload.write_text('captured')
+        self.host.capture();payload.write_text('changed')
+        with self.assertRaisesRegex(ValueError,'inventory changed'):self.host.reconcile_candidates()
+        self.assertTrue(candidate.exists())
+        payload.unlink();payload.symlink_to(self.unit)
+        with self.assertRaisesRegex(ValueError,'links'):M.candidate_inventory(candidate)
 
     def test_quiesce_capture_restore_bytes_modes_and_deferred_routes(self):
         self.host.capture()
@@ -266,7 +531,7 @@ class HostFilesTests(unittest.TestCase):
         self.assertEqual(json.loads((M.ROOT/'state/maintenance.json').read_text()), {'enabled':True})
         self.assertEqual((self.cache/'sentinel').read_text(), 'retained warm bytes')
         starts = [e for e in self.host.commands.events if e[0] == 'start']
-        self.assertEqual(starts, [('start', M.START['coordinator'])])
+        self.assertEqual(starts, [('start', (M.FILTER,))])
         self.assertNotIn(M.LOAD, starts[0][1])
         self.assertNotIn(M.SCALER, starts[0][1])
         self.host.restore()  # Same restored bytes can be verified/restored again.
@@ -356,9 +621,11 @@ class HostFilesTests(unittest.TestCase):
         old_root.mkdir()
         assignment = self.cache/'assignment.json'
         assignment.write_text('old assignment')
-        active = {'directory': str(self.cache), 'assignment': str(assignment), 'map_sha256': 'a'*64}
+        publication=self.cache/('a'*64);publication.mkdir();(publication/'shards.json').write_text('{}')
+        active = {'directory': str(publication), 'assignment': str(assignment), 'map_sha256': 'a'*64}
         self.host.plan['worker'] = dict(active)
         (old_root/'active.json').write_text(json.dumps(active))
+        self.host.plan['baseline']['files'].append({'path':str(old_root/'active.json'),'required':True})
         self.host.commands.control = lambda: {'active': active, 'warm': True, 'candidate': None,
                                              'preparing': None, 'invalidated': False}
         with patch.object(M, 'ROOT', old_root), patch.object(M, 'CACHE', self.dir/'v11-cache'):
@@ -389,6 +656,7 @@ class HostFilesTests(unittest.TestCase):
         self.host.plan['installs'] = [{'source': str(source), 'target': str(self.unit),
                                       'sha256': M.checksum(source), 'mode': 0o644}]
         self.host.saved = lambda: None
+        self.host.reconcile_candidates = lambda: None
         with patch.object(M, 'ROOT', self.dir/'publisher'):
             self.host.stage()
             displaced = Path(str(drops)+'.activity-v10-'+self.host.plan['transaction'])
@@ -410,6 +678,7 @@ class HostFilesTests(unittest.TestCase):
         # staged input failure only, while saved()/identity are covered above.
         self.host.plan['installs'] = sources
         self.host.saved = lambda: None
+        self.host.reconcile_candidates = lambda: None
         Path(sources[1]['source']).write_bytes(b'corruption')
         with self.assertRaisesRegex(ValueError, 'changed during copy'):
             with patch.object(M, 'ROOT', self.dir/'publisher'):

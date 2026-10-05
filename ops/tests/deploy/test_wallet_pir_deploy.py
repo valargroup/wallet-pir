@@ -6,6 +6,8 @@ import hashlib
 import http.server
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -20,6 +22,24 @@ from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
 from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
 from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
+
+class ImmutableWrapperSource(unittest.TestCase):
+    def test_plain_python_invocation_does_not_create_bytecode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            shutil.copytree(ROOT / 'ops/lib', root / 'ops/lib',
+                            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+            (root / 'ops/scripts').mkdir(parents=True)
+            wrapper = root / 'ops/scripts/wallet-pir-deploy.py'
+            shutil.copyfile(ROOT / 'ops/scripts/wallet-pir-deploy.py', wrapper)
+            env = dict(os.environ)
+            env.pop('PYTHONDONTWRITEBYTECODE', None)
+            result = subprocess.run([sys.executable, str(wrapper), '--help'],
+                                    env=env, capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(list(root.rglob('*.pyc')), [])
+            self.assertEqual(list(root.rglob('__pycache__')), [])
+
 
 DEPLOY = ROOT / 'enhance/ops/deploy'
 SERVICES = descriptors.load_descriptors(DEPLOY / 'deploy.toml')

@@ -1,0 +1,41 @@
+{
+  "status": "failed",
+  "source_sha": "ccbfd35fc21935f8a6878f93d288cc3107ea90e2",
+  "scope": "Immutable proof/specification staging passed; service preflight refused before baseline or maintenance. Canonical remains v10.",
+  "user_authorization": "Do not wait for CI, accelerate",
+  "ci": {
+    "passing_native_baseline_head": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+    "passing_native_baseline_run": 36827719155,
+    "candidate_run": 36844316467,
+    "candidate_status": "pending",
+    "exact_operations_ci_deferred_by_user": true,
+    "native_inputs_unchanged": true
+  },
+  "proof_request_sha256": "69e7c348ce7223254662f51e070e3ca7cfad438e0dd920c5bbaed2ab3eef8fa3",
+  "product_request_sha256": "0028981f273c4be3b59eb17ddc1cfd35b4cdf754ef1d5a27aedbc54489a56ce3",
+  "recipe_sha256": "cd226f6d8fd7f91068c8093b25e548059a5afa2a14b32fe01e9b4ef5471f483f",
+  "preflight_failure": "Original coordinator discarded detailed failure; exact original cause not established.",
+  "cause": "Subsequent direct read-only diagnostic used the recipe Python argv without the runner environment, creating bytecode before whole-source verification. Wrapper now prevents this for every invocation. Original preflight ran with PYTHONDONTWRITEBYTECODE=1; its failure must not be attributed to diagnostic-created bytecode.",
+  "fix": "Deployment wrapper disables bytecode before any package imports. Original failed source retained.",
+  "regression": [
+    {
+      "case": "before",
+      "wrapper_sha256": "95a0f08bcb50d6bb2d8b323f1326a93ed15d45393fe3341169090dbc3e68c2d3",
+      "exit_code": 0,
+      "created_bytecode_files": 14
+    },
+    {
+      "case": "after",
+      "wrapper_sha256": "59dd79a21211acb3a7d99e78e67d2dfe1592037b7ee653327ea398d1dde78a24",
+      "exit_code": 0,
+      "created_bytecode_files": 0
+    }
+  ],
+  "focused_check": {
+    "owner": "9ca21d15e1ef4d9bac20770eefc97c7a",
+    "status": "passed",
+    "duration_seconds": 15.981790832942352,
+    "base_sha": "ccbfd35fc21935f8a6878f93d288cc3107ea90e2"
+  },
+  "diagnostic_failure": "retained source file set changed"
+}

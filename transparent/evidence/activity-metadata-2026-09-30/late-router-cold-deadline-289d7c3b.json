@@ -1,0 +1,15 @@
+{
+  "status": "failed",
+  "source_sha": "289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "owner": "5e41f171e3fd405c80d1831d539ccc5b",
+  "repair_seconds": 324.34803262504283,
+  "stdout_sha256": "2167546b5ec4e39616d72526d959310c9dd283e12cfe71f971503576e3eed54c",
+  "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "failure": "verify-rollback cold archive readiness missed unchanged250-second deadline",
+  "verify_seconds": 250.9203239060007,
+  "restore_seconds": 61.54312609368935,
+  "late_observation": "All four latest remote owners passed and their PIDs exited; all three subsequently warm/invalidatedfalse/candidatenull/preparingnull on captured0acfad2089d0fc6e84457d11cd73137c4f559205cd392b135f06c78349f250d3",
+  "limitations": "Later readiness is not passing cold deadline; canonical reopen was not attempted by this owner; distinct warm recovery retry is separate"
+}

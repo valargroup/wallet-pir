@@ -10,11 +10,11 @@ from pathlib import Path
 import shlex
 import subprocess
 
-from .. import hostlock, inherited_lock, pinned_ssh
+from .. import hostlock, inherited_lock, pinned_ssh, ancillary_baseline
 from . import host_helper
 from .descriptors import LOCK_PATH
 
-HELPER = Path(host_helper.__file__).read_text()
+HELPER = "import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("+repr(Path(ancillary_baseline.__file__).read_text())+",_ANCILLARY.__dict__)\n"+Path(host_helper.__file__).read_text()
 
 
 class RemoteError(RuntimeError):
