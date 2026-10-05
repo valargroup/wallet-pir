@@ -165,7 +165,11 @@ def load_child(parent, tick, proc):
     require((path/'cgroup').read_text().strip()=='0::'+parent['cgroup'],'load child cgroup differs')
     value=dict(current,unit=LOAD,boot_id=parent['boot_id'],cgroup=parent['cgroup'],**pin,
                parent_pid=pid,parent_start_ticks=parent['start_ticks'],pgid=pid,session=pid)
-    tick();require(kernel(child,proc)==current and (path/'stat').read_text().rsplit(')',1)[1].split()==fields and
+    # CPU, fault and memory counters in /proc/stat legitimately change while
+    # the exact native query runs. Recheck its immutable lineage/start identity.
+    tick();after_fields=(path/'stat').read_text().rsplit(')',1)[1].split()
+    require(kernel(child,proc)==current and
+                   [after_fields[i] for i in (1,2,3,19)]==[fields[i] for i in (1,2,3,19)] and
                    listing.read_bytes()==raw and kernel(pid,proc)=={k:parent[k] for k in ('pid','start_ticks','state')} and
                    service(LOAD,parent['boot_id'],tick,proc)==parent,'load child or parent changed during observation')
     return [value]

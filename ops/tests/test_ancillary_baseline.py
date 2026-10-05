@@ -52,6 +52,25 @@ class Retained(unittest.TestCase):
         path.write_text('501 (query) '+' '.join(fields))
         with self.assertRaisesRegex(ValueError,'parent, group or session'):self.observe()
 
+    def test_running_child_counters_can_advance_but_lineage_cannot(self):
+        base=self.make_child();original=A.hashed
+        def moving(path,limit,tick,index):
+            value=original(path,limit,tick)
+            if Path(path)==base/'exe':
+                fields=(base/'stat').read_text().rsplit(')',1)[1].split()
+                fields[index]=str(int(fields[index])+1)
+                (base/'stat').write_text('501 (query) '+' '.join(fields))
+            return value
+        for index in (7,11,12,20,21):
+            with patch.object(A,'hashed',side_effect=lambda p,l,t: moving(p,l,t,index)):
+                self.assertEqual(self.observe()['load_children'][0]['pid'],501)
+        for index in (1,2,3,19):
+            path=base/'stat';before=path.read_text()
+            with patch.object(A,'hashed',side_effect=lambda p,l,t: moving(p,l,t,index)):
+                with self.assertRaisesRegex(ValueError,'changed during observation'):
+                    self.observe()
+            path.write_text(before)
+
     def test_deleted_executable_decoration_matches_survey_without_weakening_hash(self):
         original=os.readlink
         def decorated(path):
