@@ -91,6 +91,13 @@ fn config() -> ServiceConfig {
     }
 }
 
+fn loaded_only() -> ServiceConfig {
+    ServiceConfig {
+        readiness: ReadinessMode::LoadedOnly,
+        ..config()
+    }
+}
+
 /// Faults the edge injects in front of the workers.
 #[derive(Clone, Default)]
 struct Faults {
@@ -148,14 +155,14 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(root: &Path, role: WorkerRole) -> Self {
-        let runtime = DisplayRuntime::new(config(), None);
+    fn new(root: &Path, role: WorkerRole, config: ServiceConfig, collect: Vec<PathBuf>) -> Self {
+        let runtime = DisplayRuntime::new(config, None);
         let live = DisplayLive::new(
             runtime.clone(),
             role,
             3,
             root.join(format!("{}.active.json", role.as_str())),
-            None,
+            collect,
             None,
         )
         .unwrap();
@@ -213,6 +220,12 @@ struct World {
 
 impl World {
     async fn start() -> Self {
+        Self::start_with(config()).await
+    }
+
+    /// The owner collects `<root>/sealed`, where shards are written, as a
+    /// worker collects the root sealed revisions are shipped to for staging.
+    async fn start_with(config: ServiceConfig) -> Self {
         let root = tempfile::tempdir().unwrap();
         let a0_records = records(10, &[]);
         let r0_records = records(20, &[coincident(20, 1)]);
@@ -226,8 +239,13 @@ impl World {
         .unwrap();
         let p0 = synth::write_candidate(root.path(), &params(1), &[a0.clone(), r0.clone()], "p0")
             .unwrap();
-        let archive = Worker::new(root.path(), WorkerRole::ArchiveOwner);
-        let recent = Worker::new(root.path(), WorkerRole::RecentReplica);
+        let archive = Worker::new(
+            root.path(),
+            WorkerRole::ArchiveOwner,
+            config,
+            vec![root.path().join("sealed")],
+        );
+        let recent = Worker::new(root.path(), WorkerRole::RecentReplica, config, Vec::new());
         // Both start empty and take the publication through control, as a
         // freshly deployed worker does.
         assert_eq!(archive.publish(&p0.0, &p0.1).await["built"], 2);
@@ -413,25 +431,74 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
     assert_eq!(warm.bytes.setup + warm.bytes.manifest + warm.bytes.map, 0);
 }
 
+/// The recent shard's oldest range seals as shard 1 and a new recent shard 2
+/// follows: `a1` and `r1`, with `p1` publishing them beside `a0` and `p2`
+/// dropping `a0` from the window. Shards and candidates are written up front,
+/// because the owner collects `<root>/sealed` as it would its staged root.
+struct Seal {
+    a1: Published,
+    r1: Published,
+    r1_records: Vec<TransparentDisplayRecord>,
+    p1: (PathBuf, String),
+    p2: (PathBuf, String),
+}
+
+impl Seal {
+    fn write(world: &World) -> Self {
+        let root = world.root.path();
+        let a1 = synth::write_shard(
+            root,
+            &spec(1, 200, 240, true, &world.a0.digest),
+            &world.r0_records,
+        )
+        .unwrap();
+        let r1_records = records(30, &[]);
+        let r1 =
+            synth::write_shard(root, &spec(2, 241, 300, false, &a1.digest), &r1_records).unwrap();
+        let p1 = synth::write_candidate(
+            root,
+            &params(1),
+            &[world.a0.clone(), a1.clone(), r1.clone()],
+            "p1",
+        )
+        .unwrap();
+        let p2 = synth::write_candidate(root, &params(1), &[a1.clone(), r1.clone()], "p2").unwrap();
+        Self {
+            a1,
+            r1,
+            r1_records,
+            p1,
+            p2,
+        }
+    }
+}
+
+async fn collect(worker: &Worker) -> serde_json::Value {
+    worker.command(DisplayCommand::Collect).await.unwrap()["removed"].clone()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let world = World::start().await;
-    let root = world.root.path();
     // A stale client holds the first map, manifests and recent setup.
     let stale = world.client();
     let moved = &world.r0_records[40];
     found(&stale, moved, 210).await;
 
-    // The recent shard's oldest range seals as shard 1; a new recent follows.
-    let sealed_part: Vec<_> = world.r0_records.clone();
-    let a1 = synth::write_shard(
-        root,
-        &spec(1, 200, 240, true, &world.a0.digest),
-        &sealed_part,
-    )
-    .unwrap();
-    let r1_records = records(30, &[]);
-    let r1 = synth::write_shard(root, &spec(2, 241, 300, false, &a1.digest), &r1_records).unwrap();
+    let Seal {
+        a1,
+        r1_records,
+        p1,
+        p2,
+        ..
+    } = Seal::write(&world);
+    // Shipped but not yet staged: collection keeps a seal no map has
+    // published, and removes the copy of shard 0, which p0 publishes.
+    assert_eq!(
+        collect(&world.archive).await,
+        serde_json::json!([world.a0.dir.display().to_string()])
+    );
+    assert!(a1.dir.exists());
     let staged = world
         .archive
         .command(DisplayCommand::Stage {
@@ -450,13 +517,6 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
         .await
         .is_err());
 
-    let p1 = synth::write_candidate(
-        root,
-        &params(1),
-        &[world.a0.clone(), a1.clone(), r1.clone()],
-        "p1",
-    )
-    .unwrap();
     // The owner takes the staged archive over by inode: nothing is built.
     let before = world.archive.builds();
     let prepared = world.archive.publish(&p1.0, &p1.1).await;
@@ -466,6 +526,11 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let status = world.archive.command(DisplayCommand::Status).await.unwrap();
     assert_eq!(status["staged"], serde_json::json!([]));
     assert_eq!(status["active"]["map_sha256"], p1.1);
+    // Published and serving from p1's links, the staged copy is collected.
+    assert_eq!(
+        collect(&world.archive).await,
+        serde_json::json!([a1.dir.display().to_string()])
+    );
     // The replica builds only the new recent shard's two tables.
     let prepared = world.recent.publish(&p1.0, &p1.1).await;
     assert_eq!(prepared["built"], 2, "{prepared}");
@@ -486,7 +551,6 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
 
     // The window drops the oldest archive: shard ids are not renumbered and
     // the remaining digests are unchanged.
-    let p2 = synth::write_candidate(root, &params(1), &[a1.clone(), r1.clone()], "p2").unwrap();
     assert_eq!(world.archive.publish(&p2.0, &p2.1).await["built"], 0);
     assert_eq!(world.recent.publish(&p2.0, &p2.1).await["built"], 0);
     let (_, map) = world.get("/v1/txid/shards").await;
@@ -509,8 +573,78 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     assert_eq!(report.digest.as_deref(), Some(a1.digest.as_str()));
     assert_eq!(world.recent.builds(), builds);
     for worker in [&world.archive, &world.recent] {
-        let collected = worker.command(DisplayCommand::Collect).await.unwrap();
-        assert_eq!(collected["removed"], serde_json::json!([]));
+        assert_eq!(collect(worker).await, serde_json::json!([]));
+    }
+}
+
+/// Every display table source follows a revision into the candidate that
+/// takes it over: once the directories it was first verified in are gone,
+/// including the staged copy collection removes, cold builds read the
+/// active candidate's links. Loaded-only workers pin nothing, so every
+/// runtime can be evicted.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relinked_revisions_rebuild_after_their_first_directories_are_removed() {
+    let world = World::start_with(loaded_only()).await;
+    let root = world.root.path();
+    let Seal {
+        a1,
+        r1,
+        r1_records,
+        p1,
+        p2,
+    } = Seal::write(&world);
+    world
+        .archive
+        .command(DisplayCommand::Stage {
+            directory: a1.dir.clone(),
+        })
+        .await
+        .unwrap();
+    for (dir, map) in [&p1, &p2] {
+        world.archive.publish(dir, map).await;
+        world.recent.publish(dir, map).await;
+    }
+    collect(&world.archive).await;
+    assert!(!a1.dir.exists(), "the staged copy is collected");
+    for dir in [
+        &world.p0.0,
+        &p1.0,
+        &root.join("sealed"),
+        &root.join("recent"),
+    ] {
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    for worker in [&world.archive, &world.recent] {
+        worker.runtime.cache.evict_unpinned();
+        assert_eq!(worker.runtime.cache.entries(), 0);
+    }
+
+    for (worker, tier, revision) in [
+        (&world.archive, "archive", &a1),
+        (&world.recent, "recent", &r1),
+    ] {
+        let builds = worker.builds();
+        let shard_id = revision.manifest.shard_id;
+        for table in revision.manifest.tables() {
+            let segments = revision.manifest.segments(table).unwrap().len();
+            for segment in 0..segments {
+                let path = format!(
+                    "/v1/txid/{tier}/shards/{shard_id}/revisions/{}/setup/{}/{segment}",
+                    revision.digest,
+                    table.label()
+                );
+                let (status, body) = world.get(&path).await;
+                assert_eq!(status, 200, "{path}: {body}");
+            }
+        }
+        assert!(worker.builds() > builds, "{tier} setup was built cold");
+    }
+    let client = world.client();
+    for record in &world.r0_records[40..44] {
+        found(&client, record, 210).await;
+    }
+    for record in &r1_records[40..44] {
+        found(&client, record, 290).await;
     }
 }
 

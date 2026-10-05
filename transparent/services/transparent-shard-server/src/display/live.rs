@@ -19,7 +19,7 @@
 
 use super::serves;
 use super::service::{self, json, DisplayRuntime, DisplayState};
-use super::set::{DisplayRevision, DisplaySet, MANIFEST_FILE, MAP_FILE};
+use super::set::{DisplayRevision, DisplaySet, MAP_FILE};
 use crate::assignment::WorkerRole;
 use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
@@ -34,6 +34,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
+use transparent_shard::display::DisplayMap;
 
 /// A publication directory and the digest of its map.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -110,6 +111,14 @@ impl Drop for PreparingGuard<'_> {
     }
 }
 
+/// Clears the record of a stage in progress however the stage ends.
+struct InStage<'a>(&'a Mutex<Option<DisplayRevision>>);
+impl Drop for InStage<'_> {
+    fn drop(&mut self) {
+        *self.0.lock().unwrap() = None;
+    }
+}
+
 /// A sealed revision verified ahead of its map, with its runtimes pinned.
 struct Staged {
     revision: DisplayRevision,
@@ -121,18 +130,26 @@ struct Inner {
     role: WorkerRole,
     retain: usize,
     record: PathBuf,
-    /// Where collection may delete unused shipped directories. Without it,
+    /// Where collection may delete unused shipped directories: candidates
+    /// and staged revisions may be shipped to separate roots. With none,
     /// nothing on disk is removed: a root shared with the controller or
     /// another worker is not this worker's to collect.
-    collect_root: Option<PathBuf>,
+    collect_roots: Vec<PathBuf>,
     active: RwLock<Option<Active>>,
     retired: RwLock<Vec<Active>>,
     candidate: tokio::sync::Mutex<Option<Candidate>>,
     preparing: RwLock<Option<Preparing>>,
     staged: Mutex<BTreeMap<String, Staged>>,
     /// Serializes staging apart from `operations`, so a seal's builds never
-    /// hold up the per-block cycle.
-    staging: Arc<tokio::sync::Mutex<()>>,
+    /// hold up the per-block cycle. Collection never waits for it either.
+    staging: tokio::sync::Mutex<()>,
+    /// The revision a stage in progress is verifying and building.
+    /// Collection keeps its directory and runtimes without waiting for it.
+    in_stage: Mutex<Option<DisplayRevision>>,
+    /// Held by a collection from its keep set to its last deletion; a stage
+    /// registers in `in_stage` under it, so a collection that missed the
+    /// registration has pruned before that stage can persist a runtime.
+    collection: Arc<tokio::sync::Mutex<()>>,
     invalid: RwLock<BTreeSet<String>>,
     operations: Arc<tokio::sync::Mutex<()>>,
     publication_gate: Mutex<()>,
@@ -152,7 +169,7 @@ impl DisplayLive {
         role: WorkerRole,
         retain: usize,
         record: PathBuf,
-        collect_root: Option<PathBuf>,
+        collect_roots: Vec<PathBuf>,
         initial: Option<(DisplayState, DisplayPublication)>,
     ) -> Result<Self, String> {
         let invalid: BTreeSet<String> = match std::fs::read(record.with_extension("invalid.json")) {
@@ -169,13 +186,15 @@ impl DisplayLive {
             role,
             retain,
             record,
-            collect_root,
+            collect_roots,
             active: RwLock::new(initial.map(|(state, publication)| Active { state, publication })),
             retired: RwLock::new(Vec::new()),
             candidate: tokio::sync::Mutex::new(None),
             preparing: RwLock::new(None),
             staged: Mutex::new(BTreeMap::new()),
-            staging: Arc::new(tokio::sync::Mutex::new(())),
+            staging: tokio::sync::Mutex::new(()),
+            in_stage: Mutex::new(None),
+            collection: Arc::new(tokio::sync::Mutex::new(())),
             invalid: RwLock::new(invalid),
             operations: Arc::new(tokio::sync::Mutex::new(())),
             publication_gate: Mutex::new(()),
@@ -309,6 +328,11 @@ impl DisplayLive {
         if held {
             return done(0);
         }
+        let _in_stage = {
+            let _collection = self.0.collection.lock().await;
+            *self.0.in_stage.lock().unwrap() = Some(revision.clone());
+            InStage(&self.0.in_stage)
+        };
         let revision = tokio::task::spawn_blocking(move || revision.verify_tables())
             .await
             .map_err(|e| e.to_string())?
@@ -574,12 +598,13 @@ impl DisplayLive {
 
     async fn collect(&self) -> Result<Reply, String> {
         let operation = self.0.operations.clone().lock_owned().await;
-        // A stage in progress owns its directory until it is staged.
-        let staging = self.0.staging.clone().lock_owned().await;
+        // Never waits for a stage: the controller awaits this call within
+        // its cycle, and a stage can run for minutes.
+        let collection = self.0.collection.clone().lock_owned().await;
         let service = self.clone();
         tokio::task::spawn_blocking(move || {
             let _operation = operation;
-            let _staging = staging;
+            let _collection = collection;
             let inner = &service.0;
             let candidate = inner.candidate.blocking_lock();
             let mut retired = inner.retired.write().unwrap();
@@ -595,6 +620,9 @@ impl DisplayLive {
                 }
             }
             let active = inner.active.read().unwrap();
+            // Held with `staged`: a finishing stage inserts there before it
+            // clears this, so a stage is never in neither.
+            let in_stage = inner.in_stage.lock().unwrap();
             let staged = inner.staged.lock().unwrap();
             let snapshots = active
                 .iter()
@@ -607,23 +635,36 @@ impl DisplayLive {
                 keep_dirs.insert(publication.directory.clone());
                 keys.extend(state.set().runtime_key_strings());
             }
-            for staged in staged.values() {
-                keep_dirs.insert(staged.revision.dir.clone());
-                keys.extend(staged.revision.runtime_key_strings());
+            for revision in staged.values().map(|s| &s.revision).chain(in_stage.iter()) {
+                keep_dirs.insert(revision.dir.clone());
+                keys.extend(revision.runtime_key_strings());
             }
-            let staged_digests: BTreeSet<String> = staged.keys().cloned().collect();
+            let held: BTreeSet<String> = staged
+                .keys()
+                .cloned()
+                .chain(in_stage.iter().map(|r| r.digest.clone()))
+                .collect();
+            let unpublished_from = active
+                .as_ref()
+                .map(|a| first_unpublished_seal(&a.state.set().map));
             let kept_snapshots = retired.len();
             drop(staged);
+            drop(in_stage);
             drop(active);
             drop(retired);
             drop(candidate);
             let collected_snapshots = dropped.len();
             drop(dropped);
             let disk = inner.runtime.cache.prune_disk(&keys)?;
-            let removed = match &inner.collect_root {
-                Some(root) => collect_directories(root, &keep_dirs, &staged_digests)?,
-                None => Vec::new(),
-            };
+            let mut removed = Vec::new();
+            for root in &inner.collect_roots {
+                removed.extend(collect_directories(
+                    root,
+                    &keep_dirs,
+                    &held,
+                    unpublished_from,
+                )?);
+            }
             Ok(reply(serde_json::json!({
                 "removed": removed,
                 "retired_snapshots": kept_snapshots,
@@ -688,13 +729,27 @@ pub fn reply_line(result: Result<Reply, String>) -> serde_json::Value {
     }
 }
 
+/// The lowest shard id whose sealed revision `map` has not published. Shard
+/// ids are contiguous and only the last entry may be unsealed, and a seal
+/// takes the recent shard's id, so every sealed revision below this one is
+/// published or dropped from the window, and none of them is staged again.
+fn first_unpublished_seal(map: &DisplayMap) -> u64 {
+    let last = map.shards.last().expect("a checked map is nonempty");
+    last.shard_id + u64::from(last.sealed)
+}
+
 /// Removes shipped directories under `root` that nothing uses: candidates
-/// (holding a map) beyond the newest three unused, and staged revisions
-/// (digest-named, holding a manifest) that are no longer staged.
+/// (holding a map) beyond the newest three unused, and revisions (named by
+/// their digest, holding a manifest) that are not `held`.
+///
+/// A sealed revision at or above `unpublished_from` (every sealed revision,
+/// before any activation) may have been shipped for a stage that has not
+/// arrived yet, so it stays until a map publishes its shard.
 fn collect_directories(
     root: &Path,
     keep: &BTreeSet<PathBuf>,
-    staged: &BTreeSet<String>,
+    held: &BTreeSet<String>,
+    unpublished_from: Option<u64>,
 ) -> Result<Vec<String>, String> {
     let mut candidates = Vec::new();
     let mut removed = Vec::new();
@@ -708,11 +763,20 @@ fn collect_directories(
         if path.join(MAP_FILE).is_file() {
             let modified = entry.metadata().and_then(|m| m.modified()).ok();
             candidates.push((modified, path));
-        } else if name.len() == 64
-            && name.bytes().all(|c| c.is_ascii_hexdigit())
-            && path.join(MANIFEST_FILE).is_file()
-            && !staged.contains(&name)
+            continue;
+        }
+        if name.len() != 64 || !name.bytes().all(|c| c.is_ascii_hexdigit()) || held.contains(&name)
         {
+            continue;
+        }
+        // Unreadable or foreign content is left for an operator.
+        let Ok(revision) = DisplayRevision::read(&path) else {
+            continue;
+        };
+        let manifest = &revision.manifest;
+        let awaiting =
+            manifest.sealed && unpublished_from.is_none_or(|from| manifest.shard_id >= from);
+        if !awaiting {
             std::fs::remove_dir_all(&path).map_err(|e| e.to_string())?;
             removed.push(path.display().to_string());
         }
@@ -904,6 +968,9 @@ mod tests {
 
     #[test]
     fn collection_removes_only_unused_shipped_directories() {
+        use super::super::set::MANIFEST_FILE;
+        use super::super::synth::{self, ShardSpec};
+        let store = tempfile::tempdir().unwrap();
         let root = tempfile::tempdir().unwrap();
         let make = |name: &str, file: &str| {
             let dir = root.path().join(name);
@@ -911,20 +978,109 @@ mod tests {
             std::fs::write(dir.join(file), b"{}").unwrap();
             dir
         };
+        // A revision of `shard_id` shipped into the collect root.
+        let ship = |shard_id: u64, sealed: bool| {
+            let spec = ShardSpec {
+                shard_id,
+                start_height: 10 * shard_id,
+                end_height: 10 * shard_id + 9,
+                sealed,
+                revision: 0,
+                supersedes: String::new(),
+                parent_manifest_digest: String::new(),
+                n_buckets: 1,
+                archive_target: 1,
+                geometry: &transparent_shard::display::TXID_2K,
+            };
+            let records = synth::records(3, shard_id);
+            let published = synth::write_shard(store.path(), &spec, &records).unwrap();
+            let dir = root.path().join(&published.digest);
+            synth::link_revision(&published.dir, &dir).unwrap();
+            (published.digest, dir)
+        };
         let candidates: Vec<PathBuf> = (0..6)
             .map(|i| make(&format!("{:064x}", i), MAP_FILE))
             .collect();
-        let staged = make(&"ab".repeat(32), MANIFEST_FILE);
-        let shipped = make(&"cd".repeat(32), MANIFEST_FILE);
+        let (_, published) = ship(0, true);
+        let (staged, staged_dir) = ship(1, true);
+        let (_, awaiting) = ship(2, true);
+        let (_, recent) = ship(2, false);
+        let broken = make(&"cd".repeat(32), MANIFEST_FILE);
         let foreign = make("sealed", MANIFEST_FILE);
         let keep = BTreeSet::from([candidates[0].clone()]);
-        let removed =
-            collect_directories(root.path(), &keep, &BTreeSet::from(["ab".repeat(32)])).unwrap();
-        assert!(candidates[0].exists() && staged.exists() && foreign.exists());
-        assert!(!shipped.exists());
-        // Five unused candidates; the newest three survive.
+        let held = BTreeSet::from([staged]);
+
+        // Before any activation a sealed revision may still await its stage.
+        let removed = collect_directories(root.path(), &keep, &held, None).unwrap();
+        assert!(published.exists() && staged_dir.exists() && awaiting.exists());
+        assert!(!recent.exists());
+        assert!(candidates[0].exists() && broken.exists() && foreign.exists());
+        // Five unused candidates; the newest three survive. Two go, with the
+        // unused recent revision.
         let left = candidates.iter().filter(|c| c.exists()).count();
         assert_eq!(left, 4);
         assert_eq!(removed.len(), 3);
+
+        // Once a map publishes shards 0 and 1, shard 0's shipped copy goes.
+        // Shard 1 stays while it is staged, shard 2 until a map names it.
+        let removed = collect_directories(root.path(), &keep, &held, Some(2)).unwrap();
+        assert_eq!(removed, vec![published.display().to_string()]);
+        assert!(staged_dir.exists() && awaiting.exists());
+        let removed = collect_directories(root.path(), &keep, &BTreeSet::new(), Some(3)).unwrap();
+        assert_eq!(removed.len(), 2);
+        assert!(!staged_dir.exists() && !awaiting.exists());
+    }
+
+    /// A stage holds its lock through verification and cold builds; the
+    /// controller's collection, awaited within its cycle, must not wait.
+    #[tokio::test]
+    async fn collection_does_not_wait_for_a_stage() {
+        use crate::service::ServiceConfig;
+        let root = tempfile::tempdir().unwrap();
+        let live = DisplayLive::new(
+            DisplayRuntime::new(ServiceConfig::default(), None),
+            WorkerRole::ArchiveOwner,
+            3,
+            root.path().join("active.json"),
+            vec![root.path().to_path_buf()],
+            None,
+        )
+        .unwrap();
+        let _stage = live.0.staging.lock().await;
+        let collected = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            live.command(DisplayCommand::Collect),
+        )
+        .await
+        .expect("collection waited for the stage")
+        .unwrap();
+        assert_eq!(collected["removed"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn seals_are_published_below_the_recent_shard() {
+        use super::super::synth;
+        use transparent_shard::display::{DisplayMapEntry, DisplaySealParams};
+        let entry = |shard_id: u64, sealed: bool| DisplayMapEntry {
+            shard_id,
+            start_height: shard_id,
+            end_height: shard_id,
+            parent_block_hash: String::new(),
+            terminal_block_hash: String::new(),
+            geometry: String::new(),
+            n_buckets: 1,
+            directory_segments: vec![1],
+            page_segments: 1,
+            records: 1,
+            min_bucket_records: 1,
+            manifest_digest: String::new(),
+            revision: 0,
+            sealed,
+        };
+        let mut map = synth::map(&DisplaySealParams::default(), &[]);
+        map.shards = vec![entry(4, true), entry(5, true), entry(6, false)];
+        assert_eq!(first_unpublished_seal(&map), 6);
+        map.shards.pop();
+        assert_eq!(first_unpublished_seal(&map), 6);
     }
 }

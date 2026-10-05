@@ -70,10 +70,11 @@ struct Cli {
     #[arg(long, requires = "control_socket")]
     active_record: Option<PathBuf>,
     /// Directory whose unused shipped candidates and staged revisions
-    /// `collect` may delete. Omit when the root is shared with the controller
+    /// `collect` may delete; repeat it when candidates and staged revisions
+    /// are shipped to separate roots. Omit a root shared with the controller
     /// or another worker: nothing on disk is then removed.
     #[arg(long, requires = "control_socket")]
-    collect_root: Option<PathBuf>,
+    collect_root: Vec<PathBuf>,
 }
 
 fn role(text: &str) -> Result<WorkerRole, String> {
