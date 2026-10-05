@@ -241,6 +241,21 @@ suite passed114tests, including existing artifact/certificate/lifecycle fixtures
 and oracle refusal/composition tests. It qualifies no candidate or production
 gate. Final source publication and actual execution remain pending.
 
+On 2026-10-05 root reported that an actual candidate-upload preflight refused in
+`bootstrap.verify` on the coordinator with 18 associated processes. The bootstrap
+owner reader treated the baseline observations in raw replies retained by an
+earlier successful locked source survey
+(`input-staging/fleet-surveys/<request>/<nonce>/coordinator.json`) as owner
+references. Recorded cgroups linked the reconciler and controller services and
+the known ancillary prototype and load to that historical survey. Root holds the
+raw diagnostics outside Git. Operations source now recognizes exact retained
+bootstrap replies and attribution snapshots by content and keeps only their lock
+holders as owners (see
+[deployment](deployment.md#immutable-operation-source-staging-over-ssh)).
+Fixture tests on the development hub cover the locked-run-then-next-survey
+sequence and the refusals. No production host was accessed and the preflight has
+not been rerun. Candidate execution surveys do not use this recognizer.
+
 ## Activity metadata candidate, 2026-09-30
 
 Attempt 12 activated a fresh v11 publication after the archive roster correction,
