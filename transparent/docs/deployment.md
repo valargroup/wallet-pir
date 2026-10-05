@@ -1089,40 +1089,49 @@ qualification owner surveys do not use this attribution and still refuse such
 controls.
 
 A locked bootstrap run retains every raw reply and attribution snapshot under
-`input-staging/fleet-surveys/<request>/<nonce>/`. Those replies list the
-baseline services, ancillary units, controls and reconciler clients they
-observed, with PIDs, start ticks and cgroups. A survey is forensic evidence, not
-ownership. The bootstrap survey still reads, bounds, hashes and parses every
-file, and refuses links and malformed JSON. It passes `owner_survey` an
-`evidence` recognizer (`activity_bootstrap_fleet.retained`), which is asked about
-every JSON object at any depth. It matches content, not a path or name. It
-accepts two shapes:
+`input-staging/fleet-surveys/<request>/<nonce>/<host>[.attribution].json`.
+Those replies list what the survey observed, with PIDs, start ticks, sessions
+and cgroups: baseline services, the verified prototype and canonical load and
+its native child, controls and reconciler clients. A retained survey is
+forensic evidence, not ownership. The bootstrap survey still reads, bounds,
+hashes and parses every file, and refuses links and malformed JSON. Its
+`evidence` recognizer, `activity_bootstrap_fleet.retained`, accepts a file
+whole, and only when all of these hold:
 
-- An exact bootstrap survey report: exactly the `observe` keys plus the bootstrap
-  keys, the same bounds, classes, baseline, namespaces and inventory pin, a
-  binding whose host matches the machine pin, consistent counts and listings
-  with only retained summary fields, retained ancillary provenance with exactly
-  its written keys, and control shapes consistent with `pending` and any
-  `control_attribution`.
-- An exact `<worker>.attribution` snapshot pair in the shape `authority` writes,
-  with the pinned reconciler fragment and script.
+- It is in the input-staging namespace at exactly that path, with no
+  directory before or after it, and the host is one of the five pinned hosts.
+- A reply binding names that request, nonce and host, and its machine is
+  that host's pin.
+- A reply has exactly the shape `local` writes. That means the `observe` keys
+  plus the bootstrap keys, the same bounds, classes, baseline, namespaces and
+  inventory pin, and counts that agree with listings holding only retained
+  summary fields. Its ancillary proof must have exactly its written keys and
+  the current pins, checked at its own observation time, and its controls
+  must agree with `pending`.
+- An attribution is a worker's two snapshots in the exact shape `authority`
+  writes, with the pinned reconciler fragment and script.
 
-A recognized report contributes only its lock holders, bound to that report's
-boot. Everything else it lists is an observation. Recognition narrows only its
-own subtree. Top-level identities of durable owners, including completed
-`staged` or `reconciled` owners, any `fleet` proof `owner`, and their sessions,
-cgroups and descendants, stay references. The same applies when a durable record
-embeds a proof's `surveys`. A value with an unknown or missing field, a foreign
-machine or host, an inconsistent count or changed pins is walked like any
-other owner record, so every PID it names still counts.
+A recognized reply contributes only its lock holders, bound to its boot. Every
+other file is walked as before, and every PID it names is a reference. That
+includes each durable owner record: the lease or upload owner, with its fleet
+proof `owner` and any embedded `result` or `surveys`, completed or not. Its
+top-level identity, sessions, groups, cgroups, start windows and descendants
+stay in force. Misplaced, edited or partial replies are walked the same way.
 
-Limits: a pin change (bounds, classes, baseline, ancillary pins or reconciler
-pins) makes older retained replies unrecognized, so later surveys refuse again
-until root reviews that change. A reply edited into a different but still exact
-shape can hide only PIDs that appear in no owner record. Callers without
+Recognized replies hide nothing a survey needs. A process a reply lists as
+associated was associated through another retained record, which is still
+walked. Unattributed, marked, pending and lock-holding processes are found
+again from the live scan.
+
+Limits: a pin change (bounds, classes, baseline, inventory, ancillary pins or
+reconciler pins) makes older retained replies unrecognized, so later surveys
+refuse again until root reviews that change. The shape and pins match those
+written by every revision from `b82e111b` to `c0f4eee5`; replies from older
+revisions are not recognized. A reply rewritten at its own path into another
+exact shape can hide only PIDs that no other record names. Callers without
 `evidence`, including candidate execution
-(`activity_candidate_execution.survey`), keep treating every recorded PID as an
-owner. They still refuse when these replies name live services.
+(`activity_candidate_execution.survey`), still treat every recorded PID as an
+owner and refuse when retained replies name live services.
 
 Read-only preflight checks every host without creating a lock or owner.
 Use `schema-source-preflight --private-evidence-file FILE` on the local
