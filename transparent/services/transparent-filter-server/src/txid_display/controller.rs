@@ -562,21 +562,36 @@ impl Controller {
             .unwrap_or(self.layout.start_height - 1)
     }
 
+    /// Staged seals at the queue's head that the rule still makes at the
+    /// cache tip. A rollback inside the margin can undo a decision: such a
+    /// seal keeps its range and digest but waits, so publishing it never
+    /// leaves the recent shard below its floor.
+    fn publishable(&self) -> usize {
+        let staged = self
+            .queue
+            .iter()
+            .take_while(|j| j.state == JobState::Staged)
+            .count();
+        if staged == 0 {
+            return 0;
+        }
+        // The queue starts at the cache start, so ranges line up.
+        let start = self.cache.start();
+        staged.min(plan_seals(&self.layout.seal, start, self.cache.counts_from(start)).len())
+    }
+
     fn needs_cycle(&self) -> bool {
         let moved = self
             .cache
             .tip()
             .is_some_and(|(h, hash)| (h, hash.to_display_hex()) != self.published_tip);
-        let sealed = self
-            .queue
-            .front()
-            .is_some_and(|j| j.state == JobState::Staged);
-        moved || sealed
+        moved || self.publishable() > 0
     }
 
     fn idle(&self) -> bool {
         self.source.exhausted(&self.cache)
-            && self.queue.is_empty()
+            // A staged seal the rule no longer makes waits for blocks.
+            && self.queue.iter().all(|j| j.state == JobState::Staged)
             && !self.building
             && !self.staging
             && !self.needs_cycle()
@@ -969,16 +984,13 @@ impl Controller {
         }
     }
 
-    /// Publishes the current tip and every staged seal at the queue's head.
+    /// Publishes the current tip and every publishable seal at the queue's
+    /// head.
     async fn cycle(&mut self) -> Result<(), CycleError> {
         let started = Instant::now();
         let (tip, tip_hash) = self.cache.tip().ok_or_else(|| retry("empty cache"))?;
         let tip_hash = tip_hash.to_display_hex();
-        let staged: Vec<&SealJob> = self
-            .queue
-            .iter()
-            .take_while(|j| j.state == JobState::Staged)
-            .collect();
+        let staged: Vec<&SealJob> = self.queue.iter().take(self.publishable()).collect();
         let new_seals: Vec<SealRecord> = staged.iter().map(|j| j.record()).collect();
         let mut archives: Vec<DisplayMapEntry> = self
             .map
@@ -1303,8 +1315,14 @@ pub async fn serve_status(
     Ok(())
 }
 
-/// Re-bootstraps into a scratch root at the last seal's decided tip and
-/// compares every seal; verifies every revision of the active candidate.
+/// Re-bootstraps into a scratch root at the journal end and checks every
+/// recorded seal against it; verifies every revision of the active candidate.
+///
+/// A seal's range depends only on the chain below it, but whether the rule
+/// has made it yet depends on blocks above it. Seals the journal makes beyond
+/// the recorded ones are queued, not wrong. Recorded seals beyond the
+/// reproduced ones were made on blocks a later reorg replaced: each is
+/// rebuilt from its recorded parent and must match its range and digest.
 pub fn verify(root: &Path, journal: &Path, scratch: Option<&Path>) -> Result<Value, BoxError> {
     let layout = DisplayRoot::load(root)?;
     let active = ActiveRecord::load(root)?;
@@ -1324,14 +1342,15 @@ pub fn verify(root: &Path, journal: &Path, scratch: Option<&Path>) -> Result<Val
         }
     }
     let store = EventStore::open_existing(journal)?;
+    let through = store.covered_through().ok_or("the journal is empty")?;
     let mut report = json!({"map_sha256": active.map_sha256, "revisions_verified": map.shards.len(),
-        "seals": active.seals.len(), "archive_chain_sha256": active.archive_chain_sha256()});
-    if let Some(last) = active.seals.last() {
+        "seals": active.seals.len(), "archive_chain_sha256": active.archive_chain_sha256(),
+        "through": through});
+    if !active.seals.is_empty() {
         let scratch = tempfile::Builder::new()
             .prefix(".verify-")
             .tempdir_in(scratch.unwrap_or(root))?;
-        let rebuilt =
-            super::publisher::bootstrap(&store, scratch.path(), &layout, last.decided_tip)?.seals;
+        let rebuilt = super::publisher::bootstrap(&store, scratch.path(), &layout, through)?.seals;
         let identity = |s: &SealRecord| {
             (
                 s.shard_id,
@@ -1341,24 +1360,97 @@ pub fn verify(root: &Path, journal: &Path, scratch: Option<&Path>) -> Result<Val
                 s.terminal_block_hash.clone(),
             )
         };
-        let recorded: Vec<_> = active.seals.iter().map(identity).collect();
-        let reproduced: Vec<_> = rebuilt.iter().map(identity).collect();
-        if recorded != reproduced {
-            let first = recorded.iter().zip(&reproduced).position(|(a, b)| a != b);
+        let differs = active
+            .seals
+            .iter()
+            .zip(&rebuilt)
+            .position(|(a, b)| identity(a) != identity(b));
+        let mut unreproduced = 0;
+        if let Some(index) = differs {
             problems.push(format!(
-                "re-bootstrap at {} made {} seals, recorded {}; first difference at {:?}",
-                last.decided_tip,
-                reproduced.len(),
-                recorded.len(),
-                first
+                "seal {index} differs from the journal's: recorded {:?}, reproduced {:?}",
+                identity(&active.seals[index]),
+                identity(&rebuilt[index])
             ));
+        } else {
+            for index in rebuilt.len()..active.seals.len() {
+                let parent = index.checked_sub(1).map(|i| &active.seals[i]);
+                match rebuild_seal(
+                    &store,
+                    scratch.path(),
+                    &layout,
+                    parent,
+                    &active.seals[index],
+                ) {
+                    Ok(()) => unreproduced += 1,
+                    Err(error) => problems.push(format!("seal {index}: {error}")),
+                }
+            }
         }
-        report["decided_tip"] = last.decided_tip.into();
-        report["reproduced_seals"] = reproduced.len().into();
+        report["reproduced_seals"] = rebuilt.len().into();
+        report["queued"] = rebuilt.len().saturating_sub(active.seals.len()).into();
+        report["unreproduced_verified"] = unreproduced.into();
     }
     report["ok"] = problems.is_empty().into();
     report["problems"] = problems.into();
     Ok(report)
+}
+
+/// Rebuilds one recorded seal from the journal, after its recorded parent,
+/// without the gates that decide when the rule makes it.
+fn rebuild_seal(
+    store: &EventStore,
+    scratch: &Path,
+    layout: &DisplayRoot,
+    parent: Option<&SealRecord>,
+    seal: &SealRecord,
+) -> Result<(), BoxError> {
+    use transparent_shard::display::{archive_boundary, height_counts};
+    let (id, start) = parent.map_or((0, layout.start_height), |p| {
+        (p.shard_id + 1, p.end_height + 1)
+    });
+    let through = store.covered_through().unwrap_or(0).min(seal.end_height);
+    let mut counts = Vec::new();
+    let mut records = Vec::new();
+    for height in start..=through {
+        let block = store.display_at(height)?;
+        counts.push(height_counts(&layout.seal, &block));
+        records.extend(block);
+    }
+    let end = archive_boundary(&layout.seal, start, &counts);
+    if (seal.shard_id, seal.start_height, Some(seal.end_height)) != (id, start, end) {
+        return Err(format!(
+            "recorded shard {} over {}..={}, the rule makes shard {id} over {start}..={end:?}",
+            seal.shard_id, seal.start_height, seal.end_height
+        )
+        .into());
+    }
+    let terminal = store
+        .block_at(seal.end_height)
+        .ok_or("the journal lost a sealed terminal")?
+        .block_hash
+        .to_display_hex();
+    let spec = ShardSpec {
+        shard_id: id,
+        start,
+        end: seal.end_height,
+        parent_block_hash: parent.map_or(layout.base_parent.clone(), |p| {
+            p.terminal_block_hash.clone()
+        }),
+        terminal_block_hash: terminal,
+        parent_manifest_digest: parent.map_or(String::new(), |p| p.digest.clone()),
+        sealed: true,
+        previous: None,
+    };
+    let shard = super::publisher::publish_shard(scratch, layout, &spec, &records)?;
+    if (&shard.digest, &spec.terminal_block_hash) != (&seal.digest, &seal.terminal_block_hash) {
+        return Err(format!(
+            "rebuilt as {} ending at {}, recorded {} ending at {}",
+            shard.digest, spec.terminal_block_hash, seal.digest, seal.terminal_block_hash
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// Picks a display start and bootstrap end from the journal's counts: the

@@ -429,6 +429,8 @@ struct Fake {
     /// Apply this activation (counting from 1) but reply that it failed.
     lose_activation: Option<usize>,
     activations: usize,
+    /// Hold every stage reply this long.
+    stage_delay: Duration,
 }
 
 fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
@@ -544,7 +546,13 @@ fn spawn_fakes(dir: &Path, workers: &[(&str, &'static str)]) -> (Log, States) {
                     .await
                     .unwrap();
                 let mut command: Value = serde_json::from_str(&line).unwrap();
-                let reply = fake_reply(&mut state.lock().unwrap(), role, &mut command);
+                let (reply, delay) = {
+                    let mut state = state.lock().unwrap();
+                    let reply = fake_reply(&mut state, role, &mut command);
+                    let staged = command["operation"] == "stage";
+                    (reply, state.stage_delay * u32::from(staged))
+                };
+                tokio::time::sleep(delay).await;
                 log.lock().unwrap().push((name.clone(), command));
                 write
                     .write_all(format!("{reply}\n").as_bytes())
@@ -823,6 +831,77 @@ async fn a_restart_after_a_rollback_still_invalidates() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
+    use transparent_shard::display::height_counts;
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 130, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    let started = bootstrap_at(&journal, &root, &layout, 112).len();
+    let first = active_map(&root);
+    // The first tip that decides more seals; the last of them is undone when
+    // that tip's block is replaced by an empty one.
+    let params = fixture::params();
+    let mut counts: Vec<_> = (101..=130)
+        .map(|h| height_counts(&params, &chain_records(0, h)))
+        .collect();
+    let decided =
+        |counts: &[_], tip: u64| plan_seals(&params, 101, &counts[..=(tip - 101) as usize]).len();
+    let tip = (113..=130)
+        .find(|t| decided(&counts, *t) > started)
+        .unwrap();
+    let before = decided(&counts, tip);
+    counts.truncate((tip - 101) as usize);
+    counts.push(height_counts(&params, &[]));
+    let after = decided(&counts, tip);
+    assert_eq!(after, before - 1);
+    let (log, states) = spawn_fakes(
+        temp.path(),
+        &[("archive", "archive-owner"), ("recent", "recent-replica")],
+    );
+    // Staging outlasts the rollback that follows the decision.
+    states["archive"].lock().unwrap().stage_delay = Duration::from_millis(500);
+    let workers = vec![
+        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
+        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
+    ];
+    // The block that met the recent floor is replaced by an empty one.
+    let steps = vec![
+        ScriptStep::Advance(tip),
+        ScriptStep::Reorg {
+            ancestor: tip - 1,
+            blocks: vec![(block_hash(9, tip), vec![])],
+        },
+    ];
+    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(run.active.seals.len(), after);
+    let staged = commands(&log, "archive")
+        .iter()
+        .filter(|c| c["operation"] == "stage")
+        .count();
+    assert_eq!(staged, before - started);
+    let mut maps = run.maps;
+    states["archive"].lock().unwrap().stage_delay = Duration::ZERO;
+    // The same seal publishes once the floor holds again.
+    let steps = vec![ScriptStep::Extend(fork(3, tip + 1, tip + 4))];
+    let run = run_script(&root, &journal, steps, workers, settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert!(run.active.seals.len() >= before);
+    maps.extend(run.maps);
+    check_maps(&maps, &first);
+    let mut sealed = sealed_count(&first);
+    for map in &maps {
+        if sealed_count(map) > sealed {
+            let recent = map.shards.last().unwrap();
+            assert!(recent.records >= params.recent_floor, "{recent:?}");
+        }
+        sealed = sealed_count(map);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn command_adapters_ship_then_relay_control() {
     use std::os::unix::fs::PermissionsExt;
     let temp = tempfile::tempdir().unwrap();
@@ -996,7 +1075,11 @@ fn verify_reproduces_a_running_root() {
     fixture::write_journal(&journal, 100, 125, 0);
     let layout = layout(&journal, 3);
     let root = temp.path().join("root");
-    bootstrap_at(&journal, &root, &layout, 112);
+    let started = bootstrap_at(&journal, &root, &layout, 112).len();
+    // Seals the journal makes past the recorded ones are queued, not wrong.
+    let report = verify(&root, &journal, None).unwrap();
+    assert_eq!(report["ok"], true, "{report}");
+    assert!(report["queued"].as_u64().unwrap() > 0, "{report}");
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let run = runtime.block_on(run_script(
         &root,
@@ -1006,16 +1089,43 @@ fn verify_reproduces_a_running_root() {
         settings(),
     ));
     assert_eq!(run.outcome, Outcome::Idle);
+    assert!(run.active.seals.len() > started);
     let report = verify(&root, &journal, None).unwrap();
     assert_eq!(report["ok"], true, "{report}");
     assert_eq!(report["reproduced_seals"], run.active.seals.len());
+    assert_eq!(report["queued"], 0);
     assert!(!listing(&root).iter().any(|n| n.starts_with(".verify-")));
-    // A recorded seal the journal does not reproduce is reported.
-    let mut active = ActiveRecord::load(&root).unwrap();
-    active.seals[0].digest = "00".repeat(32);
-    active.store(&root).unwrap();
+
+    // A reorg after the last seal replaces the blocks that met its recent
+    // floor: the journal no longer makes it, so it is rebuilt on its own.
+    let last = run.active.seals.last().unwrap().clone();
+    {
+        let mut store = open_writer(&journal).unwrap();
+        store.rollback_to(Some(last.end_height + 1)).unwrap();
+        store
+            .append_block_with_display(last.end_height + 2, block_hash(9, 0), &[], &[])
+            .unwrap();
+        store.commit().unwrap();
+    }
     let report = verify(&root, &journal, None).unwrap();
-    assert_eq!(report["ok"], false);
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["reproduced_seals"], run.active.seals.len() - 1);
+    assert_eq!(report["unreproduced_verified"], 1);
+    let tamper = |index: usize| {
+        let mut active = ActiveRecord::load(&root).unwrap();
+        let original = active.clone();
+        active.seals[index].digest = "00".repeat(32);
+        active.store(&root).unwrap();
+        let report = verify(&root, &journal, None).unwrap();
+        original.store(&root).unwrap();
+        report
+    };
+    // A recorded seal that differs from the journal's is reported, whether
+    // the journal reproduces it or it is rebuilt on its own.
+    for index in [0, run.active.seals.len() - 1] {
+        let report = tamper(index);
+        assert_eq!(report["ok"], false, "{report}");
+    }
 }
 
 #[test]

@@ -130,8 +130,9 @@ enum Command {
         #[arg(long)]
         exit_when_idle: bool,
     },
-    /// Re-bootstrap at the last seal's decided tip and compare every seal;
-    /// verify every revision of the active candidate. Exits 1 on a mismatch.
+    /// Re-bootstrap at the journal end and check every recorded seal against
+    /// it; verify every revision of the active candidate. Exits 1 on a
+    /// mismatch.
     Verify {
         #[arg(long)]
         root: PathBuf,
