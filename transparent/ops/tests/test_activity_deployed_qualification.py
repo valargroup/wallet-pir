@@ -1111,6 +1111,20 @@ class RemoteTests(unittest.TestCase):
             with self.assertRaises(ValueError):actor.restore_cache(effect,record,Q.Deadline(60),None,cache)
         cache.restore.assert_not_called()
 
+    def test_remote_reader_keeps_old_bound_and_accepts_complete_manifest_set(self):
+        from io import BytesIO
+        request=self.remote('cache-corrupt-restart',cache_manifests=[format(i,'064x') for i in range(180)])
+        raw=durable.canonical(request)
+        self.assertGreater(len(raw),8192)
+        self.assertEqual(Q.read_remote_request(BytesIO(raw),durable.digest(request)),request)
+        with self.assertRaisesRegex(ValueError,'checksum'):
+            Q.read_remote_request(BytesIO(raw),'f'*64)
+        ordinary=self.remote('restart');raw=durable.canonical(ordinary)+b' '*8192
+        with self.assertRaisesRegex(ValueError,'operation bound'):
+            Q.read_remote_request(BytesIO(raw),durable.digest(ordinary))
+        with self.assertRaisesRegex(ValueError,'exceeds bound'):
+            Q.read_remote_request(BytesIO(b' '*((512<<10)+1)),'f'*64)
+
     def test_cache_requests_require_sealed_digests_and_no_path_operands(self):
         valid=self.remote('cache-corrupt-restart',cache_manifests=['a'*64])
         Q.remote_validate(valid)

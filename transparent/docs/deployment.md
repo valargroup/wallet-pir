@@ -2420,7 +2420,11 @@ external interfaces, not weaker gates:
   the existing 150-second limit, and canonical recovery still has 900 seconds.
   Filesystem IO checks the deadline cooperatively between bounded reads. This
   adapter remains unqualified until real native rejection, rebuild, exact cache
-  restoration and canonical wallet recovery evidence are reviewed.
+  restoration and canonical wallet recovery evidence are reviewed. The cache
+  operation alone permits a bounded 512 KiB request for up to 4096 sorted unique
+  sealed manifest SHA256 identities. Other remote operations retain their 8192-byte
+  limit. The receiver rejects duplicate JSON keys, excess bytes, unexpected operands
+  and a checksum mismatch before dispatch.
 - **Rolled-back service probe.** The v10 state is proven only by the recipe's
   own `verify-rollback` and `verify-service` phases. The owner probes the
   redeployed candidate, timed from its own start, and records the time from the

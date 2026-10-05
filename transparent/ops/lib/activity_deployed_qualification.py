@@ -1414,6 +1414,20 @@ class UnitEffect:
 
 # --- remote fixed actor --------------------------------------------------------
 
+MAX_REMOTE_REQUEST = 8192
+MAX_CACHE_REMOTE_REQUEST = 512 << 10  # at most4096 closed SHA256 operands
+
+
+def read_remote_request(stream, expected):
+    raw=stream.read(MAX_CACHE_REMOTE_REQUEST+1)
+    require(len(raw)<=MAX_CACHE_REMOTE_REQUEST,'remote qualification request exceeds bound')
+    request=remote_validate(json.loads(raw,object_pairs_hook=unique))
+    bound=MAX_CACHE_REMOTE_REQUEST if request['operation']=='cache-corrupt-restart' else MAX_REMOTE_REQUEST
+    require(len(raw)<=bound,'remote qualification request exceeds its operation bound')
+    require(digest(request)==expected,'remote qualification request checksum differs')
+    return request
+
+
 def remote_validate(request):
     extra={'cache_manifests'} if isinstance(request,dict) and request.get('operation')=='cache-corrupt-restart' else set()
     require(isinstance(request, dict) and set(request)-extra == {'version', 'source_sha', 'qualification_sha256', 'host',

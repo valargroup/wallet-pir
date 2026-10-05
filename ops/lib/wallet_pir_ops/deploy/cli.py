@@ -364,10 +364,7 @@ def main(argv=None, executor=None, out=print, **options):
             spec = importlib.util.spec_from_file_location('activity_deployed_qualification', ROOT/'transparent/ops/lib/activity_deployed_qualification.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
             if args.command == 'schema-qualify-remote':
-                data = sys.stdin.buffer.read(8193)
-                if len(data) > 8192: raise ValueError('remote qualification request exceeds bound')
-                request = module.remote_validate(json.loads(data))
-                if module.digest(request) != args.request_sha256: raise ValueError('remote qualification request checksum differs')
+                request = module.read_remote_request(sys.stdin.buffer,args.request_sha256)
                 out(json.dumps(module.remote_run(request, args.action), sort_keys=True))
                 return 0
             if args.command == 'schema-qualify-summary':
