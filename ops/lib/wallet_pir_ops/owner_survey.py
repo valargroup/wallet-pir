@@ -24,10 +24,10 @@ Association is a set of fixed rules, not proof that nothing survives: a
 detached process that matches no rule and no operational class is invisible.
 
 A retained survey report is evidence of what one observer saw, not a claim of
-ownership. A caller may pass `evidence` to recognize exact reports (`report`)
-anywhere inside a record; a recognized report names only its lock holders as
-owners. Without `evidence`, or for anything that does not validate, every
-recorded PID counts as before.
+ownership. A caller may pass `evidence` to recognize whole retained report
+files by namespace, path and exact content (`report`); a recognized file names
+only its lock holders as owners. Without `evidence`, and for every other file,
+every recorded PID counts.
 
 Arguments and environment values are inspected in memory only. A process
 summary, and every refusal reason, keeps the command line's SHA-256 and byte
@@ -220,19 +220,13 @@ def label(item):
     return '%d %s' % (item['pid'], item.get('exe') or item.get('comm') or '?')
 
 
-def recorded(record, name, mtime, evidence=None):
+def recorded(record, name, mtime):
     """Every process a retained record names, with whatever identity it kept.
 
     Any integer `pid` or `*_pid` value counts. Start ticks (`start_ticks`, or
     `process_start` of the upload owner), boot ID and cgroup bind only a `pid`
     in the same object. The start window is that object's, else the record's
     `started_unix`/`started`; the record's mtime closes it.
-
-    `evidence(value)` is asked about every object, at any depth. It returns
-    None for anything that is not an exact retained survey report, which is
-    walked as above, or the owner identities ({pid, start_ticks, boot_id})
-    that report itself claims; nothing else inside it is a reference. It
-    only narrows its own subtree, never another object's references.
     """
     found = []
 
@@ -246,12 +240,6 @@ def recorded(record, name, mtime, evidence=None):
             stack.extend(value)
             continue
         if not isinstance(value, dict):
-            continue
-        claimed = evidence(value) if evidence is not None else None
-        if claimed is not None:
-            found.extend({'record': name, 'key': 'survey-holder', 'pid': item['pid'], 'window': None, 'mtime': mtime,
-                          'start_ticks': item['start_ticks'], 'boot_id': item['boot_id'], 'cgroup': None}
-                         for item in claimed)
             continue
         start = window(value, top)
         for key, item in value.items():
@@ -275,22 +263,18 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None, eviden
     files, unreadable or oversized records and any bound overflow are reasons
     to refuse, never skipped silently. `select(label, name, record, sha256)`
     may return a summary of a namespace-root record for the caller.
-    `evidence` is passed to `recorded`; with it, the inventory also counts
-    the recognized reports under `evidence`. Every file is still read, parsed
-    and hashed; recognition depends on content, never on a path.
+
+    `evidence(label, name, record)`, given the namespace label, the path
+    inside it and the parsed record, returns None for an ordinary record, or
+    the owner identities ({pid, start_ticks, boot_id}) of a whole file it
+    recognizes as retained survey evidence; only those identities are then
+    references of that file. Every file is still read, bounded, parsed,
+    hashed and listed, and the inventory counts recognized files under
+    `evidence`.
     """
     reasons, references, selected, listing = [], [], [], []
-    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0}
+    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0, **({'evidence': 0} if evidence is not None else {})}
     digests = {}
-    recognize = None
-    if evidence is not None:
-        counts['evidence'] = 0
-
-        def recognize(value):
-            claimed = evidence(value)
-            if claimed is not None:
-                counts['evidence'] += 1
-            return claimed
 
     def walk():
         for label, root in roots:
@@ -352,7 +336,15 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None, eviden
                     sha = hashlib.sha256(raw).hexdigest()
                     digests[relative] = [len(raw), info.st_mtime_ns, sha]
                     listing.append([relative, 'json', len(raw), info.st_mtime_ns, sha])
-                    references.extend(recorded(record, relative, info.st_mtime_ns/1e9, recognize))
+                    mtime = info.st_mtime_ns/1e9
+                    claimed = evidence(label, os.path.relpath(entry.path, root), record) if evidence else None
+                    if claimed is None:
+                        references.extend(recorded(record, relative, mtime))
+                    else:
+                        counts['evidence'] += 1
+                        references.extend({'record': relative, 'key': 'survey-holder', 'pid': item['pid'],
+                                           'window': None, 'mtime': mtime, 'start_ticks': item['start_ticks'],
+                                           'boot_id': item['boot_id'], 'cgroup': None} for item in claimed)
                     if len(references) > bounds['references']:
                         reasons.append('owner records name more than %d processes' % bounds['references'])
                         return
@@ -644,8 +636,8 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     unless every pending process is attributed. Without `pending` the result
     has no such keys.
 
-    `evidence` recognizes retained survey reports (see `recorded`); without
-    it every recorded PID of every record is an owner reference.
+    `evidence` recognizes retained survey files (see `owner_inventory`);
+    without it every recorded PID of every record is an owner reference.
     """
     listed = bounds['listed']
     inventory, references, selected, reasons, digests = owner_inventory(namespaces, tick, bounds, select, evidence)
