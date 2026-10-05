@@ -121,6 +121,15 @@ Vizor, sending and distribution remain excluded. [Starting observations](../evid
   are ready. The user authorized proceeding with pending operations CI while retaining
   passing native CI and exact provenance; finish fresh source staging and actual
   recipe/preflight after the reproduced bytecode integrity defect, then cut over.
+  Source preflight refused worker `shard-control` clients issued by the running
+  replica reconciler. Reconciler control attribution
+  ([deployment](deployment.md#immutable-operation-source-staging-over-ssh)) is fixture-tested only. Before
+  relying on it, check read-only on the coordinator that the reconciler snapshot is
+  `verified` with the root-observed fragment/script pins, then rerun source
+  preflight and keep the private evidence. A refusal whose controls are carried
+  by the control-session master, or outlive their client, needs a separate
+  reviewed design; candidate execution and deployed qualification surveys do not
+  use this attribution.
   Ingest owner: `transparent-activity-full-ingest-release-a1c4b809` on the coordinator;
   journal `/srv/transparent-activity/full-v3/journal`, fixed anchor 3500738.
   Candidate 5/20 QPS gates passed. All 61 retained recoveries at concurrency

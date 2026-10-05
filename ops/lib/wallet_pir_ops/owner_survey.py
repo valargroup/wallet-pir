@@ -520,7 +520,8 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS, ancillary
 
 
 def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=None, marker=None, receiver=None,
-            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None, ancillary=None):
+            excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None, ancillary=None,
+            pending=None):
     """One complete read-only survey of this host; the raw dict is the evidence.
 
     `namespaces` is [(label, path)], `classes` {'names': [...], 'roots': [...]},
@@ -529,6 +530,13 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     allowed to hold the lock, or None for none. `refuse(item)` returns a reason
     or None for every record `select` chose, before the listed display is cut
     to `bounds['listed']`; more than `bounds['selected']` refuses outright.
+
+    `pending` ({pid: start_ticks, exe, command_sha256, cgroup}) names
+    operational processes whose owner another host must attribute. An exact
+    match is listed under `pending` instead of `unattributed`; it still
+    counts for markers, the lock and association, and the caller must refuse
+    unless every pending process is attributed. Without `pending` the result
+    has no such keys.
     """
     listed = bounds['listed']
     inventory, references, selected, reasons, digests = owner_inventory(namespaces, tick, bounds, select)
@@ -553,13 +561,20 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     if associated:
         reasons.append('live process associated with a retained owner record: '+', '.join(
             '%d %s %s' % (p['pid'], p['association'], p['record']) for p in associated[:4]))
-    bound, unattributed, problems = operational(processes, excluded, classes, baseline, bounds, ancillary)
+    waiting = [dict(p, **{'class': matched(p, classes)}) for p in processes
+               if p['pid'] not in excluded and p['pid'] in (pending or {}) and not p['unreadable'] and
+               matches(p, classes) and unit_of(p.get('cgroup'), baseline) is None and
+               all(p.get(k) == pending[p['pid']][k] for k in ('start_ticks', 'exe', 'command_sha256', 'cgroup'))]
+    held = {p['pid'] for p in waiting}
+    bound, unattributed, problems = operational([p for p in processes if p['pid'] not in held], excluded, classes,
+                                                baseline, bounds, ancillary)
     reasons.extend(problems)
     if unattributed:
         reasons.append('live operational process not bound to a baseline service: '+', '.join(
             label(p) for p in unattributed[:4]))
     records = sorted({p['record'] for p in associated if p['record'] in digests})
-    return {'version': VERSION, 'kind': KIND, 'binding': binding, 'bounds': bounds,
+    extra = {} if pending is None else {'pending': summary(waiting, listed), 'pending_count': len(waiting)}
+    return {**extra, 'version': VERSION, 'kind': KIND, 'binding': binding, 'bounds': bounds,
             'classes': classes, 'classes_sha256': hashlib.sha256(canonical(classes)).hexdigest(),
             'baseline': list(baseline), 'boot_id': boot_id(), 'booted_unix': booted_unix(), 'euid': os.geteuid(),
             'namespaces': [[label, str(path)] for label, path in namespaces], 'inventory': inventory,

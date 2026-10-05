@@ -33,7 +33,7 @@ def refusal_site(error):
     """Identify reviewed guard code without serializing exception data or locals."""
     codes = {}
     for label, symbol in (('bootstrap', '_BOOTSTRAP_FLEET'), ('survey', '_SURVEY'),
-                          ('fence', '_FENCE'), ('ancillary', '_ANCILLARY')):
+                          ('fence', '_FENCE'), ('ancillary', '_ANCILLARY'), ('attribution', '_CONTROL')):
         module = globals().get(symbol)
         namespace = getattr(module, '__dict__', {})
         for name, value in namespace.items():

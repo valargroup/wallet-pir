@@ -4,6 +4,12 @@ Stdlib only when embedded by source staging. The existing reviewed runtime is
 used solely for pinned SSH transport after its source receipt is verified. No
 credential values or inventory contents are retained. No baseline exception is
 created here: a live unclassified prototype or incomplete owner refuses.
+
+A worker `shard-control` in an SSH session is pending, not admitted: `fleet`
+admits it only when `control_attribution` binds its exact connection to a
+verified direct client of the running replica reconciler, observed on the
+coordinator immediately before or after that worker's survey. A host checking
+only itself (`local` plus `verify` without attributions) refuses it.
 """
 import hashlib
 import importlib
@@ -26,6 +32,11 @@ try:
     A
 except NameError:
     from wallet_pir_ops import ancillary_baseline as A
+
+try:
+    CA
+except NameError:
+    from wallet_pir_ops import control_attribution as CA
 
 ROOT = Path('/srv/transparent-activity/ops')
 INPUTS = ROOT/'input-staging'
@@ -136,17 +147,23 @@ def local(binding,host,*,holder=None,skip=None,recovery=None,deadline=None,sourc
         return 'unfinished retained bootstrap owner: '+item['name']
     ancillary=A.observe(machine,tick=tick)
     authorities=A.authorities(ancillary,machine)
+    # Only workers receive reconciler controls; the coordinator binds its own
+    # clients to the baseline unit cgroup.
+    found,rejected=CA.controls(tick=tick) if host.startswith('worker-') else ([],[])
     result=S.observe((('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
                       ('input-staging',INPUTS),('source-staging',ROOT/'staging')),
                      classes=CLASSES,baseline=BASELINE,binding=binding,lock_path=LOCK,holder=holder,
-                     tick=tick,select=select,refuse=refuse,ancillary=authorities)
+                     tick=tick,select=select,refuse=refuse,ancillary=authorities,
+                     pending={c['pid']:c for c in found})
     tick()
     result.update(bootstrap=KIND,machine_id=machine,observed_unix=time.time(),
-                  inventory_sha256=INVENTORY_SHA,ancillary=ancillary)
+                  inventory_sha256=INVENTORY_SHA,ancillary=ancillary,controls=found,
+                  control_rejections=rejected[:S.BOUNDS['listed']])
     return result
 
 
-def verify(value,binding,host,holder=None):
+def verify(value,binding,host,holder=None,attributed=None):
+    """One host's survey; pending worker controls pass only with `attributed` covering each exactly."""
     require(isinstance(value,dict) and value.get('bootstrap')==KIND and value.get('kind')==S.KIND and
             value.get('binding')==binding and value.get('machine_id')==PINS[host] and value.get('euid')==0 and
             value.get('inventory_sha256')==INVENTORY_SHA and S.number(value.get('observed_unix')) and
@@ -164,6 +181,16 @@ def verify(value,binding,host,holder=None):
             isinstance(value.get('selected_sha256'),str) and re.fullmatch('[0-9a-f]{64}',value['selected_sha256']),
             'bootstrap survey binding is partial, stale or foreign')
     A.verify(value.get('ancillary'),PINS[host])
+    controls=CA.verify_controls(value.get('controls'))
+    identities=sorted((c['pid'],c['start_ticks']) for c in controls)
+    require((host.startswith('worker-') or not controls) and isinstance(value.get('control_rejections'),list) and
+            len(value['control_rejections'])<=S.BOUNDS['listed'] and value.get('pending_count')==len(controls) and
+            isinstance(value.get('pending'),list) and
+            sorted((p.get('pid'),p.get('start_ticks')) for p in value['pending'])==identities,
+            'bootstrap survey pending controls are partial or foreign')
+    require(not controls or isinstance(attributed,list) and
+            sorted((a['control']['pid'],a['control']['start_ticks']) for a in attributed)==identities,
+            'bootstrap worker control is not attributed to the verified replica reconciler')
     require(value.get('blocked_count')==0 and value.get('blocked')==[] and
             value.get('associated_count')==0 and value.get('associated')==[] and
             value.get('unattributed_count')==0 and value.get('unattributed')==[] and value.get('processes')==[] and
@@ -199,6 +226,10 @@ def fleet(request,lock,verify_receipt,remote_code,*,skip=None,recovery=None,reta
             finally:os.close(fd)
     for host in sorted(PINS):
         if lock:lock.verify()
+        attributed=None
+        # Taken before the worker scans, so a control that ends before the
+        # reply is still bound; a later one is bound by the snapshot after it.
+        before=CA.authority() if host.startswith('worker-') else None
         host_skip=skip if host=='coordinator' else None
         binding={'request_sha256':identifier,'nonce':nonce,'host':host,'skip':host_skip}
         host_source_skip=source_skip if source_skip and PINS[host]==source_skip.get('machine_id') else None
@@ -226,7 +257,12 @@ def fleet(request,lock,verify_receipt,remote_code,*,skip=None,recovery=None,reta
         if retain:retain(host,raw)
         require(code==0 and len(raw)<=MAX_REPLY,'bootstrap survey transport failed or response exceeds bound')
         if host!='coordinator':value=json.loads(raw,object_pairs_hook=S.unique)
-        results[host]=verify(value,binding,host,holder if host=='coordinator' else None)
+        if before is not None and isinstance(value,dict) and value.get('controls'):
+            snapshots=[before,CA.authority()]
+            if retain:retain(host+'.attribution',S.canonical({'host':host,'binding':binding,'snapshots':snapshots}))
+            attributed=CA.attribute(CA.verify_controls(value['controls']),snapshots)
+            value['control_attribution']={'attributed':attributed,'snapshots':snapshots}
+        results[host]=verify(value,binding,host,holder if host=='coordinator' else None,attributed)
         require(time.monotonic()<deadline,'bootstrap complete-fleet survey exceeded bound')
     require(set(results)==set(PINS),'bootstrap fleet survey is incomplete')
     if lock:lock.verify()

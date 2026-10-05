@@ -25,7 +25,8 @@ class Fleet(unittest.TestCase):
                         ('input-staging',G.INPUTS),('source-staging',G.ROOT/'staging'))],
             inventory={'sha256':'1'*64},selected=[],selected_count=0,selected_sha256='2'*64,
             blocked=[],blocked_count=0,associated=[],associated_count=0,unattributed=[],unattributed_count=0,
-            processes=[],lock={'holders':[holder] if holder else []},ancillary={
+            processes=[],lock={'holders':[holder] if holder else []},controls=[],control_rejections=[],
+            pending=[],pending_count=0,ancillary={
                 'kind':G.A.KIND,'pins_sha256':G.A.PINS_SHA256,'machine_id':G.PINS[host],
                 'boot_id':'00000000-0000-0000-0000-000000000001' if host in ('coordinator','router') else None,
                 'observed_unix':time.time(),'units':{u:{'status':'absent'} for u in G.A.UNITS} if host=='coordinator' else {},
@@ -67,7 +68,8 @@ class Fleet(unittest.TestCase):
         def local(binding,host,**kw):return self.response(binding,host,kw['holder'])
         with patch.object(G,'runtime',return_value=(inventory,transport)),patch.object(G,'local',side_effect=local), \
              patch.object(G.subprocess,'Popen',Child),patch.object(G.S,'process',return_value={'pid':123,'start_ticks':456}), \
-             patch.object(G.S,'boot_id',return_value='00000000-0000-0000-0000-000000000001'):
+             patch.object(G.S,'boot_id',return_value='00000000-0000-0000-0000-000000000001'), \
+             patch.object(G.CA,'authority',return_value={'status':'refused'}):
             proof=G.fleet(request,SimpleNamespace(verify=lambda:None),None,'fixed readonly code',retain=lambda h,r:raws.append((h,r)))
             self.assertEqual(proof['hosts'],sorted(G.PINS))
             self.assertEqual([h for h,_ in raws],sorted(G.PINS))
@@ -79,6 +81,75 @@ class Fleet(unittest.TestCase):
             self.assertEqual(raws[-1][0],'worker-2')
             self.assertEqual(json.loads(raws[-1][1])['binding']['nonce'],'f'*48)
 
+    CONTROL={'pid':4242,'start_ticks':1002,'exe':G.CA.CONTROL[0],'command_sha256':G.CA.CONTROL_SHA256,
+             'cgroup':'0::/user.slice/user-0.slice/session-5.scope','shell':{'pid':4241,'start_ticks':1001},
+             'sshd':{'pid':4240,'start_ticks':1000},
+             'connection':{'local':['10.142.0.5',22],'remote':['10.142.0.3',40000]}}
+
+    def snapshot(self,port=40000,status='verified'):
+        return {'kind':G.CA.KIND,'status':status,'machine_id':G.CA.COORDINATOR,'monotonic':time.monotonic(),
+                'main':{'pid':4015133,'start_ticks':270361979},
+                'clients':[{'pid':5000,'start_ticks':270400000,'destination':'10.142.0.5',
+                            'connection':{'local':['10.142.0.3',port],'remote':['10.142.0.5',22]}}]}
+
+    def run_fleet(self,snapshots,raws):
+        inventory=SimpleNamespace(hosts={h:{} for h in G.PINS})
+        transport=SimpleNamespace(transport=lambda h:['ssh',h])
+        fixture=self
+        class Child:
+            def __init__(self,argv,**kw):self.returncode=0
+            def communicate(self,raw,timeout):
+                envelope=json.loads(raw);value=fixture.response(envelope['binding'],envelope['host'])
+                if envelope['host']=='worker-2':
+                    value.update(controls=[fixture.CONTROL],pending_count=1,
+                                 pending=[{k:fixture.CONTROL[k] for k in ('pid','start_ticks','exe','command_sha256','cgroup')}])
+                return json.dumps(value).encode(),None
+        def local(binding,host,**kw):return self.response(binding,host,kw['holder'])
+        with patch.object(G,'runtime',return_value=(inventory,transport)),patch.object(G,'local',side_effect=local), \
+             patch.object(G.subprocess,'Popen',Child),patch.object(G.S,'process',return_value={'pid':123,'start_ticks':456}), \
+             patch.object(G.S,'boot_id',return_value='00000000-0000-0000-0000-000000000001'), \
+             patch.object(G.CA,'authority',side_effect=snapshots):
+            return G.fleet({'source_sha':'a'*40},None,None,'fixed readonly code',retain=lambda h,r:raws.append((h,r)))
+
+    def test_service_issued_worker_control_is_attributed_through_a_fresh_coordinator_snapshot(self):
+        raws=[]
+        # Before every worker survey, and after the one reporting a control:
+        # here only the earlier snapshot still shows the client.
+        snapshots=iter([self.snapshot(),self.snapshot(),self.snapshot(port=40001),self.snapshot()])
+        proof=self.run_fleet(lambda:next(snapshots),raws)
+        self.assertIsNone(next(snapshots,None))
+        attribution=proof['surveys']['worker-2']['control_attribution']
+        self.assertEqual(attribution['attributed'][0]['client'],{'pid':5000,'start_ticks':270400000})
+        self.assertEqual(attribution['attributed'][0]['reconciler'],{'pid':4015133,'start_ticks':270361979})
+        self.assertIn('worker-2.attribution',[h for h,_ in raws])
+        self.assertNotIn('control_attribution',proof['surveys']['worker-1'])
+
+    def test_unattributed_worker_control_refuses_after_retaining_raw_evidence(self):
+        for snapshots in ([self.snapshot(port=40001)]*4,[self.snapshot(status='refused')]*4):
+            raws=[];snapshots=iter(snapshots)
+            with self.assertRaisesRegex(ValueError,'not attributable'):
+                self.run_fleet(lambda:next(snapshots),raws)
+            self.assertEqual([h for h,_ in raws][-2:],['worker-2','worker-2.attribution'])
+            self.assertEqual(json.loads(raws[-1][1])['binding']['host'],'worker-2')
+
+    def test_host_local_check_never_admits_a_pending_control(self):
+        binding={'request_sha256':'a'*64,'nonce':'b'*48,'host':'worker-1','skip':None}
+        value=self.response(binding,'worker-1')
+        pending=[{k:self.CONTROL[k] for k in ('pid','start_ticks','exe','command_sha256','cgroup')}]
+        value.update(controls=[self.CONTROL],pending=pending,pending_count=1)
+        with self.assertRaisesRegex(ValueError,'not attributed'):G.verify(value,binding,'worker-1')
+        attributed=[{'control':{'pid':4242,'start_ticks':1002}}]
+        G.verify(value,binding,'worker-1',attributed=attributed)
+        for change in ({'pending':[]},{'pending_count':0},{'controls':[dict(self.CONTROL,start_ticks=1)]},
+                       {'controls':[dict(self.CONTROL,exe='/tmp/shard-control')]},{'control_rejections':None}):
+            with self.assertRaises(ValueError):G.verify({**value,**change},binding,'worker-1',attributed=attributed)
+        with self.assertRaises(ValueError):
+            G.verify(value,binding,'worker-1',attributed=[{'control':{'pid':4242,'start_ticks':1}}])
+        coordinator={**self.response({**binding,'host':'coordinator'},'coordinator'),'controls':[self.CONTROL],
+                     'pending':pending,'pending_count':1}
+        with self.assertRaisesRegex(ValueError,'partial or foreign'):
+            G.verify(coordinator,{**binding,'host':'coordinator'},'coordinator',attributed=attributed)
+
     def test_every_candidate_tool_is_an_operational_class_and_prototype_is_never_baseline(self):
         import activity_candidate as C
         self.assertTrue({n.rsplit('/',1)[-1] for n in C.ARTIFACTS}<=set(G.NAMES))
@@ -88,6 +159,8 @@ class Fleet(unittest.TestCase):
         namespace={};exec(B.EMBEDDED_FLEET,namespace)
         self.assertIsNot(namespace['_SURVEY'].__dict__,namespace['_BOOTSTRAP_FLEET'].__dict__)
         self.assertIs(namespace['_BOOTSTRAP_FLEET'].S,namespace['_SURVEY'])
+        self.assertIs(namespace['_BOOTSTRAP_FLEET'].CA,namespace['_CONTROL'])
+        self.assertEqual(namespace['_CONTROL'].CONTROL_SHA256,G.CA.CONTROL_SHA256)
         self.assertEqual(namespace['_SURVEY'].KIND,G.S.KIND)
         self.assertEqual(namespace['_BOOTSTRAP_FLEET'].KIND,G.KIND)
         compile(B.SURVEY_HELPER,'fictional-readonly-survey','exec')

@@ -1058,6 +1058,28 @@ receipts, then associates live processes and descendants. It preserves the
 existing baseline list plus the exact ancillary reader described below. A
 service name alone does not authorize an exception.
 
+The installed replica reconciler (`transparent-live-fleet.py` from `4c85b6c2`)
+runs `shard-control` on workers over SSH; there it lives in an SSH session scope,
+not a baseline unit, and its operation (stdin) is not observable, so it is never
+treated as read-only. `ops/lib/wallet_pir_ops/control_attribution.py`, embedded
+with the survey, attributes ownership only. A worker reports a control as pending
+only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`), root's login shell
+running exactly the reconciler's `-c` command as its session leader with no other
+child, an sshd session process in the same root `session-N.scope` holding exactly
+one established TCP connection, and stable start ticks. Everything else stays
+unattributed. Before each worker survey and after a reply with pending controls,
+the coordinating survey snapshots the reconciler: unit active, pinned fragment
+`869e2606…`, no drop-ins, main argv equal to the fragment's literal `ExecStart`,
+pinned script `f3df5c53…` unchanged since the main process started, and direct
+`ssh` children with the exact unmultiplexed control argv. A pending control passes
+only if one such snapshot shows a client holding exactly the reverse connection,
+one control per client; both snapshots are retained beside the raw reply before
+any refusal. An address, key, name or argv alone never admits anything. Controls
+carried by a shared `transparent-control-sessions` master, controls whose client
+has exited (for example after the reconciler's preparation timeout), and any host
+checking only itself, including worker source staging, still refuse. A changed
+reconciler fragment or script requires reviewing new pins.
+
 Read-only preflight checks every host without creating a lock or owner.
 Use `schema-source-preflight --private-evidence-file FILE` on the local
 coordinator client to preserve exact bounded wire replies even on refusal.

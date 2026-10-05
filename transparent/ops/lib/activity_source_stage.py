@@ -14,7 +14,7 @@ import re
 import shlex
 import subprocess
 
-from wallet_pir_ops import hostlock, inherited_lock, schema_fence, owner_survey, ancillary_baseline
+from wallet_pir_ops import hostlock, inherited_lock, schema_fence, owner_survey, ancillary_baseline, control_attribution
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
 HERE = Path(__file__).parent
@@ -29,10 +29,10 @@ HOST = importlib.util.module_from_spec(_host_spec); _host_spec.loader.exec_modul
 # and bounds must never overwrite those of the source receiver.
 EMBEDDED_FLEET = "import types\n"
 for name, path in (('_ANCILLARY',Path(ancillary_baseline.__file__)),('_SURVEY', Path(owner_survey.__file__)), ('_FENCE', Path(schema_fence.__file__)),
-                   ('_BOOTSTRAP_FLEET', FLEET_PATH)):
+                   ('_CONTROL', Path(control_attribution.__file__)), ('_BOOTSTRAP_FLEET', FLEET_PATH)):
     EMBEDDED_FLEET += name+"=types.ModuleType("+repr(name)+")\n"
     if name == '_BOOTSTRAP_FLEET':
-        EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.S=_SURVEY\n_BOOTSTRAP_FLEET.A=_ANCILLARY\n"
+        EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.S=_SURVEY\n_BOOTSTRAP_FLEET.A=_ANCILLARY\n_BOOTSTRAP_FLEET.CA=_CONTROL\n"
     EMBEDDED_FLEET += "exec("+repr(path.read_text())+", "+name+".__dict__)\n"
 EMBEDDED_FLEET += "_BOOTSTRAP_FLEET.FENCE=_FENCE.local_schema_fence\n"
 SURVEY_HELPER = EMBEDDED_FLEET+r"""
@@ -164,7 +164,7 @@ class SourceStage:
             site = reply.get('refusal_site')
             suffix = ''
             if (isinstance(site, dict) and set(site) == {'component','function','line'} and
-                    site['component'] in ('bootstrap','survey','fence','ancillary') and
+                    site['component'] in ('bootstrap','survey','fence','ancillary','attribution') and
                     isinstance(site['function'],str) and re.fullmatch('[A-Za-z_][A-Za-z_0-9]{0,63}',site['function']) and
                     type(site['line']) is int and 1 <= site['line'] <= 5000):
                 suffix = ' (reviewed guard %s.%s:%d)' % (site['component'],site['function'],site['line'])
