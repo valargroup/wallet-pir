@@ -59,6 +59,10 @@ enum Command {
         heights: PathBuf,
         #[arg(long, default_value_t = 40)]
         per_class: usize,
+        /// Instead of `per_class`, this many txids per tier drawn uniformly
+        /// over every class, so a load follows the chain's own class mix.
+        #[arg(long)]
+        natural: Option<usize>,
         #[arg(long, default_value_t = 200)]
         absent: usize,
         #[arg(long, default_value_t = 0)]
@@ -70,6 +74,10 @@ enum Command {
     Audit {
         #[arg(long)]
         maps: PathBuf,
+        /// `mapwatch.jsonl`, whose `map` events give the observed order.
+        /// Without it, maps are ordered by their own coverage.
+        #[arg(long)]
+        order: Option<PathBuf>,
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -112,6 +120,7 @@ fn main() -> Result<(), Error> {
             publication,
             heights,
             per_class,
+            natural,
             absent,
             seed,
             out,
@@ -120,6 +129,7 @@ fn main() -> Result<(), Error> {
                 &candidate_dir(&publication)?,
                 &heights,
                 per_class,
+                natural,
                 absent,
                 seed,
             )?;
@@ -130,8 +140,8 @@ fn main() -> Result<(), Error> {
             );
             write_json(Some(&out), &report)
         }
-        Command::Audit { maps, out } => {
-            let report = audit(&maps)?;
+        Command::Audit { maps, order, out } => {
+            let report = audit(&maps, order.as_deref())?;
             write_json(out.as_deref(), &report)?;
             if report["ok"] != true {
                 eprintln!("audit found violations");
@@ -466,6 +476,7 @@ fn fixture(
     dir: &Path,
     heights: &Path,
     per_class: usize,
+    natural: Option<usize>,
     absent: usize,
     seed: u64,
 ) -> Result<serde_json::Value, Error> {
@@ -516,10 +527,34 @@ fn fixture(
     }
     let mut samples = Vec::new();
     let mut available = BTreeMap::new();
-    for ((tier, class), pool) in &mut pools {
-        available.insert(format!("{tier}/{class}"), pool.len());
+    if let Some(natural) = natural {
+        // One pool per tier: the seed order is uniform over its txids, so the
+        // first `natural` follow the class mix rather than equalising it.
+        let mut tiers: BTreeMap<(String, String), Vec<Candidate>> = BTreeMap::new();
+        for ((tier, class), pool) in std::mem::take(&mut pools) {
+            available.insert(format!("{tier}/{class}"), pool.len());
+            tiers
+                .entry((tier, "natural".to_string()))
+                .or_default()
+                .extend(pool);
+        }
+        for pool in tiers.values_mut() {
+            pool.sort_by_key(|candidate| candidate.0);
+            pool.truncate(natural);
+        }
+        pools = tiers;
+    }
+    for ((tier, _), pool) in &mut pools {
+        if natural.is_none() {
+            available.insert(
+                format!("{tier}/{}", class_label(pool[0].3.pages)),
+                pool.len(),
+            );
+        }
         pool.sort_by_key(|candidate| candidate.0);
-        for (_, index, bucket, entry) in pool.iter().take(per_class) {
+        let take = natural.unwrap_or(per_class);
+        for (_, index, bucket, entry) in pool.iter().take(take) {
+            let class = class_label(entry.pages);
             let revision = &revisions[*index];
             let mut rows = Rows::open(revision)?;
             let record = rows.assemble(revision, entry)?;
@@ -602,13 +637,48 @@ fn fixture(
     }))
 }
 
-fn audit(dir: &Path) -> Result<serde_json::Value, Error> {
+/// Saved maps in the order they were served. File names are map digests, so
+/// name order says nothing about time.
+fn ordered_maps(dir: &Path, order: Option<&Path>) -> Result<Vec<PathBuf>, Error> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(Result::ok)
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
         .collect();
     files.sort();
+    if let Some(order) = order {
+        let mut rank = BTreeMap::new();
+        for line in std::fs::read_to_string(order)?.lines() {
+            let event: serde_json::Value = serde_json::from_str(line)?;
+            if let (Some("map"), Some(sha)) =
+                (event["event"].as_str(), event["map_sha256"].as_str())
+            {
+                let next = rank.len();
+                rank.entry(sha.to_string()).or_insert(next);
+            }
+        }
+        let key = |p: &PathBuf| {
+            let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            rank.get(stem).copied().unwrap_or(usize::MAX)
+        };
+        files.sort_by_key(key);
+    } else {
+        // Coverage only grows apart from reorgs, so it orders an unannotated
+        // series; unreadable files sort last and are reported below.
+        let key = |p: &PathBuf| {
+            std::fs::read(p)
+                .ok()
+                .and_then(|raw| serde_json::from_slice::<DisplayMap>(&raw).ok())
+                .map(|m| (m.covered_through().unwrap_or(0), m.first_shard_id))
+                .unwrap_or((u64::MAX, u64::MAX))
+        };
+        files.sort_by_cached_key(key);
+    }
+    Ok(files)
+}
+
+fn audit(dir: &Path, order: Option<&Path>) -> Result<serde_json::Value, Error> {
+    let files = ordered_maps(dir, order)?;
     let mut violations = Vec::new();
     let mut sealed: BTreeMap<u64, (String, u64, u64)> = BTreeMap::new();
     let mut seals = Vec::new();
@@ -813,7 +883,21 @@ mod tests {
             .unwrap()
             .is_empty());
 
-        let fixture = fixture(&candidate, &out.join("tooling/heights.bin"), 2, 6, 0).unwrap();
+        let natural = fixture(
+            &candidate,
+            &out.join("tooling/heights.bin"),
+            2,
+            Some(5),
+            0,
+            0,
+        )
+        .unwrap();
+        let drawn = natural["samples"].as_array().unwrap();
+        // At most `natural` per tier, whatever their classes.
+        for tier in ["archive", "recent"] {
+            assert!(drawn.iter().filter(|s| s["tier"] == tier).count() <= 5);
+        }
+        let fixture = fixture(&candidate, &out.join("tooling/heights.bin"), 2, None, 6, 0).unwrap();
         let samples = fixture["samples"].as_array().unwrap();
         assert!(samples
             .iter()
@@ -836,13 +920,13 @@ mod tests {
         dropped.first_shard_id += 1;
         dropped.start_height = dropped.shards[0].start_height;
         std::fs::write(maps.join("0002.json"), dropped.to_bytes()).unwrap();
-        let clean = audit(&maps).unwrap();
+        let clean = audit(&maps, None).unwrap();
         assert_eq!(clean["ok"], true, "{clean}");
         assert_eq!(clean["drops"].as_array().unwrap().len(), 1);
         let mut changed = dropped.clone();
         changed.shards[0].manifest_digest = "99".repeat(32);
         std::fs::write(maps.join("0003.json"), changed.to_bytes()).unwrap();
-        let report = audit(&maps).unwrap();
+        let report = audit(&maps, None).unwrap();
         assert_eq!(report["ok"], false);
     }
 }
