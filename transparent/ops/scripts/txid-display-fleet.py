@@ -224,6 +224,9 @@ def main(argv=None, run=subprocess.run):
         result = Fleet(load_config(args.config), run=run).handle(json.loads(raw))
     except (FleetError, OSError, ValueError, KeyError) as error:
         result = {'ok': False, 'error': '%s: %s' % (type(error).__name__, error)}
+    if result.get('ok') is not True:
+        # A caller that stops at the exit status still logs why.
+        print(json.dumps({'event': 'txid_fleet_failed', 'error': result.get('error')}), file=sys.stderr)
     text = json.dumps(result, sort_keys=True) + '\n'
     if args.reply:
         Path(args.reply).write_text(text)

@@ -79,6 +79,13 @@ exactly one destroy per removed name and one in-place project change. The
 [deployment target](../../../../transparent/docs/deployment.md) has the full
 procedure.
 
+`transparent_txid_display_port_enabled` (default false) opens port 8095 on the
+transparent worker firewall for the txid display proof of concept. Only
+`wallet-pir-deploy.py txid-display-deploy --phase firewall` sets it, by writing
+`txid-display.auto.tfvars` into the coordinator's root; keep that file when the
+root is refreshed, or the next plan closes the port. `txid-display-retire`
+removes it and plans the closing change.
+
 ## Capacity
 
 Each ordered shard group owns three shards and has two active-active replicas.
