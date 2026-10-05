@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
@@ -214,6 +214,11 @@ pub struct Worker {
     /// Sealed digests the active map names, when the controller knows them.
     pub sealed: Option<Vec<String>>,
     pub staged: BTreeSet<String>,
+    /// A recent replica's undelivered invalidation: the lowest height a
+    /// rollback replaced since it last acknowledged one. It is delivered
+    /// before the replica is offered anything newer, so it never withdraws a
+    /// revision built after the rollback.
+    pub invalidate_from: Option<u64>,
 }
 
 /// Per-stage milliseconds of one activation.
@@ -259,6 +264,7 @@ impl Fleet {
                     active_dir: None,
                     sealed: None,
                     staged: BTreeSet::new(),
+                    invalidate_from: None,
                 })
                 .collect(),
         }
@@ -285,29 +291,44 @@ impl Fleet {
         errors
     }
 
-    /// Whether any worker is behind `map`: a recent replica not serving it, or
-    /// an archive owner not serving its sealed set.
+    /// Whether any worker is behind `map`: a recent replica not serving it or
+    /// owed an invalidation, or an archive owner not serving its sealed set.
     pub fn stale(&self, sha: &str, map: &transparent_shard::display::DisplayMap) -> bool {
         let sealed = sealed_digests(map);
         self.workers.iter().any(|w| match w.config.role {
-            WorkerRole::RecentReplica => w.expected != sha,
+            WorkerRole::RecentReplica => w.expected != sha || w.invalidate_from.is_some(),
             WorkerRole::ArchiveOwner => w.sealed.as_ref() != Some(&sealed),
         })
     }
 
     /// Publishes a candidate: archive owners whose sealed set differs first,
-    /// then every recent replica not already serving it. An archive failure
-    /// leaves recent replicas untouched.
+    /// then, when `recent`, every recent replica not already serving it. An
+    /// archive failure leaves recent replicas untouched, and so does an
+    /// invalidation a recent replica has not acknowledged yet
+    /// ([`Fleet::invalidate`] goes first).
     pub async fn activate(
         &mut self,
         candidate: &Path,
         sha: &str,
         map: &transparent_shard::display::DisplayMap,
+        recent: bool,
     ) -> Result<ActivationReport, String> {
         let sealed = sealed_digests(map);
         let mut report = ActivationReport::default();
-        for role in [WorkerRole::ArchiveOwner, WorkerRole::RecentReplica] {
+        let roles: &[WorkerRole] = if recent {
+            &[WorkerRole::ArchiveOwner, WorkerRole::RecentReplica]
+        } else {
+            &[WorkerRole::ArchiveOwner]
+        };
+        for &role in roles {
             for worker in self.workers.iter_mut().filter(|w| w.config.role == role) {
+                if let Some(from) = worker.invalidate_from {
+                    return Err(format!(
+                        "{} {}: invalidation from {from} is not acknowledged",
+                        role.as_str(),
+                        worker.config.name
+                    ));
+                }
                 let current = match role {
                     WorkerRole::ArchiveOwner => worker.sealed.as_ref() == Some(&sealed),
                     WorkerRole::RecentReplica => worker.expected == sha,
@@ -327,25 +348,77 @@ impl Fleet {
         Ok(report)
     }
 
-    /// Withdraws recent revisions reaching `from_height` on recent replicas.
-    /// Archive owners keep serving: nothing sealed can be affected.
-    pub async fn invalidate(&mut self, from_height: u64) -> Vec<(String, String)> {
+    /// Owes every recent replica an invalidation from `from_height`, merged
+    /// with any it still owes. Archive owners keep serving: nothing sealed can
+    /// be affected.
+    pub fn queue_invalidation(&mut self, from_height: u64) {
+        for worker in self
+            .workers
+            .iter_mut()
+            .filter(|w| w.config.role == WorkerRole::RecentReplica)
+        {
+            worker.invalidate_from = Some(
+                worker
+                    .invalidate_from
+                    .map_or(from_height, |h| h.min(from_height)),
+            );
+        }
+    }
+
+    /// Undelivered invalidations by worker name, as `invalidate.json` keeps them.
+    pub fn invalidations(&self) -> BTreeMap<String, u64> {
+        self.workers
+            .iter()
+            .filter_map(|w| w.invalidate_from.map(|h| (w.config.name.clone(), h)))
+            .collect()
+    }
+
+    /// Restores invalidations a previous run had not delivered.
+    pub fn restore_invalidations(&mut self, pending: &BTreeMap<String, u64>) {
+        for worker in self
+            .workers
+            .iter_mut()
+            .filter(|w| w.config.role == WorkerRole::RecentReplica)
+        {
+            if let Some(from) = pending.get(&worker.config.name) {
+                worker.invalidate_from = Some(*from);
+            }
+        }
+    }
+
+    /// Delivers every owed invalidation. A replica whose state is unknown is
+    /// read first, so the call names the map it actually serves, whichever
+    /// map that is; a failure keeps the invalidation owed.
+    pub async fn invalidate(
+        &mut self,
+        current: (&str, &transparent_shard::display::DisplayMap),
+    ) -> Vec<(String, String)> {
         let mut errors = Vec::new();
         for worker in self
             .workers
             .iter_mut()
-            .filter(|w| w.config.role == WorkerRole::RecentReplica && w.known)
+            .filter(|w| w.invalidate_from.is_some())
         {
-            let command = json!({"operation": "invalidate", "expected": worker.expected,
-                "from_height": from_height});
-            if let Err(error) = worker
-                .config
-                .transport
-                .control(&worker.config.name, command, CONTROL_TIMEOUT)
-                .await
-            {
-                worker.known = false;
-                errors.push((worker.config.name.clone(), error));
+            let result = async {
+                if !worker.known {
+                    refresh_worker(worker, current).await?;
+                }
+                let from_height = worker.invalidate_from.expect("filtered");
+                let command = json!({"operation": "invalidate", "expected": worker.expected,
+                    "from_height": from_height});
+                worker
+                    .config
+                    .transport
+                    .control(&worker.config.name, command, CONTROL_TIMEOUT)
+                    .await
+            }
+            .await;
+            match result {
+                Ok(_) => worker.invalidate_from = None,
+                Err(error) => {
+                    worker.known = false;
+                    errors.push((worker.config.name.clone(), error));
+                }
             }
         }
         errors

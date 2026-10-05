@@ -9,6 +9,10 @@
 //! Every source refuses a fork whose common ancestor lies below the sealed
 //! floor (the end of the last published or queued seal, or the display
 //! start's parent). A sealed range is never rewritten; the controller halts.
+//!
+//! A source that rolls the journal back calls the controller's
+//! [`BeforeRollback`] first, so the invalidation the rollback calls for is
+//! durable before any published block leaves the journal.
 
 use super::cache::DisplayCache;
 use super::now_ms;
@@ -57,6 +61,11 @@ pub enum SourceError {
     #[error("{0}")]
     Transient(String),
 }
+
+/// Called with the common ancestor and its hash before a source rolls the
+/// journal back to it. An error leaves the journal untouched and fails the
+/// poll.
+pub type BeforeRollback<'a> = &'a mut (dyn FnMut(u64, BlockHash) -> Result<(), String> + Send);
 
 fn transient(error: impl std::fmt::Display) -> SourceError {
     SourceError::Transient(error.to_string())
@@ -149,6 +158,7 @@ impl LiveSource {
         store: &mut EventStore,
         cache: &DisplayCache,
         floor: u64,
+        before_rollback: BeforeRollback<'_>,
     ) -> Result<SourceUpdate, SourceError> {
         self.last_poll = Some(Instant::now());
         let journal_end = store
@@ -175,14 +185,15 @@ impl LiveSource {
         // Walk back to the highest journal block the node agrees with. The
         // walk never passes the floor: a fork there must not touch the journal.
         let mut ancestor = journal_end;
-        loop {
+        let ours = loop {
             let ours = store
                 .block_at(ancestor)
                 .ok_or_else(|| transient("missing journal block"))?
-                .block_hash
-                .to_display_hex();
-            if ancestor <= tip && self.rpc.block_hash(ancestor).await.map_err(transient)? == ours {
-                break;
+                .block_hash;
+            if ancestor <= tip
+                && self.rpc.block_hash(ancestor).await.map_err(transient)? == ours.to_display_hex()
+            {
+                break ours;
             }
             if ancestor <= floor {
                 return Err(SourceError::SealedReorg {
@@ -191,9 +202,10 @@ impl LiveSource {
                 });
             }
             ancestor -= 1;
-        }
+        };
         let mut update = SourceUpdate::default();
         if ancestor != journal_end {
+            before_rollback(ancestor, ours).map_err(SourceError::Transient)?;
             store.rollback_to(Some(ancestor))?;
             self.outputs = OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS);
             // Replacement blocks are observed now, not when the orphans were.
@@ -329,6 +341,11 @@ pub enum ScriptStep {
         ancestor: u64,
         blocks: Vec<(BlockHash, Vec<TransparentDisplayRecord>)>,
     },
+    /// Append these blocks to the journal and show them.
+    Extend(Vec<(BlockHash, Vec<TransparentDisplayRecord>)>),
+    /// Roll the journal back to `ancestor`, then fail as a journal write
+    /// would before ingesting the replacement: the controller exits.
+    FailAfterRollback(u64),
 }
 
 #[derive(Default)]
@@ -348,7 +365,22 @@ impl Script {
         store: &mut EventStore,
         cache: &DisplayCache,
         floor: u64,
+        before_rollback: BeforeRollback<'_>,
     ) -> Result<SourceUpdate, SourceError> {
+        let mut roll_back = |store: &mut EventStore, ancestor: u64| {
+            if ancestor < floor {
+                return Err(SourceError::SealedReorg {
+                    ancestor: i128::from(ancestor),
+                    floor,
+                });
+            }
+            let hash = store
+                .block_at(ancestor)
+                .ok_or_else(|| transient(format!("no journal block at {ancestor}")))?
+                .block_hash;
+            before_rollback(ancestor, hash).map_err(SourceError::Transient)?;
+            Ok(store.rollback_to(Some(ancestor))?)
+        };
         match self.steps.pop_front() {
             None => Ok(SourceUpdate::default()),
             Some(ScriptStep::Advance(through)) => {
@@ -361,33 +393,37 @@ impl Script {
                 Ok(update)
             }
             Some(ScriptStep::Reorg { ancestor, blocks }) => {
-                if ancestor < floor {
-                    return Err(SourceError::SealedReorg {
-                        ancestor: i128::from(ancestor),
-                        floor,
-                    });
-                }
-                store.rollback_to(Some(ancestor))?;
-                let mut update = SourceUpdate {
-                    rollback_to: Some(ancestor),
-                    ..Default::default()
-                };
-                for (offset, (hash, records)) in blocks.into_iter().enumerate() {
-                    let height = ancestor + 1 + offset as u64;
-                    store.append_block_with_display(height, hash, &[], &records)?;
-                    update.blocks.push(SourceBlock {
-                        height,
-                        hash,
-                        records,
-                        observed_ms: now_ms(),
-                        ingested_ms: now_ms(),
-                    });
-                }
-                store.commit()?;
-                Ok(update)
+                roll_back(store, ancestor)?;
+                append(store, blocks)?;
+                // The cache learns of the rollback from the journal.
+                from_journal(store, cache, floor, (u64::MAX, u64::MAX), |_| now_ms())
+            }
+            Some(ScriptStep::Extend(blocks)) => {
+                append(store, blocks)?;
+                from_journal(store, cache, floor, (u64::MAX, u64::MAX), |_| now_ms())
+            }
+            Some(ScriptStep::FailAfterRollback(ancestor)) => {
+                roll_back(store, ancestor)?;
+                Err(SourceError::Store(EventStoreError::Invariant(
+                    "scripted journal failure".into(),
+                )))
             }
         }
     }
+}
+
+/// Commits `blocks` after the journal's end.
+fn append(
+    store: &mut EventStore,
+    blocks: Vec<(BlockHash, Vec<TransparentDisplayRecord>)>,
+) -> Result<(), EventStoreError> {
+    let next = store
+        .covered_through()
+        .map_or(store.start_height(), |h| h + 1);
+    for (offset, (hash, records)) in blocks.into_iter().enumerate() {
+        store.append_block_with_display(next + offset as u64, hash, &[], &records)?;
+    }
+    store.commit()
 }
 
 /// The source a controller runs with.
@@ -432,6 +468,7 @@ impl Source {
         store: &mut EventStore,
         cache: &DisplayCache,
         floor: u64,
+        before_rollback: BeforeRollback<'_>,
     ) -> Result<SourceUpdate, SourceError> {
         if let Self::Replay(replay, live) = self {
             if replay.exhausted(cache) && live.is_some() {
@@ -443,9 +480,9 @@ impl Source {
             }
         }
         match self {
-            Self::Live(live) => live.poll(store, cache, floor).await,
+            Self::Live(live) => live.poll(store, cache, floor, before_rollback).await,
             Self::Replay(replay, _) => replay.poll(store, cache, floor),
-            Self::Script(script) => script.poll(store, cache, floor),
+            Self::Script(script) => script.poll(store, cache, floor, before_rollback),
         }
     }
 }

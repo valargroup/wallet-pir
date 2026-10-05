@@ -14,6 +14,12 @@
 //! the previous ones (minus window drops) halts the controller: it writes
 //! `halted.json`, logs `alert=txid_display_halt`, and stops publishing while
 //! workers keep serving the last activation.
+//!
+//! A rollback owes every recent replica an invalidation. It is recorded in
+//! `invalidate.json` before the journal changes and kept until each replica
+//! acknowledges it, and a replica is offered nothing newer until then. A
+//! restart that finds the journal off the activated chain without such a
+//! record withdraws the whole recent range.
 
 use super::cache::DisplayCache;
 use super::now_ms;
@@ -26,18 +32,23 @@ use super::source::{Source, SourceError, SourceUpdate};
 use super::timeline::{HeightIndex, Timeline};
 use crate::events::EventStore;
 use crate::publication::{write_atomic, BoxError, Journal};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
+use transparent_filter::BlockHash;
 use transparent_shard::display::{plan_seals, DisplayManifest, DisplayMap, DisplayMapEntry};
 use transparent_shard::manifest::PublishedRevision;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.
 const WORKER_COLLECT_EVERY: u64 = 20;
+/// Invalidations recent replicas have not acknowledged, and the lowest
+/// rollback since the last activation.
+pub const INVALIDATE_FILE: &str = "invalidate.json";
 
 pub struct Settings {
     /// Skip re-verifying sealed revisions at startup.
@@ -172,6 +183,62 @@ fn ms(started: Instant) -> u64 {
     started.elapsed().as_millis() as u64
 }
 
+/// The lowest rollback since a candidate last went out to workers, made while
+/// `map_sha256` was active. Its ancestor was on that map's chain, so a
+/// journal that still holds it agrees with everything replicas can serve
+/// through it, and the invalidations queued with it cover the rest.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+struct RollbackRecord {
+    map_sha256: String,
+    ancestor: u64,
+    hash: String,
+}
+
+/// `invalidate.json`.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+struct Invalidations {
+    /// Each recent replica's unacknowledged `from_height`.
+    pending: BTreeMap<String, u64>,
+    rollback: Option<RollbackRecord>,
+}
+
+impl Invalidations {
+    fn load(root: &Path) -> Result<Self, BoxError> {
+        match std::fs::read(root.join(INVALIDATE_FILE)) {
+            Ok(bytes) => Ok(serde_json::from_slice(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn store(&self, root: &Path) -> Result<(), BoxError> {
+        write_atomic(
+            &root.join(INVALIDATE_FILE),
+            &serde_json::to_vec_pretty(self)?,
+        )
+    }
+}
+
+/// Keeps the lowest rollback under the active map.
+fn note_rollback(
+    record: &mut Option<RollbackRecord>,
+    map_sha256: &str,
+    ancestor: u64,
+    hash: BlockHash,
+) {
+    if record
+        .as_ref()
+        .is_some_and(|r| r.map_sha256 == map_sha256 && r.ancestor <= ancestor)
+    {
+        return;
+    }
+    *record = Some(RollbackRecord {
+        map_sha256: map_sha256.to_string(),
+        ancestor,
+        hash: hash.to_display_hex(),
+    });
+}
+
 /// Checks that `next` lists the sealed entries of `previous` unchanged, after
 /// dropping the oldest `dropped` of them, before anything new.
 pub fn check_sealed_continuity(
@@ -216,6 +283,9 @@ pub struct Controller {
     halted: Option<String>,
     failures: u32,
     retry_at: Option<Instant>,
+    rollback: Option<RollbackRecord>,
+    /// What `invalidate.json` holds.
+    saved_invalidations: Invalidations,
     last_cycle: Value,
     maps: Vec<DisplayMap>,
     _lock: std::fs::File,
@@ -227,7 +297,10 @@ impl Controller {
     /// Sealed terminals must still be the journal's blocks, and sealed
     /// revisions must verify from disk (unless trusted). The cache is reloaded
     /// from the recent shard's start through the activated tip; queued seals
-    /// are planned again from it and reproduce the same digests.
+    /// are planned again from it and reproduce the same digests. Undelivered
+    /// invalidations are restored. A journal that no longer holds the
+    /// activated tip, unless a recorded rollback accounts for it, owes every
+    /// recent replica an invalidation from the recent start.
     pub fn open(
         root: &Path,
         store: EventStore,
@@ -301,11 +374,41 @@ impl Controller {
         let cache =
             DisplayCache::load(&store, layout.seal, recent.start_height, through, now_ms())?;
         let index = HeightIndex::open(root)?;
+        let mut fleet = Fleet::new(workers);
+        let saved_invalidations = Invalidations::load(root)?;
+        fleet.restore_invalidations(&saved_invalidations.pending);
+        let journal_hash = |height: u64| {
+            store
+                .block_at(height)
+                .map(|b| b.block_hash.to_display_hex())
+        };
+        // Off the activated chain, replicas may serve blocks the journal no
+        // longer holds. A recorded rollback whose ancestor the journal still
+        // holds queued every invalidation that calls for. Otherwise where they
+        // differ is unknown, but sealed terminals are checked below, so
+        // everything from the recent start is enough.
+        let off_chain = journal_hash(active.tip).as_deref() != Some(active.tip_hash.as_str());
+        let recorded = saved_invalidations
+            .rollback
+            .as_ref()
+            .filter(|r| {
+                r.map_sha256 == active.map_sha256
+                    && journal_hash(r.ancestor).as_deref() == Some(r.hash.as_str())
+            })
+            .map(|r| r.ancestor + 1);
+        let replaced_from = match (off_chain, recorded) {
+            (false, _) => None,
+            (true, Some(from)) => Some(from),
+            (true, None) => {
+                fleet.queue_invalidation(recent.start_height);
+                Some(recent.start_height)
+            }
+        };
         let (sender, receiver) = mpsc::unbounded_channel();
         let mut controller = Self {
             root: root.to_path_buf(),
             published_tip: (active.tip, active.tip_hash.clone()),
-            fleet: Fleet::new(workers),
+            fleet,
             layout,
             store,
             source,
@@ -325,15 +428,26 @@ impl Controller {
             halted,
             failures: 0,
             retry_at: None,
+            rollback: saved_invalidations.rollback.clone(),
+            saved_invalidations,
             last_cycle: Value::Null,
             maps: Vec::new(),
             _lock: lock,
         };
         if controller.halted.is_none() {
             match controller.check_sealed() {
-                Ok(()) => controller.sync_index()?,
+                Ok(()) => controller.sync_index(replaced_from)?,
                 Err(halt) => controller.halt(halt),
             }
+        }
+        if let Some(from) = replaced_from {
+            controller.timeline.record(
+                "reorg",
+                json!({"from_height": from, "old_tip": controller.active.tip,
+                    "journal_end": controller.store.covered_through(),
+                    "recovered": if recorded.is_some() { "recorded" } else { "recent_start" }}),
+            );
+            controller.save_invalidations();
         }
         Ok(controller)
     }
@@ -378,14 +492,17 @@ impl Controller {
     }
 
     /// Brings the tooling index to the cache tip: drops anything above it,
-    /// then rewrites the last indexed height (which may be torn) onwards.
-    fn sync_index(&mut self) -> Result<(), BoxError> {
+    /// then rewrites the last indexed height (which may be torn) onwards, or
+    /// from `rewrite_from` when that is lower, for heights a rollback the
+    /// index never saw may have replaced.
+    fn sync_index(&mut self, rewrite_from: Option<u64>) -> Result<(), BoxError> {
         let tip = self.cache.next_height() - 1;
         self.index.truncate_after(tip)?;
         let from = match self.index.last_height()? {
             Some(last) => {
-                self.index.truncate_after(last - 1)?;
-                last
+                let from = rewrite_from.map_or(last, |h| h.min(last));
+                self.index.truncate_after(from - 1)?;
+                from
             }
             None => self.layout.start_height,
         };
@@ -548,7 +665,30 @@ impl Controller {
 
     async fn poll_source(&mut self) -> Result<(), BoxError> {
         let floor = self.sealed_floor();
-        match self.source.poll(&mut self.store, &self.cache, floor).await {
+        let (fleet, rollback, saved, root, active) = (
+            &mut self.fleet,
+            &mut self.rollback,
+            &mut self.saved_invalidations,
+            &self.root,
+            &self.active.map_sha256,
+        );
+        let mut before_rollback = |ancestor: u64, hash: BlockHash| {
+            fleet.queue_invalidation(ancestor + 1);
+            note_rollback(rollback, active, ancestor, hash);
+            let next = Invalidations {
+                pending: fleet.invalidations(),
+                rollback: rollback.clone(),
+            };
+            next.store(root)
+                .map_err(|e| format!("recording the invalidation from {}: {e}", ancestor + 1))?;
+            *saved = next;
+            Ok(())
+        };
+        let polled = self
+            .source
+            .poll(&mut self.store, &self.cache, floor, &mut before_rollback)
+            .await;
+        match polled {
             Ok(update) => self.apply(update).await?,
             Err(SourceError::SealedReorg { ancestor, floor }) => {
                 self.timeline.record(
@@ -574,10 +714,21 @@ impl Controller {
                 json!({"ancestor": ancestor, "from_height": ancestor + 1, "old_tip": old_tip,
                     "depth": old_tip.map(|t| t.saturating_sub(ancestor))}),
             );
-            if ancestor < self.published_tip.0 {
-                let errors = self.fleet.invalidate(ancestor + 1).await;
-                self.record_worker_errors("invalidate", errors);
+            // A replica may serve more than the controller activated (an
+            // activation whose reply was lost), so every rollback is withdrawn;
+            // one above everything served withdraws nothing. Sources that roll
+            // the journal back have recorded this already.
+            self.fleet.queue_invalidation(ancestor + 1);
+            if let Some(block) = self.store.block_at(ancestor) {
+                note_rollback(
+                    &mut self.rollback,
+                    &self.active.map_sha256,
+                    ancestor,
+                    block.block_hash,
+                );
             }
+            self.save_invalidations();
+            self.deliver_invalidations().await;
             self.cache.truncate_after(ancestor);
             if let Err(error) = self.index.truncate_after(ancestor) {
                 tracing::error!(%error, "height index truncation failed");
@@ -894,9 +1045,22 @@ impl Controller {
             .refresh((&self.active.map_sha256, &self.map))
             .await;
         self.record_worker_errors("status", errors);
+        self.deliver_invalidations().await;
+        // The rollback record vouches only for what replicas held when it was
+        // made. This candidate may reach some replicas without being
+        // committed, so a restart from here on withdraws the recent range.
+        if self.rollback.is_some() {
+            let next = Invalidations {
+                pending: self.fleet.invalidations(),
+                rollback: None,
+            };
+            next.store(&self.root).map_err(retry)?;
+            self.saved_invalidations = next;
+            self.rollback = None;
+        }
         let report = self
             .fleet
-            .activate(&candidate, &sha, &map)
+            .activate(&candidate, &sha, &map, true)
             .await
             .map_err(CycleError::Retry)?;
         let activated_ms = now_ms();
@@ -973,18 +1137,38 @@ impl Controller {
     }
 
     /// Activates the current candidate on workers that are behind it, such as
-    /// a worker that restarted, or every worker right after bootstrap.
+    /// a worker that restarted, or every worker right after bootstrap, and
+    /// delivers owed invalidations.
+    ///
+    /// Recent replicas are left alone while the journal no longer holds the
+    /// activated tip: a replica that never held that map was not invalidated
+    /// for it, and would serve its orphaned blocks.
     async fn sync_workers(&mut self) -> Result<(), CycleError> {
         let errors = self
             .fleet
             .refresh((&self.active.map_sha256, &self.map))
             .await;
         self.record_worker_errors("status", errors);
+        self.deliver_invalidations().await;
+        let on_chain = self
+            .store
+            .block_at(self.active.tip)
+            .is_some_and(|b| b.block_hash.to_display_hex() == self.active.tip_hash);
         let report = self
             .fleet
-            .activate(&self.active.directory, &self.active.map_sha256, &self.map)
+            .activate(
+                &self.active.directory,
+                &self.active.map_sha256,
+                &self.map,
+                on_chain,
+            )
             .await
             .map_err(CycleError::Retry)?;
+        if !on_chain && self.fleet.stale(&self.active.map_sha256, &self.map) {
+            return Err(retry(
+                "the activated tip left the journal; recent replicas wait for the next cycle",
+            ));
+        }
         if !report.workers.is_empty() {
             self.timeline.record(
                 "sync",
@@ -1015,6 +1199,42 @@ impl Controller {
         }
     }
 
+    /// Mirrors owed invalidations and the rollback record into
+    /// `invalidate.json`. A failed write leaves them in memory, and the next
+    /// change retries.
+    fn save_invalidations(&mut self) {
+        let next = Invalidations {
+            pending: self.fleet.invalidations(),
+            rollback: self.rollback.clone(),
+        };
+        if next == self.saved_invalidations {
+            return;
+        }
+        match next.store(&self.root) {
+            Ok(()) => self.saved_invalidations = next,
+            Err(error) => {
+                tracing::error!(%error, "invalidate.json write failed");
+                self.timeline.record(
+                    "error",
+                    json!({"stage": "invalidate_record", "error": error.to_string()}),
+                );
+            }
+        }
+    }
+
+    /// Delivers owed invalidations ahead of any activation.
+    async fn deliver_invalidations(&mut self) {
+        if self.fleet.invalidations().is_empty() {
+            return;
+        }
+        let errors = self
+            .fleet
+            .invalidate((&self.active.map_sha256, &self.map))
+            .await;
+        self.record_worker_errors("invalidate", errors);
+        self.save_invalidations();
+    }
+
     fn record_worker_errors(&self, stage: &str, errors: Vec<(String, String)>) {
         for (worker, error) in errors {
             tracing::warn!(stage, worker, %error, "display worker call failed");
@@ -1041,7 +1261,8 @@ impl Controller {
             "failures": self.failures,
             "workers": self.fleet.workers.iter().map(|w| json!({
                 "name": w.config.name, "role": w.config.role.as_str(), "known": w.known,
-                "expected": w.expected, "staged": w.staged})).collect::<Vec<_>>(),
+                "expected": w.expected, "staged": w.staged,
+                "invalidate_from": w.invalidate_from})).collect::<Vec<_>>(),
             "updated_ms": now_ms(),
         });
         *self.settings.status.write().unwrap() = status;

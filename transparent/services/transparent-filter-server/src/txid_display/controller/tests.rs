@@ -51,6 +51,7 @@ async fn run_script(
     settings: Settings,
 ) -> Run {
     let store = open_writer(journal).unwrap();
+    let status = settings.status.clone();
     let mut controller = Controller::open(
         root,
         store,
@@ -61,7 +62,7 @@ async fn run_script(
     .unwrap();
     let outcome = tokio::time::timeout(Duration::from_secs(120), controller.run())
         .await
-        .expect("the controller settles")
+        .unwrap_or_else(|_| panic!("the controller settles: {}", status.read().unwrap()))
         .unwrap();
     Run {
         outcome,
@@ -251,7 +252,7 @@ async fn reorgs_rebuild_recent_and_a_sealed_fork_halts() {
             before.shards.last().unwrap().manifest_digest
         );
     }
-    // Only published coverage is withdrawn, from the first replaced height.
+    // Published coverage is withdrawn from the first replaced height.
     let invalidations: Vec<_> = log
         .lock()
         .unwrap()
@@ -423,6 +424,11 @@ struct Fake {
     active: Option<(String, String, Vec<String>)>,
     prepared: Option<(String, String, Vec<String>)>,
     staged: BTreeSet<String>,
+    /// Refuse this many invalidations.
+    fail_invalidations: u32,
+    /// Apply this activation (counting from 1) but reply that it failed.
+    lose_activation: Option<usize>,
+    activations: usize,
 }
 
 fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
@@ -489,6 +495,10 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                 Some(prepared) if command["map_sha256"] == prepared.0 => {
                     state.staged.retain(|d| !prepared.2.contains(d));
                     state.active = Some(prepared);
+                    state.activations += 1;
+                    if state.lose_activation == Some(state.activations) {
+                        return fail("reply lost".into());
+                    }
                     json!({"ok": true})
                 }
                 other => {
@@ -497,7 +507,17 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                 }
             }
         }
-        "invalidate" | "collect" => json!({"ok": true, "removed": []}),
+        "invalidate" => {
+            if command["expected"] != expected {
+                return fail("active predecessor changed".into());
+            }
+            if state.fail_invalidations > 0 {
+                state.fail_invalidations -= 1;
+                return fail("invalidation refused".into());
+            }
+            json!({"ok": true})
+        }
+        "collect" => json!({"ok": true, "removed": []}),
         "discard" => {
             state.prepared = None;
             json!({"ok": true})
@@ -636,6 +656,170 @@ async fn archive_owners_stage_before_any_map_names_a_seal() {
         .join("txid-shards.json")
         .exists());
     assert!(archive.staged.is_empty());
+}
+
+fn commands(log: &Log, worker: &str) -> Vec<Value> {
+    log.lock()
+        .unwrap()
+        .iter()
+        .filter(|(w, _)| w == worker)
+        .map(|(_, c)| c.clone())
+        .collect()
+}
+
+fn invalidated(log: &Log) -> Vec<u64> {
+    commands(log, "recent")
+        .iter()
+        .filter(|c| c["operation"] == "invalidate")
+        .map(|c| c["from_height"].as_u64().unwrap())
+        .collect()
+}
+
+fn pending_invalidations(root: &Path) -> Value {
+    serde_json::from_slice::<Value>(&std::fs::read(root.join(INVALIDATE_FILE)).unwrap()).unwrap()
+        ["pending"]
+        .clone()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn invalidations_reach_every_replica_before_it_moves_on() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 118);
+    let (log, states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    {
+        let mut recent = states["recent"].lock().unwrap();
+        // Tip 119 takes effect on the replica, but the reply is lost, so the
+        // controller never commits it; then the first invalidation fails.
+        recent.lose_activation = Some(2);
+        recent.fail_invalidations = 1;
+    }
+    let workers = vec![socket_worker(
+        temp.path(),
+        "recent",
+        WorkerRole::RecentReplica,
+    )];
+    let steps = vec![
+        ScriptStep::Advance(119),
+        ScriptStep::Reorg {
+            ancestor: 118,
+            blocks: fork(1, 119, 121),
+        },
+    ];
+    let run = run_script(&root, &journal, steps, workers, settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let ops = commands(&log, "recent");
+    let lost = ops
+        .iter()
+        .filter(|c| c["operation"] == "activate")
+        .nth(1)
+        .unwrap()["map_sha256"]
+        .clone();
+    // Above the committed tip but below what the replica serves: withdrawn
+    // anyway, naming the map the replica actually serves, and retried.
+    let invalidations: Vec<usize> = (0..ops.len())
+        .filter(|i| ops[*i]["operation"] == "invalidate")
+        .collect();
+    assert_eq!(invalidated(&log), vec![119, 119]);
+    assert!(invalidations.iter().all(|i| ops[*i]["expected"] == lost));
+    // Nothing newer reaches the replica until it acknowledges.
+    assert!(ops[invalidations[0]..invalidations[1]]
+        .iter()
+        .all(|c| c["operation"] != "prepare" && c["operation"] != "activate"));
+    assert_eq!(run.active.tip, 121);
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        run.active.map_sha256
+    );
+    assert_eq!(pending_invalidations(&root), json!({}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_restart_after_a_rollback_still_invalidates() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 118);
+    let (log, _states) = spawn_fakes(temp.path(), &[("recent", "recent-replica")]);
+    let workers = vec![socket_worker(
+        temp.path(),
+        "recent",
+        WorkerRole::RecentReplica,
+    )];
+
+    // Tip 121 is published; the journal then rolls back to 119 and the next
+    // journal write fails, before the controller hears of the rollback.
+    let steps = [ScriptStep::Advance(121), ScriptStep::FailAfterRollback(119)];
+    let mut controller = Controller::open(
+        &root,
+        open_writer(&journal).unwrap(),
+        Source::Script(Script::new(steps)),
+        workers.clone(),
+        settings(),
+    )
+    .unwrap();
+    let error = tokio::time::timeout(Duration::from_secs(120), controller.run())
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(error.to_string().contains("scripted journal failure"));
+    assert_eq!(controller.active().tip, 121);
+    drop(controller);
+    assert!(invalidated(&log).is_empty());
+    assert_eq!(pending_invalidations(&root), json!({"recent": 120}));
+
+    // The restart withdraws exactly what the rollback replaced.
+    let steps = vec![ScriptStep::Extend(fork(1, 120, 122))];
+    let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(invalidated(&log), vec![120]);
+    assert_eq!(run.active.tip_hash, block_hash(1, 122).to_display_hex());
+    assert_eq!(pending_invalidations(&root), json!({}));
+
+    // A journal moved without a record (another writer, while the controller
+    // was down) withdraws the whole recent range, and the tooling index is
+    // rewritten over it.
+    let recent_start = active_map(&root).shards.last().unwrap().start_height;
+    {
+        let mut store = open_writer(&journal).unwrap();
+        store.rollback_to(Some(120)).unwrap();
+        for (h, (hash, records)) in (121..).zip(fork(2, 121, 122)) {
+            store
+                .append_block_with_display(h, hash, &[], &records)
+                .unwrap();
+        }
+        store.commit().unwrap();
+    }
+    let run = run_script(&root, &journal, vec![], workers, settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(invalidated(&log), vec![120, recent_start]);
+    assert_eq!(run.active.tip_hash, block_hash(2, 122).to_display_hex());
+    let index: BTreeSet<_> = HeightIndex::open(&root)
+        .unwrap()
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .collect();
+    let txids = |tag: u8, h: u64| -> Vec<([u8; 32], u64)> {
+        chain_records(tag, h)
+            .iter()
+            .map(|r| (r.txid.0, h))
+            .collect()
+    };
+    for (tag, h) in [(0, 120), (0, 121), (1, 121), (1, 122)] {
+        assert!(
+            txids(tag, h).iter().all(|t| !index.contains(t)),
+            "{tag}@{h}"
+        );
+    }
+    for (tag, h) in [(1, 120), (2, 121), (2, 122)] {
+        assert!(txids(tag, h).iter().all(|t| index.contains(t)), "{tag}@{h}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
