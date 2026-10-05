@@ -1124,7 +1124,15 @@ impl ShardSet {
 fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
     use std::os::unix::fs::MetadataExt;
     let mut shard = old.clone();
-    for source in shard.directory.iter_mut().chain(shard.pages.iter_mut()) {
+    // Every table, display included: a source left pointing into the old
+    // directory fails its next cold build once that directory is collected.
+    for source in shard
+        .directory
+        .iter_mut()
+        .chain(shard.pages.iter_mut())
+        .chain(shard.txdirectory.iter_mut())
+        .chain(shard.txpages.iter_mut())
+    {
         let next = dir.join(source.path.file_name()?);
         let a = std::fs::metadata(&source.path).ok()?;
         let b = std::fs::metadata(&next).ok()?;
