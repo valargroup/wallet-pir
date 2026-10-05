@@ -71,13 +71,28 @@ ROUTER_PROXY_ERRORS = ('\n\thandle_errors {\n\t\theader Retry-After 1\n'
 OPERATIONAL_KEYS = ('control_sessions', 'status_socket_forwarding', 'headless_console', 'storage_nodiscard',
                     'manage_all_workers', 'managed_recent_workers', 'reconcile_workers',
                     'membership_failures', 'membership_failure_seconds', 'activation_grace_seconds',
-                    'activation_lock_seconds', 'prepare_grace_seconds')
+                    'activation_lock_seconds', 'prepare_grace_seconds', 'route_imports')
 ASSIGNMENT_SCHEMA = 'transparent-assignment-v1'
+# Absolute Caddyfile import globs only: the value is spliced into both sites.
+ROUTE_IMPORT = re.compile(r'/[A-Za-z0-9_.*/-]+\.caddy')
 
 
 def carry_operational(config, previous):
     """`config` with every operational setting of `previous` carried over."""
     return {**config, **{key: previous[key] for key in OPERATIONAL_KEYS if key in previous}}
+
+
+def route_import_lines(config):
+    """Opt-in `import` lines for routes another product owns, e.g. txid display.
+
+    Absent or empty renders nothing, so the router bytes stay identical. The
+    withdrawn router never imports: its exact bytes attest rollback captures.
+    """
+    imports = config.get('route_imports') or []
+    if not isinstance(imports, list) or not all(
+            isinstance(glob, str) and ROUTE_IMPORT.fullmatch(glob) and '..' not in glob for glob in imports):
+        raise ValueError('invalid route imports')
+    return ['\timport ' + glob for glob in imports]
 
 
 def atomic_json(path, value):
@@ -658,6 +673,7 @@ class Fleet:
         authority = self.c['authority_upstream']
         if not re.fullmatch(r'[A-Za-z0-9_.:-]+', host) or not re.fullmatch(r'(https://)?[A-Za-z0-9_.:-]+', authority):
             raise ValueError('invalid router addresses')
+        imports = route_import_lines(self.c)
         body = ['\trequest_body {\n\t\tmax_size 1MB\n\t}']
         if workers:
             workers = self.render_set(workers, assignment)
@@ -675,7 +691,8 @@ class Fleet:
                 pattern = '|'.join(map(str,ids))
                 body += [f'\t@{name} path_regexp ^/v1/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
                          f'\thandle @{name} {{\n\t\treverse_proxy {" ".join(upstreams)} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n{ROUTER_HEALTH}\t\t}}\n\t}}']
-            body += ['\t@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest',
+            body += [*imports,
+                     '\t@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest',
                      f'\thandle @metadata {{\n\t\treverse_proxy {authority} {{\n\t\t\theader_up Host {{upstream_hostport}}\n\t\t}}\n\t}}', '\thandle {\n\t\trespond 404\n\t}',
                      ROUTER_PROXY_ERRORS.rstrip('\n')]
         else:
