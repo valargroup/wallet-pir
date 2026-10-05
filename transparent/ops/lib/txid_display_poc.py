@@ -954,11 +954,22 @@ class Poc:
         else:
             require(all(present.values()), '%s: release %s is partially staged; inspect it' % (key, self.release_dir))
         for name in names:
-            path = self.binary(name)
-            argv = ['/usr/bin/python3', path, '--help'] if name.endswith('.py') else [path, '--help']
+            argv, status, marker = self.self_check(name)
             code, output = self.run(key, argv, SELF_CHECK_SECONDS, check=False)
-            require(code == 0, '%s: staged %s failed its self-check (exit %d): %s' % (key, name, code, output[-500:]))
+            require(code == status and marker in output, '%s: staged %s failed its self-check (exit %d): %s'
+                    % (key, name, code, output[-500:]))
         transaction.event('%s: release staged and every executable runs' % key)
+
+    def self_check(self, name):
+        """A non-mutating invocation of a staged executable: `(argv, exit status, output marker)`."""
+        path = self.binary(name)
+        if name == 'txid-control':
+            # `txid-control SOCKET < command.json` has no --help: argv[1] is the
+            # socket. Without one it prints its usage and exits 1, touching nothing.
+            return [path], 1, 'usage: txid-control SOCKET'
+        if name.endswith('.py'):
+            return ['/usr/bin/python3', path, '--help'], 0, ''
+        return [path, '--help'], 0, ''
 
     # --------------------------------------------------------- terraform
 

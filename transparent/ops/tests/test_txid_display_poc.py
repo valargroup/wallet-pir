@@ -308,6 +308,12 @@ class Fake(Executor):
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
         command = argv[0]
+        if command.endswith('/txid-control'):
+            # `txid-control SOCKET < command.json`: argv[1] is the socket and
+            # stdin is empty here, so even `--help` fails to parse a command.
+            if len(argv) == 1:
+                return 1, 'Error: "usage: txid-control SOCKET < command.json"\n'
+            return 1, 'Error: Error("EOF while parsing a value", line: 1, column: 0)\n'
         if command == 'systemctl' and argv[1] == 'show':
             state = self.unit(host, argv[2])
             return 0, ('LoadState=%(load)s\nActiveState=%(active)s\nSubState=%(sub)s\nResult=%(result)s\n'
@@ -734,6 +740,11 @@ class StageTests(Base):
             for name in names:
                 self.assertEqual(self.fake.sha256(host, release + '/' + name),
                                  self.request['release']['binaries'].get(name) or self.request['release']['files'][name])
+                if name == 'txid-control':
+                    # Its contract has no --help; with no socket it prints its usage and exits 1.
+                    self.assertIn([release + '/' + name], self.fake.commands(host))
+                    self.assertNotIn([release + '/' + name, '--help'], self.fake.commands(host))
+                    continue
                 self.assertIn([release + '/' + name, '--help'] if not name.endswith('.py')
                               else ['/usr/bin/python3', release + '/' + name, '--help'], self.fake.commands(host))
         self.assertIsNone(self.fake.sha256('archive-03', release + '/txid-display-controller'))
@@ -742,6 +753,19 @@ class StageTests(Base):
         poc = self.poc()
         poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
         self.assertEqual(len([m for m in self.fake.mutations() if m[1] == 'upload']), uploads)
+
+    def test_a_self_check_that_fails_refuses_the_stage(self):
+        archive = self.bundle()
+        run = self.fake.run
+
+        def broken(host, argv, timeout):
+            if argv == ['/opt/transparent-txid-display/releases/%s/txid-control' % SHA]:
+                return 127, 'exec format error'
+            return run(host, argv, timeout)
+        self.fake.run = broken
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'staged txid-control failed its self-check'):
+            poc.deploy('stage', poc.plan_sha256(), archive=str(archive))
 
     def test_stage_refuses_other_bytes(self):
         archive = self.bundle()
