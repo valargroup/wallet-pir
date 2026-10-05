@@ -21,7 +21,7 @@ use super::serves;
 use super::service::{self, json, DisplayRuntime, DisplayState};
 use super::set::{DisplayRevision, DisplaySet, MANIFEST_FILE, MAP_FILE};
 use crate::assignment::WorkerRole;
-use crate::metrics::{Metrics, Snapshot};
+use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
 use axum::extract::{Request, State};
 use axum::http::StatusCode;
@@ -313,19 +313,18 @@ impl DisplayLive {
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| e.to_string())?;
-        let metrics = &self.0.runtime.metrics;
-        let before = Metrics::get(&metrics.builds);
         let mut handles = Vec::new();
+        let mut built = 0;
         for (table, segment) in revision.targets() {
-            handles.push(
-                self.0
-                    .runtime
-                    .runtime(&revision, table, segment, &NOT_CANCELLED)
-                    .await
-                    .map_err(|e| format!("staging {} {segment}: {e}", table.label()))?,
-            );
+            let (handle, produced) = self
+                .0
+                .runtime
+                .runtime(&revision, table, segment, &NOT_CANCELLED)
+                .await
+                .map_err(|e| format!("staging {} {segment}: {e}", table.label()))?;
+            handles.push(handle);
+            built += u64::from(produced);
         }
-        let built = Metrics::get(&metrics.builds).saturating_sub(before);
         tracing::info!(digest = %digest, built, seconds = started.elapsed().as_secs_f64(), "display revision staged");
         self.0.staged.lock().unwrap().insert(
             digest.clone(),
@@ -345,7 +344,6 @@ impl DisplayLive {
         let _operation = self.0.operations.clone().lock_owned().await;
         let started = std::time::Instant::now();
         let epoch = self.0.epoch.load(Ordering::Acquire);
-        let metrics = self.0.runtime.metrics.clone();
         let prepared = |state: &DisplayState, built: u64| {
             reply(serde_json::json!({
                 "warm": true,
@@ -386,7 +384,6 @@ impl DisplayLive {
         let _preparing = PreparingGuard(&self.0.preparing);
         // Release an obsolete candidate's pins before reserving anew.
         *self.0.candidate.lock().await = None;
-        let before = Metrics::get(&metrics.builds);
         let staged: Vec<DisplayRevision> = self
             .0
             .staged
@@ -437,7 +434,7 @@ impl DisplayLive {
         if !next.is_warm() {
             return Err("candidate did not become completely warm within the shared budget".into());
         }
-        let built = Metrics::get(&metrics.builds).saturating_sub(before);
+        let built = next.built();
         let result = prepared(&next, built);
         tracing::info!(map = %publication.map_sha256, built, seconds = started.elapsed().as_secs_f64(), "display publication prepared");
         *self.0.candidate.lock().await = Some(Candidate {

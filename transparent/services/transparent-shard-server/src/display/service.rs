@@ -84,27 +84,33 @@ impl DisplayRuntime {
         Ok(shared)
     }
 
-    /// Builds or finds the runtime of one segment, retrying transient
-    /// admission pressure as the prewarm does.
+    /// Finds or builds the runtime of one segment, retrying transient
+    /// admission pressure as the prewarm does. Also says whether it had to be
+    /// produced: an operation reports its own builds this way, not as a delta
+    /// of the process-wide counter, which concurrent stages and requests move.
     pub(crate) async fn runtime(
         &self,
         revision: &DisplayRevision,
         table: DisplayTable,
         segment: u32,
         cancelled: &AtomicBool,
-    ) -> Result<RuntimeHandle, CacheError> {
+    ) -> Result<(RuntimeHandle, bool), CacheError> {
         let source = revision
             .segment(table, segment)
             .cloned()
             .ok_or_else(|| CacheError::Failed("display segment is not held".into()))?;
+        let key = runtime_key(&revision.digest, table, segment);
+        if let Some(handle) = self.cache.cached(&key) {
+            return Ok((handle, false));
+        }
         let shared = self
             .params(revision.geometry, kind(table))
             .map_err(CacheError::Failed)?;
-        let key = runtime_key(&revision.digest, table, segment);
         crate::prewarm::retry(cancelled, std::time::Duration::from_secs(30), || {
             self.cache.get(key.clone(), shared.clone(), source.clone())
         })
         .await
+        .map(|handle| (handle, true))
     }
 }
 
@@ -115,6 +121,8 @@ struct WarmState {
     finished: AtomicBool,
     cancelled: AtomicBool,
     count: AtomicU64,
+    /// Targets that were not resident when the prewarm reached them.
+    built: AtomicU64,
     pins: Mutex<Vec<(String, RuntimeHandle)>>,
 }
 
@@ -232,6 +240,7 @@ impl DisplayState {
                     finished: AtomicBool::new(false),
                     cancelled: AtomicBool::new(false),
                     count: AtomicU64::new(0),
+                    built: AtomicU64::new(0),
                     pins: Mutex::new(Vec::new()),
                 },
                 prewarm_slots,
@@ -271,9 +280,12 @@ impl DisplayState {
                             .runtime(revision, table, segment, &inner.warm.cancelled)
                             .await
                         {
-                            Ok(handle) => {
+                            Ok((handle, built)) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) {
                                     break;
+                                }
+                                if built {
+                                    inner.warm.built.fetch_add(1, Ordering::Relaxed);
                                 }
                                 inner.warm.count.fetch_add(1, Ordering::Release);
                                 if inner.warm.mode == ReadinessMode::Warm {
@@ -324,6 +336,12 @@ impl DisplayState {
 
     pub fn warm_target(&self) -> usize {
         self.inner.warm.target
+    }
+
+    /// Warm targets the prewarm found not resident, so built (or restored)
+    /// for this snapshot.
+    pub fn built(&self) -> u64 {
+        self.inner.warm.built.load(Ordering::Relaxed)
     }
 
     pub fn is_warm(&self) -> bool {

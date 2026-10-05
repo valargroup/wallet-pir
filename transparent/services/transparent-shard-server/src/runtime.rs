@@ -602,6 +602,23 @@ impl RuntimeCache {
         Ok(handle)
     }
 
+    /// The runtime for `key` only if it is already built: never builds,
+    /// restores or waits, so a caller can refuse work a cold build would cost.
+    pub fn cached(&self, key: &RuntimeKey) -> Option<RuntimeHandle> {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        inner.clock += 1;
+        let now = inner.clock;
+        let entry = inner.entries.get_mut(key)?;
+        if !entry.slot.runtime.initialized() {
+            return None;
+        }
+        entry.last_used = now;
+        Metrics::incr(&self.metrics.cache_hits);
+        Some(RuntimeHandle {
+            slot: entry.slot.clone(),
+        })
+    }
+
     /// Restores use streaming buffers and their own concurrency bound. A miss
     /// releases that slot before waiting for a cold-build slot. Owned permits
     /// stay with blocking work even if its asynchronous caller is cancelled.
