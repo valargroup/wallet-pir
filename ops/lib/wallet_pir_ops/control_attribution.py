@@ -49,8 +49,8 @@ UNIT = 'transparent-replica-reconciler.service'
 FRAGMENT = Path('/etc/systemd/system/'+UNIT)
 # Root-verified installed bytes; the repository template differs.
 FRAGMENT_SHA256 = '869e260606f0ad020824a14c906ea6f7ac235c5832739452e027033631ca4915'
-SCRIPT = Path('/opt/transparent-publisher/transparent-live-fleet.py')
 SCRIPT_SOURCE = '4c85b6c20ced1e2077245491e77d3afc98bfd644'
+SCRIPT = Path('/srv/transparent-activity/ops/sources')/SCRIPT_SOURCE/'transparent/ops/scripts/transparent-live-fleet.py'
 SCRIPT_SHA256 = 'f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083'
 CONTROL = ('/usr/local/bin/shard-control', '/run/transparent-pir/control.sock')
 CONTROL_COMMAND = shlex.join(CONTROL)+' || [ "$?" -eq 1 ]'
@@ -294,7 +294,7 @@ def exec_start(fragment):
     require(len(starts) == 1 and starts[0] and not any(c in starts[0] for c in '%$\\"\'') and
             starts[0][0] not in '-@+!:|', 'reconciler ExecStart is not one literal command')
     argv = starts[0].split()
-    require(argv[:2] == ['/usr/bin/python3', str(SCRIPT)], 'reconciler ExecStart does not run the pinned script')
+    require(argv[:3] == ['/usr/bin/python3', '-B', str(SCRIPT)], 'reconciler ExecStart does not run the pinned script')
     return argv
 
 
@@ -355,7 +355,7 @@ def authority(*, proc=Path('/proc'), tick=lambda: None, show=properties, machine
         require(main is not None and main['state'] != 'Z' and not main['kernel'], 'reconciler main process absent')
         scope = '0::/system.slice/'+UNIT
         require(command(pid, proc) == b'\0'.join(a.encode() for a in argv)+b'\0' and uid(pid, proc) == 0 and
-                group(pid, proc) == scope and executable(pid, proc).startswith('/usr/bin/python3'),
+                group(pid, proc) == scope and executable(pid, proc) == os.path.realpath(argv[0]),
                 'reconciler main process differs from its unit')
         _, script = pinned_bytes(SCRIPT, SCRIPT_SHA256, check)
         started = booted(proc)+main['start_ticks']/os.sysconf('SC_CLK_TCK')

@@ -102,7 +102,7 @@ class Worker(unittest.TestCase):
             return hashlib.sha256(self.binary.read_bytes()).hexdigest()
         with patch.object(CA, 'CONTROL_EXE_SHA256', digest or hashlib.sha256(b'fictional shard-control').hexdigest()), \
                 patch.object(CA, 'executable_sha256', bytes_of):
-            return CA.controls(proc=self.proc.root, shell='/bin/bash')
+            return CA.controls(proc=self.proc.root, shell='/usr/bin/bash')
 
     def rejected(self, reason):
         found, rejected = self.observe()
@@ -210,12 +210,12 @@ class Coordinator(unittest.TestCase):
     def setUp(self):
         scratch = tempfile.TemporaryDirectory()
         self.addCleanup(scratch.cleanup)
-        root = Path(scratch.name)
+        root = Path(scratch.name).resolve()
         self.proc = Proc(root/'proc')
         self.script = root/'transparent-live-fleet.py'
         self.script.write_bytes(b'# fictional reconciler script\n')
         self.fragment = root/CA.UNIT
-        self.argv = ['/usr/bin/python3', str(self.script), '/opt/transparent-publisher/fleet.json', '--reconcile']
+        self.argv = ['/usr/bin/python3', '-B', str(self.script), '/opt/transparent-publisher/fleet.json', '--reconcile']
         self.fragment.write_text('[Service]\nType=simple\nExecStart = %s\nRestart=on-failure\n' % ' '.join(self.argv))
         self.machine = root/'machine-id'
         self.machine.write_text(CA.COORDINATOR+'\n')
@@ -231,7 +231,7 @@ class Coordinator(unittest.TestCase):
         p = patch.object(CA.os, 'geteuid', return_value=0)
         p.start()
         self.addCleanup(p.stop)
-        self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3.12', argv=self.argv, cgroup=UNIT_SCOPE,
+        self.proc.add(200, ppid=1, start=500, exe=os.path.realpath('/usr/bin/python3'), argv=self.argv, cgroup=UNIT_SCOPE,
                       children=(201,))
         self.client()
 
@@ -283,15 +283,20 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(CA.exec_start(self.fragment.read_bytes()), self.argv)
 
     def test_main_process_must_match_exact_exec_start(self):
-        self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3.12', argv=[*self.argv, '--extra'],
+        self.proc.add(200, ppid=1, start=500, exe=os.path.realpath('/usr/bin/python3'), argv=[*self.argv, '--extra'],
                       cgroup=UNIT_SCOPE, children=(201,))
         self.refused('differs from its unit')
-        self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3.12', argv=self.argv,
+        self.proc.add(200, ppid=1, start=500, exe=os.path.realpath('/usr/bin/python3'), argv=self.argv,
                       cgroup='0::/system.slice/other.service', children=(201,))
         self.refused('differs from its unit')
-        self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3.12', argv=self.argv, cgroup=UNIT_SCOPE,
+        self.proc.add(200, ppid=1, start=500, exe=os.path.realpath('/usr/bin/python3'), argv=self.argv, cgroup=UNIT_SCOPE,
                       children=(201,))
         self.refused('main process absent', MainPID='999')
+
+    def test_lookalike_interpreter_is_not_the_unit_executable(self):
+        self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3-foreign', argv=self.argv,
+                      cgroup=UNIT_SCOPE, children=(201,))
+        self.refused('differs from its unit')
 
     def test_multiplexed_foreign_or_reparented_clients_are_not_clients(self):
         argv = ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes', '-o',
@@ -365,7 +370,9 @@ class Survey(unittest.TestCase):
         return item
 
     def observe(self, process, pending):
-        with tempfile.TemporaryDirectory() as directory, patch.object(S, 'scan', return_value=[process]):
+        with tempfile.TemporaryDirectory() as directory, patch.object(S, 'scan', return_value=[process]), \
+                patch.object(S, 'boot_id', return_value='00000000-0000-0000-0000-000000000001'), \
+                patch.object(S, 'booted_unix', return_value=time.time()-3600):
             return S.observe((('owners', Path(directory)/'absent'),), classes={'names': ['shard-control'], 'roots': []},
                              baseline=('transparent-shard-server.service',), binding={}, pending=pending)
 

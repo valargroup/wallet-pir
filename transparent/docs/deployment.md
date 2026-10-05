@@ -1071,7 +1071,10 @@ one established TCP connection, and stable start ticks. Everything else stays
 unattributed. Before each worker survey and after a reply with pending controls,
 the coordinating survey snapshots the reconciler: unit active, pinned fragment
 `869e2606…`, no drop-ins, main argv equal to the fragment's literal `ExecStart`,
-pinned script `f3df5c53…` unchanged since the main process started, and direct
+pinned script `f3df5c53…` at the immutable `4c85b6c2` source path
+(`/srv/transparent-activity/ops/sources/<full-source-sha>/transparent/ops/scripts/transparent-live-fleet.py`),
+with the exact `/usr/bin/python3 -B` prefix and resolved interpreter executable,
+unchanged since the main process started, and direct
 `ssh` children with the exact unmultiplexed control argv. A pending control passes
 only if one such snapshot shows a client holding exactly the reverse connection,
 one control per client; both snapshots are retained beside the raw reply before
