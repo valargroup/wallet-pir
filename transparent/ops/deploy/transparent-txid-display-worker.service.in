@@ -12,7 +12,11 @@ User=root
 # stage, prepare and activate publications through the control socket only.
 # Every path is outside /srv/transparent-pir and /opt/transparent-publisher, so
 # history collectors, pruning and survey roots never see display data.
-ExecStart=@RELEASE@/transparent-txid-server --listen @LISTEN@ --role @ROLE@ --cache-bytes @CACHE_BYTES@ --build-slots @BUILD_SLOTS@ --query-slots @QUERY_SLOTS@ --retain-revisions @RETAIN_REVISIONS@ --control-socket /run/transparent-txid-display/control.sock --active-record /opt/transparent-txid-display/worker/active.json@EXTRA_ARGS@
+# The controller ships a candidate every cycle; its `collect` deletes unused
+# ones from the collect root, the adapter's publications directory. Staged
+# sealed revisions stay: a background stage owns its directory from ship to
+# stage, and candidates hard-link those files anyway.
+ExecStart=@RELEASE@/transparent-txid-server --listen @LISTEN@ --role @ROLE@ --cache-bytes @CACHE_BYTES@ --build-slots @BUILD_SLOTS@ --query-slots @QUERY_SLOTS@ --retain-revisions @RETAIN_REVISIONS@ --control-socket /run/transparent-txid-display/control.sock --active-record /opt/transparent-txid-display/worker/active.json --collect-root @COLLECT_ROOT@@EXTRA_ARGS@
 Environment=RUST_LOG=info
 Environment=TRANSPARENT_BUILD_THREADS=@BUILD_THREADS@
 Restart=on-failure

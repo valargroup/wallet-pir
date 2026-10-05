@@ -89,8 +89,10 @@ def request():
                     'node_cache_dir': '/root/.cache/zakura'},
         'publication': {'root': '/srv/zakura/txid-display-poc/root'},
         'controller': {'mode': 'replay-then-live', 'blocks_per_step': 25, 'step_interval_ms': 2000,
-                       'geometry': 'txid-2k', 'n_buckets': 1, 't_archive': 20000, 'k_recent': 10000,
-                       'rpc_url': 'http://127.0.0.1:8232', 'rpc_cookie': '/root/.cache/zakura/.cookie'},
+                       'geometry': 'txid-2k', 'n_archive': 1, 'n_recent': 1, 'archive_target': 20000,
+                       'recent_floor': 10000, 'reorg_margin': 100, 'max_archive_shards': 24, 'archives': 15,
+                       'replay_seals': 4, 'rpc_url': 'http://127.0.0.1:8232',
+                       'rpc_cookie': '/root/.cache/zakura/.cookie'},
         'router': {'import_glob': GLOB, 'live_fleet_sha256': sha256(OLD_ADAPTER)},
         'terraform': {'wrapper': WRAPPER, 'root': TF_ROOT},
         'history': {'load_status': LOAD},
@@ -445,11 +447,16 @@ class RequestTests(Base):
             (('publication', 'root'), '/srv/zakura/txid-display-poc/journal/root'),
             (('units', 'recent', 'cpu_weight'), 100), (('units', 'archive', 'nice'), 0),
             (('units', 'recent', 'oom_score_adjust'), 0), (('units', 'recent', 'cache_bytes'), 2 << 30),
-            (('controller', 'k_recent'), 9999), (('controller', 't_archive'), 5000),
+            (('controller', 'recent_floor'), 9999), (('controller', 'archive_target'), 5000),
+            (('controller', 'reorg_margin'), 99), (('controller', 'n_archive'), 65), (('controller', 'n_recent'), 0),
+            (('controller', 'max_archive_shards'), 0), (('controller', 'archives'), 0),
+            (('controller', 'n_buckets'), 1), (('controller', 'replay_seals'), KeyError),
             (('controller', 'mode'), 'fast'), (('controller', 'rpc_url'), 'http://10.0.0.1:8232'),
             (('ports', 'worker'), 8096), (('ports', 'controller_status'), 8094),
             (('hosts', 'recent', 'inventory'), 'archive-03'), (('hosts', 'archive', 'vpc_ip'), '8.8.8.8'),
             (('router', 'import_glob'), '/etc/caddy/Caddyfile'), (('router', 'import_glob'), '/tmp/x/*.caddy'),
+            (('router', 'import_glob'), '/etc/caddy/../*.caddy'), (('router', 'import_glob'), '/etc/caddy/./*.caddy'),
+            (('router', 'import_glob'), '/etc/caddy/.hidden/*.caddy'),
             (('release', 'binaries', 'txid-control'), KeyError), (('measure', 'public_url'), 'http://pir.example'),
             (('baseline', 'archive'), {}),
         ]
@@ -514,6 +521,13 @@ class PlanTests(Base):
             self.assertIn('\n' + line + '\n', archive)
         self.assertIn('--runtime-cache-dir /srv/transparent-txid-display/runtime-cache', archive)
         self.assertIn('--control-socket /run/transparent-txid-display/control.sock', archive)
+        # `collect` deletes on disk only under a collect root: the adapter's
+        # publications directory, where every cycle's candidate lands.
+        publications = json.loads(files['fleet.json'])['workers']
+        for key, unit in (('archive', archive), ('recent', recent)):
+            argv = [line for line in unit.splitlines() if line.startswith('ExecStart=')][0].split()
+            self.assertEqual(argv[argv.index('--collect-root') + 1], publications[key]['publications'])
+            self.assertEqual(argv[argv.index('--active-record') + 1], P.ACTIVE_RECORD)
         self.assertNotIn('runtime-cache', recent)
         for line in ('MemoryMax=1.5G', 'CPUQuota=100%', 'Environment=TRANSPARENT_BUILD_THREADS=1'):
             self.assertIn('\n' + line + '\n', recent)
@@ -524,6 +538,12 @@ class PlanTests(Base):
         self.assertIn('--workers /opt/transparent-txid-display/workers.json --mode replay-then-live '
                       '--status-listen 127.0.0.1:8099', controller)
         self.assertIn('--blocks-per-step 25 --step-interval-ms 2000', controller)
+        # `run` takes no seal flags: the bootstrapped root carries the rule.
+        start = [line for line in controller.splitlines() if line.startswith('ExecStart=')][0]
+        self.assertTrue(start.endswith('--rpc-cookie /root/.cache/zakura/.cookie --blocks-per-step 25 '
+                                       '--step-interval-ms 2000'), start)
+        for flag in ('--geometry', '--n-', '--archive-target', '--recent-floor', '--t-archive', '--k-recent'):
+            self.assertNotIn(flag, start)
         # The node's RPC cookie under /root stays readable.
         self.assertFalse([line for line in controller.splitlines() if line.startswith('ProtectHome')])
         for unit in (archive, recent, controller):
@@ -573,6 +593,22 @@ class PlanTests(Base):
         self.assertEqual(smoke[-4:], ['--stop-height', '3289814', '--data-dir',
                                       '/srv/zakura/txid-display-poc/journal.smoke'])
         self.assertIn('--property=MemoryMax=8G', transient['bootstrap'])
+        # txid-display-controller's flags: DisplaySealParams plus the map window.
+        seal = ['--geometry', 'txid-2k', '--n-archive', '1', '--n-recent', '1', '--archive-target', '20000',
+                '--recent-floor', '10000', '--reorg-margin', '100', '--max-archive-shards', '24']
+        controller = '/opt/transparent-txid-display/releases/%s/txid-display-controller' % SHA
+        plan_start = transient['plan-start']
+        self.assertEqual(plan_start[plan_start.index(controller):], [
+            controller, 'plan-start', '--journal', '/srv/zakura/txid-display-poc/journal', '--archives', '15',
+            '--replay-seals', '4', *seal])
+        bootstrap = transient['bootstrap']
+        self.assertEqual(bootstrap[bootstrap.index(controller):], [
+            controller, 'bootstrap', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
+            '/srv/zakura/txid-display-poc/journal', '--start', '{start}', '--through', '{through}', *seal])
+        verify = transient['verify']
+        self.assertEqual(verify[verify.index(controller):], [
+            controller, 'verify', '--root', '/srv/zakura/txid-display-poc/root', '--journal',
+            '/srv/zakura/txid-display-poc/journal'])
         self.assertIn('getbestblockhash', (ROOT / P.RELEASE_FILES['txid-display-observe.py']).read_text())
         self.assertIn('--interval-ms', transient['observer'])
         self.assertIn('https://pir.example/v1/txid/shards', transient['mapwatch'])
@@ -1033,7 +1069,8 @@ class TransientTests(Base):
 
     def test_bootstrap_uses_plan_start_unless_given_a_range(self):
         self.fake.wait_results['transparent-txid-display-plan-start.service'] = (
-            0, 'counting\n{"start_height": 3300000, "through_height": 3500000}\n')
+            0, 'counting\n{"start": 3300000, "through": 3500000, "journal_start": 3289805, '
+               '"archives_at_through": 15, "replay_seals": 4, "expected_drops": 0}\n')
         poc = self.poc()
         poc.act('bootstrap', poc.plan_sha256())
         argv = [a for a in self.fake.commands('coordinator') if a[0] == 'systemd-run'][-1]

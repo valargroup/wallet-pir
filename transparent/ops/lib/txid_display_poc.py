@@ -63,6 +63,9 @@ PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
 ACTIONS = ('ingest-start', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop', 'stop')
 MODES = ('live', 'replay', 'replay-then-live')
 GEOMETRIES = ('txid-2k', 'txid-4k')
+# DisplaySealParams plus the map window, as txid-display-controller's seal flags.
+SEAL_KEYS = ('n_archive', 'n_recent', 'archive_target', 'recent_floor', 'reorg_margin', 'max_archive_shards')
+MAX_BUCKETS = 64
 
 OPT = '/opt/transparent-txid-display'
 RELEASES = OPT + '/releases'
@@ -78,6 +81,7 @@ PUBLICATIONS = WORKER_DATA + '/publications'
 STAGED = WORKER_DATA + '/staged'
 RUNTIME_CACHE = WORKER_DATA + '/runtime-cache'
 WORKER_STATE = OPT + '/worker'
+ACTIVE_RECORD = WORKER_STATE + '/active.json'
 CONTROL_SOCKET = '/run/transparent-txid-display/control.sock'
 SYSTEM = '/etc/systemd/system'
 WORKER_UNIT = 'transparent-txid-display-worker.service'
@@ -263,17 +267,23 @@ def validate(request, inventory):
     publication = exact(request['publication'], ('root',), 'publication')
     plain_path(publication['root'], 'publication.root')
 
-    controller = exact(request['controller'], ('mode', 'blocks_per_step', 'step_interval_ms', 'geometry',
-                                               'n_buckets', 't_archive', 'k_recent', 'rpc_url', 'rpc_cookie'),
-                       'controller')
+    controller = exact(request['controller'], ('mode', 'blocks_per_step', 'step_interval_ms', 'geometry', *SEAL_KEYS,
+                                               'archives', 'replay_seals', 'rpc_url', 'rpc_cookie'), 'controller')
     require(controller['mode'] in MODES, 'controller.mode must be one of %s' % (MODES,))
     integer(controller['blocks_per_step'], 1, 1000, 'controller.blocks_per_step')
     integer(controller['step_interval_ms'], 100, 600000, 'controller.step_interval_ms')
     require(controller['geometry'] in GEOMETRIES, 'controller.geometry must be one of %s' % (GEOMETRIES,))
-    integer(controller['n_buckets'], 1, 64, 'controller.n_buckets')
+    for key in ('n_archive', 'n_recent'):
+        integer(controller[key], 1, MAX_BUCKETS, 'controller.' + key)
     # The anonymity floor of the brief; a request cannot lower it.
-    integer(controller['k_recent'], 10000, 1 << 32, 'controller.k_recent')
-    integer(controller['t_archive'], 10000, 1 << 32, 'controller.t_archive')
+    integer(controller['archive_target'], 10000, 1 << 32, 'controller.archive_target')
+    integer(controller['recent_floor'], 10000, 1 << 32, 'controller.recent_floor')
+    # Sealed shards never change, so they must stay below any reorg the node accepts.
+    integer(controller['reorg_margin'], 100, 10000, 'controller.reorg_margin')
+    integer(controller['max_archive_shards'], 1, 64, 'controller.max_archive_shards')
+    # plan-start's targets: archives bootstrap makes, and seals replay adds after them.
+    integer(controller['archives'], 1, 64, 'controller.archives')
+    integer(controller['replay_seals'], 0, 64, 'controller.replay_seals')
     require(isinstance(controller['rpc_url'], str) and RPC_URL.fullmatch(controller['rpc_url']),
             'controller.rpc_url must be the loopback node RPC')
     plain_path(controller['rpc_cookie'], 'controller.rpc_cookie')
@@ -515,17 +525,18 @@ class Poc:
                 extra = ' --runtime-cache-dir %s --runtime-cache-max-bytes %d' % (RUNTIME_CACHE, spec['disk_cache_bytes'])
             files['unit:' + key] = units.render(self.template('transparent-txid-display-worker.service.in'), {
                 'RELEASE': self.release_dir, 'LISTEN': self.upstream(key), 'ROLE': ROLES[key],
+                'COLLECT_ROOT': PUBLICATIONS,
                 'CACHE_BYTES': str(spec['cache_bytes']), 'BUILD_SLOTS': str(spec['build_slots']),
                 'QUERY_SLOTS': str(spec['query_slots']), 'RETAIN_REVISIONS': str(spec['retain_revisions']),
                 'EXTRA_ARGS': extra, 'BUILD_THREADS': str(spec['build_threads']), 'MEMORY_MAX': spec['memory_max'],
                 'CPU_QUOTA': spec['cpu_quota'], 'CPU_WEIGHT': str(spec['cpu_weight']), 'NICE': str(spec['nice']),
                 'OOM_SCORE_ADJUST': str(spec['oom_score_adjust'])})
         controller, limits = r['controller'], r['units']['controller']
-        extra = ' --geometry %s --n-buckets %d --t-archive %d --k-recent %d' % (
-            controller['geometry'], controller['n_buckets'], controller['t_archive'], controller['k_recent'])
+        # `run` reads the seal rule from the bootstrapped root; it takes no seal flags.
+        extra = ''
         if controller['mode'] != 'live':
-            extra += ' --blocks-per-step %d --step-interval-ms %d' % (controller['blocks_per_step'],
-                                                                      controller['step_interval_ms'])
+            extra = ' --blocks-per-step %d --step-interval-ms %d' % (controller['blocks_per_step'],
+                                                                     controller['step_interval_ms'])
         files['unit:controller'] = units.render(self.template('transparent-txid-display-controller.service.in'), {
             'RELEASE': self.release_dir, 'ROOT': r['publication']['root'], 'JOURNAL': r['journal']['data_dir'],
             'MODE': controller['mode'], 'STATUS_PORT': str(r['ports']['controller_status']),
@@ -592,8 +603,9 @@ class Poc:
                   '--workers', str(r['units']['ingest']['workers']), '--txid-display',
                   '--start-height', str(journal['start_height'])]
         controller = self.binary('txid-display-controller')
-        seal = ['--geometry', r['controller']['geometry'], '--n-buckets', str(r['controller']['n_buckets']),
-                '--t-archive', str(r['controller']['t_archive']), '--k-recent', str(r['controller']['k_recent'])]
+        seal = ['--geometry', r['controller']['geometry']]
+        for key in SEAL_KEYS:
+            seal += ['--' + key.replace('_', '-'), str(r['controller'][key])]
         measure = r['measure']['output'] + '/{run}'
         observe = ['/usr/bin/python3', self.binary('txid-display-observe.py')]
         return {
@@ -605,7 +617,9 @@ class Poc:
                 wait=True),
             'plan-start': self.systemd_run('transparent-txid-display-plan-start.service',
                                            self.unit_limits('bootstrap'), [
-                controller, 'plan-start', '--root', root, '--journal', journal['data_dir'], *seal], wait=True),
+                controller, 'plan-start', '--journal', journal['data_dir'],
+                '--archives', str(r['controller']['archives']),
+                '--replay-seals', str(r['controller']['replay_seals']), *seal], wait=True),
             'bootstrap': self.systemd_run(BOOTSTRAP_UNIT, self.unit_limits('bootstrap'), [
                 controller, 'bootstrap', '--root', root, '--journal', journal['data_dir'],
                 '--start', '{start}', '--through', '{through}', *seal]),
@@ -1375,8 +1389,7 @@ class Poc:
             lines = [line for line in output.splitlines() if line.startswith('{')]
             require(lines, 'plan-start printed no JSON range')
             chosen = json.loads(lines[-1])
-            start = chosen.get('start_height', chosen.get('start'))
-            through = chosen.get('through_height', chosen.get('through'))
+            start, through = chosen.get('start'), chosen.get('through')
             transaction.event('plan-start chose the bootstrap range', plan_start=chosen)
         # The journal's parent check reads block S0 - 1, so S0 starts above it.
         integer(start, r['journal']['start_height'] + 1, 1 << 40, 'bootstrap start height')
