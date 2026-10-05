@@ -237,13 +237,45 @@ class AdapterTests(unittest.TestCase):
         fleet = F.Fleet(F.load_config(self.root / 'fleet.json'), run=run)
         stage = {'operation': 'stage', 'directory': str(self.staged / REVISION)}
         with contextlib.redirect_stderr(io.StringIO()):
-            for command, deadline in (({'operation': 'status'}, None), (stage, None), ({'operation': 'status'}, 1800)):
+            for command, deadline in (({'operation': 'status'}, None), (stage, None), ({'operation': 'status'}, 540)):
                 fleet.handle({'operation': 'control', 'worker': 'recent', 'command': command,
                               **({'deadline_seconds': deadline} if deadline else {})})
-        self.assertEqual(seen, [85, 590, 1800])
+        self.assertEqual(seen, [85, 590, 540])
+        # txid-control waits at most 600 s for a reply; a longer deadline would only mislead.
+        for deadline in (601, 4000, 0, 1.5):
+            with self.subTest(deadline=deadline), self.assertRaisesRegex(F.FleetError, 'deadline'):
+                fleet.handle({'operation': 'control', 'worker': 'recent', 'command': {'operation': 'status'},
+                              'deadline_seconds': deadline})
+
+    def test_a_ship_finishes_inside_the_controllers_timeout(self):
+        clock, seen = [0.0], []
+
+        def run(argv, input=None, capture_output=True, timeout=None):
+            seen.append((Path(argv[0]).name, timeout))
+            clock[0] += 10
+            return subprocess.CompletedProcess(argv, 0, b'nolink\n', b'')
+        fleet = F.Fleet(F.load_config(self.root / 'fleet.json'), run=run, clock=lambda: clock[0])
+        with contextlib.redirect_stderr(io.StringIO()):
+            # The controller kills the adapter after 90 s for a candidate and 600 s for a staged revision.
+            for kind, budget in (('candidate', 85), ('staged', 590)):
+                seen.clear()
+                fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': kind, 'source': str(self.source),
+                              'name': DIGEST, 'link_dest': None})
+                self.assertEqual(seen, [('ssh', 60), ('rsync', budget - 10), ('ssh', 60)])
+            # The deploy's whole bootstrap candidate gets its own, explicit budget.
+            seen.clear()
+            fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate', 'source': str(self.source),
+                          'name': DIGEST, 'link_dest': None, 'deadline_seconds': 1800})
+            self.assertEqual(seen[1], ('rsync', 1790))
+        slow = F.Fleet(F.load_config(self.root / 'fleet.json'), clock=lambda: clock[0],
+                       run=lambda argv, **_: clock.__setitem__(0, clock[0] + 90) or subprocess.CompletedProcess(
+                           argv, 0, b'nolink\n', b''))
+        with self.assertRaisesRegex(F.FleetError, 'ship deadline of 85s exhausted'):
+            slow.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate', 'source': str(self.source),
+                         'name': DIGEST, 'link_dest': None})
         with self.assertRaisesRegex(F.FleetError, 'deadline'):
-            fleet.handle({'operation': 'control', 'worker': 'recent', 'command': {'operation': 'status'},
-                          'deadline_seconds': 4000})
+            fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate', 'source': str(self.source),
+                          'name': DIGEST, 'link_dest': None, 'deadline_seconds': 7200})
 
     def test_config_refuses_history_paths(self):
         for key, value in (('publications', '/srv/transparent-pir/publications'),

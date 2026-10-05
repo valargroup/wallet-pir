@@ -8,10 +8,13 @@ REPLY, else stdout); exits 0 only when the reply says `"ok": true`. Mirrors
 the history adapter's contract with its controller (`controller::fleet`):
 
     {"operation":"ship","worker":W,"kind":"candidate"|"staged","source":DIR,
-     "name":DIGEST,"link_dest":DIR|null}
+     "name":DIGEST,"link_dest":DIR|null,"deadline_seconds":N?}
         -> {"ok":true,"directory":DIR,"seconds":S}
     {"operation":"control","worker":W,"command":{...},"deadline_seconds":N?}
         -> {"ok":true,"reply":{...},"seconds":S}
+
+`deadline_seconds` is an extension for the deploy, which ships a whole
+bootstrap candidate and polls long prepares; the controller never sends it.
 
 `ship` copies a coordinator directory into the worker's publications (a
 candidate, named by its map digest) or staged (a sealed revision, named by
@@ -44,10 +47,13 @@ NAME = re.compile('[a-z][a-z0-9-]{0,31}')
 HOST = re.compile(r'[A-Za-z0-9_.:-]+')
 PATH = re.compile(r'/[A-Za-z0-9._/-]+')
 OPERATIONS = ('status', 'stage', 'unstage', 'prepare', 'activate', 'invalidate', 'discard', 'collect')
-# Below the controller's 90 s per call (600 s for stage and ship) so this
-# process reaps its own children before the controller kills it.
-DEADLINES = {'control': 85, 'stage': 590, 'ship': 590}
-MAX_DEADLINE = 3600
+# Below the controller's timeouts (90 s per call; 600 s to ship and stage a
+# sealed revision) so this process reaps its rsync and ssh children before the
+# controller kills it. A ship's deadline covers its probe, copy and rename.
+DEADLINES = {'control': 85, 'stage': 590, 'candidate': 85, 'staged': 590}
+# txid-control itself waits at most 600 s for the worker's reply.
+MAX_CONTROL_DEADLINE = 600
+MAX_SHIP_DEADLINE = 3600
 # History's namespaces. Display paths must never point into them.
 HISTORY_ROOTS = ('/srv/transparent-pir', '/opt/transparent-publisher', '/srv/transparent-activity',
                  '/run/transparent-pir')
@@ -131,8 +137,8 @@ class Fleet:
         return self.c['workers'][name]
 
     def ship(self, request):
-        require(set(request) == {'operation', 'worker', 'kind', 'source', 'name', 'link_dest'},
-                'ship takes worker, kind, source, name and link_dest')
+        require(set(request) - {'deadline_seconds'} == {'operation', 'worker', 'kind', 'source', 'name', 'link_dest'},
+                'ship takes worker, kind, source, name, link_dest and an optional deadline_seconds')
         worker = self.worker(request)
         require(request['kind'] in ('candidate', 'staged'), 'ship kind is candidate or staged')
         require(isinstance(request['name'], str) and DIGEST.fullmatch(request['name']), 'ship name must be a digest')
@@ -145,12 +151,21 @@ class Fleet:
             plain(link, 'link_dest')
             require(under(link, root) and DIGEST.fullmatch(link.rsplit('/', 1)[1]),
                     'link_dest must be a digest directory under %s' % root)
+        deadline = request.get('deadline_seconds', DEADLINES[request['kind']])
+        require(type(deadline) is int and 0 < deadline <= MAX_SHIP_DEADLINE, 'deadline_seconds must be 1..%d'
+                % MAX_SHIP_DEADLINE)
+        end = self.clock() + deadline
+
+        def left(cap=None):
+            remaining = end - self.clock()
+            require(remaining > 0, 'ship deadline of %ds exhausted' % deadline)
+            return remaining if cap is None else min(cap, remaining)
+
         quoted = {key: shlex.quote(value) for key, value in
                   (('root', root), ('staged', worker['staged']), ('final', final), ('link', link or ''))}
         probe = ('set -eu; mkdir -p {root} {staged}; if [ -d {final} ]; then echo present; '
                  'elif [ -n {link} ] && [ -d {link} ]; then echo link; else echo nolink; fi').format(**quoted)
-        deadline = DEADLINES['ship']
-        state = self.ssh(worker, probe, deadline=60, channel='ship').strip()
+        state = self.ssh(worker, probe, deadline=left(60), channel='ship').strip()
         if state == 'present':
             return {'ok': True, 'directory': final, 'reused': True}
         links = (['--link-dest=' + link] if state == 'link' else [])
@@ -160,10 +175,10 @@ class Fleet:
         # Resumes into an existing partial copy; --delete drops anything stale.
         self.execute(['rsync', '-a', '--delete', '--numeric-ids', *links,
                       '-e', shlex.join(['ssh', *self.ssh_options('ship')]),
-                      str(source) + '/', '%s:%s/' % (self.destination(worker), partial)], b'', deadline)
+                      str(source) + '/', '%s:%s/' % (self.destination(worker), partial)], b'', left())
         publish = 'set -eu; test ! -e {final}; mv -T {partial} {final}; sync -f {final}'.format(
             final=quoted['final'], partial=shlex.quote(partial))
-        self.ssh(worker, publish, deadline=60, channel='ship')
+        self.ssh(worker, publish, deadline=left(60), channel='ship')
         return {'ok': True, 'directory': final}
 
     def control(self, request):
@@ -182,9 +197,10 @@ class Fleet:
             directory = (command.get('publication') or {}).get('directory')
             plain(directory, 'prepare directory')
             require(under(directory, worker['publications']), 'prepare directory must be under publications')
-        deadline = request.get('deadline_seconds') or DEADLINES['stage' if command['operation'] == 'stage'
-                                                                else 'control']
-        require(type(deadline) is int and 0 < deadline <= MAX_DEADLINE, 'deadline_seconds must be 1..3600')
+        deadline = request.get('deadline_seconds', DEADLINES['stage' if command['operation'] == 'stage'
+                                                             else 'control'])
+        require(type(deadline) is int and 0 < deadline <= MAX_CONTROL_DEADLINE, 'deadline_seconds must be 1..%d'
+                % MAX_CONTROL_DEADLINE)
         # txid-control prints a refusal as JSON and exits 1; keep that reply
         # while transport failures and crashes still fail the SSH call.
         remote = shlex.join([worker['control_binary'], worker['control_socket']]) + ' || [ "$?" -eq 1 ]'
