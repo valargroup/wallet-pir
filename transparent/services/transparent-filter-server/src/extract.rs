@@ -16,13 +16,17 @@
 //! wallet that does have activity.
 
 use std::sync::Arc;
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use transparent_events::{
+    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
+};
 use transparent_filter::ScriptBytes;
 use zakura_chain::transaction::Transaction;
-use zakura_chain::transparent::{Input, OutPoint};
+use zakura_chain::transparent::{Input, OutPoint, Output, Utxo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ExtractError {
+    #[error("transaction metadata: {0}")]
+    Metadata(String),
     #[error("previous output {0} is unavailable; refusing to build a partial filter")]
     MissingPreviousOutput(String),
     #[error("block has {0} transactions, more than the event encoding can index")]
@@ -43,17 +47,17 @@ pub fn outpoint_label(outpoint: &OutPoint) -> String {
     format!("{}:{}", hex::encode(bytes), outpoint.index)
 }
 
-/// Supplies the locking script of an output created before this block.
+/// Supplies the full value and locking script of an output created before this block.
 pub trait PreviousOutputs {
-    /// Returns the locking script of `outpoint`, or `None` if it is not known.
+    /// Returns the complete `outpoint` output, or `None` if it is not known.
     ///
     /// `None` aborts the block. It must never be treated as an empty script:
     /// that would publish a filter missing a real spend, and a wallet checking
     /// it would be told it had no activity.
-    fn lock_script(
+    fn previous_output(
         &mut self,
         outpoint: &OutPoint,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// One event, paired with the exact raw script it is indexed under.
@@ -80,14 +84,13 @@ pub type IndexedEvent = (ScriptBytes, TransparentEvent);
 /// not part of an event. A wallet resolves height to hash against its own
 /// accepted chain, which is the only source that can safely answer whether an
 /// event sits on a branch it accepts.
-pub fn extract_events(
+pub fn extract_block(
     transactions: &[Arc<Transaction>],
     previous: &mut impl PreviousOutputs,
     height: u32,
-) -> Result<Vec<IndexedEvent>, ExtractError> {
+) -> Result<ExtractedBlock, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
-    let mut created: std::collections::HashMap<OutPoint, Vec<u8>> =
-        std::collections::HashMap::new();
+    let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
         let txid = transaction.hash();
         for (index, output) in transaction.outputs().iter().enumerate() {
@@ -96,12 +99,13 @@ pub fn extract_events(
                     hash: txid,
                     index: index as u32,
                 },
-                output.lock_script.as_raw_bytes().to_vec(),
+                output.clone(),
             );
         }
     }
 
     let mut events: Vec<IndexedEvent> = Vec::new();
+    let mut display = Vec::new();
 
     for (transaction_index, transaction) in transactions.iter().enumerate() {
         let txid = Txid(transaction.hash().0);
@@ -115,6 +119,76 @@ pub fn extract_events(
             .iter()
             .any(|input| matches!(input, Input::Coinbase { .. }));
 
+        let mut prevouts = std::collections::HashMap::new();
+        for input in transaction.inputs() {
+            let Input::PrevOut { outpoint, .. } = input else {
+                continue;
+            };
+            let output = match created.get(outpoint) {
+                Some(output) => output.clone(),
+                None => previous
+                    .previous_output(outpoint)
+                    .map_err(|source| ExtractError::Lookup {
+                        outpoint: outpoint_label(outpoint),
+                        source,
+                    })?
+                    .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?,
+            };
+            if prevouts
+                .insert(
+                    *outpoint,
+                    Utxo {
+                        output,
+                        height: zakura_chain::block::Height(height),
+                        from_coinbase: false,
+                    },
+                )
+                .is_some()
+            {
+                return Err(ExtractError::Metadata("duplicate transaction input".into()));
+            }
+        }
+        let transparent_input_count = u32::try_from(prevouts.len())
+            .map_err(|_| ExtractError::Metadata("input count exceeds u32".into()))?;
+        let fee = if coinbase {
+            FeeState::NotApplicable
+        } else {
+            let balance = transaction
+                .value_balance(&prevouts)
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            let fee = balance
+                .remaining_transaction_value()
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            FeeState::Exact(u64::from(fee))
+        };
+        let metadata = TransactionMetadata {
+            fee,
+            transparent_input_count,
+            has_shielded_components: transaction.has_shielded_data(),
+        };
+        metadata
+            .validate(coinbase)
+            .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+
+        if !transaction.inputs().is_empty() || !transaction.outputs().is_empty() {
+            let record = transparent_shard::txid::TransparentDisplayRecord {
+                txid,
+                coinbase,
+                metadata,
+                outputs: transaction
+                    .outputs()
+                    .iter()
+                    .map(|o| transparent_shard::txid::DisplayOutput {
+                        value: u64::from(o.value),
+                        script: o.lock_script.as_raw_bytes().to_vec(),
+                    })
+                    .collect(),
+            };
+            record
+                .encode()
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            display.push(record);
+        }
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
         for (output_index, output) in transaction.outputs().iter().enumerate() {
             let script = ScriptBytes::new(output.lock_script.as_raw_bytes().to_vec());
@@ -124,6 +198,7 @@ pub fn extract_events(
             events.push((
                 script,
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: Some(metadata),
                     height,
                     txid,
                     transaction_index,
@@ -140,16 +215,13 @@ pub fn extract_events(
                 Input::Coinbase { .. } => continue,
                 Input::PrevOut { outpoint, .. } => outpoint,
             };
-            let bytes = match created.get(outpoint) {
-                Some(bytes) => bytes.clone(),
-                None => previous
-                    .lock_script(outpoint)
-                    .map_err(|source| ExtractError::Lookup {
-                        outpoint: outpoint_label(outpoint),
-                        source,
-                    })?
-                    .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?,
-            };
+            let bytes = prevouts
+                .get(outpoint)
+                .ok_or_else(|| ExtractError::MissingPreviousOutput(outpoint_label(outpoint)))?
+                .output
+                .lock_script
+                .as_raw_bytes()
+                .to_vec();
             // A previous output can legitimately have an empty script; it is
             // then not an element. It cannot legitimately be OP_RETURN, since
             // such an output is unspendable, but the same rule is applied
@@ -161,6 +233,7 @@ pub fn extract_events(
             events.push((
                 script,
                 TransparentEvent::Spend(SpendEvent {
+                    metadata: Some(metadata),
                     height,
                     spending_txid: txid,
                     transaction_index,
@@ -172,7 +245,20 @@ pub fn extract_events(
         }
     }
 
-    Ok(events)
+    Ok(ExtractedBlock { events, display })
+}
+
+pub struct ExtractedBlock {
+    pub events: Vec<IndexedEvent>,
+    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
+}
+
+pub fn extract_events(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+    height: u32,
+) -> Result<Vec<IndexedEvent>, ExtractError> {
+    Ok(extract_block(transactions, previous, height)?.events)
 }
 
 /// The element set for one block.
@@ -206,16 +292,23 @@ pub(crate) mod testing {
     #[derive(Clone, Default)]
     pub struct MapPreviousOutputs {
         pub scripts: std::collections::HashMap<OutPoint, Vec<u8>>,
+        pub values: std::collections::HashMap<OutPoint, u64>,
         pub lookups: usize,
     }
 
     impl PreviousOutputs for MapPreviousOutputs {
-        fn lock_script(
+        fn previous_output(
             &mut self,
             outpoint: &OutPoint,
-        ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+        ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
             self.lookups += 1;
-            Ok(self.scripts.get(outpoint).cloned())
+            Ok(self.scripts.get(outpoint).map(|bytes| Output {
+                value: zakura_chain::amount::Amount::try_from(
+                    *self.values.get(outpoint).unwrap_or(&100_000_000),
+                )
+                .unwrap(),
+                lock_script: zakura_chain::transparent::Script::new(bytes),
+            }))
         }
     }
 }
@@ -300,6 +393,55 @@ mod tests {
 
     fn contains(elements: &[Vec<u8>], script: &[u8]) -> bool {
         elements.iter().any(|element| element == script)
+    }
+
+    #[test]
+    fn exact_fee_counts_all_inputs_and_is_attributed_to_the_spender() {
+        let first = OutPoint {
+            hash: zakura_chain::transaction::Hash([10; 32]),
+            index: 0,
+        };
+        let second = OutPoint {
+            hash: zakura_chain::transaction::Hash([11; 32]),
+            index: 1,
+        };
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(first, p2pkh(1));
+        previous.scripts.insert(second, vec![]);
+        previous.values.insert(first, 1000);
+        previous.values.insert(second, 2000);
+        let mut recipient = output(p2pkh(2));
+        recipient.value = Amount::try_from(2500).unwrap();
+        let tx = transaction(
+            vec![prevout_input(first), prevout_input(second)],
+            vec![recipient],
+        );
+        let events = extract_events(std::slice::from_ref(&tx), &mut previous, 100).unwrap();
+        assert_eq!(
+            events.len(),
+            2,
+            "the empty consumed script does not create an event"
+        );
+        for (_, event) in events {
+            assert_eq!(event.txid(), Txid(tx.hash().0));
+            assert_eq!(
+                event.metadata(),
+                Some(TransactionMetadata {
+                    fee: FeeState::Exact(500),
+                    transparent_input_count: 2,
+                    has_shielded_components: false,
+                })
+            );
+        }
+        assert_eq!(
+            previous.lookups, 2,
+            "unindexed inputs still contribute value and count"
+        );
+        previous.values.insert(first, 0);
+        assert!(
+            extract_events(&[tx], &mut previous, 100).is_err(),
+            "negative fees abort extraction"
+        );
     }
 
     #[test]
@@ -541,9 +683,16 @@ mod tests {
 
     #[test]
     fn a_receive_carries_its_value_outpoint_and_coinbase_status() {
+        let funding = transaction(vec![coinbase_input()], vec![output(p2pkh(1))]);
         let transactions = vec![
-            transaction(vec![coinbase_input()], vec![output(p2pkh(1))]),
-            transaction(vec![], vec![output(p2pkh(2))]),
+            funding.clone(),
+            transaction(
+                vec![prevout_input(OutPoint {
+                    hash: funding.hash(),
+                    index: 0,
+                })],
+                vec![output(p2pkh(2))],
+            ),
         ];
         let mut previous = MapPreviousOutputs::default();
         let events = events_of(&transactions, &mut previous);

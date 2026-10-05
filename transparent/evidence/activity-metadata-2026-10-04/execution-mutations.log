@@ -1,0 +1,24 @@
+lock descriptors not inherited                killed FAILED (failures=11, errors=3)
+child not in its own session                  killed FAILED (failures=6, errors=2)
+table hash not checked before dispatch        killed FAILED (failures=1, errors=1)
+surviving descendants accepted                killed FAILED (failures=1)
+memory budget ignored                         killed FAILED (failures=3, errors=1)
+floor ignored                                 killed FAILED (failures=2, errors=1)
+output bound ignored after exit               killed FAILED (failures=2)
+nonzero exit accepted                         killed FAILED (failures=1, errors=1)
+session check before signalling skipped       killed FAILED (failures=1)
+reused PID signalled                          killed FAILED (failures=1, errors=1)
+lock not proven free on reconcile             killed FAILED (failures=1, errors=1)
+180 coverage not enforced                     killed FAILED (failures=1, errors=1)
+receiver liveness ignored                     killed FAILED (failures=1)
+host ABI not checked                          killed FAILED (failures=3)
+foreign publication entries accepted          killed FAILED (failures=1, errors=1)
+plan digest not required                      killed FAILED (failures=1)
+historical candidate accepted                 killed FAILED (failures=1, errors=1)
+owner fence pointer not written               killed FAILED (failures=7, errors=5)
+ ops/lib/wallet_pir_ops/deploy/cli.py |  42 ++++++++++++
+ transparent/docs/deployment.md       | 127 +++++++++++++++++++++++++++++++++--
+ transparent/docs/status.md           |   6 ++
+ 3 files changed, 170 insertions(+), 5 deletions(-)
+
+[exited with code 0]

@@ -1,0 +1,29 @@
+{
+ "apply_attempts": 0,
+ "count": 1,
+ "created_unix": 1790686815.0200052,
+ "dry": true,
+ "finished_unix": 1790686833.0098734,
+ "host_keys": {
+  "transparent-pir-recent-05": {
+   "private_path": "/opt/transparent-publisher/scaler/journal/keys/3880b8f557ba/transparent-pir-recent-05",
+   "public": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHWU1gjy22XP/P3G9d4L7vk86vluzvBKOipuU1Aykeiw"
+  }
+ },
+ "id": "3880b8f557ba",
+ "kind": "scale_out",
+ "names": [
+  "transparent-pir-recent-05"
+ ],
+ "outcome": "dry-run planned",
+ "phase": "dry_planned",
+ "phase_unix": 1790686833.008512,
+ "plan_sha256": "c8623b962e377245c8e9c58b61a2f702c278698820c19253e49017cb58879d81",
+ "plan_summary": {
+  "creates": [
+   "digitalocean_droplet.recent[\"transparent-pir-recent-05\"]",
+   "digitalocean_project_resources.recent[\"transparent-pir-recent-05\"]"
+  ],
+  "destroys": []
+ }
+}

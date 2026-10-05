@@ -14,6 +14,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -21,11 +22,114 @@ SCRIPT = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location('live_fleet', SCRIPT/'transparent-live-fleet.py')
 LIVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(LIVE)
+INVENTORY_SPEC = importlib.util.spec_from_file_location('fleet_inventory', SCRIPT/'transparent-fleet-inventory.py')
+INVENTORY = importlib.util.module_from_spec(INVENTORY_SPEC)
+INVENTORY_SPEC.loader.exec_module(INVENTORY)
 ROOT = Path('/opt/transparent-publisher')
+# The shared primitives live in the same checkout; this script is never shipped alone.
+LIB = str(SCRIPT.parents[2]/'ops/lib')
+if LIB not in sys.path:
+    sys.path.insert(0, LIB)
+from wallet_pir_ops import inherited_lock, transparent_unit  # noqa: E402
+
+
+
+def publisher_service(data_dir, publication_root, initial_publication, *, state_dir=None, config_path=None):
+    """Grant only the selected journal/publication paths inside the sandbox.
+
+    The initial publication must be writable in the mount namespace too:
+    linking an immutable source through a read-only mount can fail with EROFS.
+    """
+    state_dir = ROOT/'state' if state_dir is None else Path(state_dir)
+    config_path = ROOT/'controller.json' if config_path is None else Path(config_path)
+    paths = []
+    directories = tuple(map(Path, (data_dir, publication_root, initial_publication, state_dir)))
+    if config_path in directories:
+        raise ValueError('publisher config cannot be a writable directory')
+    for path in (*directories, config_path):
+        path = Path(path)
+        value = str(path)
+        if not path.is_absolute() or path == Path('/') or '%' in value or any(ord(c) < 32 for c in value):
+            raise ValueError('publisher paths must be absolute non-root paths without control characters or systemd specifiers')
+        if path != config_path and value not in paths:
+            paths.append(value)
+    template = (SCRIPT.parent/'deploy/transparent-publish-controller.service').read_text()
+    lines = template.splitlines()
+    indices = [i for i, line in enumerate(lines) if line.startswith('ReadWritePaths=')]
+    if len(indices) != 1:
+        raise ValueError('publisher unit must contain exactly one ReadWritePaths setting')
+    lines[indices[0]] = 'ReadWritePaths=' + ' '.join(json.dumps(path, ensure_ascii=False) for path in paths)
+    starts = [i for i, line in enumerate(lines) if line.startswith('ExecStart=')]
+    if len(starts) != 1:
+        raise ValueError('publisher unit must have exactly one ExecStart')
+    lines[starts[0]] = 'ExecStart=/usr/local/bin/transparent-publish-controller --config '+json.dumps(str(config_path), ensure_ascii=False)
+    return '\n'.join(lines) + '\n'
+
+
+def argument_values(args, flag):
+    values = []
+    for index, value in enumerate(args):
+        if value == flag:
+            if index+1 >= len(args) or args[index+1].startswith('--'):
+                raise ValueError('worker unit has an incomplete '+flag)
+            values.append(args[index+1])
+        elif value.startswith(flag+'='):
+            if not value[len(flag)+1:]:
+                raise ValueError('worker unit has an incomplete '+flag)
+            values.append(value[len(flag)+1:])
+    if len(values) > 1:
+        raise ValueError('worker unit has duplicate '+flag)
+    return values
+
+
+def replace_argument(args, flag, value):
+    argument_values(args, flag)
+    output, index = [], 0
+    while index < len(args):
+        if args[index] == flag:
+            index += 2
+        elif args[index].startswith(flag+'='):
+            index += 1
+        else:
+            output.append(args[index])
+            index += 1
+    return output+[flag, str(value)]
+
+
+def worker_control_args(args, config):
+    """Bind control/persistence to the selected schema without reusing v10 state."""
+    args = list(args)
+    socket = argument_values(args, '--control-socket')
+    active = argument_values(args, '--active-record')
+    if bool(socket) != bool(active):
+        raise ValueError('worker unit has incomplete publication control')
+    schema = config.get('worker_schema')
+    if schema is None:
+        if not socket:
+            args += ['--control-socket','/run/transparent-pir/control.sock',
+                     '--active-record','/opt/transparent-publisher/active.json']
+        return args
+    if schema != 'transparent-shard-v11':
+        raise ValueError('unsupported worker schema namespace')
+    expected = {'worker_active_record': '/opt/transparent-publisher/v11/active.json',
+                'worker_runtime_cache_dir': '/srv/transparent-pir/v11/runtime-cache',
+                'worker_root': '/srv/transparent-pir/v11/publications'}
+    # These fixed public namespaces keep every new collector away from v10
+    # rollback data. A future schema needs its own reviewed namespace contract.
+    if any(config.get(key) != value for key,value in expected.items()):
+        raise ValueError('v11 requires all separate worker persistence namespaces')
+    publication = argument_values(args, '--shard-dir')
+    if len(publication) != 1 or not Path(publication[0]).is_relative_to(Path(expected['worker_root'])):
+        raise ValueError('v11 worker unit must already select its staged v11 publication namespace')
+    if '..' in Path(publication[0]).parts:
+        raise ValueError('v11 worker publication path contains traversal')
+    args = replace_argument(args, '--control-socket', '/run/transparent-pir/control.sock')
+    args = replace_argument(args, '--active-record', expected['worker_active_record'])
+    return replace_argument(args, '--runtime-cache-dir', expected['worker_runtime_cache_dir'])
 
 
 def execute(args, **kwargs):
-    subprocess.run(list(map(str,args)),check=True,**kwargs)
+    subprocess.run(list(map(str,args)),check=True,**inherited_lock.options(),**kwargs)
 
 
 def read_json(url):
@@ -147,8 +251,7 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
             raise ValueError('cache_bytes must be a positive integer')
         args += ['--runtime-cache-dir', '/srv/transparent-pir/runtime-cache',
                  '--runtime-cache-max-bytes', str(cache_bytes * 2)]
-    if '--control-socket' not in args:
-        args += ['--control-socket','/run/transparent-pir/control.sock','--active-record','/opt/transparent-publisher/active.json']
+    args = worker_control_args(args, fleet.c)
     if 'build_slots' in worker:
         slots = worker['build_slots']
         if type(slots) is not int or not 1 <= slots <= 99:
@@ -171,15 +274,10 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
     # RuntimeDirectory is created before the binary opens its control socket.
     if 'RuntimeDirectory=transparent-pir' not in new_unit.splitlines():
         new_unit=new_unit.replace('[Service]','[Service]\nRuntimeDirectory=transparent-pir',1)
-    if worker['role'] in ('recent-replica', 'archive-owner'):
-        # Reclaim file cache before transient admission reaches the 7 GiB
-        # hard limit. The four-replica target is measured with a 5.5 GiB high
-        # threshold; anonymous allocations still obey the work/cache guards.
-        new_unit='\n'.join(line for line in new_unit.splitlines() if not line.startswith('MemoryHigh='))+'\n'
-        # Archive hosts otherwise retain ~10 GiB of file cache on top of their
-        # ~46 GiB anonymous working set, exceeding the cgroup headroom gate.
-        high = 5905580032 if worker['role'] == 'recent-replica' else 51539607552
-        new_unit=new_unit.replace('[Service]',f'[Service]\nMemoryHigh={high}',1)
+    if worker['role'] in transparent_unit.MEMORY_HIGH:
+        # Reclaim file cache before the hard limit; anonymous allocations
+        # still obey the work/cache guards. The values are per role.
+        new_unit=transparent_unit.set_memory_high(new_unit, worker['role'])
     headless = fleet.c.get('headless_console', False)
     if type(headless) is not bool:
         raise ValueError('headless_console must be a boolean')
@@ -193,7 +291,8 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
     if storage:
         new_unit=new_unit.replace('[Service]', '[Service]\n'+STORAGE_PRESTART, 1)
     remote='/opt/transparent-publisher/staged'
-    await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback))
+    active_parent = Path(argument_values(args, '--active-record')[0]).parent
+    await fleet.ssh(host,'mkdir -p '+remote+' '+shlex.quote(rollback)+' '+shlex.quote(str(active_parent)))
     if headless:
         helper=(SCRIPT/'transparent-headless-console.py').read_bytes()
         await fleet.ssh(host,'cat > '+remote+'/headless-console.py',helper)
@@ -204,6 +303,7 @@ async def install_worker(fleet,worker,artifacts,rollback,stage_only=False,warm_s
         await fleet.ssh(host,'python3 '+remote+'/storage-policy.py --preflight')
     for name in ['transparent-shard-server','shard-control']:
         await LIVE.run(['rsync','-a','-e',shlex.join(fleet.ssh_args),str(artifacts/name),'root@'+host+':'+remote+'/'+name],timeout=120)
+    await verify_worker_artifacts(fleet, host, artifacts, remote)
     verify=[remote+'/transparent-shard-server']+args[1:]+['--verify-only']
     await fleet.ssh(host,shlex.join(verify),timeout=300,multiplex=False)
     await fleet.ssh(host,'cat > '+remote+'/worker.service',new_unit.encode())
@@ -256,9 +356,17 @@ systemctl restart transparent-shard-server
     raise RuntimeError(worker['id']+' failed to warm after upgrade')
 
 
+async def verify_worker_artifacts(fleet, host, artifacts, remote):
+    hashes = (await fleet.ssh(host, 'sha256sum '+remote+'/transparent-shard-server '+remote+'/shard-control')).decode().splitlines()
+    expected_hashes = [hashlib.sha256((artifacts/name).read_bytes()).hexdigest()+'  '+remote+'/'+name
+                       for name in ['transparent-shard-server','shard-control']]
+    if hashes != expected_hashes:
+        raise RuntimeError('worker transferred artifact checksum mismatch')
+
+
 async def rollback(fleet, saved):
-    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-    subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    subprocess.run(['systemctl','stop','transparent-replica-reconciler'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
+    subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
     # A binary rollback must never resurrect an orphaned publication. Validate
     # the static predecessor against the node before changing routing or units.
     initial=Path(json.loads((saved/'controller.json').read_text())['initial_publication'])
@@ -300,10 +408,13 @@ async def main():
     cli.add_argument('--recent-geometry',default='recent-8k',
                      help='Recent geometry the controller publishes (shadow mode); must match the initial publication')
     cli.add_argument('--data-dir',type=Path,default=Path('/srv/zakura/transparent-event-data-v2'),
-                     help='Event journal the controller publishes from (shadow mode); version 2 since schema v9')
+                     help='Event journal the controller publishes from (shadow mode); use a separate v3 journal for schema v11')
+    cli.add_argument('--publication-root',type=Path,default=Path('/srv/zakura/transparent-publications'),
+                     help='Writable publication parent (shadow mode); keep it on the journal filesystem')
     cli.add_argument('--directory-choice',choices=['off','sealed','all'],default='off',
                      help='Which newly built shards publish a directory choice table (shadow mode)')
     args=cli.parse_args()
+    service = publisher_service(args.data_dir, args.publication_root, args.initial_publication) if args.mode=='shadow' else None
     if os.geteuid()!=0:
         raise RuntimeError('run on the coordinator as root')
     ROOT.mkdir(exist_ok=True)
@@ -319,12 +430,22 @@ async def main():
         # Reuse the environment's existing deployment identity at runtime.
         secret_file(ROOT/'credentials/deploy-ssh',os.environ['WALLET_PIR_DEPLOY_SSH_KEY'])
         secret_file(ROOT/'credentials/known_hosts',os.environ['TRANSPARENT_SSH_KNOWN_HOSTS'])
-        LIVE.atomic_json(ROOT/'roster.json',json.loads(os.environ['TRANSPARENT_FLEET_JSON']))
+        if (ROOT/'state/inventory.json').exists():
+            # The inventory owns membership once it exists: keep its roster
+            # (elastic replicas, pinned archive ranges) and its host keys.
+            INVENTORY.Inventory(ROOT/'state', ROOT/'roster.json', ROOT/'credentials/known_hosts').project(
+                INVENTORY.Inventory(ROOT/'state').last_good())
+        else:
+            LIVE.atomic_json(ROOT/'roster.json',json.loads(os.environ['TRANSPARENT_FLEET_JSON']))
         fleet_config=dict(roster=str(ROOT/'roster.json'),state_dir=str(ROOT/'state'),ssh_key=str(ROOT/'credentials/deploy-ssh'),known_hosts=str(ROOT/'credentials/known_hosts'),
                           assign_binary='/usr/local/bin/shard-assign',public_host='transparent-pir.valargroup.dev',router_host=os.environ['TRANSPARENT_ROUTER_HOST'],
                           authority_upstream='https://enhance-pir.valargroup.dev',internal_listen=os.environ['TRANSPARENT_ROUTER_HOST']+':8080')
+        # Operators and rollouts own these settings. Regenerating the file
+        # without them once disabled status forwarding and replica catch-up.
+        if 'fleet.json' in previous_files:
+            fleet_config=LIVE.carry_operational(fleet_config,json.loads(previous_files['fleet.json']))
         LIVE.atomic_json(ROOT/'fleet.json',fleet_config)
-        config=dict(data_dir=str(args.data_dir),publication_root='/srv/zakura/transparent-publications',initial_publication=str(args.initial_publication),
+        config=dict(data_dir=str(args.data_dir),publication_root=str(args.publication_root),initial_publication=str(args.initial_publication),
                     recent_from=3262749,recent_geometry=args.recent_geometry,archive_geometry='archive-wide',rpc_url='http://127.0.0.1:8232',rpc_cookie='/root/.cache/zakura/.cookie',
                     fleet_command=str(ROOT/'transparent-live-fleet.py'),fleet_config=str(ROOT/'fleet.json'),listen='127.0.0.1:8094',source_sha=args.source_sha,shadow=True)
         # Written only when enabled, so a controller built before the field
@@ -359,24 +480,25 @@ async def main():
         saved.mkdir(parents=True,exist_ok=True)
         if 'controller.json' in previous_files and not (saved/'controller.previous.json').exists():
             atomic_bytes(saved/'controller.previous.json',previous_files['controller.json'])
-        subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        subprocess.run(['systemctl','stop','transparent-publish-controller'],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,**inherited_lock.options())
         try:
             align_filter_origin(args.initial_publication)
             await save_baseline(fleet,saved)
         except Exception:
             # No worker has changed yet: resume the previous controller.
             restore_previous()
-            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False)
+            subprocess.run(['systemctl','start','transparent-publish-controller'],check=False,**inherited_lock.options())
             raise
         for name in ['transparent-publish-controller','shard-assign']:
             shutil.copy2(args.artifacts/name,'/usr/local/bin/'+name+'.next')
             os.chmod('/usr/local/bin/'+name+'.next',0o755)
             os.replace('/usr/local/bin/'+name+'.next','/usr/local/bin/'+name)
         shutil.copy2(SCRIPT/'transparent-live-fleet.py',ROOT/'transparent-live-fleet.py')
-        shutil.copy2(SCRIPT.parent/'deploy/transparent-publish-controller.service','/etc/systemd/system/transparent-publish-controller.service')
+        shutil.copy2(SCRIPT/'transparent-fleet-inventory.py',ROOT/'transparent-fleet-inventory.py')
+        args.publication_root.mkdir(parents=True,exist_ok=True)
+        Path('/etc/systemd/system/transparent-publish-controller.service').write_text(service)
         shutil.copy2(SCRIPT.parent/'deploy/transparent-replica-reconciler.service','/etc/systemd/system/transparent-replica-reconciler.service')
         shutil.copy2(SCRIPT.parent/'deploy/transparent-control-sessions.service','/etc/systemd/system/transparent-control-sessions.service')
-        Path('/srv/zakura/transparent-publications').mkdir(exist_ok=True)
         # Recent canary first; archive owners follow serially, then other replicas.
         recent=[w for w in fleet.roster if w['role']=='recent-replica']
         owners=[w for w in fleet.roster if w['role']=='archive-owner']

@@ -62,6 +62,7 @@ fn events(start: u64, end: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
             (
                 script((height % 8) as u32),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: Txid(txid),
                     transaction_index: 0,
@@ -154,6 +155,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        txid_display: None,
         directory_choice: None,
     };
     let digest = manifest.digest();
@@ -180,6 +182,7 @@ fn write_shard(
         txids: 0,
         directory_segments: built.directory_segments(),
         page_segments: built.page_segments(),
+        txid_segments: None,
         manifest_digest: digest,
         revision: manifest.revision,
         sealed,
@@ -248,6 +251,7 @@ fn roster() -> Vec<RosterEntry> {
             ssh_host: format!("10.0.1.{}", i + 1),
             upstream: format!("10.0.1.{}:8093", i + 1),
             cache_bytes: 4 << 30,
+            archive_range: None,
         });
     }
     for i in 0..2 {
@@ -258,6 +262,7 @@ fn roster() -> Vec<RosterEntry> {
             ssh_host: format!("10.0.2.{}", i + 1),
             upstream: format!("10.0.2.{}:8093", i + 1),
             cache_bytes: 4 << 30,
+            archive_range: None,
         });
     }
     roster
@@ -630,6 +635,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
             txids: 0,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: digest,
             revision,
             sealed: false,
@@ -747,6 +753,7 @@ fn manifest_for(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        txid_display: None,
         directory_choice: None,
     }
 }
@@ -794,4 +801,70 @@ fn a_hand_written_assignment_round_trips_and_checks_shape() {
     let loaded = Assignment::load(&path).unwrap();
     assert_eq!(loaded, assignment);
     assert_eq!(loaded.digest(), assignment.digest());
+}
+
+#[tokio::test]
+async fn a_publication_held_under_another_assignment_row_is_refused() {
+    use transparent_shard_server::live::{Command, LiveService, Publication, ASSIGNMENT_CHANGED};
+    let dir = tempfile::tempdir().unwrap();
+    let map = publish(dir.path());
+    let assignment = planned(&map);
+    let held = dir.path().join("assignment.json");
+    std::fs::write(&held, assignment.canonical_bytes()).unwrap();
+    let options = LoadOptions {
+        scope: LoadScope::Assigned {
+            assignment: Arc::new(assignment.clone()),
+            worker_id: "recent-01".into(),
+        },
+        ..LoadOptions::whole(3)
+    };
+    let set = ShardSet::open_with(dir.path(), &options).unwrap();
+    let digest = set.map_digest.clone();
+    let state = ServiceState::build(set, warm_config()).unwrap();
+    state.spawn_prewarm().await.unwrap();
+    let publication = |path: &Path| Publication {
+        directory: dir.path().to_path_buf(),
+        assignment: Some(path.to_path_buf()),
+        map_sha256: digest.clone(),
+    };
+    let live = LiveService::new(
+        state,
+        publication(&held),
+        warm_config(),
+        options,
+        dir.path().join("active.json"),
+    )
+    .unwrap();
+    let prepare = |path: &Path| Command::Prepare {
+        expected: digest.clone(),
+        publication: publication(path),
+    };
+    // The same row, even in another file, is the publication already held.
+    let copy = dir.path().join("copy.json");
+    std::fs::write(&copy, assignment.canonical_bytes()).unwrap();
+    live.command(prepare(&copy)).await.unwrap();
+    // Another worker's row changing does not concern this one.
+    let mut peer = assignment.clone();
+    peer.workers
+        .iter_mut()
+        .find(|w| w.id == "recent-02")
+        .unwrap()
+        .cache_bytes += 1;
+    let peer_path = dir.path().join("peer.json");
+    std::fs::write(&peer_path, peer.canonical_bytes()).unwrap();
+    live.command(prepare(&peer_path)).await.unwrap();
+    // This worker's own row changing is refused, not reported prepared.
+    let mut changed = assignment.clone();
+    changed
+        .workers
+        .iter_mut()
+        .find(|w| w.id == "recent-01")
+        .unwrap()
+        .cache_bytes += 1;
+    let changed_path = dir.path().join("changed.json");
+    std::fs::write(&changed_path, changed.canonical_bytes()).unwrap();
+    assert_eq!(
+        live.command(prepare(&changed_path)).await.unwrap_err(),
+        ASSIGNMENT_CHANGED
+    );
 }

@@ -1,0 +1,14 @@
+{
+  "status": "passed",
+  "owner": "3d7ad47540ff4cd092aeb7f7789d3866",
+  "base_source_sha": "16f806dfb229b1afb7418528fc50abdfd8c59288",
+  "duration_seconds": 15.38588983390946,
+  "result_sha256": "1058b8b259c85db4d83689361819ca4bcf506659847e2cd411a15f89a6c536b0",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_host.py": "83259ac8e1cdb4e0f7898fdd44368bdb268038c320457818dd7c1a0cbf47ad1c",
+    "transparent/ops/lib/activity_schema_product.py": "4814d74808671f791bf15390591857a94ec2d895685976d190e4eb64f0e147fd",
+    "transparent/ops/tests/test_activity_schema_host.py": "82bb83be70e7e9d6902e02a5e9e7d84af7986405a98983ff1be26c7877948615"
+  },
+  "scope": "Explicit failed-preserve and failed-owned-withdraw-only partial guard reconciliation; complete original copied inventory; one exact audit increment/empty rendered route timestamp; original and displaced bytes retained; unrelated drift/source/previous intent refusal",
+  "limitations": "Actual owned partial capture repair and canonical proofs still required"
+}

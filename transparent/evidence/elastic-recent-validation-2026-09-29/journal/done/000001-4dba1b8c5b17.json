@@ -1,0 +1,45 @@
+{
+ "apply_attempts": 1,
+ "count": 1,
+ "created_unix": 1790687523.715188,
+ "deadline_unix": 1790689062.9829738,
+ "droplets": {
+  "transparent-pir-recent-05": {
+   "id": "604659753",
+   "ip": "10.142.0.19"
+  }
+ },
+ "dry": false,
+ "finished_unix": 1790687951.7434258,
+ "host_keys": {
+  "transparent-pir-recent-05": {
+   "private_path": "/opt/transparent-publisher/scaler/journal/keys/4dba1b8c5b17/transparent-pir-recent-05",
+   "public": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILPW6AFAvIuTCQCwe98uy77/nulwSIsDn01ykgg8Oukp"
+  }
+ },
+ "id": "4dba1b8c5b17",
+ "installed": [
+  "transparent-pir-recent-05"
+ ],
+ "kind": "scale_out",
+ "names": [
+  "transparent-pir-recent-05"
+ ],
+ "outcome": "serving",
+ "phase": "installed",
+ "phase_unix": 1790687891.400682,
+ "plan": "/opt/transparent-publisher/scaler/journal/terraform/elastic-exovbc7z.tfplan",
+ "plan_sha256": "b63db5a4247e16f6ae4ff5aeaa002dd8b9982c112487b794965e9b2d285bc94a",
+ "plan_summary": {
+  "creates": [
+   "digitalocean_droplet.recent[\"transparent-pir-recent-05\"]",
+   "digitalocean_project_resources.recent[\"transparent-pir-recent-05\"]"
+  ],
+  "destroys": []
+ },
+ "release": {
+  "binary_sha256": "4e3f8d9d8eb881bd3b3dc1450be52a1f9cf7a63987ae7e05986a2feebd64e81c",
+  "dir": "/opt/transparent-publisher/releases/a704616c",
+  "sha": "a704616c"
+ }
+}

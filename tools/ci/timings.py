@@ -4,6 +4,15 @@
 Use --run for stage/queue timings, or --workflow and --limit for completed-run
 p95. Historical populations must be separated by warm/cold and deployment mode
 before claiming the fast/routine latency targets.
+
+dispatch_to_job_start is not runner queue time: it includes waiting for `needs`
+jobs, concurrency groups and environments. Step phases come from the jobs API;
+the Rust setup step includes hosted cache restore. --cache-records reads each
+job's log for the sanitized records: CI_CACHE_IDENTITY/RESTORE/REPORT (identity,
+restore status, setup and restore seconds, fingerprint inventory),
+CI_CARGO_ARTIFACTS (fresh and compiled units from Cargo's own JSON messages
+for the commands the job executed) and CI_STAGE_REPORT (compile, execution and
+other stage seconds; null when no such stage ran).
 """
 import argparse
 from datetime import datetime, timezone
@@ -11,7 +20,22 @@ import json
 import math
 import os
 import subprocess
+import urllib.error
 import urllib.request
+
+DEFINITIONS = {
+    'dispatch_to_job_start_seconds': 'current attempt start to job start; includes needs, concurrency and environment waits, not only runner queue',
+    'phases.setup_seconds': 'job setup, checkout, comparison fetch, selection and Rust setup including hosted cache restore',
+    'phases.work_seconds': 'remaining steps (compilation and execution; see cache_records for the split)',
+    'phases.post_seconds': 'post steps, including hosted cache save',
+    'phases.report_seconds': 'reporting steps',
+    'cache_records.CI_CARGO_ARTIFACTS': 'units in compiler-artifact messages of executed Cargo build/check/clippy/test commands; compiled if any reported fresh=false',
+    'cache_records.CI_CACHE_REPORT.fingerprint_inventory': 'fingerprint directories at restore vs job end by content; inventory only, not what Cargo compiled',
+    'cache_records.CI_STAGE_REPORT.compile_stage_seconds': 'whole compile/lint Cargo commands, including resolution, downloads, build scripts and linking; null if none ran',
+}
+SETUP = ('Set up job', 'Run actions/checkout', 'Run ./.github/actions/rust-setup', 'Run dtolnay/',
+         'Run Swatinem/', 'Fetch comparison revision', 'Select affected', 'Install ', 'Identify ', 'Restore ',
+         'Record restored', 'Run hashicorp/setup-terraform')
 
 
 def api(path):
@@ -26,6 +50,61 @@ def api(path):
     return json.loads(subprocess.check_output(['gh', 'api', path]))
 
 
+class _DropAuthOnRedirect(urllib.request.HTTPRedirectHandler):
+    """Job logs redirect to presigned storage, which must not receive the token."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header('Authorization')
+        return new
+
+
+def job_log(repo, job_id):
+    token = os.environ.get('GH_TOKEN') or os.environ.get('GITHUB_TOKEN')
+    path = f'repos/{repo}/actions/jobs/{job_id}/logs'
+    try:
+        if token:
+            request = urllib.request.Request(
+                os.environ.get('GITHUB_API_URL', 'https://api.github.com') + '/' + path,
+                headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json'})
+            with urllib.request.build_opener(_DropAuthOnRedirect).open(request, timeout=60) as response:
+                return response.read().decode(errors='replace')
+        # Colored Cargo output contains escape sequences, which newer gh refuses
+        # to print without this flag; older gh lacks the flag.
+        for flags in (['--allow-escape-sequences'], []):
+            try:
+                return subprocess.check_output(['gh', 'api', *flags, path], text=True, stderr=subprocess.DEVNULL)
+            except subprocess.CalledProcessError:
+                if not flags:
+                    raise
+    except (urllib.error.URLError, subprocess.CalledProcessError, OSError):
+        return None
+
+
+def cache_records(log):
+    """Sanitized CI_CACHE_*, CI_CARGO_ARTIFACTS and CI_STAGE_REPORT records from a job log."""
+    records = []
+    for line in (log or '').splitlines():
+        for tag in ('CI_CACHE_IDENTITY', 'CI_CACHE_RESTORE', 'CI_CACHE_REPORT', 'CI_CARGO_ARTIFACTS', 'CI_STAGE_REPORT'):
+            marker = line.find(tag + ' {')
+            if marker >= 0:
+                try:
+                    records.append({'type': tag, **json.loads(line[marker + len(tag) + 1:])})
+                except json.JSONDecodeError:
+                    pass
+    return records
+
+
+def phase(name):
+    if name.startswith(SETUP):
+        return 'setup_seconds'
+    if name.startswith('Post ') or name == 'Complete job':
+        return 'post_seconds'
+    if name.startswith('Report '):
+        return 'report_seconds'
+    return 'work_seconds'
+
+
 def timestamp(value):
     return datetime.fromisoformat(value.replace('Z', '+00:00'))
 
@@ -35,10 +114,10 @@ def elapsed(start, end):
 
 
 def percentile95(values):
-    return sorted(values)[math.ceil(len(values) * .95) - 1] if values else None
+    return sorted(values)[math.ceil(len(values) * .95) - 1] if len(values) >= 20 else None
 
 
-def report(repo, run_id):
+def report(repo, run_id, records=False):
     run = api(f'repos/{repo}/actions/runs/{run_id}')
     attempt = run.get('run_attempt', 1)
     jobs = api(f'repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100')['jobs']
@@ -46,20 +125,31 @@ def report(repo, run_id):
     # a new attempt is requested, including its wait for a runner.
     started = run['run_started_at'] if attempt > 1 else run['created_at']
     now = datetime.now(timezone.utc).isoformat()
-    result = {'run': run_id, 'attempt': attempt, 'timing_start': started, 'sha': run['head_sha'], 'status': run['status'], 'jobs': []}
+    result = {'run': run_id, 'attempt': attempt, 'definitions': DEFINITIONS, 'timing_start': started, 'sha': run['head_sha'], 'status': run['status'], 'jobs': []}
     for job in jobs:
         if not job.get('started_at'):
             continue
+        reused = timestamp(job['started_at']) < timestamp(started)
+        steps = [s for s in job['steps'] if s.get('started_at') and s.get('completed_at') and s['status'] == 'completed']
+        phases = {key: 0.0 for key in ('setup_seconds', 'work_seconds', 'post_seconds', 'report_seconds')}
+        for step in steps:
+            phases[phase(step['name'])] = round(phases[phase(step['name'])] + elapsed(step['started_at'], step['completed_at']), 3)
         result['jobs'].append({
+            'reused_from_previous_attempt': reused,
             'name': job['name'], 'runner': job.get('runner_name'),
-            'dispatch_to_job_start_seconds': elapsed(started, job['started_at']),
+            'dispatch_to_job_start_seconds': None if reused else elapsed(started, job['started_at']),
             'job_seconds': elapsed(job['started_at'], job.get('completed_at') or now),
+            'phases': phases,
             'steps': [{'name': s['name'], 'seconds': elapsed(s['started_at'], s['completed_at']), 'conclusion': s['conclusion']}
-                      for s in job['steps'] if s.get('started_at') and s.get('completed_at') and s['status'] == 'completed'],
+                      for s in steps],
         })
+        if records and job.get('id') and not reused:
+            log = job_log(repo, job['id'])
+            result['jobs'][-1]['cache_records'] = cache_records(log) if log is not None else None
     # completed_at is more precise than run.updated_at, which can change later.
     ends = [j['completed_at'] for j in jobs if j.get('completed_at')]
-    result['dispatch_seconds'] = elapsed(started, max(ends) if run['status'] == 'completed' and ends else now)
+    result['dispatch_seconds'] = max(0, elapsed(started, max(ends) if run['status'] == 'completed' and ends else now))
+    result['total_dispatch_seconds'] = elapsed(run['created_at'], max(ends) if run['status'] == 'completed' and ends else now)
     result['complete'] = run['status'] == 'completed'
     return result
 
@@ -71,12 +161,13 @@ def main():
     group.add_argument('--run')
     group.add_argument('--workflow')
     parser.add_argument('--limit', type=int, default=20)
+    parser.add_argument('--cache-records', action='store_true', help='read job logs for sanitized cache/stage records')
     args = parser.parse_args()
     if args.run:
-        result = report(args.repo, args.run)
+        result = report(args.repo, args.run, args.cache_records)
     else:
         runs = api(f'repos/{args.repo}/actions/workflows/{args.workflow}/runs?status=completed&per_page={args.limit}')['workflow_runs']
-        rows = [report(args.repo, r['id']) for r in runs if r['conclusion'] == 'success']
+        rows = [report(args.repo, r['id'], args.cache_records) for r in runs if r['conclusion'] == 'success']
         result = {'workflow': args.workflow, 'successful_runs': len(rows),
                   'p95_dispatch_seconds': percentile95([r['dispatch_seconds'] for r in rows]), 'runs': rows}
     print(json.dumps(result, indent=2))

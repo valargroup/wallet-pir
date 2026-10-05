@@ -157,6 +157,7 @@ Investigate by check family:
 | `canary_*` | Inspect transport/category and pinned oracle validity; distinguish wrong bytes from unavailable service. |
 | `external_monitor`, `apm_progress` | Inspect systemd, loop progress, and state-database permissions on the named monitoring host. |
 | `*delivery*` | Check credential presence, sanitized last failure, and oldest pending age; preserve the outbox. |
+| `scaling_*` | Read `scaler/status.json` and `scaler/journal/operation.json` on the coordinator. A fenced operation proceeds only after `resolve-apply` ([elastic recent](../../transparent/docs/elastic-recent.md#actuator-operations)). |
 
 ## Deployment and rollback
 
@@ -271,6 +272,11 @@ the API; history work runs outside request and scrape tasks.
 The existing fleet roster is authoritative. No public metrics route is added.
 The host sampler uses explicitly configured private SSH targets and loopback
 Caddy metrics. Its output contains resource numbers and fixed source names.
+With a `roster` block (`{"path": ".../roster.json", "unit":
+"transparent-shard-server.service"}`) it derives one target per enrolled or
+draining transparent worker from the roster on every cycle, so elastic members
+and replaced owners are sampled under their own names. A static list sampled
+archive-03 as `transparent-pir-recent-03` after the 2026-09-29 owner move.
 Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
@@ -327,3 +333,45 @@ correctness. Thresholds are operational guardrails, not an SLO commitment.
 6. Roll back binaries/config overrides to recorded paths and restart affected
    services. Retain SQLite history and incident/outbox files. Demoting a family
    to shadow does not discard a previously announced incident's recovery.
+
+## Transparent scaler alerts
+
+The optional `scaling` family reads the Track A scaler's
+[`scaler/status.json`](../../transparent/docs/elastic-recent.md#processes-and-files)
+on the same host at every five-second evaluation. It is enabled only when
+`PIR_APM_SCALER_STATUS` names that file by absolute path, requires
+`PIR_APM_STATE_PATH`, and shares the incident database and Slack outbox.
+`PIR_APM_SCALING_ALERT_MODE` is `shadow` (default) or `active`, independent of the
+other families; `active` without a status file refuses to start. Without
+`PIR_APM_SCALER_STATUS` nothing is opened, read or written, and Enhance, Status
+and quality alerting are unchanged.
+
+Reads stop at 1 MiB. A missing, oversized, unparseable, `schema` ≠ 1 or
+future-dated file, or contents with `updated_unix` older than 90 s, make every
+rule unknown, and unknown never recovers an incident. Only the heartbeat rule
+reads stale contents. An absent or `null` field makes the rules that need it
+unknown. Every condition has resource `transparent-scaler`.
+
+| Key | Severity | Fires when | Hold |
+| --- | --- | --- | --- |
+| `scaling_status_coverage` | warning | file or `heartbeat_unix` missing, unreadable or invalid | 180 s |
+| `scaling_heartbeat` | warning | `now − heartbeat_unix > 180 s` | – |
+| `scaling_operation_deadline_<id>` | warning | `operation.deadline_exceeded` | – |
+| `scaling_operation_fenced_<id>` | critical | `operation.fenced` | – |
+| `scaling_budget` | warning | `budget.actions_left` or `budget.destroys_left` ≤ 0 | – |
+| `scaling_demand_held` | warning | `desired_recent > serving_recent` with non-empty `holds` | 30 min |
+| `scaling_forecast_warning` | warning | `forecast.days_to_recent_budget < 30` | – |
+| `scaling_forecast_critical` | critical | `forecast.days_to_recent_budget < 7` | – |
+| `scaling_recent_serving` | critical | `serving_recent == 0` | 60 s |
+| `scaling_awaiting_operator` | warning | non-empty `awaiting_operator` | – |
+| `scaling_orphan` | warning | non-empty `orphans` | – |
+
+Per-operation keys end in the operation id (characters outside `[A-Za-z0-9._-]`
+become `_`), so one stuck operation is one incident. Once fresh status no longer
+names that operation, its incident recovers. Every recovery needs two fresh healthy
+samples: distinct `updated_unix` values, or distinct heartbeats for
+`scaling_heartbeat`. Critical incidents repeat every 30 minutes like the others.
+
+Roll out with the same gates as the quality families: 24 hours in shadow, then 24
+hours active. Removing `PIR_APM_SCALER_STATUS` stops evaluation and leaves any
+open `scaling_*` incident as it was.

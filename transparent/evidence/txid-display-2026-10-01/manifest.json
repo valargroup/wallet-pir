@@ -1,0 +1,18 @@
+{
+  "run_id": "txid-display-2026-10-01",
+  "source_sha": "26ca321c963b4c60ab763b7dc3fd48c2fcff759f",
+  "metadata_dependency_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "commands": [
+    "cargo test --locked --offline --profile release-fast -p transparent-filter-server display_journal:: --lib",
+    "cargo test --locked --offline --profile release-fast -p transparent-shard-server --test txid_display",
+    "make transparent-txid-demo OFFLINE=1 REPORT=/tmp/tpir-txid-accepted.json"
+  ],
+  "result": "pass",
+  "source_dirty": false,
+  "profile": "release-fast",
+  "backend": "transparent-native / two-mask ReinspiRING",
+  "network": "frozen Zcash mainnet vectors, local loopback HTTP",
+  "geometry": "recent-4k, directory and pages 4096 x 4096 bytes",
+  "fixture_sha256": "a9ff001db04134be0874fce529d4e94ef142b5f2efa04bc24d7f2710ff83553f",
+  "limitations": "One local repetition; cache reservations rather than RSS; no production capacity, deployment, cryptographic release or wallet/Vizor qualification."
+}

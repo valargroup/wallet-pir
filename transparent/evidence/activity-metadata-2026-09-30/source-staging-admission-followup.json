@@ -1,0 +1,31 @@
+{
+  "observed_utc": "2026-10-01T00:39:45.371584+00:00",
+  "base_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+  "inputs": {
+    "transparent/ops/lib/activity_source_stage.py": "c0e944e3cbf40f74875aef1fefddd4cab55902eb2746ad1f4a94500ca3e11f47",
+    "transparent/ops/lib/activity_source_stage_host.py": "d5e63baf58003e2a532049adfbee71d419919bb3bd99350dfadcd5b65ea7ddc8",
+    "transparent/ops/tests/test_activity_schema_operation.py": "addca105373b6fde2945caa3f0afee12f2ec77885bc020c3ed1bc2a9500cf36f"
+  },
+  "finding": "Host preflight accepted a whole-tree 81439424-byte archive whose later receiving guard limits compressed bytes to 64 MiB. No oversized transfer or root receipt was attempted.",
+  "fix": "Client rejects oversized input before hashing or SSH. Export only operation dependency directories, preserving original whole-tree archive locally. New root receipts record process PID.",
+  "focused_check": {
+    "command": "python3 transparent/ops/tests/test_activity_schema_operation.py",
+    "tests": 31,
+    "seconds": 0.691,
+    "exit": 0
+  },
+  "existing_source_staging": "56b67ba0 operations-only 536659-byte archive already staged and all 269 files reverified. It is retained independently of this client admission correction.",
+  "limitations": [
+    "Actual production recipe and phase programs remain incomplete.",
+    "No binary or canonical schema activation occurred.",
+    "Old root source-staging receipt has no process PID; the new PID field applies only to subsequent staging."
+  ],
+  "affected_check": {
+    "owner_id": "deb73b988b6f44219810da5769605d50",
+    "command": "make check-fast BASE=56b67ba08932507ac775d5911b6cb5ded2882e72",
+    "base_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+    "seconds": 1.2110004159621894,
+    "exit": 0,
+    "accepted": "Source unchanged during check; only result metadata and prose formatting amended afterward."
+  }
+}

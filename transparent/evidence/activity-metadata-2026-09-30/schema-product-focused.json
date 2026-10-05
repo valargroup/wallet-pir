@@ -1,0 +1,85 @@
+{
+  "accepted_check": {
+    "exit_code": 0,
+    "head": "beffffc6ef5b6768a48f43351e07522e35cc7858",
+    "input_manifest_sha256": "755cec474add376ea26b32b76103eef2a59887b308dbb8eaf0c93d19a538a968",
+    "log_sha256": "61e584296947b88905a4cedd03cbd5306c46946b429f1b0669419826b4d05de7",
+    "owner": "50ffc8c385744eff859995a8cc1296aa",
+    "seconds": 14.54445983399637
+  },
+  "comparison_sha": "beffffc6ef5b6768a48f43351e07522e35cc7858",
+  "comprehensive_predecessor_ci": {
+    "conclusion": "success",
+    "raw_sha256": "026241e5ef1c2cb7e5f7e129d7dc738b8603098b84c7c41ac8f5c1ec9ca04ff3",
+    "run": 36812153673,
+    "sha": "beffffc6ef5b6768a48f43351e07522e35cc7858",
+    "status": "completed"
+  },
+  "derived_report_updated_after_check": true,
+  "implementation_inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "c367bdb4c79a64c063accd2975e99137bb60d72d68223019c2ac87e1bfea8046",
+    "ops/lib/wallet_pir_ops/deploy/engine.py": "e20c55c3708597e5c6c1357824604b5e2f36995032173953996d88e27c509c3d",
+    "ops/lib/wallet_pir_ops/schema_fence.py": "2acc89d98c84d9d2d76f4ddfbba9be57498849d3c0aa55ff40b45faa37a6d25e",
+    "transparent/ops/lib/activity_publication_job.py": "00d8b77f848522adb544b5c39eb5205def42e57a8c1ce8aeb42355c91b5a5aeb",
+    "transparent/ops/lib/activity_schema_dispatch.py": "b4557a6ae639abfe4f34e1d2a800d6d677efe9829440bdd8157142e776ab80fb",
+    "transparent/ops/lib/activity_schema_host.py": "8fe8b10f1f71836336abd6b0d94c38b1fa54ac7eae622920ca7f98944e56c917",
+    "transparent/ops/lib/activity_schema_operation.py": "21d66a2428e01d4c3bd4fccbb0f0017303a59c24a6c9ebfe5fed2b092c25757d",
+    "transparent/ops/lib/activity_schema_product.py": "0d31c7b1c22b93b95435d2600b05b59a5c84cbd074bb107a36128b76a2df2a7c",
+    "transparent/ops/lib/activity_schema_routing.py": "bc0ccf6c1494c67b622bd6393a3ece822681e23d5e1a9a053c5a319419626fa6",
+    "transparent/ops/lib/activity_schema_templates.py": "0b8aeca63eff6f6d8c390fbfe65ad8aede79d80cf19cd888d6c5041e472714bc",
+    "transparent/ops/lib/activity_source_stage.py": "551facdf9571cbef2211daf18d833936c96e94abfddc801391591429d31b3eaf",
+    "transparent/ops/lib/activity_source_stage_host.py": "992fb4c7dfdd5343bef846052121f0e2ba802c49f8a64788fb8ffb17ebe24fc8",
+    "transparent/ops/scripts/test_transparent_quality_load.py": "504f796a6d1379da42a4013f8e0d0d8dd27352399bb274b717d2613887130591",
+    "transparent/ops/scripts/transparent-activity-link-probe.py": "4b3d6ee44c034486d0b18978bc4700a40392b79779921e5dc1da8df4a91230d1",
+    "transparent/ops/scripts/transparent-quality-load.py": "ca47c10653ab0b5bea19ae5ce122479505f37fcc01736e0ce8ba08f79d5802db",
+    "transparent/ops/tests/test_activity_schema_host.py": "a751a6e913b6f58d45fb1f0521488a7f2c2172c2596e50a83843b041123f52d6",
+    "transparent/ops/tests/test_activity_schema_operation.py": "78a780d2a5c7183631b6f2deabe2cdef44beb777f92ce8edb315422cb30a6e90",
+    "transparent/ops/tests/test_activity_schema_product.py": "661fde6b9826d13b28bb8d3b3099eb639874af3a2ad1a7f342d549bc1fb623cc"
+  },
+  "limitations": [
+    "No actual SSH descendant qualification",
+    "No production candidate input staging or baseline capture",
+    "No canonical schema transaction or sustained-wallet qualification",
+    "Partial capture and stale candidate namespace reconciliation remain required lifecycle gates"
+  ],
+  "native_inputs_changed": false,
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "not_accepted": [
+    {
+      "owner": "dda482c3c382413da91b3f374f99e613",
+      "reason": "predates capture-intent, receipt and mode corrections",
+      "seconds": 14.326008083065972,
+      "status": "pass"
+    },
+    {
+      "owner": "97fd008553ae41a6af5298fce00056be",
+      "reason": "evidence link target missing before report creation",
+      "seconds": 4.190889665973373,
+      "status": "fail"
+    }
+  ],
+  "private_raw_root": "/Users/roman/.ai-runbook/dev-ux/activity-schema-product-review",
+  "regression": {
+    "green": {
+      "errors": 0,
+      "failures": 0,
+      "tests": 1
+    },
+    "logs": {
+      "green-mode-v2.log": "c3dc4ce80790d0a5a68dcff2d3009be59564c24dfe01144e0f6b50051e539cc3",
+      "red-mode-v2.log": "af2b1336766a14aa42be86fc0bb181e81184044d23457edcaea65183f5f13e8a"
+    },
+    "not_accepted": "prior receipt.json copied module globals and missed fixture path patches",
+    "red": {
+      "errors": 0,
+      "failures": 1,
+      "tests": 1
+    },
+    "regression": "seeded executable mode under private umask"
+  },
+  "schema_tests": {
+    "duration_seconds": 1.529,
+    "passed": 106
+  },
+  "status": "passed"
+}

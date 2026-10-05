@@ -1,0 +1,194 @@
+{
+  "run": "36854242979",
+  "attempt": 1,
+  "definitions": {
+    "dispatch_to_job_start_seconds": "current attempt start to job start; includes needs, concurrency and environment waits, not only runner queue",
+    "phases.setup_seconds": "job setup, checkout, comparison fetch, selection and Rust setup including hosted cache restore",
+    "phases.work_seconds": "remaining steps (compilation and execution; see cache_records for the split)",
+    "phases.post_seconds": "post steps, including hosted cache save",
+    "phases.report_seconds": "reporting steps",
+    "cache_records.CI_CARGO_ARTIFACTS": "units in compiler-artifact messages of executed Cargo build/check/clippy/test commands; compiled if any reported fresh=false",
+    "cache_records.CI_CACHE_REPORT.fingerprint_inventory": "fingerprint directories at restore vs job end by content; inventory only, not what Cargo compiled",
+    "cache_records.CI_STAGE_REPORT.compile_stage_seconds": "whole compile/lint Cargo commands, including resolution, downloads, build scripts and linking; null if none ran"
+  },
+  "timing_start": "2026-10-01T11:15:36Z",
+  "sha": "8d6d613a4ac853bae81a99754bdbe1f2a3349809",
+  "status": "completed",
+  "jobs": [
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Fast checks",
+      "runner": "wallet-pir-ci-fast",
+      "dispatch_to_job_start_seconds": 3.0,
+      "job_seconds": 99.0,
+      "phases": {
+        "setup_seconds": 6.0,
+        "work_seconds": 86.0,
+        "post_seconds": 1.0,
+        "report_seconds": 1.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 2.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Fetch comparison revision",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Select affected packages",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run affected fast checks",
+          "seconds": 86.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report queue and stage timings",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": [
+            [
+              ".cargo/config.toml",
+              "64026065f1a7"
+            ]
+          ],
+          "features": "selected packages with classified features",
+          "flags": {
+            "CARGO_BUILD_JOBS": "4b227777d4dd",
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "4b7a801ab0500dcb",
+          "key": null,
+          "lane": "fast",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "persistent",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "release-fast",
+          "profiles": "15543a043366",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "affected",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "3d418ec0b975fe72",
+          "toolchain_files": {
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "wrappers": {}
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "fast",
+          "status": "persistent-existing",
+          "restored_units": 1013
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "fingerprint_inventory": {
+            "added": 0,
+            "changed": 1,
+            "missing_at_end": 0,
+            "present_at_end": 1013,
+            "restored": 1013,
+            "unchanged": 1012
+          },
+          "identity": "4b7a801ab0500dcb",
+          "key": null,
+          "lane": "fast",
+          "profile": "release-fast",
+          "refs_before_restore": null,
+          "restore": "persistent-existing",
+          "restore_seconds": 0.115,
+          "scope": "affected",
+          "setup_seconds": 0.308,
+          "toolchain": "3d418ec0b975fe72"
+        },
+        {
+          "type": "CI_CARGO_ARTIFACTS",
+          "commands": 44,
+          "compiled": 1,
+          "compiled_workspace_packages": [
+            "transparent-loadtest"
+          ],
+          "fresh": 924,
+          "third_party": {
+            "compiled": 0,
+            "fresh": 805
+          },
+          "units": 925,
+          "workspace": {
+            "compiled": 1,
+            "fresh": 119
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compile_stage_seconds": 12.594,
+            "execution_stage_seconds": 64.177,
+            "failed_stages": [],
+            "other_stage_seconds": 0.047
+          }
+        }
+      ]
+    }
+  ],
+  "dispatch_seconds": 102.0,
+  "total_dispatch_seconds": 102.0,
+  "complete": true
+}

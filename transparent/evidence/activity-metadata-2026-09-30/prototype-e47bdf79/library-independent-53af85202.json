@@ -1,0 +1,27 @@
+{
+  "schema": "activity-library-independent-check-v1",
+  "status": "passed",
+  "birthday": 3499739,
+  "through": 3500738,
+  "blocks": 1000,
+  "raw_rpc_attempts": 2741,
+  "raw_rpc_failures": [
+    {
+      "attempt": 1274,
+      "rpc_batch_error": -32011
+    },
+    {
+      "attempt": 1837,
+      "rpc_batch_error": -32011
+    }
+  ],
+  "receives": 9,
+  "spends": 7,
+  "fixture_scripts": 8,
+  "sqlite_metadata_checked": true,
+  "library_result_sha256": "757756ba973d9cdc14e0eada77e3095f4af67754edaa9dedb3faee890d600768",
+  "snapshot_sha256": "dfb9e39ae8b77bc0aa31694f86b826031710616494a5380646557b2a4e19e47c",
+  "capture_index_sha256": "764c93a2874233eec81d9cfd61a86bcc1e1a7bded265e9a09db60a998af0f076",
+  "checker_sha256": "ab55bd45fe022aa3e8988a1eba193a367c7992663d1b8a31535057e7c831652f",
+  "limitation": "Public scripts stand in for ownership; shielded scan is a controlled empty-block fixture. No account promotion or financial authority."
+}

@@ -1,0 +1,71 @@
+{
+  "run": "36728359003",
+  "attempt": 1,
+  "timing_start": "2026-09-30T14:20:23Z",
+  "sha": "4f0c98cdec73fd6132d3e7842d1998889d7f8452",
+  "status": "completed",
+  "jobs": [
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Fast checks",
+      "runner": "wallet-pir-ci-fast",
+      "dispatch_to_job_start_seconds": 3.0,
+      "job_seconds": 97.0,
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 2.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Fetch comparison revision",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Select affected packages",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run affected fast checks",
+          "seconds": 85.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report queue and stage timings",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ]
+    }
+  ],
+  "dispatch_seconds": 100.0,
+  "total_dispatch_seconds": 100.0,
+  "complete": true
+}

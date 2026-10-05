@@ -60,14 +60,17 @@ See the [tooling index](tools/README.md) for development commands and the
 ## Develop
 
 ```sh
-make check
+make doctor
+make check-fast BASE=origin/main
+# Explicit comprehensive local validation: make check-full
 cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
 cargo run --release -p enhance-pir --features cli --bin enhance-pir-cli -- --help
 make transparent-sim-help
 ```
 
 Rust package and binary names are stable across the repository reorganization.
-Full-shard cryptographic tests use release mode. The legacy demos remain
+Full-shard cryptographic tests use the optimized `release-fast` profile.
+See [development commands](docs/development.md) and [agent guidance](AGENTS.md). The legacy demos remain
 independently buildable with `make demo-check`.
 
 ## Operations

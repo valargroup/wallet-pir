@@ -8,7 +8,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
     path::Path,
 };
-use transparent_events::{TransparentEvent, EVENT_BYTES};
+use transparent_events::{TransparentEvent, EVENT_BYTES, MAX_EVENT_BYTES};
 use transparent_filter::{BlockHash, ScriptBytes};
 #[derive(Deserialize)]
 struct Meta {
@@ -35,7 +35,7 @@ impl EventStore {
     pub fn open_existing(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         let meta: Meta = serde_json::from_slice(&std::fs::read(path.join("meta.json"))?)?;
-        if meta.version != 2 {
+        if !matches!(meta.version, 2 | 3) {
             bail!("unsupported journal version");
         }
         let checkpoint = std::fs::read(path.join("checkpoint.bin"))?;
@@ -120,7 +120,17 @@ impl EventStore {
             }
             let mut script = vec![0; length];
             reader.read_exact(&mut script)?;
-            let mut raw = [0; EVENT_BYTES];
+            let event_len = if self.meta.version == 3 {
+                let mut length = [0; 2];
+                reader.read_exact(&mut length)?;
+                usize::from(u16::from_le_bytes(length))
+            } else {
+                EVENT_BYTES
+            };
+            if !(EVENT_BYTES..=MAX_EVENT_BYTES).contains(&event_len) {
+                bail!("invalid journal event length");
+            }
+            let mut raw = vec![0; event_len];
             reader.read_exact(&mut raw)?;
             let event = TransparentEvent::from_bytes(&raw)?;
             if crate::height(&event) != h {
@@ -143,6 +153,7 @@ mod tests {
     fn respects_committed_lengths_without_truncating_the_journal() {
         let dir = tempfile::tempdir().unwrap();
         let event = TransparentEvent::Receive(transparent_events::ReceiveEvent {
+            metadata: None,
             height: 0,
             txid: transparent_events::Txid([7; 32]),
             transaction_index: 0,

@@ -1,0 +1,39 @@
+{
+  "id": "8aed848d5b2245d9841900ada5763888",
+  "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+  "repo": "wallet-pir",
+  "sha": "cc5f4bde63ed4cc78f46216f0d2f09f6e3efaab1",
+  "tool": "codex",
+  "session": "activity-flat-input-layout",
+  "state": "/Users/roman/.ai-runbook/dev-ux/activity-flat-input-check",
+  "log": "/Users/roman/.ai-runbook/dev-ux/activity-flat-input-check/checks/8aed848d5b2245d9841900ada5763888.log",
+  "started": 1790837873.7569,
+  "automatic_wake": false,
+  "status": "pass",
+  "exit_code": 0,
+  "duration": 13.86600720800925,
+  "implementation_inputs": {
+    "transparent/ops/lib/activity_input_stage.py": "59c56e8375963369623852a282cf41f9705e03084cca9233999431cd15706ff0",
+    "transparent/ops/tests/test_activity_input_stage.py": "d37c8a8e02b39b62d50407eadbae85dab8de82fca594a120d748b0a15fbe750f"
+  },
+  "raw_log_sha256": "e89ed83ce36a626422bd83ae78dc7a2f5ea90dcde89cef8d464d8ed0cc08c63b",
+  "combined_schema_tests": 134,
+  "regression": "Real streamed subprocess opens manifest.json in every child directory; preparation inputs remain flat files.",
+  "failed_live_candidate": {
+    "request_sha256": "58aa6569aad954b8d2e283ae88644307986d45c1554bdba13193cdc44868b541",
+    "portable_server_executed": true,
+    "exit_code": 1,
+    "native_pid": 245782,
+    "error": "Auxiliary .inputs directory lacks manifest.json",
+    "coordinator_and_worker_owners": "reconciled, partial bytes retained"
+  },
+  "failed_raw_evidence": {
+    "path": "/Users/roman/.ai-runbook/dev-ux/activity-portable-release/worker-inputs/worker-1-failure-raw.json",
+    "sha256": "d5f484a7588f12f07df62831a10c9705e4b8211b703956046f923969def991eb"
+  },
+  "limitations": [
+    "No canonical service transition",
+    "Corrected candidate requires fresh actual verification",
+    "Generic control --help check failed JSON EOF; use read-only status protocol before cutover"
+  ]
+}

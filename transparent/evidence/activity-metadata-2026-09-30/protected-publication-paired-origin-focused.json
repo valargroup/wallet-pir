@@ -1,0 +1,39 @@
+{
+  "status": "passed",
+  "gate": "focused-operations",
+  "source_base_sha": "09a9f1402c98fcbe8d5162dff643528274b7fb36",
+  "owner": "7b91d4854a834853b4cef6e2ab9bc337",
+  "duration_seconds": 17.738085916964337,
+  "command": "make check-fast BASE=09a9f1402c98fcbe8d5162dff643528274b7fb36",
+  "result_sha256": "5790f84d7b396e37705e4e2c42d8e5aeb132c17ad46c49d9fd49b35b95bdbed8",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_baseline.py": "e18ea2b8b1533dd3e113f1e90150e5cf45abb37fa3312f7d63dbe7a645655ce2",
+    "transparent/ops/lib/activity_schema_dispatch.py": "4337198928792b990f2761cd03ac8f31ecf002d4d7b29ada850fe90d9a236daa",
+    "transparent/ops/lib/activity_schema_host.py": "a0b321abbfd50d0e61b9d58388a5f692108233481275727aa40ca3e352bc2e95",
+    "transparent/ops/lib/activity_schema_operation.py": "d932f8531000970da9aac58732e0fbd98a9341a481121903ecd3e139df21afb0",
+    "transparent/ops/lib/activity_schema_product.py": "403cb95a5ccca0a92c860c2f0ecca6d5e8e190d1d88a4d86374afafec8cf8fc3",
+    "transparent/ops/lib/activity_schema_reconcile.py": "9e81028a56156bba0c1ff801641df837b194f098c20d78893e2f71de92d76f6a",
+    "transparent/ops/lib/activity_schema_routing.py": "1777a0e09aeae9db5c972d60b89ba6b6d6f28b7a60c6f72284c19373ecabfb11",
+    "transparent/ops/lib/activity_schema_templates.py": "0b8aeca63eff6f6d8c390fbfe65ad8aede79d80cf19cd888d6c5041e472714bc",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "937964c78b53d6e7b94b56b412d2c4b2132724e22da63b917dd0974094e92136",
+    "transparent/ops/tests/test_activity_schema_host.py": "9fca02fc3ac2390dd4f8adc75924e3791086d91f6f9ffaf3ece19b0ceed07b44",
+    "transparent/ops/tests/test_activity_schema_operation.py": "ae4bd7e3e0de1cd6f5249f69c173654325499813ea94f6c821f62615de1233cd",
+    "transparent/ops/tests/test_activity_schema_product.py": "f8b828f8c4403f951ffcd542b56dd608a93d12fa65952b1b254af6633a31bef8",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "69d1ad3cce3d6ecd8f33c2015b08b1f942f45e2d07e53f8d9618a477a2d85872",
+    "transparent/ops/tests/test_activity_schema_routing.py": "a8212751eac9bd7e0b277d1e7b53beee286ecf3b1c91587d13427615268a207a"
+  },
+  "observations": [
+    "280 schema tests passed",
+    "Collector unlink preserved table inodes and reconstructed exact captured generation",
+    "Changed payload, symlink and unfinished restore refused",
+    "Both HTTPS origins require independent query/reopened-store proofs; second-origin failure withdraws both",
+    "Restored worker exact assignment precedes authority startup"
+  ],
+  "limitations": [
+    "Local simulated service boundaries; no fresh production capture or protected rollback performed",
+    "Public paired native client proof remains pending deployment",
+    "Protection binds immutable inode/stat inventory and map checksum; native table verification remains required",
+    "Original rollback and 15-minute recovery acceptance remain failed; newer-v10 recovery is recorded separately",
+    "Candidate full CI not claimed passing; user explicitly waived waiting"
+  ]
+}

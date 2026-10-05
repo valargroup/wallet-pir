@@ -1,0 +1,13 @@
+status: target sha256 eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23
+worker@status-01 status-worker.service: skip
+  running eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23 from /opt/wallet-pir/releases/852d6b5-cpu/native/status-pir
+router@status-01 status-router.service: skip
+  running eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23 from /opt/wallet-pir/releases/852d6b5-cpu/native/status-pir
+controller@coordinator status-controller-qualification.service: restart
+  running f972801ab555b6ad87a0509abdadcfbdb43c6d093ec1945bca36c8cd39c9a275 from /opt/wallet-pir/releases/cd3e9f02/native/status-pir
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzz-status-public.conf: left in place; its ExecStart is overridden by the managed drop-in
+  write /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf
+problem: coordinator: release eb2a2788f414 is not staged and no binary was given
+1 target(s) to restart, 2 unchanged

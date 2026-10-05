@@ -47,9 +47,10 @@ on:
       headroom:
         description: >-
           Fleet modes only. Fraction of each worker's cache kept free of
-          assigned runtimes when planning.
+          assigned runtimes when planning. The default matches the live
+          publication adapter, so CI and the coordinator plan the same map.
         required: false
-        default: "0.15"
+        default: "0.05"
         type: string
       owner_activation:
         description: >-
@@ -159,10 +160,16 @@ jobs:
           PUBLIC_URL: ${{ vars.TRANSPARENT_PUBLIC_URL }}
         run: |
           set -euo pipefail
-          : "${FLEET_JSON:?TRANSPARENT_FLEET_JSON is empty; set the roster variable}"
           [[ "$RECENT_FROM" =~ ^[0-9]+$ ]] || { echo "recent_from must be the recorded cutoff height"; exit 1; }
-          [[ "$HEADROOM" =~ ^0\.[0-9]+$ ]] || { echo "headroom must be a fraction like 0.15"; exit 1; }
-          printf '%s\n' "$FLEET_JSON" >artifact/roster.json
+          [[ "$HEADROOM" =~ ^0\.[0-9]+$ ]] || { echo "headroom must be a fraction like 0.05"; exit 1; }
+          # Once the fleet inventory exists it owns membership: elastic recent
+          # replicas and pinned archive ranges live there, not in the variable.
+          if sudo test -f /opt/transparent-publisher/state/inventory.json; then
+            sudo cat /opt/transparent-publisher/roster.json >artifact/roster.json
+          else
+            : "${FLEET_JSON:?TRANSPARENT_FLEET_JSON is empty; set the roster variable}"
+            printf '%s\n' "$FLEET_JSON" >artifact/roster.json
+          fi
           jq -e 'type == "array" and length > 0' artifact/roster.json >/dev/null
           sudo artifact/shard-assign plan \
             --shard-dir "$SHARD_DIR" --roster artifact/roster.json \
@@ -219,6 +226,8 @@ jobs:
           # Fleet modes. The roster is a repository variable so the hosts live
           # in one place; the router is optional until it exists.
           TRANSPARENT_FLEET_JSON: ${{ vars.TRANSPARENT_FLEET_JSON }}
+          # The planned roster (from the inventory when it exists) wins.
+          TRANSPARENT_ROSTER_FILE: ${{ github.workspace }}/artifact/roster.json
           TRANSPARENT_ROUTER_HOST: ${{ vars.TRANSPARENT_ROUTER_HOST }}
           TRANSPARENT_ROUTER_INTERNAL_PORT: "8080"
           TRANSPARENT_OWNER_ACTIVATION: ${{ inputs.owner_activation }}

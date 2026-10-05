@@ -1,0 +1,20 @@
+{
+  "run_id": "shared-layers-2026-09-30",
+  "utc": {"status_sshd_reload": "2026-09-29T21:56Z", "scaler_fix": "2026-09-29T21:51Z",
+          "sampler_fix": "2026-09-29T22:15Z", "apm_restart": "2026-09-30T07:08:37Z",
+          "soak_window": ["2026-09-29T21:31:40Z", "2026-09-30T07:06:38Z"]},
+  "source": {"repository_head": "aeaee4b7d661266f60e680226e2bf6ec49a8c7cf",
+             "scaler_fix": "55291f11", "sampler_fix": "a8c83991", "apm_fix": "70366868",
+             "deploy_cli": ["3f2b8a8e", "41e05de6"], "apm_binary_ci_run": 36678333148},
+  "binaries": {"pir-apm": "0d516a796402927ff5efe4589deb9622bccc6ae2c6d521ad69c2b95d6222697e"},
+  "unchanged_serving": {"enhance_workers_router_ingress": "a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d",
+                        "enhance_coordinator": "b6857a65a526280b2fc25aafc66ea456f243ad3dc0f9fe448e3d235bec153781",
+                        "status_roles": "eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23",
+                        "status_controller": "f972801ab555b6ad87a0509abdadcfbdb43c6d093ec1945bca36c8cd39c9a275"},
+  "workload": {"enhance": "enhance-pir-load-test --rate 20 --parallelism 10, public URL, 28-record oracle, 600 s batches",
+               "status": "status-pir probe-live-load via router query tunnel 127.0.0.1:8492, 600 s batches",
+               "client": "coordinator 167.99.42.60", "owner": "another session (prod-soak-continuous-20260929)"},
+  "result_window": {"batches": 58, "enhance_correct": 696000, "status_correct": 696000, "errors": 0,
+                    "gate_failures": 0, "enhance_p99_ms": [146.8, 173.1], "status_p99_ms": [65, 103]},
+  "limits": ["no Enhance or Status serving process restarted", "soak client on the coordinator, one client host"]
+}

@@ -1,6 +1,6 @@
 //! The canonical transparent event model.
 //!
-//! One fixed-width record shape is shared by everything that touches an event:
+//! One self-contained record shape is shared by everything that touches an event:
 //! the indexer that appends it to its journal, the builder that packs it into a
 //! shard's directory and pages, and the wallet that decodes it out of a private
 //! response. A single encoding is what makes those three agree; three
@@ -28,13 +28,174 @@
 
 use std::fmt;
 
-/// Serialized size of one event. Fixed, and the same for both kinds.
-///
-/// Uniform width is not an aesthetic choice: a shard's pages are padded to a
-/// fixed row size and a PIR response has fixed geometry, so a variable-width
-/// event would leak the shape of a history through the number of rows needed to
-/// hold it.
+/// Legacy v2 event width. V3 appends bounded metadata; PIR rows remain fixed size.
 pub const EVENT_BYTES: usize = 87;
+/// Maximum self-contained v3 journal event, including metadata.
+pub const MAX_EVENT_BYTES: usize = EVENT_BYTES + 1 + 5 + 10;
+pub const MAX_MONEY: u64 = 21_000_000 * 100_000_000;
+
+/// Whole-transaction fee; this does not attribute a fee to a wallet account.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeeState {
+    Exact(u64),
+    Unknown,
+    NotApplicable,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransactionMetadata {
+    pub fee: FeeState,
+    pub transparent_input_count: u32,
+    pub has_shielded_components: bool,
+}
+
+impl TransactionMetadata {
+    pub fn validate(self, coinbase: bool) -> Result<(), EventError> {
+        if matches!(self.fee, FeeState::Exact(fee) if fee > MAX_MONEY)
+            || coinbase != matches!(self.fee, FeeState::NotApplicable)
+            || coinbase && self.transparent_input_count != 0
+        {
+            return Err(EventError::Metadata("invalid fee or coinbase input count"));
+        }
+        Ok(())
+    }
+
+    /// Metadata availability is explicit, including for legacy observations.
+    pub fn flags(self) -> u8 {
+        32 | if matches!(self.fee, FeeState::Exact(_)) {
+            8
+        } else {
+            0
+        } | if self.has_shielded_components { 16 } else { 0 }
+    }
+
+    pub fn encoded_len(self) -> usize {
+        varint_len(self.transparent_input_count.into())
+            + match self.fee {
+                FeeState::Exact(fee) => varint_len(fee),
+                _ => 0,
+            }
+    }
+
+    pub fn encode(self, out: &mut Vec<u8>) {
+        encode_varint(self.transparent_input_count.into(), out);
+        if let FeeState::Exact(fee) = self.fee {
+            encode_varint(fee, out);
+        }
+    }
+
+    pub fn decode(
+        bytes: &[u8],
+        flags: u8,
+        coinbase: bool,
+    ) -> Result<(Option<Self>, usize), EventError> {
+        if flags & !56 != 0 || flags & 32 == 0 && flags != 0 {
+            return Err(EventError::Flags(flags));
+        }
+        if flags == 0 {
+            return Ok((None, 0));
+        }
+        let (count, mut used) = decode_varint(bytes, u32::MAX.into())?;
+        let fee = if flags & 8 != 0 {
+            let (fee, n) = decode_varint(&bytes[used..], MAX_MONEY)?;
+            used += n;
+            FeeState::Exact(fee)
+        } else if coinbase {
+            FeeState::NotApplicable
+        } else {
+            FeeState::Unknown
+        };
+        let metadata = Self {
+            fee,
+            transparent_input_count: count as u32,
+            has_shielded_components: flags & 16 != 0,
+        };
+        metadata.validate(coinbase)?;
+        Ok((Some(metadata), used))
+    }
+}
+
+pub fn varint_len(mut value: u64) -> usize {
+    let mut n = 1;
+    while value >= 128 {
+        n += 1;
+        value >>= 7;
+    }
+    n
+}
+
+pub fn encode_varint(mut value: u64, out: &mut Vec<u8>) {
+    loop {
+        let byte = (value & 127) as u8;
+        value >>= 7;
+        out.push(byte | if value != 0 { 128 } else { 0 });
+        if value == 0 {
+            break;
+        }
+    }
+}
+
+pub fn decode_varint(bytes: &[u8], maximum: u64) -> Result<(u64, usize), EventError> {
+    let mut value = 0u64;
+    for i in 0..10 {
+        let byte = *bytes
+            .get(i)
+            .ok_or(EventError::Metadata("truncated varint"))?;
+        if i == 9 && byte > 1 {
+            return Err(EventError::Metadata("overflowing varint"));
+        }
+        value |= u64::from(byte & 127) << (7 * i);
+        if byte & 128 == 0 {
+            if i != 0 && byte == 0 {
+                return Err(EventError::Metadata("noncanonical varint"));
+            }
+            if value > maximum {
+                return Err(EventError::Metadata("varint exceeds bound"));
+            }
+            return Ok((value, i + 1));
+        }
+    }
+    Err(EventError::Metadata("overflowing varint"))
+}
+
+/// All observations of one transaction must describe the same placement and metadata.
+/// Duplicate input identities must also name the same consumed outpoint.
+pub fn check_transaction_consistency<'a>(
+    events: impl IntoIterator<Item = &'a TransparentEvent>,
+) -> Result<(), EventError> {
+    let mut transactions = std::collections::BTreeMap::new();
+    let mut inputs = std::collections::BTreeMap::new();
+    for event in events {
+        event.validate_metadata()?;
+        let coinbase = matches!(event, TransparentEvent::Receive(receive) if receive.coinbase);
+        let facts = (
+            event.height(),
+            event.transaction_index(),
+            event.metadata(),
+            coinbase,
+        );
+        if transactions
+            .insert(event.txid(), facts)
+            .is_some_and(|previous| previous != facts)
+        {
+            return Err(EventError::Metadata(
+                "conflicting transaction metadata or placement",
+            ));
+        }
+        if let TransparentEvent::Spend(spend) = event {
+            let spent = (spend.spent_txid, spend.spent_output_index);
+            if inputs
+                .insert((spend.spending_txid, spend.input_index), spent)
+                .is_some_and(|previous| previous != spent)
+            {
+                return Err(EventError::Metadata(
+                    "conflicting transaction input identity",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
 
 const KIND_RECEIVE: u8 = 0;
 const KIND_SPEND: u8 = 1;
@@ -57,6 +218,8 @@ const OFF_SPENT_INDEX: usize = 83;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EventError {
+    #[error("transaction metadata: {0}")]
+    Metadata(&'static str),
     #[error("event record is {0} bytes, expected {EVENT_BYTES}")]
     Length(usize),
     #[error("unknown flag bits set: {0:#04x}")]
@@ -94,6 +257,7 @@ impl fmt::Debug for Txid {
 /// An output created under a wallet-supported script.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ReceiveEvent {
+    pub metadata: Option<TransactionMetadata>,
     pub height: u32,
     pub txid: Txid,
     pub transaction_index: u16,
@@ -111,6 +275,7 @@ pub struct ReceiveEvent {
 /// this event is indexed under is the *consumed output's* script.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SpendEvent {
+    pub metadata: Option<TransactionMetadata>,
     pub height: u32,
     pub spending_txid: Txid,
     pub transaction_index: u16,
@@ -137,6 +302,65 @@ pub type ReceiveIdentity = (Txid, u32);
 pub type SpendIdentity = (Txid, u32, Txid, u32);
 
 impl TransparentEvent {
+    pub fn metadata(&self) -> Option<TransactionMetadata> {
+        match self {
+            Self::Receive(e) => e.metadata,
+            Self::Spend(e) => e.metadata,
+        }
+    }
+
+    pub fn with_metadata(mut self, metadata: Option<TransactionMetadata>) -> Self {
+        match &mut self {
+            Self::Receive(e) => e.metadata = metadata,
+            Self::Spend(e) => e.metadata = metadata,
+        }
+        self
+    }
+
+    pub fn validate_metadata(&self) -> Result<(), EventError> {
+        if let Some(metadata) = self.metadata() {
+            if matches!(self, Self::Receive(e) if e.value > MAX_MONEY) {
+                return Err(EventError::Metadata("output value exceeds monetary bound"));
+            }
+            metadata.validate(matches!(self, Self::Receive(e) if e.coinbase))?;
+            if matches!(self, Self::Spend(e) if e.input_index >= metadata.transparent_input_count) {
+                return Err(EventError::Metadata(
+                    "input index exceeds complete input count",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Canonical self-contained event bytes; legacy events retain their v2 representation.
+    pub fn to_bytes(self) -> Vec<u8> {
+        let mut bytes = self.to_legacy_bytes().to_vec();
+        if let Some(metadata) = self.metadata() {
+            bytes.push(metadata.flags());
+            metadata.encode(&mut bytes);
+        }
+        bytes
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EventError> {
+        if bytes.len() < EVENT_BYTES || bytes.len() > MAX_EVENT_BYTES {
+            return Err(EventError::Length(bytes.len()));
+        }
+        let mut event = Self::from_legacy_bytes(&bytes[..EVENT_BYTES])?;
+        if bytes.len() > EVENT_BYTES {
+            let (metadata, used) = TransactionMetadata::decode(
+                &bytes[EVENT_BYTES + 1..],
+                bytes[EVENT_BYTES],
+                matches!(event, Self::Receive(e) if e.coinbase),
+            )?;
+            if metadata.is_none() || EVENT_BYTES + 1 + used != bytes.len() {
+                return Err(EventError::Metadata("invalid metadata framing"));
+            }
+            event = event.with_metadata(metadata);
+        }
+        event.validate_metadata()?;
+        Ok(event)
+    }
     pub fn height(&self) -> u32 {
         match self {
             TransparentEvent::Receive(event) => event.height,
@@ -193,7 +417,7 @@ impl TransparentEvent {
         }
     }
 
-    pub fn to_bytes(self) -> [u8; EVENT_BYTES] {
+    pub fn to_legacy_bytes(self) -> [u8; EVENT_BYTES] {
         let mut bytes = [0u8; EVENT_BYTES];
         match self {
             TransparentEvent::Receive(event) => {
@@ -232,7 +456,7 @@ impl TransparentEvent {
     /// field set that its kind does not use is evidence that the wallet and the
     /// service disagree about the encoding. Decoding it leniently would turn
     /// that disagreement into a wrong balance instead of an error.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, EventError> {
+    pub fn from_legacy_bytes(bytes: &[u8]) -> Result<Self, EventError> {
         if bytes.len() != EVENT_BYTES {
             return Err(EventError::Length(bytes.len()));
         }
@@ -273,6 +497,7 @@ impl TransparentEvent {
                 });
             }
             Ok(TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height,
                 txid,
                 transaction_index,
@@ -294,6 +519,7 @@ impl TransparentEvent {
                 });
             }
             Ok(TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height,
                 spending_txid: txid,
                 transaction_index,
@@ -309,8 +535,100 @@ impl TransparentEvent {
 mod tests {
     use super::*;
 
+    #[test]
+    fn metadata_states_and_canonical_integer_boundaries() {
+        for value in [0, 1, 127, 128, 16383, 16384, u32::MAX as u64, u64::MAX] {
+            let mut bytes = Vec::new();
+            encode_varint(value, &mut bytes);
+            assert_eq!(bytes.len(), varint_len(value));
+            assert_eq!(decode_varint(&bytes, u64::MAX), Ok((value, bytes.len())));
+        }
+        for bytes in [
+            vec![],
+            vec![128],
+            vec![128, 0],
+            vec![255; 11],
+            vec![255; 10],
+        ] {
+            assert!(decode_varint(&bytes, u64::MAX).is_err());
+        }
+        assert!(decode_varint(&[128, 1], 127).is_err());
+        for fee in [
+            FeeState::Exact(0),
+            FeeState::Exact(MAX_MONEY),
+            FeeState::Unknown,
+        ] {
+            let event = spend().with_metadata(Some(TransactionMetadata {
+                fee,
+                transparent_input_count: u32::MAX,
+                has_shielded_components: true,
+            }));
+            assert_eq!(TransparentEvent::from_bytes(&event.to_bytes()), Ok(event));
+        }
+        let coinbase = TransparentEvent::Receive(ReceiveEvent {
+            coinbase: true,
+            ..match receive() {
+                TransparentEvent::Receive(e) => e,
+                _ => unreachable!(),
+            }
+        })
+        .with_metadata(Some(TransactionMetadata {
+            fee: FeeState::NotApplicable,
+            transparent_input_count: 0,
+            has_shielded_components: false,
+        }));
+        assert_eq!(
+            TransparentEvent::from_bytes(&coinbase.to_bytes()),
+            Ok(coinbase)
+        );
+        let metadata = TransactionMetadata {
+            fee: FeeState::Exact(500),
+            transparent_input_count: 1,
+            has_shielded_components: false,
+        };
+        let event = spend().with_metadata(Some(metadata));
+        let bytes = event.to_bytes();
+        for end in EVENT_BYTES + 1..bytes.len() {
+            assert!(TransparentEvent::from_bytes(&bytes[..end]).is_err());
+        }
+        let mut reserved = bytes.clone();
+        reserved[EVENT_BYTES] |= 64;
+        assert!(TransparentEvent::from_bytes(&reserved).is_err());
+        assert!(event
+            .with_metadata(Some(TransactionMetadata {
+                fee: FeeState::Exact(MAX_MONEY + 1),
+                ..metadata
+            }))
+            .validate_metadata()
+            .is_err());
+        assert!(event
+            .with_metadata(Some(TransactionMetadata {
+                transparent_input_count: 0,
+                ..metadata
+            }))
+            .validate_metadata()
+            .is_err());
+    }
+
+    #[test]
+    fn repeated_transaction_assertions_must_agree() {
+        let metadata = TransactionMetadata {
+            fee: FeeState::Exact(500),
+            transparent_input_count: 1,
+            has_shielded_components: false,
+        };
+        let event = spend().with_metadata(Some(metadata));
+        let conflicting = event.with_metadata(Some(TransactionMetadata {
+            fee: FeeState::Exact(501),
+            ..metadata
+        }));
+        assert!(check_transaction_consistency([&event, &event]).is_ok());
+        assert!(check_transaction_consistency([&event, &conflicting]).is_err());
+    }
+
     fn receive() -> TransparentEvent {
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: 3_428_143,
             txid: Txid([7; 32]),
             transaction_index: 3,
@@ -322,6 +640,7 @@ mod tests {
 
     fn spend() -> TransparentEvent {
         TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: 3_428_200,
             spending_txid: Txid([9; 32]),
             transaction_index: 2,

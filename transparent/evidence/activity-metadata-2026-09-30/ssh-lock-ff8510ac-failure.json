@@ -1,0 +1,12 @@
+{
+  "status": "failed",
+  "source_sha": "ff8510ac61cac033f34d9891f0896dd36ac2a2ae",
+  "owner": "3d8dd4d57d0648cbb5a8c8a5e45107f2",
+  "failure": "OpenSSH closes inherited coordinator FD; surviving SSH did not block a competing coordinator lock.",
+  "duration_seconds": 7.682315374957398,
+  "raw_failure_sha256": "5c6909669fc248de930eaa643b9947bec0c98fa4e2b77e571d6c1a0622207a2f",
+  "reconciliation": "both remote and coordinator owners reconciled through wrapper after owned children finished",
+  "reconcile_sha256": "1401c798177522e59c596ed309746ba327ec55e285d8723129cd8f424bf116ff",
+  "production_service_effects": false,
+  "qualification_passed": false
+}

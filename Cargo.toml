@@ -5,6 +5,8 @@ members = [
     "receiver/crates/receiver-pir",
     "receiver/services/receiver-pir-server",
     "shared/pir-observability",
+    "shared/pir-native",
+    "shared/pir-control",
     # Protocol libraries, clients and stores.
     "enhance/crates/enhance-pir",
     "transparent/crates/transparent-events",
@@ -30,8 +32,6 @@ members = [
 exclude = [
     "demos/legacy-spendability",
     "enhance/crates/transparent-spend-pir",
-    # Enables enhance-pir/native-reinspiring; must never unify into this workspace.
-    "transparent/crates/transparent-native/crosscheck",
 ]
 
 # spiral-rs's Barrett reduction is intentionally wrapping: `barrett_raw_u128`

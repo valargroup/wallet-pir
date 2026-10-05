@@ -6,7 +6,23 @@ the [catalog](catalog.md) lists every retained run. Results are bound to their
 recorded source and binary hashes. Historical `v4` names identify the captured
 release and must not be read as current source paths.
 
+## Development tooling
+
+- [Development-speed follow-up to PR 122](development-speed-2026-09-30/README.md) —
+  exact-SHA CI verification, automatic local Cargo leases, actual concurrent
+  checks and comparable warm feedback measurements; separate from qualification.
+- [CI Cargo cache identity and reuse](ci-cache-reuse-2026-10-01/README.md) —
+  cold, restore and workflow/env-only CI runs with sanitized restore status and
+  Cargo's own fresh/compiled unit counts; primed-main comparison pending
+  integration; no savings claimed.
+
 ## Current protocol and release inputs
+
+- [Shared layers: production checks and fixes](shared-layers-2026-09-30/README.md) —
+  read-only deploy-CLI runs against production, Status control-account
+  hardening, three alert fixes and the APM on a CI-built binary, with no
+  Enhance or Status restart; 696,000/696,000 correct on each product during the
+  changes.
 
 - [Production soak and fixes](prod-soak-2026-09-27/README.md) —
   six-hour joint 20 QPS load; 432,000/432,000 Enhance and 0 incorrect Status

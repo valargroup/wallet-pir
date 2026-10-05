@@ -87,6 +87,7 @@ fn decode_v1(bytes: &[u8; V1_EVENT_BYTES]) -> Result<TransparentEvent, String> {
                 return Err("a receive sets the consumed outpoint".into());
             }
             Ok(TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height,
                 txid,
                 transaction_index,
@@ -100,6 +101,7 @@ fn decode_v1(bytes: &[u8; V1_EVENT_BYTES]) -> Result<TransparentEvent, String> {
                 return Err("a spend sets a value or the coinbase flag".into());
             }
             Ok(TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height,
                 spending_txid: txid,
                 transaction_index,
@@ -223,7 +225,7 @@ fn convert(cli: &Cli) -> Result<Summary, BoxError> {
             if u64::from(event.height()) != height {
                 return Err(format!("block {height} holds an event at {}", event.height()).into());
             }
-            let v2 = event.to_bytes();
+            let v2 = event.to_legacy_bytes();
             if TransparentEvent::from_bytes(&v2)? != event {
                 return Err(format!("block {height}: v2 bytes do not round-trip").into());
             }
@@ -361,6 +363,7 @@ mod tests {
                 let script = ScriptBytes::new(vec![0x76, 0xa9, height as u8, i as u8]);
                 let event = if i % 2 == 0 {
                     TransparentEvent::Receive(ReceiveEvent {
+                        metadata: None,
                         height,
                         txid: Txid([height as u8 ^ 0x5a; 32]),
                         transaction_index: i as u16,
@@ -370,6 +373,7 @@ mod tests {
                     })
                 } else {
                     TransparentEvent::Spend(SpendEvent {
+                        metadata: None,
                         height,
                         spending_txid: Txid([height as u8; 32]),
                         transaction_index: i as u16,
@@ -457,10 +461,10 @@ mod tests {
         assert!(!dir.path().join("v2.partial").exists());
     }
 
-    /// The v2 writer is the ingester's; a converted journal must be what it
-    /// would have written for the same blocks, byte for byte.
+    /// The frozen converter retains 87-byte v2 records; the current v3 writer
+    /// frames its records differently but must recover the same legacy facts.
     #[test]
-    fn the_bytes_match_what_the_v2_store_writes() {
+    fn frozen_v2_bytes_and_v3_semantics_agree() {
         let dir = tempfile::tempdir().unwrap();
         let from = dir.path().join("v1");
         write_v1(&from, 0, 20);
@@ -472,25 +476,34 @@ mod tests {
             through: Some(19),
         })
         .unwrap();
-
-        let direct = dir.path().join("direct");
-        let mut store = EventStore::open(&direct, "g", 0).unwrap();
+        let mut expected = Vec::new();
+        let mut direct = EventStore::open(dir.path().join("v3"), "g", 0).unwrap();
         for height in 0..20u32 {
-            store
+            let events = events_at(height);
+            for (script, event) in &events {
+                expected.extend_from_slice(&(script.as_slice().len() as u16).to_le_bytes());
+                expected.extend_from_slice(script.as_slice());
+                expected.extend_from_slice(&event.to_legacy_bytes());
+            }
+            direct
                 .append_block(
                     u64::from(height),
                     BlockHash::from_internal_bytes([height as u8; 32]),
-                    &events_at(height),
+                    &events,
                 )
                 .unwrap();
         }
-        store.commit().unwrap();
-        drop(store);
-        for name in ["events.bin", "blocks.bin", "checkpoint.bin"] {
+        direct.commit().unwrap();
+        assert_eq!(
+            std::fs::read(converted.join("events.bin")).unwrap(),
+            expected
+        );
+        let legacy = EventStore::open_existing(&converted).unwrap();
+        assert_eq!(legacy.version(), 2);
+        for height in 0..20u64 {
             assert_eq!(
-                std::fs::read(converted.join(name)).unwrap(),
-                std::fs::read(direct.join(name)).unwrap(),
-                "{name}"
+                legacy.events_at(height).unwrap(),
+                direct.events_at(height).unwrap()
             );
         }
     }

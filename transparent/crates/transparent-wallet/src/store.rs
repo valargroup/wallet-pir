@@ -49,6 +49,8 @@ use transparent_filter::{SealParameters, ShardMap};
 /// republication and is deliberately not part of this.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetIdentity {
+    #[serde(default = "legacy_schema")]
+    pub shard_schema: String,
     pub network: String,
     pub genesis_hash: String,
     pub profile: String,
@@ -57,9 +59,18 @@ pub struct SetIdentity {
     pub seal: BTreeMap<String, SealParameters>,
 }
 
+fn legacy_schema() -> String {
+    transparent_shard::manifest::LEGACY_SCHEMA.to_string()
+}
+
 impl SetIdentity {
     pub fn of(map: &ShardMap) -> Self {
+        Self::of_schema(map, transparent_shard::SCHEMA)
+    }
+
+    pub fn of_schema(map: &ShardMap, schema: &str) -> Self {
         Self {
+            shard_schema: schema.to_string(),
             network: map.network.clone(),
             genesis_hash: map.genesis_hash.clone(),
             profile: map.profile.clone(),
@@ -80,7 +91,8 @@ impl SetIdentity {
     /// not seen to appear (a set growing into another tier) but never a
     /// changed seal for one already in use.
     pub fn continues(&self, other: &Self) -> bool {
-        self.network == other.network
+        self.shard_schema == other.shard_schema
+            && self.network == other.network
             && self.genesis_hash == other.genesis_hash
             && self.profile == other.profile
             && self.range_envelope_version == other.range_envelope_version

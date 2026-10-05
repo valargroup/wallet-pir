@@ -1,0 +1,105 @@
+# Service descriptors for ops/scripts/wallet-pir-deploy.py.
+#
+# What each service is: roles in rollout order, each role's unit, how the unit
+# is changed and how readiness is checked. Hosts are deliberately absent. The
+# operator inventory (deploy-inventory.example.json shows its shape) says where
+# each role runs, may override a unit name, and supplies the `{name}` values
+# used in the URLs below. Every URL is fetched on the role's own host.
+#
+# Modes:
+#   exec-drop-in  Write zz-wallet-pir-release.conf in /etc/systemd/system/<unit>.d/:
+#                 `ExecStart=` then the live ExecStart with only the binary path
+#                 replaced by /opt/<svc>/releases/<sha256>/<binary>. The unit and
+#                 its other drop-ins are untouched.
+#   template      Render the whole unit from its .service.in (@RELEASE@ is the
+#                 release directory) into /etc/systemd/system/<unit>.
+#
+# Drop-ins that set ExecStart are refused unless they match
+# `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
+# into the transaction directory (with --retire-historical); one that also sets
+# other directives stays in place, and the managed drop-in, which sorts after
+# it, overrides its ExecStart.
+#
+# Readiness after a restart: the unit is active, sha256(/proc/<MainPID>/exe)
+# equals the release, `health` answers 200 (a `binary_sha256` field, if
+# present, must also equal it), the optional `ready` field test passes and the
+# optional `ready_url` answers 2xx, all within `ready_timeout` seconds. A role
+# is restarted whenever its binary or effective unit changes, and only then.
+
+[services.enhance]
+root = "/opt/enhance-pir"
+binary = "enhance-pir-server"
+artifact_kinds = ["enhance-pir", "enhance-pir-native", "enhance-pir-native-cuda"]
+self_check = ["--help"]
+min_free_bytes = 1073741824
+order = ["worker", "packing-router", "query-ingress", "coordinator"]
+
+[services.enhance.roles.worker]
+unit = "enhance-pir-worker.service"
+mode = "exec-drop-in"
+# ENHANCE_WORKER_LISTEN: the worker's private address, port 8091.
+health = "http://{listen}/internal/health"
+ready = { field = "published", nonempty = true }
+ready_timeout = 300
+adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
+
+[services.enhance.roles.packing-router]
+unit = "enhance-pir-packing-router.service"
+mode = "exec-drop-in"
+# ENHANCE_ROUTER_CONTROL_LISTEN. Ready once the running coordinator re-activates it.
+health = "http://{control_listen}/internal/health"
+ready = { field = "ready", equals = true }
+ready_timeout = 300
+adoptable_drop_ins = ["zz-cleanup-*.conf"]
+
+[services.enhance.roles.query-ingress]
+unit = "enhance-pir-query-ingress.service"
+mode = "exec-drop-in"
+health = "http://127.0.0.1:8083/internal/health"
+ready = { field = "ready", equals = true }
+ready_timeout = 300
+adoptable_drop_ins = ["zz-cleanup-*.conf"]
+
+[services.enhance.roles.coordinator]
+unit = "enhance-pir-server.service"
+mode = "exec-drop-in"
+health = "http://127.0.0.1:8080/v1/health"
+ready_url = "http://127.0.0.1:8080/ready"
+ready_timeout = 600
+adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]
+
+[services.status]
+root = "/opt/status-pir"
+binary = "status-pir"
+artifact_kinds = ["status-pir"]
+self_check = ["--help"]
+min_free_bytes = 1073741824
+order = ["worker", "router", "controller"]
+# Supplied by the inventory's services.status.template_vars.
+template_vars = ["NETWORK"]
+
+[services.status.roles.worker]
+unit = "status-worker.service"
+mode = "template"
+template = "status-worker.service.in"
+# Ready needs a fresh controller heartbeat and manifest.
+health = "http://127.0.0.1:8481/control/health"
+ready = { field = "ready", equals = true }
+ready_timeout = 180
+
+[services.status.roles.router]
+unit = "status-router.service"
+mode = "template"
+template = "status-router.service.in"
+health = "http://127.0.0.1:8482/control/health"
+ready = { field = "ready", equals = true }
+ready_timeout = 180
+
+[services.status.roles.controller]
+unit = "status-controller-qualification.service"
+# Drop-ins from earlier rollouts carry its live arguments (controller-native.json,
+# --public-listen); the managed drop-in keeps them and swaps only the binary.
+mode = "exec-drop-in"
+template = "status-controller-qualification.service.in"
+health = "http://127.0.0.1:8480/internal/health"
+ready_timeout = 180

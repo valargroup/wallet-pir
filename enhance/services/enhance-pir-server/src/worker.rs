@@ -702,7 +702,7 @@ async fn metrics(
 async fn health(State(w): State<Worker>) -> Json<serde_json::Value> {
     let inner = w.inner.lock().unwrap();
     Json(
-        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"epoch":inner.disk.epoch,"revision":inner.disk.revision,
+        serde_json::json!({"matvec": w.backend, "protocol":PROTOCOL_REVISION,"placement_policy":inner.disk.placement_policy,"incarnation":w.incarnation,"binary_sha256":pir_control::binary_sha256(),"epoch":inner.disk.epoch,"revision":inner.disk.revision,
         "resident_database_bytes":inner.engine.try_lock().ok().map(|e| e.live_bytes()),"published":inner.disk.published.keys().collect::<Vec<_>>(),
         "published_manifest_digests":inner.disk.published.iter().map(|(g,(m,_))| (g.to_string(), digest(m))).collect::<BTreeMap<_,_>>(),
         "candidate":inner.disk.candidate}),
@@ -1078,12 +1078,14 @@ async fn evaluate(State(w): State<Worker>, request: Request) -> Response {
             .clone()
             .try_acquire_owned()
             .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "evaluation limit".into()))?;
-        let bytes = tokio::time::timeout(
+        // Any reception failure is 503 `not-accepted`: nothing was evaluated,
+        // so the router may retry the query once on another worker.
+        let bytes = crate::admission::read_body(
+            request.into_body(),
+            1024 * 1024,
             std::time::Duration::from_secs(30),
-            to_bytes(request.into_body(), 1024 * 1024),
         )
         .await
-        .map_err(unavailable)?
         .map_err(unavailable)?;
         let query: Evaluate =
             serde_json::from_slice(&bytes).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;

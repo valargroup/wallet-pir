@@ -13,13 +13,19 @@ import tarfile
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARIES = {
-    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    # pir-apm is the Enhance/Status/Transparent dashboard and alerting sidecar;
+    # it has no native variant.
+    'enhance-pir': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test', 'pir-apm'],
     # Same binaries built with `native-reinspiring`; they serve an incompatible
     # protocol and come from a separate target directory.
     'enhance-pir-native': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
+    'enhance-pir-native-cuda': ['enhance-pir-server', 'enhance-pir-cli', 'enhance-pir-load-test'],
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
+    # Status roles and controller, from the native target like
+    # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
+    'status-pir': ['status-pir'],
 }
 FILES = {
     'enhance-pir': ['enhance/ops/scripts/test-local.py', 'enhance/ops/scripts/bootstrap-worker.py',
@@ -29,13 +35,33 @@ FILES = {
     'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
     'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
+    'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
+                   'enhance/ops/deploy/status-controller-qualification.service.in'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
+# Kinds built with their own features and target directory, so only assembled
+# when requested explicitly.
+FILES['enhance-pir-native-cuda'] = FILES['enhance-pir-native'] + [
+    'enhance/ops/scripts/cuda-smoke.py', 'enhance/ops/scripts/verify-cuda-deployment.py',
+]
+ON_REQUEST = ('enhance-pir-native', 'enhance-pir-native-cuda', 'status-pir')
 # Build-time protocol identity recorded in candidate.json and re-checked on extract.
 PROTOCOLS = {
     'enhance-pir': 'ironwood-enhance-pir-v7',
     'enhance-pir-native': 'ironwood-enhance-pir-v9-native-two-mask-m29',
+    'enhance-pir-native-cuda': 'ironwood-enhance-pir-v9-native-two-mask-m29',
 }
+
+# ABI/build identity is checked separately from live GPU qualification.
+CUDA_BUILD = {
+    'cuda': True, 'cpu_target': 'x86-64-v3', 'os': 'ubuntu-22.04',
+    'glibc': '2.35', 'rust': '1.91.0', 'target': 'x86_64-unknown-linux-gnu',
+}
+
+
+def check_cuda_build(metadata):
+    if metadata != CUDA_BUILD or metadata.get('cuda') is not True:
+        raise ValueError('invalid CUDA build metadata')
 
 
 def check_sha(sha):
@@ -79,13 +105,13 @@ def resolve(sha, kind):
     raise ValueError(f'no qualified, unexpired {kind} artifact for {sha}; run CI full on main first')
 
 
-def assemble(sha, target, output, kind=None):
+def assemble(sha, target, output, kind=None, build_metadata=None):
     check_sha(sha)
     dirty = bool(subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=normal'], cwd=ROOT))
+    if kind == 'enhance-pir-native-cuda':
+        check_cuda_build(build_metadata)
     output.mkdir(parents=True, exist_ok=False)
-    # The native bundle needs its own feature build and target directory, so it
-    # is only assembled when requested explicitly.
-    selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k != 'enhance-pir-native'}
+    selected = {kind: BINARIES[kind]} if kind else {k: v for k, v in BINARIES.items() if k not in ON_REQUEST}
     for kind, binaries in selected.items():
         directory = output / kind
         directory.mkdir()
@@ -99,6 +125,8 @@ def assemble(sha, target, output, kind=None):
                 'kind': kind, 'schema_version': 11, 'protocol_revision': PROTOCOLS[kind],
                 'qualification': 'unqualified', 'source_revision': sha, 'source_dirty': dirty,
             }, indent=2) + '\n')
+        if kind == 'enhance-pir-native-cuda':
+            (directory / 'build.json').write_text(json.dumps(build_metadata, indent=2) + '\n')
         (directory / 'revision').write_text(sha + '\n')
         (directory / 'SHA256SUMS').write_text(''.join(
             f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n'
@@ -121,6 +149,8 @@ def extract(archive_path, destination, sha, kind):
     required = set(BINARIES[kind]) | {Path(p).name for p in FILES[kind]} | {'revision', 'SHA256SUMS'}
     if kind in PROTOCOLS:
         required.add('candidate.json')
+    if kind == 'enhance-pir-native-cuda':
+        required.add('build.json')
     if set(payload) != required:
         raise ValueError('release archive contents differ from the required artifact inventory')
     if payload['revision'].decode().strip() != sha:
@@ -144,6 +174,8 @@ def extract(archive_path, destination, sha, kind):
                 or candidate.get('qualification') != 'unqualified'
                 or not isinstance(candidate.get('source_dirty'), bool)):
             raise ValueError('invalid candidate metadata; qualification is a separate gate')
+    if kind == 'enhance-pir-native-cuda':
+        check_cuda_build(json.loads(payload['build.json']))
     destination.mkdir(parents=True, exist_ok=False)
     for name, data in payload.items():
         path = destination / name
@@ -161,12 +193,14 @@ def main():
     parser.add_argument('--target', type=Path, default=Path(os.environ.get('CARGO_TARGET_DIR', 'target')))
     parser.add_argument('--output', type=Path, default=Path('artifact'))
     parser.add_argument('--archive', type=Path)
+    parser.add_argument('--build-metadata', type=Path)
     args = parser.parse_args()
     if args.command == 'assemble':
         head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
         if head != args.sha:
             raise ValueError('cannot label a build with a different checkout revision')
-        assemble(args.sha, args.target, args.output, args.kind)
+        metadata = json.loads(args.build_metadata.read_text()) if args.build_metadata else None
+        assemble(args.sha, args.target, args.output, args.kind, metadata)
     elif args.command == 'resolve':
         resolve(args.sha, args.kind)
     else:

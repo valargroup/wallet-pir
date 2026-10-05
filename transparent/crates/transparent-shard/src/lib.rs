@@ -20,6 +20,7 @@
 pub mod build;
 pub mod choice;
 pub mod compact;
+pub mod compact_v10;
 pub mod layout;
 pub mod manifest;
 pub mod packing;
@@ -27,6 +28,7 @@ pub mod page_row;
 pub mod records;
 pub mod seal;
 pub mod tag;
+pub mod txid;
 
 pub use build::{
     build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,

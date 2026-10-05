@@ -10,15 +10,13 @@ path = "src/lib.rs"
 
 [dependencies]
 hex = "0.4"
-# `native-reinspiring` only exposes `ipir_sp::native`; it changes no existing
-# ipir-sp behaviour. The Enhance crates' own `native-reinspiring` feature is
-# deliberately not reachable from here: enabling it would switch the q48
-# Enhance binaries through feature unification.
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", features = ["native-reinspiring"] }
-rand = "0.8"
-rand_chacha = "0.3"
+pir-native = { path = "../../../shared/pir-native" }
 rayon = "1"
-reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+
+[dev-dependencies]
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", features = ["native-reinspiring"] }
+rand = "0.8"
+rand_chacha = "0.3"

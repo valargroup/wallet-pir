@@ -96,6 +96,9 @@ pub struct PublishOptions {
     /// turning this on never changes an existing digest.
     #[arg(long, value_enum, default_value_t = DirectoryChoice::Off)]
     pub directory_choice: DirectoryChoice,
+    /// Require complete display sidecars and publish private txid tables.
+    #[arg(long)]
+    pub txid_display: bool,
     /// Range-filter profile every shard is published under.
     ///
     /// Fixes the filters' Golomb-Rice parameters and is named in the map and
@@ -176,6 +179,9 @@ pub fn publish(
     store: &impl Journal,
     base_parent: BlockHash,
 ) -> Result<transparent_filter::ShardMap, BoxError> {
+    if store.journal_version() != 3 {
+        return Err("v11 publication requires a fresh v3 journal with transaction metadata".into());
+    }
     let started = std::time::Instant::now();
     let Some(journal_end) = store.covered_through() else {
         return Err("the journal is empty".into());
@@ -291,6 +297,13 @@ pub fn publish(
             Err(error) => return Err(error.into()),
         };
 
+    if previous
+        .values()
+        .any(|entry| entry.txid_segments.is_some() != cli.txid_display)
+    {
+        return Err("changing txid capability requires a separate publication directory".into());
+    }
+
     // Preserve sealed artifacts only while their chain endpoints agree. A
     // changed sealed suffix belongs to a separate publication directory.
     let mut resume_height = first;
@@ -369,6 +382,20 @@ pub fn publish(
             &events,
         )?;
 
+        let display = if cli.txid_display {
+            let mut records = Vec::new();
+            for height in shard.start_height..=shard.end_height {
+                records.extend(store.display_at(height)?);
+            }
+            Some(transparent_shard::txid::build(
+                shard.shard_id,
+                geometry,
+                &records,
+            )?)
+        } else {
+            None
+        };
+
         // The sealer sized this shard's tables from the packing rule; the
         // builder laid them out under the same rule. Nothing compared the two
         // before, so a divergence would have published a table sized for
@@ -409,6 +436,28 @@ pub fn publish(
                 shard.shard_id
             );
         }
+        // Digest every table once. The manifest is assembled twice when a
+        // published revision exists — once to test reproduction, once to
+        // publish — and each table is tens of megabytes.
+        let filter_digest = filter_hash(built.filter.as_slice()).to_display_hex();
+        let table_digests = |segments: &[Vec<u8>], rows: u64, row_bytes: usize| {
+            segments
+                .iter()
+                .map(|segment| TableGeometry {
+                    rows,
+                    row_bytes: row_bytes as u32,
+                    sha256: hex::encode(Sha256::digest(segment)),
+                })
+                .collect::<Vec<_>>()
+        };
+        let directory_segments = table_digests(
+            &built.directory,
+            geometry.directory_rows,
+            geometry.directory_row_bytes,
+        );
+        let page_segments =
+            table_digests(&built.pages, geometry.page_rows, geometry.page_row_bytes);
+        let txid_display = display.as_ref().map(|d| d.manifest(geometry));
         let make = |revision: u32, supersedes: String, with_choice: bool| ShardManifest {
             schema: SCHEMA.to_string(),
             profile: cli.range_profile.clone(),
@@ -439,25 +488,9 @@ pub fn publish(
                 page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
                 directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
             },
-            filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory_segments: built
-                .directory
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: geometry.directory_rows,
-                    row_bytes: geometry.directory_row_bytes as u32,
-                    sha256: hex::encode(Sha256::digest(segment)),
-                })
-                .collect(),
-            page_segments: built
-                .pages
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: geometry.page_rows,
-                    row_bytes: geometry.page_row_bytes as u32,
-                    sha256: hex::encode(Sha256::digest(segment)),
-                })
-                .collect(),
+            filter_hash: filter_digest.clone(),
+            directory_segments: directory_segments.clone(),
+            page_segments: page_segments.clone(),
             occupancy: ManifestOccupancy {
                 scripts: built.scripts,
                 page_rows: built.page_rows,
@@ -467,6 +500,7 @@ pub fn publish(
                 txids: shard.occupancy.txids,
                 excluded_scripts: built.excluded_scripts,
             },
+            txid_display: txid_display.clone(),
             directory_choice: built
                 .choice
                 .as_ref()
@@ -524,6 +558,14 @@ pub fn publish(
             write_immutable(&dir, &format!("pages.{index}.bin"), segment)?;
         }
 
+        if let Some(display) = &display {
+            for (index, segment) in display.directory.iter().enumerate() {
+                write_immutable(&dir, &format!("txdirectory.{index}.bin"), segment)?;
+            }
+            for (index, segment) in display.pages.iter().enumerate() {
+                write_immutable(&dir, &format!("txpages.{index}.bin"), segment)?;
+            }
+        }
         eprintln!(
             "shard {:>3} {}-{} ({} blocks) scripts {} pages {} events {} segments {}/{} {}",
             shard.shard_id,
@@ -555,6 +597,9 @@ pub fn publish(
             txids: shard.occupancy.txids,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
+            txid_segments: display
+                .as_ref()
+                .map(|d| [d.directory.len() as u32, d.pages.len() as u32]),
             manifest_digest: digest.clone(),
             revision,
             sealed: manifest.sealed,
@@ -600,6 +645,11 @@ pub fn publish(
         let events = store
             .events_at(height)?
             .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+        if events.iter().any(|(_, event)| event.metadata().is_none()) {
+            return Err(
+                format!("height {height} lacks transaction metadata required by v11").into(),
+            );
+        }
         pending.push((height, events));
         let block = pending.last().expect("just pushed");
         // One block can close two shards: the one it would have overrun, and
@@ -672,34 +722,7 @@ pub fn publish(
         shards: entries,
     };
     if !reorg && previous_dir != &cli.output && previous_dir.exists() {
-        for entry in &map.shards {
-            let mut retained = Vec::new();
-            for path in std::fs::read_dir(previous_dir)? {
-                let path = path?.path();
-                if !path.is_dir() {
-                    continue;
-                }
-                let Ok(raw) = std::fs::read(path.join("manifest.json")) else {
-                    continue;
-                };
-                let Ok(manifest) = serde_json::from_slice::<ShardManifest>(&raw) else {
-                    continue;
-                };
-                if manifest.shard_id == entry.shard_id
-                    && !manifest.sealed
-                    && manifest.revision < entry.revision
-                    && store.block_at(manifest.end_height).is_some_and(|b| {
-                        b.block_hash.to_display_hex() == manifest.terminal_block_hash
-                    })
-                {
-                    retained.push((manifest.revision, manifest.digest()));
-                }
-            }
-            retained.sort_by(|a, b| b.0.cmp(&a.0));
-            for (_, digest) in retained.into_iter().take(3) {
-                link_revision(previous_dir, &cli.output, &digest)?;
-            }
-        }
+        link_superseded_tails(previous_dir, &cli.output, &map.shards, store)?;
     }
     map.check_shape()
         .map_err(|error| format!("the published map is malformed: {error}"))?;
@@ -771,6 +794,18 @@ pub fn publish(
 
 /// Immutable journal view used by both the one-shot tool and controller snapshots.
 pub trait Journal {
+    fn journal_version(&self) -> u16;
+    fn display_at(
+        &self,
+        _height: u64,
+    ) -> Result<
+        Vec<transparent_shard::txid::TransparentDisplayRecord>,
+        crate::events::EventStoreError,
+    > {
+        Err(crate::events::EventStoreError::Invariant(
+            "journal has no display capability".into(),
+        ))
+    }
     fn genesis_hash(&self) -> &str;
     fn start_height(&self) -> u64;
     fn covered_through(&self) -> Option<u64>;
@@ -785,6 +820,18 @@ pub trait Journal {
     >;
 }
 impl Journal for EventStore {
+    fn journal_version(&self) -> u16 {
+        self.version()
+    }
+    fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<
+        Vec<transparent_shard::txid::TransparentDisplayRecord>,
+        crate::events::EventStoreError,
+    > {
+        self.display_at(height)
+    }
     fn genesis_hash(&self) -> &str {
         self.genesis_hash()
     }
@@ -809,6 +856,60 @@ impl Journal for EventStore {
     > {
         self.events_at(height)
     }
+}
+
+/// Carries the newest three superseded tail revisions of each shard forward
+/// from `previous`, for wallets still holding them, while their endpoints are
+/// on the journal's chain.
+///
+/// Every manifest in `previous` is read once. A set holds a manifest per shard,
+/// and archive manifests carry choice tables of hundreds of kilobytes, so
+/// reading them all again for every shard was quadratic in the set's size.
+fn link_superseded_tails(
+    previous: &Path,
+    output: &Path,
+    shards: &[transparent_filter::ShardMapEntry],
+    store: &impl Journal,
+) -> Result<(), BoxError> {
+    if shards.is_empty() {
+        return Ok(());
+    }
+    let mut superseded = Vec::new();
+    for path in std::fs::read_dir(previous)? {
+        let path = path?.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Ok(raw) = std::fs::read(path.join("manifest.json")) else {
+            continue;
+        };
+        let Ok(manifest) = serde_json::from_slice::<ShardManifest>(&raw) else {
+            continue;
+        };
+        if !manifest.sealed
+            && store
+                .block_at(manifest.end_height)
+                .is_some_and(|b| b.block_hash.to_display_hex() == manifest.terminal_block_hash)
+        {
+            superseded.push((manifest.shard_id, manifest.revision, manifest.digest()));
+        }
+    }
+    for entry in shards {
+        // Directory order, then a stable sort: the order the per-shard scan
+        // retained them in.
+        let mut retained: Vec<_> = superseded
+            .iter()
+            .filter(|(shard_id, revision, _)| {
+                *shard_id == entry.shard_id && *revision < entry.revision
+            })
+            .map(|(_, revision, digest)| (*revision, digest))
+            .collect();
+        retained.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+        for (_, digest) in retained.into_iter().take(3) {
+            link_revision(previous, output, digest)?;
+        }
+    }
+    Ok(())
 }
 
 /// Copies immutable revision files without rebuilding their contents.
@@ -907,6 +1008,7 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: DirectoryChoice::Off,
+            txid_display: false,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         }
     }
@@ -915,6 +1017,11 @@ mod tests {
         let events = vec![(
             ScriptBytes::new(vec![0x51, tag]),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: Some(transparent_events::TransactionMetadata {
+                    fee: transparent_events::FeeState::Exact(0),
+                    transparent_input_count: 1,
+                    has_shielded_components: false,
+                }),
                 height: h as u32,
                 txid: transparent_events::Txid([tag; 32]),
                 transaction_index: 0,
@@ -1066,6 +1173,198 @@ mod tests {
         unknown.range_profile = "zcash-transparent-range-v99".into();
         assert!(publish(&unknown, &journal, zero).is_err());
     }
+    /// The scan `link_superseded_tails` replaced: every manifest read again
+    /// for every shard of the map.
+    fn link_superseded_tails_per_shard(
+        previous: &Path,
+        output: &Path,
+        shards: &[transparent_filter::ShardMapEntry],
+        store: &impl Journal,
+    ) {
+        for entry in shards {
+            let mut retained = Vec::new();
+            for path in std::fs::read_dir(previous).unwrap() {
+                let path = path.unwrap().path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Ok(raw) = std::fs::read(path.join("manifest.json")) else {
+                    continue;
+                };
+                let Ok(manifest) = serde_json::from_slice::<ShardManifest>(&raw) else {
+                    continue;
+                };
+                if manifest.shard_id == entry.shard_id
+                    && !manifest.sealed
+                    && manifest.revision < entry.revision
+                    && store.block_at(manifest.end_height).is_some_and(|b| {
+                        b.block_hash.to_display_hex() == manifest.terminal_block_hash
+                    })
+                {
+                    retained.push((manifest.revision, manifest.digest()));
+                }
+            }
+            retained.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+            for (_, digest) in retained.into_iter().take(3) {
+                link_revision(previous, output, &digest).unwrap();
+            }
+        }
+    }
+
+    /// Reading each manifest once carries forward exactly the revisions the
+    /// per-shard scan did: the newest three superseded tails per shard whose
+    /// endpoints are canonical, never a sealed or orphaned one, and nothing
+    /// for directories without a readable manifest.
+    #[test]
+    fn superseded_tails_are_carried_as_the_per_shard_scan_did() {
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let a = root.path().join("a");
+        // Six revisions of the growing tail, published beside each other.
+        let mut map = publish(&options(&a, None), &journal, zero).unwrap();
+        for h in 4..9 {
+            block(&mut journal, h, h as u8 + 1);
+            map = publish(&options(&a, None), &journal, zero).unwrap();
+        }
+        // A tail revision whose endpoint left the chain, and directories
+        // without a readable manifest.
+        let orphan = root.path().join("orphan");
+        let mut fork = EventStore::open(root.path().join("fork"), &"00".repeat(32), 0).unwrap();
+        for h in 0..7 {
+            block(&mut fork, h, if h < 5 { h as u8 + 1 } else { h as u8 + 40 });
+        }
+        let forked = publish(&options(&orphan, None), &fork, zero).unwrap();
+        let digest = &forked.shards.last().unwrap().manifest_digest;
+        link_revision(&orphan, &a, digest).unwrap();
+        std::fs::create_dir(a.join("empty")).unwrap();
+        std::fs::create_dir(a.join("malformed")).unwrap();
+        std::fs::write(a.join("malformed").join("manifest.json"), b"{").unwrap();
+
+        let tails = map.shards.iter().filter(|s| s.revision > 0).count();
+        assert!(tails > 0 && map.shards.len() > 1);
+        let listing = |dir: &Path| -> std::collections::BTreeSet<_> {
+            std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect()
+        };
+        let single = root.path().join("single");
+        let reference = root.path().join("reference");
+        link_superseded_tails(&a, &single, &map.shards, &journal).unwrap();
+        link_superseded_tails_per_shard(&a, &reference, &map.shards, &journal);
+        assert_eq!(listing(&single), listing(&reference));
+        assert_eq!(listing(&single).len(), 3, "the newest three tails");
+        assert!(
+            !single.join(digest).exists(),
+            "an orphaned tail stays behind"
+        );
+        for name in listing(&single) {
+            assert_eq!(
+                listing(&single.join(&name)),
+                listing(&reference.join(&name))
+            );
+        }
+    }
+
+    /// Retention cost over a publication shaped like production's: one
+    /// manifest per shard of the retained v10 census, each carrying a choice
+    /// table sized for its script count, and three superseded tails. Prints
+    /// both scans' seconds; run with `--ignored --nocapture` on an optimized
+    /// build.
+    #[test]
+    #[ignore]
+    fn retention_scan_cost_at_census_scale() {
+        let census = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../evidence/compact-layout-2026-09-28/census.jsonl"),
+        )
+        .unwrap();
+        let scripts: Vec<u64> = census
+            .lines()
+            .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+            .filter(|row| row["type"] == "shard")
+            .map(|row| row["scripts"].as_u64().unwrap())
+            .collect();
+        let root = tempfile::tempdir().unwrap();
+        let mut journal =
+            EventStore::open(root.path().join("journal"), &"00".repeat(32), 0).unwrap();
+        for h in 0..4 {
+            block(&mut journal, h, h as u8 + 1);
+        }
+        let zero = BlockHash::from_internal_bytes([0; 32]);
+        let template_dir = root.path().join("template");
+        let mut options = options(&template_dir, None);
+        options.directory_choice = DirectoryChoice::All;
+        let template_map = publish(&options, &journal, zero).unwrap();
+        let tail = template_map.shards.last().unwrap();
+        let template: ShardManifest = serde_json::from_slice(
+            &std::fs::read(
+                template_dir
+                    .join(&tail.manifest_digest)
+                    .join("manifest.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+
+        let previous = root.path().join("previous");
+        let mut shards = Vec::new();
+        let mut manifest_bytes = 0;
+        let last = scripts.len() as u64 - 1;
+        let mut write = |manifest: &ShardManifest| {
+            let bytes = manifest.canonical_bytes();
+            manifest_bytes += bytes.len();
+            let dir = previous.join(manifest.digest());
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("manifest.json"), bytes).unwrap();
+            manifest.digest()
+        };
+        for (id, keys) in scripts.iter().enumerate() {
+            let segment = (keys * 123).div_ceil(100).saturating_add(32).div_ceil(3);
+            let encoded = (13 + (3 * segment).div_ceil(8)).div_ceil(3) * 4;
+            let mut manifest = template.clone();
+            manifest.shard_id = id as u64;
+            manifest.sealed = id as u64 != last;
+            manifest.revision = if manifest.sealed { 0 } else { 4 };
+            manifest.directory_choice = Some("A".repeat(encoded as usize));
+            if id as u64 == last {
+                for revision in 1..4 {
+                    let mut superseded = manifest.clone();
+                    superseded.revision = revision;
+                    write(&superseded);
+                }
+            }
+            let mut entry = tail.clone();
+            entry.shard_id = id as u64;
+            entry.sealed = manifest.sealed;
+            entry.revision = manifest.revision;
+            entry.manifest_digest = write(&manifest);
+            shards.push(entry);
+        }
+
+        let started = std::time::Instant::now();
+        link_superseded_tails_per_shard(&previous, &root.path().join("a"), &shards, &journal);
+        let per_shard = started.elapsed().as_secs_f64();
+        let started = std::time::Instant::now();
+        link_superseded_tails(&previous, &root.path().join("b"), &shards, &journal).unwrap();
+        let single = started.elapsed().as_secs_f64();
+        println!(
+            "{}",
+            serde_json::json!({
+                "shards": shards.len(),
+                "manifests": shards.len() + 3,
+                "manifest_bytes": manifest_bytes,
+                "per_shard_scan_seconds": per_shard,
+                "single_scan_seconds": single,
+            })
+        );
+    }
+
     #[test]
     fn sealed_reorg_builds_a_separate_suffix_and_snapshot_survives_rollback() {
         let root = tempfile::tempdir().unwrap();

@@ -1,0 +1,687 @@
+"""Failure/interruption coverage for the wrapper's schema transaction boundary."""
+import copy
+import importlib.util
+import io
+import json
+import os
+import subprocess
+from pathlib import Path
+import sys
+import tempfile
+import tarfile
+import unittest
+from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT/'ops/lib'))
+from wallet_pir_ops.deploy import cli  # noqa: E402
+from wallet_pir_ops.deploy.remote import LockHeld  # noqa: E402
+SPEC = importlib.util.spec_from_file_location('schema', ROOT/'transparent/ops/lib/activity_schema_operation.py')
+module = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(module)
+
+
+class Lock:
+    def __init__(self):
+        self.held = False
+        self.lost = False
+    def __enter__(self):
+        self.held = True
+        return self
+    def __exit__(self, *args):
+        self.held = False
+    def verify(self):
+        if not self.held or self.lost:
+            raise LockHeld('lost lock')
+    def descriptors(self):
+        self.verify()
+        return (123,)
+
+
+class SchemaTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.script = self.root/'phase.py'
+        self.script.write_text('public fixture program')
+        self.input = {'path': str(self.script), 'sha256': module.file_hash(self.script)}
+        def command(name, read_only=False):
+            return {'name': name, 'argv': ['/usr/bin/python3', str(self.script), name, '{transaction}', '{journal}'],
+                    'timeout': 10, 'read_only': read_only}
+        self.recipe = {'version': 1, 'source_sha': 'a'*40, 'publication_sha256': 'b'*64,
+                       'inputs': [self.input], 'rollback_inputs': [self.input],
+                       'preflight': [command('verify-inputs', True)],
+                       'steps': [command(n, n.startswith('verify-')) for n in module.FORWARD],
+                       'rollback': [command(n, n.startswith('verify-')) for n in module.ROLLBACK]}
+        self.lock = Lock()
+        self.calls = []
+        self.fail = None
+        self.interrupt = None
+        self.lose = None
+        self.service = 'v10'
+        def run(command, log, fds):
+            name = command['name']
+            if name != 'verify-inputs':
+                self.assertTrue(self.lock.held)
+                self.assertEqual(fds, (123,))
+                record = self.runner.load()
+                self.assertEqual(record['events'][-1]['status'], 'running')
+                self.assertEqual(record['events'][-1]['name'], name)
+                self.assertNotIn('{transaction}', command['argv'])
+                self.assertNotIn('{journal}', command['argv'])
+            self.calls.append(name)
+            if name == self.interrupt:
+                raise KeyboardInterrupt()
+            if name == self.lose:
+                self.lock.lost = True
+            if name == self.fail:
+                return 1
+            if name == 'activate-prewarm':
+                self.service = 'v11'
+            if name == 'restore-v10':
+                self.service = 'v10'
+            return 0
+        self.runner = module.Runner(SimpleNamespace(lock={'type': 'pinned_host', 'machine_id': 'c'*32}),
+                                    self.root/'state', run, lambda: self.lock, out=lambda x: None)
+        self.runner.coordinator = lambda: None
+
+    def deploy(self):
+        return self.runner.deploy(self.recipe, module.digest(self.recipe))
+
+    def test_complete_recipe_commits_with_durable_intent_and_lock(self):
+        record = self.deploy()
+        self.assertEqual(record['status'], 'committed')
+        self.assertEqual(self.service, 'v11')
+        self.assertEqual(self.calls, ['verify-inputs']+list(module.FORWARD))
+        self.assertTrue(all(e['status'] == 'passed' for e in record['events']))
+        self.assertFalse(self.lock.held)
+
+    def test_child_uncertain_exit_never_runs_automatic_rollback(self):
+        original=self.runner.run
+        def run(command, log, fds):
+            code=original(command, log, fds)
+            return 75 if command['name']=='activate-prewarm' else code
+        self.runner.run=run
+        with self.assertRaisesRegex(ValueError,'reconcile'):
+            self.deploy()
+        self.assertEqual(self.runner.load()['status'],'interrupted')
+        self.assertNotIn('restore-v10',self.calls)
+
+    def test_failure_restores_coherent_predecessor_before_unlock(self):
+        self.fail = 'verify-canonical'
+        with self.assertRaises(module.OperationError):
+            self.deploy()
+        self.assertEqual(self.runner.load()['status'], 'rolled-back')
+        self.assertEqual(self.service, 'v10')
+        self.assertNotIn('resume-load', self.calls)
+        self.assertEqual(self.calls[-len(module.ROLLBACK):], list(module.ROLLBACK))
+
+    def test_rollback_failure_blocks_reopening_and_new_deploy(self):
+        self.fail = 'verify-canonical'
+        original = self.runner.run
+        def run(command, log, fds):
+            if command['name'] == 'verify-rollback':
+                return 1
+            return original(command, log, fds)
+        self.runner.run = run
+        with self.assertRaises(module.OperationError):
+            self.deploy()
+        self.assertEqual(self.runner.load()['status'], 'rollback-failed')
+        self.assertNotIn('reopen-v10', self.calls)
+        with self.assertRaisesRegex(module.OperationError, 'unfinished'):
+            self.deploy()
+
+    def test_interruption_requires_explicit_recovery(self):
+        self.interrupt = 'verify-canonical'
+        with self.assertRaises(KeyboardInterrupt):
+            self.deploy()
+        self.assertEqual(self.runner.load()['status'], 'interrupted')
+        self.assertNotIn('restore-v10', self.calls)
+        with self.assertRaisesRegex(module.OperationError, 'unfinished'):
+            self.deploy()
+        self.interrupt = None
+        self.runner.rollback()
+        self.assertEqual(self.runner.load()['status'], 'rolled-back')
+        self.assertEqual(self.service, 'v10')
+        before = list(self.calls)
+        self.runner.rollback()
+        self.assertEqual(before, self.calls)
+
+    def test_timeout_requires_explicit_recovery_without_racing_descendants(self):
+        original = self.runner.run
+        def run(command, log, fds):
+            if command['name'] == 'verify-canonical':
+                raise subprocess.TimeoutExpired(command['argv'], command['timeout'])
+            return original(command, log, fds)
+        self.runner.run = run
+        with self.assertRaisesRegex(module.OperationError, 'timed out'):
+            self.deploy()
+        record = self.runner.load()
+        self.assertEqual(record['status'], 'interrupted')
+        self.assertEqual(record['events'][-1]['error_type'], 'TimeoutExpired')
+        self.assertNotIn('restore-v10', self.calls)
+        self.runner.run = original
+        self.runner.rollback()
+        self.assertEqual(self.service, 'v10')
+
+    def test_real_subprocess_inherits_lock_and_failure_restores_fixture(self):
+        machine = self.root/'machine-id'
+        machine.write_text('c'*32)
+        lock_path = self.root/'production.lock'
+        class FixtureLock(module.ProductionLock):
+            MACHINE_ID = machine
+            ROOT_UID = os.getuid()
+            PATH = lock_path
+        marker = self.root/'fixture-service'
+        marker.write_text('v10')
+        self.script.write_text("""
+import fcntl,os,sys
+from pathlib import Path
+phase=sys.argv[1]
+if phase!='verify-inputs':
+    fds=[int(x) for x in os.environ['WALLET_PIR_PRODUCTION_LOCK_FDS'].split(',')]
+    expected=Path(sys.argv[2]).stat()
+    assert any((os.fstat(fd).st_dev,os.fstat(fd).st_ino)==(expected.st_dev,expected.st_ino) for fd in fds)
+marker=Path(sys.argv[3])
+if phase=='activate-prewarm':marker.write_text('v11')
+if phase=='restore-v10':marker.write_text('v10')
+if phase=='verify-canonical':sys.exit(1)
+""")
+        self.input['sha256'] = module.file_hash(self.script)
+        for group in ('preflight', 'steps', 'rollback'):
+            for command in self.recipe[group]:
+                command['argv'] = ['/usr/bin/python3', str(self.script), command['name'], str(lock_path), str(marker)]
+        self.runner.run = module.run_command
+        self.runner.lock_factory = lambda: FixtureLock(self.runner.inventory.lock)
+        with self.assertRaises(module.OperationError):
+            self.deploy()
+        self.assertEqual(marker.read_text(), 'v10')
+        self.assertEqual(self.runner.load()['status'], 'rolled-back')
+        with FixtureLock(self.runner.inventory.lock) as held:
+            held.verify()
+
+    def test_lost_lock_prevents_following_mutations_and_rollback(self):
+        self.lose = 'activate-prewarm'
+        with self.assertRaises(LockHeld):
+            self.deploy()
+        self.assertNotIn('align-origins', self.calls)
+        self.assertNotIn('restore-v10', self.calls)
+        self.assertEqual(self.runner.load()['status'], 'applying')
+
+    def test_changed_plan_digest_rejects_before_lock(self):
+        with self.assertRaisesRegex(module.OperationError, 'reviewed plan'):
+            self.runner.deploy(self.recipe, '0'*64)
+        self.assertEqual(self.calls, [])
+        self.assertFalse((self.root/'state').exists())
+
+    def test_changed_forward_input_fails_before_side_effects(self):
+        self.script.write_text('changed')
+        with self.assertRaisesRegex(module.OperationError, 'checksum changed'):
+            self.deploy()
+        self.assertEqual(self.calls, [])
+        self.assertFalse((self.root/'state').exists())
+
+    def test_preflight_failure_never_starts_transaction(self):
+        self.fail = 'verify-inputs'
+        with self.assertRaisesRegex(module.OperationError, 'preflight failed'):
+            self.deploy()
+        self.assertEqual(self.calls, ['verify-inputs'])
+        self.assertFalse((self.root/'state').exists())
+
+    def test_changed_forward_input_does_not_block_independent_rollback(self):
+        other = self.root/'rollback.py'
+        other.write_text('retained predecessor restore')
+        self.recipe['rollback_inputs'] = [{'path': str(other), 'sha256': module.file_hash(other)}]
+        for c in self.recipe['rollback']:
+            c['argv'][1] = str(other)
+        record = self.deploy()
+        self.script.unlink()
+        self.runner.rollback(record['id'])
+        self.assertEqual(self.service, 'v10')
+
+    def test_input_is_rechecked_between_forward_phases(self):
+        original = self.runner.run
+        other = self.root/'rollback.py'
+        other.write_text('retained restore')
+        self.recipe['rollback_inputs'] = [{'path': str(other), 'sha256': module.file_hash(other)}]
+        for c in self.recipe['rollback']:
+            c['argv'][1] = str(other)
+        def run(command, log, fds):
+            code = original(command, log, fds)
+            if command['name'] == 'maintenance':
+                self.script.write_text('changed after preflight')
+            return code
+        self.runner.run = run
+        with self.assertRaisesRegex(module.OperationError, 'checksum changed'):
+            self.deploy()
+        self.assertNotIn('stage-v11', self.calls)
+        self.assertEqual(self.runner.load()['status'], 'rolled-back')
+
+    def test_inline_interpreter_recipe_rejected(self):
+        recipe = copy.deepcopy(self.recipe)
+        recipe['steps'][0]['argv'] = ['/usr/bin/python3', '-c', 'dangerous inline program']
+        with self.assertRaisesRegex(module.OperationError, 'checksum-bound script'):
+            module.validate(recipe)
+
+    def test_missing_phase_and_excessive_recovery_deadline_rejected(self):
+        recipe = copy.deepcopy(self.recipe)
+        recipe['steps'].pop()
+        with self.assertRaisesRegex(module.OperationError, 'every forward phase'):
+            module.validate(recipe)
+        recipe = copy.deepcopy(self.recipe)
+        for c in recipe['rollback']:
+            c['timeout'] = 200
+        with self.assertRaisesRegex(module.OperationError, '15 minutes'):
+            module.validate(recipe)
+
+    def test_record_tampering_and_path_traversal_rejected(self):
+        record = self.deploy()
+        path = self.root/'state'/(record['id']+'.json')
+        record['recipe']['source_sha'] = 'd'*40
+        path.write_text(json.dumps(record))
+        with self.assertRaisesRegex(module.OperationError, 'recipe changed'):
+            self.runner.load()
+        with self.assertRaisesRegex(module.OperationError, 'identifier'):
+            self.runner.load('../../credentials')
+
+    def test_duplicate_json_and_oversized_recipe_rejected(self):
+        path = self.root/'bad-recipe.json'
+        path.write_text('{"version":1,"version":2}')
+        with self.assertRaisesRegex(module.OperationError, 'duplicate JSON'):
+            module.load_recipe(path)
+        path.write_bytes(b' '*(module.MAX_RECIPE+1))
+        with self.assertRaisesRegex(module.OperationError, 'size bound'):
+            module.load_recipe(path)
+
+    def test_read_only_schema_plan_uses_wrapper_cli(self):
+        recipe_path = self.root/'recipe.json'
+        recipe_path.write_text(json.dumps(self.recipe))
+        inventory = self.root/'inventory.json'
+        inventory.write_text(json.dumps({'hosts': {'fixture': {}}, 'ssh': {'mode': 'config'},
+                                        'lock': {'type': 'pinned_host', 'machine_id': 'c'*32}, 'services': {}}))
+        output = []
+        code = cli.main(['--inventory', str(inventory), 'schema-plan', '--recipe', str(recipe_path)], out=output.append)
+        self.assertEqual(code, 0)
+        self.assertIn('recipe '+module.digest(self.recipe), output)
+        self.assertFalse((self.root/'state').exists())
+
+
+HOST_SPEC = importlib.util.spec_from_file_location('source_host', ROOT/'transparent/ops/lib/activity_source_stage_host.py')
+source_host = importlib.util.module_from_spec(HOST_SPEC)
+HOST_SPEC.loader.exec_module(source_host)
+STAGE_SPEC = importlib.util.spec_from_file_location('source_stage', ROOT/'transparent/ops/lib/activity_source_stage.py')
+source_stage = importlib.util.module_from_spec(STAGE_SPEC)
+STAGE_SPEC.loader.exec_module(source_stage)
+
+
+class SourceStageTests(unittest.TestCase):
+    def failed_promotion(self, after_archive=False):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        data=self.archive();root=self.root.resolve()/'ops';real=source_host.os.rename
+        kernel=SimpleNamespace(process=lambda pid:{'pid':pid,'start_ticks':123,'state':'S'},
+                               boot_id=lambda:'00000000-0000-0000-0000-000000000001')
+        fleet=SimpleNamespace(S=kernel)
+        def rename(original,destination):
+            if str(destination).endswith('.tar.gz'):
+                if after_archive:real(original,destination)
+                raise OSError('fictional promotion loss')
+            return real(original,destination)
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',fleet,create=True),patch.object(source_host.os,'rename',side_effect=rename):
+            with self.lock,self.assertRaises(OSError):
+                source_host.stage(self.request,self.lock,io.BytesIO(data),root,fleet_proof={'fictional':True})
+        return root,data
+
+    def reconcile_failed_source(self,root):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        fleet=SimpleNamespace(S=SimpleNamespace(process=lambda pid:None,
+                             boot_id=lambda:'00000000-0000-0000-0000-000000000001'))
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',fleet,create=True),self.lock:
+            return source_host.reconcile_source(self.request,self.lock,{'lease_request_sha256':'c'*64},root)
+
+    def test_failed_promotion_quarantines_verified_source_and_preserves_archive_bytes(self):
+        for after_archive in (False,True):
+            # Each promotion failure uses an independent private namespace.
+            self.request['source_sha']=('a' if after_archive else 'b')*40
+            root,data=self.failed_promotion(after_archive)
+            receipt=root/'staging'/(self.request['source_sha']+'.json')
+            original=receipt.read_bytes();owner=json.loads(original)
+            self.assertEqual(owner['status'],'failed');self.assertEqual(set(owner['files']),set(self.files))
+            result=self.reconcile_failed_source(root)
+            self.assertFalse(receipt.exists());self.assertEqual(Path(result['retained'][0]).read_bytes(),original)
+            quarantined=Path(result['quarantined_source'])
+            self.assertFalse((root/'sources'/self.request['source_sha']).exists())
+            for name,raw in self.files.items():self.assertEqual((quarantined/name).read_bytes(),raw)
+            archive=Path(result['quarantined_archive']) if after_archive else Path(result['partial'])/'source.tar.gz'
+            self.assertEqual(archive.read_bytes(),data)
+            self.assertTrue(Path(result['recovery_intent']).exists())
+
+    def test_source_recovery_refuses_live_or_incomplete_kernel_identity(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        root,data=self.failed_promotion(True);source=self.request['source_sha']
+        receipt=root/'staging'/(source+'.json');original=receipt.read_bytes();owner=json.loads(original)
+        kernel=SimpleNamespace(process=lambda pid:{'pid':pid,'start_ticks':owner['process_start'],'state':'S'},
+                               boot_id=lambda:owner['boot_id'])
+        with patch.object(source_host,'_BOOTSTRAP_FLEET',SimpleNamespace(S=kernel),create=True),self.lock:
+            with self.assertRaisesRegex(ValueError,'remains alive'):
+                source_host.reconcile_source(self.request,self.lock,{'lease_request_sha256':'c'*64},root)
+        self.assertEqual(receipt.read_bytes(),original)
+        owner['boot_id']=None;receipt.write_text(json.dumps(owner))
+        with self.assertRaisesRegex(ValueError,'identity is incomplete'):self.reconcile_failed_source(root)
+        self.assertTrue((root/'sources'/source).exists())
+        self.assertFalse(list((root/'staging').glob('*.recovery-*')))
+
+    def test_source_quarantine_resumes_after_rename_and_refuses_drift_or_missing_manifest(self):
+        from unittest.mock import patch
+        root,data=self.failed_promotion(True);source=self.request['source_sha']
+        target=root/'sources'/source;receipt=root/'staging'/(source+'.json');original=receipt.read_bytes()
+        file=target/'ops/scripts/wallet-pir-deploy.py';file.write_bytes(b'drift')
+        with self.assertRaisesRegex(ValueError,'checksum'):self.reconcile_failed_source(root)
+        self.assertEqual(receipt.read_bytes(),original);self.assertTrue(target.exists())
+        file.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
+        owner=json.loads(original);owner.pop('files');receipt.write_text(json.dumps(owner))
+        with self.assertRaisesRegex(ValueError,'pre-promotion'):self.reconcile_failed_source(root)
+        receipt.write_bytes(original)
+        rename=source_host.os.rename
+        def crash(original,destination):
+            rename(original,destination)
+            if Path(original)==target:raise OSError('fictional post-rename loss')
+        with patch.object(source_host.os,'rename',side_effect=crash),self.assertRaises(OSError):
+            self.reconcile_failed_source(root)
+        self.assertTrue(receipt.exists());self.assertFalse(target.exists())
+        result=self.reconcile_failed_source(root)
+        self.assertEqual(Path(result['retained'][0]).read_bytes(),original)
+        self.assertEqual(Path(result['quarantined_archive']).read_bytes(),data)
+
+    def test_repair_retains_only_exact_compiler_proved_bytecode(self):
+        import py_compile
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        before = cache.stat()
+        raw = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        with self.lock:
+            result = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+            again = source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertEqual(result, again)
+        retained = target.parent.parent/'diagnostic-bytecode'/('transparent-schema-test-'+self.request['source_sha'])
+        saved = retained/'files'/cache.relative_to(target)
+        self.assertEqual(saved.read_bytes(), raw)
+        self.assertEqual(saved.stat().st_ino, before.st_ino)
+        self.assertEqual(payload.read_bytes(), self.files['ops/lib/probe.py'])
+        self.assertFalse(cache.exists())
+        source_host.verify_receipt(receipt, target, self.request['source_sha'], self.request['sha256'])
+
+    def test_bytecode_retention_refuses_foreign_code_and_payload_drift(self):
+        import py_compile
+        import marshal
+        self.files['ops/lib/probe.py'] = b'value = 42\n'
+        target = Path(self.stage(self.archive())['path']).resolve()
+        payload = target/'ops/lib/probe.py'
+        cache = Path(py_compile.compile(str(payload), doraise=True))
+        original = cache.read_bytes()
+        receipt = json.loads((target.parent.parent/'staging'/(self.request['source_sha']+'.json')).read_bytes())
+        binding = {'transaction': 'transparent-schema-test', 'recipe_sha256': 'c'*64,
+                   'repair_source_sha': 'd'*40}
+        cache.write_bytes(original[:16]+marshal.dumps(compile('value = 99', str(payload), 'exec')))
+        with self.lock, self.assertRaisesRegex(ValueError, 'does not compile'):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+        cache.write_bytes(original)
+        payload.write_bytes(b'value = 99\n')
+        with self.lock, self.assertRaises(ValueError):
+            source_host.retain_diagnostic_bytecode(receipt, target, self.request['source_sha'],
+                        self.request['sha256'], binding, self.lock.verify)
+        self.assertTrue(cache.exists())
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.meminfo = self.root/'meminfo'
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 800 kB\n')
+        from unittest.mock import patch
+        memory = patch.object(source_host, 'MEMINFO', self.meminfo)
+        memory.start()
+        self.addCleanup(memory.stop)
+        self.lock = Lock()
+        self.request = {'mode': 'stage', 'source_sha': 'a'*40, 'sha256': '', 'machine_id': 'b'*32}
+        self.files = {'ops/scripts/wallet-pir-deploy.py': b'wrapper',
+                      'transparent/ops/lib/activity_schema_operation.py': b'recipe runner'}
+
+    def archive(self, extra=(), commit=None):
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode='w:gz', format=tarfile.PAX_FORMAT,
+                          pax_headers={'comment': commit or self.request['source_sha']}) as tar:
+            for name, contents in self.files.items():
+                entry = tarfile.TarInfo(name)
+                entry.size = len(contents)
+                tar.addfile(entry, io.BytesIO(contents))
+            for entry in extra:
+                tar.addfile(entry)
+        raw = data.getvalue()
+        self.request['sha256'] = module.hashlib.sha256(raw).hexdigest()
+        return raw
+
+    def stage(self, data):
+        with self.lock:
+            return source_host.stage(self.request, self.lock, io.BytesIO(data), self.root/'ops')
+
+    def test_bounded_archive_is_staged_idempotently_with_verified_files(self):
+        data = self.archive()
+        result = self.stage(data)
+        self.assertEqual(result['status'], 'staged')
+        target = Path(result['path'])
+        for name, contents in self.files.items():
+            self.assertEqual((target/name).read_bytes(), contents)
+        # A retry verifies the retained set and does not consume replacement bytes.
+        self.assertEqual(self.stage(b'not a second upload'), result)
+        receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
+        self.assertEqual(receipt['pid'], os.getpid())
+        self.assertEqual(receipt['compressed_bytes'], len(data))
+        retained=Path(receipt['retained_archive'])
+        self.assertEqual(retained.read_bytes(),data)
+        self.assertEqual(retained.stat().st_mode & 0o777,0o400)
+        self.assertEqual(set(receipt['files']), set(self.files))
+        self.assertEqual((self.root/'ops/staging'/('a'*40+'.json')).stat().st_mode & 0o777, 0o600)
+
+    def test_preflight_and_status_do_not_create_files(self):
+        self.archive()
+        for mode, expected in [('preflight', 'preflight-passed'), ('status', 'absent')]:
+            self.request['mode'] = mode
+            result = source_host.stage(self.request, source_stage.hostlock.PinnedHostLock(None), io.BytesIO(), self.root/'ops')
+            self.assertEqual(result['status'], expected)
+            self.assertFalse((self.root/'ops').exists())
+
+    def test_transferred_checksum_failure_keeps_failed_receipt(self):
+        data = self.archive()
+        self.request['sha256'] = 'f'*64
+        with self.assertRaisesRegex(ValueError, 'checksum differs'):
+            self.stage(data)
+        receipt = json.loads((self.root/'ops/staging'/('a'*40+'.json')).read_text())
+        self.assertEqual(receipt['status'], 'failed')
+        self.assertFalse((self.root/'ops/sources'/('a'*40)).exists())
+        with self.assertRaisesRegex(ValueError, 'incomplete retained'):
+            self.stage(data)
+
+    def test_commit_marker_mismatch_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'requested git commit'):
+            self.stage(self.archive(commit='c'*40))
+
+    def test_traversal_links_special_files_and_duplicates_rejected(self):
+        cases = [('unsafe', '../escape', tarfile.REGTYPE),
+                 ('unsafe', '/absolute', tarfile.REGTYPE),
+                 ('links', 'link', tarfile.SYMTYPE),
+                 ('links', 'hard', tarfile.LNKTYPE),
+                 ('special', 'fifo', tarfile.FIFOTYPE),
+                 ('duplicate', 'ops/scripts/wallet-pir-deploy.py', tarfile.REGTYPE)]
+        for expected, name, kind in cases:
+            with self.subTest(name=name):
+                entry = tarfile.TarInfo(name)
+                entry.type, entry.linkname = kind, '../escape'
+                target = self.root/('case-'+str(cases.index((expected, name, kind))))
+                raw = self.archive([entry])
+                with self.lock, self.assertRaises(ValueError):
+                    source_host.stage(self.request, self.lock, io.BytesIO(raw), target)
+                self.assertFalse((self.root/'escape').exists())
+
+    def test_compressed_and_expanded_bounds_reject_without_install(self):
+        from unittest.mock import patch
+        data = self.archive()
+        for field, limit in [('MAX_COMPRESSED', len(data)-1), ('MAX_EXPANDED', 1), ('MAX_ENTRIES', 1)]:
+            with self.subTest(field=field), self.lock, patch.object(source_host, field, limit):
+                with self.assertRaises(ValueError):
+                    source_host.stage(self.request, self.lock, io.BytesIO(data), self.root/field)
+
+    def test_existing_file_tamper_or_addition_or_symlink_is_rejected(self):
+        data = self.archive()
+        target = Path(self.stage(data)['path'])
+        path = target/'ops/scripts/wallet-pir-deploy.py'
+        path.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'checksum changed'):
+            self.stage(data)
+        path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
+        (target/'unreviewed.py').write_bytes(b'extra')
+        with self.assertRaisesRegex(ValueError, r'file set changed \(1 unexpected, 0 missing\)'):
+            self.stage(data)
+        (target/'unreviewed.py').unlink()
+        path.unlink()
+        with self.assertRaisesRegex(ValueError, r'file set changed \(0 unexpected, 1 missing\)'):
+            self.stage(data)
+        path.write_bytes(self.files['ops/scripts/wallet-pir-deploy.py'])
+        (target/'outside').symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            self.stage(data)
+
+    def test_status_verifies_files_without_requiring_free_disk(self):
+        from unittest.mock import patch
+        data = self.archive()
+        self.stage(data)
+        self.request['mode'] = 'status'
+        with patch.object(source_host.os, 'statvfs', side_effect=AssertionError('status must remain readable')):
+            result = self.stage(b'')
+        self.assertEqual(result['verified_files'], 2)
+        self.assertNotIn('files', result)
+
+    def test_disk_floor_stops_before_receipt_or_upload(self):
+        from unittest.mock import patch
+        data = self.archive()
+        disk = SimpleNamespace(f_bavail=1, f_frsize=4096, f_blocks=100)
+        with patch.object(source_host.os, 'statvfs', return_value=disk):
+            with self.assertRaisesRegex(ValueError, 'disk reserve'):
+                self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+
+    def test_memory_floor_stops_before_receipt_or_upload(self):
+        data = self.archive()
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 199 kB\n')
+        with self.assertRaisesRegex(ValueError, 'memory below 20 percent'):
+            self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+        self.meminfo.write_text('MemTotal: 1000 kB\nMemAvailable: 200 kB\n')
+        self.assertEqual(self.stage(data)['status'], 'staged')
+
+    def test_lost_lock_stops_before_mutation(self):
+        data = self.archive()
+        self.lock.lost = True
+        with self.assertRaises(LockHeld):
+            self.stage(data)
+        self.assertFalse((self.root/'ops').exists())
+
+    def test_wrapper_source_plan_has_no_remote_effects_and_checks_hash(self):
+        archive = self.root/'source.tar.gz'
+        archive.write_bytes(self.archive())
+        inventory = self.root/'inventory.json'
+        inventory.write_text(json.dumps({'hosts': {'coordinator': {'machine_id': 'b'*32}},
+            'ssh': {'mode': 'config'}, 'lock': {'type': 'remote', 'host': 'coordinator'}, 'services': {}}))
+        argv = ['--inventory', str(inventory), 'schema-source-plan', '--archive', str(archive),
+                '--source-sha', self.request['source_sha'], '--sha256', self.request['sha256']]
+        self.assertEqual(cli.main(argv, out=lambda x: None), 0)
+        archive.write_bytes(b'changed')
+        self.assertEqual(cli.main(argv, out=lambda x: None), 1)
+
+    def test_source_plan_rejects_oversize_before_hash_or_remote_access(self):
+        from unittest.mock import patch
+        self.assertEqual(source_stage.MAX_COMPRESSED, source_host.MAX_COMPRESSED)
+        archive = self.root/'oversized.tar.gz'
+        with archive.open('wb') as stream:
+            stream.truncate(source_stage.MAX_COMPRESSED+1)
+        inventory = SimpleNamespace(hosts={'coordinator': {'machine_id': 'b'*32}},
+            ssh={'mode': 'config'}, lock={'type': 'remote', 'host': 'coordinator'})
+        client = source_stage.SourceStage(inventory, out=lambda x: None)
+        with patch.object(source_stage.hashlib, 'file_digest', side_effect=AssertionError('no hash of oversized archive')):
+            with self.assertRaisesRegex(ValueError, 'received-archive bound'):
+                client.run('plan', 'a'*40, 'c'*64, archive)
+
+    def test_real_helper_owns_lock_during_receipt_and_extraction(self):
+        data = self.archive()
+        machine = self.root/'machine-id'
+        machine.write_text(self.request['machine_id'])
+        lock_path = self.root/'production.lock'
+        # This fixture tests the real lock/extraction; fleet decisions are mocked
+        # explicitly and exercised independently in the bootstrap-fleet suite.
+        prefix = Path(source_stage.hostlock.__file__).read_text()
+        prefix += '\n'+Path(source_stage.schema_fence.__file__).read_text()
+        prefix += '\nPinnedHostLock.MACHINE_ID = Path('+repr(str(machine))+')\n'
+        prefix += 'PinnedHostLock.ROOT_UID = os.geteuid()\n'
+        prefix += 'from types import SimpleNamespace\n'
+        prefix += '_BOOTSTRAP_FLEET=SimpleNamespace(PINS={"coordinator":'+repr(self.request['machine_id'])+'}, leased=lambda r,l,v,c,operation,s:operation({}), S=SimpleNamespace(process=lambda p:{"pid":p,"start_ticks":1},boot_id=lambda:"00000000-0000-0000-0000-000000000001"))\n'
+        prefix += '_BOOTSTRAP_REMOTE_CODE="fictional isolated lock fixture"\n'
+        helper = source_stage.HELPER_PATH.read_text().replace(
+            "STAGE_ROOT = Path('/srv/transparent-activity/ops')", 'STAGE_ROOT = Path('+repr(str(self.root/'ops'))+')').replace(
+            "LOCK_PATH = Path('/run/lock/wallet-pir-production.lock')", 'LOCK_PATH = Path('+repr(str(lock_path))+')')
+        helper = helper.replace("MEMINFO = Path('/proc/meminfo')", 'MEMINFO = Path('+repr(str(self.meminfo))+')')
+        assertion = '''
+_save = atomic_json
+def atomic_json(path, value):
+    competing = os.open(LOCK_PATH, os.O_RDWR)
+    try:
+        try:
+            fcntl.flock(competing, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            pass
+        else:
+            raise AssertionError('receipt mutation ran without production lock')
+    finally:
+        os.close(competing)
+    _save(path, value)
+'''
+        helper = helper.replace("if __name__ == '__main__':", assertion+"\nif __name__ == '__main__':")
+        result = subprocess.run([sys.executable, '-c', prefix+'\n'+helper, json.dumps(self.request)],
+                                input=data, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        reply = json.loads(result.stdout)
+        self.assertTrue(reply['ok'], reply)
+        from unittest.mock import patch
+        with patch.object(source_stage.hostlock.PinnedHostLock, 'MACHINE_ID', machine), \
+             patch.object(source_stage.hostlock.PinnedHostLock, 'ROOT_UID', os.geteuid()), \
+             source_stage.hostlock.PinnedHostLock({'type': 'pinned_host', 'machine_id': self.request['machine_id']}, path=lock_path) as lock:
+            lock.verify()
+
+
+def load_tests(loader, tests, _pattern):
+    # The wrapper's fixed preparation job shares this existing CI entry point;
+    # registering it here avoids central Makefile churn selecting every Rust package.
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_publication_job.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_host.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_routing.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_recovery_proof.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_schema_product.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_input_stage.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_input_preparation.py'))
+    tests.addTests(loader.discover(str(Path(__file__).parent), pattern='test_activity_lock_qualification.py'))
+    return tests
+
+
+if __name__ == '__main__':
+    unittest.main()

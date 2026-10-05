@@ -1,0 +1,39 @@
+{
+  "status": "passed",
+  "scope": "immutable candidate input staging and native verification; live services unchanged",
+  "source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "owner": "de4e2476b071424c92f980402ad35865",
+  "duration_seconds": 1130.1403172499267,
+  "remote_result": {
+    "allocated_bytes": 33055133696,
+    "finished_unix": 1790839194.4233973,
+    "pid": 1235464,
+    "received_bytes": 33054750413,
+    "request_sha256": "340cacf88415a02f963697fbff848c8abbdf4ac0ee519d042c97df7837d954c7",
+    "started_unix": 1790838578.6552534,
+    "status": "staged",
+    "version": 1
+  },
+  "stage_receipt": {
+    "host": "worker-3",
+    "worker_id": "transparent-pir-archive-03",
+    "action": "stage",
+    "source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+    "driver_sha256": "16a4255660f0bd854c1a8daec74be382917dab19fa9ce096955b70f97c9b538d",
+    "exit_code": 0,
+    "duration_seconds": 699.6432507920545,
+    "stdout_sha256": "5969e5ee94816b1b6b79a9e86d0e29b84f229eb13d2413395e7106afa64322f9",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "status_receipt": {
+    "host": "worker-3",
+    "worker_id": "transparent-pir-archive-03",
+    "action": "status",
+    "source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+    "driver_sha256": "16a4255660f0bd854c1a8daec74be382917dab19fa9ce096955b70f97c9b538d",
+    "exit_code": 0,
+    "duration_seconds": 125.3422755409265,
+    "stdout_sha256": "5969e5ee94816b1b6b79a9e86d0e29b84f229eb13d2413395e7106afa64322f9",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

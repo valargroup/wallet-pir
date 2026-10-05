@@ -1,0 +1,108 @@
+{
+  "status": "passed",
+  "scope": "Immutable reviewed operations sources and twelve private coordinator candidate inputs; live services remain v10",
+  "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+  "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+  "archive_bytes": 622247,
+  "source_owner": "47a20cb30590408e9c1be2546e81b3fc",
+  "source_stage_duration_seconds": 52.44371541705914,
+  "hosts": {
+    "coordinator": {
+      "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+      "path": "/srv/transparent-activity/ops/sources/3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "status": "staged",
+      "verified_files": 293
+    },
+    "worker-1": {
+      "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+      "path": "/srv/transparent-activity/ops/sources/3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "status": "staged",
+      "verified_files": 293
+    },
+    "worker-2": {
+      "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+      "path": "/srv/transparent-activity/ops/sources/3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "status": "staged",
+      "verified_files": 293
+    },
+    "worker-3": {
+      "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+      "path": "/srv/transparent-activity/ops/sources/3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "status": "staged",
+      "verified_files": 293
+    },
+    "router": {
+      "archive_sha256": "b8e3c2dc23ea2b7e5cdf781a63d1129ecfff8a37cd80af71e258f983a9ad26db",
+      "path": "/srv/transparent-activity/ops/sources/3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "status": "staged",
+      "verified_files": 293
+    }
+  },
+  "service_inputs": {
+    "request_sha256": "f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+    "plan_sha256": "aca6277a95596f39ad95a96c872c73ce4ad8daff0f3c4ead33f6e0b61fb48c5f",
+    "pid": 2046357,
+    "target": "/srv/transparent-activity/full-v11/inputs/f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+    "files": {
+      "controller.json": "c8aa689d4d71aced8c7918479203874a92065e82aa941e56463c6a6b055b6305",
+      "fixture.json": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6",
+      "fleet.json": "c5d1d1aa389a70bd3e05b2679771f241858a804bebc6000d97089dfdc06d4fbe",
+      "pins.json": "d5e34fd3bad4de4c2805d875c2dfb919749cc04424ee3aa828878998b26cc2c9",
+      "policy.json": "639bf4bd6d44caedb26335db938295e77251710be5965328ff89e6ce9850391e",
+      "roster.json": "e26866b8cae83d9bf4197dbb1a1c2716724716b5476b4b5e7dea8f69037e1580",
+      "transparent-5qps-continuous.service": "fc67191fe11ddacedbd0b5bcf829b48ea88587380f24fefe47b5234115336949",
+      "transparent-control-sessions.service": "a325ececf458423adae62acc62126830122b2380fb127d6f4597d47ed6951e3f",
+      "transparent-filter-server.service": "70f321522a135874992064e72111fb1d10f40d1186a24e545f381e22ab968580",
+      "transparent-fleet-scaler.service": "a3972808cb93e431063e9d1fb1188040df3faa612257de2cf6944326126f9487",
+      "transparent-publish-controller.service": "dd8af49006e274b526f6b3646520a42713a0ac7b89f70163122367f18ed4ae4d",
+      "transparent-replica-reconciler.service": "38fe8fc6513900ae0971f9a56bc0fb569adc59f4030ccc161d1e7ff670319f8a"
+    },
+    "finished_unix": 1790841844.0319571
+  },
+  "service_stage_receipts": {
+    "plan": {
+      "action": "plan",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "request_sha256": "f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+      "exit_code": 0,
+      "duration_seconds": 2.976412917021662,
+      "stdout_sha256": "9115b657cfc93f506350f642b66e67256f6ddd85f7679b422e70bbe895845a28",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "preflight": {
+      "action": "preflight",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "request_sha256": "f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+      "exit_code": 0,
+      "duration_seconds": 2.905831458978355,
+      "stdout_sha256": "9115b657cfc93f506350f642b66e67256f6ddd85f7679b422e70bbe895845a28",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stage": {
+      "action": "stage",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "request_sha256": "f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+      "exit_code": 0,
+      "duration_seconds": 3.2428372090216726,
+      "stdout_sha256": "c61e8756fb8e4899e438219f6bbcb24cbfc4fa5b8b0a2317cf91b67f1ddcaef3",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "status": {
+      "action": "status",
+      "source_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+      "request_sha256": "f85e887cd95de9ebf5a21313624de99740342e825dd9a23e449f91d7f934bb48",
+      "exit_code": 0,
+      "duration_seconds": 2.419677042053081,
+      "stdout_sha256": "c61e8756fb8e4899e438219f6bbcb24cbfc4fa5b8b0a2317cf91b67f1ddcaef3",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "limitations": [
+    "No baseline or service transition occurred. Complete product recipe, recovery samples, installed certificate agreement, remote descendant qualification and final acceptance remain open."
+  ]
+}

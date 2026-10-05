@@ -16,7 +16,7 @@ sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
-rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 
 [dev-dependencies]
 incrementalmerkletree = { version = "0.8", features = ["legacy-api"] }

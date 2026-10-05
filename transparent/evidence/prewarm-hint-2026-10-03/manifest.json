@@ -1,0 +1,45 @@
+{
+ "schema": "transparent-prewarm-hint-profile-v1",
+ "run_id": "prewarm-hint-2026-10-03",
+ "captured_utc": "2026-10-03T23:08:41Z/2026-10-03T23:11:45Z",
+ "classification": "local release-fast benchmark on the development hub; not a production, fleet or freshness qualification",
+ "objective": "reduce recent-worker tail prewarm (attempt 14: 10.13-11.34 s for the two sequential native tail builds at build_slots 1) after publication-freshness-2026-10-03 left projected burst visibility at 31-34 s",
+ "sources": {
+  "predecessor_checkpoint": "8a61b52d2842fb27a1fb12ce2e7aa1b21338be0f (attempt 1, merged fast-forward)",
+  "final": "d6a26f19 (code); aedeb5eb introduced the batched hint",
+  "baseline": "d6a26f19 with base-runtime.patch applied: TableRuntime::build calls pir_native::hint, the runtime of 8a61b52d",
+  "source_sha256": {
+   "transparent/crates/transparent-native/src/batched_hint.rs": "bec5ddb97203575aa65523555f555b306a71a0c5bc280fdbd520e6974d330e53",
+   "transparent/crates/transparent-native/src/lib.rs": "4ed737085a28a52f13b365ed9436f7c11cfecb24f1998cb3e9d4b84dff8e0b0c",
+   "transparent/crates/transparent-native/Cargo.toml": "1937891af7493218c7c5b9737f9ddb10568d694c4d0cd6b1c500deb1ca05edf4",
+   "transparent/services/transparent-shard-server/src/runtime.rs": "4dcf832b81cdaaf8cca3b659af4ec4d17a059b0539f38b8dd64e133b9c858057",
+   "transparent/services/transparent-shard-server/examples/hint_bench.rs": "ced9395afd555a55e77d0e0ed4820feb5e92dacf33e1832133c4153c183acf7d",
+   "Cargo.lock": "bf3559f2ad10f1fe91a9e729b8c9f3dbff7c68ca1d17f65a25b68c8837956377"
+  },
+  "binaries": {
+   "baseline": {"path": "bin/hint_bench.base", "sha256": "f0e3263409bfca778d6a060e90d8af049bbc56df69fcb72e035484790391fdf5"},
+   "final": {"path": "bin/hint_bench.final", "sha256": "f2ffcd43f941646a1607ce8cf6a2b2d3a31226e9050533fbc3e892c6c83c64da"}
+  },
+  "unchanged": "ipir-sp/reinspiring v0.1.0-rc.6 (1f2aec6), shared/pir-native, native parameters, seeds, geometry, seal policy, wire and runtime snapshot formats"
+ },
+ "build": {
+  "profile": "release-fast (target-cpu=native from .cargo/config.toml; the hub has AVX2/BMI2 and no AVX-512, deploy builds use x86-64-v3); no deploy artifact was built",
+  "command": "tool-exec --repo wallet-pir -- cargo build --profile release-fast -p transparent-shard-server --example hint_bench",
+  "target_lane": "task-owned CARGO_TARGET_DIR reused for every build"
+ },
+ "host": "host.json",
+ "workload": {
+  "inputs": "the final-cycle tail candidate of each fill retained by publication-freshness-2026-10-03 (publication_bench from the retained mainnet day; representative synthetic data, not a production replay); digests in runs/<fill>-inputs.sha256 match that run's published-trees.json",
+  "geometry": "recent-8k: directory and pages, 8,192 x 4,096-byte rows each",
+  "fills": {"10.2": "24% page fill, pages 1 of 4 hint blocks used", "13.5": "66%, pages 3 of 4", "15.9": "97%, pages 4 of 4"},
+  "threads": "TRANSPARENT_BUILD_THREADS=2, a 4-vCPU recent worker's default build pool (nice 10)"
+ },
+ "commands": {
+  "comparison": "prewarm-compare.sh <attempt-1 bench>/cmp runs (alternates base and final twice per fill, three rounds of directory then pages each; then the in-process hint comparison with the final binary)",
+  "summary": "python3 summarize.py > summary.json",
+  "focused_tests": "cargo test --profile release-fast -p transparent-native -p transparent-shard-server --lib --test round_trip --test revisions_and_cache",
+  "mutations": "mutations.json"
+ },
+ "results": "summary.json, runs/",
+ "not_retained": "a first identical comparison run from binaries built before rustfmt reflowed two lines of hint_bench.rs (no semantic change) gave the same results within noise (97% fill 4.95 -> 3.04 s); it was superseded by runs/ and deleted"
+}

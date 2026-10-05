@@ -67,6 +67,7 @@ fn events_through(last: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
             (
                 script(i as u32 % 8),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: Txid(txid),
                     transaction_index: 0,
@@ -164,6 +165,7 @@ fn write_revision_geometry(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        txid_display: None,
         directory_choice: None,
     };
 
@@ -225,6 +227,7 @@ fn write_map_geometry(
             txids: 0,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: digest.to_string(),
             revision,
             sealed: false,

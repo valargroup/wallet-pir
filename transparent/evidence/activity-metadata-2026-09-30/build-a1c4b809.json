@@ -1,0 +1,319 @@
+{
+  "source_sha": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+  "source": "/srv/transparent-activity/build/sources/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+  "profile": "release-fast",
+  "driver_sha256": "9f3b8f8a31a184645e3311309c9627ac585b61bec7690ba8bb5a411a400f8d85",
+  "target": "/srv/transparent-activity/build/target",
+  "unit": "transparent-activity-build-a1c4b809",
+  "pid": 1671476,
+  "log": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/build.log",
+  "result": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/result.json",
+  "started_at": 1790805160.7046573,
+  "ended_at": 1790805362.4361138,
+  "stages": [
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "-p",
+        "transparent-shard-server",
+        "-p",
+        "transparent-loadtest",
+        "-p",
+        "transparent-measure",
+        "-p",
+        "transparent-regression",
+        "--bins"
+      ],
+      "seconds": 91.0080716907978,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-shard-server",
+        "--example",
+        "rate-query",
+        "--example",
+        "native_certificate"
+      ],
+      "seconds": 12.503141137771308,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-events",
+        "--lib"
+      ],
+      "seconds": 0.7883538459427655,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-shard",
+        "--lib",
+        "compact"
+      ],
+      "seconds": 8.148304369766265,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--lib"
+      ],
+      "seconds": 9.739159547258168,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--test",
+        "store_semantics",
+        "metadata"
+      ],
+      "seconds": 3.036458854097873,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet-store",
+        "--example",
+        "activity-reopen"
+      ],
+      "seconds": 0.9979267339222133,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "extract::"
+      ],
+      "seconds": 19.48527423106134,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "events::"
+      ],
+      "seconds": 0.35100616235286,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--lib",
+        "publication::"
+      ],
+      "seconds": 3.2718950919806957,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--bin",
+        "event-spotcheck"
+      ],
+      "seconds": 10.029659402091056,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-filter-server",
+        "--bin",
+        "journal-convert-v1"
+      ],
+      "seconds": 1.4412402021698654,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "transparent-wallet",
+        "--features",
+        "reqwest",
+        "--lib",
+        "http::"
+      ],
+      "seconds": 33.81331237917766,
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "cargo",
+        "test",
+        "--locked",
+        "--profile",
+        "release-fast",
+        "-p",
+        "pir-apm",
+        "--lib"
+      ],
+      "seconds": 6.076451463159174,
+      "exit_code": 0
+    }
+  ],
+  "status": "passed",
+  "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6\n",
+  "cargo_lock_sha256": "9a8083a4137610c0a7f33fb32a8da9f63dff5266485e7daf0843481a19ccbf6f",
+  "binaries": {
+    "transparent-event-ingest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-event-ingest",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-event-ingest",
+      "sha256": "450a62e0e68d2e7be45dacae5e6a627ebdbdcd20fb18562ead80698a220e0237"
+    },
+    "shard-publish": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-publish",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/shard-publish",
+      "sha256": "afd7ec3bc8008d0e0ade15d35b11e0c2debfa8a9de1d8fa0177b21f070fca907"
+    },
+    "event-spotcheck": {
+      "path": "/srv/transparent-activity/build/target/release-fast/event-spotcheck",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/event-spotcheck",
+      "sha256": "c917537bafdd908ebbca3eaeb7a0c987a92790d921d695c1c9ef736188de6019"
+    },
+    "shard-verify": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-verify",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/shard-verify",
+      "sha256": "fe1a093054a340524982c13a29d5ca3cfcf289191819efe1b330a9374948c6c0"
+    },
+    "script-sample": {
+      "path": "/srv/transparent-activity/build/target/release-fast/script-sample",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/script-sample",
+      "sha256": "84c5e7cfa5964931f6051f3f2fd2a32c3d87b69415e7f172a24440a9f0dd071c"
+    },
+    "transparent-publish-controller": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-publish-controller",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-publish-controller",
+      "sha256": "03a13c446b56f7179cd617d26d7d8d970d92a767c1fcc6f78da2ee20a8ac2a8a"
+    },
+    "shard-cutoff": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-cutoff",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/shard-cutoff",
+      "sha256": "58f5481ebbe5ec6e355ec84b660c564f473734ab49253b05133e140e04866078"
+    },
+    "journal-inventory": {
+      "path": "/srv/transparent-activity/build/target/release-fast/journal-inventory",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/journal-inventory",
+      "sha256": "0eb7bd8ce59ee1c99f6a61928e3da87664951adb608dbf20932054b26082f86b"
+    },
+    "shard-census": {
+      "path": "/srv/transparent-activity/build/target/release-fast/shard-census",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/shard-census",
+      "sha256": "cb54e65d66312da23eb403d7b6240a3fb3dd31869060fbe6ddd0f19afe3746b2"
+    },
+    "transparent-shard-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-shard-server",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-shard-server",
+      "sha256": "f660128eccb33f504c44179c038f738247359250bfcaec4a72c8e0ebcb8da7eb"
+    },
+    "transparent-filter-server": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-filter-server",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-filter-server",
+      "sha256": "231ceb91705cab5c72de9636b0e9fa498f07c60b0bb46edaf0fff48b0b10ef0e"
+    },
+    "transparent-loadtest": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-loadtest",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-loadtest",
+      "sha256": "4e97bc67930a80ea9b6a89cc5b822b1e29bb58bd6326871979de278319404e1b"
+    },
+    "transparent-measure": {
+      "path": "/srv/transparent-activity/build/target/release-fast/transparent-measure",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/transparent-measure",
+      "sha256": "7c8946c84b57beaf2d82e5969938152610e741550ae5fe207fc48330e9b7714b"
+    },
+    "examples/rate-query": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/rate-query",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/examples/rate-query",
+      "sha256": "2499d85bf12a8a94d256787b592957238d98e4557e81eadb0a9f0ddfb8388067"
+    },
+    "examples/native_certificate": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/native_certificate",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/examples/native_certificate",
+      "sha256": "34da5b72b0bad95c0ae10e5226de26a6206371ad7fed9a798b68ac3bc96dd2e6"
+    },
+    "examples/activity-reopen": {
+      "path": "/srv/transparent-activity/build/target/release-fast/examples/activity-reopen",
+      "retained_path": "/srv/transparent-activity/build/evidence/a1c4b809f62035d5e8509b3b43807fb7e3dab7e1/artifacts/examples/activity-reopen",
+      "sha256": "4df06cd9943a82ec4cd8552eec44e7e98102875815e6baef462d328d75d9b40a"
+    }
+  }
+}

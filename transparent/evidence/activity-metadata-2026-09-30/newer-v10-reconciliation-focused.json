@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "owner": "9cef32f9ee2b406696459d27f1bac812",
+  "source_base": "16f2077d245f5e358d4628a9d1cc6ccb6ffaa194",
+  "seconds": 16.362911417032592,
+  "result_sha256": "84b965ba3ec560750384d320f2e3512965882a74bb86955de67c37a2916830aa",
+  "implementation_inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "b061399323b4c6b6971b0843c5d3da0641bd7f29212517764723e549176e4058",
+    "ops/lib/wallet_pir_ops/schema_fence.py": "f09e7ff6e9d5b561527803e67071a9f0b8285fff0ca18d7c9a4c40c4593bed1a",
+    "transparent/ops/lib/activity_schema_operation.py": "94e0f88f435d55fc04d20cc197bbcf92fa50088d712a8b1668acb2909a22b99c",
+    "transparent/ops/lib/activity_schema_product.py": "5770d4238731ea10eb9f9bbe240ea829b5ea862a88e7a6771bd19f98d8a936d6",
+    "transparent/ops/lib/activity_schema_reconcile.py": "c19c600a5059d6499abd16a5c48942739bf06c9180aa92ee8dcc229102a323da",
+    "transparent/ops/tests/test_activity_schema_reconcile.py": "d27e2e0c9320472268d238f803ac1b1d16cd74a189b4ecce2cebd47e66a0aee8"
+  },
+  "validation": [
+    "make check-fast BASE=16f2077d245f5e358d4628a9d1cc6ccb6ffaa194",
+    "Six real-file adoption and negative fence tests"
+  ],
+  "limitations": [
+    "Focused implementation validation only; newer-revision reconciliation and real HTTP/SQLite/HTTPS proofs have not executed.",
+    "Original rollback and 15-minute recovery acceptance remain failed."
+  ]
+}

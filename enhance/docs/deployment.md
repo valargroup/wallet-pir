@@ -111,6 +111,79 @@ The physical hosts have recorded `v4` resource names in Terraform. Those names
 are live identities and are deliberately left unchanged. The direct SSH
 cutover did not run Terraform.
 
+## Deploy CLI
+
+`ops/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
+for Enhance and Status. Read-only `capture-baseline`, `plan` and `preflight`
+runs against production on 2026-09-30 matched the live units; it has not yet
+restarted a production role. Until a real release has been exercised there, the
+manual runbook below remains the procedure and the fallback.
+
+The tool runs on the coordinator, or on a workstation with the production SSH
+access, and takes a local inventory (`--inventory` or
+`WALLET_PIR_DEPLOY_INVENTORY`) of hosts, SSH settings and the production lock.
+The repository does not describe the live fleet; see
+[deploy-inventory.example.json](../ops/deploy/deploy-inventory.example.json)
+for the shape. Roles, units, readiness checks and rollout order (workers,
+packing router, query ingress, coordinator) are in
+[deploy.toml](../ops/deploy/deploy.toml).
+
+```sh
+wallet-pir-deploy.py capture-baseline enhance
+wallet-pir-deploy.py plan enhance --binary ./enhance-pir-server
+wallet-pir-deploy.py preflight enhance --binary ./enhance-pir-server [--stage]
+wallet-pir-deploy.py deploy enhance --binary ./enhance-pir-server --retire-historical
+wallet-pir-deploy.py status enhance
+wallet-pir-deploy.py rollback enhance [--transaction ID]
+```
+
+`--archive <bundle> --sha <rev>` takes a checksummed `tools/ci/release.py` bundle
+instead of `--binary`. `--sha256 <digest>` names a binary without supplying it,
+which is enough for a no-op check or an already staged release.
+
+- `capture-baseline` records each unit's running executable digest and complete
+  unit text. `preflight` and `deploy` refuse if anything changed since, and
+  `deploy` refreshes the baseline after it commits or rolls back.
+- The binary is installed as `/opt/enhance-pir/releases/<sha256>/enhance-pir-server`
+  and must pass `--help` on each host before any unit changes.
+- Each unit gets one managed drop-in whose name (32 `z`s, then
+  `-wallet-pir-release.conf`) sorts after the drop-ins the manual rollouts
+  stacked. It clears `ExecStart` and sets it to the release binary with the live
+  argument tail. Earlier drop-ins that set `ExecStart` stay in place and are
+  shadowed; one that would sort after the managed drop-in is refused. With
+  `--retire-historical`, the ExecStart-only `zz-cleanup-*.conf` drop-ins are
+  instead moved into the host's transaction directory.
+- `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
+  targets, so the replicated workers can roll while single-instance roles keep
+  running.
+- A worker built from `main` after 2026-09-30 stops gracefully on SIGTERM: it
+  closes its listener, so the packing router retries new evaluations once on
+  the other replica, and it finishes and delivers the evaluations it already
+  accepted. Rolling the workers one at a time with `--only` then loses no
+  admitted query. Earlier worker binaries stop immediately, so replacing one of
+  them fails the few evaluations in flight at that moment. The packing router,
+  query ingress, coordinator and the Status roles are single instances, and
+  restarting any of them interrupts service.
+- In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
+  may jump through the coordinator to private addresses.
+- A unit whose running executable and effective configuration already match is
+  skipped, so deploying the running binary is a no-op.
+- Every host must accept the deploy identity before anything changes. Mutating
+  commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
+- After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
+  to have the release digest, and the role's health endpoint to report ready
+  (and the same `binary_sha256`, when the endpoint reports one). After all roles
+  it runs the inventory's exact-answer command.
+- Every step is journaled in `~/.local/state/wallet-pir-deploy/<id>.json` before
+  it happens; each host keeps the previous files in
+  `/opt/enhance-pir/transactions/<id>/`. A failure restores the touched units in
+  reverse order and checks that the previous executable is running again.
+  `rollback` does the same for a committed or interrupted transaction, and is
+  safe to repeat.
+
+The tool does not drain or pause public queries, so plan the query-route
+maintenance window as in the September 24 rollout.
+
 ## Direct SSH rollout and rollback
 
 The September 24 rollout builds with Rust 1.91, locked dependencies,

@@ -1,0 +1,60 @@
+{
+  "source_sha": "6f37db707fd334cb50f7811601550b2b0a87dcc9",
+  "owner": "44f9fcd5f6b34fd7b7837d3e2ae393f6",
+  "local_status": "failed",
+  "local_seconds": 598.1700907909544,
+  "local_transport": {
+    "exit_code": 255,
+    "seconds": 110.24330966698471,
+    "error": "Timeout, server not responding."
+  },
+  "transaction": "transparent-schema-20261002T113701Z-315cc573d353-9f25fa",
+  "recipe_sha256": "315cc573d353477bf808fcf335e5f601be480bcdd61fb2f9334b8fcc9d18a23d",
+  "forward_failure": "worker does not attest the complete warm publication",
+  "forward_failure_seconds": 29.689101225230843,
+  "cause_assurance": "Exact failed native control status was not retained. Future preparation is an inference, not a proved historical cause.",
+  "publisher_observation": {
+    "activated_height": 3503657,
+    "next_prepared_height": 3503704,
+    "archive_roster_accepted": true
+  },
+  "rollback_status": "rolled-back",
+  "rollback_phase_seconds": [
+    12.095052146818489,
+    122.5545516749844,
+    223.85927459830418,
+    24.974538358859718,
+    6.081404585391283
+  ],
+  "all_owners_exited": true,
+  "recovered_workers_warm": [
+    18,
+    18,
+    154
+  ],
+  "recovered_map_sha256": "ae2d2de4a519fe37046eeba113268d207062ef074431a72659fff5860e6268ca",
+  "native_reports": 5,
+  "each_native": {
+    "syncs": 1,
+    "completed": 1,
+    "exact": 1,
+    "failed": 0,
+    "stop_reason": null,
+    "http_503_rate": 0
+  },
+  "sqlite_reopened": 5,
+  "each_sqlite": {
+    "integrity": "ok",
+    "receives": 1,
+    "spends": 1,
+    "pending_work": 0
+  },
+  "both_canonical_metadata": {
+    "status": 200,
+    "shards": 86,
+    "first_height": 0
+  },
+  "private_proof_sha256": "cb7432e190a3ee9fafd7412f108763303a310b3261b669c6919f4d178fcf9801",
+  "qualification": "v10 cold recovery only; local transport failure remains failed; v11 and all final gates open",
+  "rollback_seconds": 389.56482136435807
+}

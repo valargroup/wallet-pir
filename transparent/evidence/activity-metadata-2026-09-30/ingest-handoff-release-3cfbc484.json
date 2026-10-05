@@ -1,0 +1,11 @@
+{
+  "status": "controlled_handoff",
+  "unix": 1790804124.2467175,
+  "checkpoint_through": 269000,
+  "checkpoint_sha256": "c251434db5e854406651d56e6012f2cd5c94e710a4bc6dbb28500281cc666623",
+  "prior_source": "e47bdf7904a359411e596ce4bf6a489b8a47830e",
+  "new_source": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "workers_before": 2,
+  "workers_after": 4,
+  "reason": "use completed fat-LTO artifact and double bounded state extraction workers"
+}

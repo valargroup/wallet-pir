@@ -53,6 +53,24 @@ only its assignment's shards, and the router's configuration is rendered from th
 assignment alone and routes on the shard id in the path. The separate artifact origin is a
 target; the publisher's own origins serve the public map, filters and setup today.
 
+## Private transparent display capability
+
+The opt-in [txid display contract and native demo](txid-display.md) extend the
+same coordinator with `txdirectory` and `txpages`. This is separate from script
+history discovery. Full txids select packed 4 KiB rows privately; inline records
+up to 128 bytes and overflow fragments carry shared transaction metadata and
+complete ordered transparent outputs, including scripts outside the history
+profile. Canonical extraction and block-hash-addressed display sidecars use the
+existing event checkpoint; missing sidecars prevent complete display publication.
+
+The capability has its own codec identity, manifest digests and table bindings.
+Workers verify its tables and include them in readiness, assignment and bounded
+cache accounting. No production activation or data migration follows from this
+source change. The reference query helper is demo/test code. The next wallet
+stage adds history/display lanes to one coordinator, preserves local send facts,
+and keeps confirmation, fee availability, financial coverage and display
+completeness independent. A display failure cannot authorize public lookup.
+
 ## Component ownership
 
 | Component | Source | Responsibility |
@@ -60,7 +78,7 @@ target; the publisher's own origins serve the public map, filters and setup toda
 | Events | `transparent/crates/transparent-events` | Canonical 87-byte chain event record |
 | Filters | `transparent/crates/transparent-filter` | Range filter profiles, keying, encoding and validation |
 | Shard protocol | `transparent/crates/transparent-shard` | Geometry registry, script tags, placement, deterministic packing, choice tables, manifests and sealing |
-| Native PIR profile | `transparent/crates/transparent-native` | The two-mask ReinspiRING helpers the server and wallet share |
+| Native PIR profile | `transparent/crates/transparent-native` over `shared/pir-native` | Transparent's seeds and scheme identity over the two-mask ReinspiRING helpers all three products share |
 | Ingest, census, publish | `transparent/services/transparent-filter-server` | Resolve events, persist journal, seal and build shards, serve filters |
 | Retrieval service | `transparent/services/transparent-shard-server` | Verify publication, bound runtime cache, revision-addressed setup/query |
 | Wallet | `transparent/crates/transparent-wallet` | Local matching, private retrieval, validation, ledger replay |
@@ -254,10 +272,11 @@ the table's key count equals the entry count.
 Both tables use the native ReinspiRING two-mask m29 profile that Enhance and Status deploy:
 d = 2,048, q = 2^54, p = 2^16, a two-limb Gaussian `K_g` packing key with 19-bit limbs, and
 two public masks rounded to 29 bits. One 4,096-byte row is one 2,048-coefficient block.
-`transparent/crates/transparent-native` holds the shared helpers; it is adapted from
-`enhance_pir::native` rather than depending on it, because enabling the Enhance crates'
-`native-reinspiring` feature would switch the q48 Enhance binaries through Cargo feature
-unification.
+The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; its
+golden test pins their bytes. It has no Cargo features, so depending on it cannot switch the
+q48 Enhance binaries, which only `enhance-pir/native-reinspiring` does.
+`transparent/crates/transparent-native` re-exports it and adds Transparent's per-geometry
+seeds, `NativeScheme` and `TableProfile`.
 
 Query masks and the packing setup are derived from 32-byte seeds per schema, geometry and
 table, so one query is answered by every segment of every shard of that geometry.
@@ -321,6 +340,12 @@ cannot evict it.
 
 Runtime construction encodes the segment, computes the public hint with exact lifted
 products against the table's query masks, and builds two-mask preprocessing per block.
+For the recent geometries only, trailing all-zero row blocks are left out of the product
+and the hint (`transparent_native::batched_hint`) transforms 32 columns at a time under
+three 30-bit primes and reduces the CRT-reconstructed integer sum modulo `q`. It equals the
+shared `pir_native::hint` exactly, and masks beyond its checked capacity are handed to that
+reference. Archive geometries, and any geometry not listed, use `pir_native::hint` over
+every block.
 Database-dependent preprocessing is rebuilt for each changed table; client secrets and
 uploaded key bodies are never shared. The cache reserves the database, the published masks
 and the preprocessing at its eight-byte-word bound (64 MiB per block); built preprocessing

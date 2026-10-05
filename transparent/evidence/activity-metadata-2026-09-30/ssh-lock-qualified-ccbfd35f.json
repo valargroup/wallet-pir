@@ -1,0 +1,51 @@
+{
+  "status": "passed",
+  "source_sha": "ccbfd35fc21935f8a6878f93d288cc3107ea90e2",
+  "owner": "af431707127a45ada1f8e7b086c576d2",
+  "duration_seconds": 109.42476891702972,
+  "raw_result_sha256": "4f19bae6e83e1308b566f4727753edc128c6ca3575b24ef9c18ffd61e84fee57",
+  "hosts": {
+    "worker-1": {
+      "request_sha256": "62b95d8caac63c04fbd55bf96c5daff67876d15faa64f1c9d68e12e8cf9fdd56",
+      "relay_pid": 2108635,
+      "transport_launcher_pid": 2108636,
+      "remote_parent_pid": 338400,
+      "remote_child_pid": 338404,
+      "status": "passed",
+      "raw_status_sha256": "9bb4e41e2c241e7db33d4ea6bb226b0473315dab280a64f5c55f3f47b581543e"
+    },
+    "worker-2": {
+      "request_sha256": "669a489944bdec9cd34191f3148164b1160ce71ebb822a98fe4ecbdf660fc8d8",
+      "relay_pid": 2109083,
+      "transport_launcher_pid": 2109090,
+      "remote_parent_pid": 3805357,
+      "remote_child_pid": 3805358,
+      "status": "passed",
+      "raw_status_sha256": "f9b46c1e30bfe12f1af6bac3fae1acd96ed9cae59df14bb97346013a7d4b067b"
+    },
+    "worker-3": {
+      "request_sha256": "e7c0aeb8d04e6134061be835f5fc91aa480ef9b2bfcb49ea6914a4099883c828",
+      "relay_pid": 2109516,
+      "transport_launcher_pid": 2109517,
+      "remote_parent_pid": 1318913,
+      "remote_child_pid": 1318914,
+      "status": "passed",
+      "raw_status_sha256": "4469c6e88b234ca92260b13d08f6a53b52a2fe73fdad27614048ab892751d599"
+    },
+    "router": {
+      "request_sha256": "2ec4f49029fd04ce3baa035cf40b9ab5559d1be0adc79fdbaeec8d3ab1a56ee3",
+      "relay_pid": 2109952,
+      "transport_launcher_pid": 2109953,
+      "remote_parent_pid": 3750266,
+      "remote_child_pid": 3750267,
+      "status": "passed",
+      "raw_status_sha256": "1cf052368f771b99c59b8068f971bc7df54e10fb1bd64d85fb02f0986b7d4674"
+    }
+  },
+  "effects": "Only private qualification receipts and existing production locks; live service state unchanged.",
+  "scope": "Actual SSH on all three workers and router, surviving coordinator/remote descendants, contention refusal, interrupted-owner fence and explicit reconciliation.",
+  "limitations": [
+    "Does not establish service cutover or load qualification.",
+    "No production baseline captured."
+  ]
+}

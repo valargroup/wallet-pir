@@ -1,5 +1,6 @@
 //! Coordinator and worker runtime for Ironwood Enhance PIR.
 
+mod admission;
 pub mod artifact;
 pub mod capacity;
 pub mod control;
@@ -32,6 +33,8 @@ pub mod packing_router;
 pub mod pool;
 pub mod query_ingress;
 mod serving_control;
+mod serving_fence;
+pub mod shutdown;
 
 mod http_metrics;
 

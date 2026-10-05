@@ -1,0 +1,70 @@
+{
+  "id": "70882ecc98c248d18817cb22fd6949e8",
+  "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+  "repo": "wallet-pir",
+  "sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "tool": "codex",
+  "session": "activity-flat-worker-inputs",
+  "state": "/Users/roman/.ai-runbook/dev-ux/activity-flat-input-copy",
+  "log": "/Users/roman/.ai-runbook/dev-ux/activity-flat-input-copy/checks/70882ecc98c248d18817cb22fd6949e8.log",
+  "started": 1790838036.257698,
+  "automatic_wake": false,
+  "status": "pass",
+  "exit_code": 0,
+  "duration": 109.66058604198042,
+  "scope": "immutable recent-worker candidate inputs and native verification, no service change",
+  "workers": [
+    {
+      "host": "worker-1",
+      "worker_id": "transparent-pir-recent-01",
+      "request_sha256": "6115788f5f3c03f3c2a15f21d034caf88cb64087992f333509d34e62ec8543bb",
+      "bytes": 439842500,
+      "received_bytes": 439842500,
+      "allocated_bytes": 440225792,
+      "receiver_pid": 249194,
+      "server_sha256": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430",
+      "stage": {
+        "host": "worker-1",
+        "worker_id": "transparent-pir-recent-01",
+        "action": "stage",
+        "source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+        "driver_sha256": "19a31cfde671aaaac965ab00bef336a9ba982516c5b6c1d7bb4177943fc3e662",
+        "exit_code": 0,
+        "duration_seconds": 45.16552029096056,
+        "stdout_sha256": "40217dbbf43f99dcf58acac474051455b2c6188baf38f052039723594aa1d92a",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "host": "worker-2",
+      "worker_id": "transparent-pir-recent-02",
+      "request_sha256": "0d28bd4c6eceb2f1c6ed02c33bf619a0c3961736654f0f068d4061980e65d1b1",
+      "bytes": 439842500,
+      "received_bytes": 439842500,
+      "allocated_bytes": 440225792,
+      "receiver_pid": 3716987,
+      "server_sha256": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430",
+      "stage": {
+        "host": "worker-2",
+        "worker_id": "transparent-pir-recent-02",
+        "action": "stage",
+        "source_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+        "driver_sha256": "19a31cfde671aaaac965ab00bef336a9ba982516c5b6c1d7bb4177943fc3e662",
+        "exit_code": 0,
+        "duration_seconds": 20.817995375022292,
+        "stdout_sha256": "2b1e3b5a5d88c90b4a1832c91cd476c03861e463ce2396ebd060f81c0efb007f",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  ],
+  "control_status": {
+    "exit_code": 0,
+    "ok": true,
+    "raw_sha256": "5b86abf8baa57a718e99053ada1e7cbe8f3db726025f165442948258d4bd8c7d"
+  },
+  "limitations": [
+    "Canonical v10 service unchanged",
+    "Archive candidate preparation remains separately owned",
+    "Full publication certificates/oracle, reviewed service recipe, remote descendant locking and canonical/load/lifecycle gates remain"
+  ]
+}

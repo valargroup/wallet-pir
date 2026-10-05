@@ -1,0 +1,184 @@
+"""Fictional files/units; no fixture authorizes a production baseline."""
+import copy
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'lib'))
+from wallet_pir_ops import ancillary_baseline as A, owner_survey as S
+
+class Retained(unittest.TestCase):
+    def make_child(self):
+        pid=501;parent=333;base=self.proc/str(pid);base.mkdir()
+        fields=['0']*23;fields[0]='S';fields[1:4]=[str(parent)]*3;fields[19]='1234'
+        (base/'stat').write_text(str(pid)+' (query) '+' '.join(fields))
+        (base/'cgroup').write_text('0::/system.slice/'+A.LOAD+'\n')
+        command=b'fictional native query\0';(base/'cmdline').write_bytes(command)
+        binary=self.root/'rate-query';binary.write_bytes(b'fictional native binary');(base/'exe').symlink_to(binary)
+        self.pins[A.LOAD]['child'].update(exe=str(binary),exe_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+            command_sha256=hashlib.sha256(command).hexdigest())
+        (self.proc/str(parent)/'task'/str(parent)/'children').write_text(str(pid)+' ')
+        return base
+
+    def test_exact_load_child_is_bound_and_every_other_descendant_refuses(self):
+        self.make_child();proof=self.observe();cap=proof['load_children'][0]
+        item=dict(cap,ppid=cap['parent_pid'],argv=[cap['exe']],cgroup='0::'+cap['cgroup'])
+        allowed=A.authorities(proof,A.COORDINATOR);classes={'names':[],'roots':[str(self.root)+'/']}
+        bound,foreign,errors=S.operational([item],set(),classes,(),ancillary=allowed)
+        self.assertEqual((len(bound),foreign,errors),(1,[],[]));self.assertTrue(A.authorized(proof,A.COORDINATOR,item))
+        for change in ({'ppid':2},{'pgid':2},{'session':2},{'pid':502},{'start_ticks':1235},
+                       {'command_sha256':'0'*64},{'cgroup':item['cgroup']+'/child'}):
+            changed={**item,**change}
+            self.assertFalse(A.authorized(proof,A.COORDINATOR,changed))
+            self.assertEqual(len(S.operational([changed],set(),classes,(),ancillary=allowed)[1]),1)
+        for change in ({'parent_start_ticks':1},{'exe_sha256':'0'*64},{'parent_pid':2}):
+            altered=copy.deepcopy(proof);altered['load_children'][0].update(change)
+            with self.assertRaisesRegex(ValueError,'child provenance'):A.authorities(altered,A.COORDINATOR)
+
+    def test_child_drift_extra_child_and_bad_parentage_refuse(self):
+        base=self.make_child()
+        for path,raw in ((base/'cmdline',b'changed'),(self.root/'rate-query',b'changed'),
+                         (base/'cgroup',b'0::/other'),
+                         (self.proc/'333/task/333/children',b'501 502')):
+            before=path.read_bytes();path.write_bytes(raw)
+            with self.assertRaises(ValueError):self.observe()
+            path.write_bytes(before)
+        path=base/'stat';before=path.read_text();fields=before.rsplit(')',1)[1].split();fields[1]='2'
+        path.write_text('501 (query) '+' '.join(fields))
+        with self.assertRaisesRegex(ValueError,'parent, group or session'):self.observe()
+
+    def test_running_child_counters_can_advance_but_lineage_cannot(self):
+        base=self.make_child();original=A.hashed
+        def moving(path,limit,tick,index):
+            value=original(path,limit,tick)
+            if Path(path)==base/'exe':
+                fields=(base/'stat').read_text().rsplit(')',1)[1].split()
+                fields[index]=str(int(fields[index])+1)
+                (base/'stat').write_text('501 (query) '+' '.join(fields))
+            return value
+        for index in (7,11,12,20,21):
+            with patch.object(A,'hashed',side_effect=lambda p,l,t: moving(p,l,t,index)):
+                self.assertEqual(self.observe()['load_children'][0]['pid'],501)
+        for index in (1,2,3,19):
+            path=base/'stat';before=path.read_text()
+            with patch.object(A,'hashed',side_effect=lambda p,l,t: moving(p,l,t,index)):
+                with self.assertRaisesRegex(ValueError,'changed during observation'):
+                    self.observe()
+            path.write_text(before)
+
+    def test_deleted_executable_decoration_matches_survey_without_weakening_hash(self):
+        original=os.readlink
+        def decorated(path):
+            value=original(path)
+            return value+' (deleted)' if str(path).endswith('/exe') else value
+        with patch.object(A.os,'readlink',side_effect=decorated):
+            proof=self.observe()
+        cap=proof['units'][A.PROTOTYPE]
+        self.assertFalse(cap['exe'].endswith(' (deleted)'))
+        item=dict(pid=cap['pid'],start_ticks=cap['start_ticks'],exe=cap['exe'],
+                  command_sha256=cap['command_sha256'],cgroup='0::'+cap['cgroup'])
+        self.assertTrue(A.authorized(proof,A.COORDINATOR,item))
+        binary=self.root/(A.PROTOTYPE+'.exe');binary.write_bytes(b'changed')
+        with patch.object(A.os,'readlink',side_effect=decorated):
+            with self.assertRaisesRegex(ValueError,'executable differs'):self.observe()
+
+    def setUp(self):
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        self.root=Path(temporary.name).resolve();self.proc=self.root/'proc';self.props={}
+        boot=self.proc/'sys/kernel/random/boot_id';boot.parent.mkdir(parents=True);boot.write_text(A.PINS[A.PROTOTYPE]['boot_id'])
+        self.pins=copy.deepcopy(A.PINS)
+        for unit,pid in ((A.PROTOTYPE,A.PINS[A.PROTOTYPE]['pid']),(A.LOAD,333)):
+            pin=self.pins[unit];start=pin.get('start_ticks',987)
+            base=self.proc/str(pid);base.mkdir(parents=True)
+            fields=['0']*23;fields[0]='S';fields[19]=str(start)
+            (base/'stat').write_text(str(pid)+' (fixture) '+' '.join(fields))
+            (base/'cgroup').write_text('0::/system.slice/'+unit+'\n')
+            command=(unit+'\0--fictional\0').encode();(base/'cmdline').write_bytes(command)
+            binary=self.root/(unit+'.exe');binary.write_bytes(b'fictional executable '+unit.encode());(base/'exe').symlink_to(binary)
+            fragment=self.root/(unit+'.unit');fragment.write_bytes(b'fictional unit '+unit.encode())
+            pin.update(fragment=str(fragment),fragment_sha256=hashlib.sha256(fragment.read_bytes()).hexdigest(),
+                       exe_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),command_sha256=hashlib.sha256(command).hexdigest())
+            self.props[unit]=dict(Id=unit,ActiveState='active',SubState='running',MainPID=str(pid),NRestarts='0',
+                ControlGroup='/system.slice/'+unit,FragmentPath=str(fragment),DropInPaths='',NeedDaemonReload='no')
+            (base/'fd').mkdir()
+            children=base/'task'/str(pid)/'children';children.parent.mkdir(parents=True);children.write_text('')
+        pid=self.pins[A.PROTOTYPE]['pid'];(self.proc/str(pid)/'fd/0').symlink_to('socket:[123]')
+        net=self.proc/'net';net.mkdir()
+        (net/'tcp').write_text('header\n 0: 0100007F:2000 00000000:0000 0A 0 0 0 0 0 123\n');(net/'tcp6').write_text('header\n')
+        for item in (patch.object(A,'PINS',self.pins),patch.object(A,'PINS_SHA256',hashlib.sha256(json.dumps(self.pins,sort_keys=True,separators=(',',':')).encode()).hexdigest()),
+                     patch.object(A,'properties',side_effect=lambda unit:dict(self.props[unit])),patch.object(A.os,'geteuid',return_value=0),
+                     patch.object(A,'route',return_value={'sha256':'f'*64,'bytes':50,'prototype_port_excluded':True})):
+            item.start();self.addCleanup(item.stop)
+
+    def observe(self):return A.observe(A.COORDINATOR,proc=self.proc)
+
+    def test_exact_files_process_command_socket_and_route_proof_then_allow_only_main_process(self):
+        value=self.observe();A.verify(value,A.COORDINATOR)
+        cap=value['units'][A.PROTOTYPE];item=dict(cap,argv=[],cgroup='0::'+cap['cgroup'])
+        classes={'names':[],'roots':[str(self.root)+'/']}
+        allowed=A.authorities(value,A.COORDINATOR)
+        self.assertTrue(A.authorized(value,A.COORDINATOR,item))
+        bound,foreign,errors=S.operational([item],set(),classes,(),ancillary=allowed)
+        self.assertEqual((len(bound),foreign,errors),(1,[],[]))
+        for change in ({'pid':cap['pid']+1},{'start_ticks':cap['start_ticks']+1},{'command_sha256':'0'*64},
+                       {'cgroup':item['cgroup']+'/descendant'},{'exe':'/other/transparent-shard-server'}):
+            test={**item,**change};test['argv']=[str(self.root/'operation')]
+            bound,foreign,errors=S.operational([test],set(),classes,(),ancillary=allowed)
+            self.assertFalse(bound);self.assertEqual(len(foreign),1)
+            self.assertFalse(A.authorized(value,A.COORDINATOR,test))
+        self.assertEqual(set(A.UNITS),set(S.ANCILLARY_UNITS))
+        self.assertEqual(len(S.operational([item],set(),classes,(A.PROTOTYPE,))[1]),1)
+        # A unit name without the verified authority remains unclassified.
+        self.assertEqual(len(S.operational([item],set(),classes,())[1]),1)
+
+    def test_changed_pid_start_command_binary_unit_or_public_listener_refuses(self):
+        pid=self.pins[A.PROTOTYPE]['pid'];base=self.proc/str(pid)
+        for path,raw in ((base/'cmdline',b'changed'),(self.root/(A.PROTOTYPE+'.exe'),b'changed'),
+                         (Path(self.pins[A.PROTOTYPE]['fragment']),b'changed'),
+                         (self.proc/'net/tcp',b'header\n 0: 00000000:2000 00000000:0000 0A 0 0 0 0 0 123\n')):
+            before=path.read_bytes();path.write_bytes(raw)
+            with self.assertRaises(ValueError):self.observe()
+            path.write_bytes(before)
+        before=self.props[A.PROTOTYPE]['MainPID'];self.props[A.PROTOTYPE]['MainPID']='333'
+        with self.assertRaisesRegex(ValueError,'process identity'):self.observe()
+        self.props[A.PROTOTYPE]['MainPID']=before
+        self.props[A.LOAD]['DropInPaths']='/unexpected'
+        with self.assertRaises(ValueError):self.observe()
+
+    def test_proof_cannot_be_stale_substituted_or_omit_router_route(self):
+        value=self.observe()
+        for change in ({'observed_unix':time.time()-301},{'machine_id':A.ROUTER},{'pins_sha256':'0'*64},
+                       {'route':None},{'route':{'sha256':'f'*64,'bytes':50,'prototype_port_excluded':False}},{'units':{}}):
+            with self.assertRaises(ValueError):A.verify({**value,**change},A.COORDINATOR)
+        router=A.observe(A.ROUTER,proc=self.proc);A.verify(router,A.ROUTER)
+        with self.assertRaises(ValueError):A.verify(dict(router,route=None),A.ROUTER)
+
+    def test_inactive_unit_grants_no_authority_and_other_hosts_never_probe(self):
+        self.props[A.PROTOTYPE].update(ActiveState='inactive',MainPID='0')
+        value=self.observe();self.assertNotIn(self.pins[A.PROTOTYPE]['pid'],A.authorities(value,A.COORDINATOR))
+        with patch.object(A,'properties',side_effect=AssertionError('not a coordinator')):
+            value=A.observe('a'*32,proc=self.root/'absent');A.verify(value,'a'*32)
+        self.assertEqual(A.authorities(value,'a'*32),{})
+
+    def test_loaded_route_never_redirects_or_allows_port_reference(self):
+        class Response:
+            status=200
+            def __enter__(self):return self
+            def __exit__(self,*args):pass
+            def read(self,n):return b'{"dial":"127.0.0.1:8192"}'
+        # Test original implementation, not the setUp route stand-in.
+        original=self._original_route
+        with patch.object(A.urllib.request,'build_opener',return_value=type('Opener',(),{'open':lambda *a,**k:Response()})()):
+            with self.assertRaises(ValueError):original()
+            with patch.object(Response,'read',lambda self,n: b'{"dial":"127.0.0.1:\\u0038192"}'):
+                with self.assertRaisesRegex(ValueError,'historical prototype'):original()
+        with self.assertRaises(ValueError):A.NoRedirect().redirect_request(None,None,None,None,None,None)
+
+    _original_route=staticmethod(A.route)
+
+if __name__=='__main__':unittest.main()

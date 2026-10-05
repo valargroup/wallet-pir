@@ -1,0 +1,177 @@
+{
+ "members": [
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "group": "recent",
+   "id": "transparent-pir-recent-01",
+   "intent": "enrolled",
+   "memory_max": "7G",
+   "origin": "static",
+   "role": "recent-replica",
+   "ssh_host": "10.142.0.10",
+   "upstream": "10.142.0.10:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "group": "recent",
+   "id": "transparent-pir-recent-02",
+   "intent": "enrolled",
+   "memory_max": "7G",
+   "origin": "static",
+   "role": "recent-replica",
+   "ssh_host": "10.142.0.8",
+   "upstream": "10.142.0.8:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "group": "recent",
+   "id": "transparent-pir-recent-03",
+   "intent": "retired",
+   "intent_unix": 1790687429.286817,
+   "memory_max": "7G",
+   "origin": "static",
+   "role": "recent-replica",
+   "ssh_host": "10.142.0.7",
+   "upstream": "10.142.0.7:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "group": "recent",
+   "id": "transparent-pir-recent-04",
+   "intent": "retired",
+   "intent_unix": 1790687429.3541772,
+   "memory_max": "7G",
+   "origin": "static",
+   "role": "recent-replica",
+   "ssh_host": "10.142.0.12",
+   "upstream": "10.142.0.12:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 51539607552,
+   "group": "a0",
+   "id": "transparent-pir-archive-01",
+   "intent": "retired",
+   "intent_unix": 1790698930.3118727,
+   "memory_max": "56G",
+   "origin": "static",
+   "retired_reason": "repartition",
+   "role": "archive-owner",
+   "ssh_host": "10.142.0.6",
+   "upstream": "10.142.0.6:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 51539607552,
+   "group": "a1",
+   "id": "transparent-pir-archive-02",
+   "intent": "retired",
+   "intent_unix": 1790698930.3118727,
+   "memory_max": "56G",
+   "origin": "static",
+   "retired_reason": "repartition",
+   "role": "archive-owner",
+   "ssh_host": "10.142.0.9",
+   "upstream": "10.142.0.9:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "droplet_id": "604659753",
+   "group": "recent",
+   "id": "transparent-pir-recent-05",
+   "installed_release": "a704616c",
+   "intent": "retired",
+   "intent_unix": 1790688200.8057005,
+   "memory_max": "7G",
+   "origin": "elastic",
+   "role": "recent-replica",
+   "size": "s-4vcpu-8gb",
+   "ssh_host": "10.142.0.19",
+   "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILPW6AFAvIuTCQCwe98uy77/nulwSIsDn01ykgg8Oukp",
+   "upstream": "10.142.0.19:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "droplet_id": "604668400",
+   "group": "recent",
+   "id": "transparent-pir-recent-06",
+   "installed_release": "a704616c",
+   "intent": "retired",
+   "intent_unix": 1790691263.6672418,
+   "memory_max": "7G",
+   "origin": "elastic",
+   "role": "recent-replica",
+   "size": "s-4vcpu-8gb",
+   "ssh_host": "10.142.0.20",
+   "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPyYwjqrasw9+3xlS56hUABf0TpcwLQGRX4BQoQW3xeX",
+   "upstream": "10.142.0.20:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 5368709120,
+   "droplet_id": "604672625",
+   "group": "recent",
+   "id": "transparent-pir-recent-07",
+   "installed_release": "a704616c",
+   "intent": "retired",
+   "intent_unix": 1790692419.6043808,
+   "memory_max": "7G",
+   "origin": "elastic",
+   "role": "recent-replica",
+   "size": "s-4vcpu-8gb",
+   "ssh_host": "10.142.0.21",
+   "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIA6i49vqaqn+LMNkRl0SycEh+UU+4zNOWB4rXaj32YAX",
+   "upstream": "10.142.0.21:8093"
+  },
+  {
+   "build_slots": 1,
+   "cache_bytes": 51539607552,
+   "group": "a2",
+   "id": "transparent-pir-archive-03",
+   "intent": "enrolled",
+   "intent_unix": 1790698930.3118727,
+   "memory_max": "56G",
+   "origin": "static",
+   "role": "archive-owner",
+   "ssh_host": "10.142.0.7",
+   "ssh_host_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBZorLZHO/PnclEpg+AfF3hnqC6JOTCjYolpXuja/+sl",
+   "upstream": "10.142.0.7:8093"
+  }
+ ],
+ "partition": {
+  "ranges": [
+   {
+    "first": 0,
+    "id": "a2",
+    "last": 76
+   }
+  ]
+ },
+ "partition_history": [
+  {
+   "first": 0,
+   "id": "a0",
+   "last": 38
+  },
+  {
+   "first": 39,
+   "id": "a1",
+   "last": 76
+  }
+ ],
+ "repartition": {
+  "from_revision": 18,
+  "revision": 19,
+  "unix": 1790698930.3118727
+ },
+ "revision": 19,
+ "schema": "transparent-fleet-inventory-v1",
+ "updated_by": "operator:archive-1host",
+ "updated_unix": 1790698931.3456092
+}

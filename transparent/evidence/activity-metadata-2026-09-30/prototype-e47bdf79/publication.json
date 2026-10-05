@@ -1,0 +1,33 @@
+{
+  "data_dir": "/srv/transparent-activity/prototype/e47bdf79/journal",
+  "elapsed_seconds": 2.662514496,
+  "generated_at": "2026-09-30T18:42:05.769742446+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3500738,
+    "events_stored": 26868,
+    "start_height": 3499739
+  },
+  "network": "main",
+  "output": "/srv/transparent-activity/prototype/e47bdf79/publication",
+  "published": {
+    "anchor_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+    "archive_geometry": "archive-wide",
+    "archive_policy": "SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }",
+    "archive_shards": 1,
+    "map_bytes": 1801,
+    "map_sha256": "7383171e56855a250651dbf5a9567d860677c837ecb3c771f5ded859c317b832",
+    "multi_segment_shards": 0,
+    "recent_from": 3500239,
+    "recent_geometry": "recent-4k-8k",
+    "recent_policy": "SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+    "recent_shards": 1,
+    "shards": 2,
+    "start_height": 3499739,
+    "tail_revision": 0,
+    "through": 3500738
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v11",
+  "tool_sha": "e47bdf7904a359411e596ce4bf6a489b8a47830e"
+}

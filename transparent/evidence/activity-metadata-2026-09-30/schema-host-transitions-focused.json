@@ -1,0 +1,74 @@
+{
+  "source_base": "6e8337fa91f723e4383f074d2227b1720b341655",
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "implementation_inputs": {
+    "transparent/ops/lib/activity_schema_host.py": "1670605ceaea3b866df6b9927de2815f5f086d4ab52a86c5417609cec5ac7a1f",
+    "transparent/ops/lib/activity_schema_baseline.py": "bc6ab035a2b618f94236e471f9fb471aab3b89644963a4900372f0cab909ae21",
+    "ops/lib/wallet_pir_ops/inherited_lock.py": "50724124bbf797e0c6eb62c081cd19b1dd29e3f661550bccb284dd8cd172c003",
+    "transparent/ops/scripts/transparent-activity-host.py": "1f08eeb06b0c17aeaed411ed368d1b165ab3595fe9451a62e019a2f6c9952e66",
+    "transparent/ops/tests/test_activity_schema_host.py": "2c8db67d17249a43835ded5bb3645e43db4edfcb87e2de9feb6a845b54b3d404",
+    "transparent/ops/tests/test_activity_schema_operation.py": "784233fa65649f96bfe408705bd706163902864e9e57425f44c7a236971eaedd"
+  },
+  "focused_check": {
+    "id": "7f329b84b9fc494d85a6a57f388b95a1",
+    "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+    "repo": "wallet-pir",
+    "sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "tool": "codex",
+    "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+    "state": "/Users/roman/.ai-runbook/dev-ux",
+    "log": "/Users/roman/.ai-runbook/dev-ux/checks/7f329b84b9fc494d85a6a57f388b95a1.log",
+    "started": 1790822714.238765,
+    "automatic_wake": false,
+    "status": "pass",
+    "exit_code": 0,
+    "duration": 13.25734266708605
+  },
+  "tests": {
+    "host_transitions": 20,
+    "schema_staging_publication_and_host": 59,
+    "baseline": 19,
+    "shared_deployment": 45
+  },
+  "review_ordering_regression": {
+    "initial": {
+      "failures": 1,
+      "errors": 2,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-service-planning/host-ordering-red.log",
+      "log_sha256": "85289f786976c62635c3a2996f66eb1315044b6741068e0df624675183049304"
+    },
+    "first_correction": {
+      "errors": 1,
+      "reason": "worker fixture attempted its production cache path; isolated fixture path corrected",
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-service-planning/host-ordering-green.log",
+      "log_sha256": "aa9e58bc02e6275818696178534c8257977afc70b25caebee5ca51168951c90b"
+    },
+    "corrected": {
+      "tests": 19,
+      "status": "passed",
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-service-planning/host-ordering-green-2.log",
+      "log_sha256": "2d9cda1f175b9d7f88ad1e7b877e17af7d6bda03024f8ddfde1a88dddd36a33e"
+    },
+    "fixes": [
+      "capture original router before withdrawal",
+      "capture quiescent warm worker before withdrawal; stop only during staging",
+      "stop filter before replacement and activation"
+    ]
+  },
+  "earlier_affected_check": {
+    "owner": "a4cd26ee22ab45feb67b81cb94f249b8",
+    "duration_seconds": 13.189352042041719,
+    "status": "passed",
+    "accepted_for_final_inputs": false,
+    "reason": "superseded by review ordering corrections and additional tests"
+  },
+  "production_mutation": false,
+  "canonical_schema": "transparent-shard-v10",
+  "limitations": [
+    "host fixture dependencies only; complete reviewed cutover/reopen orchestration and plans unfinished",
+    "no live baseline or service transition",
+    "full journal/publication/certificates/oracle gates pending",
+    "actual SSH descendant and installed sandbox qualification pending",
+    "canonical load, freshness, capacity, lifecycle and rollback gates pending"
+  ]
+}

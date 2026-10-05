@@ -1,0 +1,1385 @@
+{
+  "allocation": {
+    "allocated_bytes": 33451520000,
+    "directory_rows": 2719744,
+    "directory_segments": 90,
+    "files": 361,
+    "logical_bytes": 33451143444,
+    "occupancy": [
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 17501,
+          "events": 4196620,
+          "excluded_scripts": 1,
+          "fragments": 84505,
+          "page_rows": 63528,
+          "scripts": 101195,
+          "txids": 122715
+        },
+        "shard_id": 0
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 16039,
+          "events": 4433195,
+          "excluded_scripts": 0,
+          "fragments": 80881,
+          "page_rows": 63508,
+          "scripts": 53936,
+          "txids": 68466
+        },
+        "shard_id": 1
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 20994,
+          "events": 4566261,
+          "excluded_scripts": 0,
+          "fragments": 81267,
+          "page_rows": 63495,
+          "scripts": 59929,
+          "txids": 81291
+        },
+        "shard_id": 2
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 20307,
+          "events": 4436054,
+          "excluded_scripts": 0,
+          "fragments": 80333,
+          "page_rows": 63490,
+          "scripts": 60617,
+          "txids": 82765
+        },
+        "shard_id": 3
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 19300,
+          "events": 4514859,
+          "excluded_scripts": 0,
+          "fragments": 83424,
+          "page_rows": 63490,
+          "scripts": 78349,
+          "txids": 103615
+        },
+        "shard_id": 4
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 12298,
+          "events": 4053103,
+          "excluded_scripts": 0,
+          "fragments": 84326,
+          "page_rows": 63600,
+          "scripts": 66852,
+          "txids": 64039
+        },
+        "shard_id": 5
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 713,
+          "events": 3099517,
+          "excluded_scripts": 0,
+          "fragments": 76262,
+          "page_rows": 63603,
+          "scripts": 33798,
+          "txids": 15558
+        },
+        "shard_id": 6
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 636,
+          "events": 3094302,
+          "excluded_scripts": 0,
+          "fragments": 73490,
+          "page_rows": 63506,
+          "scripts": 26046,
+          "txids": 14768
+        },
+        "shard_id": 7
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4517,
+          "events": 3476926,
+          "excluded_scripts": 0,
+          "fragments": 84907,
+          "page_rows": 63488,
+          "scripts": 51396,
+          "txids": 33640
+        },
+        "shard_id": 8
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 16188,
+          "events": 4579027,
+          "excluded_scripts": 0,
+          "fragments": 100238,
+          "page_rows": 63496,
+          "scripts": 125007,
+          "txids": 102318
+        },
+        "shard_id": 9
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 12837,
+          "events": 4667829,
+          "excluded_scripts": 0,
+          "fragments": 123460,
+          "page_rows": 63498,
+          "scripts": 170398,
+          "txids": 113518
+        },
+        "shard_id": 10
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 12687,
+          "events": 4685971,
+          "excluded_scripts": 0,
+          "fragments": 130799,
+          "page_rows": 63495,
+          "scripts": 172895,
+          "txids": 101704
+        },
+        "shard_id": 11
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 10964,
+          "events": 4425071,
+          "excluded_scripts": 0,
+          "fragments": 126102,
+          "page_rows": 63508,
+          "scripts": 171040,
+          "txids": 92550
+        },
+        "shard_id": 12
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8829,
+          "events": 4207967,
+          "excluded_scripts": 0,
+          "fragments": 126734,
+          "page_rows": 63491,
+          "scripts": 167498,
+          "txids": 85710
+        },
+        "shard_id": 13
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 10748,
+          "events": 4538820,
+          "excluded_scripts": 0,
+          "fragments": 131286,
+          "page_rows": 63498,
+          "scripts": 186544,
+          "txids": 104400
+        },
+        "shard_id": 14
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8147,
+          "events": 4293770,
+          "excluded_scripts": 0,
+          "fragments": 137324,
+          "page_rows": 63498,
+          "scripts": 203448,
+          "txids": 90392
+        },
+        "shard_id": 15
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8291,
+          "events": 4299545,
+          "excluded_scripts": 0,
+          "fragments": 138610,
+          "page_rows": 63675,
+          "scripts": 186174,
+          "txids": 85167
+        },
+        "shard_id": 16
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7996,
+          "events": 4238016,
+          "excluded_scripts": 0,
+          "fragments": 132396,
+          "page_rows": 63488,
+          "scripts": 174358,
+          "txids": 74520
+        },
+        "shard_id": 17
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8596,
+          "events": 4354128,
+          "excluded_scripts": 0,
+          "fragments": 134517,
+          "page_rows": 63498,
+          "scripts": 194676,
+          "txids": 95181
+        },
+        "shard_id": 18
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8289,
+          "events": 4333964,
+          "excluded_scripts": 0,
+          "fragments": 133524,
+          "page_rows": 63495,
+          "scripts": 205909,
+          "txids": 100099
+        },
+        "shard_id": 19
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7417,
+          "events": 4348599,
+          "excluded_scripts": 0,
+          "fragments": 144746,
+          "page_rows": 63496,
+          "scripts": 226304,
+          "txids": 100651
+        },
+        "shard_id": 20
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 6328,
+          "events": 4470338,
+          "excluded_scripts": 0,
+          "fragments": 160483,
+          "page_rows": 63488,
+          "scripts": 278162,
+          "txids": 122045
+        },
+        "shard_id": 21
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 5412,
+          "events": 4338842,
+          "excluded_scripts": 0,
+          "fragments": 167510,
+          "page_rows": 63570,
+          "scripts": 279842,
+          "txids": 117413
+        },
+        "shard_id": 22
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 6828,
+          "events": 4606339,
+          "excluded_scripts": 0,
+          "fragments": 167897,
+          "page_rows": 63501,
+          "scripts": 309611,
+          "txids": 140738
+        },
+        "shard_id": 23
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 6870,
+          "events": 4574295,
+          "excluded_scripts": 0,
+          "fragments": 170167,
+          "page_rows": 63507,
+          "scripts": 293026,
+          "txids": 126283
+        },
+        "shard_id": 24
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7340,
+          "events": 4565537,
+          "excluded_scripts": 0,
+          "fragments": 165588,
+          "page_rows": 63493,
+          "scripts": 266409,
+          "txids": 107198
+        },
+        "shard_id": 25
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 6853,
+          "events": 4454965,
+          "excluded_scripts": 0,
+          "fragments": 167294,
+          "page_rows": 63496,
+          "scripts": 269644,
+          "txids": 102870
+        },
+        "shard_id": 26
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7762,
+          "events": 4569071,
+          "excluded_scripts": 0,
+          "fragments": 165291,
+          "page_rows": 63489,
+          "scripts": 248507,
+          "txids": 103412
+        },
+        "shard_id": 27
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7951,
+          "events": 4475206,
+          "excluded_scripts": 0,
+          "fragments": 165080,
+          "page_rows": 63508,
+          "scripts": 241883,
+          "txids": 100574
+        },
+        "shard_id": 28
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 8398,
+          "events": 4476021,
+          "excluded_scripts": 0,
+          "fragments": 158390,
+          "page_rows": 63755,
+          "scripts": 219134,
+          "txids": 88608
+        },
+        "shard_id": 29
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7503,
+          "events": 4321316,
+          "excluded_scripts": 0,
+          "fragments": 152517,
+          "page_rows": 63493,
+          "scripts": 200393,
+          "txids": 73282
+        },
+        "shard_id": 30
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 9081,
+          "events": 4578378,
+          "excluded_scripts": 0,
+          "fragments": 151667,
+          "page_rows": 63494,
+          "scripts": 227796,
+          "txids": 104611
+        },
+        "shard_id": 31
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 6494,
+          "events": 4218188,
+          "excluded_scripts": 0,
+          "fragments": 149880,
+          "page_rows": 63489,
+          "scripts": 206671,
+          "txids": 78054
+        },
+        "shard_id": 32
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4156,
+          "events": 3879045,
+          "excluded_scripts": 0,
+          "fragments": 143248,
+          "page_rows": 63541,
+          "scripts": 198556,
+          "txids": 69856
+        },
+        "shard_id": 33
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 3797,
+          "events": 3877472,
+          "excluded_scripts": 0,
+          "fragments": 161336,
+          "page_rows": 63489,
+          "scripts": 241267,
+          "txids": 63403
+        },
+        "shard_id": 34
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4670,
+          "events": 3982971,
+          "excluded_scripts": 0,
+          "fragments": 152372,
+          "page_rows": 63597,
+          "scripts": 200374,
+          "txids": 62296
+        },
+        "shard_id": 35
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4180,
+          "events": 3872454,
+          "excluded_scripts": 0,
+          "fragments": 151147,
+          "page_rows": 63507,
+          "scripts": 192662,
+          "txids": 75694
+        },
+        "shard_id": 36
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4099,
+          "events": 3731687,
+          "excluded_scripts": 0,
+          "fragments": 140008,
+          "page_rows": 63623,
+          "scripts": 167956,
+          "txids": 71815
+        },
+        "shard_id": 37
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4564,
+          "events": 3686131,
+          "excluded_scripts": 0,
+          "fragments": 135711,
+          "page_rows": 63505,
+          "scripts": 159664,
+          "txids": 75479
+        },
+        "shard_id": 38
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 11002,
+          "events": 4180969,
+          "excluded_scripts": 0,
+          "fragments": 137908,
+          "page_rows": 63548,
+          "scripts": 181587,
+          "txids": 100602
+        },
+        "shard_id": 39
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 4890,
+          "events": 3601172,
+          "excluded_scripts": 0,
+          "fragments": 122631,
+          "page_rows": 63501,
+          "scripts": 145618,
+          "txids": 85270
+        },
+        "shard_id": 40
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 18943,
+          "events": 4349593,
+          "excluded_scripts": 0,
+          "fragments": 131451,
+          "page_rows": 63488,
+          "scripts": 223616,
+          "txids": 140766
+        },
+        "shard_id": 41
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 29117,
+          "events": 4453057,
+          "excluded_scripts": 0,
+          "fragments": 123839,
+          "page_rows": 63490,
+          "scripts": 236842,
+          "txids": 193036
+        },
+        "shard_id": 42
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 36045,
+          "events": 4396538,
+          "excluded_scripts": 0,
+          "fragments": 113757,
+          "page_rows": 63506,
+          "scripts": 236443,
+          "txids": 221204
+        },
+        "shard_id": 43
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 27710,
+          "events": 3971192,
+          "excluded_scripts": 0,
+          "fragments": 101626,
+          "page_rows": 63527,
+          "scripts": 170215,
+          "txids": 152156
+        },
+        "shard_id": 44
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 42346,
+          "events": 4316582,
+          "excluded_scripts": 0,
+          "fragments": 100118,
+          "page_rows": 63488,
+          "scripts": 232435,
+          "txids": 251557
+        },
+        "shard_id": 45
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 43074,
+          "events": 4354974,
+          "excluded_scripts": 0,
+          "fragments": 106710,
+          "page_rows": 63503,
+          "scripts": 311336,
+          "txids": 318103
+        },
+        "shard_id": 46
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 34897,
+          "events": 4463289,
+          "excluded_scripts": 0,
+          "fragments": 100490,
+          "page_rows": 63488,
+          "scripts": 426201,
+          "txids": 330912
+        },
+        "shard_id": 47
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 9902,
+          "events": 3370214,
+          "excluded_scripts": 0,
+          "fragments": 89334,
+          "page_rows": 63654,
+          "scripts": 97891,
+          "txids": 64418
+        },
+        "shard_id": 48
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 18569,
+          "events": 3579323,
+          "excluded_scripts": 0,
+          "fragments": 96106,
+          "page_rows": 63583,
+          "scripts": 151108,
+          "txids": 112043
+        },
+        "shard_id": 49
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 76798,
+          "events": 4238228,
+          "excluded_scripts": 0,
+          "fragments": 96248,
+          "page_rows": 63489,
+          "scripts": 247923,
+          "txids": 356468
+        },
+        "shard_id": 50
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 104603,
+          "events": 4238846,
+          "excluded_scripts": 0,
+          "fragments": 92954,
+          "page_rows": 63488,
+          "scripts": 261057,
+          "txids": 412734
+        },
+        "shard_id": 51
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 92250,
+          "events": 4275634,
+          "excluded_scripts": 0,
+          "fragments": 102751,
+          "page_rows": 63493,
+          "scripts": 384701,
+          "txids": 425176
+        },
+        "shard_id": 52
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 79383,
+          "events": 4661795,
+          "excluded_scripts": 0,
+          "fragments": 131762,
+          "page_rows": 63490,
+          "scripts": 355725,
+          "txids": 406046
+        },
+        "shard_id": 53
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 60722,
+          "events": 4645138,
+          "excluded_scripts": 0,
+          "fragments": 134227,
+          "page_rows": 63489,
+          "scripts": 298941,
+          "txids": 260277
+        },
+        "shard_id": 54
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 57943,
+          "events": 4539700,
+          "excluded_scripts": 0,
+          "fragments": 135671,
+          "page_rows": 63488,
+          "scripts": 304373,
+          "txids": 254230
+        },
+        "shard_id": 55
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 39554,
+          "events": 4230492,
+          "excluded_scripts": 0,
+          "fragments": 137999,
+          "page_rows": 63520,
+          "scripts": 295113,
+          "txids": 206144
+        },
+        "shard_id": 56
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 45927,
+          "events": 4576040,
+          "excluded_scripts": 0,
+          "fragments": 146165,
+          "page_rows": 63488,
+          "scripts": 359188,
+          "txids": 259603
+        },
+        "shard_id": 57
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 38919,
+          "events": 4503151,
+          "excluded_scripts": 0,
+          "fragments": 155233,
+          "page_rows": 63488,
+          "scripts": 343377,
+          "txids": 199331
+        },
+        "shard_id": 58
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 47720,
+          "events": 4880262,
+          "excluded_scripts": 0,
+          "fragments": 165712,
+          "page_rows": 63490,
+          "scripts": 385496,
+          "txids": 250317
+        },
+        "shard_id": 59
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 52202,
+          "events": 4773330,
+          "excluded_scripts": 0,
+          "fragments": 158252,
+          "page_rows": 63489,
+          "scripts": 318104,
+          "txids": 213503
+        },
+        "shard_id": 60
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 47334,
+          "events": 4170274,
+          "excluded_scripts": 0,
+          "fragments": 157764,
+          "page_rows": 63488,
+          "scripts": 279122,
+          "txids": 196840
+        },
+        "shard_id": 61
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 57502,
+          "events": 4335623,
+          "excluded_scripts": 0,
+          "fragments": 160676,
+          "page_rows": 63490,
+          "scripts": 311542,
+          "txids": 245183
+        },
+        "shard_id": 62
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 74162,
+          "events": 4867416,
+          "excluded_scripts": 0,
+          "fragments": 172630,
+          "page_rows": 63504,
+          "scripts": 408942,
+          "txids": 352504
+        },
+        "shard_id": 63
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 86464,
+          "events": 4899923,
+          "excluded_scripts": 0,
+          "fragments": 164837,
+          "page_rows": 63488,
+          "scripts": 365556,
+          "txids": 333611
+        },
+        "shard_id": 64
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 31024,
+          "events": 3817515,
+          "excluded_scripts": 0,
+          "fragments": 135377,
+          "page_rows": 63488,
+          "scripts": 249022,
+          "txids": 138274
+        },
+        "shard_id": 65
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 87821,
+          "events": 4998242,
+          "excluded_scripts": 0,
+          "fragments": 149385,
+          "page_rows": 63488,
+          "scripts": 464045,
+          "txids": 445612
+        },
+        "shard_id": 66
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 84357,
+          "events": 4266699,
+          "excluded_scripts": 0,
+          "fragments": 142763,
+          "page_rows": 63611,
+          "scripts": 250682,
+          "txids": 237069
+        },
+        "shard_id": 67
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 76702,
+          "events": 4174065,
+          "excluded_scripts": 0,
+          "fragments": 136523,
+          "page_rows": 63492,
+          "scripts": 260466,
+          "txids": 235181
+        },
+        "shard_id": 68
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 7017,
+          "events": 3289751,
+          "excluded_scripts": 0,
+          "fragments": 102042,
+          "page_rows": 63517,
+          "scripts": 128230,
+          "txids": 40173
+        },
+        "shard_id": 69
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 19474,
+          "events": 3426550,
+          "excluded_scripts": 0,
+          "fragments": 117015,
+          "page_rows": 63488,
+          "scripts": 152196,
+          "txids": 79467
+        },
+        "shard_id": 70
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 120831,
+          "events": 4881141,
+          "excluded_scripts": 0,
+          "fragments": 128446,
+          "page_rows": 63490,
+          "scripts": 346981,
+          "txids": 485211
+        },
+        "shard_id": 71
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 120368,
+          "events": 4838390,
+          "excluded_scripts": 0,
+          "fragments": 120889,
+          "page_rows": 63488,
+          "scripts": 308677,
+          "txids": 499072
+        },
+        "shard_id": 72
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 89086,
+          "events": 4470809,
+          "excluded_scripts": 0,
+          "fragments": 89933,
+          "page_rows": 63520,
+          "scripts": 158833,
+          "txids": 311612
+        },
+        "shard_id": 73
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 57073,
+          "events": 4404171,
+          "excluded_scripts": 0,
+          "fragments": 86749,
+          "page_rows": 63488,
+          "scripts": 97395,
+          "txids": 191015
+        },
+        "shard_id": 74
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 149107,
+          "events": 4517470,
+          "excluded_scripts": 0,
+          "fragments": 97715,
+          "page_rows": 63488,
+          "scripts": 208420,
+          "txids": 411434
+        },
+        "shard_id": 75
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 131410,
+          "events": 4616551,
+          "excluded_scripts": 0,
+          "fragments": 99695,
+          "page_rows": 63488,
+          "scripts": 195224,
+          "txids": 400840
+        },
+        "shard_id": 76
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 68691,
+          "events": 4651841,
+          "excluded_scripts": 0,
+          "fragments": 90367,
+          "page_rows": 63488,
+          "scripts": 96279,
+          "txids": 237665
+        },
+        "shard_id": 77
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 82829,
+          "events": 4590014,
+          "excluded_scripts": 0,
+          "fragments": 77232,
+          "page_rows": 63488,
+          "scripts": 84858,
+          "txids": 235569
+        },
+        "shard_id": 78
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 401144,
+          "events": 4338481,
+          "excluded_scripts": 0,
+          "fragments": 108893,
+          "page_rows": 63495,
+          "scripts": 339858,
+          "txids": 885357
+        },
+        "shard_id": 79
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 121261,
+          "events": 4446124,
+          "excluded_scripts": 0,
+          "fragments": 155556,
+          "page_rows": 63488,
+          "scripts": 374917,
+          "txids": 984131
+        },
+        "shard_id": 80
+      },
+      {
+        "geometry": "archive-wide",
+        "occupancy": {
+          "blocks": 58052,
+          "events": 1094272,
+          "excluded_scripts": 0,
+          "fragments": 47246,
+          "page_rows": 14981,
+          "scripts": 96629,
+          "txids": 275919
+        },
+        "shard_id": 81
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 30900,
+          "events": 589918,
+          "excluded_scripts": 0,
+          "fragments": 25407,
+          "page_rows": 7936,
+          "scripts": 55767,
+          "txids": 158231
+        },
+        "shard_id": 82
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 22879,
+          "events": 590330,
+          "excluded_scripts": 0,
+          "fragments": 23306,
+          "page_rows": 7941,
+          "scripts": 65560,
+          "txids": 143090
+        },
+        "shard_id": 83
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 17712,
+          "events": 584120,
+          "excluded_scripts": 0,
+          "fragments": 21437,
+          "page_rows": 7936,
+          "scripts": 63695,
+          "txids": 133766
+        },
+        "shard_id": 84
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 37676,
+          "events": 596043,
+          "excluded_scripts": 0,
+          "fragments": 17979,
+          "page_rows": 7936,
+          "scripts": 68480,
+          "txids": 146352
+        },
+        "shard_id": 85
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 39064,
+          "events": 579422,
+          "excluded_scripts": 1,
+          "fragments": 17640,
+          "page_rows": 7936,
+          "scripts": 63336,
+          "txids": 134867
+        },
+        "shard_id": 86
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 32676,
+          "events": 588216,
+          "excluded_scripts": 0,
+          "fragments": 18489,
+          "page_rows": 7936,
+          "scripts": 67403,
+          "txids": 145532
+        },
+        "shard_id": 87
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 17788,
+          "events": 600987,
+          "excluded_scripts": 0,
+          "fragments": 23520,
+          "page_rows": 7936,
+          "scripts": 87776,
+          "txids": 143025
+        },
+        "shard_id": 88
+      },
+      {
+        "geometry": "recent-4k-8k",
+        "occupancy": {
+          "blocks": 12239,
+          "events": 485566,
+          "excluded_scripts": 0,
+          "fragments": 18295,
+          "page_rows": 6246,
+          "scripts": 66780,
+          "txids": 125366
+        },
+        "shard_id": 89
+      }
+    ],
+    "page_rows": 5439488,
+    "page_segments": 90,
+    "shards": 90
+  },
+  "elapsed_seconds": 6085.2667400836945,
+  "ended_unix": 1790831651.388825,
+  "gate": "artifact-verification",
+  "health_sha256": "9ce5424da6ff924088fd6218e169c8442e037140810a99118373dfc1922f7bba",
+  "last_health": {
+    "disk_available": {
+      "/": 0.30135046658701947,
+      "/srv/transparent-activity": 0.6024201575476307,
+      "/srv/zakura": 0.22905775926493993
+    },
+    "memory_available": 0.8187670087258534,
+    "stage": "shard-verify",
+    "unix": 1790831649.4268415
+  },
+  "limitations": [
+    "Artifact preparation and four journal rebuilds passed. Native correctness certificates and independent raw-chain metadata comparisons are additional gates.",
+    "RemainAfterExit retains ActiveState=active with MainPID=0 and an empty cgroup. The older immutable launch record still says running; terminal result and systemd exit identities agree.",
+    "No worker input staging, production baseline, service cutover or canonical v11 qualification has occurred."
+  ],
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "observed_unit": {
+    "ActiveState": "active",
+    "ControlGroup": "",
+    "ExecMainStatus": "0",
+    "MainPID": "0",
+    "NRestarts": "0",
+    "Result": "success"
+  },
+  "operations_source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+  "original_pid": 1876447,
+  "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+  "publication": {
+    "data_dir": "/srv/transparent-activity/full-v3/journal",
+    "elapsed_seconds": 5891.045809638,
+    "generated_at": "2026-10-01T05:11:08.668787004+00:00",
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "journal": {
+      "covered_through": 3500738,
+      "events_stored": 353831243,
+      "start_height": 0
+    },
+    "network": "main",
+    "output": "/srv/transparent-activity/full-v11/publications/initial",
+    "published": {
+      "anchor_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+      "archive_geometry": "archive-wide",
+      "archive_policy": "SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }",
+      "archive_shards": 82,
+      "map_bytes": 61108,
+      "map_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+      "multi_segment_shards": 0,
+      "recent_from": 3289805,
+      "recent_geometry": "recent-4k-8k",
+      "recent_policy": "SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+      "recent_shards": 8,
+      "shards": 90,
+      "start_height": 0,
+      "tail_revision": 0,
+      "through": 3500738
+    },
+    "schema": "transparent-publication-v1",
+    "shard_schema": "transparent-shard-v11",
+    "tool_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9"
+  },
+  "publication_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+  "raw_envelope_sha256": "a685e4b153a6eeb07298cf9c67e6616899c0d76434a18a0a4800f12ec5bc8579",
+  "raw_report_sha256": {
+    "allocation.json": "0bd616792abd64531a420964d34652a0fd77fba6bd9443362e899fde6d51104d",
+    "owner.json": "bab69f45b7e1f121d445120b7e1031c7ad29fa5a1709231742501aa671e5b910",
+    "publication.json": "e788aea44bb3c104aea3a68074ebd71623a9e169ca9cd7abb82aacc18904861c",
+    "result.json": "87c9e44648398995d37651a50e5cb91479b307bf35184a0acfd7477954602b1d",
+    "shard-cutoff.owner.json": "46e8ea70f21debc9de2385de1f6ca86fc45f4eba3f2259096e164e46d3f351bb",
+    "shard-cutoff.result.json": "cb67464b1026b918b0319a742ffe22e18b8b81b2a7c0ab695cd8ff86ec915195",
+    "shard-publish.owner.json": "be41a2f09e16db84218b63bd20a4c9b8969de7abbfd5dd021d54d21296f4ae25",
+    "shard-publish.result.json": "8e46c3265556689b5b0a09d078221dd37c1a210c66c3e6a9ea5f9e0e2dca7c0d",
+    "shard-verify.owner.json": "34fa6e704f1626cd9ff8034072548233265581baf290325c568a15bdd5c34682",
+    "shard-verify.result.json": "614ab1e2dcd80e688a1e27cd61dd9f87622581ea4393011bf978a58a28c900aa",
+    "verified.json": "34f2661ef8c10cf8da871b2e7d0e4394996436160fbde0f9c75717d3b5bdcdaa"
+  },
+  "recorded_owner_status": "running",
+  "release_result_sha256": "2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8",
+  "started_unix": 1790825566.1220849,
+  "status": "passed",
+  "unit": "transparent-activity-full-publication-v11",
+  "verification": {
+    "checks": [
+      {
+        "check": "load",
+        "detail": "90 shards, 90 revisions held, every manifest, table segment and filter verified in 149.0s",
+        "ok": true
+      },
+      {
+        "check": "coverage-contiguous",
+        "detail": "0-3500738 across 90 shards",
+        "ok": true
+      },
+      {
+        "check": "coverage-start",
+        "detail": "map starts at 0, expected 0",
+        "ok": true
+      },
+      {
+        "check": "coverage-through",
+        "detail": "last shard ends at Some(3500738), expected 3500738",
+        "ok": true
+      },
+      {
+        "check": "anchor-hash",
+        "detail": "terminal block Some(\"00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665\"), expected 00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+        "ok": true
+      },
+      {
+        "check": "tiers",
+        "detail": "82 archive-wide shards below 3289805, 8 recent-4k-8k shards from it",
+        "ok": true
+      },
+      {
+        "check": "map-sha256",
+        "detail": "shards.json digests to 34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d, expected 34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+        "ok": true
+      },
+      {
+        "check": "rebuild-0",
+        "detail": "0-17500 4196620 events, filter same, directory same, pages same, 8.9s",
+        "ok": true
+      },
+      {
+        "check": "rebuild-9",
+        "detail": "112305-128492 4579027 events, filter same, directory same, pages same, 9.1s",
+        "ok": true
+      },
+      {
+        "check": "rebuild-53",
+        "detail": "895726-975108 4661795 events, filter same, directory same, pages same, 13.0s",
+        "ok": true
+      },
+      {
+        "check": "rebuild-89",
+        "detail": "3488500-3500738 485566 events, filter same, directory same, pages same, 1.1s",
+        "ok": true
+      }
+    ],
+    "failures": 0,
+    "generated_at": "2026-10-01T05:14:11.198994181+00:00",
+    "publication": "/srv/transparent-activity/full-v11/preparation/publication.json",
+    "schema": "transparent-shard-verify-v1",
+    "set": {
+      "geometries": [
+        "archive-wide",
+        "recent-4k-8k"
+      ],
+      "map_file_sha256": "34e3ebe3510206617460cebc87528e56f01949b971797e6f17cc8ca958f23f5d",
+      "map_served_sha256": "fd4dcadb2d35333091b0805c7cbe06d3a715502b2cab9e6326e2c0bc5382cab3",
+      "multi_segment_shards": [],
+      "rebuilt": [
+        {
+          "directory": true,
+          "events": 4196620,
+          "filter": true,
+          "geometry": "archive-wide",
+          "pages": true,
+          "seconds": 8.928484277999999,
+          "shard_id": 0
+        },
+        {
+          "directory": true,
+          "events": 4579027,
+          "filter": true,
+          "geometry": "archive-wide",
+          "pages": true,
+          "seconds": 9.11677426,
+          "shard_id": 9
+        },
+        {
+          "directory": true,
+          "events": 4661795,
+          "filter": true,
+          "geometry": "archive-wide",
+          "pages": true,
+          "seconds": 12.950327021,
+          "shard_id": 53
+        },
+        {
+          "directory": true,
+          "events": 485566,
+          "filter": true,
+          "geometry": "recent-4k-8k",
+          "pages": true,
+          "seconds": 1.127077475,
+          "shard_id": 89
+        }
+      ],
+      "revisions_held": 90,
+      "shards": 90,
+      "start_height": 0,
+      "terminal_block_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+      "through": 3500738
+    },
+    "shard_dir": "/srv/transparent-activity/full-v11/publications/initial",
+    "tool_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9"
+  }
+}

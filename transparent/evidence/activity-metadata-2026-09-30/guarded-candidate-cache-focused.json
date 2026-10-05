@@ -1,0 +1,18 @@
+{
+  "base_sha": "721dac6a9388771277d6e37d820c2f4a0c915655",
+  "owner": "c345b520cec943bab00294246a0e4632",
+  "duration_seconds": 17.848604166996665,
+  "status": "passed",
+  "command": "make check-fast BASE=721dac6a9388771277d6e37d820c2f4a0c915655",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_host.py": "6b310bf14163ddafc40e90c09737541fec7a0ff0606b07303ccedcca517fe0f0",
+    "transparent/ops/lib/activity_schema_product.py": "54483dab3af0b967005a82d4d1bbd980480d9388fccde029a0bb88442561d210",
+    "transparent/ops/lib/activity_schema_dispatch.py": "7a4f4f4bdedeb3d426688a4bfe30adf524207b6888e40f7df8986e97a48716e3",
+    "transparent/ops/tests/test_activity_schema_host.py": "97c85ce58e9cb70b40d81ca6fd002c36a1a27e116e5bd0658a6a6a8cb51bac05",
+    "transparent/ops/tests/test_activity_schema_product.py": "b66262d60f9328741887bdcb7863da8dcac3542947a4724f3ab2c127ee11affc"
+  },
+  "scope": "Closed guarded candidate runtime-cache preparation; separate 300-second activation gate and rollback 740-second budget unchanged. No production candidate-cache preparation performed yet.",
+  "native_inputs": "Rust/Cargo/toolchain unchanged from 12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "candidate_ci": "not accepted; explicit user waiver to proceed without waiting",
+  "native_ci": "CI801/run36827719155/all12 passed under original identity"
+}

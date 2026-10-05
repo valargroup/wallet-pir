@@ -1,0 +1,17 @@
+{
+  "comparison_sha": "9164c2c71fb957b9a01677f202ae7296e9271168",
+  "owner": "fb12f0eedff241ddaa93fbcf5b23bd26",
+  "status": "passed",
+  "seconds": 19.850673540960997,
+  "command": "make check-fast BASE=9164c2c71fb957b9a01677f202ae7296e9271168",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_host.py": "787e95940494b8588c8277858e23151c03cc6ebd0597cc9b07b85849114f97f9",
+    "transparent/ops/lib/activity_schema_product.py": "d7b221f38aee054f16d2ddf55c398bff9c54bd39094da8643413ef9ffe335139",
+    "transparent/ops/lib/activity_schema_routing.py": "d8e2759fd19a5458aa9b9291762d06fd6825977cf36f330be7928cd624de8ce6",
+    "transparent/ops/tests/test_activity_schema_product.py": "caddc9401e68e1989ebf73309ec2a1b57628a375677f22f9c6fa00a4633334b9",
+    "transparent/ops/tests/test_activity_schema_routing.py": "68d8910c40c7cb1a0e407f9369eb8e94867a174da96cc60cf00590fd1984a6b1",
+    "transparent/services/transparent-filter-server/src/controller.rs": "8a10a155fbaf337dc7ca9856fd11ba15447948e227db928187578f1948c7c967"
+  },
+  "native_inputs_changed": false,
+  "scope": "Closed bootstrap observation, real HTTP refusal context and affected checks only; actual corrected cutover and all final qualification remain open."
+}

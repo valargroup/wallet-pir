@@ -1,0 +1,37 @@
+{
+  "unix": 1790808462.407975,
+  "replacement_source_sha": "a65c618e42219cdf8fa89792a9e518c3f8885e1e",
+  "reason": "Review repairs replace known-failing older source heads; preserve failures and use one comprehensive owner for repaired source. No passing qualification is inferred from cancellation.",
+  "runs": [
+    {
+      "run_id": 36782406119,
+      "source_sha": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+      "prior_state": {
+        "conclusion": "",
+        "headSha": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+        "status": "queued"
+      },
+      "action": "canceled_superseded_owned_run"
+    },
+    {
+      "run_id": 36784041817,
+      "source_sha": "d11fcc2bc322a2479715f017b169cb96f19b2d80",
+      "prior_state": {
+        "conclusion": "",
+        "headSha": "d11fcc2bc322a2479715f017b169cb96f19b2d80",
+        "status": "queued"
+      },
+      "action": "canceled_superseded_owned_run"
+    },
+    {
+      "run_id": 36785929591,
+      "source_sha": "0d843d4b752d252331c2887f12f5916777913d33",
+      "prior_state": {
+        "conclusion": "",
+        "headSha": "0d843d4b752d252331c2887f12f5916777913d33",
+        "status": "queued"
+      },
+      "action": "canceled_superseded_owned_run"
+    }
+  ]
+}

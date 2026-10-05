@@ -21,9 +21,9 @@ for lane in fast build; do
   install -d -o "$user" -g "$user" -m 0700 "/home/$user/actions-runner"
   if [[ ! -x "/home/$user/.cargo/bin/rustup" ]]; then
     curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs -o /tmp/wallet-pir-rustup.sh
-    runuser -u "$user" -- sh /tmp/wallet-pir-rustup.sh -y --profile minimal --default-toolchain 1.91.0
+    runuser -u "$user" -- sh /tmp/wallet-pir-rustup.sh -y --profile minimal --default-toolchain 1.97.1
   fi
-  runuser -u "$user" -- "/home/$user/.cargo/bin/rustup" component add --toolchain 1.91.0 rustfmt clippy
+  runuser -u "$user" -- "/home/$user/.cargo/bin/rustup" toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
   if [[ ! -x "/home/$user/actions-runner/config.sh" ]]; then
     archive=/tmp/wallet-pir-actions-runner.tar.gz
     curl -fLsS https://github.com/actions/runner/releases/download/v2.337.0/actions-runner-linux-x64-2.337.0.tar.gz -o "$archive"

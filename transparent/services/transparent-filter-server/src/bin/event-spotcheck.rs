@@ -73,6 +73,7 @@ struct Cli {
 /// One event as the journal stores it, in a form that sorts and compares.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 struct Line {
+    metadata: Option<(String, u32, bool)>,
     script: String,
     kind: &'static str,
     height: u32,
@@ -88,6 +89,7 @@ struct Line {
 fn journal_line(script: &ScriptBytes, event: &TransparentEvent) -> Line {
     match event {
         TransparentEvent::Receive(receive) => Line {
+            metadata: metadata_line(event),
             script: hex::encode(script.as_slice()),
             kind: "receive",
             height: receive.height,
@@ -100,6 +102,7 @@ fn journal_line(script: &ScriptBytes, event: &TransparentEvent) -> Line {
             spent_index: 0,
         },
         TransparentEvent::Spend(spend) => Line {
+            metadata: metadata_line(event),
             script: hex::encode(script.as_slice()),
             kind: "spend",
             height: spend.height,
@@ -114,6 +117,58 @@ fn journal_line(script: &ScriptBytes, event: &TransparentEvent) -> Line {
     }
 }
 
+fn metadata_line(event: &TransparentEvent) -> Option<(String, u32, bool)> {
+    event.metadata().map(|m| {
+        (
+            match m.fee {
+                transparent_events::FeeState::Exact(fee) => format!("exact:{fee}"),
+                transparent_events::FeeState::Unknown => "unknown".into(),
+                transparent_events::FeeState::NotApplicable => "not-applicable".into(),
+            },
+            m.transparent_input_count,
+            m.has_shielded_components,
+        )
+    })
+}
+
+/// Decimal fallback uses exact textual arithmetic, never floating-point rounding.
+fn decimal_zatoshis(value: &serde_json::Value) -> Result<i128, BoxError> {
+    let text = value
+        .as_str()
+        .map(str::to_string)
+        .unwrap_or_else(|| value.to_string());
+    let negative = text.starts_with('-');
+    let unsigned = text.strip_prefix('-').unwrap_or(&text);
+    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if fraction.len() > 8
+        || !whole.bytes().all(|b| b.is_ascii_digit())
+        || !fraction.bytes().all(|b| b.is_ascii_digit())
+    {
+        return Err("noncanonical decimal amount".into());
+    }
+    let whole = whole.parse::<i128>()?;
+    let fraction = format!("{fraction:0<8}").parse::<i128>()?;
+    let amount = whole
+        .checked_mul(100_000_000)
+        .and_then(|n| n.checked_add(fraction))
+        .ok_or("amount overflow")?;
+    Ok(if negative { -amount } else { amount })
+}
+
+fn signed_amount(
+    object: &serde_json::Value,
+    integer: &str,
+    decimal: &str,
+) -> Result<i128, BoxError> {
+    if let Some(value) = object.get(integer) {
+        return value
+            .as_i64()
+            .map(i128::from)
+            .ok_or_else(|| "invalid integer monetary amount".into());
+    }
+    decimal_zatoshis(object.get(decimal).ok_or("missing monetary amount")?)
+}
+
 /// The indexing rule, restated: nonempty and not `OP_RETURN` (0x6a) first.
 fn indexable(script: &[u8]) -> bool {
     !script.is_empty() && script[0] != 0x6a
@@ -121,6 +176,8 @@ fn indexable(script: &[u8]) -> bool {
 
 /// A verbose transaction's parts this check needs.
 struct VerboseTx {
+    shielded_balance: i128,
+    has_shielded_components: bool,
     txid: String,
     coinbase: bool,
     inputs: Vec<(String, u32)>,
@@ -173,20 +230,48 @@ fn parse_verbose(value: &serde_json::Value) -> Result<VerboseTx, BoxError> {
             Some(zat) => zat
                 .as_u64()
                 .ok_or_else(|| format!("{txid}: output {n} has a non-integer valueZat"))?,
-            None => {
-                // Only a decimal ZEC figure: scale and round. Every amount on
-                // the chain is an integer below 2^53 zatoshi, so the rounding
-                // recovers it exactly.
-                let zec = output
-                    .get("value")
-                    .and_then(serde_json::Value::as_f64)
-                    .ok_or_else(|| format!("{txid}: output {n} without value"))?;
-                (zec * 1e8).round() as u64
-            }
+            None => u64::try_from(decimal_zatoshis(
+                output.get("value").ok_or("output without value")?,
+            )?)?,
         };
         outputs.push((hex::decode(script_hex)?, value));
     }
+    let nonempty = |key: &str| {
+        value
+            .get(key)
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|items| !items.is_empty())
+    };
+    let mut shielded_balance = 0i128;
+    let mut has_shielded_components =
+        nonempty("vShieldedSpend") || nonempty("vShieldedOutput") || nonempty("vjoinsplit");
+    if let Some(joinsplits) = value
+        .get("vjoinsplit")
+        .and_then(serde_json::Value::as_array)
+    {
+        for joinsplit in joinsplits {
+            shielded_balance += signed_amount(joinsplit, "vpub_newZat", "vpub_new")?
+                - signed_amount(joinsplit, "vpub_oldZat", "vpub_old")?;
+        }
+    }
+    if value.get("valueBalanceZat").is_some() || value.get("valueBalance").is_some() {
+        shielded_balance += signed_amount(value, "valueBalanceZat", "valueBalance")?;
+    } else if nonempty("vShieldedSpend") || nonempty("vShieldedOutput") {
+        return Err("Sapling bundle without balance".into());
+    }
+    for pool in ["orchard", "ironwood"] {
+        if let Some(bundle) = value.get(pool).filter(|b| !b.is_null()) {
+            let actions = bundle
+                .get("actions")
+                .and_then(serde_json::Value::as_array)
+                .ok_or("bundle without actions")?;
+            has_shielded_components |= !actions.is_empty();
+            shielded_balance += signed_amount(bundle, "valueBalanceZat", "valueBalance")?;
+        }
+    }
     Ok(VerboseTx {
+        shielded_balance,
+        has_shielded_components,
         txid,
         coinbase,
         inputs,
@@ -217,8 +302,12 @@ async fn verbose_transactions(
             .collect();
         match client.call_batch_values(&calls).await {
             Ok(values) => {
-                for value in values {
-                    all.push(parse_verbose(&value)?);
+                for (value, expected) in values.into_iter().zip(&txids[start..end]) {
+                    let tx = parse_verbose(&value)?;
+                    if tx.txid != *expected {
+                        return Err("verbose transaction identity differs".into());
+                    }
+                    all.push(tx);
                 }
                 start = end;
             }
@@ -239,6 +328,7 @@ async fn node_lines(
     client: &ZakuraClient,
     height: u64,
     batch: usize,
+    include_metadata: bool,
 ) -> Result<(String, Vec<Line>, u64), BoxError> {
     let block = client
         .call_value("getblock", serde_json::json!([height.to_string(), 1]))
@@ -264,10 +354,10 @@ async fn node_lines(
 
     // Outputs created in this block, then every earlier transaction the
     // block's inputs reach back to.
-    let mut scripts: HashMap<(String, u32), Vec<u8>> = HashMap::new();
+    let mut scripts: HashMap<(String, u32), (Vec<u8>, u64)> = HashMap::new();
     for tx in &transactions {
-        for (index, (script, _)) in tx.outputs.iter().enumerate() {
-            scripts.insert((tx.txid.clone(), index as u32), script.clone());
+        for (index, (script, value)) in tx.outputs.iter().enumerate() {
+            scripts.insert((tx.txid.clone(), index as u32), (script.clone(), *value));
         }
     }
     let wanted: BTreeSet<String> = transactions
@@ -279,8 +369,8 @@ async fn node_lines(
     let wanted: Vec<String> = wanted.into_iter().collect();
     let lookups = wanted.len() as u64;
     for tx in verbose_transactions(client, &wanted, batch).await? {
-        for (index, (script, _)) in tx.outputs.iter().enumerate() {
-            scripts.insert((tx.txid.clone(), index as u32), script.clone());
+        for (index, (script, value)) in tx.outputs.iter().enumerate() {
+            scripts.insert((tx.txid.clone(), index as u32), (script.clone(), *value));
         }
     }
 
@@ -288,11 +378,31 @@ async fn node_lines(
     let mut lines = Vec::new();
     for (transaction_index, tx) in transactions.iter().enumerate() {
         let transaction_index = u16::try_from(transaction_index)?;
+        let input_value = tx.inputs.iter().try_fold(0i128, |sum, outpoint| {
+            let (_, value) = scripts.get(outpoint).ok_or("unresolved oracle prevout")?;
+            Ok::<_, BoxError>(sum + i128::from(*value))
+        })?;
+        let output_value: i128 = tx.outputs.iter().map(|(_, value)| i128::from(*value)).sum();
+        let fee = if tx.coinbase {
+            "not-applicable".to_string()
+        } else {
+            let fee = u64::try_from(input_value - output_value + tx.shielded_balance)?;
+            if fee > transparent_events::MAX_MONEY {
+                return Err("oracle fee exceeds monetary bound".into());
+            }
+            format!("exact:{fee}")
+        };
+        let metadata = include_metadata.then_some((
+            fee,
+            u32::try_from(tx.inputs.len())?,
+            tx.has_shielded_components,
+        ));
         for (output_index, (script, value)) in tx.outputs.iter().enumerate() {
             if !indexable(script) {
                 continue;
             }
             lines.push(Line {
+                metadata: metadata.clone(),
                 script: hex::encode(script),
                 kind: "receive",
                 height: height32,
@@ -306,7 +416,7 @@ async fn node_lines(
             });
         }
         for (input_index, (spent_txid, spent_index)) in tx.inputs.iter().enumerate() {
-            let script = scripts
+            let (script, _) = scripts
                 .get(&(spent_txid.clone(), *spent_index))
                 .ok_or_else(|| {
                     format!(
@@ -318,6 +428,7 @@ async fn node_lines(
                 continue;
             }
             lines.push(Line {
+                metadata: metadata.clone(),
                 script: hex::encode(script),
                 kind: "spend",
                 height: height32,
@@ -432,7 +543,8 @@ async fn main() -> Result<(), BoxError> {
             .map(|(script, event)| journal_line(script, event))
             .collect();
         let started = std::time::Instant::now();
-        let (node_hash, node, lookups) = node_lines(&client, *height, cli.batch).await?;
+        let (node_hash, node, lookups) =
+            node_lines(&client, *height, cli.batch, store.version() == 3).await?;
         let journal_hash = entry.block_hash.to_display_hex();
         let missing = only_in(&node, &journal);
         let extra = only_in(&journal, &node);
@@ -476,7 +588,7 @@ async fn main() -> Result<(), BoxError> {
     }
 
     let record = serde_json::json!({
-        "schema": "transparent-event-spotcheck-v1",
+        "schema": "transparent-event-spotcheck-v2",
         "generated_at": chrono::Utc::now().to_rfc3339(),
         "tool_sha": cli.source_sha,
         "method": "node verbose getblock/getrawtransaction JSON, indexing rule reapplied; \
@@ -532,6 +644,7 @@ mod tests {
     #[test]
     fn multiset_difference_keeps_repetition() {
         let a = Line {
+            metadata: None,
             script: "aa".into(),
             kind: "receive",
             height: 1,

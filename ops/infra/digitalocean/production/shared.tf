@@ -3,7 +3,7 @@ locals {
   enhance_public_hostname     = "enhance-pir.valargroup.dev"
   # The transparent fleet terminates TLS on the worker rather than behind the
   # Enhance coordinator's Caddy. That Caddyfile is rendered and installed by
-  # deploy-enhance-pir.sh, and a token it does not substitute would fail
+  # Enhance coordinator deploys, and a token they do not substitute would fail
   # `caddy validate` on the next Enhance deploy -- a live service broken by a
   # change with nothing to do with it. When the coordinator daemon lands and
   # there is more than one worker, fronting moves there and this record follows.
@@ -82,7 +82,8 @@ resource "digitalocean_project_resources" "wallet" {
     [for worker in slice(digitalocean_droplet.enhance_worker, 0, 2) : worker.urn],
     [for worker in digitalocean_droplet.enhance_legacy_worker : worker.urn],
     [for worker in digitalocean_droplet.transparent_recent : worker.urn],
-    [for worker in digitalocean_droplet.transparent_archive : worker.urn],
+    # values() of a for_each resource is in name order: archive-01, archive-02, ...
+    [for worker in values(digitalocean_droplet.transparent_archive) : worker.urn],
     [for router in digitalocean_droplet.transparent_router : router.urn],
     [for host in digitalocean_droplet.transparent_loadgen : host.urn],
   )
@@ -122,4 +123,15 @@ moved {
 moved {
   from = digitalocean_project_resources.enhance
   to   = digitalocean_project_resources.wallet
+}
+
+# The archive owners were created with `count`; keep them under their names.
+moved {
+  from = digitalocean_droplet.transparent_archive[0]
+  to   = digitalocean_droplet.transparent_archive["transparent-pir-archive-01"]
+}
+
+moved {
+  from = digitalocean_droplet.transparent_archive[1]
+  to   = digitalocean_droplet.transparent_archive["transparent-pir-archive-02"]
 }

@@ -1,5 +1,6 @@
-# Rendered by scripts/deploy-enhance-pir.sh: ENHANCE_PUBLIC_HOST is replaced with the
-# host of ENHANCE_PUBLIC_URL before the file is validated and installed.
+# Rendered during Enhance coordinator deploys: ENHANCE_PUBLIC_HOST is replaced with
+# the host of ENHANCE_PUBLIC_URL before the file is validated and installed.
+# (deploy-enhance-pir.sh, which used to do this, was removed in afdb4b6d.)
 ENHANCE_PUBLIC_HOST {
 	tls {
 		issuer acme {

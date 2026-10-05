@@ -1,0 +1,11 @@
+{
+"cpu_model": "DO-Premium-Intel",
+"nproc": 8,
+"available_parallelism_build_pool_default": "1 thread (process quota); comparison runs set TRANSPARENT_BUILD_THREADS=2",
+"avx512f": false,
+"sha_ni": false,
+"mem_total_kib": 32866108,
+"kernel": "6.8.0-134-generic",
+"os": "Ubuntu 24.04.3 LTS",
+"rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+}

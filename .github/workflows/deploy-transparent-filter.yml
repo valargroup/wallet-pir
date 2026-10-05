@@ -1,8 +1,8 @@
 name: Deploy transparent filter service
 
 # Ships the transparent filter service on its own, without an Enhance rollout.
-# It shares the coordinator host with Enhance, so it shares that workflow's
-# concurrency group and its SSH material, and it saves rollback copies under
+# It shares the coordinator host with Enhance, so it keeps the concurrency
+# group and SSH material the (since removed) Enhance workflow used, and it saves rollback copies under
 # the same paths -- but it touches no Enhance unit and no Caddyfile.
 #
 # The staged binary is asked to read the shard directory the unit will name

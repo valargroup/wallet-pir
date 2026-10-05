@@ -1,0 +1,13 @@
+diff --git a/transparent/services/transparent-shard-server/src/runtime.rs b/transparent/services/transparent-shard-server/src/runtime.rs
+index 5f955a0e..1ff68c91 100644
+--- a/transparent/services/transparent-shard-server/src/runtime.rs
++++ b/transparent/services/transparent-shard-server/src/runtime.rs
+@@ -329,7 +329,7 @@ impl TableRuntime {
+         // hint, and every byte published from it, is the same. The batched
+         // hint computes the reference's exact integers several times faster.
+         let used = used_blocks(rows, profile.row_bytes, profile.rows);
+-        let hint = native::batched_hint::hint(
++        let hint = native::hint(
+             &profile.masks[..used],
+             used * native::D,
+             profile.cols,

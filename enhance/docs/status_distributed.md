@@ -77,6 +77,56 @@ installs the forwarding-only `status-control` key with explicit `permitopen`
 (8481, 8482, 8484) and `permitlisten` (8495) restrictions. The CUDA worker
 remains an optional build (`--features cuda`, `--cuda`) and is not deployed.
 
+### Supervised control sessions (not deployed)
+
+`wallet-pir-control-sessions.service` is the intended replacement for
+`status-control-tunnel` and `status-query-tunnel`. It is
+[the shared control-session supervisor](../../docs/control-sessions.md), and it
+is not installed on the coordinator. `ops/deploy/control-sessions.status.example.json`
+carries the two tunnels' forwards unchanged: 8481, 8482 and 8495 on one master
+with compression, and 8492 to 8484 on another. It keeps the same
+forwarding-only account, key and known-hosts file, and `ServerAliveCountMax 4`.
+The tests compare it with both unit templates.
+
+The swap changes only the transport:
+
+- a supervised master per tunnel, with bounded restart backoff and a status
+  file, instead of systemd restarting bare `ssh`;
+- a known-hosts digest pin;
+- no system SSH configuration.
+
+Before the swap, add `AllowStreamLocalForwarding no` to the host's
+`status-control` Match block: the current key line does not stop the key from
+creating remote Unix-socket listeners. The rollout and rollback steps are in
+[the control-session guide](../../docs/control-sessions.md#rollout-order).
+
+### Deploy CLI
+
+`ops/scripts/wallet-pir-deploy.py` can deploy Status as the `status` service.
+Read-only runs against production on 2026-09-30 found the live worker and router
+units identical to their templates; it has not yet restarted a Status role, so
+the manual rollout remains the procedure and the fallback. Commands, inventory, locking, journal
+and rollback are described in
+[the Enhance deployment guide](deployment.md#deploy-cli).
+
+For the Status worker and router the tool renders the whole unit from its
+`.service.in` template, with `@RELEASE@` set to `/opt/status-pir/releases/<sha256>` and
+`@NETWORK@` taken from the inventory. The rollout order is worker, router, then
+the coordinator's controller, whose binary alone is swapped. The tunnels are not managed.
+[deploy.toml](../ops/deploy/deploy.toml) records each role's `/control/health`
+or `/internal/health` readiness check. The `status-pir` release kind in
+`tools/ci/release.py` bundles the binary with these templates. It is assembled
+from the `native-reinspiring` target directory; full CI uploads it as the
+`status-pir-<sha>` artifact.
+
+The tool compares each rendered unit's effective configuration with the live
+one and refuses any difference beyond the binary unless `--allow-unit-drift` is
+given. On 2026-09-30 the live worker and router units matched their templates
+(`MemoryMax=12G` and 3G, `STATUS_PREPARATION_THREADS=6`), and a preflight with
+the running binary planned no restart. The controller is not rendered: its
+arguments (`controller-native.json`, `--public-listen`) live in drop-ins from
+earlier rollouts, so it is an `exec-drop-in` role like the Enhance units.
+
 ## Publication and recovery
 
 Control binds network, recovery epoch, generation, process incarnation and

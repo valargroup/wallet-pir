@@ -1,0 +1,382 @@
+{
+  "applyable": true,
+  "complete": true,
+  "errored": false,
+  "format_version": "1.2",
+  "resource_changes": [
+    {
+      "address": "digitalocean_droplet.recent[\"transparent-pir-recent-05\"]",
+      "change": {
+        "actions": [
+          "no-op"
+        ],
+        "after": {
+          "backup_policy": [],
+          "backups": false,
+          "created_at": "2026-09-29T10:00:00Z",
+          "disk": 160,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "id": "512345678",
+          "image": "171234567",
+          "ipv4_address": "203.0.113.20",
+          "ipv4_address_private": "10.142.0.20",
+          "ipv6": true,
+          "ipv6_address": "2a03:b0c0::20",
+          "locked": false,
+          "memory": 8192,
+          "monitoring": true,
+          "name": "transparent-pir-recent-05",
+          "price_hourly": 0.07143,
+          "price_monthly": 48,
+          "private_networking": true,
+          "public_networking": true,
+          "region": "ams3",
+          "resize_disk": true,
+          "size": "s-4vcpu-8gb",
+          "ssh_keys": [
+            "12345"
+          ],
+          "status": "active",
+          "tags": [
+            "transparent-pir-worker"
+          ],
+          "timeouts": null,
+          "urn": "do:droplet:512345678",
+          "user_data": "#cloud-config\n# fixture: the real value holds the pinned host key\n",
+          "vcpus": 4,
+          "volume_ids": [],
+          "vpc_uuid": "00000000-0000-4000-8000-00000000a142"
+        },
+        "after_sensitive": {
+          "user_data": true
+        },
+        "after_unknown": {},
+        "before": {
+          "backup_policy": [],
+          "backups": false,
+          "created_at": "2026-09-29T10:00:00Z",
+          "disk": 160,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "id": "512345678",
+          "image": "171234567",
+          "ipv4_address": "203.0.113.20",
+          "ipv4_address_private": "10.142.0.20",
+          "ipv6": true,
+          "ipv6_address": "2a03:b0c0::20",
+          "locked": false,
+          "memory": 8192,
+          "monitoring": true,
+          "name": "transparent-pir-recent-05",
+          "price_hourly": 0.07143,
+          "price_monthly": 48,
+          "private_networking": true,
+          "public_networking": true,
+          "region": "ams3",
+          "resize_disk": true,
+          "size": "s-4vcpu-8gb",
+          "ssh_keys": [
+            "12345"
+          ],
+          "status": "active",
+          "tags": [
+            "transparent-pir-worker"
+          ],
+          "timeouts": null,
+          "urn": "do:droplet:512345678",
+          "user_data": "#cloud-config\n# fixture: the real value holds the pinned host key\n",
+          "vcpus": 4,
+          "volume_ids": [],
+          "vpc_uuid": "00000000-0000-4000-8000-00000000a142"
+        },
+        "before_sensitive": {
+          "user_data": true
+        }
+      },
+      "index": "transparent-pir-recent-05",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_droplet"
+    },
+    {
+      "address": "digitalocean_project_resources.recent[\"transparent-pir-recent-05\"]",
+      "change": {
+        "actions": [
+          "no-op"
+        ],
+        "after": {
+          "id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "project": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "resources": [
+            "do:droplet:512345678"
+          ],
+          "timeouts": null
+        },
+        "after_sensitive": {},
+        "after_unknown": {},
+        "before": {
+          "id": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "project": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "resources": [
+            "do:droplet:512345678"
+          ],
+          "timeouts": null
+        },
+        "before_sensitive": {}
+      },
+      "index": "transparent-pir-recent-05",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_project_resources"
+    },
+    {
+      "address": "digitalocean_droplet.recent[\"transparent-pir-recent-06\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "backup_policy": [],
+          "backups": false,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "image": "ubuntu-24-04-x64",
+          "ipv6": true,
+          "monitoring": true,
+          "name": "transparent-pir-recent-06",
+          "region": "ams3",
+          "resize_disk": true,
+          "size": "s-4vcpu-8gb",
+          "ssh_keys": [
+            "12345"
+          ],
+          "tags": [
+            "transparent-pir-worker"
+          ],
+          "timeouts": null,
+          "user_data": "#cloud-config\n# fixture: the real value holds the pinned host key\n",
+          "vpc_uuid": "00000000-0000-4000-8000-00000000a142"
+        },
+        "after_sensitive": {
+          "user_data": true
+        },
+        "after_unknown": {
+          "backup_policy": [],
+          "created_at": true,
+          "disk": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv4_address_private": true,
+          "ipv6_address": true,
+          "locked": true,
+          "memory": true,
+          "price_hourly": true,
+          "price_monthly": true,
+          "private_networking": true,
+          "public_networking": true,
+          "ssh_keys": [
+            false
+          ],
+          "status": true,
+          "tags": [
+            false
+          ],
+          "urn": true,
+          "vcpus": true,
+          "volume_ids": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "transparent-pir-recent-06",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_droplet"
+    },
+    {
+      "address": "digitalocean_project_resources.recent[\"transparent-pir-recent-06\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "project": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "resources": [
+            null
+          ]
+        },
+        "after_sensitive": {},
+        "after_unknown": {
+          "id": true,
+          "resources": [
+            true
+          ]
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "transparent-pir-recent-06",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_project_resources"
+    },
+    {
+      "address": "digitalocean_droplet.recent[\"transparent-pir-recent-07\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "backup_policy": [],
+          "backups": false,
+          "droplet_agent": null,
+          "gpu_partition_mode": null,
+          "graceful_shutdown": null,
+          "image": "ubuntu-24-04-x64",
+          "ipv6": true,
+          "monitoring": true,
+          "name": "transparent-pir-recent-07",
+          "region": "ams3",
+          "resize_disk": true,
+          "size": "s-4vcpu-8gb",
+          "ssh_keys": [
+            "12345"
+          ],
+          "tags": [
+            "transparent-pir-worker"
+          ],
+          "timeouts": null,
+          "user_data": "#cloud-config\n# fixture: the real value holds the pinned host key\n",
+          "vpc_uuid": "00000000-0000-4000-8000-00000000a142"
+        },
+        "after_sensitive": {
+          "user_data": true
+        },
+        "after_unknown": {
+          "backup_policy": [],
+          "created_at": true,
+          "disk": true,
+          "id": true,
+          "ipv4_address": true,
+          "ipv4_address_private": true,
+          "ipv6_address": true,
+          "locked": true,
+          "memory": true,
+          "price_hourly": true,
+          "price_monthly": true,
+          "private_networking": true,
+          "public_networking": true,
+          "ssh_keys": [
+            false
+          ],
+          "status": true,
+          "tags": [
+            false
+          ],
+          "urn": true,
+          "vcpus": true,
+          "volume_ids": true
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "transparent-pir-recent-07",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_droplet"
+    },
+    {
+      "address": "digitalocean_project_resources.recent[\"transparent-pir-recent-07\"]",
+      "change": {
+        "actions": [
+          "create"
+        ],
+        "after": {
+          "project": "85639967-fecb-4c8d-88be-c0e3dee3f86c",
+          "resources": [
+            null
+          ]
+        },
+        "after_sensitive": {},
+        "after_unknown": {
+          "id": true,
+          "resources": [
+            true
+          ]
+        },
+        "before": null,
+        "before_sensitive": false
+      },
+      "index": "transparent-pir-recent-07",
+      "mode": "managed",
+      "name": "recent",
+      "provider_name": "registry.terraform.io/digitalocean/digitalocean",
+      "type": "digitalocean_project_resources"
+    }
+  ],
+  "resource_drift": [],
+  "terraform_version": "1.14.8",
+  "timestamp": "2026-09-29T12:00:00Z",
+  "variables": {
+    "deploy_public_key": {
+      "value": ""
+    },
+    "digitalocean_token": {
+      "value": "fixture-not-a-token"
+    },
+    "host_keys": {
+      "value": {
+        "transparent-pir-recent-06": {
+          "private": "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n",
+          "public": "ssh-ed25519 AAAAfixture transparent-pir-recent-06"
+        },
+        "transparent-pir-recent-07": {
+          "private": "-----BEGIN OPENSSH PRIVATE KEY-----\nfixture\n-----END OPENSSH PRIVATE KEY-----\n",
+          "public": "ssh-ed25519 AAAAfixture transparent-pir-recent-07"
+        }
+      }
+    },
+    "members": {
+      "value": {
+        "transparent-pir-recent-05": {
+          "image": "ubuntu-24-04-x64",
+          "size": "s-4vcpu-8gb"
+        },
+        "transparent-pir-recent-06": {
+          "image": "ubuntu-24-04-x64",
+          "size": "s-4vcpu-8gb"
+        },
+        "transparent-pir-recent-07": {
+          "image": "ubuntu-24-04-x64",
+          "size": "s-4vcpu-8gb"
+        }
+      }
+    },
+    "project_id": {
+      "value": "85639967-fecb-4c8d-88be-c0e3dee3f86c"
+    },
+    "region": {
+      "value": "ams3"
+    },
+    "ssh_key_ids": {
+      "value": [
+        "12345"
+      ]
+    },
+    "vpc_uuid": {
+      "value": "00000000-0000-4000-8000-00000000a142"
+    },
+    "worker_tag": {
+      "value": "transparent-pir-worker"
+    }
+  }
+}

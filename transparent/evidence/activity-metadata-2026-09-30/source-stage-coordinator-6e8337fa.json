@@ -1,0 +1,153 @@
+{
+  "inputs": {
+    "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "sha256": "1663ab1563acfa3b8eeba9d1997a639bd9a7bbcc07d1f63062c9f2335f6a950d",
+    "compressed_bytes": 554361,
+    "archive": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/source-ops.tar.gz",
+    "exports": [
+      "ops",
+      "transparent/ops",
+      "enhance/ops",
+      "tools/ci",
+      "shared/dev"
+    ]
+  },
+  "commands": [
+    {
+      "mode": "plan",
+      "exit_code": 0,
+      "seconds": 0.08190112502779812,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/plan.log"
+    },
+    {
+      "mode": "preflight",
+      "exit_code": 0,
+      "seconds": 2.158172458061017,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/preflight.log"
+    },
+    {
+      "mode": "stage",
+      "exit_code": 0,
+      "seconds": 5.727688957937062,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/stage.log",
+      "receipt_status": {
+        "archive_sha256": "1663ab1563acfa3b8eeba9d1997a639bd9a7bbcc07d1f63062c9f2335f6a950d",
+        "path": "/srv/transparent-activity/ops/sources/6e8337fa91f723e4383f074d2227b1720b341655",
+        "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+        "status": "staged"
+      }
+    },
+    {
+      "mode": "status",
+      "exit_code": 0,
+      "seconds": 2.2829145829891786,
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/status.log",
+      "receipt_status": {
+        "archive_sha256": "1663ab1563acfa3b8eeba9d1997a639bd9a7bbcc07d1f63062c9f2335f6a950d",
+        "path": "/srv/transparent-activity/ops/sources/6e8337fa91f723e4383f074d2227b1720b341655",
+        "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+        "status": "staged",
+        "verified_files": 275
+      }
+    }
+  ],
+  "receipt_pid": 1827147,
+  "publication_readonly": [
+    {
+      "mode": "plan",
+      "exit_code": 0,
+      "reply": {
+        "geometries": {
+          "archive_geometry": "archive-wide",
+          "directory_choice": "all",
+          "range_profile": "zcash-transparent-range-v2",
+          "recent_geometry": "recent-4k-8k"
+        },
+        "journal": "/srv/transparent-activity/full-v3/journal",
+        "output": "/srv/transparent-activity/full-v11/publications/initial",
+        "plan_sha256": "f72758aae901f115374699a6a65486b8a3fcad13b114721086053710af5157b4",
+        "properties": [
+          "CPUQuota=400%",
+          "MemoryHigh=14G",
+          "MemoryMax=16G",
+          "MemorySwapMax=0",
+          "Nice=10",
+          "IOWeight=20",
+          "Restart=no",
+          "KillMode=control-group",
+          "TimeoutStopSec=20",
+          "RemainAfterExit=yes"
+        ],
+        "release_result_sha256": "2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8",
+        "release_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+        "source_sha": "6e8337fa91f723e4383f074d2227b1720b341655",
+        "through": 3500738,
+        "unit": "transparent-activity-full-publication-v11",
+        "version": 1
+      },
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-plan.log"
+    },
+    {
+      "mode": "status",
+      "exit_code": 0,
+      "reply": {
+        "status": "not-started",
+        "unit": "transparent-activity-full-publication-v11"
+      },
+      "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-status.log"
+    }
+  ],
+  "publication_preflight": {
+    "exit_code": 1,
+    "seconds": 2.3252605830784887,
+    "expected_refusal": true,
+    "status": "blocked-by-incomplete-ingestion",
+    "passing_evidence": false,
+    "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-preflight-final.log",
+    "prior_attempts": [
+      {
+        "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-preflight.log",
+        "local_parser": "failed by assuming stderr error channel",
+        "remote_exit_code": "not retained"
+      },
+      {
+        "log": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/6e8337fa91f723e4383f074d2227b1720b341655/publication-preflight-retry.log",
+        "local_parser": "failed by assuming exit status 2",
+        "remote_exit_code": "not retained"
+      }
+    ],
+    "remote_mutations": false
+  },
+  "canonical_schema": "transparent-shard-v10",
+  "schema_transaction_applied": false,
+  "native_artifacts_staged": false,
+  "jobs_observed_2026_10_01_0207_utc": {
+    "ingest_pid": 1689410,
+    "guard_pid": 1689418,
+    "candidate_observation_pid": 1664850,
+    "all_active": true,
+    "ingest_restarts": 0,
+    "quality_supervisor_unit": "transparent-quality-rollout.service",
+    "quality_supervisor_active_state": "failed",
+    "quality_supervisor_pid": 0
+  },
+  "backfill_2026_10_01_0208_utc": {
+    "through": 2110000,
+    "target": 3500738,
+    "events": 311377094,
+    "eta_minutes_linear_variable": 182.1
+  },
+  "main_ci": {
+    "head": "6e8337fa91f723e4383f074d2227b1720b341655",
+    "fast": {
+      "run": 36804203601,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    "full": {
+      "run": 36804203576,
+      "status": "queued",
+      "conclusion": ""
+    }
+  }
+}

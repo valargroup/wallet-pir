@@ -1,0 +1,28 @@
+{
+  "gate": "allocated-worker-startup-focused",
+  "status": "passed",
+  "base_sha": "289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "owner": "7c14a2f82859481dbd59c3f9458b280b",
+  "seconds": 15.956891041016206,
+  "command": "make check-fast BASE=289d7c3bd40b1309484c35d8c79e9abbdf9e9ff3",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_host.py": "663708b6a6a79571a1ac8e730963b012fd751966ff4dff330566d310c61dffeb",
+    "transparent/ops/lib/activity_schema_product.py": "7c1eb507fa5b01e83044630353279ba40504ef540bd909f8d6bd6ce9fe2aa6a8",
+    "transparent/ops/tests/test_activity_schema_host.py": "51dcbfdf5326feeb6e65f88be41cf0272252877c772e509c2680db2ad740dc16",
+    "transparent/ops/tests/test_activity_schema_product.py": "62020d92d56d43b7d2ed8b634560dc1b4c59e47d2528f5c8c6819879c7d6b4db"
+  },
+  "startup_observation_seconds": 100,
+  "startup_transport_seconds": 130,
+  "warm_verification_seconds": {
+    "candidate": 300,
+    "rollback": 250
+  },
+  "rollback_phase_budget_seconds": [
+    60,
+    140,
+    300,
+    100,
+    140
+  ],
+  "scope": "Bounded worker startup observations before separate mandatory proof; no startup observation claims qualification. Existing 140-second restore and total740-second budgets unchanged. Actual cutover/cold rollback rerun remains required; native inputs unchanged."
+}

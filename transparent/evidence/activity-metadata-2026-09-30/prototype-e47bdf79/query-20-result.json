@@ -1,0 +1,40 @@
+{
+  "source_sha": "e47bdf7904a359411e596ce4bf6a489b8a47830e",
+  "pid": 1523051,
+  "started_unix": 1790794840.2256489,
+  "driver_sha256": "7a5c57a9099afe3e7fe7cbada3ed3eaa4c5f21cf8e5f9978faa2b391e1be7a47",
+  "binary_sha256": "82ff43e581bebe07146cfbc189629ad93492fc4ae767ea6eb24f29786ce5fcd4",
+  "fixture_sha256": "0c82e07cb79f4683ba38da6d616893f6a16443b5c05463f71be5136db9d5de4b",
+  "target_qps": 20,
+  "duration_seconds": 600,
+  "processes": 4,
+  "url": "http://127.0.0.1:8192",
+  "result": "/srv/transparent-activity/prototype/e47bdf79/evidence/query-20/result.json",
+  "child_pids": [
+    1523059,
+    1523060,
+    1523061,
+    1523062
+  ],
+  "ended_unix": 1790795440.6507313,
+  "status": "passed",
+  "failures": [],
+  "exact": 11965,
+  "logical_failures": 0,
+  "failed_attempts": 0,
+  "failed_attempt_ratio": 0.0,
+  "completed_qps": 19.941666666666666,
+  "p50_seconds": 0.003036886,
+  "p99_seconds": 0.031245821,
+  "missed_slots": 0,
+  "child_exit_codes": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "limitations": [
+    "Candidate endpoint only; production background traffic is measured separately",
+    "Row equality does not establish extraction correctness or completed-wallet capacity"
+  ]
+}

@@ -33,6 +33,7 @@ pub fn receive(tag: u8, index: u32, value: u64, height: u32) -> StoredEvent {
     StoredEvent {
         script: script(tag),
         event: TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height,
             txid: txid(tag),
             transaction_index: 0,
@@ -49,6 +50,7 @@ pub fn spend(script_tag: u8, spent: u8, spent_index: u32, spender: u8, height: u
     StoredEvent {
         script: script(script_tag),
         event: TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height,
             spending_txid: txid(spender),
             transaction_index: 1,
@@ -63,6 +65,7 @@ pub fn spend(script_tag: u8, spent: u8, spent_index: u32, spender: u8, height: u
 
 pub fn identity() -> SetIdentity {
     SetIdentity {
+        shard_schema: transparent_shard::SCHEMA.to_string(),
         network: "main".into(),
         genesis_hash: "00".repeat(32),
         profile: "zcash-transparent-range-v1".into(),

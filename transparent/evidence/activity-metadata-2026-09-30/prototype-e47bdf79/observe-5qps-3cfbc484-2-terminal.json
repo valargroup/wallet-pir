@@ -1,0 +1,60 @@
+{
+  "owner": {
+    "binary_sha256": "c23ca0a29fd6220670851f23fd41bb5eb49262ffb52ef528e9577b1bdd8650fa",
+    "child_pids": [
+      1664851
+    ],
+    "driver_sha256": "7a5c57a9099afe3e7fe7cbada3ed3eaa4c5f21cf8e5f9978faa2b391e1be7a47",
+    "duration_seconds": 21600,
+    "fixture_sha256": "0c82e07cb79f4683ba38da6d616893f6a16443b5c05463f71be5136db9d5de4b",
+    "pid": 1664850,
+    "processes": 1,
+    "result": "/srv/transparent-activity/prototype/e47bdf79/evidence/observe-5qps-3cfbc484-2/result.json",
+    "source_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+    "started_unix": 1790804513.1742685,
+    "target_qps": 5,
+    "url": "http://127.0.0.1:8192"
+  },
+  "owner_inputs_agree": true,
+  "result": {
+    "binary_sha256": "c23ca0a29fd6220670851f23fd41bb5eb49262ffb52ef528e9577b1bdd8650fa",
+    "child_exit_codes": [
+      0
+    ],
+    "child_pids": [
+      1664851
+    ],
+    "completed_qps": 4.987962962962963,
+    "driver_sha256": "7a5c57a9099afe3e7fe7cbada3ed3eaa4c5f21cf8e5f9978faa2b391e1be7a47",
+    "duration_seconds": 21600,
+    "ended_unix": 1790826118.5315104,
+    "exact": 107740,
+    "failed_attempt_ratio": 0.0,
+    "failed_attempts": 0,
+    "failures": [],
+    "fixture_sha256": "0c82e07cb79f4683ba38da6d616893f6a16443b5c05463f71be5136db9d5de4b",
+    "limitations": [
+      "Candidate endpoint only; production background traffic is measured separately",
+      "Row equality does not establish extraction correctness or completed-wallet capacity"
+    ],
+    "logical_failures": 0,
+    "missed_slots": 5,
+    "p50_seconds": 0.004117059,
+    "p99_seconds": 0.029808073,
+    "pid": 1664850,
+    "processes": 1,
+    "result": "/srv/transparent-activity/prototype/e47bdf79/evidence/observe-5qps-3cfbc484-2/result.json",
+    "source_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+    "started_unix": 1790804513.1742685,
+    "status": "passed",
+    "target_qps": 5,
+    "url": "http://127.0.0.1:8192"
+  },
+  "state": {
+    "ActiveState": "inactive",
+    "ExecMainStatus": "0",
+    "MainPID": "0",
+    "NRestarts": "0",
+    "Result": "success"
+  }
+}

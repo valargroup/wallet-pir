@@ -192,6 +192,17 @@ impl Occupancy {
     }
 }
 
+/// What [`Sealer::project`] reports about a block before it is absorbed.
+struct Projection {
+    scripts: u64,
+    fragments: u64,
+    inline_events: u64,
+    directory_bytes: u64,
+    page_rows: u64,
+    txids: u64,
+    events: u64,
+}
+
 /// A sealed shard's extent and contents.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SealedShard {
@@ -537,15 +548,19 @@ impl Sealer {
             .collect()
     }
 
+    /// The occupancy adding `events` would produce, computed on a copy. The
+    /// reference [`Self::project`] is tested against.
+    #[cfg(test)]
     fn projected(&self, events: &[(ScriptBytes, TransparentEvent)]) -> Occupancy {
+        let histories = self.updated_histories(events);
         let mut scripts = self.scripts.len() as u64;
         let mut fragments = self.fragments;
         let mut inline_events = self.inline_events;
         let mut directory_bytes = self.directory_bytes;
         let mut demand = self.demand.clone();
-        for (script, updated) in self.updated_histories(events) {
+        for (script, updated) in &histories {
             let empty = HistoryLayout::default();
-            let old = self.scripts.get(&script).unwrap_or(&empty);
+            let old = self.scripts.get(script).unwrap_or(&empty);
             if old.events == 0 {
                 scripts += 1;
             }
@@ -559,7 +574,7 @@ impl Sealer {
                         old.directory_bytes() as u64
                     }
                     + updated.directory_bytes() as u64;
-                demand.shift(old, &updated);
+                demand.shift(old, updated);
             }
         }
         let added_txids: HashSet<_> = events.iter().map(|(_, event)| event.txid()).collect();
@@ -585,6 +600,68 @@ impl Sealer {
         }
     }
 
+    /// The figures a capacity decision reads if `events`, with their
+    /// [`Self::updated_histories`], were added.
+    ///
+    /// The packed demand is shifted in place rather than on a copy: the
+    /// sealer runs this for every block of the tail at every publication, and
+    /// the block is almost always absorbed. [`Self::unproject`] restores it
+    /// when the shard closes first. The row count computed here stays cached
+    /// for [`Self::reached_target`].
+    fn project(
+        &mut self,
+        histories: &[(Vec<u8>, HistoryLayout)],
+        events: &[(ScriptBytes, TransparentEvent)],
+    ) -> Projection {
+        let mut projection = Projection {
+            scripts: self.scripts.len() as u64,
+            fragments: self.fragments,
+            inline_events: self.inline_events,
+            directory_bytes: self.directory_bytes,
+            page_rows: 0,
+            txids: 0,
+            events: self.events + events.len() as u64,
+        };
+        for (script, updated) in histories {
+            let empty = HistoryLayout::default();
+            let old = self.scripts.get(script).unwrap_or(&empty);
+            if old.events == 0 {
+                projection.scripts += 1;
+            }
+            projection.fragments += u64::from(updated.fragments - old.fragments);
+            projection.inline_events += (updated.inline.len() - old.inline.len()) as u64;
+            if script.len() <= MAX_SCRIPT_BYTES {
+                projection.directory_bytes = projection.directory_bytes
+                    - if old.events == 0 {
+                        0
+                    } else {
+                        old.directory_bytes() as u64
+                    }
+                    + updated.directory_bytes() as u64;
+                self.demand.shift(old, updated);
+            }
+        }
+        let added_txids: HashSet<_> = events.iter().map(|(_, event)| event.txid()).collect();
+        projection.txids = self.txids.len() as u64
+            + added_txids
+                .iter()
+                .filter(|id| !self.txids.contains(*id))
+                .count() as u64;
+        projection.page_rows = Self::page_rows(self.basis, projection.fragments, &self.demand);
+        projection
+    }
+
+    /// Undoes [`Self::project`]'s shift of the packed demand.
+    fn unproject(&mut self, histories: &[(Vec<u8>, HistoryLayout)]) {
+        for (script, updated) in histories {
+            if script.len() <= MAX_SCRIPT_BYTES {
+                let empty = HistoryLayout::default();
+                let old = self.scripts.get(script).unwrap_or(&empty);
+                self.demand.shift(updated, old);
+            }
+        }
+    }
+
     fn directory_limit(&self) -> Limit {
         let capacity = self.geometry.directory_rows
             * (self.geometry.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES)
@@ -595,7 +672,7 @@ impl Sealer {
         }
     }
 
-    fn over_capacity(&self, projected: &Occupancy) -> Option<(&'static str, u64, u64)> {
+    fn over_capacity(&self, projected: &Projection) -> Option<(&'static str, u64, u64)> {
         for (name, value, limit) in [
             ("scripts", projected.scripts, self.policy.scripts),
             (
@@ -613,15 +690,20 @@ impl Sealer {
     }
 
     fn reached_target(&self) -> Option<&'static str> {
-        let occupancy = self.occupancy();
+        // The three figures `occupancy()` would report, without cloning the
+        // packed demand it carries: this runs after every block.
         for (name, value, limit) in [
-            ("scripts", occupancy.scripts, self.policy.scripts),
+            ("scripts", self.scripts.len() as u64, self.policy.scripts),
             (
                 "directory bytes",
-                occupancy.directory_bytes,
+                self.directory_bytes,
                 self.directory_limit(),
             ),
-            ("page rows", occupancy.page_rows, self.policy.page_rows),
+            (
+                "page rows",
+                Self::page_rows(self.basis, self.fragments, &self.demand),
+                self.policy.page_rows,
+            ),
         ] {
             if value >= limit.target {
                 return Some(name);
@@ -630,32 +712,34 @@ impl Sealer {
         None
     }
 
-    fn absorb(&mut self, height: u64, events: &[(ScriptBytes, TransparentEvent)]) {
+    /// Adds a block, given the projection [`Self::project`] took for it
+    /// against the current state and the histories that projection used.
+    ///
+    /// The projection already computed every counter absorbing changes and
+    /// shifted the packed demand, so neither is applied a second time.
+    fn absorb(
+        &mut self,
+        height: u64,
+        events: &[(ScriptBytes, TransparentEvent)],
+        histories: Vec<(Vec<u8>, HistoryLayout)>,
+        projected: Projection,
+    ) {
         if self.start_height.is_none() {
             self.start_height = Some(height);
         }
         self.last_height = Some(height);
-        for (script, updated) in self.updated_histories(events) {
-            let empty = HistoryLayout::default();
-            let old = self.scripts.get(&script).unwrap_or(&empty);
-            self.fragments += u64::from(updated.fragments - old.fragments);
-            self.inline_events += (updated.inline.len() - old.inline.len()) as u64;
-            if script.len() <= MAX_SCRIPT_BYTES {
-                self.directory_bytes = self.directory_bytes
-                    - if old.events == 0 {
-                        0
-                    } else {
-                        old.directory_bytes() as u64
-                    }
-                    + updated.directory_bytes() as u64;
-                self.demand.shift(old, &updated);
-            }
+        self.fragments = projected.fragments;
+        self.inline_events = projected.inline_events;
+        self.directory_bytes = projected.directory_bytes;
+        self.events = projected.events;
+        for (script, updated) in histories {
             self.scripts.insert(script, updated);
         }
         for (_, event) in events {
             self.txids.insert(event.txid());
         }
-        self.events += events.len() as u64;
+        debug_assert_eq!(self.scripts.len() as u64, projected.scripts);
+        debug_assert_eq!(self.txids.len() as u64, projected.txids);
     }
 
     /// Offers one block to the sealer, returning the shards it sealed.
@@ -681,19 +765,25 @@ impl Sealer {
 
         let mut sealed = Vec::new();
         let mut oversized = None;
-        if let Some((quantity, _, _)) = self.over_capacity(&self.projected(events)) {
+        let mut histories = self.updated_histories(events);
+        let mut projected = self.project(&histories, events);
+        if let Some((quantity, _, _)) = self.over_capacity(&projected) {
             if self.start_height.is_some() {
+                // The shard closes without this block.
+                self.unproject(&histories);
                 sealed.push(self.close(Some(SealReason::WouldExceedCapacity(quantity))));
+                histories = self.updated_histories(events);
+                projected = self.project(&histories, events);
             }
             // Re-check against the now-empty shard. Still over means the block
             // exceeds a capacity by itself, so it becomes a shard of its own
             // and is sealed as soon as it is absorbed.
-            if let Some((quantity, _, _)) = self.over_capacity(&self.projected(events)) {
+            if let Some((quantity, _, _)) = self.over_capacity(&projected) {
                 oversized = Some(quantity);
             }
         }
 
-        self.absorb(height, events);
+        self.absorb(height, events, histories, projected);
         self.next_expected = Some(height + 1);
 
         if let Some(quantity) = oversized {
@@ -833,6 +923,7 @@ mod tests {
         (
             script(tag),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: height as u32,
                 txid: Txid(txid),
                 transaction_index: 0,
@@ -1408,6 +1499,153 @@ mod tests {
         assert!(Limit::new(0, 10).is_err());
         assert!(Limit::new(11, 10).is_err());
         assert!(Limit::new(10, 10).is_ok());
+    }
+
+    /// Absorbing takes its counters and packed demand from the projection
+    /// rather than reapplying the block. Boundaries and occupancy must equal a
+    /// reference that recounts every candidate shard from its blocks alone,
+    /// across target seals, capacity seals, a block over capacity on its own,
+    /// long paged histories and scripts too long to index.
+    #[test]
+    fn boundaries_equal_a_from_scratch_recount() {
+        type Block = Vec<(ScriptBytes, TransparentEvent)>;
+        let geometry = Geometry::default();
+        let directory = {
+            let capacity = geometry.directory_rows
+                * (geometry.directory_row_bytes - crate::records::DIRECTORY_ROW_HEADER_BYTES)
+                    as u64;
+            Limit {
+                target: capacity - capacity / 7,
+                capacity,
+            }
+        };
+        // Scripts, directory bytes and packed page rows of `blocks` as one shard.
+        let recount = |blocks: &[&Block]| -> (u64, u64, u64) {
+            let mut histories: HashMap<Vec<u8>, HistoryLayout> = HashMap::new();
+            for block in blocks {
+                let mut added: std::collections::BTreeMap<&[u8], Vec<TransparentEvent>> =
+                    std::collections::BTreeMap::new();
+                for (script, event) in block.iter() {
+                    added.entry(script.as_slice()).or_default().push(*event);
+                }
+                for (script, mut events) in added {
+                    events.sort_by_key(TransparentEvent::sort_key);
+                    let history = histories.entry(script.to_vec()).or_default();
+                    for event in events {
+                        history.push(event, geometry.inline_events);
+                    }
+                }
+            }
+            let mut demand = PackedDemand::default();
+            let mut bytes = 0;
+            for (script, history) in &histories {
+                if script.len() <= MAX_SCRIPT_BYTES {
+                    demand.shift(&HistoryLayout::default(), history);
+                    bytes += history.directory_bytes() as u64;
+                }
+            }
+            (histories.len() as u64, bytes, demand.rows())
+        };
+        let policy = policy((60, 90), (6, 9));
+        let over = |(scripts, bytes, rows): (u64, u64, u64)| {
+            scripts > policy.scripts.capacity
+                || bytes > directory.capacity
+                || rows > policy.page_rows.capacity
+        };
+        let reached = |(scripts, bytes, rows): (u64, u64, u64)| {
+            scripts >= policy.scripts.target
+                || bytes >= directory.target
+                || rows >= policy.page_rows.target
+        };
+
+        let mut blocks: Vec<(u64, Block)> = Vec::new();
+        for height in 100..400u64 {
+            let mut block = Vec::new();
+            let width = match height % 37 {
+                0 => 120, // over the script capacity on its own
+                n if n % 5 == 0 => 0,
+                n => n as u32 % 9,
+            };
+            for i in 0..width {
+                // The block over capacity also pages every one of its
+                // histories, so closing before it must leave its demand out.
+                let (tag, per) = match width {
+                    w if w > 100 => (i * 1000 + 50, 4),
+                    _ => ((height as u32 * 11 + i * 7) % 50, 1),
+                };
+                for k in 0..per {
+                    let (script, mut event) = event(height, tag, i * 8 + k);
+                    if let TransparentEvent::Receive(receive) = &mut event {
+                        receive.value = u64::from(i) << (height % 40);
+                    }
+                    block.push((script, event));
+                }
+            }
+            // One history grows across many blocks and pages repeatedly.
+            for nonce in 0..(height % 4) as u32 {
+                for event in crate::compact::tests::pair(height as u32, nonce) {
+                    block.push((script(7_777), event));
+                }
+            }
+            if height % 23 == 0 {
+                let (_, event) = event(height, 9, 99);
+                block.push((ScriptBytes::new(vec![0x51; MAX_SCRIPT_BYTES + 1]), event));
+            }
+            blocks.push((height, block));
+        }
+
+        let mut sealer = Sealer::new(policy, 100);
+        let mut sealed = Vec::new();
+        for (height, block) in &blocks {
+            sealed.extend(sealer.push_block(*height, block).unwrap());
+        }
+        sealed.extend(sealer.finish());
+
+        let mut expected = Vec::new();
+        let mut current: Vec<&(u64, Block)> = Vec::new();
+        let counts = |shard: &[&(u64, Block)]| {
+            recount(&shard.iter().map(|(_, block)| block).collect::<Vec<_>>())
+        };
+        for entry in &blocks {
+            let mut candidate = current.clone();
+            candidate.push(entry);
+            let mut oversized = false;
+            if over(counts(&candidate)) {
+                if !current.is_empty() {
+                    expected.push((counts(&current), current.clone()));
+                    current.clear();
+                }
+                oversized = over(counts(&[entry]));
+            }
+            current.push(entry);
+            if oversized || reached(counts(&current)) {
+                expected.push((counts(&current), std::mem::take(&mut current)));
+            }
+        }
+        if !current.is_empty() {
+            expected.push((counts(&current), current));
+        }
+
+        assert!(expected.len() > 10, "the fixture seals often");
+        assert_eq!(sealed.len(), expected.len());
+        for (shard, (counts, blocks)) in sealed.iter().zip(&expected) {
+            assert_eq!(
+                (shard.start_height, shard.end_height),
+                (blocks[0].0, blocks.last().unwrap().0)
+            );
+            let occupancy = &shard.occupancy;
+            assert_eq!(
+                (
+                    occupancy.scripts,
+                    occupancy.directory_bytes,
+                    occupancy.page_rows
+                ),
+                *counts,
+                "shard {}",
+                shard.shard_id
+            );
+            assert_eq!(occupancy.packed_page_rows, occupancy.demand.rows());
+        }
     }
 
     /// `inline_events` is maintained rather than recomputed, so it has to be

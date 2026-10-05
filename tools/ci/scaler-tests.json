@@ -1,0 +1,4 @@
+{
+  "fast": ["test_scaler_metrics", "test_scaler_signals", "test_scaler_forecast", "test_scaler_decide", "test_scaler_daemon"],
+  "full": ["test_scaler_sim", "test_membership_model"]
+}

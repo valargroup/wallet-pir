@@ -2,6 +2,92 @@
 
 Accepted target: 2026-09-07. Implement and validate through [remaining work](remaining-work.md). Live state is recorded only in [status](status.md). This supersedes the nine-small-archive-worker plan and the single-global-geometry proposals.
 
+If an unstaged cutover loses its captured publication to predecessor collection,
+`schema-reconcile-plan` and `schema-reconcile-preflight` can bind one newer,
+already warm v10 map on every original worker to the original transaction and
+recipe digest. `schema-reconcile-deploy --expect-plan-sha256 <reviewed-digest>`
+retains the displaced coordinator activation records and prior destination
+bytes, then runs guarded private HTTP, reopened SQLite, and both canonical HTTPS
+proofs before resuming predecessor load. It accepts only the original captured
+namespace and complete pinned predecessor fleet; it cannot install v11 or choose
+arbitrary source files. A partial adoption refuses replay. Successful newer
+revision recovery is recorded as `reconciled-v10`, preserving the original failed
+rollback and any missed recovery deadline. It does not satisfy rollback timing
+acceptance; a fresh coherent baseline and actual rollback rehearsal remain
+required before final qualification.
+
+Fresh schema captures protect each named collector-owned publication generation
+with hard links in a private sibling outside the controller and worker collection
+roots, on the original filesystem. Completion binds the captured map checksum
+and full file inode/size/mode/ownership/mtime inventory. This protects immutable
+tables against unlink collection; native table verification remains required.
+Rollback validates the entire baseline and protection before reconstructing a
+missing generation. Changed generations, links, special files and unfinished
+restore directories refuse recovery. Coordinator authority remains stopped until
+every restored worker proves the captured exact assignment, then private proof
+waits for the guarded predecessor authority endpoint.
+
+Product input staging pins the reviewed generations before the long native
+preflight, using the input-preparation owner and each worker's remote owner and
+lock. This changes only private retention links. Capture then derives the actual
+active generation from the independently copied activation records after writers
+are quiet, and protects that generation as well if publication advanced during
+preflight. The complete baseline binds those additional generations to the copied
+records. An older protected child alone cannot satisfy a worker's captured active
+identity. Unfinished pins refuse reuse; unknown remote outcomes require owner
+observation and explicit reconciliation before another staging attempt.
+
+After capture and before withdrawal, the coordinator compares every captured
+worker's exact warm map and assignment checksum to its protected native map and
+coordinator activation target. It independently checks genesis and every current
+and retained advertised anchor against the node. A mismatch fails preservation
+before v11 staging. Rollback allocates 60/140/300/100/140 seconds to withdrawal,
+restore, cold-cache/private verification, reopen and public verification,
+respectively: 740 seconds total, within the 900-second recovery ceiling.
+
+Candidate worker runtime caches are prepared within the guarded staging phase,
+using only the installed checksum-bound worker unit and reviewed active map,
+assignment and binary. The predecessor worker is stopped first. Preparation
+has a 1200-second bound within the existing 1800-second staging phase, checks
+host memory and disk availability at or above 20 percent, rejects OOM/restarts,
+and reads persistence counters from the bounded native readiness cache object,
+rejecting duplicate/missing/malformed fields. It waits for native warm completion
+with zero cache-write failures and pending writes. It then stops the candidate under the same remote owner and lock,
+retaining disk caches. Missing observations, foreign identity or interrupted
+owners refuse progress. Preparation never reopens routes or qualifies serving;
+subsequent activation still performs its independent 300-second exact warm proof,
+installed setup checks and private/both canonical encrypted-query proofs.
+Rollback deadlines and resource floors are unchanged.
+
+Public recovery now runs two independent native client proofs with separate
+reopened SQLite stores, using each canonical origin as the encrypted query
+origin in turn. A successful metadata request or filter request alone does not
+qualify that origin's setup and query path. Both client results must pass before
+the public proof receipt is recorded; either failure withdraws both origins.
+
+After a completed adoption, an ordinary `verify-rollback` failure may use
+`schema-reconcile-resume-plan` / `schema-reconcile-resume-preflight` /
+`schema-reconcile-resume-deploy`. The `--map-sha256` argument binds the original
+adoption plan digest in this mode; deploy additionally binds the new preflight
+digest. Resume verifies retained adoption completion, preserved prior bytes,
+the complete current canonical predecessor fleet and the accepted adoption
+anchor. It executes only the final private proof, reopen, and public proof
+phases, without replaying restoration. Partial installation, uncertain remote
+outcomes, and failures in other phases refuse this path.
+
+If private proof stopped predecessor authority, use the closed
+`schema-reconcile-resume-prepare-plan` / `schema-reconcile-resume-prepare-preflight`
+/ `schema-reconcile-resume-prepare-deploy` path first. It checks the retained
+current publication, manifests, every pinned warm worker and canonical anchor
+without requiring the stopped authority HTTP endpoint. It derives the private
+relay from the checksum-bound captured fleet's internal listener and requires
+the same captured router IP. Only captured predecessor filter and authority
+units may start; public origins remain guarded. Preparation is recorded
+separately and is not client acceptance. Then run the ordinary closed resume
+proof. An uncertain preparation refuses further actions until
+`schema-reconcile-resume-prepare-reconcile` observes its owner gone and either
+its exact completion receipt or complete coordinator quiescence.
+
 ## Target configuration
 
 | Parameter | Recent | Archive |
@@ -13,8 +99,8 @@ Accepted target: 2026-09-07. Implement and validate through [remaining work](rem
 | V10 seal target:capacity (directory bytes) | `14366428:16760832` | `114931420:134086656` |
 | V10 absolute script target:capacity | `203630:237568` | `1629038:1900544` |
 | Page-row target:capacity | `7936:8192` | `63488:65536` |
-| Workers | 4 full recent replicas | 2 disjoint archive assignments |
-| Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized |
+| Workers | 2 full recent replicas, plus elastic copies under load (up to `max_recent`) | 1 static owner holding every archive shard (0–76) |
+| Host target | 4 vCPU / 8 GiB | 8 vCPU / 64 GiB, memory optimized (`m-8vcpu-64gb`) |
 | Runtime cache (RAM) | 5 GiB = 5368709120 bytes | 48 GiB = 51539607552 bytes |
 | Runtime cache (disk limit) | 10 GiB = 10737418240 bytes | 96 GiB = 103079215104 bytes |
 | Process MemoryMax | 7 GiB | 56 GiB |
@@ -31,6 +117,35 @@ These are proposed operating budgets within the accepted architecture, not targe
 Fleet configuration lives in one place: a roster (repository variable `TRANSPARENT_FLEET_JSON`, one entry per worker with `id`, `role`, `replica_group`, `ssh_host`, `upstream`, `cache_bytes`, `memory_max` and optionally `build_slots`, default 1) and the assignment `shard-assign plan` derives from it and the published set at the recorded cutoff. The assignment is the durable record of who holds what; its digest is reported by every worker and asserted by the deploy. The router's Caddyfile is rendered from the assignment alone. Worker units are rendered from the committed template with the roster's cache and memory budgets and `--assignment … --worker-id … --prune-excess`.
 
 Use one 2 vCPU / 4 GiB routing host initially. This is a single point of failure. The existing chain node/indexer/publisher remains separate from retrieval capacity budgeting. Keep archive restores off recent workers. Serve immutable public filters and setup from an object/CDN origin, with a refreshable map; verify cross-origin map consistency and retain an independent wallet anchor source.
+
+### Elastic recent replicas
+
+The accepted recent tier is two full copies; four hosts was a load target, not a
+requirement. Two replicas passed the 20 QPS gate at 20.9 QPS, p99 53 ms, with
+runtime construction in its own low-priority pool
+([evidence](../evidence/recent-floor-2026-09-29/README.md)). Elastic copies are
+added and removed by the actuator from `ops/infra/digitalocean/transparent-elastic/`
+(one droplet and project entry per member, its own state and host lock), never
+by the production root; the scaler decides within `scaler/policy.json`
+(`min_recent` 2, `max_recent`, budgets, cost cap). Serving recent replicas never
+drop below two outside maintenance. Archive owners stay static and manual: the
+scaler and actuator never change them, the partition or `recent_from`. The fleet
+inventory owns membership once it exists; `TRANSPARENT_FLEET_JSON` only seeds it.
+Formats and invariants: [elastic recent replicas](elastic-recent.md).
+
+Operator commands on the coordinator:
+
+- `transparent-fleet-inventory.py drain|undrain|retire|quarantine <id>`: intent;
+  drain needs two other serving recent replicas.
+- `transparent-fleet-actuator status|scale-out --count N|scale-in [--member id]|replace <id>`:
+  journaled operations with the runtime credential; `touch scaler/disabled` stops
+  every side effect. `resolve-apply` and `abandon` clear a fenced operation after
+  Terraform state and DigitalOcean are reconciled by hand.
+- Pause the scaler (`mode: observe`) during a canary soak or full-fleet upgrade:
+  the canary gate binds the whole roster.
+- `transparent-archive-standby.py`, then `transparent-fleet-inventory.py --archive
+  repartition|restore`: replace archive owners; see
+  [archive owner changes](#archive-owner-changes).
 
 ## Geometry and schema cutovers
 
@@ -67,11 +182,71 @@ Do not publish `archive-32k` as the selected target: uniform-chain evidence favo
 
 ## Sizing and availability
 
-Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. Two 48 GiB cache reservations can hold the approximate halves at 576 MiB reserved per shard, but actual RSS, retained revisions and assignment imbalance must pass validation.
+Uniform full-chain `archive-wide` evidence is 162 shards and 57.1 decimal GB plaintext. Applying measured c-8 per-shard RSS gives approximately 93.2 GiB prepared residency, or 81 shards / 46.6 GiB per half. This is a sizing proxy, not the mixed-tier census. The mixed-tier archive is 77 shards (0–76). A single-owner prototype on 2026-09-29 reserved 41.35 GiB of its 48 GiB cache for all of them at planning headroom 0.05 (the live adapter's; 0.15 refuses it), with about 36 GiB resident. One owner therefore holds the whole archive: 48 GiB runtime cache in RAM, 96 GiB on disk, `MemoryMax` 56G, `MemoryHigh` 48 GiB, one build slot. In production (`transparent-pir-archive-03`, worker `a704616c`) it runs at 34.1 GiB RSS with 52% of host memory available, and at about 20 archive queries/s uses 1.4 of 8 cores and 12% of its query slots, with the same per-query evaluation time (about 11 ms) as the two-owner split ([evidence](../evidence/archive-consolidation-2026-09-29/README.md)).
 
 Retain space for the current assignment, candidate publication and rollback artifacts plus at least 20% disk headroom. The publisher needs independent peak-RSS and temporary-disk measurements; census RSS is not publisher RSS. Do not duplicate immutable sealed bytes per tail revision unnecessarily.
 
-Losing an archive host makes its range unavailable until recovery. Recent replication does not make archive or router highly available. The initial target accepts that explicit interruption. If archive availability requirements change, evaluate two 128 GiB hosts with complete archive copies, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
+There is one copy of the archive. Losing or restarting its owner makes every archive shard unavailable until it is warm again: about 100–300 s from its disk runtime cache (291 s measured, including a restage), about 27 minutes cold at one build slot (1,596 s measured). With two owners the same event took out half. This is an accepted risk (2026-09-29). Recent replication does not make archive or router highly available. If archive availability requirements rise, the path is two 128 GiB hosts each holding a complete archive copy, or replicated assignments, before claiming failover. Do not apply the old nine-host 219 restores/s estimate to this fleet.
+
+### Archive owner changes
+
+Archive owners are static and changed only by an operator, under the production
+lock, with the scaler out of `act` mode (`scaler/policy.json` `mode: observe`).
+The planner cannot mix old and new owners of overlapping ranges, so owners
+switch at one publication boundary: the old ones keep serving the previous
+publication until the new ones activate.
+
+1. **Host.** Add the name to `transparent_archive_names` in the coordinator's
+   production tfvars and apply a saved plan reviewed as one droplet create and
+   one in-place project change. The first plan after the `count` to `for_each`
+   change must show only moves.
+   Set `transparent_worker_deploy_public_key` in the same tfvars so the fleet
+   key reaches the new host at first boot; it was unset on 2026-09-29 and the
+   key was installed by hand.
+2. **Standby.** Pin the new host's key (verified out of band) in a known_hosts
+   file and run, from `/opt/transparent-publisher/releases/current/repo`:
+   `transparent/ops/scripts/transparent-archive-standby.py --id transparent-pir-archive-NN --host <vpc ip> --droplet-id <id> --known-hosts <file> --release <sha>`.
+   It checks the droplet id and x86-64-v3, installs the release against its
+   SHA256SUMS, plans the active publication with the new host pinned to the
+   whole archive, copies at `--bwlimit-kbps` (pausing while freshness is over
+   20 s), starts the archive unit and waits (40 minutes by default) until the
+   host attests the publication warm, then checks that the router reaches
+   the host's `/v1/ready` (a reused VPC address can leave a stale neighbour
+   entry on the router). Rerunning is safe: it hard-links what the host already
+   holds. Qualify it with low-rate exact queries to its private `:8093` and
+   record memory and warm time. Measured on 2026-09-29: 1,596 s cold at one
+   build slot; 291 s to restart onto a newer publication from the disk runtime
+   cache. The coordinator keeps only about nine publications, so a copy that
+   outlives its source fails and is rerun; `repartition` checks the standby
+   against the worker's own copy of the map it serves.
+3. **Cutover.** `transparent-fleet-inventory.py --archive repartition --ranges a2:0-76 --owner transparent-pir-archive-NN=<ssh_host>,<ssh_host>:8093,<host key or file>,51539607552,56G,1`.
+   It refuses unless the new owner is ready and warm on the active archive
+   shards. The next publication plans the new owner; the reconciler stages it
+   by hard links, prepares and activates it, and the router switches owners at
+   that activation. Watch freshness (at most 20 s), router 5xx and the
+   continuous-load supervisor.
+4. **Rollback.** If the new owner is not prepared within two publications, a
+   wrong row appears or freshness exceeds 60 s:
+   `transparent-fleet-inventory.py --archive restore --revision <repartition.from_revision>`.
+   It is refused once an old owner is stopped or unreachable, and after any
+   later archive change.
+5. **Removal.** Only after the measurement gates pass and the change is
+   confirmed: stop the old owners (`systemctl disable --now transparent-shard-server`),
+   remove their names from `transparent_archive_names` and apply a saved plan
+   reviewed as exactly one destroy per name and one project change. After that
+   `restore` is no longer possible.
+
+Combined 20 QPS results (2026-09-29, 10 minutes each on top of the continuous
+5 QPS load, two recent replicas, every query exact, [evidence](../evidence/archive-consolidation-2026-09-29/README.md)):
+
+| Topology | Mixed 3 × 7 QPS: p50 / p99 | Archive-only 4 × 5 QPS: p50 / p99 |
+|---|---|---|
+| Two archive owners | 17 / 50 ms at 20.9 QPS | 16 / 33 ms at 19.5 QPS |
+| One archive owner | 14 / 45 ms at 20.9 QPS | 18 / 35 ms at 19.6 QPS |
+
+The cutover itself failed twelve synthetic archive queries over about twelve
+seconds while the router could not yet dial the new owner; the standby tool now
+checks that path first.
 
 ## Proposed wallet objectives from the 2026-09-08 fleet series
 
@@ -108,7 +283,7 @@ third owner, is the lever if archive-02's queue grows at higher load.
 
 ## Budget baseline
 
-Public DigitalOcean list prices checked 2026-09-07: four regular Basic 8 GiB/4 vCPU hosts at $48, two regular memory-optimized 64 GiB/8 vCPU hosts at $336, one Basic 4 GiB router at $24: **$888/month compute**. [Provider pricing](https://www.digitalocean.com/pricing/droplets).
+Public DigitalOcean list prices checked 2026-09-07: four regular Basic 8 GiB/4 vCPU hosts at $48, two regular memory-optimized 64 GiB/8 vCPU hosts at $336, one Basic 4 GiB router at $24: **$888/month compute**. [Provider pricing](https://www.digitalocean.com/pricing/droplets). At the same prices the current floor, two recent replicas, one archive owner and the router, is $456/month before elastic copies.
 
 This excludes existing node/indexer/publisher, CDN/object storage, backups, taxes and transfer overages. Basic shared workers are a cost baseline, not guaranteed sustained bandwidth. Recheck SKU/region availability and benchmark both shared and dedicated alternatives before provisioning. Additional vCPUs do not imply independent memory bandwidth. Two full-copy 128 GiB archive hosts alone would cost $1344/month at the same listed family.
 
@@ -136,7 +311,7 @@ place until canonical warm service and exact private queries are verified.
 6. Canary real wallet recovery, tail republishing and outage handling, then expand only after workload gates pass. Record actual deployment state and measurement artifacts.
 7. Roll back binary, publication and routing together. Preserve the previously valid revision/coverage relationship; a wallet must explicitly recover from an incompatible or lower anchor rather than silently accept it.
 
-The filter service deploys on its own through `.github/workflows/deploy-transparent-filter.yml`, which asks the staged binary to read the named set (`--check-shard-dir`) before the running service is touched, compares that map digest with the set the fleet serves, and verifies both public origins afterwards. It shares the Enhance workflow's concurrency group and rollback paths and touches nothing of Enhance. The Enhance workflow still stages the filter binary too; remove that once the filter-only path has deployed successfully, keeping the Enhance script's rollback lines. Do not copy a transparent Caddy configuration onto the Enhance coordinator.
+The filter service deploys on its own through `.github/workflows/deploy-transparent-filter.yml`, which asks the staged binary to read the named set (`--check-shard-dir`) before the running service is touched, compares that map digest with the set the fleet serves, and verifies both public origins afterwards. It uses the `enhance-production` concurrency group and the `/opt/enhance-pir/rollback` paths the removed Enhance workflow used, and touches nothing of Enhance. Do not copy a transparent Caddy configuration onto the Enhance coordinator.
 
 ## Runtime persistence and deployment identity
 
@@ -264,11 +439,34 @@ coverage remains contiguous. Historical catch-up and deep reorg rebuilding are
 reported separately from steady-state freshness.
 
 Activation requires all archive owners and at least one warm recent replica.
-Lagging replicas leave current routing and are retried on later publications.
-Artifact transfer commands may reuse authenticated SSH sessions for up to 60
-seconds. Control commands use independent connections; bounded read-only status
-retry is described in the hardening gate below. Cancelling a slower replica
-does not delay an already warm quorum. An unchanged router configuration skips
+With `manage_all_workers: true` the reconciler prepares every member, archive
+owners included; the foreground adapter only waits for those jobs and never
+stages a worker itself. Preparation returns at quorum plus
+`prepare_grace_seconds`, so recent replicas that finish their tail build moments
+after the first one activate together; the grace costs freshness directly. A
+replica that misses it is activated and routed by the reconciler as soon as it
+attests the current publication. Activation also returns at quorum plus a short
+grace and waits at most `activation_lock_seconds` for a worker lock.
+
+Membership probes run without the routing lock. A change is applied under it
+only if no activation, invalidation or withdrawal happened since the probe
+(`state/routing-generation.json`). A transport failure, or an unknown canonical
+endpoint, unroutes a recent replica only after three consecutive failures
+spanning five seconds (`membership_failures`, `membership_failure_seconds`); a
+status that answers but does not attest (not warm, another digest, a fork)
+removes it at once. Archive owners leave routing only through activation quorum
+or invalidation. The reconciler writes observed member states and the routed
+recent count to `state/membership.json`; the controller's `ready_replicas`
+reads it while it is under ten seconds old.
+
+Artifact transfers use their own SSH master for up to 60 seconds, never the
+owned control session: a transfer on that connection delayed status past its
+budget. Assignment plans are written once per publication, locally and on each
+worker; a worker refuses a prepare that names a publication it already holds
+under a different row of the assignment. A publisher redeploy carries
+operational `fleet.json` settings over (`OPERATIONAL_KEYS` in
+`transparent-live-fleet.py`). Cancelling a slower replica does not delay an
+already warm quorum. An unchanged router configuration skips
 reload only when its successful application marker matches; an interrupted
 rename/reload is retried.
 Workers prepare through a root-only Unix control socket, keep current runtimes
@@ -399,7 +597,13 @@ the approved duration and preserve complete results and query logs.
 The full-fleet gate must match the tested binary, fleet script, configuration
 and roster digest; elapsed time alone is insufficient. The foreground adapter and
 reconciler must use the same `fleet.json`. Enable `managed_recent_workers` for
-recent-01 at the canary stage and all four recent replicas after their upgrade.
+recent-01 at the canary stage; once every worker's binary reports the control
+status fields, set `manage_all_workers: true` instead.
+`transparent/ops/scripts/roll-recent-replicas.py` upgrades recent replicas one at
+a time without a maintenance window, only while two others are routed, and
+waits for each to be routed again before the next. Archive owners still use the
+maintenance upgrade. Stop observers that latch on worker restarts, such as the
+continuous-load supervisor, before a roll and re-qualify their binaries after.
 The installer applies an explicit roster `build_slots` value to the staged worker
 unit before verification; an omitted value preserves the installed setting.
 With `control_sessions: true`, short control commands use authenticated SSH
@@ -414,6 +618,10 @@ or wait indefinitely for its output descriptors. Bootstrap configurations withou
 the flag retain direct SSH. Preparation always uses direct SSH. Read-only status
 retries one transport failure (1 s then 1.5 s command budgets within the 3 s
 membership timeout).
+The shared supervisor library, `ops/lib/wallet_pir_ops/control_sessions.py`
+([control sessions](../../docs/control-sessions.md)), builds the same socket
+names and SSH arguments; a test holds the two equal. This script stays
+standalone on the coordinator and does not import the library.
 The optional `status_socket_forwarding: true` flag requires `control_sessions`
 and carries status over root-only Unix forwards owned by the same supervisor.
 It is disabled by default; consult [status](status.md) for whether it is deployed.
@@ -422,8 +630,9 @@ same status timeout/retry policy. Missing forwards do not fall back to helper
 execution. Mutations keep their existing SSH paths. Verify all worker forwards
 before enabling clients; changes require matching acceptance evidence.
 
-Returned status still must attest the current warm publication. Two failed reads
-withdraw membership; invalid or rejected status is not retried. Mutating control
+Returned status still must attest the current warm publication. Transport
+failures change membership only under the hysteresis above; invalid or rejected
+status is not retried. Mutating control
 commands are never blindly retried after an ambiguous transport failure.
 One daemon task owns each managed worker's preparation across foreground quorum
 cancellation; it coalesces queued targets and reattests status after restart.
@@ -539,3 +748,2376 @@ pins atomically, then resumes load. Failures leave load stopped for investigatio
 An existing correctness/resource latch blocks mutation. The observer chooses a
 query shard from the selected worker's current assignment unless explicitly pinned.
 The existing six-hour / 300-block and full-fleet observation gates are unchanged.
+
+## Activity metadata v3/v11 prototype and cutover
+
+The candidate journal and publication share the 250 GiB XFS coordinator volume
+at `/srv/transparent-activity`. V10 data, binaries, units, active records and caches
+remain outside that namespace. Prototype data covers only blocks 3499739–3500738;
+it cannot replace the complete canonical publication.
+
+The prototype shard service is loopback port 8192, with CPU quota 400%, 8 GiB
+process memory, no swap, 4 GiB runtime reservation, 8 GiB disk-cache limit and
+1 build / 4 query slots. Release-fast artifacts are disposable prototype artifacts.
+The frozen candidate repeats metadata on events and uses unchanged 4096-byte PIR
+rows and registry geometries. Recalculate shard occupancy from actual v11 encoded
+bytes; v10 capacity arithmetic does not establish a v11 capacity benefit.
+
+Genesis ingestion uses the RocksDB secondary reader, journal v3, fixed anchor
+3500738, four workers, CPU quota 400%, a 16 GiB memory ceiling and no swap.
+The current owner is `transparent-activity-full-ingest-release-a1c4b809`, using
+the immutable, checksum-verified fat-LTO release binary; its independent oracle
+and uncached journal comparison passed before checkpoint handoff.
+The ceiling includes RocksDB file cache; the initial 6 GiB limit caused direct
+reclaim despite roughly 89% available host memory. Its dedicated health guard retains
+source SHA, executable hash, PID/unit, checkpoint and terminal result, sampling
+memory and disk every five seconds. Stop candidate ingestion at less than 20%
+available memory or disk, or an unexpected process replacement. Independent
+chain comparisons and a complete publication remain separate acceptance gates.
+
+Build in the persistent coordinator lane with sequential Cargo writers, a 12 GiB
+memory ceiling, no swap and low CPU/I/O priority. Compress immutable source exports
+before SSH transfer. Production binaries require the fat-LTO `release` profile,
+executable checksums verified after transfer, compiler/profile/dependency provenance,
+and matching publication identities and native certificates.
+
+The publisher shadow installer accepts `--publication-root`. For v11, use
+`/srv/transparent-activity/full-v11/publications` alongside
+`--data-dir /srv/transparent-activity/full-v3/journal` and an initial publication
+inside that publication parent. The installer renders sandbox write paths for
+those exact locations and the initial source, retaining `ProtectSystem=strict`.
+Verify hard-link behavior under the resulting unit before activation.
+
+For canonical cutover, coordinate with publication/deployment owners, take the
+existing deployment lock and put the scaler in observe mode. Pause maintenance
+load, withdraw metadata at both public origins, stage the complete fleet assignment,
+prewarm workers, align public filter and shard origins, verify accepted anchors,
+setup and directory/page answers, then reopen. Verify schema-separated caches and
+hard links inside the publisher sandbox. Resume canonical 5-QPS traffic only with
+updated fixtures and worker pins. The paused quality supervisor remains inactive;
+new quality alerts remain in shadow. Restore the coherent v10 fleet and origins
+before reopening if a cutover gate fails; migrated clients need compatible readers.
+
+The loaded prototype and early production cutover do not establish qualification.
+Preserve the final six-hour/300-block freshness window, three sustained 60-minute
+runs at each of 8/20/40 wallets, every failed or incomplete attempt, lifecycle faults,
+and rollback/redeploy gates in the approved activity metadata plan. Supported
+completed-sync demand is at most 50% of measured sustainable throughput.
+
+### Guarded schema operation API
+
+All production changes, including source staging, binary transfers and unit
+changes, run through `ops/scripts/wallet-pir-deploy.py`. The wrapper's
+`schema-plan`, `schema-preflight`, `schema-deploy`, `schema-status` and
+`schema-rollback` commands coordinate a checksum-bound recipe on the inventory's
+pinned root coordinator under `/run/lock/wallet-pir-production.lock`.
+Use the same `--inventory` and the private coordinator state directory
+`/srv/transparent-activity/ops/schema` for every command. Production schema
+transactions refuse a different state directory: generic deployment and source
+bootstrap check this durable ownership fence under the production lock. Plan and
+preflight precede deployment; `schema-deploy --recipe FILE
+--expect-recipe-sha256 HASH` requires the digest printed by the reviewed plan.
+Status reports the durable journal state, and must be paired with live canonical
+checks. After deployment the CLI prints status and a complete rollback command.
+
+Recipe version 1 pins the native source SHA, publication SHA-256, forward inputs
+and separately retained rollback inputs. Each input is an absolute regular file
+with a SHA-256 checksum. Commands invoke those bound executables or bound scripts
+through Python/Bash, without inline interpreter programs. Recipes contain no
+credentials; phase programs read runtime credentials without printing them.
+Preflight commands and verification phases must be read-only.
+
+The forward phases are `preserve-v10`, `maintenance`, `stage-v11`,
+`activate-prewarm`, `align-origins`, `verify-canonical`, `resume-load` and
+`verify-service`. The recovery phases are `withdraw-origins`, `restore-v10`,
+`verify-rollback`, `reopen-v10` and `verify-service`, with a combined deadline of
+at most 900 seconds. Programs must be idempotent after partial execution,
+including a partially completed predecessor backup. They must reject an
+incomplete backup before withdrawal and preserve separate v10 data and caches.
+Verification must fail before reopening when the restored service is incoherent.
+
+The wrapper records phase intent before side effects, rechecks input hashes and
+the lock between phases, and retains private journals and phase logs. Child
+programs receive the lock descriptors through `pass_fds` and
+`WALLET_PIR_PRODUCTION_LOCK_FDS`; they must preserve them in any descendant that
+can mutate production. A nonzero phase exit triggers coherent recovery while
+the lock is held. Timeout, interruption or lock loss require reconciliation and
+explicit recovery, so a possibly live descendant cannot race an automatic
+rollback. An unfinished transaction blocks a new deployment.
+
+This API is an implemented coordination boundary. The actual production recipe,
+trusted phase programs, complete publication and live acceptance checks must be
+prepared and verified before deployment.
+
+### Coordinated product service phases
+
+`schema-input-service-{plan,preflight,stage,status,reconcile}` retains the twelve
+reviewed coordinator inputs before preparing a product recipe: controller,
+fleet, roster, fixture, worker pins, observe policy and the six product units.
+The checksum-bound request contains `version=1`, `source_sha`,
+`release_result_sha256`, `attempt` and a closed `files` object of UTF-8 bytes.
+Run plan/preflight first; stage requires `--expect-plan-sha256`. It uses the
+same coordinator production lock, ownership fence, atomic private bundle and
+explicit partial-output reconciliation as assignment preparation. All output
+remains under `/srv/transparent-activity/full-v11/inputs/<requestSHA>`; no unit,
+configuration, credential, active record or routing is installed at this step.
+
+The receiver checks the completed publication/release identities, its actual
+cutoff/profile, separate v11 controller/fleet/control/cache paths, portable
+worker pins, observe policy, all four traffic groups and immutable script
+commands. Requests are bounded to 8 MiB, with 2 MiB reserved per fixture and
+256 KiB per other file. Full product preflight still verifies actual host
+inputs, recovery samples and all independent release reports before maintenance.
+`activity-query-fixture.py --out -` exports the exact sealed-table row fixture
+to stdout, keeping read-only preparation free of host output files; its digest
+summary goes to stderr. Include provisional rows only for frozen disposable
+prototype workloads.
+
+`schema-product-recipe --spec FILE --spec-sha256 HASH` constructs the complete
+ordered forward/recovery recipe from a reviewed private product specification.
+Retain its exact JSON, then run `schema-plan`, `schema-preflight` and
+`schema-deploy` with that recipe. This constructs service transitions; it does
+not prepare missing native artifacts or worker publication bytes. Product
+preflight refuses until those immutable inputs exist on every pinned host and
+the full-publication artifact, native-certificate, independent-chain-oracle and
+comprehensive-CI gate reports match the frozen native source and publication.
+No report may be generated merely to satisfy this shape; retain and review its
+independent raw inputs before binding it into the specification.
+
+The specification includes one coordinator, one router and every assigned
+worker, with distinct machine pins, complete host baseline/install plans, a
+routing plan, the native assignment, and checksummed load/scaler inputs. Host
+and routing templates permit `{transaction}` only in the transaction identity
+and its prescribed rollback root. Commands, install targets and arbitrary JSON
+strings are never interpolated. Runtime phases bind the actual schema journal
+ID and require its current durable phase intent and the spec digest. They cannot
+be called as free-standing host mutations.
+
+The coordinator captures original service states before stopping writers, then
+captures router and warm workers before withdrawing both metadata origins.
+It stages all workers, installs the coordinator and seeds separate v11 worker
+active records, controller activation, native assignment/request/desired/active
+fleet records and `maintenance=true` before any restart. All workers must warm
+and prove identity before authority startup. The measured certificate report retains each table's exact public-setup hash.
+After every worker is warm, the coordinator reads every assigned setup on every
+replica, checks its shard/revision/table/segment/count identity, decodes its bytes
+and compares their SHA-256 with those measured bindings. Missing, duplicate or
+changed certificate coverage refuses authority startup; private receipts retain
+all comparisons. Both recovery samples must bind every worker executable, and
+candidate pins must equal the reviewed host plans before maintenance.
+The filter, controller, fleet,
+scaler and load units must refer to the reviewed v11 paths. The scaler uses an
+observe-only policy; load uses the retained fat-LTO rate client, exact worker
+pins and a fixture covering all four recent/archive directory/page groups.
+The source load supervisor now stops on memory or disk headroom below 20%,
+including actual worker publication, coordinator candidate and chain disks.
+Existing production load continues using its installed predecessor until cutover.
+
+Private real HTTP/SQLite proof precedes reopening. A hard-link probe enters the
+**running installed publisher's mount namespace**, checks its running executable
+and root identity, links the immutable candidate map on its publication
+filesystem and removes the probe link. Canonical HTTPS recovery must pass before
+load/scaler startup. Recovery restores all workers and coordinator, verifies old
+anchors and exact recovery, restores the original router Caddy bytes while the
+coordinator remains guarded, then reopens and resumes only previously active
+predecessor load/scaler units. Generated recovery phases reserve 740 seconds;
+the outer runner enforces the total deadline and never lowers acceptance gates.
+
+Remote `schema-host-run`, `schema-host-status` and `schema-host-reconcile` are
+internal wrapper commands. The coordinator retains its FD in the local SSH
+process; each remote root actor acquires its **own** pinned host production lock.
+Closed request/plan hashes bind its durable private intent, PID and result.
+No persistent SSH master is created. Parallel worker calls always join all
+outcomes. A lost or unstructured reply, remote timeout or exit 75 leaves the
+coordinator interrupted; exit 75 propagates through the runner rather than
+triggering automatic rollback. Inspect the exact retained request on that host,
+use status, reconcile under its lock only after surviving descendants release
+it, then run explicit schema recovery. A request with a retained result is never
+silently repeated. Partial baselines and capture intents require explicit
+reconciliation; they cannot authorize reopening or be overwritten.
+
+These programs have local process, ordering and failure-injection tests. Actual
+SSH descendant qualification, immutable worker input staging, reviewed live
+plans, complete release gates and a production transaction remain prerequisites;
+source implementation is not evidence of a successful cutover or rollback.
+
+### Immutable v11 worker input staging
+
+After the owned full-publication preparation terminates successfully, stage the
+reviewed operations export on the coordinator. The coordinator can then use
+`schema-source-{plan,preflight,stage,status,reconcile} --host HOST` with its pinned-host
+inventory to stage the same export on each router/worker. This form runs only
+as root on the pinned coordinator, holds its production lock through SSH and
+makes the remote helper acquire its own host lock. New source staging retains
+the exact export at `/srv/transparent-activity/ops/staging/<SHA>.tar.gz` for this
+step; older receipts without a retained archive are preserved as recorded.
+Persistent SSH masters are disabled. Preserve earlier sources and receipts.
+
+`schema-input-prepare-{plan,preflight,stage,status,reconcile}` prepares the
+concrete native assignment and worker units on the pinned root coordinator.
+Provide `--request FILE --request-sha256 HASH`; stage additionally requires
+`--expect-plan-sha256 HASH` from the reviewed plan. The closed private request
+binds the operations source, frozen release receipt, review time, attempt and
+complete worker identities, roles, VPC upstreams, cache budgets and predecessor
+unit bytes. At least two recent replicas and one archive owner are required.
+Preflight rechecks every running peer's fragment and refuses drop-ins or pending
+unit reloads until reviewed. It uses the completed publication's actual cutoff
+and the native planner with 15% assignment headroom. Plan uses disposable private
+tmpfs scratch; it leaves no retained candidate or owner. Only native provenance
+time is normalized to the request's review time for deterministic plan hashes;
+native placement and identities are preserved and checked again by `shard-assign
+check`. Stage repeats the plan under the lock, retaining inherited descriptors
+through preflight and native children, then atomically retains assignment,
+roster, inventory and units as mode 0400 under
+`/srv/transparent-activity/full-v11/inputs/<request SHA>`. This changes no live
+units or records. Failed/unknown owners fence other mutations and require explicit
+reconciliation, preserving partial output in a same-filesystem abandoned directory.
+
+Publication file and protocol identities are separate. The full publication's
+file SHA is `34e3ebe3...`; native Serde's compact served-map SHA is `fd4dcadb...`.
+Immutable worker directories and file checks use the former; native assignment,
+active records, readiness and fleet/controller activation use the latter. Host
+worker plans bind both `map_file_sha256` and `map_sha256`. The protocol serializer
+rejects unsupported fields/types and matches the independently retained native
+verifier's served digest. Do not replace an immutable file merely to make these
+identities equal. The existing 48 GiB archive cache budget is supported by input
+requests; the bounded maximum is 64 GiB, with the unchanged native admission and
+20% host memory/disk gates.
+
+`schema-input-build --host HOST --worker-id ID --source-sha REV --assignment FILE
+--unit FILE --release-result-sha256 HASH --cache-bytes BYTES` renders a private
+request from the completed full publication and frozen 18-artifact release.
+Native `shard-assign files` selects all manifests/filters and the assigned shard
+directories; the renderer expands those directories into exact files. It also
+includes the complete assignment, two retained worker executables and reviewed
+worker unit. Retain the request JSON with a final newline and its canonical JSON
+SHA-256, which is printed by the subsequent plan. Host aliases and native worker
+IDs may differ. Requests are limited to 65536 files, 192 GiB and an 8 MiB header.
+
+Use the staged wrapper with `--inventory FILE` and the same
+`--host HOST --request FILE --request-sha256 HASH` for
+`schema-input-plan`, `schema-input-preflight`, `schema-input-stage` and
+`schema-input-status`. Plan rechecks the native file list, full publication and
+release identities; preflight checks the remote pinned source/machine, free
+candidate namespace, memory and disk reserve before a byte is sent. Stage
+repeats these checks under the coordinator lock. The pinned receiver journals
+intent, owns its host lock and streams exactly the declared bytes in 1 MiB
+chunks without a temporary whole-publication archive. It rejects truncation,
+extra bytes, links, duplicates, traversal, file/directory collisions and changed
+hashes/sizes/modes. Available memory and disk must stay at least 20%; initial disk
+reserve includes the entire incoming candidate. Raw receiver health, transfer
+counts and the native verifier's PID/log/result are retained privately.
+
+Each complete candidate is renamed on its original filesystem into
+`/srv/transparent-pir/v11/publications/<map SHA>`. Prepared binaries and unit are
+as flat `.input-*` files, for the later reviewed host install plan. Native
+`--verify-only` checks the assignment and requested cache budget before the
+completed receipt; later product preflight checks the actual reviewed unit
+configuration again. This changes no live executable, unit, controller active
+record, runtime cache or public route. File preparation is not warm service,
+canonical recovery or qualification.
+
+An interrupted or failed receiver remains fenced. Both the coordinator and
+remote host retain the exact request SHA, original PID, private request and
+result. Uncertain SSH replies return exit 75 and never authorize automatic
+retry. Generic deployment, source staging, publication start and schema deploy
+check these owners even when no schema journal exists. Inspect status, then run
+`schema-input-reconcile` with the exact request under both locks. A remotely
+completed, reverified candidate can be acknowledged; a failed/partial candidate
+is displaced into an `.abandoned-<request SHA>` namespace on its original
+filesystem. Evidence is preserved. A new attempt requires an explicitly rendered
+request with a higher `--attempt` and a new checksum; old requests never replay.
+Actual SSH surviving-descendant qualification and production lifecycle exercises
+remain separate acceptance gates.
+
+### Immutable operation source staging over SSH
+
+The wrapper's `schema-source-plan`, `schema-source-preflight`,
+`schema-source-stage`, `schema-source-status` and `schema-source-reconcile` commands bootstrap reviewed
+operation sources on the coordinator. They require a remote-lock inventory with
+the coordinator's machine ID pinned in its host entry, exact `--source-sha` and
+`--sha256` identities, `--attempt N` (1–100), and `--archive FILE` except for status or reconciliation. Create the archive
+with `git archive --format=tar.gz` from that exact commit, exporting `ops`,
+`transparent/ops`, `enhance/ops`, `tools/ci` and `shared/dev`. Candidate archive
+transfer and preparation refuse a source whose receipt lacks `tools/ci/release.py`. This contains the
+operation dependencies without historical evidence bundles. The reviewed
+operations export at `56b67ba0` was 536659 bytes; its whole-tree archive was
+81439424 bytes and exceeded the 64 MiB transfer limit. The client now rejects
+an oversized archive before hashing or making an SSH request. Run plan and preflight
+before stage; stage also repeats preflight. The helper receives the archive and
+performs every write in the same root process holding the production lock.
+It does not depend on a separate SSH lock process surviving the transfer.
+
+Source staging and candidate upload use the closed bootstrap survey in
+`activity_bootstrap_fleet.py`. It verifies the immutable retained full-v11
+inventory by its physical file hash and the existing `4c85b6c2` runtime receipt
+before importing its pinned SSH transport in an isolated package namespace.
+There are exactly five named hosts with their reviewed machine pins. The survey
+uses the shared bounded owner reader across schema, host-action, input and source
+receipts, then associates live processes and descendants. It preserves the
+existing baseline list plus the exact ancillary reader described below. A
+service name alone does not authorize an exception.
+
+The installed replica reconciler (`transparent-live-fleet.py` from `4c85b6c2`)
+runs `shard-control` on workers over SSH; there it lives in an SSH session scope,
+not a baseline unit, and its operation (stdin) is not observable, so it is never
+treated as read-only. `ops/lib/wallet_pir_ops/control_attribution.py`, embedded
+with the survey, attributes ownership only. A worker reports a control as pending
+only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`) and pinned
+executable bytes (`6dfe78fa…`, the staged portable worker pin), root's login shell
+running exactly the reconciler's `-c` command as its session leader with no other
+child, an sshd session process in the same root `session-N.scope` holding exactly
+one established TCP connection, and stable start ticks. Everything else stays
+unattributed. Candidates come from the same complete process scan used by the
+ownership survey, rather than an earlier PID listing. Before each worker survey and after a reply with pending controls,
+the coordinating survey snapshots the reconciler: unit active, pinned fragment
+`869e2606…`, no drop-ins, main argv equal to the fragment's literal `ExecStart`,
+pinned script `f3df5c53…` at the immutable `4c85b6c2` source path
+(`/srv/transparent-activity/ops/sources/<full-source-sha>/transparent/ops/scripts/transparent-live-fleet.py`),
+with the exact `/usr/bin/python3 -B` prefix and resolved interpreter executable,
+unchanged since the main process started, and direct
+`ssh` children with the exact unmultiplexed control argv. A pending control passes
+only if one such snapshot shows a client holding exactly the reverse connection,
+one control per client; both snapshots are retained beside the raw reply before
+any refusal. An address, key, name or argv alone never admits anything. Controls
+carried by a shared `transparent-control-sessions` master, controls whose client
+has exited (for example after the reconciler's preparation timeout), and any host
+checking only itself, including worker source staging, still refuse. A changed
+reconciler fragment or script, or a new worker `shard-control`, requires reviewing
+new pins. Candidate execution (`activity_candidate_execution.survey`) and deployed
+qualification owner surveys do not use this attribution and still refuse such
+controls.
+
+Read-only preflight checks every host without creating a lock or owner.
+Use `schema-source-preflight --private-evidence-file FILE` on the local
+coordinator client to preserve exact bounded wire replies even on refusal.
+The file must be new, with no links in its path; creation precedes transport,
+its final permissions are 0400, and survey contents are never included in the
+refusal message. The remote helper retains at most five one-MiB replies in
+memory, including the reply that fails verification; it writes no host file.
+Truncated or malformed replies remain failure evidence, never clearance.
+Refusal diagnostics identify only a reviewed component, function and line.
+
+Stage first holds the coordinator production lock and persists its request, real
+PID/start/boot identity and latest input fence. Only a new nonce bound to the
+request, complete five-host replies, absence of foreign owners and verified lock
+holder permit archive reception. Raw replies are retained privately before
+refusal; the complete survey has a 300-second ceiling with 60-second remote
+read limits. Worker source staging joins the coordinator's inherited lock,
+receives the compact fresh coordinator proof, acquires its own host lock and
+rechecks local owners. Full read-only preflight evidence is returned separately
+from the bounded forwarded request. Inline source transport is compressed,
+bounded to 512 KiB after decompression and SHA-256 verified before execution;
+the entire SSH command remains below the Linux per-argument ceiling.
+
+Transport timeout, nonzero SSH exit or invalid reply means unknown outcome
+(exit 75). Observe both source receipt and coordinator owner before reconciliation;
+no owner is signalled. Reconciliation requires its exact PID/start/boot to have
+exited and a new locked complete-fleet survey. It retains the original failed
+owner and moves only the matching failed source receipt to its immutable
+abandoned name, preserving partial archive bytes. A new attempt is required.
+Before promotion, the source receiver persists the independently hashed file
+manifest. Recovery verifies that exact file set and any retained archive hash
+before moving an inert failed promotion to an abandoned namespace. A durable
+recovery intent permits resuming after either rename; failed receipts and partial
+archives remain retained. A legacy failed promotion without a pre-promotion
+manifest refuses. Completed source receipts still require full file-set verification.
+
+Sources are retained under `/srv/transparent-activity/ops/sources/<SHA>` with
+private receipts under `/srv/transparent-activity/ops/staging/`. The helper
+verifies the received checksum and Git commit marker, rejects links, special
+files, traversal and duplicates, bounds compressed/expanded data and entry count,
+and enforces disk reserve, 20% disk headroom and 20% available memory. Completed staging is
+idempotent only when every retained source file still matches. Failed or
+interrupted receipts require reconciliation; neither a retry nor a new archive
+may silently overwrite the retained source. Source staging does not activate a
+service, switch a publication or establish canonical validation. Preserve these
+sources and receipts as rollback material.
+Invoke the staged wrapper with `/usr/bin/python3 -B` so imports do not alter its
+verified file set. Schema phase subprocesses also receive
+`PYTHONDONTWRITEBYTECODE=1`; their descendant programs must preserve it.
+
+
+### Schema baseline dependencies
+
+The trusted phase programs can invoke the checksum-bound
+`transparent/ops/scripts/transparent-activity-baseline.py` dependency through the
+schema runner. Its `capture` and `restore` actions require the inherited local
+production-lock descriptor to name `/run/lock/wallet-pir-production.lock` and
+require root. `verify` reads the retained private receipt. Do not invoke mutation
+outside the wrapper or treat this file utility as the complete schema transaction.
+The owner must quiesce every writer before capture/restore and bind the explicit
+host plans and all imported program files in the reviewed recipe.
+
+The private baseline copies mutable files independently, including executable,
+unit/drop-in, controller/filter configuration and active-record/state targets
+selected by the reviewed host plan. It preserves modes and ownership, records
+optional missing targets, bounds copies to 1 GiB and 65,536 entries per host,
+and checks that copying retains at least 20% disk headroom. SSH sockets, Python
+bytecode and flock files are excluded. A completion receipt is fsynced only after
+all selected bytes match their source. Partial, corrupted, extra-file and changed
+retention snapshots fail closed. Large v10 journal/publication/cache trees must
+remain outside candidate collection namespaces; identity and sentinel checks
+fence these retained paths rather than copying or linking mutable state.
+The direct `active.json`, `withdrawn.json` and `activation.json` files at a
+retained publication root are copied independently; this exception permits only
+regular files, including explicitly absent optional records. Nested paths,
+symlinks, directories and table files cannot use it. Coordinator capture also
+stops the filter writer before copying its store. Router baselines bind Caddy's
+actual `/etc`, `/usr/lib` or `/lib` unit fragment, the absent `/etc` override and
+both applicable drop-in directories; runtime fragment drift refuses preflight.
+
+The `schema-input-cutover-{plan,preflight,stage,status,reconcile}` commands retain
+two closed input bundles through the same locked immutable preparation path.
+First supply `inventory.json`, nonempty `v10-sample.json` and `v11-sample.json`,
+and the four actual passed gate reports named `artifact-verification.json`,
+`native-certificates.json`, `independent-chain-oracle.json` and
+`comprehensive-ci.json`. The inventory must equal the pinned staging inventory;
+pending or mismatched reports refuse. Then supply only `product.json`, referring
+to that retained bundle. Its complete product identities, inputs and service
+units are checked before retention. Both requests use the service preparation's
+source/release/attempt/files envelope, request digest and expected plan digest.
+Neither stage captures a baseline or invokes a service phase. Reports must be
+derived from retained results; a document shaped like a passing report supplies
+no independent evidence. The full load fixture has a separate 2 MiB reader bound;
+host plans and specifications keep their 256 KiB bound.
+
+### SSH descendant lock qualification
+
+Before the first service transaction, use `schema-lock-plan` and
+`schema-lock-preflight` on the pinned root coordinator with the staged
+`--source-sha`, reviewed `--host` and a new `--attempt`. The inventory must be
+the retained coordinator input file, rather than stdin, because the bounded
+relay rereads it. `schema-lock-qualify` requires `--expect-plan-sha256`, the
+canonical digest of the plan. No service, routing or executable is changed.
+
+The relay exits while a keeper retains the coordinator descriptor for real SSH. The remote
+wrapper acquires its own host lock and exits while a child retains that lock
+for fifteen seconds. Competing lock acquisitions must refuse on both machines;
+the remote interrupted owner must also fence unrelated wrapper operations.
+Private receipts and the SSH log live under the existing input-staging owner
+namespace. Success requires child completion, released locks and reconciliation
+on both hosts. `schema-lock-status` reports the retained coordinator owner;
+`schema-lock-reconcile` resolves an interrupted test only after the remote and
+coordinator locks can both be acquired. Never replay an owned attempt or infer
+remote assurance from the local process tests. Reconcile failures before any
+source staging or deployment; the shared input-owner fence remains in force.
+
+OpenSSH closes inherited nonstandard descriptors at startup. Guarded transport
+commands therefore run under a separate keeper which holds the descriptor until
+SSH exits. A forked keeper survives termination or timeout of its launcher; the
+transport receives normal signal handling and no descriptor environment claim.
+The first real qualification reproduced the missing coordinator lock and was
+reconciled on both hosts before this correction. Passing local keeper tests does
+not replace rerunning the real SSH gate with the corrected staged source.
+
+Restoration verifies the entire snapshot before changing any target and preserves
+displaced candidate state alongside its original target on the live filesystem.
+Routing, scaler and load files can be deferred until the canonical verifier passes.
+An interrupted temporary restore or a second conflicting displaced state requires
+explicit reconciliation. No file-level restore starts services or reopens origins.
+Recovery must separately verify every advertised revision's accepted chain anchor,
+binary/publication identity and exact private retrieval before restoring routing.
+The actual complete host plans, service orchestration and reviewed cutover recipe
+remain open; no production baseline has been captured with this dependency yet.
+
+### Full v11 publication preparation
+
+The deployment wrapper owns a separate preparation job, before any schema
+maintenance. Use its `schema-publication-plan`, `schema-publication-preflight`,
+`schema-publication-start` and `schema-publication-status` commands on the pinned
+root coordinator. Pass the immutable staged operations `--source-sha` and
+`--release-result-sha256`; start additionally requires the printed
+`--expect-plan-sha256`. The frozen release receipt checksum is
+`2f7fbd4a7dcddfe7be1853f697f2e541812b748479a4c305526742e0bd3c5ff8`.
+Do not launch it until the existing ingest and independent guard finish.
+
+The fixed job publishes `/srv/transparent-activity/full-v3/journal` from genesis
+through 3500738 into `/srv/transparent-activity/full-v11/publications/initial`.
+It derives the six-calendar-month boundary from independently accepted node
+headers, keeps `recent-4k-8k` / `archive-wide`, choice tables `all`, and the v2
+range profile. It uses the 18 retained fat-LTO artifacts at `12ce1291`, rechecking
+receipt, dependency, compiler, profile and every executable hash. Native
+publication is followed by complete artifact verification and four journal
+rebuild samples, final independent genesis/anchor checks and measured allocation,
+table counts and occupancy. Extraction oracle comparisons and native certificates
+remain additional gates before service cutover.
+
+`transparent-activity-full-publication-v11.service` owns the detached work with
+400% CPU, 14 GiB MemoryHigh, 16 GiB MemoryMax, no swap/restart, Nice 10 and IOWeight
+20. The child reacquires the production lock after bounded startup handoff and
+repeats preflight before writing; its native descendants inherit production and
+journal locks. Every five seconds the owner records memory and all three disk
+fractions, stopping its own stage below 20%. The job does not switch units,
+origins, scaler or load. Its private owner, per-stage PID/log/result, health and
+terminal evidence are retained under `full-v11/preparation`. Any existing owner
+or output refuses another start; failed or interrupted preparation requires
+explicit reconciliation, preserving its evidence rather than automatic overwrite.
+Job startup or preparation success is not canonical deployment or qualification.
+
+The publisher, fleet subprocesses and shared SSH executor now pass inherited
+production-lock descriptors and `PYTHONDONTWRITEBYTECODE=1` to children. A real
+local grandchild fixture retained the lock after its parent and original owner
+exited. This is local process evidence; qualification must also exercise the
+actual SSH/remote phase boundary and reconcile surviving remote descendants
+before explicit recovery after timeout or interruption.
+
+### Product host transitions for the v11 recipe
+
+The checksum-bound `transparent/ops/scripts/transparent-activity-host.py` now
+implements host `preflight`, `capture`, `stage`, `activate`, `restore` and warm
+worker identity checks. Run it only as a dependency of the schema wrapper recipe,
+from its pinned immutable operations source on the reviewed machine. Mutations
+require the inherited host production-lock descriptor. The coordinator must keep
+its own production lock while invoking pinned SSH descendants; remote owners and
+locks must be qualified before any live use.
+
+A closed host plan binds role, machine ID, operations SHA, transaction ID, private
+baseline plan and each install's source hash, target and mode. Coordinator
+coverage includes binaries/units/drop-ins, controller/fleet/roster/credentials,
+fleet and scaler state, both controller activation records and the entire load
+tree and worker pins. Worker coverage includes both binaries, unit/drop-ins,
+active/invalidation records and prestart helpers. The installed predecessor's
+static publication, active publication, assignments and cache must be retained or
+copied as applicable. Large journals/publications/caches keep their namespace
+and sentinel fences. Units loaded from uncaptured vendor fragments or external
+drop-ins are refused.
+
+Capture first stops coordinator publication/reconciliation/control, scaler and
+load writers and checks zero main PIDs **and empty cgroups**. The recipe then
+captures the original router routing and quiescent warm worker state, before
+public withdrawal. Workers must have no pending prepare/candidate operation and
+match their durable active record; their bytes remain independently checked
+against the saved copies while the services stay warm. It records prior unit
+states privately beside the baseline, binding them to the host plan. The coordinator owner must keep all authority writers stopped throughout this
+cross-host capture. Stage requires both origins withdrawn, verifies candidate publication
+bytes with the native worker's `--verify-only`, stops and verifies empty cgroups
+for every replaced product service (including the filter), then atomically installs retained
+executables/configuration/units and displaces old unit drop-ins on their existing
+filesystem. Worker units must agree on the separate v11 static publication,
+assignment, active record, control socket and disk cache. Controller and fleet
+services must use the separate v11 configuration/state/publication paths.
+
+Recovery verifies the entire baseline before stopping services or restoring any
+byte. It restores controller/filter/worker state and starts only previously
+active authority units. Caddy, continuous load and scaler state remain deferred;
+load and scaler remain stopped. Warm worker checks compare the **running**
+executable hash, complete active publication identity, no preparing/candidate
+state and every advertised revision anchor. Their output is input to the
+coordinator's independent canonical-anchor and exact-query/SQLite verification;
+it cannot authorize reopening. The quality supervisor is never started.
+
+These are concrete host transition dependencies, **not a complete reviewed
+fleet cutover**. Coordinated withdrawal/reopen, scaler observe policy, initial
+fleet/controller activation records, all-worker prewarm, filter alignment,
+installed-sandbox hard-link verification, independent canonical retrieval,
+updated load fixtures, complete host plans/recipe and actual SSH descendant
+qualification still gate production use. The full publication preparation and
+native certificates/oracle gates precede maintenance. No host baseline or service
+transition has been applied by these fixture checks.
+
+### Guarded routing and reference recovery phases
+
+`transparent/ops/scripts/transparent-activity-routing.py` implements the schema
+recipe's withdrawal, private routing, verification, reopening and public
+verification dependencies. Invoke only under the coordinator wrapper's inherited
+production lock, with a closed plan binding both fleet configurations, original
+Caddy bytes, complete coordinator baseline and checksum-bound v10/v11 samples.
+Samples bind every worker executable independently; the compatible retained
+`12ce1291` fat-LTO reader serves both schemas. These dependencies do not supply
+the complete reviewed host plans, remote dispatch or cutover recipe.
+
+Withdrawal guards the coordinator authority before changing router routes. Both
+canonical metadata origins must return 503. A temporary Caddy relay bound only
+to `127.0.0.1:18193` forwards metadata to the local candidate authority and PIR
+setup/query traffic to the reviewed private router. It permits a real HTTP
+reference-wallet recovery while public metadata stays withdrawn. One-shot fleet
+phases use direct SSH without persistent control masters.
+
+Verification requires every reviewed worker, including both recent replicas and
+all archive owners, to attest its warm publication and running executable pin.
+The HTTP worker scope and canonical assignment digest must also match the complete
+reviewed assignment, including worker identity, role and assigned shard count.
+Every advertised retained revision is compared with accepted node anchors. Each
+authority manifest's actual response bytes must match its map digest, schema,
+range, geometry, chain identity and preceding manifest. Sealed entries remain
+identical across recovery and reopening; only a monotonically advancing tail
+may change. A new failed verification retires its predecessor's passing proof.
+
+The brief native recovery retains every report, attempt and SQLite store. An
+independent read-only reopen checks the reader fence, source attribution, exact
+nonempty events, agreeing transaction metadata, complete coverage, no pending
+work and the committed accepted anchor. Unresolved-spend completions cannot
+pass. Legacy v10 metadata remains unavailable. Each reviewed class must complete
+exactly. Owner/result records are atomic, private and durable. This brief gate
+does not replace sustained qualification or the raw-chain extraction oracle.
+
+Reopening requires a complete baseline and a matching proof no older than five
+minutes, then repeats live worker and anchor checks. After reopening, a fresh
+reference recovery uses the two canonical HTTPS origins and independently
+reopens its stores. Origin disagreement, router failure or public recovery
+failure withdraws both origins again. Rollback restoration writes the old
+fleet's maintenance fence before starting the restored authority; load and
+scaler stay stopped until the outer approved phases restore them.
+
+### Portable activity worker executables
+
+The full-chain journal, publication tools and reference reader retain the 12ce
+fat-LTO release identity. Worker server/control instead use the checksummed
+`transparent-publisher` bundle from successful comprehensive main CI 36819961986
+at `80c94f32d7d8cde6615226d41b9cdd7627cc774b`. Native Rust, Cargo and toolchain
+inputs match 12ce; the CPU flags explicitly select `x86-64-v3` plus `pclmulqdq`.
+The coordinator native-CPU build required instructions unavailable on the recent
+workers and failed candidate verification with SIGILL. Preserve that failed
+owner, native result and abandoned bytes after locked reconciliation.
+
+Stage the two portable executables through wrapper plan/preflight and
+`preflight --stage` into checksum-named releases under
+`/srv/transparent-activity/portable-workers`. This only prepares candidate files.
+The input builder and product preflight pin both exact executable hashes, modes
+and source paths; they refuse the coordinator-native worker bytes. Use a fresh
+input request/attempt after reconciliation. Prove native verification on an
+actual recent worker before starting the archive copy. The original release
+receipt still binds publication/assignment tools; worker file records bind the
+separately compiled portable artifacts. Never rewrite the old build receipt or
+claim that reusing CI artifacts establishes fleet or load qualification.
+
+Candidate preparation executables and unit text are flat `.input-*` files beside
+`shards.json`. The native server inspects every immediate child directory as a
+shard, so an auxiliary `.inputs` directory is invalid. The first portable
+verification exposed that error after the earlier SIGILL was fixed. Reconcile
+that failed request through its retained source, preserve the partial copy and
+use a new request/attempt; never weaken native shard discovery or bypass it.
+The generic `shard-control --help` staging check returns a JSON EOF error because
+this executable uses stdin JSON and a socket argument; retain that failed check.
+Its actual read-only status protocol must be checked before service cutover.
+
+### Changed-native activity candidate `c3c66b9b`
+
+The changed-native candidate `c3c66b9b51a5e2f4a6ac9261a941a397d119e920` is a
+separate executable and qualification identity. Historical identities keep their
+original build and are never relabelled. These include the full publication
+`34e3ebe3...`, its initial assignment generated by 12ce, the journal, the frozen
+publication job and its 18 retained 12ce artifacts, and the recovery samples
+created by the 12ce tools. They also include the 80c94f32 portable-worker
+receipts, the four existing 12ce gate reports, the rollback recovery reader and
+captured predecessor executables. Version 1 service, cutover, worker-input and
+product inputs select only that historical build.
+
+`transparent/ops/lib/activity_candidate.py` pins the candidate's 18 artifacts.
+Five serving roles come from the exact-head CI release bundles of comprehensive
+run 37173250956: `transparent-publisher-<sha>` and `transparent-filter-<sha>`.
+The other 13 tools come from the supplemental archive `d3a8f60a...`, recorded in
+the [supplemental build manifest](../evidence/activity-metadata-2026-10-04/README.md).
+The module also pins the fat-LTO `release` profile with one codegen unit, Rust
+1.97.1, `-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq`, and the Cargo
+manifest, lock and toolchain digests. The ABI ceiling is glibc 2.39, from the five
+production hosts' read-only report. That ceiling is a loadability bound, not
+runtime or hardware qualification.
+
+#### Candidate archive transfer
+
+Root keeps the three reviewed archives on its workstation. Before preparation,
+transfer them to the coordinator with
+`schema-candidate-upload-{plan,preflight,stage} --source-sha REV --attempt N
+--transparent-filter F --transparent-publisher F --supplemental F`; stage also
+requires `--expect-plan-sha256` from the reviewed plan. Then run
+`schema-candidate-upload-status --source-sha REV --request-sha256 HASH`. The
+inventory must use a remote coordinator lock, pinned SSH host keys, and the
+coordinator's `machine_id` pin. The operations source must already be staged
+there.
+
+The only inputs are three archives, under the fixed logical names
+`transparent-filter`, `transparent-publisher` and `supplemental`. Each must be an
+absolute, bounded, regular file. Symlinks anywhere in its path and hard links
+refuse. Their SHA-256 pins are fixed in
+`transparent/ops/lib/activity_candidate_upload.py`:
+
+| Archive | SHA-256 |
+| --- | --- |
+| `transparent-filter` | `1a3dcc5805dbb4b0cfbf82fe32c0be72b501d350d3f7ae2385b7e3f378506ea1` |
+| `transparent-publisher` | `092fe69ce76f8003714524f77741754448913efb7ca483d3fe36e056a50708fa` |
+| `supplemental` | `d3a8f60a76e0fa59288fe670275abed75b304b7d390cde368effb842c840a9c3` |
+
+The closed request is `{version: 1, kind, source_sha, candidate_sha, ci_run,
+attempt, machine_id, archives: {name: {sha256, size}}}`. It carries no path.
+Local plan and preflight hash the real bytes and run `activity_candidate.collect`
+over all 18 artifacts. That checks CI revision and checksums, the supplemental
+build provenance and the ABI ceiling. This scratch is a private temporary
+directory, so plan works on a Mac or on Linux. The coordinator keeps its Linux
+tmpfs scratch. The plan names the fixed remote target, the retained
+CandidatePreparation request and its digest, and the next coordinator argv.
+
+Stage streams the closed request header and then the three archives, in that
+order, over one SSH session without persistent masters. The remote command is
+fixed: `/usr/bin/python3 -B
+/srv/transparent-activity/ops/sources/<REV>/ops/scripts/wallet-pir-deploy.py
+schema-candidate-receive --action ACTION --request-sha256 HASH`. Neither scp, a
+generic upload, a caller-chosen target nor inline remote code is used.
+
+The client checks every archive's device, inode, size, mtime and ctime against
+the identity verified at plan. It checks them again while streaming, and refuses
+growth or change.
+
+The receiver checks root, the coordinator machine ID and the staged source
+receipt. That receipt must include `tools/ci/release.py`, because the CI bundle
+checks import it. Every operations source export must therefore include
+`tools/ci`, and CandidatePreparation applies the same guard.
+
+The receiver holds the production lock in the receiving process and runs the
+schema/input fence and the 20% memory and disk checks. It writes its request and
+a `receiving` owner to `/srv/transparent-activity/ops/input-staging/` before
+reading any archive byte. It then points `latest.json` at that owner. Before consuming any archive byte,
+it completes the same fresh locked five-host bootstrap survey and saves that
+proof in the owner. Only the exact receiver input fence is skipped on the
+coordinator; remote owner fences remain enforced.
+
+Each archive is written with `O_EXCL|O_NOFOLLOW` into the private directory
+`/srv/transparent-activity/candidates/archives/<request SHA>.receiving`, in
+bounded chunks with total and idle deadlines. Truncation, extra bytes and a
+checksum mismatch refuse.
+
+Before the directory is renamed to `.../archives/<request SHA>`, the receiver
+checks the exact private file set and runs all 18 artifact checks again. Files
+must be root-owned, mode 0400, with a single link. It then writes
+`preparation-request.json` (0400) beside the archives. It installs and runs
+nothing.
+
+A failure or interruption keeps the owner and every received byte. That owner
+fences all other mutation until
+`schema-candidate-upload-reconcile --source-sha REV --request-sha256 HASH`.
+Reconciliation observes status first. Under the lock, it refuses while the
+recorded owner process, identified by PID and kernel start time, is still active.
+The receiver starts no descendants. It repeats the locked full-fleet survey
+before reconciliation effects. It then renames the partial or target to a
+same-directory `.abandoned-<request SHA>` sibling. A retry needs a new attempt.
+
+If the local SSH session is lost, times out or returns no parseable reply, the
+outcome is unknown. The client exits 75, never retries and never infers the
+remote exit. Root runs status and then reconcile explicitly.
+
+The reviewed order is:
+
+1. `schema-candidate-upload-plan`, then `schema-candidate-upload-preflight`.
+2. `schema-candidate-upload-stage --expect-plan-sha256 <plan sha256>`.
+3. `schema-candidate-upload-status`.
+4. On the coordinator, `schema-candidate-{plan,preflight,stage,status}`.
+   Use `--request /srv/transparent-activity/candidates/archives/<request
+   SHA>/preparation-request.json --request-sha256 <preparation digest>`. The
+   upload plan prints that digest and the exact argv. Root writes no request
+   file on the host.
+
+Fixture tests exercise real pipes and child processes. Root owns the actual
+archive round trip.
+
+#### Bundle preparation
+
+Prepare the bundle on the pinned root coordinator with
+`schema-candidate-{plan,preflight,stage,status,reconcile} --request FILE
+--request-sha256 HASH`; stage also requires `--expect-plan-sha256` from the
+reviewed plan. The closed request is `{version: 1, source_sha, candidate_sha,
+ci_run, attempt, archives}`. Its `archives` field names the absolute retained
+`transparent-publisher` and `transparent-filter` CI bundles and the supplemental
+archive. Plan extracts only into private tmpfs scratch.
+
+CI bundles pass the release tool's exact-revision checks: unique flat regular
+members, a `revision` equal to `c3c66b9b` and a consistent `SHA256SUMS`. The
+supplemental archive must match its pinned digest. Its members must stay under
+the release root, with no links, special files, traversal, duplicates or foreign
+artifacts. Its build result must record the approved source, profile, flags,
+inputs and no CI-role rebuild. Each of the 18 artifacts must match its pin, its
+size bound, and the Linux x86-64 ELF and glibc ceiling.
+
+Stage repeats every check under the production lock and schema fence. It records
+a durable owner in the shared input-staging namespace, then renames one complete
+bundle to `/srv/transparent-activity/candidates/release-<sha>`, which holds
+`provenance.json` (0400) and `artifacts/<name>` (0555, root-owned). Status
+reverifies the exact file set, links, hard links, modes, provenance, checksums and
+ABI. An unfinished owner fences generic deployment, source staging, publication
+start and schema deploy until `schema-candidate-reconcile` retains partial output
+as `.abandoned-<request SHA>`. A retry then needs a new attempt.
+
+Preparation runs no executable and does not touch the frozen release, the
+publication job, units, routes or live services.
+
+For each worker whose version-1 publication request is already staged, run
+`schema-candidate-worker-build --host HOST --source-sha REV
+--publication-request-sha256 HASH`. Pass the resulting version-2 request through
+`schema-input-{plan,preflight,stage,status,reconcile}`. The pinned receiver
+retains only the two worker executables at
+`/srv/transparent-pir/v11/candidates/release-<sha>`. It reverifies the staged
+publication bytes against their retained request, then runs the candidate
+server's `--verify-only` against that publication. Publication bytes and the
+older `.input-*` files stay unchanged. Worker host plans install from the
+candidate namespace.
+
+Version 2 of the service, cutover and product inputs adds `candidate_sha`:
+
+- **Service inputs** pin every worker to the candidate server. The controller's
+  `source_sha` is `c3c66b9b` and labels new continuous publications; the initial
+  publication and assignment keep 12ce.
+- **Product preflight** verifies the whole bundle. Every coordinator and worker
+  `/usr/local/bin` install and every worker plan must equal candidate bytes.
+- **Load and recovery readers.** Load uses the candidate `rate-query` and the
+  forward v11 recovery uses the candidate `transparent-loadtest`. The v10
+  rollback reader stays the retained 12ce path, and the rollback sample may not
+  name the candidate worker.
+- **Unchanged gates.** Native certificate setup bindings, installed setups on
+  both recent replicas, warm serving proof, all rollback bounds and every
+  qualification floor are unchanged.
+
+The cutover proof bundle requires four new passed reports. Each must be bound to
+the candidate:
+
+| Report | Required candidate binding |
+| --- | --- |
+| All four | `native_source_sha` is `c3c66b9b`. `publication_sha256` is the full publication. `candidate_sha256` is the provenance digest `bc109c95...`. `binaries` is exactly the gate's candidate pins. Any `binary_sha256` equals that pin. |
+| `artifact-verification` | `shard-verify` |
+| `native-certificates` | `examples/native_certificate`, unchanged floors `{archive-wide-pages: 83, otherwise: 128}` and complete `setup_bindings`, with `segments` equal to their count |
+| `independent-chain-oracle` | `event-spotcheck` |
+| `comprehensive-ci` | The five CI roles, with run 37173250956, `head_sha` `c3c66b9b`, conclusion `success` and 12 of 12 jobs passed |
+
+The following refuse:
+
+- 12ce reports, and relabelled or mixed reports.
+- Missing or foreign binaries and changed floors.
+- Version-1 inputs carrying candidate identities.
+
+Recovery samples keep their historical `tool_sha` 12ce.
+
+#### Reports from retained native output
+
+`transparent/ops/scripts/activity-candidate-report.py` produces a new local
+`artifact-verification` or `native-certificates` report. Supply a private input
+JSON file with `--input`, its reviewed `--input-sha256`, and a new `--out` path.
+It never overwrites a prior attempt or executes a production program.
+
+The artifact input contains `mapping` and `execution`. The certificate input
+contains `mapping`, `manifests`, `executions` and the retained `certifier` path.
+Every byte reference is `{path: absolute-local-path, sha256: reviewed-digest}`.
+References must resolve to bounded independent regular files without symlinks
+or hard links. Duplicate JSON fields and nonfinite values refuse.
+
+Each execution contains references named `owner`, `result`, `native`, `stderr`
+and `health`. The trusted locked execution observer must record the actual PID,
+start time, candidate/source/publication and binary hashes in the owner. The
+terminal result binds that PID/start time, exit zero and a positive elapsed time
+within its recorded bound (at most 1800 seconds). Resource samples include
+`observed_unix`, `memory_available` and nonempty `disk_available` fractions,
+cover the entire execution with no gap over ten seconds, and meet the existing
+20 percent floor. Retaining these bytes does not replace production ownership,
+installed-binary observation or interrupted-owner reconciliation.
+
+Artifact reports require every coverage, anchor, tier and map-hash expectation
+in the actual `shard-verify` output, with no failed or duplicate checks. Native
+`tool_sha`, the complete shard count, genesis start, terminal height/hash and
+publication file hash must agree. Certificate coverage is derived from every
+checksum-bound v11 manifest; all 180 segment executions must occur exactly
+once. Synthetic databases, missing/foreign segments and table-hash disagreement
+refuse. The producer checks the retained certifier and frozen sampler file
+hashes, reevaluates each native output with the exact-rational certifier, and
+applies 83 bits only to archive-wide pages and 128 bits elsewhere. It retains
+the measured table/public setup bindings and the raw evidence references.
+Installed warm-worker and canonical setup agreement remains a separate gate.
+The producer writes the full raw references and evaluated certificates to
+`<out>.raw-evidence.json` first, then binds that immutable file by path and hash
+in the compact report. Retain both files. The staged report keeps scalar
+certificate scores and all setup bindings within the existing 256 KiB cutover
+input bound; neither source evidence nor arithmetic detail is discarded.
+
+The independent-chain oracle producer and its execution controls still require
+implementation, as do load, capacity and fault controls. These offline
+producers and their fixture tests are source evidence; no candidate native
+qualification has been performed.
+
+#### Native gate execution
+
+`schema-candidate-execute-*` produces the raw inputs of the two reports above.
+Run it from root's workstation. It needs the remote-lock inventory, pinned SSH,
+and a `machine_id` pin and a root or sudo identity for every inventory host:
+
+- `schema-candidate-execute-{plan,preflight,stage} --source-sha REV --mode MODE
+  --attempt N --preparation-request-sha256 H`. Stage also needs
+  `--expect-plan-sha256` from the reviewed plan.
+- `schema-candidate-execute-{status,reconcile} --source-sha REV
+  --request-sha256 H`. Reconcile reads the retained request through status. It
+  refuses if this inventory's hosts differ from that request's hosts.
+
+The closed request (version 2) contains `kind`, `mode`, `source_sha`,
+`candidate_sha`, `candidate_identity`, `preparation_request_sha256`,
+`publication_sha256`, `coordinator`, `machine_id`, `hosts` and `attempt`.
+`hosts` is the sorted list of every inventory host and its machine ID, and must
+include the coordinator. The request names the staged CandidatePreparation
+owner, the candidate provenance digest and the pinned publication map
+`34e3ebe3...`. It refuses historical, partial or foreign identities, and a
+partial, duplicated or coordinator-less host list. There are only two modes:
+
+| Mode | Children |
+| --- | --- |
+| `artifact-verification` | One `shard-verify --shard-dir /srv/transparent-activity/full-v11/publications/initial` with `--expect-start 0`, `--expect-through 3500738`, `--expect-anchor-hash 00000000007b5488...`, `--expect-recent-from 3289805`, both geometries, `--expect-map-sha256 34e3ebe3...` and `--source-sha c3c66b9b...`. No `--data-dir`, journal, rebuild or `--out`. |
+| `native-certificates` | One `native_certificate segment --geometry G --table T --rows-bin <publication>/<manifest digest>/<table>.<index>.bin` for each manifest table segment: all 180, derived from the 90 checksum-bound manifests. No synthetic mode and no `--public`. |
+
+Each remote call runs the staged wrapper's fixed `schema-candidate-execute-receive
+--action ACTION --request-sha256 HASH` as `/usr/bin/python3 -B`. The actions are
+`plan`, `preflight`, `stage`, `status`, `reconcile` and the read-only `survey`.
+The plan, executable, argv and paths all derive from the request; the caller
+chooses none of them.
+
+Before any child starts, the receiver checks:
+
+- Root, the coordinator machine ID and the staged source receipt.
+- The staged CandidatePreparation owner and request, then the whole 18-artifact
+  bundle.
+- The runtime host ABI: x86-64, `glibc 2.39`, and the `x86-64-v3` and
+  `pclmulqdq` CPU flags.
+- The publication. It must be root-owned, not group- or other-writable, with no
+  links. It holds exactly `shards.json` and 90 manifest directories. Each
+  directory holds exactly `manifest.json`, `filter.bin` and its segment files.
+  These must all agree: the map hash, coverage, anchor and tiers, every manifest
+  hash, and every table file size (rows × 4096).
+
+##### All-host reconciliation under the lock
+
+Stage and reconcile take the global production lock in the receiving process.
+They then emit a lock line carrying a fresh nonce and the receiver's PID, start
+ticks and boot ID. Root's client then runs the read-only `survey` over pinned
+SSH on every other inventory host. The receiver surveys the coordinator itself.
+Each survey records:
+
+- Machine ID, boot ID, effective UID and the staged operations source.
+- The schema, host-action and input-staging fence.
+- Every process holding that host's production lock.
+- Every live process that carries a launch token or runs a stage or reconcile
+  receiver.
+- An inventory of every entry under the schema state, host-action and
+  input-staging owner namespaces, latest or not and of any kind, with a digest.
+  Every regular `.json` file is parsed. Any integer `pid` or `*_pid` value in
+  it is a recorded process, bound to the start ticks (`start_ticks` or
+  `process_start`), boot ID and cgroup kept beside it.
+- Every live process associated with a recorded process:
+  - the PID matches the kept start ticks or, without them, the process started
+    no later than the record's last write;
+  - a member of a session or process group the recorded process led, when that
+    process is gone or still live (Linux never reuses a PID while such a
+    session or group exists);
+  - a process in the recorded cgroup, when that cgroup is not the observer's;
+  - a process whose session or group leader is gone and that started between
+    the record's `started_unix`/`started` and its last write;
+  - a process started in that window whose parent is PID 1, a `systemd`
+    manager, unscanned or younger than itself: a reparented child, including
+    one that made its own session. The oldest process of a `.service` cgroup
+    is that service's main process and is exempt;
+  - every live descendant, by parent PID, of any process above, including the
+    children of a recorded process that is still running.
+
+  Records last written before this boot, or naming another boot, are skipped.
+  Kernel threads and kernel-spawned helpers (session 0) are never associated.
+- Every live process of a closed operational class: its executable or an argv
+  element has the basename of a candidate tool, `wallet-pir-deploy.py` or
+  `transparent-block-server`, or lies under `/srv/transparent-activity/` or
+  `/srv/transparent-pir/`. Such a process is allowed only when systemd placed
+  it in the cgroup of an exact baseline unit:
+  `transparent-shard-server`, `transparent-filter-server`,
+  `transparent-publish-controller`, `transparent-control-sessions`,
+  `transparent-fleet-scaler`, `transparent-replica-reconciler` and
+  `transparent-quality-rollout`. The survey records each bound process's unit,
+  PID, start ticks, executable and executable SHA-256. Any other match is
+  unattributed and refuses, whatever its session, parent or token. That
+  includes an active unit outside this baseline running an operational
+  executable, even a deleted one (the `(deleted)` suffix is stripped before
+  matching). The survey keeps its exact PID, start ticks, executable and
+  cgroup. It never stops, signals or allowlists it; adding a unit to the
+  baseline needs root's reviewed provenance.
+
+These rules are fixed heuristics, not proof that no descendant survives. A
+detached process with an unclassified name, started outside every recorded
+window, is not seen. A refusal can also be a false positive, for example a
+daemon that double-forked during a recorded operation. Root reviews the
+retained raw survey in either case.
+
+The survey is the stdlib-only `ops/lib/wallet_pir_ops/owner_survey.py`. It has
+no package imports, so a source bootstrap can embed its exact text, as it does
+`hostlock` and `schema_fence`. The caller passes every input: namespaces,
+bounds, classes, baseline units, lock path, allowed holder and a binding of
+nonce, request and host. The raw result echoes all of them, with the class
+digest and the digests of the records behind each association. The receiver
+refuses a reply whose bounds, classes, baseline or binding differ from its own.
+
+The survey reads command lines and the launch-token variable only in memory.
+A retained process entry, and every refusal reason, keeps:
+
+- PID, start ticks, session, group, parent, UID, kernel name, cgroup and
+  executable path.
+- The SHA-256 and byte count of the command line, read to 4096 bytes. A count
+  of 4097 means the digest covers only that bounded prefix.
+- The token's SHA-256, never its value. The launch record keeps the receiver's
+  own token, so its digest identifies own processes offline.
+- The operational class entries it matched (a tool name or root), and the
+  lock, receiver and unreadable flags.
+
+No argument or environment value is retained. Credentials, URL credentials or
+inline script text in another process's command line never reach the evidence.
+  On the coordinator this walk keeps the 2-second health sampling, and a
+  failure there still retains every reply already received.
+- Every candidate execution owner and its status. The unfinished check runs on
+  every selected owner. Only the listed display is cut to 64, and the reply
+  carries the complete count and a digest of the whole selection. More than
+  10000 selected owners refuses.
+
+Before any owner exists, the receiver checks the nonce, the host set, every
+machine ID and the source. It refuses on any of:
+
+- A host that is missing, extra, stale or foreign, or a transport failure.
+- A missing operations source, an unreadable machine ID, owner record or
+  process.
+- An owner namespace over 100000 entries, 512 MiB of `.json` records or
+  100000 recorded processes; one record over 16 MiB; a symlink or special file.
+- An unfinished fence or candidate execution owner.
+- Any live process associated with any retained owner record, terminal or not.
+- Any unattributed live operational-class process.
+- A lock holder other than the receiver.
+- Any live candidate process or other receiver.
+
+Every reply is retained as raw immutable bytes, pass or fail, under
+`/srv/transparent-activity/candidates/executions/surveys/<request SHA>/<nonce>/`.
+The `index.json` there is referenced from the owner record. Surveys never write
+on any host.
+
+##### Launch, limits and sampling
+
+After a clear survey, stage writes the request and a `running` owner to
+`/srv/transparent-activity/ops/input-staging/`, then points `latest.json` at it.
+Children then run one at a time. For each child, the receiver:
+
+1. Re-checks the binary hash, ELF ABI and host ABI. For certificates, it hashes
+   the table in chunks, sampling between chunks, and checks its identity again
+   after the child exits.
+2. Records a durable launch intent with a random launch token.
+3. Starts a fixed guardian (`GUARDIAN_SHA256` is in the plan) in its own
+   session. The guardian inherits the lock descriptor, a gate pipe, a notify
+   pipe and its report file, and carries the token in its environment. It is a
+   child subreaper and ignores SIGHUP, SIGINT and SIGPIPE.
+4. The guardian forks the native process and reports its PID. That process
+   dies with the guardian (`PR_SET_PDEATHSIG`), sets the hard limits
+   `RLIMIT_AS`, `RLIMIT_CPU` (with a 5-second grace before SIGKILL) and
+   `RLIMIT_CORE=0`, then waits on the gate.
+5. The receiver checks that the reported process is the guardian's child in
+   its session. It writes `owner.json` and the child record durably, with the
+   native and guardian PIDs, start ticks, boot ID, token and guardian deadline.
+   Only then does it send `go`, and the native process executes the closed
+   argv.
+
+If the receiver dies before `go`, the native process sees end-of-file and exits
+125 without executing anything.
+
+The guardian has its own deadline: the child's wall budget plus a 60-second
+launch window, from its own start. At that deadline, at native exit or on
+SIGTERM, it kills the native process and then every descendant, through pidfds
+re-checked against their start ticks. As a subreaper it also finds descendants
+that left its session. It writes `guardian.json` with the native exit status,
+whether the deadline expired, and what it killed. The receiver's own wall
+deadline is shorter. The guardian bounds an IO-blocked child, which
+`RLIMIT_CPU` cannot stop, after the receiver is gone. Only killing the guardian
+from outside escapes it: the native process then dies with it, and a surviving
+descendant keeps the lock and the fence until root inspects it.
+
+The per-mode budgets are in the plan, with their basis:
+
+| Mode | Wall | Guardian | CPU | Address space | Aggregate per stage |
+| --- | --- | --- | --- | --- | --- |
+| `native-certificates` | 600 s | 660 s | 600 s | 14 GiB | 180 × 600 s + 3600 s = 111600 s |
+| `artifact-verification` | 1800 s | 1860 s | 1800 s | 14 GiB | 1800 s + 3600 s = 5400 s |
+
+- The certificate limits are root's conservative closed choice. They match the
+  prepared certificate driver's `RLIMIT_AS` and its per-segment CPU and wall.
+- The artifact wall time is the unchanged 1800-second report-contract ceiling.
+- Root accepted the artifact values as a conservative initial ceiling: the
+  pinned `shard-verify` path streams segments and maps no whole publication.
+  They are not measurements of `shard-verify`.
+- All budgets are explicit ceilings, not qualification evidence. Failures are
+  retained without widening them; root sets the production allowance after
+  current measurements.
+- The aggregate budget covers one stage on the coordinator, from lock
+  acquisition to the terminal owner record. That includes surveys, candidate
+  and publication checks, table hashing, input retention, every child and the
+  sampling between children. Root accepted the 3600 seconds outside children
+  and the aggregates as finite operational maxima, not estimates.
+- The 60-second guardian launch window is a wrapper choice. It bounds only the
+  owner write before `go` and a dead receiver's child, and awaits root's
+  review.
+- The receiver refuses to start a child the remaining aggregate budget cannot
+  cover.
+- The client's SSH wait is the aggregate plus 900 seconds. It is transport
+  only and bounds nothing remote.
+- Sampled RSS is recorded as an observation, never as a limit.
+
+The receiver takes one health sample at lock acquisition, then at least every 2
+seconds through all locked work: checks, hashing, the wait for surveys, each
+child and the gaps between children. It also samples before each spawn and
+after each exit. All samples go to `health.ndjson` in the execution directory.
+The run stops, its own child is stopped, and the owner fails on any of:
+
+- Memory or disk below 20 percent.
+- A sampling gap over 10 seconds.
+- The aggregate deadline.
+- A child past its wall deadline, or killed by its hard limits.
+- stdout above 16 MiB or stderr above 1 MiB.
+- A nonzero exit, a refused launch, an expired guardian, or any descendant the
+  guardian had to kill or a token-bearing process still alive after exit.
+
+Each child's private directory under
+`/srv/transparent-activity/candidates/executions/<request SHA>/<key>/` keeps
+these files, all 0400 with a single link:
+
+- `owner.json`: actual binary, argv, guardian digest, token, native PID and
+  start ticks, guardian identity and deadline, boot ID, source, candidate,
+  publication and limits.
+- `native.json` (raw stdout) and `stderr.log`.
+- `guardian.json`: the guardian's terminal report.
+- `health.json`: that child's samples, from before spawn to after exit.
+- `result.json`: status, native exit code or signal, native PID, times, limits
+  and the guardian's PID, exit code and report reference.
+
+Owner and result follow the `activity_candidate_reports.capture` contract, and
+each successful capture is checked against it. Private copies of the map and
+manifests sit under `inputs/`. A complete run writes `references.json` and the
+owner becomes `staged` with `gate: unevaluated`. Native exit zero is not a gate
+pass until `activity-candidate-report.py` accepts the retained bytes.
+
+Two constraints remain:
+
+- The references are absolute coordinator paths. The report producer reads them
+  there, or from an exact copy at the same paths. Its compact report and
+  raw-evidence index are unchanged.
+- The certificate report still needs the root-supplied `certifier` path.
+
+##### Failure and recovery
+
+A failure stops the run at that child and keeps every byte, including the failed
+attempt. The `latest.json` owner fences every other mutation until
+`schema-candidate-execute-reconcile` succeeds. SIGHUP (including SSH loss),
+SIGTERM or SIGINT makes the receiver stop its own child, record `interrupted`
+and exit 75. If the transport is lost while the receiver lives, the client
+reports an unknown outcome (exit 75), and root runs status and then reconcile.
+
+Reconciliation acquires the production lock before any effect:
+
+1. Refuse while the recorded receiver is alive. Identity is boot ID, PID and
+   start ticks.
+2. Acquire the production lock, waiting at most 30 seconds. Children inherit
+   it, so while the guardian, the native process or any descendant holding it
+   lives, the lock is unavailable. Refuse then without writing the owner or
+   signalling anything, and say which case applies: own processes until the
+   guardian deadline, own processes past it, or a holder this owner cannot
+   prove its own. The observation is kept as
+   `reconciliation-unlocked-<time>-<random>.json`.
+3. Under the lock, check that the owner did not change. Append the attempt
+   (claimant PID, start ticks, boot ID) to `recoveries` and save it. This is the
+   first owner write of the recovery.
+4. Scan every process for the launch token and the recorded guardian's session.
+   Own processes carry the exact token inside that session. In the launch
+   window, that is the session of the token-bearing guardian. If a token escaped
+   the session or a session member lacks it, refuse and signal nothing.
+5. Own processes that released the lock (possible only after the guardian was
+   killed from outside) are signalled while this reconciler holds the lock,
+   each through a pidfd re-checked against its start ticks: TERM, then KILL.
+   A reused PID is never signalled.
+6. Run the fence and an all-host survey, as stage does. This one allows only
+   this owner to be unfinished. Then mark the owner `reconciled`.
+
+Every locked attempt, blocked or not, writes an immutable
+`reconciliation-<n>.json` with the claimant, the observations, the guardian
+report, the signals and the survey reference. A blocked attempt leaves the
+owner unfinished and the fence in place. A retry needs a new attempt. If the
+receiver dies between fork and `go`, the native process's end-of-file exit
+frees the lock within the lock wait.
+
+The receiver writes only this private qualification evidence. It never touches
+a live service, cache, unit, route or journal writer.
+
+Fixture tests use real child processes, flock locks, rlimits, pidfd signals,
+signals and a second surveyed host process. They cover:
+
+- Receiver death with an IO-blocked child, refused without effect until the
+  guardian deadline and then reconciled under the lock; death before the child
+  owner write and before `go`.
+- The guardian's gate, limits, deadline, SIGTERM and parent-death kill, and
+  its subtree kill of a setsid descendant.
+- SIGHUP, lost transport, a concurrent reconciler, a reused PID, a foreign
+  session and an unknown lock holder, none of them signalled.
+- Escaped descendants, own descendants left by a killed guardian, and live or
+  missing remote owners, sources and lock holders.
+- Nonlatest owners of any kind in every namespace with a live process, a
+  terminal owner whose process died while a descendant lives, PID reuse,
+  namespace overflow, unreadable records and links, and each association rule.
+- A legacy child that made its own session and was reparented after its parent
+  exited, with no token and a live session leader: refused by its recorded
+  window, by its executable class, or both. Baseline binding by exact unit
+  cgroup, and the survey run from its embedded text.
+- Partial, stale and foreign surveys.
+- Floors, gaps, the aggregate budget, wall deadlines, hard memory and CPU
+  limits, output bounds and nonzero exits.
+- Drift and 180-segment coverage.
+
+No production execution has occurred, and the budgets above still need root's
+review. Installed and canonical setup agreement remains a separate cutover gate.
+
+#### Independent raw RPC validation
+
+`transparent/ops/lib/activity_oracle_rpc.py` validates retained RPC attempts
+without reading any journal or running a native program. Each attempt binds an
+HTTP status and independent local `request`/`response` byte references. A gzip
+body additionally binds `decoded_sha256`; both the retained compressed bytes
+and the bounded decompressed bytes are verified. Each body is bounded at128MiB
+and an input has at most4096attempts. Original bodies stay retained while the
+validator keeps only an indexing/category projection in memory, excluding large
+shielded proof fields.
+
+The validator matches response IDs, methods, verbose transaction identities,
+block heights/hashes and complete transaction/previous-output coverage. It
+independently applies the nonempty/non-OP_RETURN script rule, counts receives
+and spends, and compares all17block counts/hashes with the native multiset
+comparison result. It derives public transaction pool/category counts from the
+sampled block transactions, excluding previous-output lookups. Oversized-batch
+refusals remain bound raw evidence and every refused transaction must have a
+subsequent successful verbose response. Other failed requests, unresolved
+previous outputs, malformed encodings, conflicting projections and native
+count disagreements refuse.
+
+This validator alone cannot produce an oracle gate. Exact candidate native
+execution, immutable snapshot construction/verification, writer restoration,
+canonical anchors and complete reviewed category coverage remain prerequisites.
+Historical corpus compatibility tests are parser tests only; they cannot
+qualify c3. Native multiset comparison verifies full event fields; the Python
+raw validator independently verifies coverage/counts/categories, and does not
+claim to rederive every monetary or metadata field.
+
+#### Offline candidate cutover assembly
+
+`transparent/ops/scripts/activity-candidate-inputs.py --input <absolute-file>
+--input-sha256 <digest> --out <new-absolute-directory>` assembles inert local
+version-2 service, proof and product staging requests. It does not query hosts,
+install configuration, start workers or qualify deployment.
+
+The checksum-bound input object has `source_sha`, `release_result_sha256`,
+`attempt`, `mapping`, `inventory`, `samples`, `gates`, `service_request` and
+`product_template`. Byte references use the report producer's independent,
+bounded local-file format. `samples` contains `v10` and `v11`; `gates` contains
+all four exact candidate gates. The three measured gates must bind readable raw
+evidence indexes; native certificate coverage must contain all 180 bindings.
+Historical samples retain their 12ce tool identity and anchor3500738. Both the
+service request and product template must already be explicit version2 inputs
+for the reviewed operations source and c3 candidate. The assembler refuses a
+version1 template instead of converting historical deployment evidence.
+
+The template contains explicit reviewed host plans, assignment, routing,
+rollback readers and load inputs. Only inventory, gate and recovery-sample
+references are rebound to the new proof request's checksum namespace. Service
+configuration and load references must match the exact supplied service request;
+coordinator and worker executable installs must use their separate pinned
+candidate namespaces. The existing host/routing/product validators run before
+output. Retain each request and its canonical digest for guarded wrapper
+plan/preflight/staging. Outputs are exclusive, immutable and durable; interrupted
+partial output remains evidence and requires a new output directory. Remote
+preparation still verifies publication, service content, staged bytes, fleet
+ownership and preflight independently. No request can be produced while any
+candidate gate is pending.
+
+Root's ordered path, without rebuilding the old CI or native chain:
+
+1. Stage the reviewed operations source.
+2. Transfer the three retained archives with `schema-candidate-upload-*`.
+   Then run candidate plan, preflight, stage and status against the retained
+   `preparation-request.json`.
+3. Run the actual gates with the staged candidate executables against the
+   immutable publication: `schema-candidate-execute-*` for artifact verification
+   and native certificates. The `independent-chain-oracle` mode requires
+   `--snapshot-request-sha256`, `--snapshot-owner-sha256` and
+   `--snapshot-manifest-sha256`: respectively the canonical snapshot request
+   identity and exact retained owner/manifest byte digests. These identify only
+   the fixed [journal snapshot](#candidate-journal-snapshot) namespace.
+   Plan/preflight expose the closed recipe and snapshot references. Stage uses
+   the same lock, fresh complete-fleet handshake and gated workflow supervisor;
+   it fully verifies the snapshot before the candidate reader, captures canonical
+   RPC boundaries and raw attempts around the native run, then re-verifies the
+   snapshot and writes the oracle report. Its closed limits are1800seconds native
+   plus the existing3600seconds non-child ceiling; they are operational maxima,
+   not measured candidate timings. Pre-handshake and terminal supervisor writes
+   remain cooperatively bounded. Actual qualification remains pending.
+   Bind each report from retained raw results with `activity-candidate-report.py`;
+   a document shaped like a passing report is not evidence.
+4. Stage the candidate worker pair on every worker.
+5. Render version-2 service, proof and product inputs, then follow the existing
+   schema plan, preflight and deploy path.
+
+None of this has been executed. Fixture tests are source evidence only.
+
+#### Deployed candidate qualification
+
+After the version-2 product transaction commits, `schema-qualify-*` measures
+the deployed candidate. Its module is
+`transparent/ops/lib/activity_deployed_qualification.py`. Run it on the pinned
+root coordinator from a staged operations source that contains the module.
+That source can be newer than the product transaction's source.
+
+- `schema-qualify-plan --request F --request-sha256 H` prints the plan and its
+  digest. It does not read hosts.
+- `schema-qualify-preflight` uses the same arguments. It holds the production
+  lock, because its remote probes briefly take each host's lock.
+- `schema-qualify-run` adds `--expect-plan-sha256 H` and launches the owner.
+- `schema-qualify-status --request-sha256 H` reports the owner, its effect and
+  its remote actions.
+- `schema-qualify-reconcile --request-sha256 H` reconciles the owner after it
+  stops and restores any owned unit effect that did not finish.
+- `schema-qualify-summary --transaction ID` is read-only. It prints the
+  capacity decision from that transaction's reconciled trials.
+
+The closed request has `version=1`, `kind`, `source_sha`, `attempt`,
+`transaction` and `recipe_sha256`. Some kinds take more fields:
+
+- `capacity` adds `level`, `trial` and the reviewed `sample`, a loadtest sample
+  object of at most 8 MiB.
+- `fault` adds `fault`.
+- A fault that targets a worker also needs `target`.
+- `client-reopen` also needs `seed_trial`, the request SHA of a reconciled
+  capacity trial of the same transaction.
+- `rollback-redeploy` also needs `rolled_back_transaction`.
+
+Requests cannot carry URLs, argv, paths, units, signals, thresholds or timing.
+The plan lists every fixed bound.
+
+Every action rechecks the same deployment:
+
+- The latest schema transaction is exactly `transaction`. Its status is
+  `committed`, and every forward phase passed under `recipe_sha256`.
+- The recipe's product specification is version 2 for candidate `c3c66b9b`,
+  with one coordinator, a router, at least two recent replicas and an archive
+  owner.
+- The rollback budgets are unchanged.
+- The candidate `rate-query` and `transparent-loadtest` match their pins.
+- The load fixture, recovery sample, assignment and inventory match their
+  checksums.
+- The scaler policy is `observe`, and the quality supervisor is stopped with an
+  empty cgroup.
+- The coordinator has at least 20% memory and disk headroom.
+- Every pinned host passes owner reconciliation (below). Remote hosts also need
+  20% headroom, and their restart and OOM counters are recorded.
+- Each host's retained rollback baseline for `transaction`
+  (`/opt/transparent-publisher/schema-rollback/<transaction>`) verifies
+  read-only, and its digest is recorded.
+- Every worker is ready as its assigned role on the candidate executable. Its
+  assignment digests and incarnation are recorded.
+- The public map's protocol digest, sealed shards and canonical tail are
+  recorded.
+
+The historical 12ce publication, assignment, samples and rollback reader stay
+unchanged; only the forward v11 recovery reader is the candidate client.
+
+**Owner reconciliation.** A terminal journal does not prove quiescence. On
+every pinned host, none exempt, reconciliation:
+
+- takes the host's production lock without waiting (on the coordinator, the
+  owner already holds it), so no lock-inheriting owner or descendant lives;
+- passes the shared schema, host-action and input fences;
+- reads every retained record, not only the latest, of the schema, host-action,
+  input-staging, qualification-action and publication-job namespaces. It
+  refuses if there are more than 4096 records, a record over 4 MiB, more than
+  128 MiB in total, a link, or an unparseable record, because the scope would
+  be incomplete or unknown;
+- fails if any recorded owner or child is alive. Recorded identities are PID,
+  start ticks and boot. A PID with kernel start ticks is matched exactly. A bare
+  PID counts as alive if its process started before its record;
+- reads one table of every live process, and refuses if it cannot read one.
+  It fails if a live process is in the session or process group of a dead
+  recorded owner and started before that owner's record was last written. Such
+  a process is an escaped descendant;
+- fails if a live process runs an executable or argument from
+  `/srv/transparent-activity` or `/srv/transparent-pir/v11/candidates` outside a
+  product unit's cgroup, this owner's unit or the caller's own ancestry. This
+  catches a descendant that left its session and never inherited the lock;
+- lists every `transparent-activity-*` and `transparent-full-burst-*` unit, and
+  fails if one has a main PID, is transitioning or has a non-empty cgroup.
+
+Only this owner's own record and unit are exempt, and only on the coordinator.
+Each record's path, SHA-256 and per-process verdicts, and the escaped-process
+lists, are retained. A refusal names each survivor exactly: an escaped process
+by PID, start ticks, executable (including a ` (deleted)` suffix) and leading
+arguments, and a live unit by name, active state and main PID. A survivor that
+no retained record or product unit accounts for, such as a historical
+prototype service with unverified code or identity, refuses every preflight and
+effect. The exact ancillary reader below can attribute its reviewed main
+process and the one independently pinned direct load query; other descendants
+and retained-owner associations still refuse.
+Reconciliation runs at preflight, every 60 seconds
+during load, freshness and capacity, and immediately before and after each
+fault effect.
+
+Launch then works in this order:
+
+1. It records durable intent under the shared input-staging fence
+   (`latest.json`). Every other wrapper mutation and a second qualification
+   refuse until reconcile, so freshness and capacity never overlap.
+2. It retains the request, plan and preflight as read-only files under
+   `/srv/transparent-activity/qualification/<request SHA>`.
+3. It starts the fixed transient unit `transparent-activity-qualification-<prefix>`
+   with `Restart=no`, `KillMode=control-group`, `TimeoutStopSec=90` and
+   `RuntimeMaxSec`.
+
+The unit's owner reacquires the production lock. Clients start in their own
+sessions and inherit the lock. Each child's intent is saved before it starts,
+and its PID, start ticks and boot ID after. A child started before its identity
+was saved is still in the owner's cgroup and still holds the lock.
+
+**Timing bounds.** The owner's deadline ends 150 seconds before
+`RuntimeMaxSec`. Every wait, network call, `systemctl` call and child shares it,
+and no bounded suboperation starts unless its whole bound still fits. Node RPCs
+are bounded at 3 seconds, origin reads at 4 or 5 seconds, `systemctl` at 15
+seconds, unit stop and start at 90 seconds each, and each remote call at its
+operation bound plus 30 seconds, plus 150 seconds of restoration for an effect. A clean stop has 30 seconds to end children and
+then seals the result.
+
+| Owner | `RuntimeMaxSec` |
+| --- | --- |
+| staged load | 2400 |
+| freshness | 45000 |
+| capacity | 13680 |
+| fault | 3600 |
+
+Health is checked every 1 to 2 seconds on the coordinator. Remote reconciliation runs
+in a background thread, so a slow SSH probe never stalls observations. A failed
+or more than 150-second-old remote result stops the activity. Any of these also
+stops it:
+
+- headroom below 20%
+- an OOM
+- a changed `MainPID` or `NRestarts` outside the fault under test
+- a quality supervisor that starts
+- a lost lock
+
+The owner writes `result.json` exactly once and seals all raw files read-only.
+An owned unit effect that did not finish or restore makes the result `failed`
+and `fenced`. Reconcile requires all of the following:
+
+- the lock is free
+- the unit has no main PID and its cgroup is empty
+- no recorded process or owned session is alive
+- every owned local effect and remote action is `passed`, `restored` or
+  `refused`, restoring it first if needed
+
+An interrupted run gets an `interrupted` result, and its partial raw files are
+kept. If SSH drops, run status and reconcile again; never repeat a request.
+
+**Staged load.** Freshness must permit the run first: within 300 seconds, one
+new canonical block must be visible at both public origins within 30 seconds and
+at every recent replica within 60 seconds.
+
+The owner then runs five candidate `rate-query` clients against
+`https://transparent-pir.valargroup.dev`: 5 QPS for 120 seconds, then 20 QPS for
+600 seconds. Each query uses fresh keys, and the fixture splits queries
+40/40/10/10 across recent directory, recent pages, archive directory and archive
+pages, so recent/archive is 80/20.
+
+A stage passes only on raw output, with:
+
+- zero logical failures
+- at least 95% of the requested rate completed
+- p50 below 0.7 seconds and p99 below 2 seconds
+- transport attempt failures below 1%
+- a measured 75–85% recent share
+- every client exiting 0 within its bound
+
+A freshness or health violation, or a failed stage, refuses escalation and keeps
+the failed stage. A stage starts only if it and 120 seconds fit the deadline.
+
+**Freshness.** Each observation reads the node tip and hash, both public maps,
+every recent replica and the canonical hash of every served tail. Each call's
+raw response is kept once under `raw/responses/<sha256>`, and each observation
+line records every call's monotonic and wall-clock start and end.
+
+Latency is an upper bound from observation times, not a guess of when a block
+arrived. A block counts as born at the start of the last node read that did not
+report it. It counts as visible at the end of the first read that serves it.
+The public origins must be within 30 seconds and each recent replica within
+60 seconds.
+
+A violation, a reorganization, a failed observation or more than 10 seconds
+between complete observations closes the current interval. The closed interval
+is recorded as failed in `intervals.jsonl`, and a new interval starts with no
+inherited credit. Unobserved time never counts as fresh. The run passes after
+6 hours and 300 blocks in one interval; it fails after 12 hours without one.
+
+**Capacity.** One request is one sustained 60-minute candidate
+`transparent-loadtest` scenario at level 8, 20 or 40. The scenario fixes:
+
+- three measured HTTP attempts per call
+- a 600-second recovery deadline, which covers the heavy class
+- SQLite stores
+- every worker's `/metrics` scrape
+- a preparation cache in the qualification namespace
+- the trial number as its seed
+
+The 20-wallet composition is the supplied mixed-20 scenario, and 40 doubles it.
+Eight slots cannot hold all nine classes; they omit `catch-up-7d` and keep the
+heavy `reused-tail` class. **Review this composition before the first run.**
+
+The evaluator reads `wallets.ndjson`, `requests.ndjson` and `metrics.ndjson`:
+
+- Only `exact` outcomes with exact events count as completed syncs.
+  `scheduled` wallets and request counts never count.
+- A trial fails if:
+  - the loadtest did not exit 0 by itself, or the owner stopped it, whatever
+    its partial rows show
+  - a wallet event is malformed, duplicated, unscheduled, or out of order
+    (started before scheduled, or finished before started)
+  - any wallet lacks a terminal outcome
+  - failed or incomplete outcomes exceed 5%, heavy attempts included
+  - 503 attempts exceed 10%
+  - the window did not complete
+  - a worker restarted
+  - a worker's cgroup memory exceeded 80% of its limit
+  - freshness or health stopped it
+- Payload bytes, peak queue depth, revisions held, body bytes and overloads are
+  retained.
+
+Trials run in sequence, three per level. Up to three more are allowed only when
+an ordinary profile has fewer than 100 exact observations. Level 20 requires a
+passed level 8, and 40 requires 20. A failed trial ends the level.
+
+Pooled p95 targets are:
+
+- 5 seconds for small-active and the three catch-up classes
+- 10 seconds for `restore-6m`
+- 60 seconds for `restore-old` and the forty-script `multi-script`
+- 15 seconds for `unused`
+
+The heavy class has no latency target. Supported capacity is 50% of the lowest
+load-window exact-sync rate at the highest passing level.
+
+**Continuation.** The candidate `transparent-loadtest` has a hidden
+`--scenario-worker` mode that reads one JSON job per line and reopens an
+existing SQLite store. A closed adapter builds that job only from the retained
+scenario, one sample wallet, its retained prepared-history seed and the
+retained store. The job has no other fields. The adapter then:
+
+1. copies the store and its WAL sidecars untouched (`pre-resume`);
+2. reopens a second copy and refuses unless it passes an integrity check,
+   carries a schema version, holds only wallet scripts, and holds only prior
+   history (below `required_from`) that is in the seed. The worker re-imports
+   the seed, and the native store accepts only identical events;
+3. resumes a third copy in an owned child that inherits the lock, within
+   600 seconds;
+4. retains the job, every worker line and the native outcome.
+
+A continuation passes only if the worker exits 0 with an `exact` outcome and
+exact events, and if its digest and event count equal the sample's. An exact
+outcome deletes the resumed store natively, so no completed database is
+retained or claimed. Pre-resume evidence and the native outcome are kept apart.
+
+After a trial that the owner did not stop, each heavy wallet whose outcome was
+not `exact` resumes once, at most four per trial. Each is checked for health
+first. A heavy wallet that is not exact after its continuation, missing seeds
+or stores, or more than four incomplete heavy stores fail the trial.
+
+**Faults**, one per request:
+
+| Fault | Fixed action |
+| --- | --- |
+| `client-reopen` | Starts one seeded worker-protocol wallet from `seed_trial`, terminates it after its first request and once its store exists, then resumes that store through the continuation adapter |
+| `publication-interruption` | Waits up to 300 s for a recent replica to report a preparation, then stops and restarts the coordinator publish controller; recovery also needs the public map to reach the pre-fault node tip |
+| `recent-worker-loss` | Stops the target recent replica's worker, waits 60 s, then starts it |
+| `archive-restart` | Restarts the target archive owner |
+| `router-restart` | Restarts router Caddy |
+| `rollback-redeploy` | Changes nothing; verifies retained journals |
+
+A fault starts only if an owner survey, its effect, 900-second recovery and
+post checks fit the owner deadline, and only after owner reconciliation of every
+host and of the owner's own children. Each all-host survey must finish within
+120 seconds and is retained once under its own name; a later survey never
+replaces an earlier one.
+
+`publication-interruption` waits before its effect, so the first survey
+(`owners-before-effect.json`) may be up to 345 seconds old when a preparation
+appears. The owner then refuses unless all of the following hold, in order,
+before it stops the publisher:
+
+1. the stop, its post-stop read, start, restoration, 900-second recovery and
+   post checks still fit the owner deadline;
+2. a second complete survey of every pinned host passes, retained as
+   `owners-before-stop.json`;
+3. a re-read of the same recent replica reports the same preparation instance:
+   same map digest, an age that advanced with that host's clock (5-second
+   tolerance), and an unchanged active map that is not the prepared one.
+
+A refusal is recorded on the effect as `refused`. No publisher state was
+captured or changed, so nothing is fenced. Recovery is timed from the publisher
+stop, not from the start of the wait.
+
+No other effect waits after its survey. A remote effect re-runs owner
+reconciliation under the target host's lock immediately before it captures
+the unit. The `stop-start` hold and every start after a stop restore that same
+owned effect. `client-reopen` only terminates its own child session.
+
+**Unit effects.** A unit effect, local or remote, first records the exact
+pre-fault service: active state, main PID, start ticks, executable digest, unit
+fragment, drop-ins and cgroup. It saves each phase (`stopping`, `stopped`,
+`starting`, `restarting`, `verified`) before the `systemctl --no-block` call
+that enters it, then polls under the deadline. Success requires the same unit
+definition, cgroup and executable, with a new process.
+
+Remote effects run through hidden `schema-qualify-remote` under that host's own
+production lock, within 240 seconds (`stop-start`) or 180 seconds (`restart`).
+They ignore SSH hangup and broken pipes. A termination signal or a handled
+failure enters restoration, bounded at 150 more seconds. A request is never
+replayed.
+
+Restoration starts only the owned unit, only after an owned stop, and at most
+three times per effect. An unchanged original process counts as restored only
+if the recorded phase shows no stop or restart took effect. A worker must also
+be ready on the restored executable. A unit that stopped without an owned stop,
+changed without an owned effect, or now runs a different definition or
+executable stays fenced for review.
+
+The coordinator treats a lost or unstructured remote reply as unknown. The
+action stays fenced, and every later mutation refuses, until reconcile.
+Remote reconcile waits for that host's lock, then either restores and proves the
+owned service or, if no intent was ever recorded, writes a permanent `refused`
+record so a delayed request can never act.
+
+`client-reopen` uses the first scheduled wallet of `restore-old`,
+`restore-6m`, `catch-up-30d` or `multi-script`, in that order, whose seed the
+trial retains. It fails if the wallet finishes before it is interrupted. It
+also fails if the client leaves a descendant, or if the store fails its
+pre-resume audit or does not continue to an exact outcome.
+
+`publication-interruption` counts only if a recent replica's native control
+status reported `preparing` with a candidate map before the stop, and the same
+worker, read after the stop completed, has not activated that map. Otherwise
+the fault fails after restarting the publisher.
+
+`rollback-redeploy` performs no effect. Root runs the reviewed `schema-rollback`
+and then `schema-deploy` of the same recipe. The fault then verifies the
+retained journals:
+
+- The original transaction is `rolled-back`, with no repair or v10 adoption.
+- All eight forward phases and the five rollback phases passed.
+- Each rollback phase stayed within 60/140/300/100/140 seconds, and the whole
+  rollback within 740 seconds.
+- The forward timeouts are still 1800 seconds.
+- The redeploy is the latest committed transaction of the same recipe, created
+  after rollback. An unchanged recipe digest keeps cache preparation 1200,
+  stage 1800, candidate warm 300 and restored-start 250 bound.
+
+Every fault requires the following:
+
+- The canonical query and reopened-wallet probes pass before the fault.
+- One 900-second monotonic deadline starts with the effect. A recovery attempt
+  starts only if its whole 330-second bound fits. A success measured after 900
+  seconds fails, and the measured time is retained. Each attempt needs:
+  - exact canonical encrypted queries and the existing reopened-SQLite
+    recovery proof;
+  - every worker on its baseline binary, worker ID, role and assignment
+    digests;
+  - every worker serving exactly the current public map, whose tail is
+    canonical, with every sealed pre-fault shard unchanged. Publication
+    advances during a fault, so the stale pre-fault map is never required;
+  - a new incarnation for a faulted worker and an unchanged one for every
+    other worker.
+- After recovery, health and owner reconciliation of every host pass, and the
+  owner's children have ended. Every host's retained rollback baseline is
+  unchanged.
+
+**Missing assurance.** No result sets `qualified`. These gaps need native or
+external interfaces, not weaker gates:
+
+- **Quality alerts.** Their shadow state is APM configuration. The coordinator
+  verifies only that the quality supervisor is stopped.
+- **Continuation.** Heavy and interrupted stores resume through the existing
+  `--scenario-worker` protocol of the pinned loadtest. No native code changed.
+  The adapter is an unproven interface candidate until real measurements are
+  reviewed. Whether a resume reuses partial work is recorded, not asserted.
+- **Cache corruption.** The draft `archive-restart` adapter selects one read-only
+  runtime cache inode actually mapped by the pinned warm candidate archive worker,
+  with a canonical sealed manifest prefix and matching native header identity.
+  After the owned worker stops and its cgroup empties, it retains the original
+  inode in a request-owned recovery directory and installs a deliberately invalid
+  64-byte header as a new inode under the existing native `.lock`. It never writes
+  to an existing mapped inode. Durable phases precede each rename; the original
+  hash, inode, native rejection log and rebuilt cache counters are retained.
+  Restoration authorizes the owned service first, preserves the displaced bytes,
+  and refuses an unexplained replacement. Disk and memory headroom remain at
+  least 20 percent. Each hash/rename stage shares a maximum 60-second child
+  deadline inside the unchanged 240-second action bound; failed restoration has
+  the existing 150-second limit, and canonical recovery still has 900 seconds.
+  Filesystem IO checks the deadline cooperatively between bounded reads. This
+  adapter remains unqualified until real native rejection, rebuild, exact cache
+  restoration and canonical wallet recovery evidence are reviewed. The cache
+  operation alone permits a bounded 512 KiB request for up to 4096 sorted unique
+  sealed manifest SHA256 identities. Other remote operations retain their 8192-byte
+  limit. The receiver rejects duplicate JSON keys, excess bytes, unexpected operands
+  and a checksum mismatch before dispatch.
+- **Rolled-back service probe.** The v10 state is proven only by the recipe's
+  own `verify-rollback` and `verify-service` phases. The owner probes the
+  redeployed candidate, timed from its own start, and records the time from the
+  redeploy commit to that proof.
+- **`transparent-measure`.** It serves its own local shard set, so it cannot
+  measure a deployment and is not used.
+
+Owner kill points have no automatic recovery. An owner killed by
+`RuntimeMaxSec`, `TimeoutStopSec` or `SIGKILL` during a fault effect can leave
+the publisher or a worker stopped until `schema-qualify-reconcile` restores it.
+Until then, the fence blocks every wrapper mutation.
+
+The capacity owner is limited to 10 GiB high and 12 GiB maximum memory. Other
+owners are limited to 4/6 GiB. CPU is 200% and swap is zero. The host-wide 20%
+floors still apply. These are proposed budgets for review, not measurements.
+
+Nothing here has run against production. The focused fixture tests are source
+evidence only.
+
+#### Candidate journal snapshot
+
+Candidate gates that read the full journal
+`/srv/transparent-activity/full-v3/journal` need bytes that do not move while they
+run. The journal's writer is the publication controller: `controller.rs` opens
+`EventStore::open` on its configured `data_dir` and keeps it for its whole run.
+While it runs it appends, and a reorganization can truncate the journal.
+
+`schema-snapshot-{plan,preflight,stage,status,reconcile} --request FILE
+--request-sha256 HASH` copies a committed prefix into an immutable private
+snapshot. Stage also requires `--expect-plan-sha256`. All five actions run on the
+pinned root coordinator from staged immutable operations source, in
+`transparent/ops/lib/activity_journal_snapshot.py`.
+
+**What a faithful copy contains.** Native `EventStore::open_existing` reads four
+files: `meta.json`, `checkpoint.bin`, `blocks.bin` and `events.bin`. `events_at`
+then always appends the oversized-script events from
+`display-v1/<block display hash>.bin`, and `display_at` reads display records from
+the same file.
+
+When a sidecar file is missing, the native reader returns no oversized events and
+no error. A journal copy without sidecars would therefore silently drop events.
+
+Sidecars are not written for every block. Both writers call
+`append_block_with_display` only in display mode. For `event-ingest` that means
+`--txid-display`; for the controller, an active publication with txid segments.
+Otherwise the writer calls plain `append_block`, which writes no sidecar. The
+journal alone cannot tell a block written without display apart from a lost
+sidecar.
+
+**Request.** The closed request is `{version: 1, kind:
+"activity-journal-snapshot", source_sha, attempt, machine_id, candidate,
+publication, journal, sidecars, writer, bounds}`. It names no paths except the
+writer's own unit files and binary. Its fields bind:
+
+- **Candidate.** `candidate` is `c3c66b9b` and its provenance digest.
+- **Publication.** `publication` is the full map digest plus the cutoff anchor at
+  3500738. It must match the retained `shards.json`, `result.json` and
+  `cutoff.json`.
+- **Journal.** `journal` is format version 3, start height 0 and the genesis hash.
+  `meta.json` must equal these exactly.
+- **Sidecars.** `sidecars` is `{policy, coverage_heights}`.
+  - `every-committed-block` refuses if any committed block lacks a sidecar.
+  - `mirror-source` copies every committed block's sidecar that exists. It records
+    the rest as absent in the source, which is what the native reader would see.
+    That count is never evidence that those blocks have no oversized events.
+  - `coverage_heights` lists up to 64 sorted heights, such as the oracle's sampled
+    blocks. Each must be committed and have a sidecar under either policy, and
+    the manifest itemizes them.
+- **Writer.** `writer` is the reviewed unit name, fragment path and digest, the
+  ordered drop-ins and their digests, the ExecStart binary path and digest, the
+  main PID and its kernel start time. The live writer must match all of them.
+  The plan reports any drift without refusing, so root can review the live
+  identity. Preflight and stage refuse drift.
+- **Bounds.** `bounds` holds `precopy_seconds`, `stop_seconds`, `copy_seconds`,
+  `restart_seconds`, `restart_attempts` and `total_seconds`. Root chooses every
+  value; the module has no defaults. It only requires positive integers, with the
+  total at least the sum of the phases. The plan digest covers the
+  request-derived plan only.
+
+**Unit interplay.** The writer's unit must have no `RequiredBy`, `RequisiteOf`,
+`BoundBy`, `ConsistsOf`, `UpheldBy`, `TriggeredBy` or `PropagatesStopTo`. Any of
+these would let stopping the writer stop another unit, or let systemd start it
+again while it is quiesced. The check runs at every identity proof.
+
+The repository's controller template is `Restart=on-failure`, which an explicit
+stop does not trigger. No template unit depends on the controller, and the
+elastic actuator timer acts only on workers. Other wrapper paths that start the
+controller need the production lock, which the snapshot owner holds. The installed
+unit is checked live, not assumed.
+
+While the controller is stopped it publishes nothing new and its status endpoint
+is absent. Workers keep serving their active publication. Root decides whether
+the downtime is acceptable for the continuous load, scaler and reconciler, which
+observe the controller.
+
+**Lock protocol.** The native `EventStore::open` holds `writer.lock` with Rust
+`File::try_lock` for the journal's whole writable lifetime. On Linux, Rust 1.97.1
+implements it as `flock(LOCK_EX|LOCK_NB)`. A fixture probe compiled with the pinned
+`rustc` checks the protocol in both directions: Python `flock` is refused while
+Rust holds the lock, and Rust `try_lock` is refused while Python holds it.
+
+The module proves the protocol on the existing `writer.lock`. It never creates,
+replaces or follows that file. Three checks must hold:
+
+1. `/proc/locks` lists exactly one `FLOCK ADVISORY WRITE` holder for the inode,
+   and it is the reviewed PID.
+2. That PID holds the file open.
+3. A non-blocking `flock` from the module is refused.
+
+The contention attempt runs only after the holder is listed. A listed holder that
+does not contend refuses, because that would mean the protocols differ. A POSIX
+`lockf` holder also refuses. Plan does not contend.
+
+**Every pinned host.** Before any effect, preflight, stage, the owner and
+reconcile each probe every pinned inventory host afresh, including the
+coordinator. Remote hosts are probed through one read-only deploy-helper
+operation, `ownership_probe`, over pinned SSH. On each host the probe returns:
+
+- `/etc/machine-id`, which must equal the host's pin. A host without a pin, or
+  one that cannot be reached or read, refuses.
+- **The whole owner namespace.** The schema state, host-action, input-staging and
+  source-staging trees are walked to any depth within finite bounds: depth 8,
+  65,536 entries, 64 MiB of records and 1 MiB per record. Exceeding a bound, any
+  link and any special file refuse; nothing is skipped silently. Every
+  non-request `*.json` is parsed as an owner record. Every file is listed by
+  name, size and kind: record, request, receipt or other, such as a schema
+  phase log. This module's own `*.snapshot-fleet` receipt trees hold copies of
+  records, not owners, so they are listed and type-checked but not parsed.
+- **Every live process,** up to 65,536 processes and 2^20 descriptors in total;
+  more refuses. For each it returns:
+  - its stat line: PID, parent, process group, session and kernel start time;
+  - its executable path and unified cgroup;
+  - whether it holds the production lock file open, its environment carries
+    `WALLET_PIR_PRODUCTION_LOCK_FDS`, or its command line runs
+    `wallet-pir-deploy.py`;
+  - whether its executable or arguments belong to an operation class.
+
+  Operation classes are executables or absolute arguments under
+  `/srv/transparent-activity/build`, `/srv/transparent-activity/candidates`, the
+  portable worker releases, `/srv/transparent-pir/v11/candidates` and the staged
+  operation sources. They also include an executable or `argv[0]` named for a
+  native tool: the 13 supplemental tools, `shard-assign` and `shard-control`.
+  Environment and command-line contents are never returned or retained.
+  Unreadable evidence is reported as unknown. Only the probing process and its
+  ancestors are exempt.
+- **The boot identity,** and the production lock's kernel holders from
+  `/proc/locks`.
+
+The coordinator then refuses if any of these hold:
+
+- the shared schema fence fails over that host's latest owner pointers;
+- a source-staging receipt is not `staged` or `failed`;
+- **any** owner record names a live owned process. A record owns:
+  - its top-level PID fields;
+  - its `launch`, `launcher`, `owner`, `guardian`, `child` and `native`
+    objects and its `children` list, each with an optional nested `identity`
+    and further owned containers. A candidate child's guardian and the native
+    process nested under its `native` key are both owned.
+  - Owned containers nested more than four levels deep refuse rather than being
+    dropped.
+
+  Observations such as a restored writer inside a proof are not owners. A
+  recorded `process_start` or `start_ticks` must not match a live process.
+  Without one, a process started no later than the record's last update could
+  be the owner, and a missing record time fails closed. A container without its
+  own boot fields is in its enclosing container's boot. Only well-formed boot
+  evidence proves an earlier boot: a lowercase UUID `boot_id` that differs from
+  the live one, or, without comparable boot IDs, a finite `boot_unix` more than
+  one second from the live boot time. Matching boot IDs are the same boot.
+  Missing, null or malformed recorded or live boot evidence proves nothing, and
+  the identity is checked against live processes;
+- a live process shares the session or process group of a recorded owner PID.
+  A dead recorded parent with a live orphaned child in its session refuses. Only
+  a reused PID whose newer leader started every such member is accepted;
+- any other live process holds the production lock, carries the inherited-lock
+  variable or runs the deploy wrapper. The refusal names its whole live
+  parent-PID descendant closure;
+- a live process of an operation class is not inside a reviewed long-running
+  service unit. These units are `activity_schema_host.UNITS` and the quality
+  rollout unit. This finds survivors after their parent exits, even in their own
+  session with the lock descriptor closed, the environment cleared and no
+  wrapper argument. A transient operation unit, such as the publication job, is
+  not a reviewed service;
+- any process's ownership evidence is unreadable;
+- a remote host's production lock has any kernel holder. The coordinator's lock
+  is this operation's own.
+
+The snapshot records its own launcher and owner as `pid`, `process_start` and
+`boot_id`. On the coordinator only this snapshot's own owner record is exempt.
+Each host's raw probe and result, including refusals, are kept at mode 0400
+under
+`/srv/transparent-activity/ops/input-staging/<request SHA>.snapshot-fleet/<stage|owner|reconcile>-<time>/<host>.json`.
+
+The remaining limit is attribution. A process outside every operation class, in
+a new session, with no lock descriptor, environment marker or wrapper argument,
+and whose recorded parent has exited cannot be attributed from `/proc`.
+
+**One total bound.** `total_seconds` starts when stage begins. It runs through
+the owner's adoption, pre-copy, copy, anchors and full re-verification; the owner
+inherits the absolute deadline from its durable record. Each phase bound is
+capped by what remains of the total.
+
+Every long step checks the deadline before each bounded chunk, record batch,
+file, remote call and node RPC. That covers sidecar scans, record passes,
+hashing, sidecar copies, anchors, the all-host reads and the final
+verification. At most once a second it also re-observes the 20% memory and disk
+floors after reserving the bytes still to be written. Each sample, including a
+refusal, goes to the private health log. Restoring the writer is never cut short
+by the total; it has its own reviewed attempt bounds.
+
+**Stage.** Under the production lock, stage first reruns the input-staging and
+schema fences and the full preflight. Preflight checks:
+
+- every pinned host, as above;
+- the writer identity, unit interplay, cgroup, running executable and lock
+  protocol;
+- the committed prefix and the sidecar policy and coverage;
+- node anchors at genesis, 3500738 and the current tip;
+- the namespace, and memory and disk at or above 20% after reserving the copy's
+  bytes.
+
+Stage then writes the request and the exact inventory (both 0400) and a
+`running` owner to `/srv/transparent-activity/ops/input-staging/`, and points
+`latest.json` at that owner. The owner records the inventory digest and the
+absolute deadline.
+
+Stage then launches `schema-snapshot-owner` in a new session. The owner inherits
+the production lock descriptor, and its output goes to a private log. If the SSH
+session is lost, the launcher dies but the owner keeps both the lock and its
+durable record. A launcher still waiting when the total runs out exits 75 with
+an unknown outcome; root observes status. The owner then:
+
+1. Readopts the record once; a replay refuses.
+2. Loads the retained inventory, which must match the recorded digest. It then
+   reads every pinned host afresh, keeping receipts.
+3. Repeats the identity, lock, prefix, policy and anchor checks.
+4. **Pre-copies sidecars while the writer still runs**, within
+   `precopy_seconds`. Sidecars are immutable: the writer renames each into place
+   before committing the block that names it, never rewrites one, and each
+   carries its block hash and a trailing SHA-256 that the copy checks. For each
+   block of the committed prefix, a private inventory
+   (`<request SHA>.snapshot-sidecars.bin`, 64 bytes per block) records the block
+   hash and the source sidecar's inode, size and times, or its absence.
+5. Proves the writer identity again, records `quiescing`, then stops only the
+   reviewed unit within `stop_seconds`. The unit must be inactive with an empty
+   cgroup, and the old PID and start time must be gone.
+6. Takes `writer.lock` itself, so no writer can reopen the journal during the
+   copy. Any remaining holder refuses.
+7. Within `copy_seconds`, before writing anything, observes the source's
+   committed prefix and every committed block's sidecar again under quiescence:
+   - **Unchanged prefix.** Each pre-copied block hash must be unchanged. This is
+     the independent check that the whole pre-quiescence prefix survived, not just
+     its tip.
+   - **Unchanged sidecars.** Each pre-copied sidecar must keep its inode, size and
+     times; every sidecar must be a single-link regular file.
+   - **Newer sidecars.** Sidecars that appeared or belong to newer blocks are
+     listed with their exact sizes.
+   - **Policy and coverage** apply to what is observed here.
+8. Reserves the exact remaining bytes: the committed `events.bin` and
+   `blocks.bin` prefixes plus those newer sidecars. Memory and disk must stay at
+   or above 20% after that reservation, or nothing is written.
+9. Copies `meta.json`, `checkpoint.bin`, and exactly the checkpoint-committed
+   prefixes of `blocks.bin` and `events.bin`, hashing as it copies. The copied
+   `blocks.bin` must hash to the prefix just observed. Every source must be a
+   single-link regular file opened without following links. Destinations are
+   created exclusively at mode 0400, inside 0700 directories.
+10. Copies the newer sidecars, each of which must still have its observed
+    identity. Then one `syncfs` flushes the whole copy.
+11. Checks continuously against the active bound, the resource floors, the
+    inherited lock and, while stopped, the unit staying stopped. A foreign restart
+    refuses.
+12. Validates the copy's format, genesis, start height and exact checkpoint
+    lengths, and its complete 48-byte records. Offsets must start at zero and
+    never decrease, and each record's event span must fit its count within the
+    native entry bounds. The copy's genesis block, pre-quiescence tip and
+    publication anchor must keep their recorded hashes. Event payloads are
+    decoded by the native reader that consumes the snapshot, not here.
+
+**Restoration and completion.** Every handled exit, including failures, timeouts
+and SIGTERM, SIGINT or SIGHUP, releases `writer.lock` and restores the writer.
+Later signals are recorded but do not interrupt the owner. The owner checks the
+unit, drop-in and binary bytes again, then starts the unit for at most
+`restart_attempts` attempts of `restart_seconds` each. It records each started
+PID and start time durably. Restoration is proven only when the new PID passes
+the same identity, interplay, cgroup, executable and lock checks, does not
+restart during the proof, and memory and disk meet the floors.
+
+**Anchor RPC.** Each node anchor is one HTTP/1.1 JSON-RPC POST, with
+`Connection: close`, to the fixed loopback endpoint. There is no proxy. One
+aggregate deadline bounds connect, send and every receive, so trickled bytes
+cannot extend it. That deadline is the smaller of the publication job's existing
+10-second per-anchor bound and the remaining total. Only a direct `200` answer
+with a matching length or bounded chunked body up to 64 KiB is accepted, so
+redirects and errors are never followed. A failure reports only its exception
+type; the cookie never reaches a message. `Budget.seconds` returns the exact time
+remaining and never rounds up past the total.
+
+After restoration, the owner checks the node anchors again at genesis, the
+publication anchor, the pre-quiescence tip and the snapshot tip. Within the
+remaining total, with sampled floors, it then re-reads the private copy alone. It
+re-runs the record-boundary pass over the copied `blocks.bin`, requiring every
+independently observed or reviewed hash:
+
+- genesis and the publication anchor;
+- the pre-quiescence tip;
+- both node anchor sets;
+- every coverage height.
+
+It also re-derives:
+
+- every main file digest, which must equal the digests taken while copying;
+- the event count and tip, which must equal those found under quiescence;
+- the sidecar count, which must equal the count observed under quiescence;
+- each sidecar's block binding and digest;
+- an aggregate sidecar digest.
+
+The copy must hold no sidecar for any block that is not committed.
+
+The owner writes `manifest.json` (0400) with those contents, the prefix, the
+sidecar policy summary and coverage, the host receipts' digests, the writer
+identities and the anchors. Only then, and only within the total, does it rename
+the partial directory to
+`/srv/transparent-activity/snapshots/journal/<request SHA>/` and record `staged`.
+Status checks only the private single-link file set, sizes and the manifest
+digest; it is not verification.
+
+**Consumer contract.** Root's locked oracle consumer verifies a snapshot with
+`activity_journal_snapshot.verify_snapshot(request_sha256, deadline=...,
+guard=..., health=None)`; there is no manifest-only adapter. The arguments are:
+
+- `deadline` is an absolute, finite `time.monotonic()` bound the consumer
+  chooses. Infinite and NaN deadlines refuse before any read, as does a
+  non-finite deadline for any `Budget`.
+- `guard` is called before the first read, with every resource sample (at most
+  once a second) and at the end. It must raise when the consumer's production
+  lock or other preconditions no longer hold.
+- `health`, when given, receives every sample and refusal.
+
+The snapshot must be `staged` by its own owner. Within the deadline and the 20%
+floors, the call re-derives every file digest, record boundary, independently
+observed anchor, coverage hash and sidecar from the private copy, and refuses on
+any difference.
+
+**Failure and reconciliation.** Any other outcome records `failed`,
+`interrupted` or `restore-failed`. The owner, the sidecar inventory, the host
+receipts, the partial `<request SHA>.copying` directory and its health samples
+are kept, and the owner fences other mutations. The same applies if a killed
+owner leaves `running`.
+
+`schema-snapshot-reconcile` runs under the production lock. A live owner still
+holds that lock, so reconcile refuses while it runs. Reconcile also refuses
+while:
+
+- the recorded launcher or owner PID and start time are alive;
+- the given inventory differs from the retained one;
+- any pinned host fails its fresh owner and process reads.
+
+It accepts a running writer only if it is the original process or one this owner
+recorded starting, and then proves it again. An unknown or restarted writer
+refuses. A writer stopped before this owner recorded `quiescing` refuses.
+Changed unit or binary bytes refuse.
+
+Otherwise reconcile restarts the exact reviewed writer and proves it. It then
+renames any partial or unpublished target to a same-directory
+`.abandoned-<request SHA>` sibling, and records `reconciled`. A retry needs a new
+attempt.
+
+**Timing, from a hub probe only.** The probe ran on the ai-dev hub's attached
+volume, with 8 GiB and 200,000 synthetic 1.4 KB sidecars, while other tests were
+running. It measured:
+
+| Operation | Hub measurement |
+| --- | --- |
+| Copy and hash, cold source | 154.7 MiB/s |
+| Re-hash | 210.3 MiB/s |
+| Sidecar pre-copy | 115 µs each |
+| Sidecar `lstat` | 4.6 µs each |
+| `syncfs` | 3 s |
+
+Applied to root's reported sizes (`events.bin` 42,699,881,014 bytes,
+`blocks.bin` 168,301,056 bytes, so 3,506,272 blocks), arithmetic projects:
+
+- **Writer downtime: about 4.5 minutes of copying.** That is 40,882 MiB of `events.bin` and
+  `blocks.bin` copied while stopped, about 264 s, plus about 16 s of sidecar `lstat` and the
+  reconciliation loop. Add stop and restart time.
+- **Pre-copy while live: about 7 minutes.**
+- **Post-restore re-read: over 3 minutes.**
+
+These are projections, not coordinator measurements. Root chooses the bounds. If
+the coordinator cannot copy, hash or restart within them, the owner refuses with
+its partial evidence; it never widens them.
+
+A staged snapshot is an input for root's chain-oracle and other candidate gates.
+It is not oracle, certificate, candidate, serving or capacity qualification, and
+its manifest says so. Fixture tests use real flock processes, a file-backed fake
+systemd and a fixture node. Nothing has been run against the coordinator.
+
+The following questions remain open for root:
+
+- The actual controller identity, and acceptance of controller downtime for
+  load, scaler and reconciler.
+- The values of all six bounds. Remote host reads are bounded only by the
+  remaining total; their latency is unmeasured.
+- The sidecar policy, and the coverage heights to bind.
+- The live sidecar count and bytes against the 20% disk floor.
+- Whether full event decoding should also run during the stopped window.
+
+### Failed-transaction source repair
+
+For an interrupted or failed rollback, immutable source staging may bind
+`--recovery-transaction` and `--recovery-recipe-sha256` to the exact latest failed
+journal. This exception stages source only; running phases, different recipes,
+remote unfinished owners and unfinished input owners still refuse. Run ordinary
+source plan/preflight before stage, preserving every earlier source receipt.
+
+`schema-repair-rollback --transaction ID --expect-recipe-sha256 SHA` retains the
+original recipe and input hashes and records a separately verified repair source
+receipt. It substitutes only the closed rollback wrapper, never a forward
+program, and retains the original 740-second total budget. It quiesces restored
+authority before restoring workers, permits bounded cold-cache warming before
+exact identity/recovery proof, and resumes authority after guarded reopening.
+
+Explicit repair preserves prior restore displacements on their original
+filesystem with private intent/completion receipts; temporary interrupted restore
+files refuse. If a publisher collected an older retention sentinel, the only
+accepted replacement is the protocol map named by the independently copied
+worker active record in the complete baseline, with unchanged retained namespace
+identity. Missing or changed active publication bytes refuse. Original baseline
+receipts are never rewritten. Repair startup and focused tests are not live
+recovery acceptance.
+
+A reviewed failed-rollback source repair may reuse an already warm restored worker only when every captured file still matches byte/hash/mode/owner inventory and the live executable, active publication and assignment prove the captured predecessor. Ordinary restore still stops and restores workers. Candidate cold-start verification has a bounded 300-second wait and 330-second transport; the approved rollback budget and readiness gates are unchanged.
+
+Canonical reopen binds transparent revision setup/query routes on the captured
+Enhance site to the same checksum-bound private shard router used for recovery.
+The owned transparent handler must occur exactly once; an existing query handler
+must match that exact router or the operation refuses. Other handlers, including
+`/v1/enhance/query`, retain their captured bytes. Maintenance guards the added
+transparent query handler too. Each canonical query origin requires its own fresh
+native report and reopened SQLite proof; process exit zero alone is insufficient.
+
+Protected predecessor continuation is re-established from the complete validated
+baseline in each separate rollback reopen/service process. Future preparation may
+coexist with the exact warm current map; current map, binary, assignment, HTTP
+readiness and independently canonical anchors remain mandatory. Forward and
+unprotected rollback phases retain static preparation checks.
+
+### Retained candidate namespaces and restored startup
+
+Fresh forward host plans explicitly capture presence or absence of the complete
+`/opt/transparent-publisher/v11` tree and, on the coordinator, the candidate
+canonical-load tree. After quiescence, stage binds their full bounded file
+inventories, including lock files, to the complete baseline. It retains any
+captured tree in a transaction-named sibling on its original filesystem before
+installing fresh candidate files. Worker stale activation must match the reviewed
+candidate directory, assignment and map exactly. Drift, aliases, special files,
+uncaptured state or a prior reconciliation intent refuse staging. Original
+baselines, recipes and displaced candidate bytes remain intact.
+
+Restoration records up to 40 seconds of worker startup observations inside the
+existing restore phase. These observations do not establish qualification; exact
+worker identity, assignment, warm publication, anchors and real client proofs
+remain mandatory. The remote restore budget is 90 seconds, restore phase 140
+seconds, global warm wait 250 seconds, and total rollback budget 740 seconds.
+
+The coordinator separately captures the direct initial-publication `active.json`
+pointer. A prior failed candidate can leave this outside its fleet-state tree.
+Preflight accepts its presence only when directory, served map, terminal height
+and hash, and complete upstream roster equal the reviewed initial publication.
+Seed revalidates its byte inventory against the complete baseline and records a
+private source/baseline-bound adoption receipt before writing fleet state. Missing
+capture declarations, byte drift, foreign identities and symlinks refuse.
+
+A captured initial-v11 pointer is retained candidate bookkeeping, not a v10
+predecessor generation. Discovery recognizes only its fixed path and closed
+record shape; product validation still binds its exact reviewed target.
+
+If preserve fails after all coordinator copies but before completion, explicit
+failed-preserve repair may complete that partial capture only when private intent,
+plan identity, candidate inventories and every copied byte/mode/owner still match
+the stopped live state. It does not recopy or change original payloads. Only an
+owned repair of the latest failed preserve, with no later forward phase, can
+capture the unchanged remote predecessors without repeating the already passed
+native preflight. Complete warm binary/assignment/canonical-anchor coherence is
+then proved before withdrawal. All remote locks, durable owners and ordinary
+rollback budgets remain in force; partial drift or unknown descendants refuse.
+
+An explicit failed-preserve repair may reconcile the two inactive candidate
+routing audit files only after an owned withdrawal failed. The complete partial
+copies, private capture intent and entire candidate inventory must match apart
+from one withdrawal counter increment and an empty-route timestamp. Both newer
+audit files are retained with intent/completion outside the immutable partial
+baseline before restoring its original bytes. Unrelated drift and prior repair
+intents refuse; capture and canonical recovery remain separate gates.
+
+The same failed-preserve repair keeps the installed public withdrawal in place
+while completing capture. It derives exact guard bytes from the independently
+copied Caddy file and checksum-bound private router, requires both origins still
+503, and records both captured and guarded file identities. Only that fixed
+Caddy transition may differ from the copied baseline; it never substitutes
+guarded bytes for the captured original or reopens routing during capture.
+
+If the sole forward phase was a failed preserve and the complete coordinator
+baseline records its owned partial-capture guard, explicit repair attests the
+late router snapshot against exact withdrawn bytes from the captured predecessor
+fleet config and the shared native routing producer. The pinned router verifies
+its entire baseline and captured Caddy hash under a checksum-bound remote owner.
+Only this attested case keeps the regenerated predecessor routing instead of
+restoring a snapshot already withdrawn. Original snapshots remain unchanged;
+private and both canonical encrypted-query/SQLite proofs still gate recovery.
+
+Worker activation and restoration retain up to 100 seconds of startup
+observations before their separate warm proof. The remote owner transport allows
+130 seconds for those actions, within the existing 140-second restore phase.
+This accounts for archive native loading before cache prewarm. An observation is
+not qualification: candidate warm verification remains 300 seconds, restored
+worker waiting remains 250 seconds, and the total rollback budget remains 740
+seconds. Cold recovery and actual cutover must still pass their original gates.
+
+### Retaining diagnostic import bytecode during rollback repair
+
+A current checksum-bound rollback repair may retain at most 16 unexpected import
+cache files from the original operations source in a private sibling on the same
+filesystem. Every original payload hash must still match. Each cache must use
+the running interpreter tag and magic and contain exactly the code compiled from
+its reviewed source file. Foreign entries, payload drift, aliases, hardlinks and
+unfinished retention refuse. Private intent/completion binds the failed
+transaction, immutable recipe and reviewed repair source; rename preserves the
+cache bytes and inodes outside the source tree. The original source receipt is
+unchanged and strict verification must pass after retention. Ordinary source
+verification never permits extra files. Read-only diagnostics must use Python
+`-B` before importing retained operations libraries.
+
+The activity service-input controller uses the full native range profile name
+`zcash-transparent-range-v2`, bound to the reviewed publication geometry.
+Shorthand `v2` and foreign names refuse before service staging. A committed
+cutover and brief canonical proof do not accept continuous-publication freshness.
+
+### Controller startup observation before canonical verification
+
+The native publication authority starts withdrawn until it reconciles its first
+publication. The v11 canonical phase observes only the fixed local metadata
+endpoint's exact native HTTP 503 reconciliation body while status is `starting`
+and reports no ingestion/publication error. Unexpected responses and failures
+refuse immediately. The installed unit, executable, PID, restart/OOM counters,
+20% memory/disk floors and both public withdrawals remain checked. This
+observation is capped at 300 seconds inside the existing 1,800-second forward
+phase. Bounded HTTP refusal context is retained privately; public exception text
+is unchanged. A successful response ends observation and still requires all
+worker/map/assignment/anchor and real private/canonical recovery proofs. Cache
+preparation, worker warm bounds, rollback bounds and acceptance floors are unchanged.
+
+Service input preparation binds roster archive ownership to the qualified v11
+map. Every archive owner needs an inclusive integer range; the sorted ranges
+must partition all archive shards contiguously from zero with no gaps or overlap.
+Recent replicas cannot own archive ranges. The native assignment, memory budgets
+and full installed worker proofs remain separate gates. Controller bootstrap
+records bounded phase and publication/ingestion error context privately before
+refusing startup errors.
+
+Continuous v11 serving verification attests the current active publication even
+while the native worker prepares a future candidate. Warmth and invalidation
+must describe that exact active map; a candidate's warmth cannot substitute.
+Both recent replicas, all archive owners, HTTP readiness, assignment and release
+identities, complete map manifests and independent canonical anchors still pass
+before private and each public recovery proof. Bounded private worker control
+and HTTP observations are retained before a refusal. Initial candidate activation
+still uses its separate strict warm proof and unchanged deadlines.
+
+
+### Exact retained ancillary process attribution
+
+`ops/lib/wallet_pir_ops/ancillary_baseline.py` is a read-only, standard-library
+reader shared by source/upload bootstrap, native qualification, journal snapshot
+and deployed qualification. On the pinned coordinator it verifies the historical
+`transparent-activity-prototype-server-e47bdf79.service` and existing
+`transparent-5qps-continuous.service`. The prototype is fixed to its reviewed
+PID/start/boot identity; its loaded executable, raw command and unit fragment
+must match the immutable hashes in the reader. The load service can have a new
+PID/start after an owned restart, but requires the same reviewed executable,
+command and fragment. Neither unit can gain ordinary name-only baseline status.
+Linux's ` (deleted)` executable decoration is normalized consistently with the
+owner reader; executable bytes are still independently hashed through `/proc`.
+The load's sole direct `rate-query` child must match its fixed executable path,
+historical release binary hash and reviewed command hash. Its parent must be
+the verified load main, with matching process group, session, cgroup and boot;
+parent and child identities are read again afterwards. A changed command,
+binary, parent, session or cgroup refuses. More than one direct child refuses.
+This only attributes existing historical load; it supplies no candidate gate.
+
+Active units require exact systemd identity, no drop-ins, no pending reload,
+zero automatic restarts and the exact main-process cgroup. Hashing and process
+observation are bounded and repeated identity checks reject changes during the
+read. The prototype must have only the loopback TCP listener on port 8192. Both
+coordinator and router must independently supply a fresh hash of their loaded
+Caddy configuration excluding that port. Raw command and configuration values
+are not retained. A stopped unit grants no process authority. Other hosts grant
+none; their machine pins and complete owner surveys remain mandatory.
+
+The outer owner guards still reject processes associated with retained owners,
+unattributed operational processes, other descendants, partial or stale fleet replies
+and resource floors below 20 percent. An ancillary capsule authorizes only the
+exact surveyed main or pinned direct query PID/start/executable/cgroup and
+command identity, plus the query's parent/group/session. It does
+not stop a service, change routes, qualify the historical prototype as the new
+candidate, or prove deployed freshness. The reader's 30-second bound is inside
+the existing host/fleet timing budgets, which remain unchanged. A full five-host
+locked survey must run freshly before any production effect.
+
+
+### Loaded quality-alert shadow evidence
+
+Deployed qualification uses `activity_quality_shadow.py` to observe the running
+coordinator APM independently of files describing desired configuration. It pins
+the existing `pir-apm` executable to the artifact in
+[the shared-layer manifest](../../enhance/evidence/shared-layers-2026-09-30/manifest.json)
+(source `aeaee4b7`, CI `36678333148`). It requires the exact systemd main PID,
+start ticks, boot, executable path and cgroup, a bounded executable hash, and
+exactly one explicit `PIR_APM_QUALITY_ALERT_MODE=shadow` entry in that process's
+environment. Absence, duplicates, active mode, unknown values, unreadable data,
+a different binary, or identity drift refuse. Environment data and unrelated
+credential values never leave the reader. The observation has a ten-second
+bound within the existing qualification deadline.
+
+Preflight retains this proof; health samples retain a renewed proof at least
+every 60 seconds; a final forced observation is retained before the result is
+sealed. APM restart or identity change fails the interval. The quality supervisor
+must still remain stopped. A mocked or incomplete path without runtime evidence
+remains unqualified, and a failed final observation produces a failed result.
+This closes the missing APM-mode interface, without changing the APM binary,
+configuration, incident store, notification mode of other families, or supervisor.
+Actual candidate qualification remains required. Capacity continuation, cache
+corruption and independently verified rollback/redeployment retain their separate
+missing assurance until their real interfaces and evidence pass review.
+
+
+### Independent retained rollback evidence
+
+`activity_rollback_evidence.py` independently rechecks a successful original
+rollback before the `rollback-redeploy` qualification owner can use it. It binds
+the same reviewed recipe and distinct original/redeploy journals, and derives
+all paths from the validated original product inputs and routing namespace. The
+private rollback recovery and both canonical HTTPS recoveries must retain their
+exact raw native reports, owner commands, original phase timestamps, input
+hashes and nonempty completed results. The historical reader remains `12ce` and
+these reports prove only the restored v10 service; they never qualify c3.
+
+The reader reopens the original committed SQLite files and recomputes exact
+events, trusted anchor, schema, coverage and metadata availability against the
+retained sample. It uses read-only immutable SQLite connections only after
+refusing links and WAL/SHM/journal sidecars. Inputs, reports and store files are
+hashed before and after the read. Changed bytes, foreign paths/commands, missing
+origins, incomplete classes or a stale original phase refuse. A cooperative
+60-second inspection bound, 1,024 files, 2 GiB total evidence bytes, 256 stores
+per recovery and 128 MiB per store bound the read. SQLite progress callbacks
+and event limits also refuse overruns. These bounds do not authorize truncating
+or skipping a larger evidence set. Native journal snapshot safety remains a
+separate writer-quiescence operation.
+
+Candidate recovery uses the time already elapsed since the actual redeploy
+commit to consume its 900-second allowance. Starting a later owner cannot reset
+that clock. A future/expired commit or a final canonical proof after 900 seconds
+fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
+(740 total). No rollback or redeploy is synthesized: root must perform both
+through the guarded deployment wrapper and retain their actual raw evidence.
+The lifecycle gate remains open until those executions and reinspection pass.

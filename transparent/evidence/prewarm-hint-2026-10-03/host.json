@@ -1,0 +1,11 @@
+{
+"cpu_model": "DO-Premium-Intel",
+"nproc": 8,
+"avx2": true,
+"avx512f": false,
+"mem_total_kib": 32866108,
+"load_average_during_runs": "4.4-5.0 (other tenants active); runs/runs.log records each run",
+"kernel": "6.8.0-134-generic",
+"os": "Ubuntu 24.04.3 LTS",
+"rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)"
+}

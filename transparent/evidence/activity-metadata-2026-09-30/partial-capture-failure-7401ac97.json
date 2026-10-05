@@ -1,0 +1,14 @@
+{
+  "status": "failed",
+  "source_sha": "7401ac979da6ad4dcf4a012f8ee155c74c59d06e",
+  "owner": "30d84a44290f498a8f3f0cbc7624da4c",
+  "duration_seconds": 244.87701083300635,
+  "result_sha256": "e87b8516aa741cc924a59aaa2bcba936aafc0b4236686eae6cbfb9d0e86d55a9",
+  "transaction": "transparent-schema-20261001T173242Z-1a4859c2c38d-aeaf1f",
+  "recipe_sha256": "1a4859c2c38dc73b2ef285374dfe7ec2011b43ec167d49c98860f1099c730793",
+  "locked_preflight": "passed",
+  "preserve_v10": "failed: captured candidate activation misclassified as predecessor outside retained namespaces",
+  "withdraw_origins": "failed: incomplete baseline",
+  "journal_status": "rollback-failed",
+  "service_effects": "Coordinator writers stopped during capture; no worker capture/stage or v11 activation reached"
+}

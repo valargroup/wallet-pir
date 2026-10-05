@@ -1,0 +1,2 @@
+16:20:05
+publication d7c7c84208d3 is no longer on the coordinator; rerun the standby tool

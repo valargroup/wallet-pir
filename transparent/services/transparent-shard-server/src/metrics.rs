@@ -186,6 +186,10 @@ pub struct Metrics {
     pub cache_misses: AtomicU64,
     /// Microseconds spent waiting for a query slot.
     pub query_queue_micros: AtomicU64,
+    /// Evaluation slots this worker admits concurrently.
+    pub query_slots: AtomicU64,
+    /// Microseconds evaluation slots were held, summed over slots.
+    pub slot_busy_micros: AtomicU64,
     /// Manifests served.
     pub manifests: AtomicU64,
     /// Queries refused before any work because their declared length was not
@@ -244,6 +248,8 @@ impl Default for Metrics {
             cache_hits: AtomicU64::new(0),
             cache_misses: AtomicU64::new(0),
             query_queue_micros: AtomicU64::new(0),
+            query_slots: AtomicU64::new(0),
+            slot_busy_micros: AtomicU64::new(0),
             manifests: AtomicU64::new(0),
             query_length_rejections: AtomicU64::new(0),
             queue_rejections: AtomicU64::new(0),
@@ -529,6 +535,18 @@ impl Metrics {
             "gauge",
             "Requests currently waiting or running.",
             Self::get(&self.query_queue_depth),
+        );
+        line(
+            "transparent_shard_query_slots",
+            "gauge",
+            "Evaluation slots this worker admits concurrently.",
+            Self::get(&self.query_slots),
+        );
+        line(
+            "transparent_shard_query_slot_busy_microseconds_total",
+            "counter",
+            "Time evaluation slots were held, summed over slots.",
+            Self::get(&self.slot_busy_micros),
         );
         line(
             "transparent_shard_body_bytes_in_flight",

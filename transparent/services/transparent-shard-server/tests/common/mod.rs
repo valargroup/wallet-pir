@@ -9,7 +9,8 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
-use transparent_shard::build::build_shard;
+mod prepared;
+use prepared::prepared_shard;
 use transparent_shard::layout::{Geometry, RECENT_8K};
 use transparent_shard::manifest::{
     ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
@@ -83,6 +84,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 5,
         script(1),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: (FIRST + 5) as u32,
             txid: txid(100),
             transaction_index: 0,
@@ -95,6 +97,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         FIRST + 2 * SPAN + 10,
         script(1),
         TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: (FIRST + 2 * SPAN + 10) as u32,
             spending_txid: txid(200),
             transaction_index: 0,
@@ -109,6 +112,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             *height,
             script(2),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: *height as u32,
                 txid: txid(300 + n as u64),
                 transaction_index: 1,
@@ -126,6 +130,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
             height,
             script(3),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: height as u32,
                 txid: txid(1_000 + u64::from(i)),
                 transaction_index: 2,
@@ -143,6 +148,7 @@ pub fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
                 height,
                 script(tag),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: txid(u64::from(tag) * 1_000 + shard),
                     transaction_index: 3,
@@ -185,7 +191,7 @@ pub fn publish_with(
         let geometry = geometry_for(shard_id);
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
-        let built = build_shard(
+        let built = prepared_shard(
             shard_id,
             start,
             end,
@@ -194,8 +200,7 @@ pub fn publish_with(
             transparent_filter::RANGE_PROFILE,
             geometry,
             events,
-        )
-        .expect("build");
+        );
         let is_tail = shard_id + 1 == count && count == SHARDS;
 
         let manifest = ShardManifest {
@@ -260,6 +265,7 @@ pub fn publish_with(
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
+            txid_display: None,
             directory_choice: None,
         };
 
@@ -288,6 +294,7 @@ pub fn publish_with(
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
+            txid_segments: None,
             manifest_digest: digest.clone(),
             revision: manifest.revision,
             sealed: manifest.sealed,

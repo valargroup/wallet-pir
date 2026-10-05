@@ -1,0 +1,433 @@
+"""Locked, journaled execution of the reviewed Transparent schema-cutover recipe.
+
+This coordinates existing deployment programs; it does not infer their success
+from startup or authorize a cutover without their publication/correctness gates.
+Recipes contain paths and public identities, never credentials. Run through
+ops/scripts/wallet-pir-deploy.py on the inventory's pinned coordinator.
+"""
+import hashlib
+import importlib.util
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import time
+from contextlib import contextmanager
+
+from wallet_pir_ops import durable, schema_fence
+from wallet_pir_ops.deploy.remote import ProductionLock
+from wallet_pir_ops.deploy.transaction import new_id
+
+FORWARD = ('preserve-v10', 'maintenance', 'stage-v11', 'activate-prewarm',
+           'align-origins', 'verify-canonical', 'resume-load', 'verify-service')
+ROLLBACK = ('withdraw-origins', 'restore-v10', 'verify-rollback', 'reopen-v10', 'verify-service')
+SERVICE = 'transparent-schema'
+HEX = re.compile(r'^[0-9a-f]+$')
+IDENTIFIER = re.compile(r'^transparent-schema-[A-Za-z0-9-]+$')
+MAX_RECIPE = 256 * 1024
+
+
+class OperationError(ValueError):
+    pass
+
+
+def require(ok, message):
+    if not ok:
+        raise OperationError(message)
+
+
+def digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def file_hash(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+def validate(recipe):
+    fields = {'version', 'source_sha', 'publication_sha256', 'inputs', 'rollback_inputs',
+              'preflight', 'steps', 'rollback'}
+    require(isinstance(recipe, dict) and set(recipe) == fields, 'invalid recipe fields')
+    require(type(recipe['version']) is int and recipe['version'] == 1, 'unsupported recipe version')
+    for field, length in [('source_sha', 40), ('publication_sha256', 64)]:
+        value = recipe[field]
+        require(isinstance(value, str) and len(value) == length and HEX.fullmatch(value), 'invalid '+field)
+    input_paths = {}
+    for group in ('inputs', 'rollback_inputs'):
+        entries = recipe[group]
+        require(isinstance(entries, list) and 1 <= len(entries) <= 128, 'invalid '+group)
+        paths = set()
+        for entry in entries:
+            require(isinstance(entry, dict) and set(entry) == {'path', 'sha256'}, 'invalid input entry')
+            path, sha = entry['path'], entry['sha256']
+            require(isinstance(path, str) and Path(path).is_absolute() and '\x00' not in path, 'invalid input path')
+            require(isinstance(sha, str) and len(sha) == 64 and HEX.fullmatch(sha), 'invalid input checksum')
+            require(path not in paths, 'duplicate input path')
+            paths.add(path)
+        input_paths[group] = paths
+    for group in ('preflight', 'steps', 'rollback'):
+        commands = recipe[group]
+        require(isinstance(commands, list) and 1 <= len(commands) <= 32, 'invalid '+group)
+        names = []
+        allowed = input_paths['rollback_inputs' if group == 'rollback' else 'inputs']
+        for command in commands:
+            require(isinstance(command, dict) and set(command) == {'name', 'argv', 'timeout', 'read_only'}, 'invalid command')
+            name, argv = command['name'], command['argv']
+            require(isinstance(name, str) and re.fullmatch('[a-z][a-z0-9-]{0,63}', name), 'invalid phase name')
+            require(isinstance(argv, list) and 1 <= len(argv) <= 64 and all(
+                isinstance(a, str) and len(a) <= 8192 and '\x00' not in a for a in argv), 'invalid argv')
+            require(Path(argv[0]).is_absolute(), 'command executable must be absolute')
+            # No inline shell/Python: the invoked program must be a checksum-bound file.
+            if argv[0] in ('/usr/bin/python3', '/usr/bin/bash', '/bin/bash'):
+                require(len(argv) >= 2 and argv[1] in allowed, 'interpreter needs a checksum-bound script')
+            else:
+                require(argv[0] in allowed, 'command needs a checksum-bound executable')
+            require(type(command['timeout']) is int and 1 <= command['timeout'] <= 1800, 'invalid timeout')
+            require(type(command['read_only']) is bool, 'read_only must be boolean')
+            if group == 'preflight':
+                require(command['read_only'], 'preflight commands must be read-only')
+            names.append(name)
+        require(len(set(names)) == len(names), 'duplicate phase name')
+        if group == 'steps':
+            require(tuple(names) == FORWARD, 'cutover must contain every forward phase in order')
+        if group == 'rollback':
+            require(tuple(names) == ROLLBACK, 'rollback must contain every recovery phase in order')
+            require(sum(c['timeout'] for c in commands) <= 900, 'rollback deadlines exceed 15 minutes')
+    for group, name in [('steps', 'verify-canonical'), ('steps', 'verify-service'),
+                        ('rollback', 'verify-rollback'), ('rollback', 'verify-service')]:
+        require(next(c for c in recipe[group] if c['name'] == name)['read_only'], name+' must be read-only')
+    return recipe
+
+
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        require(key not in result, 'duplicate JSON key')
+        result[key] = value
+    return result
+
+
+def load_recipe(path):
+    with Path(path).open('rb') as stream:
+        data = stream.read(MAX_RECIPE + 1)
+    require(len(data) <= MAX_RECIPE, 'recipe exceeds size bound')
+    return validate(json.loads(data, object_pairs_hook=unique_object))
+
+
+def verify_inputs(entries):
+    for entry in entries:
+        path = Path(entry['path'])
+        require(path.is_file() and not path.is_symlink(), 'input is missing or a symlink: '+str(path))
+        require(file_hash(path) == entry['sha256'], 'input checksum changed: '+str(path))
+
+
+def run_command(command, log, pass_fds):
+    result = subprocess.run(command['argv'], timeout=command['timeout'],
+                            stdout=log, stderr=subprocess.STDOUT, pass_fds=pass_fds,
+                            env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1',
+                                     WALLET_PIR_PRODUCTION_LOCK_FDS=','.join(map(str, pass_fds))))
+    return result.returncode
+
+
+@contextmanager
+def inherited_scope(lock):
+    key = 'WALLET_PIR_PRODUCTION_LOCK_FDS'
+    previous = os.environ.get(key)
+    os.environ[key] = ','.join(map(str,lock.descriptors()))
+    try:
+        yield
+    finally:
+        if previous is None: os.environ.pop(key,None)
+        else: os.environ[key] = previous
+
+
+class Runner:
+    def __init__(self, inventory, state_dir, run=run_command, lock_factory=None, out=print):
+        self.inventory = inventory
+        self.state_dir = Path(state_dir)
+        self.run = run
+        self.lock_factory = lock_factory or (lambda: ProductionLock(inventory.lock))
+        self.out = out
+        self.active_id = None
+
+    def coordinator(self):
+        require(self.state_dir == Path('/srv/transparent-activity/ops/schema'), 'production schema journal must use the shared fenced state directory')
+        require(self.inventory.lock.get('type') == 'pinned_host', 'schema operations must run on the pinned coordinator')
+        require(os.geteuid() == 0 and ProductionLock.MACHINE_ID.read_text().strip() == self.inventory.lock['machine_id'],
+                'schema operation is not on the pinned root coordinator')
+
+    def plan(self, recipe):
+        validate(recipe)
+        self.out('recipe '+digest(recipe))
+        self.out('source '+recipe['source_sha']+' publication '+recipe['publication_sha256'])
+        for group in ('preflight', 'steps', 'rollback'):
+            self.out(group+': '+', '.join(c['name'] for c in recipe[group]))
+        self.out('rollback timeout budget: '+str(sum(c['timeout'] for c in recipe['rollback']))+' seconds')
+
+    def preflight(self, recipe, lock=None):
+        validate(recipe)
+        self.coordinator()
+        verify_inputs(recipe['inputs'])
+        verify_inputs(recipe['rollback_inputs'])
+        for command in recipe['preflight']:
+            if lock:
+                lock.verify()
+            with tempfile.TemporaryFile() as log:
+                code = self.run(command, log, lock.descriptors() if lock else ())
+            require(code == 0, 'preflight failed: '+command['name'])
+        self.out('preflight passed for recipe '+digest(recipe))
+
+    def save(self, record):
+        durable.atomic_json(self.state_dir/(record['id']+'.json'), record, mode=0o600)
+
+    def load(self, identifier=None):
+        if identifier is None:
+            pointer = self.state_dir/('latest-'+SERVICE+'.json')
+            if not pointer.exists():
+                return None
+            identifier = json.loads(pointer.read_text())['id']
+        require(isinstance(identifier, str) and IDENTIFIER.fullmatch(identifier), 'invalid transaction identifier')
+        record = json.loads((self.state_dir/(identifier+'.json')).read_text())
+        require(record.get('journal_version') == 1, 'unsupported schema journal version')
+        require(record['id'] == identifier and digest(validate(record['recipe'])) == record['recipe_sha256'], 'transaction recipe changed')
+        return record
+
+    def execute(self, record, group, lock):
+        entries = record['recipe']['rollback_inputs' if group == 'rollback' else 'inputs']
+        directory = self.state_dir/record['id']/group
+        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+        started = time.monotonic()
+        budget = sum(c['timeout'] for c in record['recipe'][group])
+        for index, original in enumerate(record['recipe'][group]):
+            if index < getattr(self,'resume_at',0):
+                require(group == 'rollback', 'resume cannot skip forward phases')
+                continue
+            lock.verify()
+            verify_inputs(entries)
+            command = dict(original)
+            repair = getattr(self, 'repair_program', None)
+            if repair is not None:
+                require(group == 'rollback', 'repair cannot change forward programs')
+                self.verify_repair_program(repair)
+                old = str(Path('/srv/transparent-activity/ops/sources')/record['recipe']['source_sha']/'ops/scripts/wallet-pir-deploy.py')
+                require(command['argv'][:2] == ['/usr/bin/python3', old] and
+                        'schema-product-phase' in command['argv'], 'repair only supports the closed product rollback')
+                command['argv'] = [command['argv'][0], repair['wrapper'], *command['argv'][2:]]
+                command['timeout'] = repair['timeouts'][command['name']]
+            command['argv'] = [a.replace('{transaction}', record['id']).replace(
+                '{journal}', str(self.state_dir/(record['id']+'.json'))) for a in command['argv']]
+            if group == 'rollback':
+                command['timeout'] = min(command['timeout'], int(budget-(time.monotonic()-started)))
+                require(command['timeout'] > 0, 'rollback exceeded its time budget')
+            phase = {'group': group, 'name': command['name'], 'status': 'running', 'started': time.time()}
+            record['events'].append(phase)
+            self.save(record)  # Durable intent before every side effect.
+            log_path = directory/('%02d-%s-%d.log' % (index, command['name'], len(record['events'])))
+            fd = os.open(log_path, os.O_WRONLY|os.O_CREAT|os.O_EXCL, 0o600)
+            phase_started = time.monotonic()
+            try:
+                with os.fdopen(fd, 'wb') as log:
+                    code = self.run(command, log, lock.descriptors())
+                if code == 75:
+                    # The child has a durable uncertain remote outcome. A normal
+                    # nonzero path would race it with automatic recovery.
+                    raise subprocess.TimeoutExpired('schema descendant requires reconciliation', command['timeout'])
+                phase.update(exit_code=code, status='passed' if code == 0 else 'failed')
+            except BaseException as error:
+                phase['status'] = 'failed' if isinstance(error, Exception) else 'interrupted'
+                phase['error_type'] = type(error).__name__
+                raise
+            finally:
+                phase.update(seconds=time.monotonic()-phase_started, log=str(log_path))
+                self.save(record)
+            require(code == 0, 'phase failed: '+command['name'])
+            lock.verify()
+
+    def recover(self, record, lock):
+        record['status'] = 'rolling-back'
+        self.save(record)
+        try:
+            self.execute(record, 'rollback', lock)
+        except BaseException:
+            record['status'] = 'rollback-failed'
+            self.save(record)
+            raise
+        record['status'] = 'reconciled-v10' if getattr(self, 'reconcile_v10', False) else 'rolled-back'
+        if getattr(self, 'reconcile_v10', False):
+            record['v10_reconciliation']['status'] = 'passed'
+            record['v10_reconciliation']['completed'] = time.time()
+        self.save(record)
+
+    def deploy(self, recipe, expected):
+        require(digest(validate(recipe)) == expected, 'recipe differs from reviewed plan digest')
+        self.coordinator()
+        with self.lock_factory() as lock:
+            lock.verify()
+            schema_fence.local_schema_fence()
+            previous = self.load()
+            require(previous is None or previous['status'] in ('committed', 'rolled-back', 'reconciled-v10'),
+                    'unfinished schema transaction; recover it before deploying')
+            self.preflight(recipe, lock)
+            identifier = new_id(SERVICE, expected)
+            self.state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            record = {'journal_version': 1, 'id': identifier, 'recipe': recipe, 'recipe_sha256': expected,
+                      'driver_sha256': file_hash(Path(__file__)),
+                      'status': 'applying', 'created': time.time(), 'events': []}
+            self.save(record)
+            self.active_id = identifier
+            durable.atomic_json(self.state_dir/('latest-'+SERVICE+'.json'), {'id': identifier}, mode=0o600)
+            self.out('transaction '+identifier)
+            try:
+                self.execute(record, 'steps', lock)
+            except subprocess.TimeoutExpired:
+                # A descendant may still hold the inherited lock or be completing
+                # remote work. Do not race it with automatic rollback.
+                record['status'] = 'interrupted'
+                self.save(record)
+                raise OperationError('schema phase timed out; reconcile and recover the recorded transaction') from None
+            except Exception:
+                # A lost/replaced lock forbids further mutations, including rollback.
+                lock.verify()
+                self.recover(record, lock)
+                raise
+            except BaseException:
+                record['status'] = 'interrupted'
+                self.save(record)
+                raise
+            record['status'] = 'committed'
+            self.save(record)
+            self.out('committed '+identifier)
+            return record
+
+    def rollback(self, identifier=None):
+        self.coordinator()
+        with self.lock_factory() as lock:
+            lock.verify()
+            record = self.load(identifier)
+            require(record is not None, 'no schema transaction recorded')
+            require('v10_reconciliation' not in record, 'adoption recovery cannot replay the original rollback')
+            latest = self.load()
+            require(latest['id'] == record['id'], 'recover the latest schema transaction first')
+            require(record['status'] != 'reconciled-v10', 'newer revision recovery is terminal; original rollback remains failed')
+            if record['status'] != 'rolled-back':
+                self.recover(record, lock)
+            self.out('rolled-back '+record['id'])
+            return record
+
+    def verify_repair_program(self, repair):
+        source = Path('/srv/transparent-activity/ops/sources')/repair['source_sha']
+        spec = importlib.util.spec_from_file_location('recovery_source_receipt', source/'transparent/ops/lib/activity_source_stage_host.py')
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(repair['source_sha']+'.json')).read_text())
+        require(receipt['archive_sha256'] == repair['archive_sha256'], 'recovery source receipt changed')
+        module.verify_receipt(receipt, source, repair['source_sha'], repair['archive_sha256'])
+
+    def repair_rollback(self, identifier, expected):
+        """Retain the original recipe; substitute only a fully verified repair wrapper."""
+        self.coordinator()
+        with self.lock_factory() as lock:
+            lock.verify()
+            record = self.load(identifier)
+            require(record is not None and self.load()['id'] == identifier and
+                    record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
+                    'repair must bind the latest failed transaction')
+            require('v10_reconciliation' not in record, 'adoption recovery requires its own reconciliation')
+            schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
+            source = Path(__file__).resolve().parents[3]
+            require(source.parent == Path('/srv/transparent-activity/ops/sources') and
+                    re.fullmatch('[0-9a-f]{40}', source.name), 'repair requires an immutable staged source')
+            receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(source.name+'.json')).read_text())
+            repair = {'source_sha':source.name,'archive_sha256':receipt['archive_sha256'],
+                      'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py'),
+                      'timeouts':dict(zip(ROLLBACK,(60,140,300,100,140)))}
+            self.verify_repair_program(repair)
+            require(sum(repair['timeouts'].values()) <= sum(c['timeout'] for c in record['recipe']['rollback']),
+                    'repair cannot enlarge the approved rollback budget')
+            self.repair_program = repair
+            record.setdefault('recovery_programs', []).append(repair)
+            self.save(record)
+            self.recover(record, lock)
+            self.out('rolled-back '+identifier)
+            return record
+
+    def status(self, identifier=None):
+        record = self.load(identifier)
+        self.out('no schema transaction recorded' if record is None else record['id']+': '+record['status'])
+        self.out('status is the journal state; live canonical checks remain required')
+
+    def reconcile(self, action, identifier, expected, target, plan_sha=None):
+        """Plan and recover one complete newer v10 activation, preserving failure."""
+        self.coordinator()
+        with self.lock_factory() as lock, inherited_scope(lock):
+            lock.verify()
+            record = self.load(identifier)
+            require(record is not None and self.load()['id'] == identifier and
+                    record['status'] in ('interrupted','rollback-failed') and record['recipe_sha256'] == expected,
+                    'reconciliation requires the latest failed original recipe')
+            schema_fence.local_schema_fence(recovery={'transaction':identifier,'recipe_sha256':expected})
+            resume = action.startswith('resume-')
+            preparation = action.startswith('resume-prepare-')
+            require(action == 'resume-prepare-reconcile' or not any(p.get('status') in ('running','interrupted') for p in record.get('v10_reconciliation',{}).get('preparations',[])),
+                    'unfinished resume preparation requires explicit reconciliation')
+            require(resume or 'v10_reconciliation' not in record, 'existing adoption intent requires explicit reconciliation')
+            verify_inputs(record['recipe']['rollback_inputs'])
+            source = Path(__file__).resolve().parents[3]
+            require(source.parent == Path('/srv/transparent-activity/ops/sources') and
+                    re.fullmatch('[0-9a-f]{40}', source.name), 'reconciliation requires an immutable staged source')
+            receipt = json.loads((Path('/srv/transparent-activity/ops/staging')/(source.name+'.json')).read_text())
+            repair = {'source_sha':source.name,'archive_sha256':receipt['archive_sha256'],
+                      'wrapper':str(source/'ops/scripts/wallet-pir-deploy.py'),
+                      'timeouts':dict(zip(ROLLBACK,(60,140,300,100,140)))}
+            self.verify_repair_program(repair)
+            require(sum(repair['timeouts'].values()) <= sum(c['timeout'] for c in record['recipe']['rollback']),
+                    'reconciliation cannot enlarge recovery budget')
+            def module(name):
+                spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(name+'.py'))
+                result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
+                return result
+            product_module = module('activity_schema_product')
+            argv = record['recipe']['rollback'][2]['argv']
+            require('schema-product-phase' in argv and '--spec' in argv and '--spec-sha256' in argv,
+                    'reconciliation requires the closed product recipe')
+            path, sha = argv[argv.index('--spec')+1], argv[argv.index('--spec-sha256')+1]
+            require(file_hash(path) == sha, 'original product specification changed')
+            product = product_module.Product(product_module.H.load(path), spec_sha256=sha)
+            reconciliation = module('activity_schema_reconcile')
+            if resume:
+                require(record.get('v10_reconciliation',{}).get('plan_sha256') == target,
+                        'resume differs from reviewed original adoption')
+                if action == 'resume-prepare-reconcile':
+                    reconciliation.reconcile_preparation(product,record,self.save)
+                    return record
+                plan = reconciliation.inspect_resume(product,record, prepare=True) if preparation else reconciliation.inspect_resume(product,record)
+            else:
+                plan = reconciliation.inspect(product, record, target)
+            plan['recovery_source'] = {'source_sha':repair['source_sha'], 'archive_sha256':repair['archive_sha256']}
+            self.out(json.dumps({'plan':plan,'plan_sha256':digest(plan)}, sort_keys=True))
+            if action not in ('deploy','resume-deploy','resume-prepare-deploy'):
+                return plan
+            require(plan_sha == digest(plan), 'adoption differs from reviewed preflight plan')
+            if preparation:
+                record['v10_reconciliation'].setdefault('preparations',[]).append({'plan':plan,
+                    'plan_sha256':digest(plan),'status':'running','pid':os.getpid(),'started':time.time()})
+                self.save(record)
+                reconciliation.prepare_resume(product,record,self.save)
+                self.out('guarded predecessor prepared; client acceptance remains pending')
+                return record
+            self.repair_program = repair
+            self.reconcile_v10 = True
+            record.setdefault('recovery_programs', []).append(repair)
+            if resume:
+                self.resume_at = 2
+                record['v10_reconciliation'].setdefault('resumes',[]).append({'plan':plan,'plan_sha256':digest(plan),
+                    'started':time.time(),'event_index':len(record['events'])})
+            else:
+                record['v10_reconciliation'] = {'status':'running','plan':plan,'plan_sha256':digest(plan),
+                        'original_outcome':record['status'], 'started':time.time()}
+            self.save(record)
+            self.recover(record, lock)
+            self.out('reconciled at newer v10 revision '+plan['map_sha256']+'; original rollback acceptance remains failed')
+            return record

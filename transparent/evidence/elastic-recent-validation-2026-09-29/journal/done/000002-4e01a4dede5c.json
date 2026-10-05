@@ -1,0 +1,24 @@
+{
+ "apply_attempts": 0,
+ "created_unix": 1790687966.3185837,
+ "destroyed": "604659753",
+ "dry": false,
+ "finished_unix": 1790688230.006509,
+ "id": "4e01a4dede5c",
+ "kind": "scale_in",
+ "member": "transparent-pir-recent-05",
+ "outcome": "removed",
+ "phase": "removed",
+ "phase_unix": 1790688230.0053296,
+ "plan": "/opt/transparent-publisher/scaler/journal/terraform/elastic-etzmfy8x.tfplan",
+ "plan_sha256": "de19cb8b3d537437d4c51302b347667f5067385c96ae1b47f8b797b89267b2c3",
+ "plan_summary": {
+  "creates": [],
+  "destroys": [
+   "digitalocean_droplet.recent[\"transparent-pir-recent-05\"]",
+   "digitalocean_project_resources.recent[\"transparent-pir-recent-05\"]"
+  ]
+ },
+ "quiet_queries": 71.0,
+ "quiet_since": 1790688138.675297
+}

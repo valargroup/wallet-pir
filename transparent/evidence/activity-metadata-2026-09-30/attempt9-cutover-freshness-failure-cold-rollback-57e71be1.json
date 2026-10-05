@@ -1,0 +1,156 @@
+{
+  "source_sha": "57e71be15dd78a732497af7995851dddbd0500a4",
+  "transaction": "transparent-schema-20261001T215412Z-71e4478e1788-d4fa46",
+  "recipe_sha256": "71e4478e17882be471019d4789f6601cb1faf4c3757def82b3086cdcbe514ba5",
+  "remote_deployment_status": "committed before explicit rollback",
+  "current_remote_status": "rolled-back",
+  "phases": [
+    {
+      "group": "steps",
+      "name": "preserve-v10",
+      "status": "passed",
+      "seconds": 231.82740947417915
+    },
+    {
+      "group": "steps",
+      "name": "maintenance",
+      "status": "passed",
+      "seconds": 10.432826922275126
+    },
+    {
+      "group": "steps",
+      "name": "stage-v11",
+      "status": "passed",
+      "seconds": 881.2090742141008
+    },
+    {
+      "group": "steps",
+      "name": "activate-prewarm",
+      "status": "passed",
+      "seconds": 333.2111957152374
+    },
+    {
+      "group": "steps",
+      "name": "align-origins",
+      "status": "passed",
+      "seconds": 5.97996631404385
+    },
+    {
+      "group": "steps",
+      "name": "verify-canonical",
+      "status": "passed",
+      "seconds": 7.9895565952174366
+    },
+    {
+      "group": "steps",
+      "name": "resume-load",
+      "status": "passed",
+      "seconds": 12.750357342883945
+    },
+    {
+      "group": "steps",
+      "name": "verify-service",
+      "status": "passed",
+      "seconds": 3.2734363470226526
+    },
+    {
+      "group": "rollback",
+      "name": "withdraw-origins",
+      "status": "passed",
+      "seconds": 10.943954898044467
+    },
+    {
+      "group": "rollback",
+      "name": "restore-v10",
+      "status": "passed",
+      "seconds": 119.87264918163419
+    },
+    {
+      "group": "rollback",
+      "name": "verify-rollback",
+      "status": "passed",
+      "seconds": 219.8166403369978
+    },
+    {
+      "group": "rollback",
+      "name": "reopen-v10",
+      "status": "passed",
+      "seconds": 21.050175078678876
+    },
+    {
+      "group": "rollback",
+      "name": "verify-service",
+      "status": "passed",
+      "seconds": 5.625775051768869
+    }
+  ],
+  "local_forward_transport": {
+    "status": "failed",
+    "ssh_exit_code": 255,
+    "seconds": 1340.3735542499926
+  },
+  "local_rollback_transport": {
+    "status": "failed",
+    "reason": "950-second timeout",
+    "owner": "d7a869eccc6045a4b6189ca3e3e92fea",
+    "seconds": 950.0765005000867
+  },
+  "freshness_acceptance": {
+    "status": "failed",
+    "publication_error": "unknown range profile \"v2\"",
+    "public_height": 3500738,
+    "node_height": 3503068,
+    "logical_queries_completed": 0,
+    "load_mode": "paused"
+  },
+  "cold_rollback_seconds": 377.3091945471242,
+  "native_proofs": {
+    "v11": {
+      "reports": 5,
+      "each_syncs": 1,
+      "each_completed": 1,
+      "each_exact": 1,
+      "each_failed": 0,
+      "each_stop_reason": null,
+      "each_http_503_rate": 0
+    },
+    "v10": {
+      "reports": 5,
+      "each_syncs": 1,
+      "each_completed": 1,
+      "each_exact": 1,
+      "each_failed": 0,
+      "each_stop_reason": null,
+      "each_http_503_rate": 0
+    }
+  },
+  "reopened_sqlite": {
+    "v11_stores": 5,
+    "v10_stores": 5,
+    "each_integrity": "ok",
+    "each_pending_work": 0
+  },
+  "remote_owners": {
+    "latest_hosts": 4,
+    "all_passed": true,
+    "all_exited": true,
+    "coordinator_owners_after_timeout": 0
+  },
+  "fresh_v10_metadata": {
+    "origins": 2,
+    "each_http": 200,
+    "each_shards": 86,
+    "each_start_height": 0,
+    "sha256": "e16e7d219f43b4e231b3a2ed5065dc72610e00da59844f214add219ac3cc8dc0"
+  },
+  "retained_private_sha256": {
+    "attempt9-journal-1790893638366217000.private.json": "b86f9f0c2fc55db0e211a9797c4e2b208efd1f4f4dfdcf9325cdc2d4281cf2a7",
+    "attempt9-load-health-1790893707200722000.private.json": "efcfe20fe9aea2f95653e825877562d1cd05699e12f5a83acd4124595d463df8",
+    "attempt9-committed-cutover-proof-1790893671964974000.private.tar": "0458661d1e5a775e399874f3f8f48719142f882e5f1a60726370e2b6534792ee",
+    "attempt9-committed-cutover-proof-1790895239484455000.private.tar": "8a4cc0dd8752f47078c1937a4133913e77bd4171a3696ebf1f4897926ab04d62",
+    "attempt9-freshness-rollback-journal-1790895191530646000.private.json": "5c0e23c28012d29347088fcb8788f5223f7b87115475b3ee69c1d631b7608f38",
+    "attempt9-rollback-terminal-owners-1790895216866921000.private.jsonl": "11f73cdd75e24450817e05472c62083717082cae42d51f81521a1796de9a728b",
+    "attempt9-timeout-reconciled-1790896047177445000.private.json": "b1d1db189356efee00cce4647a4bffc7886a1b36cde0334a3addff4af52cb4a8"
+  },
+  "scope": "Remote cutover and cold rollback proofs only. Local transport failures and freshness failure remain failed. Successful corrected redeployment, continuous publication, load, capacity and lifecycle acceptance remain open."
+}

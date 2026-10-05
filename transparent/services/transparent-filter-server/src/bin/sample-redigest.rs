@@ -137,7 +137,9 @@ fn main() -> Result<(), BoxError> {
     sample["clients"] = serde_json::Value::Array(rewritten);
     sample["redigest"] = serde_json::json!({
         "from_sample_sha256": hex::encode(Sha256::digest(&raw)),
-        "event_bytes": transparent_events::EVENT_BYTES,
+        "journal_version": store.version(),
+        "event_encoding": "self-contained canonical event bytes, including available transaction metadata",
+        "event_bytes_max": transparent_events::MAX_EVENT_BYTES,
         "journal": cli.data_dir,
         "tool_sha": cli.source_sha,
         "clients_changed": changed,

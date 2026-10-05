@@ -27,7 +27,11 @@ use sha2::{Digest, Sha256};
 ///
 /// An opaque string, refused rather than guessed at: a shard whose entry or
 /// page encoding changed would decode to plausible nonsense instead of failing.
-pub const SCHEMA: &str = "transparent-shard-v10";
+pub const LEGACY_SCHEMA: &str = "transparent-shard-v10";
+pub const SCHEMA: &str = "transparent-shard-v11";
+pub fn supported_schema(schema: &str) -> bool {
+    schema == SCHEMA || schema == LEGACY_SCHEMA
+}
 
 /// Geometry and digest of one table.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -50,8 +54,8 @@ pub struct ManifestOccupancy {
     pub fragments: u64,
     pub events: u64,
     pub blocks: u64,
-    /// Distinct transaction ids. Reported only; the transaction-detail table
-    /// they would size is not built.
+    /// Distinct transaction ids in supported script histories. Display coverage
+    /// is counted separately because it also includes unindexed raw scripts.
     pub txids: u64,
     /// Scripts present in the filter but absent from the directory because they
     /// exceed `max_script_bytes`.
@@ -200,6 +204,8 @@ pub struct ShardManifest {
     /// not decode is a malformed publication, not an absent one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory_choice: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub txid_display: Option<crate::txid::DisplayTables>,
 }
 
 /// Why a published choice table cannot be used.
@@ -260,8 +266,12 @@ pub fn encode_directory_choice(table: &crate::choice::ChoiceTable) -> String {
 /// re-derive this from data they hold. Fixed width, so it leaks nothing about
 /// the selection.
 pub fn query_binding(manifest_digest: &str, table: &str) -> [u8; 8] {
+    query_binding_for_schema(SCHEMA, manifest_digest, table)
+}
+
+pub fn query_binding_for_schema(schema: &str, manifest_digest: &str, table: &str) -> [u8; 8] {
     let mut hasher = Sha256::new();
-    hasher.update(SCHEMA.as_bytes());
+    hasher.update(schema.as_bytes());
     hasher.update(b"/query-binding\0");
     hasher.update(manifest_digest.as_bytes());
     hasher.update(b"\0");
@@ -382,6 +392,7 @@ mod tests {
                 txids: 10_355,
                 excluded_scripts: 0,
             },
+            txid_display: None,
             directory_choice: None,
         }
     }

@@ -1,0 +1,25 @@
+{
+  "baseline_sha": "0abce392691977b9e0c73a0ce8112d71d8e87fa6",
+  "installer_sha256": "2c7670ef906cf0db5915ff0fa90067bf9d2a1986f5a4104b939957f136e1a89a",
+  "unit_sha256": "785e728aa2af351d1914422544067b0f9d3e01d58db1bbcc594aac42f3256cba",
+  "scope": "planned publisher sandbox; repeat against installed unit and complete publication before activation",
+  "command": [
+    "systemd-run",
+    "--unit=transparent-activity-publisher-hardlink-probe",
+    "--wait",
+    "--pipe",
+    "--collect",
+    "--property=ProtectSystem=strict",
+    "--property=NoNewPrivileges=yes",
+    "--property=PrivateTmp=yes",
+    "--property=ReadOnlyPaths=/opt/transparent-publisher/credentials",
+    "--property=ReadWritePaths=\"/srv/transparent-activity/full-v3/journal\" \"/srv/transparent-activity/full-v11/publications\" \"/srv/transparent-activity/full-v11/publications/sandbox-probe-source\" \"/opt/transparent-publisher/state\"",
+    "python3",
+    "-c",
+    "from pathlib import Path; import os,json; a=Path('/srv/transparent-activity/full-v11/publications/sandbox-probe-source/origin'); b=a.parent.parent/'sandbox-probe-link'; os.link(a,b); x=a.stat(); y=b.stat(); assert (x.st_dev,x.st_ino)==(y.st_dev,y.st_ino); print(json.dumps(dict(status='passed',device=x.st_dev,inode=x.st_ino,nlink=x.st_nlink))); b.unlink()"
+  ],
+  "exit_code": 0,
+  "stdout": "{\"status\": \"passed\", \"device\": 2064, \"inode\": 403389666, \"nlink\": 2}\n",
+  "stderr": "Running as unit: transparent-activity-publisher-hardlink-probe.service; invocation ID: cc11285c09de4aaa8da626cdc9351566\nFinished with result: success\nMain processes terminated with: code=exited/status=0\nService runtime: 46ms\nCPU time consumed: 39ms\nMemory peak: 256.0K\nMemory swap peak: 0B\n",
+  "observed_at": 1790809810.8458788
+}

@@ -1,0 +1,13 @@
+2026-10-03T20:31:51Z fill=10.2 round=1 bin=base load=1.07 1.25 1.33
+2026-10-03T20:33:28Z fill=10.2 round=1 bin=final load=1.45 1.35 1.36
+2026-10-03T20:34:53Z fill=10.2 round=2 bin=base load=1.65 1.45 1.40
+2026-10-03T20:35:20Z fill=10.2 round=2 bin=final load=1.62 1.45 1.40
+2026-10-03T20:35:41Z fill=13.5 round=1 bin=base load=1.66 1.47 1.41
+2026-10-03T20:37:55Z fill=13.5 round=1 bin=final load=1.67 1.59 1.46
+2026-10-03T20:39:47Z fill=13.5 round=2 bin=base load=1.65 1.65 1.51
+2026-10-03T20:40:27Z fill=13.5 round=2 bin=final load=1.49 1.60 1.49
+2026-10-03T20:40:54Z fill=15.9 round=1 bin=base load=1.48 1.59 1.49
+2026-10-03T20:43:34Z fill=15.9 round=1 bin=final load=1.49 1.59 1.51
+2026-10-03T20:45:49Z fill=15.9 round=2 bin=base load=1.59 1.64 1.55
+2026-10-03T20:46:39Z fill=15.9 round=2 bin=final load=1.47 1.59 1.53
+done

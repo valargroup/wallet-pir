@@ -1,0 +1,16 @@
+{
+  "run_id": "shared-native-rollout-2026-09-30",
+  "utc": {"scale_out": "2026-09-30T04:41Z", "roll": ["2026-09-30T04:46Z", "2026-09-30T04:48Z"],
+          "gate": ["2026-09-30T04:48:47Z", "2026-09-30T04:58:48Z"]},
+  "source": {"commit": "6360f0d813006b7b1713831a01795500631f1b28", "ci_run": 36638226167,
+             "artifact": "transparent-publisher-6360f0d813006b7b1713831a01795500631f1b28"},
+  "binaries": {"transparent-shard-server": "291cd5043e3549e587b48d01f14009040422a1fec4e6c2aa9c2fd814f2ec1652",
+               "shard-control": "04f73ad4ab0c3900ea559578e5064615b074cbc687b6c8ff675e96531ce117fe",
+               "archive_owner_unchanged": "4e3f8d9d8eb881bd3b3dc1450be52a1f9cf7a63987ae7e05986a2feebd64e81c"},
+  "fleet": {"recent": ["transparent-pir-recent-01", "transparent-pir-recent-02", "transparent-pir-recent-08 (elastic, s-4vcpu-8gb)"],
+            "archive": ["transparent-pir-archive-03 (0-76)"]},
+  "workload": "3 x rate-query --qps 7 --workers 16 --seconds 600, fixture /root/gate-fixture.json, public URL, client roman-ipir-bench-8vcpu (8 vCPU)",
+  "result": {"queries": 12528, "exact": 12528, "errors": 2, "missed_slots": 42, "achieved_qps": 20.88,
+             "p50_s": 0.0157, "p95_s": 0.0347, "p99_s": 0.0476, "max_s": 2.1623},
+  "limits": ["three recent replicas routed, not two", "archive owner not upgraded", "10 minutes, not a soak"]
+}

@@ -1,0 +1,16 @@
+{
+ "updated_unix": 1790720187.037398,
+ "mode": "act",
+ "budget": {
+  "actions_left": 3,
+  "destroys_left": 0,
+  "monthly_cost_usd": 96.0
+ },
+ "decision": {
+  "action": "hold",
+  "decided_unix": 1790720172.0403812,
+  "reason": "steady: desired 2, serving 2, offered 4.0 qps"
+ },
+ "desired_recent": 2,
+ "serving_recent": 2
+}

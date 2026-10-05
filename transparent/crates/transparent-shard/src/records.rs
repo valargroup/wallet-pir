@@ -8,7 +8,7 @@ pub const MAX_SCRIPT_BYTES: usize = 40;
 pub const DIRECTORY_ENTRY_HEADER_BYTES: usize = SCRIPT_TAG_BYTES + 4 + 1;
 pub const DIRECTORY_ROW_HEADER_BYTES: usize = 4;
 pub const MAX_DIRECTORY_ENTRY_BYTES: usize =
-    DIRECTORY_ENTRY_HEADER_BYTES + INLINE_EVENTS as usize * compact::SPEND_BYTES;
+    DIRECTORY_ENTRY_HEADER_BYTES + INLINE_EVENTS as usize * (compact::SPEND_BYTES + 15);
 /// Maximum count, attained with one receive per entry. Actual capacity is bytes.
 pub const DIRECTORY_SLOTS: usize = (DIRECTORY_ROW_BYTES - DIRECTORY_ROW_HEADER_BYTES)
     / (DIRECTORY_ENTRY_HEADER_BYTES + compact::RECEIVE_BYTES);
@@ -82,6 +82,13 @@ impl DirectoryEntry {
 
     /// Decode one occupied entry from a row prefix and report its exact length.
     pub fn decode(bytes: &[u8]) -> Result<(Self, usize), RecordError> {
+        Self::decode_with_schema(bytes, crate::SCHEMA)
+    }
+
+    pub fn decode_with_schema(bytes: &[u8], schema: &str) -> Result<(Self, usize), RecordError> {
+        if !crate::manifest::supported_schema(schema) {
+            return Err(RecordError::Malformed("unsupported schema".into()));
+        }
         if bytes.len() < DIRECTORY_ENTRY_HEADER_BYTES {
             return Err(RecordError::Malformed("truncated directory entry".into()));
         }
@@ -98,7 +105,12 @@ impl DirectoryEntry {
         {
             return Err(RecordError::Malformed("invalid inline count".into()));
         }
-        let (inline, used) = compact::decode(&bytes[DE_INLINE_EVENTS..], count)?;
+        let decode = if schema == crate::manifest::LEGACY_SCHEMA {
+            crate::compact_v10::decode
+        } else {
+            compact::decode
+        };
+        let (inline, used) = decode(&bytes[DE_INLINE_EVENTS..], count)?;
         if inline.windows(2).any(|w| w[0].sort_key() > w[1].sort_key()) {
             return Err(RecordError::Malformed("inline events out of order".into()));
         }
@@ -137,6 +149,13 @@ pub fn encode_directory_row(entries: &[DirectoryEntry]) -> Result<Vec<u8>, Recor
 }
 
 pub fn decode_directory_row(row: &[u8]) -> Result<Vec<DirectoryEntry>, RecordError> {
+    decode_directory_row_with_schema(row, crate::SCHEMA)
+}
+
+pub fn decode_directory_row_with_schema(
+    row: &[u8],
+    schema: &str,
+) -> Result<Vec<DirectoryEntry>, RecordError> {
     if row.len() != DIRECTORY_ROW_BYTES {
         return Err(RecordError::Length {
             got: row.len(),
@@ -150,7 +169,7 @@ pub fn decode_directory_row(row: &[u8]) -> Result<Vec<DirectoryEntry>, RecordErr
     let mut entries: Vec<DirectoryEntry> = Vec::with_capacity(count);
     let mut at = DIRECTORY_ROW_HEADER_BYTES;
     for _ in 0..count {
-        let (entry, used) = DirectoryEntry::decode(&row[at..])?;
+        let (entry, used) = DirectoryEntry::decode_with_schema(&row[at..], schema)?;
         if entries.iter().any(|other| other.tag == entry.tag) {
             return Err(RecordError::Malformed("duplicate directory tag".into()));
         }
@@ -177,6 +196,7 @@ mod tests {
 
     fn event(height: u32, nonce: u8) -> TransparentEvent {
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height,
             txid: Txid([nonce; 32]),
             transaction_index: 0,
@@ -211,7 +231,7 @@ mod tests {
     /// deliberate edit here rather than a silent shift in every table.
     #[test]
     fn the_geometry_is_what_the_layout_promises() {
-        assert_eq!(MAX_DIRECTORY_ENTRY_BYTES, 177);
+        assert_eq!(MAX_DIRECTORY_ENTRY_BYTES, 207);
         assert_eq!(DIRECTORY_SLOTS, 58);
         assert_eq!(entry(1, 1, 0).encoded_len(), 70);
         assert_eq!(entry(1, 2, 0).encoded_len(), 121);

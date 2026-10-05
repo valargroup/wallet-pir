@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "base_sha": "9212afee9aa0e2dfab0966ab187f24bbd6af72f6",
+  "red": {
+    "returncode": 1,
+    "regression": "publisher subprocess drops inherited production lock descriptor",
+    "failure": "Bad file descriptor"
+  },
+  "green": {
+    "returncode": 0,
+    "tests": 19,
+    "coverage": [
+      "private independent snapshot",
+      "partial and corrupted snapshot refusal before restore",
+      "live mutation and retained namespace fences",
+      "coherent config/active-record/absent-dropin restoration",
+      "deferred routing restoration",
+      "UID/GID/mode preservation",
+      "sync/async FD inheritance",
+      "surviving grandchild keeps lock"
+    ]
+  },
+  "scope": "fixture evidence; no production baseline, service mutation, schema transaction or live SSH-survivor qualification",
+  "affected_check": {
+    "id": "be1b32f8740d4fa397fc40e8cb228d6e",
+    "cwd": "/Users/roman/.codex/worktrees/0ddb/wallet-pir",
+    "repo": "wallet-pir",
+    "sha": "9212afee9aa0e2dfab0966ab187f24bbd6af72f6",
+    "tool": "codex",
+    "session": "01a0f338-b6ea-7553-ae23-997f3fb45025",
+    "state": "/Users/roman/.ai-runbook/dev-ux",
+    "log": "/Users/roman/.ai-runbook/dev-ux/checks/be1b32f8740d4fa397fc40e8cb228d6e.log",
+    "started": 1790817047.089401,
+    "automatic_wake": false,
+    "status": "pass",
+    "exit_code": 0,
+    "duration": 46.89218774996698
+  },
+  "input_sha256": {
+    "ops/lib/wallet_pir_ops/inherited_lock.py": "50724124bbf797e0c6eb62c081cd19b1dd29e3f661550bccb284dd8cd172c003",
+    "ops/lib/wallet_pir_ops/deploy/remote.py": "9cf250e637cc7304ceba168aa5b6314967e90cb49a9fb24cdd3714dd03c95dca",
+    "transparent/ops/lib/activity_schema_baseline.py": "bc6ab035a2b618f94236e471f9fb471aab3b89644963a4900372f0cab909ae21",
+    "transparent/ops/scripts/transparent-activity-baseline.py": "d24f9f35b83edf34488664af9638b16ca9228e4eebe15f84d1a30995b0bb3b0d",
+    "transparent/ops/scripts/deploy-transparent-publisher.py": "028dc49da47d69fadb14a76f6bc24c1c55e4f59ab0d3beb121ae2735012a85a6",
+    "transparent/ops/scripts/transparent-live-fleet.py": "c7a1ad5725e14a54c977abfce6bbeb4d1a8cf610d3b661e6580909cd594e3722",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "3f71639a47bb34cd91a756ca29e1e8a76f797c4f57bf6322c24a19cd181046a1",
+    "Makefile": "0b47c6a759c7f97446a84cc7237cb2dce764d50841d874b6ca7e4b89132ec85a"
+  },
+  "shared_deploy_tests": 45,
+  "schema_staging_tests": 31,
+  "native_source": "12ce12918446eaa56e2d766ec2f43d82c531abb9"
+}

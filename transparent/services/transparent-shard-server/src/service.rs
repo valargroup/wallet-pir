@@ -180,6 +180,8 @@ pub struct GeometryInit {
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub txid_tables: Vec<serde_json::Value>,
 }
 
 /// What `GET /v1/shards/init` returns.
@@ -240,7 +242,7 @@ impl ServiceState {
         disk: Option<crate::runtime::disk::DiskCache>,
         previous: Option<&Self>,
     ) -> Result<Self, String> {
-        let _ = binary_digest();
+        let _ = pir_control::Identity::process();
         let metrics = previous
             .map(|s| s.inner.metrics.clone())
             .unwrap_or_else(|| Arc::new(Metrics::default()));
@@ -251,7 +253,20 @@ impl ServiceState {
         let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
-            for table in [Table::Directory, Table::Pages] {
+            for table in Table::ALL {
+                if matches!(table, Table::TxDirectory | Table::TxPages)
+                    && !set
+                        .map
+                        .shards
+                        .iter()
+                        .any(|s| s.geometry == geometry.name && s.txid_segments.is_some())
+                    && !set
+                        .revisions()
+                        .iter()
+                        .any(|s| s.geometry.name == geometry.name && s.segments(table) > 0)
+                {
+                    continue;
+                }
                 let shared =
                     match previous.and_then(|s| s.inner.params.get(&(geometry.name, table))) {
                         Some(shared) => shared.clone(),
@@ -270,7 +285,10 @@ impl ServiceState {
         // refused here rather than discovered under load.
         let mut assigned_reserved = 0u64;
         for shard in set.current() {
-            for table in [Table::Directory, Table::Pages] {
+            for table in Table::ALL {
+                if shard.segments(table) == 0 {
+                    continue;
+                }
                 let shared = &params[&(shard.geometry.name, table)];
                 assigned_reserved += shared.reserved_bytes() * u64::from(shard.segments(table));
             }
@@ -283,7 +301,12 @@ impl ServiceState {
         }
         let target = set
             .current()
-            .map(|s| (s.segments(Table::Directory) + s.segments(Table::Pages)) as usize)
+            .map(|s| {
+                Table::ALL
+                    .iter()
+                    .map(|t| s.segments(*t) as usize)
+                    .sum::<usize>()
+            })
             .sum();
         Metrics::set(&metrics.target_runtimes, target as u64);
         let cache = previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
@@ -820,6 +843,9 @@ async fn health(State(state): State<ServiceState>) -> Response {
         "prewarm_operations_total": Metrics::get(&inner.metrics.warm_runtimes),
         "work_memory_reserved_bytes": inner.cache.work_memory.reserved_bytes(),
         "target_runtimes": inner.warm.target,
+        "binary_sha256": pir_control::binary_sha256(),
+        "incarnation": pir_control::Identity::process().incarnation,
+        "started_unix": pir_control::Identity::process().started_unix,
     });
     if let (Some(body), Some(identity)) = (body.as_object_mut(), state.identity().as_object()) {
         for (key, value) in identity {
@@ -827,28 +853,6 @@ async fn health(State(state): State<ServiceState>) -> Response {
         }
     }
     json(StatusCode::OK, body)
-}
-
-fn binary_digest() -> &'static Option<String> {
-    static DIGEST: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-    DIGEST.get_or_init(|| {
-        use sha2::{Digest, Sha256};
-        use std::io::Read;
-        #[cfg(target_os = "linux")]
-        let mut file = std::fs::File::open("/proc/self/exe").ok()?;
-        #[cfg(not(target_os = "linux"))]
-        let mut file = std::fs::File::open(std::env::current_exe().ok()?).ok()?;
-        let mut hash = Sha256::new();
-        let mut bytes = [0u8; 65536];
-        loop {
-            let n = file.read(&mut bytes).ok()?;
-            if n == 0 {
-                break;
-            }
-            hash.update(&bytes[..n]);
-        }
-        Some(hex::encode(hash.finalize()))
-    })
 }
 
 /// What readiness attests depends on the mode.
@@ -891,7 +895,9 @@ async fn ready(State(state): State<ServiceState>) -> Response {
         "assigned_shards": inner.set.assigned_len(),
         "warm_runtimes": warm,
         "target_runtimes": inner.warm.target,
-        "binary_sha256": binary_digest(),
+        "binary_sha256": pir_control::binary_sha256(),
+        "incarnation": pir_control::Identity::process().incarnation,
+        "started_unix": pir_control::Identity::process().started_unix,
         "runtime_cache": runtime_cache,
         "prewarm_failed": Metrics::get(&inner.metrics.prewarm_failed),
         "prewarm_finished": inner.warm.finished.load(Ordering::Acquire),
@@ -1013,6 +1019,12 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 page_row_bytes: geometry.page_row_bytes as u32,
                 pages_scheme: pages.scheme().clone(),
                 pages_setup_seed: pages.setup_seed,
+                txid_tables: if inner.set.map.shards.iter().any(|s| s.geometry == geometry.name && s.txid_segments.is_some()) {
+                    [Table::TxDirectory, Table::TxPages].into_iter().map(|table| {
+                        let shared = &inner.params[&(geometry.name, table)];
+                        serde_json::json!({"table": table.as_str(), "rows": table.rows(geometry), "row_bytes": table.row_bytes(geometry), "scheme": shared.scheme(), "setup_seed": shared.setup_seed, "codec": transparent_shard::txid::CODEC})
+                    }).collect()
+                } else { Vec::new() },
             }
         })
         .collect();
@@ -1169,6 +1181,15 @@ async fn query_inner(
                 return state.refuse_unread(request, refused).await;
             }
         };
+        if shard.segments(table) == 0 {
+            return state
+                .refuse_unread(
+                    request,
+                    RequestError::Bad("table capability unavailable".into())
+                        .into_response(&map_digest),
+                )
+                .await;
+        }
         (shard.segments(table), state.shared(shard, table))
     };
 

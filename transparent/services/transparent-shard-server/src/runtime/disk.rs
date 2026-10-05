@@ -283,7 +283,10 @@ impl DiskCache {
         let mut largest = 0u64;
         let mut total = 0u64;
         for shard in set.current() {
-            for table in [super::Table::Directory, super::Table::Pages] {
+            for table in super::Table::ALL {
+                if shard.segments(table) == 0 {
+                    continue;
+                }
                 let shared = params
                     .entry((shard.geometry.name, table))
                     .or_insert_with(|| SharedParams::build(shard.geometry, table));
@@ -614,7 +617,7 @@ mod tests {
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
         for geometry in [&RECENT_8K, &ARCHIVE_WIDE] {
-            for table in [Table::Directory, Table::Pages] {
+            for table in Table::ALL {
                 let dir = tempfile::tempdir().unwrap();
                 let shared = SharedParams::build(geometry, table).unwrap();
                 let rows: Vec<_> = (0..table.rows(geometry) as usize

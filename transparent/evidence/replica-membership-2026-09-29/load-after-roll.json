@@ -1,0 +1,17 @@
+{
+ "utc": "2026-09-29T12:19:30.456804+00:00",
+ "mode": "running",
+ "trailing_60s": {
+  "exact": 299,
+  "errors": 0,
+  "missed_slots": 1,
+  "completed_qps": 4.983333333333333,
+  "http_p50_seconds": 0.020618303,
+  "http_p95_seconds": 0.044806012,
+  "http_p99_seconds": 0.479563775,
+  "max_schedule_lag_seconds": 0.112361474
+ },
+ "incidents": 0,
+ "ready_replicas": 4,
+ "freshness_seconds": 14.522591002
+}

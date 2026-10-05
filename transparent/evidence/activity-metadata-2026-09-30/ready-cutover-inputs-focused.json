@@ -1,0 +1,30 @@
+{
+  "base_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+  "check": "make check-fast BASE=1d3372eea7ef6a5d8c5793283689784165d8d86e",
+  "duration_seconds": 14.287621541996486,
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "598cd7952e4217151a7a968de8aa41a0c216f53176075ebf42d08bae8fdae631",
+    "transparent/docs/deployment.md": "982e1eb851f1a583194d7600073254e05f9f1bbe694a46595cfc88ab6b91da67",
+    "transparent/ops/lib/activity_input_stage.py": "48c5206dc45dfdbd700fe59c736d620e05b6ebb6da51b7aa89cc00add0e439f0",
+    "transparent/ops/lib/activity_schema_baseline.py": "06ef6575951fb7844a8a7d1ee4677f6b08cb1b6be1448156eeee38b847ca6bd3",
+    "transparent/ops/lib/activity_schema_host.py": "9198b85454d8122d8e3162e85f067ed4130d92d6fb720c86023739ba0c8c8193",
+    "transparent/ops/lib/activity_schema_product.py": "39c109663f6f0cb6840a2d2672d2e409bd020e1c67dd1febbb24c97dc57889b4",
+    "transparent/ops/tests/test_activity_input_stage.py": "33a344d34328594b5a1534655d6fc0a907855b829be90af3bdfdb146b2990bd5",
+    "transparent/ops/tests/test_activity_schema_baseline.py": "e4e169fbe753e35d8095a05ed0fff421a059ecbb4985e535799e39b8d6b37804",
+    "transparent/ops/tests/test_activity_schema_host.py": "b1aa35868789943849b572176dd72ed46016b13ec3600e1062347ccaaf0bfd33",
+    "transparent/ops/tests/test_activity_schema_product.py": "38a215bb7bf7f5110f9614cd07e41a72d5e645ab0f1fb6f297218c6a87f83be3"
+  },
+  "owner": "107d06b47cf14ca99b1e2e6cab82dc0a",
+  "private_manifest_sha256": "b951b5ad10d972cf1be9282131345f84f33a63551d0f232f95134078ee7ac252",
+  "regressions": {
+    "filter-quiescence-green.log": "5f4c06245d1833f4d67671f121f8a2590580a70f958cc44cdd12be52864c0b12",
+    "filter-quiescence-red.log": "6c149044664f819f727f7f9e040aadef79a416363006bc8a5b08b5ede1d7250e",
+    "full-fixture-bound-green.log": "f22d232ed372ce48cfbdd7f8fb4c3086f2f7fbcc95f727f6333247c80bb11c38",
+    "full-fixture-bound-red.log": "b573889072d379a6939074bee60153da7d725a4a1bcbca5161a4f38a28745ce7",
+    "publication-record-retention-final-green.log": "7bcbc1bda887ba172f77f7b1aebaaf6b10bfd9ad0260e9dc8d052f03b80e7081",
+    "publication-record-retention-red.log": "fa120d36bec293e4a4be9c4a7b580baae1b574f196afedccc67d27fbd5724f7a"
+  },
+  "scope": "Full fixture bounded reader, independent publication control-record backup, filter quiescence, actual packaged router unit capture, closed proof/spec input staging. Source/fixture checks only; no live transition or remote descendant qualification.",
+  "status": "passed",
+  "superseded_owner": "7e7f1e400e46408da48e0e84fe063cfd"
+}

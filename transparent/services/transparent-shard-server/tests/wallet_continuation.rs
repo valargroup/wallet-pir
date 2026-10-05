@@ -292,6 +292,7 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
         events.push((
             script(1),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: (FIRST + i) as u32,
                 transaction_index: 0,
                 txid: txid(10_000 + i),
@@ -305,6 +306,7 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     events.push((
         script(1),
         TransparentEvent::Spend(transparent_events::SpendEvent {
+            metadata: None,
             height: (FIRST + 79) as u32,
             transaction_index: 0,
             spending_txid: txid(20_000),
@@ -317,6 +319,7 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
         events.push((
             script(1),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: (FIRST + i) as u32,
                 transaction_index: 0,
                 txid: txid(10_000 + i),
@@ -722,6 +725,7 @@ async fn a_superseded_provisional_tail_is_truncated_and_replayed_not_appended() 
     after[3].push((
         script(2),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: (FIRST + 3 * SPAN + 150) as u32,
             txid: txid(777),
             transaction_index: 4,
@@ -835,6 +839,7 @@ async fn a_reorg_below_the_tier_boundary_rewinds_to_the_accepted_ancestor() {
     forked[1].push((
         script(1),
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: (fork + 1) as u32,
             txid: txid(4242),
             transaction_index: 5,

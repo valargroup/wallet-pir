@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "focused_owner": "b7ff694f2ce24ae687084b0353d0eed1",
+  "seconds": 15.187015292001888,
+  "inputs": {
+    "transparent/ops/lib/activity_schema_product.py": "c5b47d145b35499c41934713a057e8e6248697b23ea6c40bcd94002482441d44",
+    "transparent/ops/lib/activity_schema_routing.py": "caa1de9695bb909ae81676f5478e4afb40347c081696075d5a6d31f46cba5f11",
+    "transparent/ops/tests/test_activity_schema_routing.py": "f4c2485f246eac2a437c50af11fb887aa6406d42033cea390b2542d80859137e"
+  },
+  "actual_recovery_owner": "4d8627b590e14a5a9ebe1f16db2ff009",
+  "actual_recovery_status": "failed",
+  "cause": "Routing rejected original-plan/new-repair-source before service effects",
+  "limits": [
+    "Actual repaired recovery remains pending",
+    "Original 15 minute acceptance missed; public origins guarded"
+  ]
+}

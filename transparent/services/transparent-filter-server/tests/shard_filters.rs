@@ -33,6 +33,7 @@ fn entry(shard_id: u64, digest: &str, filter: &[u8]) -> ShardMapEntry {
         txids: 0,
         directory_segments: 1,
         page_segments: 1,
+        txid_segments: None,
         manifest_digest: digest.to_string(),
         revision: 0,
         sealed: true,

@@ -1,0 +1,12 @@
+[package]
+name = "pir-control"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Process identity and control-lease watchdog shared by the Enhance, Status and Transparent PIR services"
+
+[dependencies]
+hex = "0.4"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"

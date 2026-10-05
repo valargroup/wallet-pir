@@ -1,0 +1,10 @@
+{
+  "source_sha": "26ca321c963b4c60ab763b7dc3fd48c2fcff759f",
+  "comparison_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "command": "make check-fast BASE=3cfbc4848b92b1385b9215174251f8e51fbfa804 OFFLINE=1",
+  "status": "pass",
+  "exit_code": 0,
+  "elapsed_seconds": 216.68506612500641,
+  "owner_id": "9fc74c39f7534fdf92c82e6726b6cce5",
+  "scope": "Repository affected-check planner; selected the full package set due to Cargo.lock and Makefile. Includes dirty/untracked evidence documents. Native demo is the separate acceptance gate."
+}

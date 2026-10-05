@@ -1,0 +1,48 @@
+enhance: target sha256 a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d
+worker@worker-01 enhance-pir-worker.service: skip
+  running a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d from /opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/50-candidate-5270482.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/60-candidate-216b999.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/90-v7.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/95-architecture2.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/99-apm-hour.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zz-cleanup-71be21f.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzz-latency-47ac3e3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzz-native-ac06df3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzz-native2m-1dae185.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+worker@worker-02 enhance-pir-worker.service: skip
+  running a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d from /opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/50-candidate-5270482.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/60-candidate-216b999.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/90-v7.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/95-architecture2.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/99-apm-hour.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zz-cleanup-71be21f.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzz-latency-47ac3e3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzz-native-ac06df3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzz-native2m-1dae185.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+packing-router@router-01 enhance-pir-packing-router.service: skip
+  running a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d from /opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zz-cleanup-71be21f.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzz-gpu-5ad545d.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzz-main-3685438.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzz-mapped-4d14feb.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzz-native-ac06df3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzz-native2m-1dae185.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzzzzzz-observability.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+query-ingress@coordinator enhance-pir-query-ingress.service: skip
+  running a464bd4bd46cc90c2c3fd79ab045b97161d57addd24b7c3e01c815045bca925d from /opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/99-apm-hour.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zz-cleanup-71be21f.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zzzz-main-3685438.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzz-native-ac06df3.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzzz-native2m-1dae185.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+0 target(s) to restart, 4 unchanged

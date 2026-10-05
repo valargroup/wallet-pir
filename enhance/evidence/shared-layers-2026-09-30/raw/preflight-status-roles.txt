@@ -1,0 +1,6 @@
+status: target sha256 eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23
+worker@status-01 status-worker.service: skip
+  running eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23 from /opt/wallet-pir/releases/852d6b5-cpu/native/status-pir
+router@status-01 status-router.service: skip
+  running eb2a2788f41475702c37aae13956b6a478ebfbfac3772ad4c9a55b33a2731d23 from /opt/wallet-pir/releases/852d6b5-cpu/native/status-pir
+0 target(s) to restart, 2 unchanged

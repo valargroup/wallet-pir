@@ -1,0 +1,53 @@
+TARGET_LEASE {"target": "/Users/roman/projects/wallet-pir-txid-display/target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0", "compatibility": "420f3ee2eaf0dcb939c2", "owner_pid": 82461}
+   Compiling transparent-wallet v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/crates/transparent-wallet)
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/services/transparent-shard-server)
+   Compiling transparent-blocks v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/crates/transparent-blocks)
+   Compiling transparent-filter-server v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/services/transparent-filter-server)
+    Finished `release-fast` profile [optimized] target(s) in 7.22s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0/release-fast/deps/transparent_filter_server-912e42805f28b0dd)
+
+running 3 tests
+test display_journal::tests::immutable_identity_reload_and_malformed ... ok
+test display_journal::tests::large_raw_script_remains_in_display_and_filter_projection ... ok
+test display_journal::tests::checkpoint_interruption_contradiction_and_reorg ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 58 filtered out; finished in 0.17s
+
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/services/transparent-shard-server)
+   Compiling transparent-filter-server v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/services/transparent-filter-server)
+    Finished `release-fast` profile [optimized] target(s) in 4.46s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/txid_display.rs (target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0/release-fast/deps/txid_display-9c49d98b477c8004)
+
+running 1 test
+test native_display_queries_bind_and_decode_every_segment ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.45s
+
+python3 transparent/tools/txid-display/demo.py --report "/tmp/tpir-txid-accepted.json" --offline
+independent frozen fixture verification passed: four blocks, sixteen transactions, fifteen prevouts
+TARGET_LEASE {"target": "/Users/roman/projects/wallet-pir-txid-display/target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0", "compatibility": "420f3ee2eaf0dcb939c2", "owner_pid": 82720}
+   Compiling transparent-shard-server v0.1.0 (/Users/roman/projects/wallet-pir-txid-display/transparent/services/transparent-shard-server)
+    Finished `release-fast` profile [optimized] target(s) in 2.19s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0/release-fast/examples/transparent-txid-demo --report /tmp/tpir-txid-accepted.json`
+journal 347499-347501, all recent-4k sealing at SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 3968, capacity: 4096 } }
+shard   0 347499-347501 (3 blocks) scripts 1020 pages 1 events 1035 segments 1/1 TAIL r0
+published 1 shards covering 347499-347501; filters ~0.00 MB
+journal 0-0, all recent-4k sealing at SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 3968, capacity: 4096 } }
+shard   0 0-0 (1 blocks) scripts 0 pages 0 events 1 segments 1/1 TAIL r0
+published 1 shards covering 0-0; filters ~0.00 MB
+native transparent txid demo passed; report /tmp/tpir-txid-accepted.json
+    Finished `release-fast` profile [optimized] target(s) in 0.23s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running `target/dev-lanes/420f3ee2eaf0dcb939c2/lane-0/release-fast/examples/transparent-txid-demo --corrupt-oracle --report /var/folders/h2/8khctpjd7s99fqmbcwjzyry80000gn/T/txid-oracle-negative-orgqj3s3/must-not-exist.json`
+journal 347499-347501, all recent-4k sealing at SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 3968, capacity: 4096 } }
+shard   0 347499-347501 (3 blocks) scripts 1020 pages 1 events 1035 segments 1/1 TAIL r0
+published 1 shards covering 347499-347501; filters ~0.00 MB
+Error: "independent ordered output comparison failed"
+confirmed native gate and independent-oracle exit control passed

@@ -1,0 +1,159 @@
+{
+  "baseRefOid": "c2675c4fe67710c46c1a917b792035f6ddec005e",
+  "headRefOid": "cc6656f2342b37b5acc612ece42a57855cadf660",
+  "isDraft": false,
+  "mergeStateStatus": "CLEAN",
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:42:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130875148",
+      "name": "prepare",
+      "startedAt": "2026-09-30T22:42:03Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:42:19Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130875023",
+      "name": "lightweight",
+      "startedAt": "2026-09-30T22:42:03Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:42:54Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920459",
+      "name": "zakura-graph",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:43:13Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920480",
+      "name": "wallet-lib-modes",
+      "startedAt": "2026-09-30T22:42:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:42:27Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920467",
+      "name": "vendor-ancestry",
+      "startedAt": "2026-09-30T22:42:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:50:33Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920617",
+      "name": "test-default",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:47:50Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920529",
+      "name": "test-orchard",
+      "startedAt": "2026-09-30T22:42:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:49:55Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920563",
+      "name": "test-transparent",
+      "startedAt": "2026-09-30T22:42:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:49:16Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920546",
+      "name": "test-transparent-import",
+      "startedAt": "2026-09-30T22:42:11Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:45:28Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920576",
+      "name": "test-sqlite",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:43:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920594",
+      "name": "test-enhance-wallet",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:43:35Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920663",
+      "name": "test-enhance",
+      "startedAt": "2026-09-30T22:42:13Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:43:41Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920574",
+      "name": "test-transparent-pir",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:42:37Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110130920409",
+      "name": "protobuf",
+      "startedAt": "2026-09-30T22:42:12Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-09-30T22:50:39Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/zakura-core/wallet-libraries/actions/runs/36787056474/job/110133454984",
+      "name": "tests",
+      "startedAt": "2026-09-30T22:50:36Z",
+      "status": "COMPLETED",
+      "workflowName": "Verify wallet libraries"
+    }
+  ]
+}

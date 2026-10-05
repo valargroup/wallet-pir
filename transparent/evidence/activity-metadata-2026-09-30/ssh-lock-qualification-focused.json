@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "base_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+  "owner": "b16cc2eaeb514a1490fc4ca1fa5a4891",
+  "duration_seconds": 15.786799625027925,
+  "command": "make check-fast BASE=38b1c7fcdf8bbd5bde60853972ef62c450067321",
+  "source_files": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "79ccff9a4b337a2160d9eb77b31956a10728220d0a2f278eb0e58d684f0ec05d",
+    "transparent/ops/lib/activity_lock_qualification.py": "b5d199a2fc9e29a84f96e1fa036a217206807adf303dea999eaa4b0455ff1b79",
+    "transparent/ops/tests/test_activity_lock_qualification.py": "2949f5164007a1e9870f45d638f84c998ca507db7e1698291573289396b02608",
+    "transparent/ops/tests/test_activity_schema_operation.py": "ae4bd7e3e0de1cd6f5249f69c173654325499813ea94f6c821f62615de1233cd"
+  },
+  "raw_result_sha256": "d8e8689c662e8cfd377a736bbad4fc4fd60eadcea425b650e514b4c6d3566014",
+  "raw_log_sha256": "49ca3372dba299888db7c45036703ddd3859e7a8177f339ff25802afe6e67d10",
+  "scope": "local subprocess lock survival and wrapper/helper checks",
+  "limitations": [
+    "Actual SSH qualification has not yet run.",
+    "No production service transition or baseline capture."
+  ]
+}

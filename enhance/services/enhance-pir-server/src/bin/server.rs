@@ -260,9 +260,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             matvec,
         } => {
             let worker = Worker::open_with_backend(&data_dir, placement_policy, matvec)?;
-            axum::serve(
+            // A stopped replica drains accepted evaluations; new ones are
+            // refused and retried by the packing router on another replica.
+            enhance_pir_server::shutdown::serve_until(
                 tokio::net::TcpListener::bind(listen).await?,
                 worker.router(),
+                enhance_pir_server::shutdown::signal(),
             )
             .await?;
         }

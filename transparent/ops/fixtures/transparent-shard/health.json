@@ -1,13 +1,15 @@
 {
   "assigned_shards": 2,
   "assignment_sha256": null,
+  "binary_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "cache_budget_bytes": 4294967296,
   "cache_resident_bytes": 0,
   "geometries": [
     "recent-4k",
     "recent-8k"
   ],
-  "map_sha256": "69560683fcf3f202b59cc5ab59e82fcb769968ba69a1adc3333880246189fc08",
+  "incarnation": "00000000000000000000000000000000",
+  "map_sha256": "98c0274967d7f27c7db93638c5a9e2bf4b34722233dfab845419eb390a7ab8f9",
   "phase": "serving",
   "prewarm_operations_total": 0,
   "prunable_revisions": 0,
@@ -17,6 +19,7 @@
   "role": null,
   "runtimes_built": 0,
   "shards": 2,
+  "started_unix": 0,
   "target_runtimes": 4,
   "warm_runtimes": 0,
   "work_memory_reserved_bytes": 0,

@@ -21,7 +21,9 @@
 //! too high and looks perfectly normal.
 
 use std::collections::BTreeMap;
-use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
+use transparent_events::{
+    FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
+};
 
 /// An output the wallet controls, as recovered from the ledger.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +41,7 @@ pub struct Utxo {
 /// A spend of a recovered output.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConfirmedSpend {
+    pub input_index: u32,
     pub spent_txid: Txid,
     pub spent_output_index: u32,
     pub spending_txid: Txid,
@@ -56,6 +59,8 @@ pub struct UnresolvedSpend {
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LedgerError {
+    #[error("transaction metadata contradicts recovered history: {0}")]
+    Metadata(#[from] transparent_events::EventError),
     #[error("outpoint {0}:{1} was received twice with different contents")]
     ConflictingReceive(String, u32),
     #[error("outpoint {0}:{1} was spent twice, by different transactions")]
@@ -71,21 +76,44 @@ pub struct TransactionSummary {
     pub received: u64,
     /// Value of wallet outputs this transaction consumed.
     pub spent: u64,
+    pub metadata: Option<TransactionMetadata>,
+    /// Includes known spends whose input values are still unresolved.
+    pub owned_input_count: u32,
+    pub unresolved_input_count: u32,
 }
 
 impl TransactionSummary {
+    /// Aggregate external payment is available only with complete selected-account
+    /// effects and sole funding. The caller supplies independently established coverage.
+    pub fn aggregate_payment(&self, owned_effects_complete: bool) -> Option<u64> {
+        let metadata = self.metadata?;
+        let FeeState::Exact(fee) = metadata.fee else {
+            return None;
+        };
+        if !owned_effects_complete
+            || metadata.has_shielded_components
+            || self.unresolved_input_count != 0
+            || self.owned_input_count == 0
+            || self.owned_input_count != metadata.transparent_input_count
+        {
+            return None;
+        }
+        self.spent.checked_sub(self.received)?.checked_sub(fee)
+    }
     /// Received minus spent.
     ///
-    /// A transaction with both is a self-transfer or change, and its net value
-    /// is the honest summary of it. Presenting exact recipients and fees needs
-    /// the transaction-detail table, which this profile does not publish.
+    /// This is recovered account movement; unresolved values remain explicitly partial.
     pub fn net(&self) -> i128 {
         self.received as i128 - self.spent as i128
     }
 }
 
+/// Canonical chain order and event identity, matching `TransparentEvent::sort_key`.
+type ObservationKey = (u32, u16, u8, Txid, u32, Txid, u32);
+
 #[derive(Debug, Default)]
 pub struct Ledger {
+    observations: BTreeMap<ObservationKey, TransparentEvent>,
     utxos: BTreeMap<(Txid, u32), Utxo>,
     /// Every recovered receive, kept after it is spent so history survives.
     receives: BTreeMap<(Txid, u32), Utxo>,
@@ -117,9 +145,15 @@ impl Ledger {
         &mut self,
         events: &mut [(Vec<u8>, TransparentEvent)],
     ) -> Result<(), LedgerError> {
-        events.sort_by(|a, b| a.1.sort_key().cmp(&b.1.sort_key()));
+        transparent_events::check_transaction_consistency(
+            self.observations
+                .values()
+                .chain(events.iter().map(|(_, event)| event)),
+        )?;
+        events.sort_by_key(|entry| entry.1.sort_key());
         for (script, event) in events.iter() {
             self.apply(script, event)?;
+            self.observations.insert(event.sort_key(), *event);
         }
         Ok(())
     }
@@ -159,6 +193,8 @@ impl Ledger {
     /// whose spend was removed but whose receive survives. A reorg, or a
     /// replaced provisional tail.
     pub fn truncate_above(&mut self, height: u32) {
+        self.observations
+            .retain(|_, event| event.height() <= height);
         self.receives
             .retain(|_, utxo| utxo.creation_height <= height);
         self.utxos.retain(|key, _| self.receives.contains_key(key));
@@ -238,6 +274,7 @@ impl Ledger {
         match self.receives.get(&key) {
             Some(utxo) => {
                 let spend = ConfirmedSpend {
+                    input_index: event.input_index,
                     spent_txid: event.spent_txid,
                     spent_output_index: event.spent_output_index,
                     spending_txid: event.spending_txid,
@@ -299,6 +336,9 @@ impl Ledger {
                 height: utxo.creation_height,
                 received: 0,
                 spent: 0,
+                metadata: None,
+                owned_input_count: 0,
+                unresolved_input_count: 0,
             });
             entry.received += utxo.value;
             entry.height = entry.height.min(utxo.creation_height);
@@ -311,9 +351,36 @@ impl Ledger {
                     height: spend.height,
                     received: 0,
                     spent: 0,
+                    metadata: None,
+                    owned_input_count: 0,
+                    unresolved_input_count: 0,
                 });
             entry.spent += spend.value;
             entry.height = entry.height.min(spend.height);
+        }
+        let mut input_ids = std::collections::BTreeSet::new();
+        for event in self.observations.values() {
+            let entry = by_txid.entry(event.txid()).or_insert(TransactionSummary {
+                txid: event.txid(),
+                height: event.height(),
+                received: 0,
+                spent: 0,
+                metadata: None,
+                owned_input_count: 0,
+                unresolved_input_count: 0,
+            });
+            entry.metadata = event.metadata();
+            if let TransparentEvent::Spend(spend) = event {
+                if input_ids.insert((spend.spending_txid, spend.input_index)) {
+                    entry.owned_input_count += 1;
+                    if !self
+                        .spent_index
+                        .contains_key(&(spend.spent_txid, spend.spent_output_index))
+                    {
+                        entry.unresolved_input_count += 1;
+                    }
+                }
+            }
         }
         let mut history: Vec<_> = by_txid.into_values().collect();
         history.sort_by_key(|summary| (summary.height, summary.txid));
@@ -324,6 +391,41 @@ impl Ledger {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aggregate_payment_requires_sole_funding_complete_effects_and_values() {
+        let summary = TransactionSummary {
+            txid: txid(1),
+            height: 10,
+            received: 2000,
+            spent: 10000,
+            metadata: Some(TransactionMetadata {
+                fee: FeeState::Exact(1000),
+                transparent_input_count: 2,
+                has_shielded_components: false,
+            }),
+            owned_input_count: 2,
+            unresolved_input_count: 0,
+        };
+        assert_eq!(summary.aggregate_payment(true), Some(7000));
+        assert_eq!(summary.aggregate_payment(false), None);
+        let mut partial = summary.clone();
+        partial.owned_input_count = 1;
+        assert_eq!(partial.aggregate_payment(true), None);
+        let mut mixed = summary.clone();
+        mixed.metadata.as_mut().unwrap().has_shielded_components = true;
+        assert_eq!(mixed.aggregate_payment(true), None);
+        let mut unresolved = summary.clone();
+        unresolved.unresolved_input_count = 1;
+        assert_eq!(unresolved.aggregate_payment(true), None);
+        let mut legacy = summary;
+        legacy.metadata = None;
+        assert_eq!(legacy.aggregate_payment(true), None);
+        let ledger = replay(vec![spend(9, 9, 0, 2, 110)]);
+        let history = ledger.history();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].unresolved_input_count, 1);
+    }
 
     fn txid(tag: u8) -> Txid {
         Txid([tag; 32])
@@ -337,6 +439,7 @@ mod tests {
         (
             script(tag),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height,
                 txid: txid(tag),
                 transaction_index: 0,
@@ -357,10 +460,11 @@ mod tests {
         (
             script(script_tag),
             TransparentEvent::Spend(SpendEvent {
+                metadata: None,
                 height,
                 spending_txid: txid(spender),
                 transaction_index: 1,
-                input_index: 0,
+                input_index: u32::from(spent) * 256 + spent_index,
                 spent_txid: txid(spent),
                 spent_output_index: spent_index,
             }),
@@ -547,6 +651,7 @@ mod tests {
         events.push((
             script(4),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: 110,
                 txid: txid(3),
                 transaction_index: 1,
@@ -629,6 +734,7 @@ mod tests {
         let mut events = vec![(
             script(1),
             TransparentEvent::Receive(ReceiveEvent {
+                metadata: None,
                 height: 100,
                 txid: txid(1),
                 transaction_index: 0,

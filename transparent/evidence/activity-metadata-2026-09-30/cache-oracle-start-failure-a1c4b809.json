@@ -1,0 +1,8 @@
+{
+  "status": "failed",
+  "unit": "transparent-activity-cache-oracle-a1c4b809",
+  "failure": "capture server was not listening before the first RPC attempt",
+  "failed_attempts": 1,
+  "log_sha256": "f8990032276bcfda738b7f231a8a43c0b1866a834eab622fd8d88a0c121dc3e0",
+  "source_sha": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1"
+}

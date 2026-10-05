@@ -16,24 +16,53 @@ TRANSPARENT_LOAD_JSON ?= transparent-load-report.json
 build:
 	cargo build --release --workspace --bins --features enhance-pir/cli
 
-check: check-ops check-docs check-reports check-tools
+check: check-full
+
+.PHONY: check-full check-fast check-package doctor prepare-dev
+check-fast:
+	python3 tools/ci/fast.py $(if $(BASE),--base "$(BASE)") $(if $(filter 1,$(OFFLINE)),--offline)
+
+check-package:
+	@test -n "$(PACKAGE)" || { echo "Set PACKAGE=<workspace package>"; exit 1; }
+	python3 tools/ci/fast.py --package "$(PACKAGE)" $(if $(TEST),--test "$(TEST)") $(if $(TEST_TARGET),--test-target "$(TEST_TARGET)") $(if $(FEATURES),--features "$(FEATURES)") $(if $(filter 1,$(OFFLINE)),--offline)
+
+doctor:
+	python3 tools/ci/doctor.py $(if $(filter 1,$(NETWORK)),--network)
+
+prepare-dev:
+	cargo fetch --locked
+
+check-full: check-ops check-docs check-reports check-tools
 	cargo fmt --all --check
-	cargo clippy --workspace --all-targets --all-features -- -D warnings
-	cargo test --workspace --release
+	cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+	tools/ci/full-test.sh --locked --workspace --profile release-fast
 
 # The deploy scripts' jq programs, compiled and run against payloads the server
 # serializes. Part of `check` because both of the bugs it exists to catch got
 # through a green `check`: CI exercises the scripts only in `validate` mode,
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
-.PHONY: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
-check-ops: check-ops-enhance check-ops-shared check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing
+.PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
+check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
 
 check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
 
 check-ops-shared:
 	python3 -m unittest discover -s ops/tests -p 'test_*.py'
+
+# The control-session supervisor, its restricted account model and Status
+# config, against a stub ssh. WALLET_PIR_SSHD_PROBE=1 adds a private sshd on
+# 127.0.0.1 that checks the generated account with real OpenSSH.
+check-ops-control-sessions:
+	python3 -m unittest discover -s ops/tests/control_sessions -p 'test_*.py'
+
+# The Enhance and Status deploy CLI (ops/scripts/wallet-pir-deploy.py) against
+# an in-memory fleet, plus its host helper run locally.
+check-ops-deploy:
+	python3 -m unittest discover -s ops/tests/deploy -p 'test_*.py'
+	python3 transparent/ops/tests/test_activity_schema_operation.py
+	python3 transparent/ops/tests/test_activity_schema_baseline.py
 
 check-ops-contracts:
 	ops/scripts/check-jq-contracts.sh
@@ -62,6 +91,36 @@ check-ops-observation:
 check-ops-stage-timing:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_stage_timing.py'
 
+# Fleet membership, managed preparation, the archive standby and the rollouts
+# that rewrite fleet config.
+check-ops-membership:
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_membership.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_managed_preparation.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_reconciler.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_maintenance.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_worker_upgrade.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_rolling.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_inventory.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_actuator.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_archive_standby.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_quality_rollout_load.py'
+	python3 -m unittest discover -s transparent/ops/scripts -p 'test_transparent_quality_load.py'
+
+# Elastic recent replicas: the saved-plan validator and the Terraform root runner.
+check-ops-elastic:
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_transparent_plan.py'
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_elastic_root.py'
+
+# Recent-tier scaler: unit tests of every decision rule, the seeded fleet
+# simulator (test_scaler_sim.py) and the exhaustive membership and actuation
+# model (test_membership_model.py).
+check-ops-scaler:
+	python3 tools/ci/scaler_tests.py --tier full
+
+.PHONY: check-ops-scaler-fast
+check-ops-scaler-fast:
+	python3 tools/ci/scaler_tests.py --tier fast
+
 .PHONY: check-reports
 check-reports:
 	python3 -m unittest discover -s transparent/tools/transparent-loadtest/tests -p 'test_*.py'
@@ -74,7 +133,7 @@ check-docs:
 	tools/check-doc-links.sh
 
 test:
-	cargo test --workspace --release
+	tools/ci/full-test.sh --locked --workspace --profile release-fast
 
 run-server:
 	cargo run --release -p enhance-pir-server --bin enhance-pir-server -- --help
@@ -263,7 +322,13 @@ transparent-burst:
 
 .PHONY: check-tools
 check-tools:
+	python3 tools/ci/scaler_tests.py
+	python3 tools/ci/full_packages.py
 	python3 tools/ci/enhance_tests.py
 	python3 -m unittest discover -s transparent/tools/filters -p 'test_*.py'
 	python3 -m unittest discover -s transparent/tools/parent-filters -p 'test_*.py'
 	python3 -m unittest discover -s tools/tests -p 'test_*.py'
+
+.PHONY: transparent-txid-demo
+transparent-txid-demo:
+	python3 transparent/tools/txid-display/demo.py $(if $(REPORT),--report "$(REPORT)") $(if $(filter 1,$(OFFLINE)),--offline)

@@ -16,6 +16,7 @@ class DocumentationLinks(unittest.TestCase):
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         (self.root / "tools").mkdir()
         shutil.copy2(CHECKER, self.root / "tools/check-doc-links.sh")
+        shutil.copy2(CHECKER.with_suffix(".py"), self.root / "tools/check-doc-links.py")
 
     def write(self, path, content):
         p = self.root / path
@@ -48,6 +49,15 @@ class DocumentationLinks(unittest.TestCase):
         result = self.check()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no heading", result.stdout)
+
+    def test_spaces_titles_multiple_links_and_repeated_anchors(self):
+        self.write("docs/spaced file.md", "# Some `Heading`!\n")
+        self.write("docs/README.md", '[a](<spaced file.md#some-heading>) [b](spaced file.md#some-heading "title")\n')
+        self.assertEqual(self.check().returncode, 0)
+        self.write("docs/README.md", "[a](spaced file.md#some-heading) [bad](spaced file.md#absent)\n")
+        result = self.check()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("1 broken link", result.stderr)
 
     def test_history_url_is_not_a_local_path(self):
         self.write("docs/README.md", "[history](https://example.invalid/revision/old.md)\n")

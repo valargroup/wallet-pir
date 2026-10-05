@@ -647,6 +647,7 @@ mod seed_tests {
         let genesis = BlockHash([1; 32]).to_display_hex();
         let end = BlockHash([2; 32]).to_display_hex();
         let receive = TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height: 0,
             txid: Txid([3; 32]),
             transaction_index: 0,
@@ -655,6 +656,7 @@ mod seed_tests {
             coinbase: false,
         });
         let spend = TransparentEvent::Spend(SpendEvent {
+            metadata: None,
             height: 1,
             spending_txid: Txid([4; 32]),
             transaction_index: 0,
@@ -695,6 +697,7 @@ mod seed_tests {
             txids: 2,
             directory_segments: 1,
             page_segments: 1,
+            txid_segments: None,
             manifest_digest: "22".repeat(32),
             revision: 0,
             sealed: false,

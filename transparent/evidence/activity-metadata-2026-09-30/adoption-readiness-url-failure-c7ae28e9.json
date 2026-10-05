@@ -1,0 +1,21 @@
+{
+  "status": "failed",
+  "source_sha": "c7ae28e9cd1178b51cec45ae1ae6796bebf5d581",
+  "owner": "a8240acfba80427a90e202b741acc986",
+  "duration_seconds": 289.02489137498196,
+  "transaction": "transparent-schema-20261001T112410Z-15d5de8189d2-c99edc",
+  "plan_sha256": "e3a99f725928fa6ec67e521efe0a41b27b39293293b5668dd9c556dec3c3f3de",
+  "raw_stdout_sha256": "a6ae00dc6a7653b7dc7814a8888a3709011c4f6f8cc16cad90f11d3703523c94",
+  "raw_stderr_sha256": "572e1c1c8b452b2c2fc2f690061770157b48c7da8ac7eb7c4d0096fe86ad3119",
+  "phase_outcomes": {
+    "withdraw-origins": "passed",
+    "restore-v10": "passed",
+    "verify-rollback": "failed"
+  },
+  "cause": "Readiness request omitted HTTP scheme for reviewed bare private upstreams, causing an artificial 250-second deadline failure despite actual workers being ready.",
+  "observed_newer_map": "b3d8ec7a894b69f11072e3df901b5afceece483d0be4251f9de57d24a7315b1c",
+  "limitations": [
+    "No real client proof or canonical reopening occurred. Both public origins remained guarded.",
+    "Original failed rollback and missed 15-minute deadline are unchanged."
+  ]
+}

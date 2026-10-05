@@ -49,9 +49,12 @@ resource "digitalocean_droplet" "transparent_recent" {
   }
 }
 
+# Archive owners are named, not counted, so the operator can add a new owner and
+# later remove old ones without Terraform renumbering the survivors. Which
+# shards each one holds is the inventory's partition, not this list.
 resource "digitalocean_droplet" "transparent_archive" {
-  count      = var.transparent_archive_count
-  name       = format("transparent-pir-archive-%02d", count.index + 1)
+  for_each   = toset(var.transparent_archive_names)
+  name       = each.key
   image      = var.image
   region     = var.region
   size       = var.transparent_archive_size

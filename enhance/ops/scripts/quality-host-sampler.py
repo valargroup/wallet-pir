@@ -2,7 +2,9 @@
 """Read-only host and Caddy snapshots, isolated from request and APM scrape paths.
 
 The root-owned config lists explicit hosts, service units, filesystems, and SSH
-credential paths. Only numeric resource observations and aggregate Caddy metrics
+credential paths. An optional `roster` block instead derives one target per
+enrolled or draining transparent worker from the fleet roster on every cycle,
+so elastic members and replaced owners are sampled under their own names. Only numeric resource observations and aggregate Caddy metrics
 are written. Failed hosts disappear from the next snapshot, never retain a fresh
 timestamp. The HTTP admin API is accessed on router loopback only.
 """
@@ -75,9 +77,23 @@ def atomic(path, text):
     tmp.replace(path)
 
 
+def roster_targets(spec):
+    """One target per enrolled or draining roster member, read fresh each cycle."""
+    roster = json.loads(Path(spec['path']).read_text())
+    return [{'sources': [w['id']], 'unit': spec['unit'], 'data_dir': spec.get('data_dir', '/'),
+             'host': 'root@' + w['ssh_host']}
+            for w in roster if w.get('intent', 'enrolled') in ('enrolled', 'draining')]
+
+
 def collect(config):
     result = {}
-    targets = config['targets']
+    targets = list(config['targets'])
+    if config.get('roster'):
+        # An unreadable roster keeps the explicit targets rather than stopping sampling.
+        try:
+            targets = roster_targets(config['roster']) + targets
+        except (OSError, ValueError, KeyError, TypeError):
+            print(json.dumps({'event': 'roster_unavailable'}), flush=True)
     if len(targets)>64:
         raise ValueError('too many hosts')
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:

@@ -27,7 +27,7 @@ use transparent_wallet::store::{
 
 /// Versioned persistence: known older versions migrate transactionally;
 /// unknown versions are refused rather than misread.
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// Default bound on pending page retrievals a commit may leave.
 pub const DEFAULT_PENDING_LIMIT: usize = 4_096;
@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS spends (
     PRIMARY KEY (spending_txid, input_index, spent_txid, spent_output_index),
     UNIQUE (spent_txid, spent_output_index)
 );
+CREATE INDEX IF NOT EXISTS spends_by_transaction ON spends(spending_txid);
 CREATE TABLE IF NOT EXISTS pending_work (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     shard_id INTEGER NOT NULL,
@@ -137,7 +138,9 @@ fn encode_boundary(boundary: Option<&PageBoundary>) -> Option<Vec<u8>> {
 fn decode_boundary(bytes: Option<&[u8]>) -> Result<Option<PageBoundary>, StoreError> {
     bytes
         .map(|bytes| {
-            if bytes.len() != 4 + EVENT_BYTES {
+            if bytes.len() < 4 + EVENT_BYTES
+                || bytes.len() > 4 + transparent_events::MAX_EVENT_BYTES
+            {
                 return Err(StoreError::Corrupt("invalid page boundary length".into()));
             }
             let event_bytes = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes"));
@@ -193,6 +196,20 @@ impl SqliteStore {
     }
 
     fn prepare(&mut self) -> Result<(), StoreError> {
+        // Fence unknown readers before changing journal mode or creating indexes.
+        let has_meta: bool = self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'wallet_meta')",
+            [], |row| row.get(0),
+        ).map_err(io)?;
+        if has_meta {
+            if let Some(found) = self.meta("schema_version")? {
+                if !matches!(found.as_str(), "1" | "2" | "3" | "4") {
+                    return Err(StoreError::Corrupt(format!(
+                        "store schema {found}, this build reads {SCHEMA_VERSION}"
+                    )));
+                }
+            }
+        }
         // Durable on every commit: a commit that returned is on disk.
         self.conn
             .execute_batch(
@@ -202,7 +219,7 @@ impl SqliteStore {
         self.conn.execute_batch(SCHEMA).map_err(io)?;
         match self.meta("schema_version")? {
             None => self.set_meta("schema_version", &SCHEMA_VERSION.to_string())?,
-            Some(found) if found == SCHEMA_VERSION.to_string() || found == "2" => {}
+            Some(found) if found == SCHEMA_VERSION.to_string() || found == "2" || found == "3" => {}
             Some(found) if found == "1" => {
                 let tx = self.conn.transaction().map_err(io)?;
                 tx.execute_batch("ALTER TABLE coverage ADD COLUMN source_anchor TEXT;
@@ -226,6 +243,11 @@ impl SqliteStore {
                 UPDATE wallet_meta SET value = '3' WHERE key = 'schema_version';",
             )
             .map_err(io)?;
+            tx.commit().map_err(io)?;
+        }
+        if self.meta("schema_version")?.as_deref() == Some("3") {
+            let tx = self.conn.transaction().map_err(io)?;
+            tx.execute_batch("CREATE INDEX IF NOT EXISTS spends_by_transaction ON spends(spending_txid); UPDATE wallet_meta SET value = '4' WHERE key = 'schema_version';").map_err(io)?;
             tx.commit().map_err(io)?;
         }
         Ok(())
@@ -334,14 +356,34 @@ fn kind_str(kind: CoverageKind) -> &'static str {
 }
 
 fn encode_inline(events: &[TransparentEvent]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(events.len() * EVENT_BYTES);
+    let mut out = b"EV3\0".to_vec();
     for event in events {
-        out.extend_from_slice(&event.to_bytes());
+        let raw = event.to_bytes();
+        out.extend_from_slice(&(raw.len() as u16).to_le_bytes());
+        out.extend_from_slice(&raw);
     }
     out
 }
 
 fn decode_inline(bytes: &[u8]) -> Result<Vec<TransparentEvent>, StoreError> {
+    if let Some(mut remaining) = bytes.strip_prefix(b"EV3\0") {
+        let mut events = Vec::new();
+        while !remaining.is_empty() {
+            let header = remaining
+                .get(..2)
+                .ok_or_else(|| StoreError::Corrupt("truncated inline framing".into()))?;
+            let length = usize::from(u16::from_le_bytes(header.try_into().unwrap()));
+            let raw = remaining
+                .get(2..2 + length)
+                .ok_or_else(|| StoreError::Corrupt("truncated inline event".into()))?;
+            events.push(decode_event(raw)?);
+            if events.len() > transparent_shard::INLINE_EVENTS as usize {
+                return Err(StoreError::Corrupt("too many inline events".into()));
+            }
+            remaining = &remaining[2 + length..];
+        }
+        return Ok(events);
+    }
     if !bytes.len().is_multiple_of(EVENT_BYTES) {
         return Err(StoreError::Corrupt(
             "inline events are not whole records".into(),
@@ -351,7 +393,7 @@ fn decode_inline(bytes: &[u8]) -> Result<Vec<TransparentEvent>, StoreError> {
 }
 
 fn decode_event(bytes: &[u8]) -> Result<TransparentEvent, StoreError> {
-    if bytes.len() != EVENT_BYTES {
+    if !(EVENT_BYTES..=transparent_events::MAX_EVENT_BYTES).contains(&bytes.len()) {
         return Err(StoreError::Corrupt(
             "event record has the wrong length".into(),
         ));
@@ -529,7 +571,7 @@ impl WalletStore for SqliteStore {
                 revision_digest,
             });
         }
-        events.sort_by(|a, b| a.event.sort_key().cmp(&b.event.sort_key()));
+        events.sort_by_key(|entry| entry.event.sort_key());
         Ok(events)
     }
 
@@ -538,6 +580,26 @@ impl WalletStore for SqliteStore {
             .conn
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(io)?;
+        let mut assertions = commit
+            .events
+            .iter()
+            .map(|stored| stored.event)
+            .collect::<Vec<_>>();
+        let txids = assertions
+            .iter()
+            .map(TransparentEvent::txid)
+            .collect::<std::collections::BTreeSet<_>>();
+        for txid in txids {
+            let mut query = tx.prepare_cached("SELECT event FROM receives WHERE txid = ?1 UNION ALL SELECT event FROM spends WHERE spending_txid = ?1").map_err(io)?;
+            let rows = query
+                .query_map([txid.0.as_slice()], |row| row.get::<_, Vec<u8>>(0))
+                .map_err(io)?;
+            for row in rows {
+                assertions.push(decode_event(&row.map_err(io)?)?);
+            }
+        }
+        transparent_events::check_transaction_consistency(&assertions)
+            .map_err(|e| StoreError::Corrupt(e.to_string()))?;
         // Contradictions first, before any write, so a refused commit rolls
         // back to exactly the prior state.
         for stored in &commit.events {

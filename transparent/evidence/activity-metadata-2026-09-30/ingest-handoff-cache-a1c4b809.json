@@ -1,0 +1,12 @@
+{
+  "status": "controlled_handoff",
+  "unix": 1790806460.4975498,
+  "checkpoint_through": 324000,
+  "checkpoint_sha256": "afc9cd7d70ff75bd24ec4abddd03d2ba3349c3dcff8095754809aa7076441b90",
+  "prior_source": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "new_source": "a1c4b809f62035d5e8509b3b43807fb7e3dab7e1",
+  "new_binary_sha256": "d4a8cc161cc9c6b938963a81d12dd9b13df5cfad595d6fe4a5309d3a2032a972",
+  "workers": 4,
+  "profile": "release",
+  "reason": "bounded parent cache passed strict bounds, byte-equal uncached extraction and independent 100-block RPC oracle"
+}

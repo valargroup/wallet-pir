@@ -124,3 +124,45 @@ same single-permit worker. Wrong-length and unreduced queries must return HTTP
 400 without invoking the backend. Injection support exists only in test builds.
 
 [Failure-regression evidence](../evidence/cuda-p4000-2026-09-24/failure-regressions/README.md) records the CPU and P4000 runs.
+
+## CI artifact and manual GPU deployment
+
+Full CI on main builds `enhance-pir-native-cuda-<full-sha>` separately from the
+CPU/native bundles. Its digest-pinned Ubuntu 22.04 build uses Rust 1.91.0,
+glibc 2.35 and `x86-64-v3`, matching the older GPU host ABI. The archive includes
+native v9 server/client/load binaries, checksums, source identity, strict build
+metadata and isolated CUDA validation scripts. Successful CI establishes build
+provenance; live CUDA correctness remains a deployment gate.
+
+Use **Deploy Enhance CUDA worker** with `ref` set to a full main-ancestor SHA
+whose full CI succeeded. Start with `mode=preflight`, then use `mode=deploy`.
+The workflow accepts only the optional GPU worker, takes the shared production
+lock, and preserves its state root, arguments, CUDA library path and placement.
+Preflight uploads verified validation binaries and runs fresh loopback fixture
+processes with two isolated CUDA replicas on device 0 to satisfy the reservation
+quorum. Both replicas must publish native CUDA health; their summed evaluation
+counter must increase during exact fixture queries. Each uses a separate loopback
+port and temporary state root. Preflight does not restart the production unit.
+Deployment swaps the server binary transactionally, verifies native v9/CUDA
+health and executable identity, then runs public exact-answer queries at 1 QPS
+for 60 seconds after a paced 10-second warmup. Acceptance requires zero errors,
+GPU evaluation counter growth, router availability, and no worker restart or OOM.
+Repeat deploys rerun validation without restarting an unchanged unit. No deliberate
+production failover or throughput qualification is part of this workflow.
+
+The root deployment runner on the coordinator needs a root-owned operator
+inventory at `/etc/enhance-pir/cuda-deploy-inventory.json`; the accompanying
+`cuda-deploy-inventory.example.json` documents its shape. Verify both SSH host
+keys out of band and pin the exact known-hosts file SHA-256 in that inventory.
+Set repository variable `WALLET_PIR_CUDA_SSH_KNOWN_HOSTS` to that public host-key
+inventory. The existing `WALLET_PIR_DEPLOY_SSH_KEY` secret supplies the identity;
+its public key must authenticate to the coordinator and the sudo-capable GPU
+account. Credentials remain runtime material. The independent oracle must use
+public canonical records at positions in the current native dataset.
+
+Transaction journals and baseline persist under `/var/lib/wallet-pir-deploy/cuda`.
+Any activation or post-deploy verification failure rolls back touched targets.
+The workflow uploads metadata, smoke results, public query reports and rollback
+status even on failure. For an interrupted transaction, resume the existing
+transactional CLI's rollback using the same inventory and state directory before
+retrying deployment; do not clear the journal or force through configuration drift.

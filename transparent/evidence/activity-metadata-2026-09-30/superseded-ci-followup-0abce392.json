@@ -1,0 +1,20 @@
+{
+  "cancelled_runs": [
+    {
+      "id": 36787846636,
+      "sha": "f10fdb1f2ca9dca1cbb27ab92c65383f84f0c40a",
+      "pre_cancel_status": "queued",
+      "reason": "Documentation-only successor of a65 now superseded by reviewed repair"
+    },
+    {
+      "id": 36789025012,
+      "sha": "0abce392691977b9e0c73a0ce8112d71d8e87fa6",
+      "pre_cancel_status": "queued",
+      "active_jobs": 0,
+      "reason": "Superseded queued full suite; final 12ce1291 full workflow runs all groups"
+    }
+  ],
+  "final_candidate_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "full_ci_owner": 36789825125,
+  "note": "Cancellation is not passing evidence. Earlier active a65 tests were left to finish."
+}

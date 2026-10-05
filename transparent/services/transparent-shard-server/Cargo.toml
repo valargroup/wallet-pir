@@ -24,8 +24,10 @@ path = "src/bin/shard-residency.rs"
 portable-kernel = []
 
 [dependencies]
+pir-control = { path = "../../../shared/pir-control" }
 pir-observability = { path = "../../../shared/pir-observability" }
 axum = "0.7"
+rayon = "1"
 http-body = "1"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }
@@ -51,9 +53,11 @@ transparent-native = { path = "../../crates/transparent-native" }
 transparent-shard = { path = "../../crates/transparent-shard" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1", features = ["fs"] }
+rustix = { version = "1.1", features = ["fs", "process", "thread"] }
 
 [dev-dependencies]
+transparent-filter-server = { path = "../transparent-filter-server" }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "af944f5194ef2e9921bc96af017629450375013c" }
 rayon = "1"
 base64 = "0.22"
 http-body = "1"

@@ -18,7 +18,8 @@ def fetch(url):
  except Exception as e:return {'error':str(e)}
 def worker(w):
  service=w.get('service','transparent-shard-server')
- command=f'cat /proc/meminfo; systemctl show {service} -p ActiveState -p NRestarts -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec; cat /sys/fs/cgroup/system.slice/{service}.service/memory.events; cat /proc/loadavg'
+ disk_paths='/ /srv/transparent-activity /srv/zakura' if w.get('local') else '/ /srv/transparent-pir' if 'upstream' in w else '/ /srv'
+ command=f'cat /proc/meminfo; systemctl show {service} -p ActiveState -p NRestarts -p MemoryCurrent -p MemoryPeak -p CPUUsageNSec; cat /sys/fs/cgroup/system.slice/{service}.service/memory.events; cat /proc/loadavg; df -P {disk_paths}'
  args=['ssh','-i',FLEET['ssh_key'],'-o','BatchMode=yes','-o','IdentitiesOnly=yes','-o','StrictHostKeyChecking=yes','-o','UserKnownHostsFile='+FLEET['known_hosts'],'-o','ConnectTimeout=4','root@'+w.get('ssh_host','localhost'),command]
  if w.get('local'):args=['/bin/sh','-c',command]
  result={'id':w['id'],'ready':fetch('http://'+w['upstream']+'/v1/ready') if 'upstream' in w else {}}
@@ -27,6 +28,7 @@ def worker(w):
   if 'upstream' not in w:result['ready']={'http':200,'body':{'ready':'ActiveState=active' in p.stdout,'mode':'warm','probe':'systemd '+service}}
   for key,pattern in [('available_kib',r'^MemAvailable:\s+(\d+)'),('total_kib',r'^MemTotal:\s+(\d+)'),('oom',r'^oom (\d+)'),('oom_kill',r'^oom_kill (\d+)'),('restarts',r'^NRestarts=(\d+)'),('cpu_ns',r'^CPUUsageNSec=(\d+)')]:
    m=re.search(pattern,p.stdout,re.M);result[key]=int(m[1]) if m else None
+  result['disk_available_fractions']=[(100-int(line.split()[4].rstrip('%')))/100 for line in p.stdout.splitlines() if re.match(r'^\S+\s+\d+\s+\d+\s+\d+\s+\d+%\s+/',line)]
  except Exception as e:result['error']=str(e)
  return result
 
@@ -62,13 +64,35 @@ def stop(signum,frame):
  if PROC and PROC.poll() is None:PROC.terminate()
 signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
 
+def nodes(roster):
+ return roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
+
+def current_roster(previous):
+ # The inventory adds and retires recent replicas; follow it, keeping the
+ # last readable roster if a rewrite is caught half-way.
+ try:return json.loads(pathlib.Path(FLEET['roster']).read_text())
+ except (OSError,ValueError):return previous
+
+SERVED=set()
+def monitored(roster):
+ # A newly enrolled replica boots and warms for minutes before the router
+ # sends it traffic; judge it only once it has been rendered, while every
+ # member qualified at start stays under watch from the beginning.
+ try:
+  members=json.loads((pathlib.Path(FLEET['state_dir'])/'membership.json').read_text())['members']
+  SERVED.update(i for i,v in members.items() if v.get('rendered'))
+ except (OSError,ValueError,KeyError):pass
+ return [w for w in roster if w['id'] in EXPECTED_BINARIES or w['id'] in SERVED]
+
 def main():
  global PROC,FLEET,NODES,EXPECTED_BINARIES
  FLEET=json.loads(FLEET_PATH.read_text())
  roster=json.loads(pathlib.Path(FLEET['roster']).read_text())
  EXPECTED_BINARIES=json.loads(EXPECTED_FILE.read_text()) if EXPECTED_FILE else {w['id']:EXPECTED_BINARY for w in roster}
- if set(EXPECTED_BINARIES)!={w['id'] for w in roster} or not all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in EXPECTED_BINARIES.values()):raise ValueError('qualified binary map must exactly cover the fleet roster')
- NODES=roster+[{'id':'transparent-router','ssh_host':FLEET['router_host'],'service':'caddy'},{'id':'transparent-coordinator','local':True,'service':'transparent-publish-controller'}]
+ if not {w['id'] for w in roster}<=set(EXPECTED_BINARIES) or not all(isinstance(v,str) and re.fullmatch('[0-9a-f]{64}',v) for v in EXPECTED_BINARIES.values()):raise ValueError('qualified binary map must cover the starting fleet roster')
+ # A replica enrolled later runs a release already qualified for another worker.
+ QUALIFIED=set(EXPECTED_BINARIES.values())
+ NODES=nodes(roster)
  (ROOT/'permit').write_text('deny\n')
  if (ROOT/'latched.json').exists():LATCH.append({'event':'health_latch','reason':'persisted critical incident; inspect latched.json'})
  args=[str(ROOT/'rate-query'),'--url','https://transparent-pir.valargroup.dev','--fixture',str(ROOT/'fixture.json'),'--qps','5','--workers','8','--permit',str(ROOT/'permit')]
@@ -79,6 +103,7 @@ def main():
   thread=threading.Thread(target=reader,args=(PROC,),daemon=True);thread.start()
   while not STOP:
    tick=time.monotonic()
+   roster=current_roster(roster);NODES=nodes(monitored(roster))
    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
     futures=[pool.submit(worker,w) for w in NODES]
     c=pool.submit(fetch,'http://127.0.0.1:8094/v1/status');public=pool.submit(fetch,'https://transparent-pir.valargroup.dev/v1/shards/init')
@@ -90,7 +115,10 @@ def main():
    for w in workers:
     name=w['id'];body=w['ready'].get('body',{})
     if w.get('ssh_exit')!=0 or w.get('available_kib') is None or w.get('total_kib') is None:reasons.append(name+': resource probe unavailable')
-    elif w['available_kib']/w['total_kib']<.15:critical.append(name+': available memory below 15%')
+    elif w['available_kib']/w['total_kib']<.20:critical.append(name+': available memory below 20%')
+    disks=w.get('disk_available_fractions',[])
+    if len(disks)<2:reasons.append(name+': disk resource probe unavailable')
+    elif min(disks)<.20:critical.append(name+': disk headroom below 20%')
     if w['ready'].get('http')!=200 or not body.get('ready') or body.get('mode')!='warm':reasons.append(name+': not warm/ready')
     for key in ['oom','oom_kill','restarts']:
      value=w.get(key)
@@ -98,15 +126,16 @@ def main():
      elif (name,key) not in baseline:baseline[name,key]=value
      elif value>baseline[name,key]:critical.append(name+': '+key+' increased')
     if body.get('runtime_cache',{}).get('write_failures',0)>0:reasons.append(name+': cache write failures')
-    if name in EXPECTED_BINARIES:
+    if name in EXPECTED_BINARIES or name in {w['id'] for w in roster}:
      if 'binary_sha256' not in body:reasons.append(name+': binary observation unavailable')
-     elif body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
+     elif name in EXPECTED_BINARIES and body['binary_sha256']!=EXPECTED_BINARIES[name]:critical.append(name+': worker binary changed from configured qualified source')
+     elif name not in EXPECTED_BINARIES and body['binary_sha256'] not in QUALIFIED:critical.append(name+': enrolled worker runs an unqualified binary')
    c=controller.get('body',{})
    if controller.get('http')!=200 or c.get('phase')!='serving':reasons.append('publisher not serving')
    if c.get('node_height',0)-c.get('public_height',0)>2:reasons.append('publication more than two blocks behind node')
    if init.get('http')!=200:reasons.append('public init unavailable')
    disk=os.statvfs(ROOT)
-   if disk.f_bavail/disk.f_blocks<.1:critical.append('load log filesystem below 10% free')
+   if disk.f_bavail/disk.f_blocks<.20:critical.append('load log filesystem below 20% free')
    with LOCK:
     while WINDOW and WINDOW[0][0]<time.time()-60:WINDOW.popleft()
     recent=list(WINDOW);counts=dict(COUNTS);latch=list(LATCH);ready=LAST_READY

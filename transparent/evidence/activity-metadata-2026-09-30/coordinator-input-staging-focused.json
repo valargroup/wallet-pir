@@ -1,0 +1,38 @@
+{
+  "status": "passed",
+  "scope": "Focused source checks for bounded coordinator input staging, host schema agreement and read-only fixture export; not a service cutover or qualification",
+  "owner": "0a89073371f34d13b2da74db110fb40f",
+  "comparison_sha": "801d7a62ae14fc3eb99f0672227b14484b01d197",
+  "duration_seconds": 18.03971633303445,
+  "combined_schema_tests": 140,
+  "baseline_tests": 19,
+  "shared_deployment_tests": 45,
+  "input_tests": 26,
+  "inputs": {
+    "ops/lib/wallet_pir_ops/deploy/cli.py": "394e0333f50bdcef75cd1ec4e8459cfc0dd3ccee7fc4dcf933fa2a840d095711",
+    "transparent/docs/deployment.md": "32b7ca31fe71c1af815bfe7a62d7d29083c4855dce2bfc5dc693c7526b2086f5",
+    "transparent/docs/remaining-work.md": "4be039e4d48390a1240d490e21256437ed8053293204e2eb6d3540e8b9cb8f28",
+    "transparent/docs/status.md": "86ee1d2f6197b40f2577957021dfe6cc6eb219faa94348bdb67f4760887359ff",
+    "transparent/ops/lib/activity_input_stage.py": "562ff505185974cfc006bfaa808eb6a9d4571a66d07773435affa49c14f8908b",
+    "transparent/ops/lib/activity_schema_host.py": "7d7bf2908e212d12dbdadfa2684fc544c89289a9a28d1a97ab2219f8613bfffc",
+    "transparent/ops/scripts/activity-query-fixture.py": "704d17ec9dd2d0591c220fef651fa46df88f1171164a313282f39ec08f14fe81",
+    "transparent/ops/tests/test_activity_input_stage.py": "0f754ba1547c1123ad6bca878ce1635bcd17b402cb46ee3fa6c16a183c630fd2",
+    "transparent/evidence/activity-metadata-2026-09-30/archive-worker-inputs-801d7a62.json": "acabcdd99a0e26a3a88b83bb79b64df4b28fe185d351d69660a6116af353b7ca",
+    "transparent/evidence/activity-metadata-2026-09-30/full-chain-oracle-801d7a62.json": "002e1922d09c7cc65f62996dc6ffe58154e717e718e87cfcb56d1e9027d773ab",
+    "transparent/evidence/activity-metadata-2026-09-30/full-native-certificates-801d7a62.json": "6574895d70827239833524b43d74a57eb401afcdbe00454172d1af8f35692edc",
+    "transparent/evidence/activity-metadata-2026-09-30/recent-worker-inputs-801d7a62.json": "a3898755cf865c7c1976c560e9ff74bd9214ab7d8b4a481f82f9d20551746245"
+  },
+  "native_inputs_unchanged_from": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "regression": {
+    "red_sha256": "52a2ce889f0c82804269e3929172c2421077b03ed95c661ee1b637b352ea95f2",
+    "green_sha256": "2299339565fdc7c4fedeb54e99b181ba53b821f77194926422cc7df3301ba0ee",
+    "issue": "Host validator expected integer 11 while producer uses transparent-shard-v11; actual producer/host contract test rejected before repair.",
+    "initial_fixture_error": "First setup appended .service twice; failed setup, not accepted red evidence."
+  },
+  "actual_candidate_fixture": {
+    "tables": 178,
+    "sha256": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6",
+    "scope": "Sealed v11 recent/archive directory/page table row hashes; raw-chain extraction is separately checked."
+  },
+  "configuration": "Twelve actual private candidate files rendered and locally checked against Host and Product namespaces; rerender after source publication and run wrapper plan/preflight before staging."
+}

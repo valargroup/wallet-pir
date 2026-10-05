@@ -1,0 +1,102 @@
+{
+  "base_publication_seconds": 0.000066486,
+  "cycles": [
+    {
+      "capture_seconds": 0.019864751,
+      "cycle": 0,
+      "filters_open_seconds": 0.001485379,
+      "height": 3011751,
+      "map_sha256": "6562af093a7ab4964422234682cfa7cebbe72e70269b36c4395c45c4755a4b1f",
+      "publish_seconds": 1.792677868,
+      "shards": 3,
+      "tail": {
+        "end_height": 3011751,
+        "manifest_digest": "f356e11df33af1d3171152191e8c36dbcf88dbfc54c184d48e8936f098cfa586",
+        "page_rows": 1919,
+        "revision": 1,
+        "scripts": 23577,
+        "shard_id": 2,
+        "start_height": 3009417
+      },
+      "total_seconds": 1.8140475390000002
+    },
+    {
+      "capture_seconds": 0.013938628,
+      "cycle": 1,
+      "filters_open_seconds": 0.001562519,
+      "height": 3011752,
+      "map_sha256": "31547229e3d14aa2866dc5106c94cd17aa1dd30d0ac7e40acd1039dd6545874e",
+      "publish_seconds": 1.299087091,
+      "shards": 3,
+      "tail": {
+        "end_height": 3011752,
+        "manifest_digest": "f316e5a74527405793d40b0099fbd1a427c6518a9d256dccb13c1e086034651c",
+        "page_rows": 1919,
+        "revision": 2,
+        "scripts": 23579,
+        "shard_id": 2,
+        "start_height": 3009417
+      },
+      "total_seconds": 1.314593655
+    },
+    {
+      "capture_seconds": 0.014169692,
+      "cycle": 2,
+      "filters_open_seconds": 0.00151963,
+      "height": 3011753,
+      "map_sha256": "b8210714dc3ef9163c30acdfdd3f3e846a799f03b79e988483cbe21388438777",
+      "publish_seconds": 1.343591448,
+      "shards": 3,
+      "tail": {
+        "end_height": 3011753,
+        "manifest_digest": "5531dc28abae5aec691aad6d089642165c66b2dd759bc685ba142a436617bdbd",
+        "page_rows": 1919,
+        "revision": 3,
+        "scripts": 23583,
+        "shard_id": 2,
+        "start_height": 3009417
+      },
+      "total_seconds": 1.359286094
+    }
+  ],
+  "day_blocks": 1152,
+  "day_sha256": "e0979d3cb727cb7646474ccc3a9220f9cc7080e300b6509ae720e8f289b790bf",
+  "directory_choice": "all",
+  "initial_copies": 10.2,
+  "initial_through": 3011750,
+  "runtime": [
+    {
+      "build_threads": 2,
+      "public_params_sha256": "2324fd752f2a3a9b8a72a855aaaf5d4ed68e7bf9e1b23907525651456e77ab08",
+      "repeat": 0,
+      "seconds": 2.513722976,
+      "segment": 0,
+      "table": "directory"
+    },
+    {
+      "build_threads": 2,
+      "public_params_sha256": "2324fd752f2a3a9b8a72a855aaaf5d4ed68e7bf9e1b23907525651456e77ab08",
+      "repeat": 1,
+      "seconds": 2.25590014,
+      "segment": 0,
+      "table": "directory"
+    },
+    {
+      "build_threads": 2,
+      "public_params_sha256": "d52cf9e8f3b2d44b24f4aafb5e24ea32c2202784aadbb27fe3a516c6d7bd59a2",
+      "repeat": 0,
+      "seconds": 1.707320027,
+      "segment": 0,
+      "table": "pages"
+    },
+    {
+      "build_threads": 2,
+      "public_params_sha256": "d52cf9e8f3b2d44b24f4aafb5e24ea32c2202784aadbb27fe3a516c6d7bd59a2",
+      "repeat": 1,
+      "seconds": 1.641649591,
+      "segment": 0,
+      "table": "pages"
+    }
+  ],
+  "schema": "transparent-publication-bench-v1"
+}

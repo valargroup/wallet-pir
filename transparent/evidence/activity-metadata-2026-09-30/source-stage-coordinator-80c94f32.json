@@ -1,0 +1,20 @@
+{
+  "archive_bytes": 610263,
+  "archive_mode": 256,
+  "archive_sha256": "6bb07c297bd547860a814ab8e6e88a3d6839f1f83cda37358a70872edaa7044a",
+  "elapsed_seconds": 4.86714512493927,
+  "limitations": [
+    "Immutable operations source only; no native artifacts or worker inputs were transferred and no service was changed.",
+    "Full-publication terminal result passed before acquiring source staging lock."
+  ],
+  "path": "/srv/transparent-activity/ops/sources/80c94f32d7d8cde6615226d41b9cdd7627cc774b",
+  "pid": 1942251,
+  "retained_archive": "/srv/transparent-activity/ops/staging/80c94f32d7d8cde6615226d41b9cdd7627cc774b.tar.gz",
+  "retained_archive_observation_sha256": "d18736fab34b762dd50b803200640f6f9d6fff3d325b5cd546156c57f3d27880",
+  "source_sha": "80c94f32d7d8cde6615226d41b9cdd7627cc774b",
+  "stage_log_sha256": "e43bb7c34477d7ab4e14715ca0b0fa47fa3b035b4ec8681f0acf415958c7d77c",
+  "status": "staged",
+  "status_log_sha256": "0f46f5640a990dbf9eb880052d16d4c1e56d8f162d72722c547e17c0a19cd6c0",
+  "verified_files": 291,
+  "version": 1
+}

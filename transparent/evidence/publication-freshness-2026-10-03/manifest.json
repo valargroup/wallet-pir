@@ -1,0 +1,59 @@
+{
+  "schema": "transparent-publication-freshness-profile-v1",
+  "run_id": "publication-freshness-2026-10-03",
+  "captured_utc": "2026-10-03T20:31:51Z/2026-10-03T20:54:17Z",
+  "classification": "local release-fast benchmark on the development hub; not a production, fleet or freshness qualification",
+  "objective": "profile and reduce the transparent v11 continuous publication cycle (production attempt14: serial cycles 23-25 s, burst block visibility 43-45 s against an unchanged 30 s target)",
+  "sources": {
+    "baseline": "4c85b6c20ced1e2077245491e77d3afc98bfd644",
+    "final": "921e1642",
+    "checkpoints": ["5d31779f", "921e1642"],
+    "benchmark": "transparent/services/transparent-filter-server/examples/publication_bench.rs (identical in both builds; baseline binary built from the baseline's library sources plus this example)",
+    "binaries": {
+      "baseline": {"path": "publication_bench.base", "sha256": "6b7e7da1c7ef72bc5068ade678647e62a2c0ccba89b0988e06b382a06715fa4f"},
+      "final": {"path": "publication_bench.final", "sha256": "fca87b899db1b0cfde818df6d9487919a9ed15e267cbc828f6e59b7602f4e1d1"}
+    },
+    "profile_binaries": "baseline and final sources with instrument.py applied (temporary phase timers, never committed)"
+  },
+  "build": {
+    "profile": "release-fast (fat LTO off, codegen-units 16); no deploy artifact was built",
+    "command": "tool-exec --repo wallet-pir -- cargo build --profile release-fast -p transparent-filter-server --example publication_bench",
+    "target_lane": "task-owned CARGO_TARGET_DIR reused for every build"
+  },
+  "host": "host.json",
+  "workload": {
+    "input": "transparent/evidence/baselines/mainnet-study/mainnet-day.jsonl.gz",
+    "input_sha256_gz": "4d34d011d5190195e030175da1e4f04cdc88bddb4788d4d1f0ede794a536689a",
+    "input_sha256_decompressed": "e0979d3cb727cb7646474ccc3a9220f9cc7080e300b6509ae720e8f289b790bf",
+    "input_blocks": 1152,
+    "derivation": "v3 journal from height 3,000,000: one empty archive block, then consecutive copies of the day. Copy c>0 offsets txids and gives about 70% of supported scripts a per-copy identity; fees exact where every input value is known, otherwise unknown with shielded components; synthetic block hashes. Representative synthetic data derived from real data, not a production replay.",
+    "network_genesis": "main, 00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "range_profile": "zcash-transparent-range-v2",
+    "geometries": {"archive": "archive-wide below 3,000,001", "recent": "recent-8k (8192 x 4096-byte rows per table) from 3,000,001"},
+    "seal_policy_recent": "scripts target 407,260 capacity 475,136; page rows target 7,936 capacity 8,192",
+    "directory_choice": "all",
+    "txid_display": false,
+    "sealed_recent_shard": {"heights": "3,000,001-3,009,416", "blocks": 9416, "scripts": 80369, "page_rows": 7936, "events": 573493},
+    "tails": {
+      "10.2": {"initial_through": 3011750, "tail_from": 3009417, "page_rows": 1919, "scripts": 23583, "fill_of_page_target": "24%"},
+      "13.5": {"initial_through": 3015552, "tail_from": 3009417, "page_rows": 5266, "scripts": 56206, "fill_of_page_target": "66%"},
+      "15.9": {"initial_through": 3018317, "tail_from": 3009417, "page_rows": 7715, "scripts": 78119, "events_at_first_cycle": 556963, "fill_of_page_target": "97%"}
+    },
+    "cycle": "append one block, Snapshot::capture, publication::publish into a new directory with --previous, ShardFilters::open (the controller's spawn_blocking publication and candidate read)",
+    "runtime": "TableRuntime::build for the final tail's directory and pages segments in the runtime build pool, TRANSPARENT_BUILD_THREADS=2 (a 4-vCPU worker's default), two repeats per run"
+  },
+  "commands": {
+    "comparison": "bench/compare.sh (alternates base and final twice per fill, three cycles each)",
+    "summary": "python3 summarize.py cmp > summary.json",
+    "phase_profile": "python3 instrument.py <checkout>; build; publication_bench --initial-copies 15.9 --cycles 3",
+    "retention_probe": "cargo test --profile release-fast -p transparent-filter-server --lib -- --ignored --nocapture retention_scan_cost (three runs)",
+    "focused_tests": "cargo test --profile release-fast -p transparent-shard --lib; -p transparent-filter-server --lib -- publication; -p transparent-shard-server --lib -- runtime::tests"
+  },
+  "results": "summary.json, runtime-stages.json, profile/, retention-probe.jsonl, row-stability.json, published-trees.json",
+  "failures_and_rejected": [
+    "Reusing the previous tail revision's hint or rows: rejected; consecutive revisions share no nonzero row in either table (row-stability.json) because script tags are salted by the endpoint hash",
+    "Two-level free-space bitmap in the packer: measured 0.2-0.3 s at 97% fill, inside host noise; reverted",
+    "First packer equivalence test used an impossible out-of-row size that also divides by zero in the reference; corrected to an out-of-range free space",
+    "The first sealer fixture did not exercise closing before an over-capacity block that pages; a mutation removing the demand restore passed until the fixture was strengthened"
+  ]
+}

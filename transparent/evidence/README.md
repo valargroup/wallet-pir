@@ -7,6 +7,15 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Changed-native activity candidate `c3c66b9b`](activity-metadata-2026-10-04/README.md) | Supplemental fat-LTO build manifest for the 13 tools absent from exact-head CI, plus focused and mutation checks of the candidate's preparation and qualification guards; source and fixture evidence only, nothing staged, gated or deployed |
+| [Prewarm hint assurance](prewarm-hint-assurance-2026-10-04/README.md) | Source-level follow-up to the prewarm hint: recent-only dispatch, derivation and provenance, independent known-answer vectors, forced reference fallback and mutation results; no timing re-measured, not deployed |
+| [Recent-worker prewarm hint](prewarm-hint-2026-10-03/README.md) | Local release-fast comparison on the retained synthetic recent-8k tails: two-table runtime build at two threads −30% to −37% (4.81 s → 3.05 s at 97% fill), identical hints, masks and answers, unchanged peak memory; not deployed and not a freshness qualification |
+| [Tail publication profile and compute fix](publication-freshness-2026-10-03/README.md) | Local release-fast benchmark on a synthetic recent-8k tail derived from the retained mainnet day: native publication −48% to −61% (9.67 s → 3.78 s at 97% fill) with byte-identical output; partly filled page-hint reduction; not deployed and not a freshness qualification |
+| [Recent replicas on the shared native crate](shared-native-rollout-2026-09-30/README.md) | Rolling upgrade of three recent replicas (one elastic added first) to `6360f0d8` without maintenance, then a 10-minute 20 QPS gate: 12,528/12,528 exact, p99 48 ms; archive owner not upgraded, not a soak |
+| [Archive tier from two owners to one](archive-consolidation-2026-09-29/README.md) | Cutover to a single archive owner and the same combined 20 QPS measurement (mixed and archive-only) before and after, recent tier held at two; the archive-only client is built from an uncommitted change |
+| [Elastic recent tier validation](elastic-recent-validation-2026-09-29/README.md) | Real droplets in production: operator scale-out/in, scaler-driven scale-out, make-before-break replacement and scale-in under a temporary low-capacity policy; not a capacity measurement |
+| [Recent tier from four to two](recent-floor-2026-09-29/README.md) | Inventory rollout and two 20 QPS gates on two recent replicas (before and after moving runtime builds off the query pool); retirement of recent-03/04 |
+| [Replica membership fix](replica-membership-2026-09-29/README.md) | Before/after routing of recent replicas across one production deploy over SSH (no CI or soak); every member managed, recent replicas rolled without maintenance; not capacity, and the 24-hour routing gate is open |
 | [Continuous 5 QPS query load](continuous-5qps-2026-09-29/README.md) | Enabled ongoing public-path query load; fresh keys, exact row hashes, 80% recent / 20% archive across 85 sealed shards; frozen initial observations and persistent health gates; not whole-wallet throughput or completed capacity acceptance |
 | [Schema v10 production cutover](v10-cutover-2026-09-28/README.md) | Same-history 86-shard publication verified and deployed over SSH; public regression 11/11 cases and 68/68 checkpoints; 124/124 exact smoke syncs; four-client load 46 exact of 47 attempts, one query-budget incomplete; one transient init probe 503; no sustained-capacity acceptance |
 | [Compact schema v10 layout](compact-layout-2026-09-28/README.md) | Actual sample builder; [full-journal census](compact-layout-2026-09-28/census.md): 38.79% fewer allocated table bytes / 63.36% more capacity for the same history; not throughput or deployment acceptance |
@@ -54,3 +63,5 @@ They do not establish an accepted sustained beta operating envelope.
 Follow the [shared metadata and retention rules](../../evidence/README.md). Superseded diagnostic
 runs are listed in the [cleanup ledger](../../docs/cleanup-2026-09-14.md); their old
 status descriptions must not be read as present blockers or current fleet settings.
+
+- [Native txid display qualification](txid-display-2026-10-01/README.md): frozen confirmed vectors, private HTTP retrieval and explicit measurement limits.

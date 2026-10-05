@@ -1,0 +1,14 @@
+{
+  "schema": "activity-raw-retention-v1",
+  "path": "raw-independent-e24a25db.tar.gz",
+  "sha256": "668d2c6543614a8b9cf874e38fef85a227784c4e927272b551705ee09dfe4a99",
+  "bytes": 226423138,
+  "remote": "/srv/transparent-activity/prototype/e47bdf79/evidence/raw-independent-e24a25db.tar.gz",
+  "rpc_attempts": 2741,
+  "rpc_http_failures": 0,
+  "rpc_global_batch_refusals": 2,
+  "wallet_http_attempts": 17,
+  "wallet_http_failures": 0,
+  "contents": "Raw public block, header, transaction and prevout JSON-RPC bodies plus every attempt index. PIR traces retain only route, size and digest; no headers or query bodies.",
+  "git_retention": "226 MB bundle retained read-only under transparent/evidence and on coordinator; excluded from Git through this clone local info/exclude. Keep it before archiving this worktree."
+}

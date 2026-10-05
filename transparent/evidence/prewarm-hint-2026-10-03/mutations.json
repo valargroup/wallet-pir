@@ -1,0 +1,11 @@
+{
+ "schema": "transparent-prewarm-hint-mutations-v1",
+ "command": "cargo test --profile release-fast -p transparent-native --lib",
+ "mutations": [
+  {"change": "batched_hint.rs Crt::reduce drops the third prime's Garner term (x = low)",
+   "failed": ["crt_reconstructs_signed_values_at_the_capacity_edges", "extreme_operands_match_schoolbook_products", "matches_the_reference_hint_and_its_shape_refusals"]},
+  {"change": "batched_hint.rs fits() accepts bounds up to twice the primes' product",
+   "failed": ["capacity_covers_deployed_shapes_and_refuses_beyond_it"]}
+ ],
+ "restored": "both reverted with git checkout; the committed source passes all 10 tests"
+}

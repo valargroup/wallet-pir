@@ -1,0 +1,1255 @@
+{
+  "architecture": "aarch64",
+  "cargo_lock_sha256": "9a8083a4137610c0a7f33fb32a8da9f63dff5266485e7daf0843481a19ccbf6f",
+  "chain_parser_sha": "af944f5194ef2e9921bc96af017629450375013c",
+  "command": "make transparent-txid-demo OFFLINE=1 REPORT=<report>",
+  "concurrency": 1,
+  "cpu": "Apple M4 Max",
+  "elapsed_seconds": 3.790670458,
+  "fixture_sha256": "a9ff001db04134be0874fce529d4e94ef142b5f2efa04bc24d7f2710ff83553f",
+  "fixture_source_sha": "7d283dab150b2f9872ed3b7b1dcd76ed5c9282ae",
+  "format": "transparent-txid-native-demo-v1",
+  "generated_at_unix_seconds": 1790801450,
+  "limitations": "Server protocol evidence only; trusted publisher, range/table/page-count/timing leakage. No production capacity, cryptographic release, wallet recovery or Vizor qualification.",
+  "metadata_dependency_sha": "3cfbc4848b92b1385b9215174251f8e51fbfa804",
+  "native_dependency_sha": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+  "network": "zcash-mainnet frozen vectors; loopback HTTP; no runtime external lookup",
+  "os": "macos",
+  "passed": true,
+  "profile": "release-fast",
+  "ram_bytes": 137438953472,
+  "repetitions": 1,
+  "revision_churn": 0,
+  "runs": [
+    {
+      "byte_accounting": "Helper application payloads only; successful setup/manifest/native responses and native query bodies, including intentional interrupted-query upload. Excludes HTTP headers, discovery and direct negative-control requests.",
+      "cases": {
+        "coinbase": 3,
+        "external_transparent_unshielding": 5,
+        "large_output_list": 3,
+        "ordinary_send_with_change": 1,
+        "several_outputs": 4
+      },
+      "checkpoint_restart": true,
+      "display_tables": {
+        "codec": "transparent-txid-display-v1",
+        "directory_segments": [
+          {
+            "row_bytes": 4096,
+            "rows": 4096,
+            "sha256": "5b6c941bc988bea4e7ebe82f3c489893827f890a7e03feaf06680e1bbce212a9"
+          }
+        ],
+        "page_segments": [
+          {
+            "row_bytes": 4096,
+            "rows": 4096,
+            "sha256": "205e6d0b0434d35789efcbf2e23f3d87b372349ee93ae15bed65e89a5e3cf70e"
+          }
+        ],
+        "records": 13
+      },
+      "download_bytes_including_setup": 391762,
+      "elapsed_seconds": 2.7931162499999997,
+      "end_height": 347501,
+      "history_cold_seconds": 0.874274042,
+      "history_supported_script": true,
+      "history_with_display_loaded_seconds": 0.030939542,
+      "http_header_shapes": [
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        }
+      ],
+      "http_safe_paths": [
+        "GET /v1/shards/init",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/setup/directory/0",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/directory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/directory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/setup/pages/0",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/pages",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/setup/txdirectory/0",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/setup/txpages/0",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/manifest",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txpages",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/txdirectory",
+        "GET /v1/shards/0/revisions/0000000000000000000000000000000000000000000000000000000000000000/setup/txdirectory/0",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/directory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/directory",
+        "POST /v1/shards/0/revisions/4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3/query/pages"
+      ],
+      "manifest_digest": "4e962114b4fae5e1c5981e0967d30db25d7b7b228365eacd9aab62cc7c3925c3",
+      "memory_accounting": "Runtime-cache reservations, not RSS or transient allocation peaks.",
+      "negative_controls": [
+        "missing_txid",
+        "wrong_revision",
+        "wrong_table_binding",
+        "altered_output",
+        "altered_fee",
+        "interrupted_overflow_if_present",
+        "unknown_placement",
+        "unsupported_capability"
+      ],
+      "packing": [
+        {
+          "bytes": 16777216,
+          "entries": 13,
+          "occupied_rows": 13,
+          "rows": 4096,
+          "segment": 0,
+          "sha256": "5b6c941bc988bea4e7ebe82f3c489893827f890a7e03feaf06680e1bbce212a9",
+          "table": "txdirectory"
+        },
+        {
+          "bytes": 16777216,
+          "entries": 10,
+          "occupied_rows": 9,
+          "rows": 4096,
+          "segment": 0,
+          "sha256": "205e6d0b0434d35789efcbf2e23f3d87b372349ee93ae15bed65e89a5e3cf70e",
+          "table": "txpages"
+        }
+      ],
+      "payload_bytes": 29783,
+      "prepared_bytes_after_display": 335735008,
+      "prepared_bytes_before_display": 167867504,
+      "prepared_bytes_growth": 167867504,
+      "publication_reload": true,
+      "queries": 52,
+      "record_count": 13,
+      "records": [
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 63
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 64
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 61
+        },
+        {
+          "inline": true,
+          "outputs": 1,
+          "payload_bytes": 36
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 61
+        },
+        {
+          "inline": false,
+          "outputs": 104,
+          "payload_bytes": 3033
+        },
+        {
+          "inline": false,
+          "outputs": 300,
+          "payload_bytes": 8744
+        },
+        {
+          "inline": false,
+          "outputs": 300,
+          "payload_bytes": 8748
+        },
+        {
+          "inline": false,
+          "outputs": 300,
+          "payload_bytes": 8746
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 63
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 63
+        },
+        {
+          "inline": true,
+          "outputs": 2,
+          "payload_bytes": 65
+        },
+        {
+          "inline": true,
+          "outputs": 1,
+          "payload_bytes": 36
+        }
+      ],
+      "start_height": 347499,
+      "upload_bytes": 2742688
+    },
+    {
+      "byte_accounting": "Helper application payloads only; successful setup/manifest/native responses and native query bodies, including intentional interrupted-query upload. Excludes HTTP headers, discovery and direct negative-control requests.",
+      "cases": {
+        "coinbase": 1,
+        "unusual_output_script": 1
+      },
+      "checkpoint_restart": true,
+      "display_tables": {
+        "codec": "transparent-txid-display-v1",
+        "directory_segments": [
+          {
+            "row_bytes": 4096,
+            "rows": 4096,
+            "sha256": "e16aae34641ab2aa2ca1448152f12711bfcd7cc6feb6626088f6d042e76dd445"
+          }
+        ],
+        "page_segments": [
+          {
+            "row_bytes": 4096,
+            "rows": 4096,
+            "sha256": "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
+          }
+        ],
+        "records": 1
+      },
+      "download_bytes_including_setup": 47307,
+      "elapsed_seconds": 0.929491125,
+      "end_height": 0,
+      "history_cold_seconds": 0.0,
+      "history_supported_script": false,
+      "history_with_display_loaded_seconds": 0.0,
+      "http_header_shapes": [
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        }
+      ],
+      "http_safe_paths": [
+        "GET /v1/shards/init",
+        "GET /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/manifest",
+        "GET /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/manifest",
+        "GET /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/setup/txdirectory/0",
+        "POST /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/query/txdirectory",
+        "POST /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/query/txdirectory",
+        "GET /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/manifest",
+        "POST /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/query/txdirectory",
+        "POST /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/query/txdirectory",
+        "POST /v1/shards/0/revisions/6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859/query/txdirectory",
+        "GET /v1/shards/0/revisions/0000000000000000000000000000000000000000000000000000000000000000/setup/txdirectory/0"
+      ],
+      "manifest_digest": "6840ff7d94f3f2994364cc65fecd8ab414e85d38cc7c4b8e5bcbb660c893b859",
+      "memory_accounting": "Runtime-cache reservations, not RSS or transient allocation peaks.",
+      "negative_controls": [
+        "missing_txid",
+        "wrong_revision",
+        "wrong_table_binding",
+        "altered_output",
+        "altered_fee",
+        "interrupted_overflow_if_present",
+        "unknown_placement",
+        "unsupported_capability"
+      ],
+      "packing": [
+        {
+          "bytes": 16777216,
+          "entries": 1,
+          "occupied_rows": 1,
+          "rows": 4096,
+          "segment": 0,
+          "sha256": "e16aae34641ab2aa2ca1448152f12711bfcd7cc6feb6626088f6d042e76dd445",
+          "table": "txdirectory"
+        },
+        {
+          "bytes": 16777216,
+          "entries": 0,
+          "occupied_rows": 0,
+          "rows": 4096,
+          "segment": 0,
+          "sha256": "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e",
+          "table": "txpages"
+        }
+      ],
+      "payload_bytes": 73,
+      "prepared_bytes_after_display": 83933752,
+      "prepared_bytes_before_display": 0,
+      "prepared_bytes_growth": 83933752,
+      "publication_reload": true,
+      "queries": 4,
+      "record_count": 1,
+      "records": [
+        {
+          "inline": true,
+          "outputs": 1,
+          "payload_bytes": 73
+        }
+      ],
+      "start_height": 0,
+      "upload_bytes": 210976
+    }
+  ],
+  "source_dirty": false,
+  "source_sha": "26ca321c963b4c60ab763b7dc3fd48c2fcff759f"
+}

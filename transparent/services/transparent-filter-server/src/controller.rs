@@ -17,7 +17,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
@@ -85,9 +85,37 @@ struct Inner {
     status: RwLock<serde_json::Value>,
     http: reqwest::Client,
     observed: RwLock<BTreeMap<u64, std::time::Instant>>,
+    /// The fleet reconciler's membership record, when the fleet config names
+    /// a state directory.
+    membership: Option<PathBuf>,
 }
 #[derive(Clone)]
 pub struct Authority(Arc<Inner>);
+
+/// The fleet's membership record: `<state_dir>/membership.json` from the
+/// fleet adapter's config, if it names one.
+fn membership_path(fleet_config: &Path) -> Option<PathBuf> {
+    let config: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fleet_config).ok()?).ok()?;
+    Some(PathBuf::from(config.get("state_dir")?.as_str()?).join("membership.json"))
+}
+
+/// Recent replicas routed right now, from a membership record written in the
+/// last ten seconds. The count reported at activation goes stale as soon as
+/// the reconciler routes a replica that finished preparing after quorum.
+fn routed_recent_replicas(membership: Option<&Path>) -> Option<u64> {
+    let record: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(membership?).ok()?).ok()?;
+    let age = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs_f64()
+        - record.get("updated_unix")?.as_f64()?;
+    if !(0.0..=10.0).contains(&age) {
+        return None;
+    }
+    record.get("routed_recent")?.as_u64()
+}
 impl Authority {
     pub fn router(&self) -> Router {
         self.0
@@ -106,6 +134,7 @@ impl Authority {
 /// Snapshot only rebuilt event rows plus the endpoint hashes used to establish
 /// reuse. It stays valid even if ingest truncates and rewrites its journal.
 pub struct Snapshot {
+    journal_version: u16,
     genesis: String,
     first: u64,
     end: u64,
@@ -114,6 +143,7 @@ pub struct Snapshot {
     events: std::sync::Mutex<std::fs::File>,
     events_offset: u64,
     events_first: u64,
+    display_dir: PathBuf,
 }
 impl Snapshot {
     pub fn capture(store: &EventStore, previous: &ShardMap) -> Result<Self, BoxError> {
@@ -145,6 +175,7 @@ impl Snapshot {
             );
         }
         Ok(Self {
+            journal_version: store.version(),
             genesis: store.genesis_hash().into(),
             first: store.start_height(),
             end,
@@ -153,10 +184,31 @@ impl Snapshot {
             events: std::sync::Mutex::new(events),
             events_offset,
             events_first: first,
+            display_dir: store.directory().to_path_buf(),
         })
     }
 }
 impl Journal for Snapshot {
+    fn journal_version(&self) -> u16 {
+        self.journal_version
+    }
+    fn display_at(
+        &self,
+        height: u64,
+    ) -> Result<Vec<transparent_shard::txid::TransparentDisplayRecord>, EventStoreError> {
+        let block = self
+            .blocks
+            .get(&height)
+            .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
+        let records = crate::display_journal::read(&self.display_dir, block.block_hash)?;
+        crate::display_journal::validate_events(
+            &records,
+            &self.events_at(height)?.ok_or_else(|| {
+                EventStoreError::Invariant("snapshot display events missing".into())
+            })?,
+        )?;
+        Ok(records)
+    }
     fn genesis_hash(&self) -> &str {
         &self.genesis
     }
@@ -186,7 +238,21 @@ impl Journal for Snapshot {
             .offset
             .checked_sub(self.events_offset)
             .ok_or_else(|| EventStoreError::Invariant("snapshot offset precedes suffix".into()))?;
-        crate::events::read_event_record(&mut self.events.lock().unwrap(), entry)
+        let mut file = self.events.lock().unwrap();
+        let end = self
+            .blocks
+            .get(&(h + 1))
+            .map_or(file.metadata()?.len(), |next| {
+                next.offset - self.events_offset
+            });
+        let mut events = crate::events::read_event_record(&mut file, entry, end)?;
+        if let Some(events) = &mut events {
+            events.extend(crate::display_journal::oversized_events(
+                &self.display_dir,
+                entry.block_hash,
+            )?);
+        }
+        Ok(events)
     }
 }
 
@@ -288,6 +354,7 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         http: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(5))
             .build()?,
+        membership: membership_path(&config.fleet_config),
     }));
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     let app = authority.router();
@@ -515,7 +582,26 @@ async fn ingest_once(
         }
         {
             let mut journal = store.lock().await;
-            journal.append_block(next, built.block_hash, &built.events)?;
+            let display = authority
+                .0
+                .active
+                .read()
+                .unwrap()
+                .filters
+                .map()
+                .shards
+                .iter()
+                .any(|s| s.txid_segments.is_some());
+            if display {
+                journal.append_block_with_display(
+                    next,
+                    built.block_hash,
+                    &built.events,
+                    &built.display,
+                )?;
+            } else {
+                journal.append_block(next, built.block_hash, &built.events)?;
+            }
             journal.commit()?;
         }
         authority.0.status.write().unwrap()["journal_height"] = next.into();
@@ -606,6 +692,12 @@ async fn publish_once(
             record: Some(directory.join("publication.json")),
             source_sha: Some(config.source_sha.clone()),
             directory_choice: config.directory_choice,
+            txid_display: old
+                .filters
+                .map()
+                .shards
+                .iter()
+                .any(|s| s.txid_segments.is_some()),
             range_profile: config.range_profile.clone(),
         };
         tokio::task::spawn_blocking(move || {
@@ -724,11 +816,19 @@ async fn publish_once(
 async fn public_request(State(authority): State<Authority>, request: Request) -> Response {
     let path = request.uri().path();
     let epoch = authority.0.epoch.load(Ordering::Acquire);
+    let routed = routed_recent_replicas(authority.0.membership.as_deref());
     if path == "/v1/status" {
-        return axum::Json(authority.0.status.read().unwrap().clone()).into_response();
+        let mut status = authority.0.status.read().unwrap().clone();
+        if let Some(routed) = routed {
+            status["ready_replicas"] = routed.into();
+        }
+        return axum::Json(status).into_response();
     }
     if path == "/metrics" {
-        let status = authority.0.status.read().unwrap();
+        let mut status = authority.0.status.read().unwrap().clone();
+        if let Some(routed) = routed {
+            status["ready_replicas"] = routed.into();
+        }
         let public = authority.0.active.read().unwrap().publication.height;
         let node = status["node_height"].as_u64().unwrap_or(public);
         let oldest = authority
@@ -952,6 +1052,46 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ready_replicas_follow_a_fresh_membership_record_only() {
+        let root = tempfile::tempdir().unwrap();
+        let state = root.path().join("state");
+        std::fs::create_dir(&state).unwrap();
+        let fleet = root.path().join("fleet.json");
+        std::fs::write(
+            &fleet,
+            serde_json::to_vec(&serde_json::json!({"state_dir": state})).unwrap(),
+        )
+        .unwrap();
+        let membership = membership_path(&fleet).unwrap();
+        assert_eq!(membership, state.join("membership.json"));
+        assert_eq!(routed_recent_replicas(Some(&membership)), None);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64();
+        let write = |updated: f64| {
+            std::fs::write(
+                &membership,
+                serde_json::to_vec(
+                    &serde_json::json!({"updated_unix": updated, "routed_recent": 4}),
+                )
+                .unwrap(),
+            )
+            .unwrap()
+        };
+        write(now);
+        assert_eq!(routed_recent_replicas(Some(&membership)), Some(4));
+        write(now - 60.0);
+        assert_eq!(
+            routed_recent_replicas(Some(&membership)),
+            None,
+            "a stale record falls back to the activation count"
+        );
+        assert_eq!(membership_path(&root.path().join("absent.json")), None);
+    }
+
     use super::*;
     use axum::{routing::post, Json};
     use zakura_chain::serialization::ZcashDeserialize;
@@ -1064,6 +1204,7 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
+            txid_display: false,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();
@@ -1115,6 +1256,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             status: RwLock::new(serde_json::json!({})),
             observed: RwLock::new(BTreeMap::new()),
             http: reqwest::Client::new(),
+            membership: None,
         }));
         let store = Arc::new(tokio::sync::Mutex::new(journal));
         let (notify, _) = tokio::sync::watch::channel(0);

@@ -1,0 +1,317 @@
+{
+  "source": "GitHub Actions job logs, rust-cache \"Cache Configuration\" and restore lines; captured 2026-10-01",
+  "runs": [
+    {
+      "run": 36723820479,
+      "label": "PR 122 final head ecc987fa (second full run in PR)",
+      "jobs": [
+        {
+          "job": "Shared lint and tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "restored v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Transparent tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f",
+          "restore": "restored v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Transparent lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "restored v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Enhance lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "restored v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Enhance tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "restored v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        }
+      ]
+    },
+    {
+      "run": 36728359128,
+      "label": "PR 123 first full run 4f0c98cd (cancelled after restore)",
+      "jobs": [
+        {
+          "job": "Enhance lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Enhance tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Transparent tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Shared lint and tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Transparent lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        }
+      ]
+    },
+    {
+      "run": 36729873650,
+      "label": "PR 123 final head 55ab7b1a",
+      "jobs": [
+        {
+          "job": "Transparent lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "restored v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Enhance lint",
+          "key": "v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af",
+          "restore": "restored v0-rust-ubuntu24.04-full-lint-v3-Linux-x64-44c036af-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Enhance tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "restored v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Shared lint and tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf",
+          "restore": "restored v0-rust-ubuntu24.04-full-test-v3-Linux-x64-d4cf8dcf-ec7f9ab3 full match true",
+          "save": "up-to-date (no save)",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        },
+        {
+          "job": "Transparent tests",
+          "key": "v0-rust-ubuntu24.04-full-test-v3-Linux-x64-f767345f",
+          "restore": "No cache found",
+          "save": "saved",
+          "rust_versions": [
+            "1.91.0 x86_64-unknown-linux-gnu f8297e351a40c1439a467bbbb6879088047f50b3",
+            "1.98.1 x86_64-unknown-linux-gnu 48a229ceaefd4985c50990b14116b6d856af0985"
+          ],
+          "env_considered": [
+            "CARGO_HOME",
+            "CARGO_INCREMENTAL",
+            "CARGO_TARGET_DIR",
+            "CARGO_TERM_COLOR",
+            "CFLAGS",
+            "CXXFLAGS",
+            "RUST_TEST_THREADS",
+            "RUSTFLAGS"
+          ]
+        }
+      ]
+    }
+  ]
+}

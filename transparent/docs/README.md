@@ -1,6 +1,6 @@
 # Transparent PIR documentation
 
-Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is four small recent replicas and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
+Status updated 2026-09-28 UTC; milestone acceptance remains as recorded below. The accepted target is two small recent replicas, grown elastically under load, and two larger archive workers. M0–M2 are accepted, including the revised six-hour M1 fleet observation. M3 has fixture and native real-wallet evidence; application/lifecycle acceptance, whole-wallet measurements, capacity and release observation remain open. Read [status](status.md) for the current evidence and [remaining work](remaining-work.md) for the next actions.
 
 ## Reading order and authority
 
@@ -17,6 +17,9 @@ Do not infer live state from a plan, source code, a workflow default or an old h
 The contract governs intended behavior; code establishes implementation; deployment governs target configuration; dated operational evidence establishes live state. If these disagree, report the gap and update the owning document with the implementation change. Do not silently weaken the contract.
 
 8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
+9. [Elastic recent replicas](elastic-recent.md): inventory, membership, scaler and actuator formats for the automatically scaled recent tier.
+
+10. [Txid display PIR](txid-display.md): opt-in server tables, native HTTP demo and subsequent wallet integration.
 
 ## Product boundaries
 

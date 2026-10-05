@@ -63,6 +63,9 @@ struct Args {
     /// Completed syncs per ordinary class a step aims for before it may end early.
     #[arg(long, default_value_t = 100)]
     min_completed_per_class: u64,
+    /// Run the entire requested duration even after the sample-count floor is met.
+    #[arg(long)]
+    sustained: bool,
     #[arg(long, default_value_t = 0.05)]
     max_error_rate: f64,
     #[arg(long, default_value_t = 0.10)]
@@ -97,6 +100,9 @@ struct Args {
     /// memory; measures the SQLite cost a real wallet pays.
     #[arg(long)]
     store_dir: Option<PathBuf>,
+    /// Retain each independently recovered SQLite database for reopen and metadata checks.
+    #[arg(long, requires = "store_dir")]
+    retain_stores: bool,
     /// Scrape these origins' /metrics at each step boundary: the workers
     /// over the VPC, since the router routes no operator path. Repeatable.
     #[arg(long = "metrics-url")]
@@ -438,7 +444,12 @@ fn run_client(
         let report = match &args.store_dir {
             Some(dir) => {
                 let path = dir.join(format!("client-{index}.sqlite"));
-                let _ = std::fs::remove_file(&path);
+                if args.retain_stores && path.exists() {
+                    bail!("retained wallet path already exists: {}", path.display());
+                }
+                if !args.retain_stores {
+                    let _ = std::fs::remove_file(&path);
+                }
                 let mut store = SqliteStore::open(&path)?;
                 let report = sync_into(
                     &mut store,
@@ -453,7 +464,9 @@ fn run_client(
                     target,
                 )?;
                 let (digest, events) = store_digest(&store, spec.required_from, anchor)?;
-                let _ = std::fs::remove_file(&path);
+                if !args.retain_stores {
+                    let _ = std::fs::remove_file(&path);
+                }
                 (incomplete_reason(&report.completion), digest, events)
             }
             None => {
@@ -665,6 +678,9 @@ fn main() -> anyhow::Result<()> {
 
 async fn legacy_main() -> anyhow::Result<()> {
     let args = Args::parse();
+    if let Some(dir) = &args.store_dir {
+        std::fs::create_dir_all(dir).context("creating the SQLite store directory")?;
+    }
     let sample: Sample =
         serde_json::from_slice(&std::fs::read(&args.sample).context("reading the sample")?)?;
     let sample_sha256 = hex::encode(Sha256::digest(std::fs::read(&args.sample)?));
@@ -754,7 +770,18 @@ async fn legacy_main() -> anyhow::Result<()> {
     let mut stopped_at: Option<usize> = None;
     let mut stop_reason: Option<String> = None;
     let started_all = Instant::now();
-    for &concurrency in &args.steps {
+    for (step_index, &concurrency) in args.steps.iter().enumerate() {
+        let mut step_args = (*args).clone();
+        if args.retain_stores {
+            let dir = args
+                .store_dir
+                .as_ref()
+                .unwrap()
+                .join(format!("step-{step_index}"));
+            std::fs::create_dir_all(&dir)?;
+            step_args.store_dir = Some(dir);
+        }
+        let step_args = Arc::new(step_args);
         eprintln!(
             "== step: {concurrency} concurrent clients for {}",
             args.step_duration
@@ -767,7 +794,7 @@ async fn legacy_main() -> anyhow::Result<()> {
         let backoff_millis = Arc::new(AtomicU64::new(0));
         let mut workers = Vec::new();
         for worker in 0..concurrency {
-            let args = args.clone();
+            let args = step_args.clone();
             let clients = clients.clone();
             let map = map.clone();
             let target = target.clone();
@@ -809,7 +836,7 @@ async fn legacy_main() -> anyhow::Result<()> {
                                     .collect::<std::collections::BTreeSet<_>>()
                                     .len()
                     };
-                    if enough {
+                    if enough && !args.sustained {
                         break;
                     }
                     // A wallet whose sync failed comes back later, not at once.
@@ -1005,7 +1032,7 @@ fn write_report(
         "limitations": [
             "TLS handshake and connection bytes are not measured; byte figures are wallet-level payloads as the wallet charges them",
             "clients are synthetic groupings of public scripts, not a user population",
-            "a step ends early once every class reached min_completed_per_class; rates are computed over the step's actual duration",
+            if args.sustained { "every step runs for its full requested duration; sample counts cannot terminate it early" } else { "a step ends early once every class reached min_completed_per_class; rates use its actual duration" },
             "a client whose sync failed or stopped overloaded waits a jittered exponential backoff (0.5 s doubling to 16 s) before its next sync; resubmit_backoff_seconds sums those waits per step",
             "a sync that stopped only for unresolved spends counts as completed: synthetic wallets begin with an empty store inside their history, so older receives are absent by construction; the count is reported per class",
         ],

@@ -1,0 +1,15 @@
+{
+  "comparison_sha": "6f37db707fd334cb50f7811601550b2b0a87dcc9",
+  "owner": "20d2829905804bcfa1e5d3620579f527",
+  "status": "passed",
+  "seconds": 18.098810542000138,
+  "command": "make check-fast BASE=6f37db707fd334cb50f7811601550b2b0a87dcc9",
+  "input_sha256": {
+    "transparent/ops/lib/activity_schema_routing.py": "45d111c2b18dba88ae596b9106f45694bc242cb83e6a3ce2829652805ee5822a",
+    "transparent/ops/tests/test_activity_schema_routing.py": "c102f30d0b914e5bae0bc4b51af00ef54ab24f2e8bf93a6b166b697a1f4d0822",
+    "transparent/services/transparent-shard-server/src/live.rs": "2fa1d80e372347a104ad9d231183b2b835cca601066fe1245364949f206880bb",
+    "transparent/ops/scripts/transparent-live-fleet.py": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083"
+  },
+  "native_inputs_changed": false,
+  "scope": "Exact current-serving publication proof during future preparation, private refusal observations and negative fixtures. Historical attempt12 predicate remains unproved; actual new cutover and all final gates remain required."
+}

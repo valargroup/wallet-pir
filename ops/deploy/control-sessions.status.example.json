@@ -1,0 +1,39 @@
+{
+  "schema": "wallet-pir-control-sessions-v1",
+  "runtime_dir": "/run/wallet-pir-control-sessions",
+  "status_file": "/run/wallet-pir-control-sessions/status.json",
+  "restart_initial_seconds": 2,
+  "restart_max_seconds": 10,
+  "stable_seconds": 30,
+  "sessions": [
+    {
+      "name": "status-control",
+      "destination": "status-control@@STATUS_HOST@",
+      "identity_file": "/etc/status-pir-control/id_ed25519",
+      "known_hosts": "/etc/status-pir-control/known_hosts",
+      "known_hosts_sha256": "@STATUS_KNOWN_HOSTS_SHA256@",
+      "compression": true,
+      "server_alive_interval": 2,
+      "server_alive_count_max": 4,
+      "local_forwards": [
+        ["127.0.0.1:8481", "127.0.0.1:8481"],
+        ["127.0.0.1:8482", "127.0.0.1:8482"]
+      ],
+      "reverse_forwards": [
+        ["127.0.0.1:8495", "127.0.0.1:8480"]
+      ]
+    },
+    {
+      "name": "status-query",
+      "destination": "status-control@@STATUS_HOST@",
+      "identity_file": "/etc/status-pir-control/id_ed25519",
+      "known_hosts": "/etc/status-pir-control/known_hosts",
+      "known_hosts_sha256": "@STATUS_KNOWN_HOSTS_SHA256@",
+      "server_alive_interval": 2,
+      "server_alive_count_max": 4,
+      "local_forwards": [
+        ["127.0.0.1:8492", "127.0.0.1:8484"]
+      ]
+    }
+  ]
+}

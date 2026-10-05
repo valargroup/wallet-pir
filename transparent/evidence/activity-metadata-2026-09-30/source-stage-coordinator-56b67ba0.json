@@ -1,0 +1,43 @@
+{
+  "observed_utc": "2026-10-01T00:37:17.660621+00:00",
+  "operation": "immutable operations-source staging through ops/scripts/wallet-pir-deploy.py",
+  "source_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+  "archive_sha256": "42f673c92624580cb9e5ae9f64da0a1ad0a60f4205d3065c87fc8181f3bf2748",
+  "archive_bytes": 536659,
+  "export_paths": [
+    "ops",
+    "transparent/ops",
+    "enhance/ops",
+    "tools/ci",
+    "shared/dev"
+  ],
+  "coordinator": "167.99.42.60",
+  "root_receipt": "/srv/transparent-activity/ops/staging/56b67ba08932507ac775d5911b6cb5ded2882e72.json",
+  "stage": {
+    "exit": 0,
+    "seconds": 4.52105083304923,
+    "status": "staged"
+  },
+  "verified_status": {
+    "archive_sha256": "42f673c92624580cb9e5ae9f64da0a1ad0a60f4205d3065c87fc8181f3bf2748",
+    "path": "/srv/transparent-activity/ops/sources/56b67ba08932507ac775d5911b6cb5ded2882e72",
+    "source_sha": "56b67ba08932507ac775d5911b6cb5ded2882e72",
+    "status": "staged",
+    "verified_files": 269
+  },
+  "root_wrapper_status": {
+    "exit": 0,
+    "inventory": "pinned coordinator inventory supplied through /dev/stdin without writing a config file",
+    "state_dir": "/srv/transparent-activity/ops/schema",
+    "result": "no schema transaction recorded; journal status only"
+  },
+  "local_logs": "/Users/roman/.ai-runbook/dev-ux/activity-schema-staging/56b67ba08932507ac775d5911b6cb5ded2882e72",
+  "native_candidate_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "limitations": [
+    "This is source staging, not binary/fleet deployment or canonical recovery.",
+    "Actual production recipe, trusted phase programs and complete publication remain open.",
+    "Whole-tree 81439424-byte Git archive exceeds the 64 MiB received-archive limit. It was retained locally and not transferred; operations-only export is 536659 bytes. Source preflight checks host eligibility but currently defers archive-size rejection to receipt.",
+    "No staging helper PID was captured; foreground command exited and all retained source files were reverified."
+  ],
+  "rollback": "Canonical service remains v10; retain inactive staged sources and receipt as rollback material. No schema transaction exists to roll back."
+}

@@ -1,0 +1,48 @@
+{
+  "duration_seconds": 226.80824841593858,
+  "earlier_failed_owner": "7d4dae9e45a24af0a05e449d47aab2c2",
+  "owner": "eadb965ac1814bcc9c43b626bfed6c37",
+  "samples": {
+    "v10": {
+      "anchor_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+      "anchor_height": 3500738,
+      "classes": {
+        "small-active": 1
+      },
+      "events": [
+        2
+      ],
+      "receipt": {
+        "duration_seconds": 226.77625641599298,
+        "exit_code": 0,
+        "raw_sha256": "6dfc78f233b21292c8a266f83a358d338c9222f07e759faa5605d421e2fc016c",
+        "reused_export": false,
+        "schema": "v10",
+        "stderr_sha256": "3cd65055ceb803d0a0c9630f8f1f4a685a3ac23f5c54a941ee665766e40cf367"
+      },
+      "sample_sha256": "5b24f1c2ae6a236b6ec51cd3aa3a7e1734a3119522e731d0132d2cdcd8d7663f"
+    },
+    "v11": {
+      "anchor_hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+      "anchor_height": 3500738,
+      "classes": {
+        "small-active": 1
+      },
+      "events": [
+        2
+      ],
+      "receipt": {
+        "duration_seconds": 0.0005164999747648835,
+        "exit_code": 0,
+        "raw_sha256": "0ac7c6b19b64f63823c667af2673e548a6b8adfaf449113ffc7d2cb0e0abf7f4",
+        "reused_export": true,
+        "schema": "v11",
+        "stderr_sha256": "d8e1f3003c8898164259f31a7411da34493a3baab759ba98f07fbd925b18a305"
+      },
+      "sample_sha256": "d12ca9f27dfcecf268a342fc5f4910c5856b004583a17f81e0061a708d47379d"
+    }
+  },
+  "scope": "Journal-derived brief nonempty candidate/predecessor recovery fixtures. Actual HTTP/SQLite completeness and metadata agreement remain unverified. Not an independent extraction oracle or capacity measurement.",
+  "source_sha": "1d3372eea7ef6a5d8c5793283689784165d8d86e",
+  "status": "passed"
+}

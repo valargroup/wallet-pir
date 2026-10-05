@@ -12,9 +12,10 @@
 //! this reads a running node's database without stopping it and without a copy.
 //! `ZakuraDb::transaction` resolves a previous output through `tx_loc_by_hash`
 //! and `tx_by_loc` as two local point lookups, which is the whole of what the
-//! cache was standing in for. So there is no cache here: a miss costs a page
-//! cache hit rather than a network round trip, and a second cache layer over
-//! RocksDB's own would only duplicate it.
+//! cache was standing in for. A block-local cache now retains validated full
+//! outputs: dense early mining transactions otherwise require repeatedly
+//! parsing and hashing the same large parent for different referenced outputs.
+//! Its output, byte and entry bounds are independent of RocksDB's page cache.
 //!
 //! # What this deliberately does not read
 //!
@@ -35,12 +36,13 @@
 //! irrelevant. Near the tip it means a height can be briefly absent, which
 //! surfaces as [`StateError::MissingBlock`] rather than as a wrong answer.
 
-use crate::extract::{extract_events, outpoint_label, PreviousOutputs};
+use crate::extract::{extract_block, outpoint_label, PreviousOutputs};
 use crate::ingest::BuiltEvents;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use transparent_filter::BlockHash;
 use zakura_chain::parameters::Network;
-use zakura_chain::transparent::OutPoint;
+use zakura_chain::transparent::{OutPoint, Output};
 use zakura_state::{Config, HashOrHeight, ReadStateService, StorageMode, ZakuraDb};
 
 #[derive(Debug, thiserror::Error)]
@@ -163,16 +165,19 @@ impl StateReader {
         let mut previous = StatePreviousOutputs {
             db: &self.db,
             lookups: 0,
+            cache_hits: 0,
+            cache: BlockOutputCache::new(32_768, 8 * 1024 * 1024, 1_024),
         };
-        let events = extract_events(&block.transactions, &mut previous, event_height)?;
+        let extracted = extract_block(&block.transactions, &mut previous, event_height)?;
         Ok(BuiltEvents {
             block_hash,
-            events,
+            events: extracted.events,
+            display: extracted.display,
             // Named for the field the RPC path fills. These are local database
             // reads, and a run reporting thousands of them per second is
             // reporting that, not network traffic.
             rpc_lookups: previous.lookups,
-            cache_hits: 0,
+            cache_hits: previous.cache_hits,
         })
     }
 }
@@ -195,21 +200,100 @@ struct StatePreviousOutputs<'a> {
     db: &'a ZakuraDb,
     /// Previous-output resolutions that reached the database.
     lookups: u64,
+    cache_hits: u64,
+    cache: BlockOutputCache,
+}
+
+/// Full outputs of identity-checked parents, scoped to one independently
+/// extracted block. Oversized parents bypass the cache; they are still resolved.
+struct BlockOutputCache {
+    entries: HashMap<zakura_chain::transaction::Hash, (Vec<Output>, usize)>,
+    order: VecDeque<zakura_chain::transaction::Hash>,
+    outputs: usize,
+    bytes: usize,
+    max_outputs: usize,
+    max_bytes: usize,
+    max_entries: usize,
+}
+
+impl BlockOutputCache {
+    fn new(max_outputs: usize, max_bytes: usize, max_entries: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            outputs: 0,
+            bytes: 0,
+            max_outputs,
+            max_bytes,
+            max_entries,
+        }
+    }
+
+    fn get(&self, outpoint: &OutPoint) -> Option<Option<Output>> {
+        self.entries
+            .get(&outpoint.hash)
+            .map(|(outputs, _)| outputs.get(outpoint.index as usize).cloned())
+    }
+
+    fn insert(&mut self, hash: zakura_chain::transaction::Hash, outputs: &[Output]) {
+        if outputs.is_empty()
+            || outputs.len() > self.max_outputs
+            || self.entries.contains_key(&hash)
+            || self.max_entries == 0
+        {
+            return;
+        }
+        // Charge inline outputs, script payloads, and conservative per-entry
+        // bookkeeping. There is no exception for a single oversized parent.
+        let Some(bytes) = outputs.iter().try_fold(128usize, |sum, output| {
+            sum.checked_add(std::mem::size_of::<Output>())?
+                .checked_add(output.lock_script.as_raw_bytes().len())
+        }) else {
+            return;
+        };
+        if bytes > self.max_bytes {
+            return;
+        }
+        while self.outputs > self.max_outputs - outputs.len()
+            || self.bytes > self.max_bytes - bytes
+            || self.entries.len() >= self.max_entries
+        {
+            let oldest = self
+                .order
+                .pop_front()
+                .expect("charged entry has eviction order");
+            let (evicted, cost) = self
+                .entries
+                .remove(&oldest)
+                .expect("ordered cache entry exists");
+            self.outputs -= evicted.len();
+            self.bytes -= cost;
+        }
+        self.outputs += outputs.len();
+        self.bytes += bytes;
+        self.entries.insert(hash, (outputs.to_vec(), bytes));
+        self.order.push_back(hash);
+    }
 }
 
 impl PreviousOutputs for StatePreviousOutputs<'_> {
-    fn lock_script(
+    fn previous_output(
         &mut self,
         outpoint: &OutPoint,
-    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<Option<Output>, Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(output) = self.cache.get(outpoint) {
+            self.cache_hits += 1;
+            return Ok(output);
+        }
         self.lookups += 1;
         let Some((transaction, _height, _time)) = self.db.transaction(outpoint.hash) else {
             return Ok(None);
         };
-        let script = transaction
-            .outputs()
-            .get(outpoint.index as usize)
-            .map(|output| output.lock_script.as_raw_bytes().to_vec());
+        if transaction.hash() != outpoint.hash {
+            return Err("previous transaction identity mismatch".into());
+        }
+        self.cache.insert(outpoint.hash, transaction.outputs());
+        let script = transaction.outputs().get(outpoint.index as usize).cloned();
         if script.is_none() {
             tracing::warn!(
                 outpoint = %outpoint_label(outpoint),
@@ -218,5 +302,99 @@ impl PreviousOutputs for StatePreviousOutputs<'_> {
             );
         }
         Ok(script)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zakura_chain::{
+        amount::Amount,
+        transaction::{LockTime, Transaction},
+        transparent::Script,
+    };
+
+    fn transaction(tag: u8, count: usize) -> Transaction {
+        Transaction::V1 {
+            inputs: vec![],
+            outputs: (0..count)
+                .map(|n| Output {
+                    value: Amount::try_from(n as i64 + 1).unwrap(),
+                    lock_script: Script::new(&[0x76, tag, n as u8]),
+                })
+                .collect(),
+            lock_time: LockTime::unlocked(),
+        }
+    }
+    fn point(tx: &Transaction, index: u32) -> OutPoint {
+        OutPoint {
+            hash: tx.hash(),
+            index,
+        }
+    }
+
+    #[test]
+    fn full_parent_outputs_preserve_values_scripts_and_missing_index() {
+        let tx = transaction(1, 3);
+        let mut cache = BlockOutputCache::new(10, 4096, 10);
+        cache.insert(tx.hash(), tx.outputs());
+        for n in 0..3 {
+            assert_eq!(
+                cache.get(&point(&tx, n)),
+                Some(Some(tx.outputs()[n as usize].clone()))
+            );
+        }
+        assert_eq!(cache.get(&point(&tx, 3)), Some(None));
+        let missing = transaction(2, 1);
+        assert_eq!(cache.get(&point(&missing, 0)), None);
+        cache.insert(tx.hash(), tx.outputs());
+        assert_eq!(cache.outputs, 3);
+        assert_eq!(cache.order.len(), 1);
+    }
+
+    #[test]
+    fn dense_parents_and_script_bytes_obey_strict_admission_bounds() {
+        let tx = transaction(1, 3);
+        let mut cache = BlockOutputCache::new(2, 4096, 10);
+        cache.insert(tx.hash(), tx.outputs());
+        assert!(cache.entries.is_empty());
+        let cost = 128 + std::mem::size_of::<Output>() + 3;
+        let small = transaction(2, 1);
+        let mut cache = BlockOutputCache::new(10, cost, 10);
+        cache.insert(small.hash(), small.outputs());
+        assert_eq!(cache.bytes, cost);
+        cache.insert(tx.hash(), tx.outputs());
+        assert_eq!(
+            cache.get(&point(&small, 0)),
+            Some(Some(small.outputs()[0].clone()))
+        );
+        assert_eq!(cache.get(&point(&tx, 0)), None);
+    }
+
+    #[test]
+    fn eviction_respects_output_byte_and_entry_limits_independently() {
+        for (outputs, bytes, entries) in [
+            (2, 4096, 10),
+            (10, 128 + std::mem::size_of::<Output>() + 3, 10),
+            (10, 4096, 1),
+        ] {
+            let mut cache = BlockOutputCache::new(outputs, bytes, entries);
+            let first = transaction(1, 1);
+            cache.insert(first.hash(), first.outputs());
+            for tag in 2..20 {
+                let tx = transaction(tag, 1);
+                cache.insert(tx.hash(), tx.outputs());
+                assert!(
+                    cache.outputs <= outputs
+                        && cache.bytes <= bytes
+                        && cache.entries.len() <= entries
+                );
+                assert_eq!(
+                    cache.get(&point(&tx, 0)),
+                    Some(Some(tx.outputs()[0].clone()))
+                );
+            }
+            assert_eq!(cache.get(&point(&first, 0)), None);
+        }
     }
 }

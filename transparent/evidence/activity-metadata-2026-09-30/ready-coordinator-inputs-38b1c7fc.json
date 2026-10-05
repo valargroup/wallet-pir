@@ -1,0 +1,59 @@
+{
+  "archive_bytes": 620318,
+  "archive_sha256": "39bad61af65559780cbbe03ef1689732e2c144cb4528649a53dbe0f3835cce0f",
+  "files": 12,
+  "host_source_status_sha256": {
+    "coordinator": "dd4a9cd73a0d52e8609ec9b6b8f9411d82218fa2546222f30794b840600c63f7",
+    "router": "dd4a9cd73a0d52e8609ec9b6b8f9411d82218fa2546222f30794b840600c63f7",
+    "worker-1": "dd4a9cd73a0d52e8609ec9b6b8f9411d82218fa2546222f30794b840600c63f7",
+    "worker-2": "dd4a9cd73a0d52e8609ec9b6b8f9411d82218fa2546222f30794b840600c63f7",
+    "worker-3": "dd4a9cd73a0d52e8609ec9b6b8f9411d82218fa2546222f30794b840600c63f7"
+  },
+  "operations_source_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+  "phases": {
+    "plan": {
+      "action": "plan",
+      "duration_seconds": 3.335360125056468,
+      "exit_code": 0,
+      "request_sha256": "edf28a6a1d8610b61079bae9ade9ea6dc74e054396696fa60066eec96dccb05c",
+      "source_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "a3a9a8072b1dd6071ab145f0f6d35949ec3e4fd3f43ff2a78204e08117e8d8c5"
+    },
+    "preflight": {
+      "action": "preflight",
+      "duration_seconds": 2.7169718330260366,
+      "exit_code": 0,
+      "request_sha256": "edf28a6a1d8610b61079bae9ade9ea6dc74e054396696fa60066eec96dccb05c",
+      "source_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "a3a9a8072b1dd6071ab145f0f6d35949ec3e4fd3f43ff2a78204e08117e8d8c5"
+    },
+    "stage": {
+      "action": "stage",
+      "duration_seconds": 3.2660832080291584,
+      "exit_code": 0,
+      "request_sha256": "edf28a6a1d8610b61079bae9ade9ea6dc74e054396696fa60066eec96dccb05c",
+      "source_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "87f006ea6a4512d52ab731eb1f3feb423d17e6db05021b3910fbf0c6e4bb305f"
+    },
+    "status": {
+      "action": "status",
+      "duration_seconds": 2.569952749996446,
+      "exit_code": 0,
+      "request_sha256": "edf28a6a1d8610b61079bae9ade9ea6dc74e054396696fa60066eec96dccb05c",
+      "source_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stdout_sha256": "87f006ea6a4512d52ab731eb1f3feb423d17e6db05021b3910fbf0c6e4bb305f"
+    }
+  },
+  "scope": "Immutable operation sources and twelve coordinator service inputs only. Live v10 unchanged; no baseline or schema transaction.",
+  "service_pid": 2085493,
+  "service_plan_sha256": "5a469664372426aa6e1fa72346ce1d75717f9228f60093b9004b6b10897703b5",
+  "service_request_sha256": "edf28a6a1d8610b61079bae9ade9ea6dc74e054396696fa60066eec96dccb05c",
+  "service_status_sha256": "87f006ea6a4512d52ab731eb1f3feb423d17e6db05021b3910fbf0c6e4bb305f",
+  "source_duration_seconds": 52.24858737492468,
+  "source_owner": "b0e3b2c8d8794fe8906b34674ed3565f",
+  "status": "passed"
+}

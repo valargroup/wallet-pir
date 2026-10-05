@@ -175,6 +175,21 @@ pub fn encode_page_row(entries: &[PageEntry]) -> Result<Vec<u8>, RecordError> {
 /// An unused row and a full one are the same size and are indistinguishable in
 /// a response; only the decoded content differs. That is the point.
 pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
+    decode_page_row_with_schema(row, crate::SCHEMA)
+}
+
+pub fn decode_page_row_with_schema(
+    row: &[u8],
+    schema: &str,
+) -> Result<Vec<PageEntry>, RecordError> {
+    if !crate::manifest::supported_schema(schema) {
+        return Err(RecordError::Malformed("unsupported schema".into()));
+    }
+    let decode = if schema == crate::manifest::LEGACY_SCHEMA {
+        crate::compact_v10::decode
+    } else {
+        compact::decode
+    };
     if row.len() != PAGE_ROW_BYTES {
         return Err(RecordError::Length {
             got: row.len(),
@@ -222,7 +237,7 @@ pub fn decode_page_row(row: &[u8]) -> Result<Vec<PageEntry>, RecordError> {
         }
 
         let body = at + PAGE_ENTRY_HEADER_BYTES;
-        let (events, event_bytes) = compact::decode(
+        let (events, event_bytes) = decode(
             row.get(body..)
                 .ok_or_else(|| RecordError::Malformed("entry runs past row".into()))?,
             event_count,
@@ -289,6 +304,7 @@ mod tests {
         let mut txid = [0u8; 32];
         txid[..4].copy_from_slice(&nonce.to_le_bytes());
         TransparentEvent::Receive(ReceiveEvent {
+            metadata: None,
             height,
             txid: Txid(txid),
             transaction_index: 0,

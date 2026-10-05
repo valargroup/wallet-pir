@@ -102,6 +102,7 @@ fn events(start: u64, end: u64) -> Vec<(ScriptBytes, TransparentEvent)> {
             (
                 script((height % 8) as u32),
                 TransparentEvent::Receive(ReceiveEvent {
+                    metadata: None,
                     height: height as u32,
                     txid: Txid(txid),
                     transaction_index: 0,
@@ -198,6 +199,7 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
+        txid_display: None,
         directory_choice: None,
     };
 
@@ -226,6 +228,7 @@ fn write_shard(
         txids: 0,
         directory_segments: built.directory_segments(),
         page_segments: built.page_segments(),
+        txid_segments: None,
         manifest_digest: digest,
         revision: manifest.revision,
         sealed,
@@ -291,6 +294,29 @@ async fn get(state: &ServiceState, path: &str) -> (StatusCode, Vec<u8>) {
         .expect("body")
         .to_vec();
     (status, body)
+}
+
+/// `payload` with the process identity (docs/serving-contract.md) checked for
+/// shape and replaced by fixed values, which differ on every build and start.
+fn process_identity_zeroed(payload: &serde_json::Value) -> serde_json::Value {
+    let hex = |field: &str, len: usize| {
+        let value = payload[field]
+            .as_str()
+            .unwrap_or_else(|| panic!("{field} is present"));
+        assert_eq!(value.len(), len, "{field}");
+        assert!(
+            value.bytes().all(|byte| byte.is_ascii_hexdigit()),
+            "{field}"
+        );
+    };
+    hex("binary_sha256", 64);
+    hex("incarnation", 32);
+    assert!(payload["started_unix"].as_u64().is_some_and(|t| t > 0));
+    let mut fixed = payload.clone();
+    fixed["binary_sha256"] = serde_json::json!("0".repeat(64));
+    fixed["incarnation"] = serde_json::json!("0".repeat(32));
+    fixed["started_unix"] = serde_json::json!(0);
+    fixed
 }
 
 /// Writes `name` if `UPDATE_OPS_FIXTURES` is set, and otherwise compares.
@@ -367,15 +393,9 @@ async fn the_operator_payloads_match_what_ops_parses() {
     assert!(rendered.contains("transparent_shard_build_seconds_bucket{"));
 
     golden("init.json", &init);
-    golden("health.json", &health);
+    golden("health.json", &process_identity_zeroed(&health));
     // The prewarm timing is a measurement, not a contract.
-    let mut ready_fixture = ready.clone();
-    let binary = ready["binary_sha256"]
-        .as_str()
-        .expect("binary identity is present");
-    assert_eq!(binary.len(), 64);
-    assert!(binary.bytes().all(|byte| byte.is_ascii_hexdigit()));
-    ready_fixture["binary_sha256"] = serde_json::json!("0".repeat(64));
+    let mut ready_fixture = process_identity_zeroed(&ready);
     ready_fixture["prewarm_seconds"] = serde_json::json!(0.0);
     golden("ready.json", &ready_fixture);
     golden(

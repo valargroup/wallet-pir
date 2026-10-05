@@ -1,0 +1,24 @@
+{
+ "since": "2026-09-29 11:23:00",
+ "until": "2026-09-29 12:02:00",
+ "publications": 20,
+ "prepared_recent_replicas_histogram": {
+  "2": 1,
+  "3": 2,
+  "4": 17
+ },
+ "prepared_publications_per_worker": {
+  "transparent-pir-archive-01": 20,
+  "transparent-pir-archive-02": 20,
+  "transparent-pir-recent-01": 18,
+  "transparent-pir-recent-02": 18,
+  "transparent-pir-recent-03": 20,
+  "transparent-pir-recent-04": 20
+ },
+ "reconciler_events": {
+  "worker_membership:transparent-pir-recent-01:True": 3,
+  "worker_membership:transparent-pir-recent-02:True": 2,
+  "worker_membership:transparent-pir-recent-03:True": 2,
+  "worker_private_progress": 3
+ }
+}

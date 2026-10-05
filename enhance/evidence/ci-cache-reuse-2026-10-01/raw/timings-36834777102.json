@@ -1,0 +1,1033 @@
+{
+  "run": "36834777102",
+  "attempt": 1,
+  "definitions": {
+    "dispatch_to_job_start_seconds": "current attempt start to job start; includes needs, concurrency and environment waits, not only runner queue",
+    "phases.setup_seconds": "job setup, checkout, comparison fetch, selection and Rust setup including hosted cache restore",
+    "phases.work_seconds": "remaining steps (compilation and execution; see cache_records for the split)",
+    "phases.post_seconds": "post steps, including hosted cache save",
+    "phases.report_seconds": "reporting steps"
+  },
+  "timing_start": "2026-10-01T08:11:27Z",
+  "sha": "856a419aac03d3531d3e19380df95146e1b18281",
+  "status": "completed",
+  "jobs": [
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Select full checks",
+      "runner": "GitHub Actions 1000168327",
+      "dispatch_to_job_start_seconds": 3.0,
+      "job_seconds": 7.0,
+      "phases": {
+        "setup_seconds": 4.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Select affected full suites",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate selected helper checks",
+      "runner": "GitHub Actions 1000168334",
+      "dispatch_to_job_start_seconds": 12.0,
+      "job_seconds": 54.0,
+      "phases": {
+        "setup_seconds": 4.0,
+        "work_seconds": 46.0,
+        "post_seconds": 1.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run selected full helper suites",
+          "seconds": 46.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate transparent filter inputs",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate transparent shard inputs",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate Enhance infrastructure",
+      "runner": "GitHub Actions 1000168333",
+      "dispatch_to_job_start_seconds": 13.0,
+      "job_seconds": 8.0,
+      "phases": {
+        "setup_seconds": 5.0,
+        "work_seconds": 1.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run hashicorp/setup-terraform@v3",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate provider schema and mock fleet plans",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Validate transparent elastic infrastructure",
+      "runner": "GitHub Actions 1000168328",
+      "dispatch_to_job_start_seconds": 12.0,
+      "job_seconds": 10.0,
+      "phases": {
+        "setup_seconds": 6.0,
+        "work_seconds": 1.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run hashicorp/setup-terraform@v3",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Validate provider schema and mock member plans",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Enhance tests",
+      "runner": "GitHub Actions 1000168331",
+      "dispatch_to_job_start_seconds": 13.0,
+      "job_seconds": 1413.0,
+      "phases": {
+        "setup_seconds": 36.0,
+        "work_seconds": 1363.0,
+        "post_seconds": 11.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 32.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run Enhance release tests",
+          "seconds": 957.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Check tagged native distributed integration",
+          "seconds": 316.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Check optional CUDA worker without a GPU",
+          "seconds": 90.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 11.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": {
+            ".cargo/config.toml": "64026065f1a7",
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "features": "enhance-pir/cli; native-reinspiring; cuda checks",
+          "flags": {
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "8fa029be50b0f32e",
+          "key": "full-test-enhance-8fa029be50b0f32e",
+          "lane": "full-test",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "restore",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "release-fast",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "enhance",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "bea3bf2450dff54a"
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "full-test",
+          "status": "miss",
+          "restored_units": 0
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "identity": "8fa029be50b0f32e",
+          "key": "full-test-enhance-8fa029be50b0f32e",
+          "lane": "full-test",
+          "profile": "release-fast",
+          "refs_before_restore": [],
+          "restore": "miss",
+          "restore_seconds": 1.193,
+          "scope": "enhance",
+          "setup_seconds": 30.209,
+          "third_party": {
+            "new": 977,
+            "rebuilt": 0
+          },
+          "toolchain": "bea3bf2450dff54a",
+          "units": {
+            "missing_at_end": 0,
+            "new": 1057,
+            "rebuilt": 0,
+            "restored": 0,
+            "reused": 0
+          },
+          "workspace_names": {
+            "new": [
+              "enhance-pir",
+              "enhance-pir-load-test",
+              "enhance-pir-server",
+              "pir-apm",
+              "pir-control",
+              "pir-monitor",
+              "pir-native"
+            ],
+            "rebuilt": []
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compilation_seconds": 447.591,
+            "execution_seconds": 752.249,
+            "failed_stages": [],
+            "other_seconds": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Transparent lint",
+      "runner": "GitHub Actions 1000168329",
+      "dispatch_to_job_start_seconds": 12.0,
+      "job_seconds": 812.0,
+      "phases": {
+        "setup_seconds": 52.0,
+        "work_seconds": 743.0,
+        "post_seconds": 15.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 48.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run cargo fmt --all --check",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Test simulation report helpers",
+          "seconds": 14.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group transparent --lint",
+          "seconds": 728.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 14.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": {
+            ".cargo/config.toml": "64026065f1a7",
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "features": "clippy all-targets all-features",
+          "flags": {
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "8109d207376799c7",
+          "key": "full-lint-transparent-8109d207376799c7",
+          "lane": "full-lint",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "restore",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "dev",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "transparent",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "bea3bf2450dff54a"
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "full-lint",
+          "status": "miss",
+          "restored_units": 0
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "identity": "8109d207376799c7",
+          "key": "full-lint-transparent-8109d207376799c7",
+          "lane": "full-lint",
+          "profile": "dev",
+          "refs_before_restore": [],
+          "restore": "miss",
+          "restore_seconds": 2.265,
+          "scope": "transparent",
+          "setup_seconds": 45.065,
+          "third_party": {
+            "new": 513,
+            "rebuilt": 0
+          },
+          "toolchain": "bea3bf2450dff54a",
+          "units": {
+            "missing_at_end": 0,
+            "new": 627,
+            "rebuilt": 0,
+            "restored": 0,
+            "reused": 0
+          },
+          "workspace_names": {
+            "new": [
+              "pir-control",
+              "pir-native",
+              "pir-observability",
+              "transparent-block-server",
+              "transparent-blocks",
+              "transparent-events",
+              "transparent-filter",
+              "transparent-filter-server",
+              "transparent-loadtest",
+              "transparent-measure",
+              "transparent-native",
+              "transparent-regression",
+              "transparent-shard",
+              "transparent-shard-server",
+              "transparent-wallet",
+              "transparent-wallet-store"
+            ],
+            "rebuilt": []
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compilation_seconds": 727.486,
+            "execution_seconds": 0.0,
+            "failed_stages": [],
+            "other_seconds": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Enhance lint",
+      "runner": "GitHub Actions 1000168330",
+      "dispatch_to_job_start_seconds": 18.0,
+      "job_seconds": 270.0,
+      "phases": {
+        "setup_seconds": 40.0,
+        "work_seconds": 212.0,
+        "post_seconds": 15.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 35.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group enhance --lint",
+          "seconds": 212.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 15.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": {
+            ".cargo/config.toml": "64026065f1a7",
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "features": "clippy all-targets all-features",
+          "flags": {
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "6296b909bb887855",
+          "key": "full-lint-enhance-6296b909bb887855",
+          "lane": "full-lint",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "restore",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "dev",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "enhance",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "bea3bf2450dff54a"
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "full-lint",
+          "status": "miss",
+          "restored_units": 0
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "identity": "6296b909bb887855",
+          "key": "full-lint-enhance-6296b909bb887855",
+          "lane": "full-lint",
+          "profile": "dev",
+          "refs_before_restore": [],
+          "restore": "miss",
+          "restore_seconds": 3.676,
+          "scope": "enhance",
+          "setup_seconds": 30.06,
+          "third_party": {
+            "new": 422,
+            "rebuilt": 0
+          },
+          "toolchain": "bea3bf2450dff54a",
+          "units": {
+            "missing_at_end": 0,
+            "new": 461,
+            "rebuilt": 0,
+            "restored": 0,
+            "reused": 0
+          },
+          "workspace_names": {
+            "new": [
+              "enhance-pir",
+              "enhance-pir-load-test",
+              "enhance-pir-server",
+              "pir-apm",
+              "pir-control",
+              "pir-monitor",
+              "pir-native"
+            ],
+            "rebuilt": []
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compilation_seconds": 211.361,
+            "execution_seconds": 0.0,
+            "failed_stages": [],
+            "other_seconds": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Shared lint and tests",
+      "runner": "GitHub Actions 1000168335",
+      "dispatch_to_job_start_seconds": 13.0,
+      "job_seconds": 153.0,
+      "phases": {
+        "setup_seconds": 28.0,
+        "work_seconds": 111.0,
+        "post_seconds": 9.0,
+        "report_seconds": 1.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 4.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 24.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group shared --lint",
+          "seconds": 61.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group shared",
+          "seconds": 50.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 9.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": {
+            ".cargo/config.toml": "64026065f1a7",
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "features": "clippy all-features; default",
+          "flags": {
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "806158661ae05ac6",
+          "key": "full-test-shared-806158661ae05ac6",
+          "lane": "full-test",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "restore",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "dev,release-fast",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "shared",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "bea3bf2450dff54a"
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "full-test",
+          "status": "miss",
+          "restored_units": 0
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "identity": "806158661ae05ac6",
+          "key": "full-test-shared-806158661ae05ac6",
+          "lane": "full-test",
+          "profile": "dev,release-fast",
+          "refs_before_restore": [],
+          "restore": "miss",
+          "restore_seconds": 0.548,
+          "scope": "shared",
+          "setup_seconds": 22.376,
+          "third_party": {
+            "new": 306,
+            "rebuilt": 0
+          },
+          "toolchain": "bea3bf2450dff54a",
+          "units": {
+            "missing_at_end": 0,
+            "new": 320,
+            "rebuilt": 0,
+            "restored": 0,
+            "reused": 0
+          },
+          "workspace_names": {
+            "new": [
+              "pir-control",
+              "pir-native",
+              "pir-observability"
+            ],
+            "rebuilt": []
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compilation_seconds": 107.657,
+            "execution_seconds": 3.092,
+            "failed_stages": [],
+            "other_seconds": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Transparent tests",
+      "runner": "GitHub Actions 1000168332",
+      "dispatch_to_job_start_seconds": 12.0,
+      "job_seconds": 1554.0,
+      "phases": {
+        "setup_seconds": 30.0,
+        "work_seconds": 1509.0,
+        "post_seconds": 12.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 1.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run actions/checkout@v4",
+          "seconds": 3.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run ./.github/actions/rust-setup",
+          "seconds": 26.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Run python3 tools/ci/full_packages.py --group transparent",
+          "seconds": 1509.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Report Cargo cache reuse",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run ./.github/actions/rust-setup",
+          "seconds": 12.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Post Run actions/checkout@v4",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": [
+        {
+          "type": "CI_CACHE_IDENTITY",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "cargo_config": {
+            ".cargo/config.toml": "64026065f1a7",
+            "rust-toolchain.toml": "5d959dfcc98b"
+          },
+          "features": "transparent-filter/cli",
+          "flags": {
+            "CFLAGS": "0aec0c905cb2",
+            "CXXFLAGS": "0aec0c905cb2",
+            "RUSTFLAGS": "f5373c6f8a9d"
+          },
+          "identity": "38610f7c803781bd",
+          "key": "full-test-transparent-38610f7c803781bd",
+          "lane": "full-test",
+          "libc": "glibc 2.39",
+          "lock": "9a8083a41376",
+          "machine": "x86_64",
+          "mode": "restore",
+          "native": {
+            "cc": "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "clang": "Ubuntu clang version 18.1.3 (1ubuntu1)",
+            "cxx": "c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+            "protoc": "libprotoc 3.21.12"
+          },
+          "os": "ubuntu 24.04",
+          "profile": "release-fast",
+          "rustc": {
+            "LLVM version": "22.1.6",
+            "commit-hash": "8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+            "host": "x86_64-unknown-linux-gnu",
+            "release": "1.97.1"
+          },
+          "scope": "transparent",
+          "target": "x86_64-unknown-linux-gnu",
+          "toolchain": "bea3bf2450dff54a"
+        },
+        {
+          "type": "CI_CACHE_RESTORE",
+          "lane": "full-test",
+          "status": "miss",
+          "restored_units": 0
+        },
+        {
+          "type": "CI_CACHE_REPORT",
+          "identity": "38610f7c803781bd",
+          "key": "full-test-transparent-38610f7c803781bd",
+          "lane": "full-test",
+          "profile": "release-fast",
+          "refs_before_restore": [],
+          "restore": "miss",
+          "restore_seconds": 0.478,
+          "scope": "transparent",
+          "setup_seconds": 25.232,
+          "third_party": {
+            "new": 516,
+            "rebuilt": 0
+          },
+          "toolchain": "bea3bf2450dff54a",
+          "units": {
+            "missing_at_end": 0,
+            "new": 628,
+            "rebuilt": 0,
+            "restored": 0,
+            "reused": 0
+          },
+          "workspace_names": {
+            "new": [
+              "pir-control",
+              "pir-native",
+              "pir-observability",
+              "transparent-block-server",
+              "transparent-blocks",
+              "transparent-events",
+              "transparent-filter",
+              "transparent-filter-server",
+              "transparent-loadtest",
+              "transparent-measure",
+              "transparent-native",
+              "transparent-regression",
+              "transparent-shard",
+              "transparent-shard-server",
+              "transparent-wallet",
+              "transparent-wallet-store"
+            ],
+            "rebuilt": []
+          }
+        },
+        {
+          "type": "CI_STAGE_REPORT",
+          "stages": {
+            "compilation_seconds": 840.915,
+            "execution_seconds": 668.167,
+            "failed_stages": [],
+            "other_seconds": 0.0
+          }
+        }
+      ]
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Full checks complete",
+      "runner": "GitHub Actions 1000168354",
+      "dispatch_to_job_start_seconds": 1568.0,
+      "job_seconds": 3.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [
+        {
+          "name": "Set up job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Verify selected checks completed",
+          "seconds": 0.0,
+          "conclusion": "success"
+        },
+        {
+          "name": "Complete job",
+          "seconds": 0.0,
+          "conclusion": "success"
+        }
+      ],
+      "cache_records": []
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Prepare qualified release artifacts",
+      "runner": null,
+      "dispatch_to_job_start_seconds": 1571.0,
+      "job_seconds": 0.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [],
+      "cache_records": null
+    },
+    {
+      "reused_from_previous_attempt": false,
+      "name": "Prepare native CUDA release artifact (Ubuntu 22.04)",
+      "runner": null,
+      "dispatch_to_job_start_seconds": 1571.0,
+      "job_seconds": 0.0,
+      "phases": {
+        "setup_seconds": 0.0,
+        "work_seconds": 0.0,
+        "post_seconds": 0.0,
+        "report_seconds": 0.0
+      },
+      "steps": [],
+      "cache_records": null
+    }
+  ],
+  "dispatch_seconds": 1571.0,
+  "total_dispatch_seconds": 1571.0,
+  "complete": true
+}

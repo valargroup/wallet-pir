@@ -1,0 +1,26 @@
+{
+ "apply_attempts": 0,
+ "created_unix": 1790692231.6800382,
+ "decision_id": "231a9b66-5216-526e-a7aa-4557099867c7",
+ "destroyed": "604672625",
+ "dry": false,
+ "finished_unix": 1790692448.3982906,
+ "id": "696139648dfa",
+ "kind": "scale_in",
+ "member": "transparent-pir-recent-07",
+ "outcome": "removed",
+ "phase": "removed",
+ "phase_unix": 1790692448.3971405,
+ "plan": "/opt/transparent-publisher/scaler/journal/terraform/elastic-_tdvaji8.tfplan",
+ "plan_sha256": "6bfe96bd6bed2b26c879180628e03cad9e68d7fd7e9e7392518d3b69c4103af2",
+ "plan_summary": {
+  "creates": [],
+  "destroys": [
+   "digitalocean_droplet.recent[\"transparent-pir-recent-07\"]",
+   "digitalocean_project_resources.recent[\"transparent-pir-recent-07\"]"
+  ]
+ },
+ "quiet_queries": 1553.0,
+ "quiet_since": 1790692353.677361,
+ "reason": "desired 2 < 3 serving for 360 s, p99 0.04 s, no rejections"
+}

@@ -1,0 +1,29 @@
+{
+  "shared": [
+    "pir-control",
+    "pir-observability",
+    "pir-native"
+  ],
+  "enhance": [
+    "enhance-pir",
+    "enhance-pir-load-test",
+    "enhance-pir-server",
+    "pir-apm",
+    "pir-monitor"
+  ],
+  "transparent": [
+    "transparent-native",
+    "transparent-events",
+    "transparent-filter",
+    "transparent-shard",
+    "transparent-wallet",
+    "transparent-wallet-store",
+    "transparent-blocks",
+    "transparent-block-server",
+    "transparent-filter-server",
+    "transparent-shard-server",
+    "transparent-loadtest",
+    "transparent-measure",
+    "transparent-regression"
+  ]
+}

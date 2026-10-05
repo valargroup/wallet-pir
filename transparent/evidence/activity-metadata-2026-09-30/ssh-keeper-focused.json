@@ -1,0 +1,22 @@
+{
+  "status": "passed",
+  "base_sha": "ff8510ac61cac033f34d9891f0896dd36ac2a2ae",
+  "owner": "feaa18d541ec4f5296dd08aeb926bd0d",
+  "duration_seconds": 16.794709208072163,
+  "command": "make check-fast BASE=ff8510ac61cac033f34d9891f0896dd36ac2a2ae",
+  "source_files": {
+    "ops/lib/wallet_pir_ops/inherited_lock.py": "84983b18e1833d0ca7aa7b6cc8dbe9b7f5ad362ef59444dd685d0f892233789a",
+    "ops/lib/wallet_pir_ops/ssh_lock_keeper.py": "a83e48bda12e627e9ea5c061d89d0903ef4d2aba0313d999193d4671145d1cdc",
+    "ops/lib/wallet_pir_ops/pinned_ssh.py": "20691acff45053ea4c023df3fa51d4f08509d0bbb15b8246dfc3a325f3b5252f",
+    "ops/lib/wallet_pir_ops/deploy/remote.py": "a431a7f5f69f117c3ac1e1aa6da37dbfd6afe5ad9261bd2ee953ca40ca212a5c",
+    "transparent/ops/scripts/transparent-live-fleet.py": "d204eca876b762014adf5ff46decdde7caba6e87845c6b11f681d53467e30295",
+    "transparent/ops/tests/test_activity_lock_qualification.py": "d7ee359d17e1da11d2ac3ad02720243a335ecbe6400a0520d1751ed5b188eb1d"
+  },
+  "raw_result_sha256": "088817bb7b9bb4302d2b80e0ca8744f7919f24f35084e538ad5f7522bafc6bd3",
+  "raw_log_sha256": "dbe5b11663ac94e26398aeb2eaf0ed71c9ef2a71e6ddac14968ae23d1b05d06c",
+  "scope": "Local transport closes FD and launcher termination; separate keeper retains lock until transport completion, plus affected helper checks.",
+  "limitations": [
+    "Corrected real SSH qualification pending.",
+    "No production service transition."
+  ]
+}

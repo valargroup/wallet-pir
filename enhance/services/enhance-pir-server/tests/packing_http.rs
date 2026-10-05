@@ -32,6 +32,27 @@ async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() }),
     )
 }
+async fn wait_preferred(http: &reqwest::Client, origin: &str, worker: &str, expected: bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let health: serde_json::Value = http
+                .get(format!("{origin}/internal/health"))
+                .send()
+                .await
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if health["preferred_workers"][worker] == expected {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("worker preference must converge");
+}
+
 fn record(n: u64) -> Vec<u8> {
     let mut bytes = vec![0; RECORD_BYTES];
     bytes[..8].copy_from_slice(&n.to_le_bytes());
@@ -356,16 +377,7 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .unwrap();
     // The optional worker can disappear without blocking publication or answers.
     modes[2].store(3, Ordering::SeqCst);
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    let packing_health: serde_json::Value = http
-        .get(format!("{packing_control}/internal/health"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(packing_health["preferred_workers"][&replicas[2].url], false);
+    wait_preferred(&http, &packing_control, &replicas[2].url, false).await;
     let mut client = EnhancePirClient::connect(&public).await.unwrap();
     assert_eq!(
         client
@@ -413,16 +425,7 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
         .publish(&journal, 3428147, "05".repeat(32))
         .await
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-    let packing_health: serde_json::Value = http
-        .get(format!("{packing_control}/internal/health"))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    assert_eq!(packing_health["preferred_workers"][&replicas[2].url], true);
+    wait_preferred(&http, &packing_control, &replicas[2].url, true).await;
     let gpu_queries_before = counts[2].load(Ordering::SeqCst);
     let mut client = EnhancePirClient::connect(&public).await.unwrap();
     assert_eq!(

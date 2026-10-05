@@ -1,0 +1,33 @@
+{
+ "schema": 1,
+ "mode": "act",
+ "min_recent": 2,
+ "max_recent": 6,
+ "size": "s-4vcpu-8gb",
+ "capacity_qps_per_replica": 10.0,
+ "capacity_evidence": "transparent/evidence/recent-floor-2026-09-29: two replicas at 20.9 QPS total (about 8.3 QPS each on recent), p99 53 ms, slots 3-4% busy",
+ "headroom": 1.5,
+ "max_step": 3,
+ "stale_seconds": 45,
+ "window_seconds": 300,
+ "backstop": {
+  "error_rate": 0.05,
+  "error_seconds": 120,
+  "p99_seconds": 1.4,
+  "p99_hold_seconds": 300
+ },
+ "scale_in": {
+  "hold_seconds": 3600,
+  "p99_seconds": 0.8
+ },
+ "cooldown_out_seconds": 900,
+ "cooldown_in_seconds": 3600,
+ "replace_unhealthy_seconds": 900,
+ "daily_actions": 6,
+ "daily_destroys": 2,
+ "monthly_cost_cap_usd": 400,
+ "prices_usd_monthly": {
+  "s-4vcpu-8gb": 48.0
+ },
+ "paused_until_unix": null
+}

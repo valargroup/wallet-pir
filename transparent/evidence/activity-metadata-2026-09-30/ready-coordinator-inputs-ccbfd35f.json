@@ -1,0 +1,34 @@
+{
+  "status": "staged",
+  "source_sha": "ccbfd35fc21935f8a6878f93d288cc3107ea90e2",
+  "service_request_sha256": "1d8daf080d932350f3d34261bc01e8c725577fc1f3c5d11b28b99add4daff46b",
+  "pid": 2108046,
+  "plan_sha256": "7d790dc3eea670b0da010b2ebf2290d2359954596db20db92eb710f0a34bc1b8",
+  "file_count": 12,
+  "raw_status_sha256": "a2c086d49e002d3f1dec34f68b95cf941d09e005735f48a0f176a5f437088ac0",
+  "source_archive_sha256": "1a4fa34886dddd13a7942a0d4ca2410fd23c9504808369ecf2fc381ec16c30ee",
+  "source_archive_bytes": 631268,
+  "source_hosts": {
+    "coordinator": {
+      "status": "verified",
+      "raw_status_sha256": "acca93f6bd48f5f560a3dc5054e30fd177783e1b1df0c192e65c11789279fe0b"
+    },
+    "worker-1": {
+      "status": "verified",
+      "raw_status_sha256": "acca93f6bd48f5f560a3dc5054e30fd177783e1b1df0c192e65c11789279fe0b"
+    },
+    "worker-2": {
+      "status": "verified",
+      "raw_status_sha256": "acca93f6bd48f5f560a3dc5054e30fd177783e1b1df0c192e65c11789279fe0b"
+    },
+    "worker-3": {
+      "status": "verified",
+      "raw_status_sha256": "acca93f6bd48f5f560a3dc5054e30fd177783e1b1df0c192e65c11789279fe0b"
+    },
+    "router": {
+      "status": "verified",
+      "raw_status_sha256": "acca93f6bd48f5f560a3dc5054e30fd177783e1b1df0c192e65c11789279fe0b"
+    }
+  },
+  "effects": "Immutable source/config input preparation only; no live service changes."
+}

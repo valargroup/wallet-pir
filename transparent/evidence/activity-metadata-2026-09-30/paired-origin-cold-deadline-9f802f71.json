@@ -1,0 +1,15 @@
+{
+  "status": "failed",
+  "source_sha": "9f802f71625e80337afc710f98e5dd62ee7cdf83",
+  "owner": "c287e9c26c01430db2a5e5c7812308f3",
+  "duration_seconds": 290.43644779198803,
+  "restore_status": "passed",
+  "verify_rollback_status": "failed",
+  "verify_seconds": 250.94924181932583,
+  "limitation": "All workers warm later at exact captured map; later warm observation does not pass missed cold-start deadline",
+  "raw_sha256": {
+    "c287e9c26c01430db2a5e5c7812308f3.result.json": "0917811125ec8279c98d2f7686fb360faf6f718ce663973dccb1cf6fc4a12363",
+    "paired-origin-9f-terminal-host-owners.jsonl": "f976533f8a54d12c4a22049a51fb44f4d001405de0adc8cd86db1c8c731d8e25",
+    "paired-origin-warm-after-deadline-worker-status.jsonl": "90db3cbe625975bcf3504eb1f21ed3c787746562a08c1777bc7fc9ea0c860b7d"
+  }
+}

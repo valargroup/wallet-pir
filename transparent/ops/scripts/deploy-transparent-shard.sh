@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Deploys the transparent PIR shard worker.
 #
-# Deliberately separate from deploy-enhance-pir.sh rather than a mode inside it.
-# That script carries the one-time legacy rollback branches the repository
+# Deliberately separate from the Enhance deploy (formerly deploy-enhance-pir.sh,
+# removed in afdb4b6d) rather than a mode inside it. That deploy carries the one-time legacy rollback branches the repository
 # guidance protects, and a fleet that shares no state with Enhance must not be
 # able to disturb them. Nothing here touches the Enhance coordinator, its units,
 # its Caddyfile, or the filter service.
@@ -601,7 +601,13 @@ verify_public() {
 # The single-host modes above are unchanged: this is what the pilot grows into,
 # not a replacement for it.
 
-fleet_json() { printf '%s' "$TRANSPARENT_FLEET_JSON"; }
+fleet_json() {
+  if [[ -n "${TRANSPARENT_ROSTER_FILE:-}" && -f "$TRANSPARENT_ROSTER_FILE" ]]; then
+    cat "$TRANSPARENT_ROSTER_FILE"
+  else
+    printf '%s' "$TRANSPARENT_FLEET_JSON"
+  fi
+}
 
 validate_fleet_inputs() {
   [[ "${TRANSPARENT_REPLICA_ACTIVATION:-paired}" =~ ^(paired|serial)$ ]] || fail "replica activation must be paired or serial"

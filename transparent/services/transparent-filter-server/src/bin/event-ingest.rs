@@ -86,6 +86,9 @@ struct Cli {
     /// Blocks between progress lines.
     #[arg(long, default_value_t = 1_000)]
     log_every: u64,
+    /// Write complete txid display sidecars before each block checkpoint.
+    #[arg(long)]
+    txid_display: bool,
 }
 
 /// Rolls stored coverage back to the highest block the node still agrees with.
@@ -247,7 +250,16 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
             return Err(format!("extracted height {at} out of order at {height}").into());
         }
         lookups += built.rpc_lookups;
-        store.append_block(height, built.block_hash, &built.events)?;
+        if cli.txid_display {
+            store.append_block_with_display(
+                height,
+                built.block_hash,
+                &built.events,
+                &built.display,
+            )?;
+        } else {
+            store.append_block(height, built.block_hash, &built.events)?;
+        }
 
         if height % cli.commit_every == 0 {
             store.commit()?;
@@ -367,7 +379,16 @@ async fn main() -> Result<(), BoxError> {
         let built = build_fetched_block_events(&zakura, &mut cache, height, fetched).await?;
         rpc_lookups += built.rpc_lookups;
         cache_hits += built.cache_hits;
-        store.append_block(height, built.block_hash, &built.events)?;
+        if cli.txid_display {
+            store.append_block_with_display(
+                height,
+                built.block_hash,
+                &built.events,
+                &built.display,
+            )?;
+        } else {
+            store.append_block(height, built.block_hash, &built.events)?;
+        }
 
         if height % cli.commit_every == 0 {
             store.commit()?;

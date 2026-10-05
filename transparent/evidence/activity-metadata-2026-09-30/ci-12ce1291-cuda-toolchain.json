@@ -1,0 +1,112 @@
+{
+  "observed_utc": "2026-10-01T00:13:22.215821+00:00",
+  "source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "run_url": "https://github.com/valargroup/wallet-pir/actions/runs/36789825125",
+  "status": "in_progress",
+  "conclusion": "",
+  "jobs": [
+    {
+      "name": "Select full checks",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139842780,
+      "startedAt": "2026-09-30T23:12:10Z",
+      "completedAt": "2026-09-30T23:12:21Z"
+    },
+    {
+      "name": "Enhance lint",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908027,
+      "startedAt": "2026-09-30T23:22:02Z",
+      "completedAt": "2026-09-30T23:22:10Z"
+    },
+    {
+      "name": "Validate Enhance infrastructure",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908062,
+      "startedAt": "2026-09-30T23:12:23Z",
+      "completedAt": "2026-09-30T23:12:34Z"
+    },
+    {
+      "name": "Enhance tests",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908066,
+      "startedAt": "2026-09-30T23:22:12Z",
+      "completedAt": "2026-09-30T23:39:06Z"
+    },
+    {
+      "name": "Validate transparent elastic infrastructure",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908071,
+      "startedAt": "2026-09-30T23:12:25Z",
+      "completedAt": "2026-09-30T23:12:36Z"
+    },
+    {
+      "name": "Transparent tests",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908106,
+      "startedAt": "2026-09-30T23:39:29Z",
+      "completedAt": "2026-09-30T23:53:34Z"
+    },
+    {
+      "name": "Validate selected helper checks",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908141,
+      "startedAt": "2026-10-01T00:04:56Z",
+      "completedAt": "2026-10-01T00:06:05Z"
+    },
+    {
+      "name": "Shared lint and tests",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908149,
+      "startedAt": "2026-09-30T23:39:08Z",
+      "completedAt": "2026-09-30T23:39:28Z"
+    },
+    {
+      "name": "Transparent lint",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110139908176,
+      "startedAt": "2026-09-30T23:53:36Z",
+      "completedAt": "2026-10-01T00:04:54Z"
+    },
+    {
+      "name": "Full checks complete",
+      "status": "completed",
+      "conclusion": "success",
+      "databaseId": 110154532496,
+      "startedAt": "2026-10-01T00:06:07Z",
+      "completedAt": "2026-10-01T00:06:10Z"
+    },
+    {
+      "name": "Prepare qualified release artifacts",
+      "status": "in_progress",
+      "conclusion": "",
+      "databaseId": 110154553365,
+      "startedAt": "2026-10-01T00:06:12Z",
+      "completedAt": "0001-01-01T00:00:00Z"
+    },
+    {
+      "name": "Prepare native CUDA release artifact (Ubuntu 22.04)",
+      "status": "completed",
+      "conclusion": "failure",
+      "databaseId": 110154553473,
+      "startedAt": "2026-10-01T00:06:12Z",
+      "completedAt": "2026-10-01T00:07:51Z"
+    }
+  ],
+  "cuda_failure": {
+    "job_id": 110154553473,
+    "failed_step": "Build isolated native CUDA binaries and record ABI",
+    "cause": "Installed 1.91 default is overridden by checkout rust-toolchain.toml 1.97.1; build-cuda.sh requires 1.91.0. Set job RUSTUP_TOOLCHAIN=1.91.0.",
+    "regression": "test_cuda_toolchain_overrides_the_checkout_toolchain failed before fix and passed afterward"
+  },
+  "acceptance": "Comprehensive check jobs passed. This is not a fully passing CI run: CUDA artifact failed; CPU artifact preparation was pending in the observation."
+}

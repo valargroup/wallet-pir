@@ -1,0 +1,37 @@
+{
+  "lock": {"type": "pinned_host", "machine_id": "<coordinator machine-id>"},
+  "ssh": {
+    "mode": "pinned",
+    "key": "/runtime/ci/key",
+    "known_hosts": "/runtime/ci/known_hosts",
+    "known_hosts_sha256": "<verified SHA-256 of exact known-hosts bytes>"
+  },
+  "hosts": {
+    "coordinator": {"address": "192.0.2.1", "user": "root"},
+    "enhance-pir-gpu-01": {
+      "address": "10.250.90.3", "user": "paperspace", "sudo": true, "jump": "coordinator"
+    }
+  },
+  "services": {
+    "enhance": {
+      "roles": {
+        "worker": [{
+          "host": "enhance-pir-gpu-01",
+          "unit": "enhance-pir-gpu-worker.service",
+          "vars": {"listen": "10.250.90.3:8091"},
+          "health_equals": {
+            "protocol": "ironwood-enhance-pir-v9-native-two-mask-m29",
+            "matvec.matvec_backend": "cuda",
+            "matvec.cuda_device": 0
+          }
+        }]
+      },
+      "cuda_validation": {
+        "origin": "https://enhance-pir.example",
+        "oracle": "/path/to/independent-public-oracle.json",
+        "router_url": "http://192.0.2.2:8093",
+        "coordinator_url": "http://127.0.0.1:8080"
+      }
+    }
+  }
+}

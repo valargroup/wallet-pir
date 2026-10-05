@@ -1,0 +1,16 @@
+{
+  "status": "passed",
+  "scope": "Frozen release receipt and product load path agreement; no binary rebuild or live installation",
+  "owner": "ad9b082675b94697ad50c492ef813be8",
+  "comparison_sha": "3a2fa573a9028cd95eed4ef7fc5e71c87c3c89d3",
+  "duration_seconds": 14.071831625071354,
+  "native_source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9",
+  "selected_path": "/srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/examples/rate-query",
+  "red_sha256": "ee717a45779b65bf52e19d4e9fd159d9ce5cdd6eccd87ceed3dcb87ee3d5d185",
+  "green_sha256": "fb184ea57734512b1f088f9181209901b9cd46df3eb7eaa2500ea9e48dde20b5",
+  "inputs": {
+    "transparent/ops/lib/activity_schema_product.py": "724ac4be96ae19e8293e4dc490cb53139963cbf42dc7371af55e40505686e46a",
+    "transparent/ops/tests/test_activity_schema_product.py": "b0bfbde49453f19704c34170b9cb69c37934db07722b3d4bf550a0c77e6d1f27"
+  },
+  "issue": "Product required nonexistent artifacts/rate-query; retained qualified release uses artifacts/examples/rate-query. Actual receipt regression rejected before fix."
+}

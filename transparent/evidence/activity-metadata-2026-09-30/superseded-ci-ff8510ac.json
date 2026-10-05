@@ -1,0 +1,10 @@
+{
+  "run": 36840540066,
+  "head_sha": "38b1c7fcdf8bbd5bde60853972ef62c450067321",
+  "status": "completed",
+  "conclusion": "cancelled",
+  "replacement_run": 36843281762,
+  "active_jobs_before_cancel": 0,
+  "ownership_actor": "p0mvn",
+  "limitation": "Cancellation is not passing evidence."
+}

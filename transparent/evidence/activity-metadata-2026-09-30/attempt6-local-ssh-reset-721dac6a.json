@@ -1,0 +1,15 @@
+{
+  "source_sha": "721dac6a9388771277d6e37d820c2f4a0c915655",
+  "recipe_sha256": "73028c5af3dda42502c6165edc3bbf43bab3256877206b6c5bb5693468dabe9c",
+  "exit_code": 255,
+  "duration_seconds": 167.3663351670839,
+  "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "stderr_sha256": "a5bbba31be0f681554aff33509e0ba914ccb20d334e451bdd0705519d68b8fce",
+  "scope": "Local SSH exit255 connection reset; remote wrapper survives and owns ongoing transaction. NOT deployment failure/success acceptance. No replay, rollback, new mutation or head change while descendants run.",
+  "status": "failed-local-transport-remote-running",
+  "owner": "1170ecaeacc7462b9f87a014ead348af",
+  "owner_duration_seconds": 258.63571687496733,
+  "transaction": "transparent-schema-20261001T191953Z-73028c5af3dd-c36dd1",
+  "remote_coordinator_pid": 2450980,
+  "remote_archive_stage_pid": 1566217
+}

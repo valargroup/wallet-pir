@@ -1,0 +1,53 @@
+{
+  "lock": {"type": "remote", "host": "coordinator"},
+  "ssh": {
+    "mode": "pinned",
+    "user": "root",
+    "key": "~/.ssh/wallet-pir-deploy",
+    "known_hosts": "~/.config/wallet-pir-deploy/known_hosts",
+    "known_hosts_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "hosts": {
+    "coordinator": {"address": "192.0.2.10"},
+    "worker-01": {"address": "192.0.2.15"},
+    "worker-02": {"address": "192.0.2.16"},
+    "router-01": {"address": "192.0.2.14"},
+    "status-01": {"address": "192.0.2.17"}
+  },
+  "services": {
+    "enhance": {
+      "roles": {
+        "worker": [
+          {"host": "worker-01", "vars": {"listen": "192.0.2.15:8091"}},
+          {"host": "worker-02", "vars": {"listen": "192.0.2.16:8091"}}
+        ],
+        "packing-router": [{"host": "router-01", "vars": {"control_listen": "192.0.2.14:8093"}}],
+        "query-ingress": [{"host": "coordinator"}],
+        "coordinator": [{"host": "coordinator", "unit": "enhance-pir-server.service"}]
+      },
+      "exact_check": {
+        "host": "coordinator",
+        "argv": ["/opt/enhance-pir/tools/enhance-pir-load-test", "--oracle", "/path/to/public-oracle.json",
+                 "--server", "https://enhance.example", "--parallelism", "2", "--rate", "2",
+                 "--duration", "60s", "--warmup", "10s", "--max-error-rate", "0",
+                 "--json-out", "/root/wallet-pir-deploy-{transaction}-exact.json"],
+        "timeout": 900
+      }
+    },
+    "status": {
+      "template_vars": {"NETWORK": "<canonical network genesis hash, hex>"},
+      "roles": {
+        "worker": [{"host": "status-01"}],
+        "router": [{"host": "status-01"}],
+        "controller": [{"host": "coordinator"}]
+      },
+      "exact_check": {
+        "host": "coordinator",
+        "argv": ["{release_dir}/status-pir", "probe-live-load", "--origin", "http://127.0.0.1:8480",
+                 "--query-origin", "http://127.0.0.1:8492", "--cookie", "/root/.cache/zakura/.cookie",
+                 "--seconds", "60", "--report-dir", "/root/wallet-pir-deploy-{transaction}-status-probe"],
+        "timeout": 900
+      }
+    }
+  }
+}

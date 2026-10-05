@@ -1,0 +1,89 @@
+{
+  "status": "passed",
+  "gate": "coherent-newer-v10-recovery",
+  "source_sha": "09a9f1402c98fcbe8d5162dff643528274b7fb36",
+  "owner": "0f9d722c8f654a9699b2f28d57421da4",
+  "duration_seconds": 120.46547658299096,
+  "transaction": "transparent-schema-20261001T112410Z-15d5de8189d2-c99edc",
+  "recipe_sha256": "15d5de8189d241fe41523b274deb5fe5e8de827929bfb483b51fbaddf316d276",
+  "journal_status": "reconciled-v10",
+  "phases": [
+    {
+      "name": "verify-rollback",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "name": "reopen-v10",
+      "status": "passed",
+      "exit_code": 0
+    },
+    {
+      "name": "verify-service",
+      "status": "passed",
+      "exit_code": 0
+    }
+  ],
+  "native_reports": [
+    {
+      "path": "/srv/transparent-activity/ops/schema/transparent-schema-20261001T112410Z-15d5de8189d2-c99edc/routing/v10-recovery-1790864352192429180/native.json",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "path": "/srv/transparent-activity/ops/schema/transparent-schema-20261001T112410Z-15d5de8189d2-c99edc/routing/v10-public-recovery-1790864367242187615/native.json",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    },
+    {
+      "path": "/srv/transparent-activity/ops/schema/transparent-schema-20261001T112410Z-15d5de8189d2-c99edc/routing/v10-public-recovery-1790864373010253888/native.json",
+      "stop_reason": null,
+      "steps": [
+        {
+          "syncs": 1,
+          "completed": 1,
+          "exact": 1,
+          "failed": 0,
+          "http_503_rate": 0.0
+        }
+      ]
+    }
+  ],
+  "raw_sha256": {
+    "preflight.log": "959a070a47022f8535d6bde1ceee72a05dc8f9c288a251d4e27c7b17af46c06f",
+    "public-enhance.json": "08cf676191529ae4bd25c7747edb551ef2e5a2a4964146317dab59c9953f4c7d",
+    "plan.log": "c939090a292104f65078f1e9c1acf81e1907cef37020f5018cea2daf04deea36",
+    "result.json": "4e490e05cf07ca4798cb0efc6378f40df7b585044707777f0df1283827271c37",
+    "prepare-deploy.log": "3b954562bc1f5445d5f4e70398d5ebc7b3f624c12d38c50c4c55ea4a4534abf6",
+    "plan.stderr": "3af7c09f9a5fbd229d7180f70182546081fea5fdc922fad9a2d15ac5e5352117",
+    "prepare-deploy.stderr": "f640bc8ffbb110c48fd42dabb148cd70327c4cf25c2d9ee75fd2c8b14b242b81",
+    "deploy.log": "4da5ba6595d7d89743aefef1e5e02ec96b04ae2d772fdb26d06f431777578be4",
+    "preflight.stderr": "c92199132512c7cb691eaf18f3dfa4932f518cf0530de09d4742a2401192e092",
+    "passed-native-summaries.json": "ac9ef158bbe8e96bcc71bcacb5e3208441c584834676697db99c735f7b47b6bb",
+    "prepare-preflight.log": "c939090a292104f65078f1e9c1acf81e1907cef37020f5018cea2daf04deea36",
+    "prepare-preflight.stderr": "6506add26cc919fae96ad9b40ef4f62a0cff50ed86899b683e0f50f4acedda53",
+    "prepare-plan.stderr": "97f208e2c97e200c555cd498a9a489c00eea9e009e2a2014d4e3e2e254958485",
+    "public-transparent.json": "08cf676191529ae4bd25c7747edb551ef2e5a2a4964146317dab59c9953f4c7d",
+    "terminal-journal.json": "a5712417ae633138a3927e1e5594dfa71530d5dd7c16a45f91e2e8f4bd080b0d",
+    "deploy.stderr": "1e635fe0266d3515f77c4edf9a35fb99f7cfb769e374297ac4dd686ff7f2b8c8",
+    "prepare-plan.log": "c939090a292104f65078f1e9c1acf81e1907cef37020f5018cea2daf04deea36"
+  },
+  "original_rollback_and_deadline": "failed-not-relabelled",
+  "limitations": "Coherent recovery at newer v10 revision, not v11 installation or original rollback acceptance. Fresh protected rollback baseline and actual v11 cutover/load/freshness/capacity/lifecycle qualification still required. Public verifier uses Transparent for encrypted queries and Enhance for filters; separate encrypted query proofs through each origin still required."
+}

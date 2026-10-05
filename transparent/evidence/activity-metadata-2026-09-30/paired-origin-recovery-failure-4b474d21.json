@@ -1,0 +1,59 @@
+{
+  "status": "failed",
+  "gate": "paired-canonical-predecessor-recovery",
+  "source_sha": "4b474d216039caf77133c9daa126e3ee092efeeb",
+  "owner": "09113095242e4d2984856b1d9b037afa",
+  "duration_seconds": 99.13466125,
+  "transaction": "transparent-schema-20261001T154349Z-50fbcb9efe77-3fbe95",
+  "original_recipe_sha256": "50fbcb9efe7795038bb5d7d7a96c779fdcd6f7bc8f3ffbc0f2bd6b01545b94e6",
+  "phases": {
+    "restore_v10": {
+      "status": "passed",
+      "seconds": 22.009736637
+    },
+    "verify_rollback": {
+      "status": "passed",
+      "seconds": 19.164413434
+    },
+    "reopen_v10": {
+      "status": "failed",
+      "seconds": 47.869867193
+    }
+  },
+  "native_proofs": [
+    {
+      "query_origin": "private",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0
+    },
+    {
+      "query_origin": "Transparent",
+      "stop_reason": null,
+      "syncs": 1,
+      "completed": 1,
+      "exact": 1,
+      "failed": 0
+    },
+    {
+      "query_origin": "Enhance",
+      "stop_reason": "error rate 1.000 above 0",
+      "syncs": 6,
+      "completed": 0,
+      "exact": 0,
+      "failed": 6
+    }
+  ],
+  "failure": "Enhance transparent revision setup returned HTTP404; failed report retained despite native process exit0; both origins re-guarded",
+  "private_raw_sha256": {
+    "native-reports-4b-repair.private.json": "dc2c1d296ffc44f525693134f96fd46a072bfb17806ae98625edb2fe6352b753",
+    "paired-origin-4b-failed-proof.tar": "d116d26d1615df4408a8bf0314a53f95e84cf2cad5229e401ed9c8015fdf1e92"
+  },
+  "limitations": [
+    "No passing paired canonical proof or accepted v11 cutover",
+    "Earlier missed recovery deadlines remain failed",
+    "Raw reports, native logs and reopened SQLite stores retained privately"
+  ]
+}

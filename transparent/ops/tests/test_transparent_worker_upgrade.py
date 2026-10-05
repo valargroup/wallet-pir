@@ -9,6 +9,12 @@ SPEC = importlib.util.spec_from_file_location('deploy', Path(__file__).resolve()
 M = importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(M)
 
 class UpgradeTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        # Unit/activation tests substitute the independently tested SSH digest boundary.
+        checksum_patch = patch.object(M, 'verify_worker_artifacts', new=AsyncMock())
+        checksum_patch.start()
+        self.addCleanup(checksum_patch.stop)
+
     async def test_explicit_runtime_cache_is_preserved_and_partial_cache_rejected(self):
         for flags, valid in [
             ('--runtime-cache-dir=/custom --runtime-cache-max-bytes=1234', True),
@@ -175,3 +181,59 @@ class UpgradeTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(M, 'read_json', return_value={'ready':True,'mode':'warm'}), self.assertRaises(ValueError):
                 await M.install_worker(fleet, worker, Path('/unused'), '/rollback', stage_only=True)
             self.assertEqual(fleet.ssh.await_count, 1)
+
+
+class SchemaNamespaceTests(unittest.IsolatedAsyncioTestCase):
+    CONFIG = {'worker_schema':'transparent-shard-v11',
+              'worker_active_record':'/opt/transparent-publisher/v11/active.json',
+              'worker_runtime_cache_dir':'/srv/transparent-pir/v11/runtime-cache',
+              'worker_root':'/srv/transparent-pir/v11/publications'}
+
+    def test_old_control_record_and_cache_are_replaced_in_both_cli_forms(self):
+        for old in [[], ['--control-socket','/run/transparent-pir/control.sock',
+                         '--active-record','/opt/transparent-publisher/active.json',
+                         '--runtime-cache-dir','/srv/transparent-pir/runtime-cache'],
+                    ['--control-socket=/run/transparent-pir/control.sock',
+                     '--active-record=/opt/transparent-publisher/active.json',
+                     '--runtime-cache-dir=/srv/transparent-pir/runtime-cache']]:
+            result = M.worker_control_args(['worker', '--shard-dir','/srv/transparent-pir/v11/publications/candidate',
+                '--runtime-cache-max-bytes','1234', *old], self.CONFIG)
+            self.assertEqual(M.argument_values(result, '--active-record'), [self.CONFIG['worker_active_record']])
+            self.assertEqual(M.argument_values(result, '--runtime-cache-dir'), [self.CONFIG['worker_runtime_cache_dir']])
+            self.assertEqual(M.argument_values(result, '--runtime-cache-max-bytes'), ['1234'])
+            self.assertNotIn('/opt/transparent-publisher/active.json', result)
+
+    def test_missing_namespace_duplicate_and_partial_control_are_refused(self):
+        for key in ('worker_active_record','worker_runtime_cache_dir','worker_root'):
+            config = dict(self.CONFIG)
+            config.pop(key)
+            with self.assertRaises(ValueError):
+                M.worker_control_args(['worker'], config)
+        for flags in [['--active-record=/old'], ['--control-socket=/run/socket'],
+                      ['--active-record=/old','--active-record','/other','--control-socket=/run/socket'],
+                      ['--active-record','--control-socket=/run/socket']]:
+            with self.assertRaises(ValueError):
+                M.worker_control_args(['worker', *flags], self.CONFIG)
+
+    def test_v10_static_publication_is_refused_before_addition_of_v11_control(self):
+        for path in ('/srv/transparent-pir/publications/old',
+                     '/srv/transparent-pir/v11/publications/../../publications/old','relative'):
+            with self.assertRaises(ValueError):
+                M.worker_control_args(['worker','--shard-dir',path],self.CONFIG)
+
+    async def test_transfer_corruption_is_rejected_for_either_binary(self):
+        with tempfile.TemporaryDirectory() as directory:
+            artifacts = Path(directory)
+            for name in ('transparent-shard-server','shard-control'):
+                (artifacts/name).write_bytes(name.encode())
+            lines = [hashlib.sha256((artifacts/name).read_bytes()).hexdigest()+'  /stage/'+name
+                     for name in ('transparent-shard-server','shard-control')]
+            fleet = AsyncMock()
+            fleet.ssh.return_value = ('\n'.join(lines)+'\n').encode()
+            await M.verify_worker_artifacts(fleet,'host',artifacts,'/stage')
+            for index in (0,1):
+                corrupted = list(lines)
+                corrupted[index] = '0'*64+corrupted[index][64:]
+                fleet.ssh.return_value = ('\n'.join(corrupted)+'\n').encode()
+                with self.assertRaisesRegex(RuntimeError, 'checksum mismatch'):
+                    await M.verify_worker_artifacts(fleet,'host',artifacts,'/stage')
