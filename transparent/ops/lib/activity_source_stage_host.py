@@ -276,6 +276,9 @@ def stage(request, lock, incoming, root=STAGE_ROOT, *, fleet_proof=None):
         lock.verify()
         headroom(root)
         require(not target.exists(), 'source target appeared during extraction')
+        # Retain the independently hashed file set before either promotion rename.
+        receipt.update(files=files,compressed_bytes=size)
+        atomic_json(receipt_path,receipt)
         os.rename(extraction, target)
         fd = os.open(target.parent, os.O_RDONLY)
         try:
@@ -309,6 +312,7 @@ def reconcile_source(request,lock,proof,root=STAGE_ROOT):
     """Retain an exact failed receipt; never remove partial archive bytes."""
     source=request['source_sha'];path=root/'staging'/(source+'.json');target=root/'sources'/source
     lock.verify()
+    require(all(not p.is_symlink() for p in (root,*root.parents)), 'source recovery root contains a link')
     if not path.exists():
         require(not target.exists(),'source target has no owner receipt')
         return {'status':'reconciled','source_sha':source,'retained':[]}
@@ -320,10 +324,51 @@ def reconcile_source(request,lock,proof,root=STAGE_ROOT):
         verify_receipt(receipt,target,source,request['sha256'])
         return {'status':'reconciled','source_sha':source,'retained':[str(path)]}
     require(receipt.get('status') in ('receiving','failed'),'source receipt does not need reconciliation')
+    require(type(receipt.get('pid')) is int and receipt['pid']>0 and
+            type(receipt.get('process_start')) is int and receipt['process_start']>0 and
+            isinstance(receipt.get('boot_id'),str) and
+            re.fullmatch('[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}',receipt['boot_id']),
+            'source receiver kernel identity is incomplete')
     current=_BOOTSTRAP_FLEET.S.process(receipt['pid'])
-    require(current is None or current['state']=='Z' or receipt.get('process_start') is not None and
-            current['start_ticks']!=receipt['process_start'],'source receiver remains alive; nothing was signalled')
-    require(not target.exists(),'failed source target requires independent file-set recovery')
+    require(current is None or current['state']=='Z' or current['start_ticks']!=receipt['process_start'] or
+            receipt['boot_id']!=_BOOTSTRAP_FLEET.S.boot_id(),'source receiver remains alive; nothing was signalled')
+    lease=proof['lease_request_sha256']
+    require(isinstance(lease,str) and re.fullmatch('[0-9a-f]{64}',lease),'invalid source recovery lease')
+    abandoned=target.with_name(source+'.abandoned-'+lease)
+    archive=root/'staging'/(source+'.tar.gz')
+    saved_archive=archive.with_name(source+'.abandoned-'+lease+'.tar.gz')
+    intent=path.with_name(source+'.recovery-'+lease+'.json')
+    # A promoted directory is still inert source. Verify its exact committed file
+    # set before quarantining it; never adopt a failed promotion as staged.
+    for candidate in (target,abandoned):
+        require(not candidate.is_symlink(),'source recovery namespace contains a link')
+        if candidate.exists():
+            require(candidate.is_dir() and candidate.resolve()==candidate,'invalid source recovery directory')
+            require(isinstance(receipt.get('files'),dict),'promoted source lacks pre-promotion file evidence')
+            verify_receipt(dict(receipt,status='staged'),candidate,source,request['sha256'])
+    require(not (target.exists() and abandoned.exists()),'both source recovery directories exist')
+    for candidate in (archive,saved_archive):
+        require(not candidate.is_symlink(),'source recovery archive contains a link')
+        if candidate.exists():
+            info=candidate.stat()
+            require(candidate.is_file() and info.st_nlink==1 and info.st_size<=MAX_COMPRESSED and
+                    sha256(candidate)==request['sha256'],'source recovery archive differs')
+    require(not (archive.exists() and saved_archive.exists()),'both source recovery archives exist')
+    binding={'source_sha':source,'archive_sha256':request['sha256'],'lease_request_sha256':lease,
+             'receipt_sha256':sha256(path),'directory_present':target.exists() or abandoned.exists(),
+             'archive_present':archive.exists() or saved_archive.exists()}
+    if intent.exists():
+        require(not intent.is_symlink() and intent.stat().st_size<=1<<20 and
+                json.loads(intent.read_text())==binding,'source recovery intent differs')
+    else:
+        lock.verify();atomic_json(intent,binding)
+    for original,saved in ((target,abandoned),(archive,saved_archive)):
+        if original.exists():
+            require(original.parent.stat().st_dev==original.stat().st_dev,'source recovery filesystem differs')
+            lock.verify();os.rename(original,saved)
+            fd=os.open(original.parent,os.O_RDONLY)
+            try:os.fsync(fd)
+            finally:os.close(fd)
     destination=path.with_name(source+'.abandoned-'+proof['lease_request_sha256']+'.json')
     require(not destination.exists(),'source failure already retained')
     lock.verify();os.rename(path,destination)
@@ -331,7 +376,9 @@ def reconcile_source(request,lock,proof,root=STAGE_ROOT):
     try:os.fsync(fd)
     finally:os.close(fd)
     return {'status':'reconciled','source_sha':source,'retained':[str(destination)],
-            'partial':receipt.get('temporary')}
+            'partial':receipt.get('temporary'),'recovery_intent':str(intent),
+            'quarantined_source':str(abandoned) if abandoned.exists() else None,
+            'quarantined_archive':str(saved_archive) if saved_archive.exists() else None}
 
 
 def main():

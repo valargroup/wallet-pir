@@ -86,7 +86,8 @@ observation and reconciliation. Failed owners and partial bytes remain retained.
 
 These are source assurance interfaces, not actual production passes. Root keeps
 exact source hashes, Linux fixture logs and all failed checks in the private
-qualification evidence directory. Prototype/load baseline disposition and the
-failed already-promoted source recovery case remain separate prerequisites.
+qualification evidence directory. Failed promotions with pre-promotion manifests now have verified, resumable
+quarantine recovery; legacy failures lacking that evidence refuse. Prototype/load
+baseline disposition remains a separate prerequisite.
 No candidate hardware, snapshot/oracle, cutover, freshness, capacity or lifecycle
 acceptance follows from these fixture checks.

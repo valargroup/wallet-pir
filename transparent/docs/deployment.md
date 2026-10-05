@@ -1077,10 +1077,12 @@ no owner is signalled. Reconciliation requires its exact PID/start/boot to have
 exited and a new locked complete-fleet survey. It retains the original failed
 owner and moves only the matching failed source receipt to its immutable
 abandoned name, preserving partial archive bytes. A new attempt is required.
-A failed already-promoted source directory deliberately refuses pending an
-independent file-set recovery; this unresolved case must be closed or explicitly
-avoided by a reviewed recovery recipe before production staging. Completed
-source receipts still require full file-set verification.
+Before promotion, the source receiver persists the independently hashed file
+manifest. Recovery verifies that exact file set and any retained archive hash
+before moving an inert failed promotion to an abandoned namespace. A durable
+recovery intent permits resuming after either rename; failed receipts and partial
+archives remain retained. A legacy failed promotion without a pre-promotion
+manifest refuses. Completed source receipts still require full file-set verification.
 
 Sources are retained under `/srv/transparent-activity/ops/sources/<SHA>` with
 private receipts under `/srv/transparent-activity/ops/staging/`. The helper
