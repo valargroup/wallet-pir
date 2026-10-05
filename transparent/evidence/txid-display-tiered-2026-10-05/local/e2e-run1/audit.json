@@ -1,0 +1,148 @@
+{
+  "drops": [
+    {
+      "digest": "ed45a2e54f92233ff72aca022dbd765f072f49e5b56558c7997ef8d69bf47f9f",
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/3636a0293a4e21396a708030c51b1c32e27232a33a21a4cc63db8866b3dca8fb.json",
+      "shard_id": 0
+    },
+    {
+      "digest": "19edd467749f823b50d859f2fa209f8d16c662de2b00187d35a826cafe5c6d5e",
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/acfeaea5ce8daad9774353fc4d5a419c9bcee9a57149089ad9c3135532fbed5c.json",
+      "shard_id": 1
+    }
+  ],
+  "files": [
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/8eab4f23ca5318188bd0c3cd5b6b5a753c50fefa9c1ed1e94b11bde70db45608.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/35be0db0b642acce15d6276d4f668cfdde13508547d8dbb2ffd8abc1569859d3.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b167344c8b0d2b083ab34c3112534fd8023bca921de10dc41dc4d00f93542ec4.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/f8e332393e92f195cad97c1f47b77693758afb22aeeadb0c5d5690838deb78b7.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/4f73c9219ad4f9bc985ec457a7190496a5b905e64b6e4a0853327b7f4d0b3c62.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/d17511e6fb51ff66c9a8a8128d21ca41bff3c573b20c4eeb74e57b8478bd3eda.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/1e64888c3e6548db5a3694efe664b0d6d86991ad5ca818ed8e63e3558f71bcf0.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/f16e81575f358f6c7f42213eb11871784d755597d4bced0a9f68f5668c87b939.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/022d95a064d9fc5fa91f99ba6d134532f7e046e7ead844b454701d2a2977700e.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/1c3bca06a4d1d12cf48667494ee4cff284ae825c9b10d628ef467b869c6e8ce9.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/9626ceb59f84c6c753a495e99ed885d068d1c4d936b02722c438d17b6caf1c9d.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/19289795a82991b4952c96de0434dc74307c79dc0817d7ffdbca39d9465f3f67.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/dffca5ab453718b9b84ff863c865f094c7851a0c27162d393a9b01191a40545f.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/305201721d81004277f37984a84c3bcb3027a49e179b4f8a068d4281ca57b5e6.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b10a31d0e58a1771b1da991c2908f29d241f6a9bcc41d7803bd467d902d4aca6.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b17105352cab16f11ae90c29a5047b947bb27b6d8d864b3a1f4cd73ff5011f9e.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/128e6ea90cd1fbbdc93c0820832a209907560097e272e1541bed3117da85d128.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/013062d60f01c544f30a6c2cea6202f468d91d2da0fca7bb89c3e0d415cf3a0d.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/f84614f6f5af91b06fbf5ac22f906bcf90e700179ef94e78bcd934b35f371afc.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/67905f52a849663f911cf2de570a58f0bed4f8c3259413e9bbbd5f009153d441.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/2c3ebf2419c09dbc70e7602d33ffebdee94bdaa24c824c0c68a7d41c273f0113.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/5c02c42fc0b6866fb6eef481f6c5b53262c78f6ea589c99c4d8a64df335758a9.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/e4fbd48661d7af98a46057fd30da903e843cea82487b452a6596f76943d1b430.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/e59deef065c4feb60028aaa47265b85c217239d3c533ea5918774e277ff2fe37.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/4b75eaf8e023f9da8cfa3b8e2673d03d4e73b6d022cb93671f38a52e655db840.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/375dcf2cc1c7c89737f857b9bd3636c28fc012d67dc0c67dc66f815471b11df6.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/1b2895c73af697a087e632fdeb067e5b3132176ed1a38c7c8906467a02785847.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/175113cbf0e24b6c6c9140e44f07081258cf9d8afa832c15c107e3f103c28aae.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/80c471306c6d50af673592f28c77438ee40b4167971063e8ebf6f8eabd041097.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/c2b65289661a8ac65aa503ba3b326e5b0f5ccb79a36e9914f464929f186ccc36.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/c4861ab6a304499750591953adf03903e3c8951b8e5bf51cb1325256953e13e2.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/af3589d178c7a8ea262a5ac3178f40b08a43b4147a20c5c3fde89f25a8e4abf3.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/1a4ae9a24d9ec494e51b9030c9c5e21c55254ed859b08e0363463f37cf0c8bb0.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/23674290854dd1a5f46aba2ccc84140d18691237650dbe26c84e910e00eaf5c2.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b070bcb80604e1082121b0d39c83f9a62dde37af8177db33afcad567a254bb35.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/3636a0293a4e21396a708030c51b1c32e27232a33a21a4cc63db8866b3dca8fb.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b7eb2751296f9e6f2d83b7a738ed1b8c63b1381ea51e160c6c2bc9b66e1761f1.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/92594e90a009362b4cc34e308601c52b2b9fca32e5f2d28a6783e9f068fdd6dc.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/7e28d21182e2758115933b9cfbb701757d26f2d4ad61155b65314a07fe494f25.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/12f3d767b9da168feaf253f737a18de0283e083dd16f53124576f44273614dfc.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/2c945d5a7c9238109c407a430c3d308fd336ea21dd9f4ee9ae484e54f094f835.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/f0b5cacb54d7f7ae9fcba9d9caaa9d0a4df2fcfe3467c1a8f51c3a7a79e1e40f.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/26ca518d238365771bb4c2b781496d32ae2d040fca2fb66a17923d3f75a04c47.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/6c280b7df98735b0e790c18a483d1d399020e6a541faa7d57f80dd458feae157.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/912ff015fd3baafc9825667be4b9f2f88dab27b3aec1a6c0b5e40d810c7d6f00.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/b333e31ab83ca8fce23a4a2780fbd600df228134b40686452e65605d94619fff.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/1db312c5053f332a1d963c5bd08de54ec22a7b9ff83fa37a5ce300893922b8a9.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/0eeb2c536fef1c48e0844eb21ade3f0a37fe5a256d5b825d0525aa24c39a9ac4.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/fa5e4dceb7aac7d7c8a46336db1acbde019c3fdb8d6c650233d434f3b183f707.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/75c0bc3e61e94689dc7420bffb796d5187ab070a97d62a5be00838536dec577a.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/51bb40831c43b87b82d7bfa726f1c14e67eeb7f0636d5888aa160b638efcff8d.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/41db45e84dbd1dc39a1d4bb2c99b8a630ace97b468196e10996c9c850435c307.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/c412c46be406b85427ed1c5619d761bd5bb3ee1e02988037f6ddccb4c2b4a8a5.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/e01c3d9ad94ff1871e1e479032be665f19aeb6238573c416fe5dee95fc2e7d1e.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/52db0b36272bd748aba38e18ee1c51b8ecc5fd14c4c25a3b716ad6ec58b9a26f.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/9c75a063f94c1ae6f9eea802da6a89db499a65a75c296a4f2be4525cb928e956.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/9b8f501c10730c6aab6d43abf0b35c7a7063b1ba5dc46dbffe46905b408dd11c.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/629775d5e6a6c2b79cbd76a38f0b32514156ce0f033b9f0999b6083e5535f30e.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/a3a4d5bff58c7604df0ca810473689ab681f02f86e87501b9b05cdb33069b93b.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/11e571d5ecc7a186c8cb8f2f42a15de443890b01dffcb8f59586eb752219fd01.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/be96354d7dca573485f3af4627dd49f56ea4a9e6a8c31154e4f32a73e8cbf5ec.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/f1236f3b7177f40280c305385a4f2f27b1c6e9f7d99fb12bfbfe13142e605f69.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/594780ed05dfc85aeb16b1550db126da7cb83c8ef7c2b4e6e6a3920d1f437ce6.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/5a0d5cd47ec77466fb00f4e3f8f6b6d6d8a0d613987c462f19e024a450fa35d1.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/6e3e5b19cf53039b4d0eadb9912dc92f197e7a46f1e26a479a4794712a0e205f.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/68f8afb33bbf9f473e5494bc157561a442e7230c7a768ad05b6689acf6d851e6.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/af47114a04029b9b6229621cf1069104c12b3e0f2eefc35fc40b75280b86a573.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/acfeaea5ce8daad9774353fc4d5a419c9bcee9a57149089ad9c3135532fbed5c.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/03806c920fe65785e25de4611c0061a4d7843f57bee6ad82cb3c99f4f23618c0.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/c153568ccf08675ed272751809d64bf04ba040298ed4b50f50bf782bbca4f339.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/6da4a7c0bb84a36c7c9dcd6861cb56641ed74e408f4965826ef8eb9da5b07bf1.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/7c32e6e144a77fc678e5c83db09473735cfc207c6a9181b22209947dc1d480ec.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/e488f6905665b9d0daf6ffd47f27eba570123038131bb71fb6c1a3452055a86b.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/7a1d8215857f2da49d85a92f1c0ab1b0866eb1d60794766a173ed25ca0548108.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/4f228307b1759cce96f45b843e029741368426acc431f266466a58d4a453c565.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/3acc467bc58dd9873a31252b53725a180f02decb9b2d95747adcd9f129d4bd23.json",
+    "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/392de2598e7349c73bc11de24032dfe63dd9bf313e83ab97ec54ecbe3a09ebd2.json"
+  ],
+  "maps": 77,
+  "ok": true,
+  "sealed": {
+    "0": {
+      "digest": "ed45a2e54f92233ff72aca022dbd765f072f49e5b56558c7997ef8d69bf47f9f",
+      "end_height": 3505,
+      "start_height": 1001
+    },
+    "1": {
+      "digest": "19edd467749f823b50d859f2fa209f8d16c662de2b00187d35a826cafe5c6d5e",
+      "end_height": 6014,
+      "start_height": 3506
+    },
+    "2": {
+      "digest": "625969e239e5412ff0358b9da5d38f9692b31c762fa06584ce34e7f2e99c031b",
+      "end_height": 8516,
+      "start_height": 6015
+    },
+    "3": {
+      "digest": "079c9da537f8245a9f48e2f87891ccc0c70d1d43ddf46ccec3749bb096c00e6a",
+      "end_height": 11005,
+      "start_height": 8517
+    }
+  },
+  "seals": [
+    {
+      "digest": "ed45a2e54f92233ff72aca022dbd765f072f49e5b56558c7997ef8d69bf47f9f",
+      "end_height": 3505,
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/8eab4f23ca5318188bd0c3cd5b6b5a753c50fefa9c1ed1e94b11bde70db45608.json",
+      "shard_id": 0,
+      "start_height": 1001
+    },
+    {
+      "digest": "19edd467749f823b50d859f2fa209f8d16c662de2b00187d35a826cafe5c6d5e",
+      "end_height": 6014,
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/dffca5ab453718b9b84ff863c865f094c7851a0c27162d393a9b01191a40545f.json",
+      "shard_id": 1,
+      "start_height": 3506
+    },
+    {
+      "digest": "625969e239e5412ff0358b9da5d38f9692b31c762fa06584ce34e7f2e99c031b",
+      "end_height": 8516,
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/3636a0293a4e21396a708030c51b1c32e27232a33a21a4cc63db8866b3dca8fb.json",
+      "shard_id": 2,
+      "start_height": 6015
+    },
+    {
+      "digest": "079c9da537f8245a9f48e2f87891ccc0c70d1d43ddf46ccec3749bb096c00e6a",
+      "end_height": 11005,
+      "map": "transparent/evidence/txid-display-tiered-2026-10-05/local/mapwatch/maps/acfeaea5ce8daad9774353fc4d5a419c9bcee9a57149089ad9c3135532fbed5c.json",
+      "shard_id": 3,
+      "start_height": 8517
+    }
+  ],
+  "violations": []
+}

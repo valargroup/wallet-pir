@@ -1,0 +1,9 @@
+2026-10-05T20:38:28Z synthetic journal 1000+12000 mean 8
+2026-10-05T20:40:21Z bootstrap through 6200
+2026-10-05T20:40:24Z controller replay 25 blocks per 2000 ms
+2026-10-05T20:49:32Z replay finished
+2026-10-05T20:49:47Z verify
+2026-10-05T20:49:52Z verify ok
+2026-10-05T20:49:52Z census and audit
+2026-10-05T20:49:53Z bandwidth
+2026-10-05T20:50:59Z done

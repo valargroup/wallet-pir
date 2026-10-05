@@ -1,0 +1,14 @@
+2026-10-05T20:51:43Z size 10000: {"digest":"be9885b9f60b6263ac32aaa1ba29095d8b3f29e9697dc077554fab8e941ae8a2","dir_segments":[1],"end":2250,"id":0,"page_segments":1,"records":9970,"revision":0,"start":1001,"used_bytes":1212095}
+2026-10-05T20:52:12Z size 10000: 3 cycles, memory peak 421724160
+2026-10-05T20:52:33Z size 20000: {"digest":"05f79e6583f43f7f57f5cf8bde2ea043b051725e47aabd53482f811641865bcb","dir_segments":[1],"end":3500,"id":0,"page_segments":1,"records":20023,"revision":0,"start":1001,"used_bytes":2424427}
+2026-10-05T20:52:55Z size 20000: 2 cycles, memory peak 422309888
+2026-10-05T20:53:29Z size 30000: {"digest":"859cb6df8381e6cb177b63d27868091e0b4c54bab6cb5c5808fc94183e8a504d","dir_segments":[1],"end":4750,"id":0,"page_segments":1,"records":30096,"revision":0,"start":1001,"used_bytes":3632890}
+2026-10-05T20:53:53Z size 30000: 2 cycles, memory peak 422993920
+2026-10-05T20:54:36Z size 40000: {"digest":"e61819a6f48f91b16131185ea896e98e45568a3c7fa94c74328443e94a711d4a","dir_segments":[1],"end":6000,"id":0,"page_segments":1,"records":40016,"revision":0,"start":1001,"used_bytes":4825102}
+2026-10-05T20:54:58Z size 40000: 2 cycles, memory peak 423653376
+2026-10-05T20:55:46Z size 50000: {"digest":"cfcfadd87b261ddc979cce488df55e6409595fa16f1244b765a5a111f4e4c7cb","dir_segments":[1],"end":7250,"id":0,"page_segments":1,"records":50030,"revision":0,"start":1001,"used_bytes":6023305}
+2026-10-05T20:56:08Z size 50000: 2 cycles, memory peak 424218624
+2026-10-05T20:57:03Z size 60000: {"digest":"54520b57843dd0d085a280036fb7d938afcec3ad4e978952bc0ce361e3a6c76c","dir_segments":[1],"end":8500,"id":0,"page_segments":1,"records":59989,"revision":0,"start":1001,"used_bytes":7214224}
+2026-10-05T20:57:26Z size 60000: 2 cycles, memory peak 424964096
+2026-10-05T20:58:28Z size 70000: {"digest":"4e768c64d725f8f7eb7740d4715a87642e75658ca44e10147d240a3321df35b7","dir_segments":[2],"end":9750,"id":0,"page_segments":1,"records":69850,"revision":0,"start":1001,"used_bytes":8403798}
+2026-10-05T20:59:01Z size 70000: 2 cycles, memory peak 510550016

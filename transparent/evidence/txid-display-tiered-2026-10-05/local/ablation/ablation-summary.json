@@ -1,0 +1,92 @@
+{
+ "n1-t20k": {
+  "total_txids": 240335,
+  "min_shard_bucket": {
+   "bucket": 0,
+   "shard_id": 1,
+   "txids": 20000
+  },
+  "recent_min_bucket": 20304,
+  "classes_below_floor": 138,
+  "smallest_pages1_class": 1936,
+  "bandwidth_equal": true,
+  "bandwidth_max": {
+   "cold/inline": 125119,
+   "cold/pages-1": 191929,
+   "cold/pages-2": 238230,
+   "cold/pages-3": 284530,
+   "cold/pages-4": 330831,
+   "warm/inline": 92616,
+   "warm/pages-1": 138915,
+   "warm/pages-2": 185220,
+   "warm/pages-3": 231517,
+   "warm/pages-4": 277818
+  },
+  "sealed_shards": 11,
+  "sealed_table_segments": 22,
+  "sealed_records": 220031,
+  "table_segments_per_shard": 2.0,
+  "runtime_bytes_per_txid": 7549,
+  "plaintext_bytes_per_txid": 839
+ },
+ "n1-t40k": {
+  "total_txids": 240335,
+  "min_shard_bucket": {
+   "bucket": 0,
+   "shard_id": 3,
+   "txids": 40002
+  },
+  "recent_min_bucket": 40306,
+  "classes_below_floor": 84,
+  "smallest_pages1_class": 3919,
+  "bandwidth_equal": true,
+  "bandwidth_max": {
+   "cold/inline": 121509,
+   "cold/pages-1": 188319,
+   "cold/pages-2": 234620,
+   "cold/pages-3": 280921,
+   "cold/pages-4": 327217,
+   "warm/inline": 92614,
+   "warm/pages-1": 138915,
+   "warm/pages-2": 185216,
+   "warm/pages-3": 231517,
+   "warm/pages-4": 277818
+  },
+  "sealed_shards": 5,
+  "sealed_table_segments": 10,
+  "sealed_records": 200029,
+  "table_segments_per_shard": 2.0,
+  "runtime_bytes_per_txid": 3774,
+  "plaintext_bytes_per_txid": 419
+ },
+ "n4-t10k": {
+  "total_txids": 240335,
+  "min_shard_bucket": {
+   "bucket": 2,
+   "shard_id": 5,
+   "txids": 9398
+  },
+  "recent_min_bucket": 9398,
+  "classes_below_floor": 219,
+  "smallest_pages1_class": 912,
+  "bandwidth_equal": true,
+  "bandwidth_max": {
+   "cold/inline": 122478,
+   "cold/pages-1": 189288,
+   "cold/pages-2": 235589,
+   "cold/pages-3": 281890,
+   "cold/pages-4": 328180,
+   "warm/inline": 92614,
+   "warm/pages-1": 138915,
+   "warm/pages-2": 185216,
+   "warm/pages-3": 231517,
+   "warm/pages-4": 277818
+  },
+  "sealed_shards": 5,
+  "sealed_table_segments": 25,
+  "sealed_records": 202132,
+  "table_segments_per_shard": 5.0,
+  "runtime_bytes_per_txid": 9338,
+  "plaintext_bytes_per_txid": 1038
+ }
+}

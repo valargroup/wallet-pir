@@ -66,21 +66,34 @@ for _ in $(seq 120); do curl -fsS -o /dev/null http://127.0.0.1:18090/v1/txid/sh
 python3 "$REPO/transparent/ops/scripts/txid-display-observe.py" mapwatch \
   --url http://127.0.0.1:18090/v1/txid/shards --interval-ms 1000 --out-dir "$OUT/mapwatch" &
 pids+=($!)
-candidate=$(ls -d "$WORK"/root/candidate-* | sort | tail -1)
-"$BIN/txid-inventory" fixture --publication "$candidate" --heights "$WORK/root/tooling/heights.bin" \
-  --natural 400 --absent 50 --out "$WORK/fixture.json"
 echo allow >"$WORK/permit"
 ( while kill -0 "$controller" 2>/dev/null; do echo allow >"$WORK/permit"; sleep 10; done; echo deny >"$WORK/permit" ) &
 pids+=($!)
-"$EXAMPLES/txid-rate" --url http://127.0.0.1:18090 --fixture "$WORK/fixture.json" --rate "$RATE" \
-  --permit "$WORK/permit" --mix recent=0.8,archive=0.2 --cold-every 25 >"$OUT/rate.jsonl" 2>"$OUT/rate.log" &
-rate=$!
-pids+=($rate)
+# A fixture samples what one candidate serves. Seals move its recent samples
+# into archives and window drops retire its archive samples, so the load runs
+# in segments, each on a fixture from the newest candidate.
+REFIXTURE_S=${REFIXTURE_S:-60}
+(
+  segment=0
+  while kill -0 "$controller" 2>/dev/null; do
+    candidate=$(ls -d "$WORK"/root/candidate-* | sort | tail -1)
+    "$BIN/txid-inventory" fixture --publication "$candidate" --heights "$WORK/root/tooling/heights.bin" \
+      --natural 400 --absent 50 --seed "$segment" --out "$WORK/fixture-$segment.json" >/dev/null
+    "$EXAMPLES/txid-rate" --url http://127.0.0.1:18090 --fixture "$WORK/fixture-$segment.json" --rate "$RATE" \
+      --permit "$WORK/permit" --mix recent=0.8,archive=0.2 --cold-every 25 >>"$OUT/rate.jsonl" 2>>"$OUT/rate.log" &
+    rate=$!
+    for _ in $(seq "$REFIXTURE_S"); do kill -0 "$controller" 2>/dev/null || break; sleep 1; done
+    kill -0 "$controller" 2>/dev/null || sleep 15
+    kill "$rate" 2>/dev/null || true; wait "$rate" 2>/dev/null || true
+    segment=$((segment + 1))
+  done
+) &
+pids+=($!)
+load=$!
 
 wait "$controller" || { log "controller exited $?"; }
 log "replay finished"
-sleep 15
-kill "$rate" 2>/dev/null || true
+wait "$load" 2>/dev/null || true
 
 cp "$WORK/root/timeline.jsonl" "$OUT/timeline.jsonl"
 log "verify"

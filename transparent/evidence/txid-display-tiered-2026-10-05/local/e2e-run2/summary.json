@@ -1,0 +1,598 @@
+{
+ "audit": {
+  "maps": 110,
+  "violations": 0
+ },
+ "bandwidth": {
+  "all_measured_equal_computed": true,
+  "max_measured_total_by_state_class": {
+   "cold/inline": 119736,
+   "cold/pages-1": 186544,
+   "cold/pages-10": 603244,
+   "cold/pages-11": 649544,
+   "cold/pages-12": 695844,
+   "cold/pages-13": 742125,
+   "cold/pages-14": 788444,
+   "cold/pages-15": 834744,
+   "cold/pages-2": 232844,
+   "cold/pages-3": 279088,
+   "cold/pages-4": 325416,
+   "cold/pages-5": 371744,
+   "cold/pages-6": 418044,
+   "cold/pages-7": 464319,
+   "cold/pages-8": 510620,
+   "cold/pages-9": 556944,
+   "warm/inline": 92614,
+   "warm/pages-1": 138915,
+   "warm/pages-10": 555624,
+   "warm/pages-11": 601925,
+   "warm/pages-12": 648226,
+   "warm/pages-13": 694527,
+   "warm/pages-14": 740828,
+   "warm/pages-15": 787129,
+   "warm/pages-2": 185216,
+   "warm/pages-3": 231517,
+   "warm/pages-4": 277818,
+   "warm/pages-5": 324119,
+   "warm/pages-6": 370420,
+   "warm/pages-7": 416721,
+   "warm/pages-8": 463022,
+   "warm/pages-9": 509323
+  },
+  "plain_http": true,
+  "summary": {
+   "archive/inline/cold": {
+    "max_measured": 119703,
+    "samples": 3,
+    "sum_measured": 359055
+   },
+   "archive/inline/warm": {
+    "max_measured": 92614,
+    "samples": 3,
+    "sum_measured": 277842
+   },
+   "archive/pages-1/cold": {
+    "max_measured": 186513,
+    "samples": 3,
+    "sum_measured": 559512
+   },
+   "archive/pages-1/warm": {
+    "max_measured": 138915,
+    "samples": 3,
+    "sum_measured": 416745
+   },
+   "archive/pages-10/cold": {
+    "max_measured": 603222,
+    "samples": 3,
+    "sum_measured": 1809666
+   },
+   "archive/pages-10/warm": {
+    "max_measured": 555624,
+    "samples": 3,
+    "sum_measured": 1666872
+   },
+   "archive/pages-11/cold": {
+    "max_measured": 649523,
+    "samples": 3,
+    "sum_measured": 1948542
+   },
+   "archive/pages-11/warm": {
+    "max_measured": 601925,
+    "samples": 3,
+    "sum_measured": 1805775
+   },
+   "archive/pages-12/cold": {
+    "max_measured": 695824,
+    "samples": 1,
+    "sum_measured": 695824
+   },
+   "archive/pages-12/warm": {
+    "max_measured": 648226,
+    "samples": 1,
+    "sum_measured": 648226
+   },
+   "archive/pages-13/cold": {
+    "max_measured": 742125,
+    "samples": 3,
+    "sum_measured": 2226321
+   },
+   "archive/pages-13/warm": {
+    "max_measured": 694527,
+    "samples": 3,
+    "sum_measured": 2083581
+   },
+   "archive/pages-14/cold": {
+    "max_measured": 788426,
+    "samples": 3,
+    "sum_measured": 2365251
+   },
+   "archive/pages-14/warm": {
+    "max_measured": 740828,
+    "samples": 3,
+    "sum_measured": 2222484
+   },
+   "archive/pages-15/cold": {
+    "max_measured": 834700,
+    "samples": 3,
+    "sum_measured": 2504100
+   },
+   "archive/pages-15/warm": {
+    "max_measured": 787129,
+    "samples": 3,
+    "sum_measured": 2361387
+   },
+   "archive/pages-2/cold": {
+    "max_measured": 232814,
+    "samples": 2,
+    "sum_measured": 465601
+   },
+   "archive/pages-2/warm": {
+    "max_measured": 185216,
+    "samples": 2,
+    "sum_measured": 370432
+   },
+   "archive/pages-3/cold": {
+    "max_measured": 279088,
+    "samples": 3,
+    "sum_measured": 837264
+   },
+   "archive/pages-3/warm": {
+    "max_measured": 231517,
+    "samples": 3,
+    "sum_measured": 694551
+   },
+   "archive/pages-4/cold": {
+    "max_measured": 325416,
+    "samples": 1,
+    "sum_measured": 325416
+   },
+   "archive/pages-4/warm": {
+    "max_measured": 277818,
+    "samples": 1,
+    "sum_measured": 277818
+   },
+   "archive/pages-5/cold": {
+    "max_measured": 371717,
+    "samples": 3,
+    "sum_measured": 1115124
+   },
+   "archive/pages-5/warm": {
+    "max_measured": 324119,
+    "samples": 3,
+    "sum_measured": 972357
+   },
+   "archive/pages-6/cold": {
+    "max_measured": 418018,
+    "samples": 3,
+    "sum_measured": 1254027
+   },
+   "archive/pages-6/warm": {
+    "max_measured": 370420,
+    "samples": 3,
+    "sum_measured": 1111260
+   },
+   "archive/pages-7/cold": {
+    "max_measured": 464319,
+    "samples": 2,
+    "sum_measured": 928638
+   },
+   "archive/pages-7/warm": {
+    "max_measured": 416721,
+    "samples": 2,
+    "sum_measured": 833442
+   },
+   "archive/pages-8/cold": {
+    "max_measured": 510620,
+    "samples": 2,
+    "sum_measured": 1021213
+   },
+   "archive/pages-8/warm": {
+    "max_measured": 463022,
+    "samples": 2,
+    "sum_measured": 926044
+   },
+   "archive/pages-9/cold": {
+    "max_measured": 556921,
+    "samples": 3,
+    "sum_measured": 1670736
+   },
+   "archive/pages-9/warm": {
+    "max_measured": 509323,
+    "samples": 3,
+    "sum_measured": 1527969
+   },
+   "recent/inline/cold": {
+    "max_measured": 119736,
+    "samples": 3,
+    "sum_measured": 359208
+   },
+   "recent/inline/warm": {
+    "max_measured": 92612,
+    "samples": 3,
+    "sum_measured": 277836
+   },
+   "recent/pages-1/cold": {
+    "max_measured": 186544,
+    "samples": 3,
+    "sum_measured": 559632
+   },
+   "recent/pages-1/warm": {
+    "max_measured": 138912,
+    "samples": 3,
+    "sum_measured": 416736
+   },
+   "recent/pages-10/cold": {
+    "max_measured": 603244,
+    "samples": 2,
+    "sum_measured": 1206488
+   },
+   "recent/pages-10/warm": {
+    "max_measured": 555612,
+    "samples": 2,
+    "sum_measured": 1111224
+   },
+   "recent/pages-11/cold": {
+    "max_measured": 649544,
+    "samples": 1,
+    "sum_measured": 649544
+   },
+   "recent/pages-11/warm": {
+    "max_measured": 601912,
+    "samples": 1,
+    "sum_measured": 601912
+   },
+   "recent/pages-12/cold": {
+    "max_measured": 695844,
+    "samples": 3,
+    "sum_measured": 2087532
+   },
+   "recent/pages-12/warm": {
+    "max_measured": 648212,
+    "samples": 3,
+    "sum_measured": 1944636
+   },
+   "recent/pages-14/cold": {
+    "max_measured": 788444,
+    "samples": 3,
+    "sum_measured": 2365332
+   },
+   "recent/pages-14/warm": {
+    "max_measured": 740812,
+    "samples": 3,
+    "sum_measured": 2222436
+   },
+   "recent/pages-15/cold": {
+    "max_measured": 834744,
+    "samples": 1,
+    "sum_measured": 834744
+   },
+   "recent/pages-15/warm": {
+    "max_measured": 787112,
+    "samples": 1,
+    "sum_measured": 787112
+   },
+   "recent/pages-2/cold": {
+    "max_measured": 232844,
+    "samples": 1,
+    "sum_measured": 232844
+   },
+   "recent/pages-2/warm": {
+    "max_measured": 185212,
+    "samples": 1,
+    "sum_measured": 185212
+   },
+   "recent/pages-5/cold": {
+    "max_measured": 371744,
+    "samples": 3,
+    "sum_measured": 1115232
+   },
+   "recent/pages-5/warm": {
+    "max_measured": 324112,
+    "samples": 3,
+    "sum_measured": 972336
+   },
+   "recent/pages-6/cold": {
+    "max_measured": 418044,
+    "samples": 1,
+    "sum_measured": 418044
+   },
+   "recent/pages-6/warm": {
+    "max_measured": 370412,
+    "samples": 1,
+    "sum_measured": 370412
+   },
+   "recent/pages-9/cold": {
+    "max_measured": 556944,
+    "samples": 1,
+    "sum_measured": 556944
+   },
+   "recent/pages-9/warm": {
+    "max_measured": 509312,
+    "samples": 1,
+    "sum_measured": 509312
+   }
+  }
+ },
+ "census": {
+  "classes_below_floor": 36,
+  "inline_if": [
+   {
+    "cutoff": 128,
+    "inline_records": 50390,
+    "share": 0.8996125899344795
+   },
+   {
+    "cutoff": 192,
+    "inline_records": 51185,
+    "share": 0.9138057236712906
+   },
+   {
+    "cutoff": 256,
+    "inline_records": 51986,
+    "share": 0.9281059753985682
+   },
+   {
+    "cutoff": 384,
+    "inline_records": 53528,
+    "share": 0.9556352989484584
+   },
+   {
+    "cutoff": 512,
+    "inline_records": 55166,
+    "share": 0.9848785103458125
+   },
+   {
+    "cutoff": 1024,
+    "inline_records": 55433,
+    "share": 0.9896452609215718
+   }
+  ],
+  "min_class": {
+   "bucket": 0,
+   "pages": 2,
+   "shard_id": 2,
+   "txids": 1
+  },
+  "min_shard_bucket": {
+   "bucket": 0,
+   "shard_id": 4,
+   "txids": 16003
+  },
+  "recent_min_bucket": 16003,
+  "smallest_class": {
+   "bucket": 0,
+   "pages": 2,
+   "shard_id": 2,
+   "txids": 1
+  },
+  "total_txids": 56013,
+  "txids_in_small_classes": 5623
+ },
+ "load": {
+  "errors": {},
+  "events": {
+   "lookup": 3441,
+   "map": 109,
+   "missed_slot": 1961,
+   "paused": 3,
+   "query": 7230,
+   "ready": 1
+  },
+  "exact": 3441,
+  "lookup_seconds": {
+   "max": 0.381819442,
+   "n": 3441,
+   "p50": 0.058678165,
+   "p99": 0.286629871
+  },
+  "lookup_seconds_by_tier_state_class": {
+   "archive/cold/inline": {
+    "max": 0.340257103,
+    "n": 195,
+    "p50": 0.224083988,
+    "p99": 0.286629871
+   },
+   "archive/cold/pages-1": {
+    "max": 0.380884913,
+    "n": 22,
+    "p50": 0.356657639,
+    "p99": 0.37844031
+   },
+   "archive/warm/inline": {
+    "max": 0.223437578,
+    "n": 783,
+    "p50": 0.044072865,
+    "p99": 0.136858839
+   },
+   "archive/warm/pages-1": {
+    "max": 0.221998748,
+    "n": 81,
+    "p50": 0.130123625,
+    "p99": 0.2031522
+   },
+   "archive/warm/pages-5": {
+    "max": 0.158144045,
+    "n": 1,
+    "p50": 0.158144045,
+    "p99": 0.158144045
+   },
+   "recent/warm/absent": {
+    "max": 0.281343457,
+    "n": 147,
+    "p50": 0.042407168,
+    "p99": 0.266659409
+   },
+   "recent/warm/inline": {
+    "max": 0.308274076,
+    "n": 1980,
+    "p50": 0.047968099,
+    "p99": 0.207710721
+   },
+   "recent/warm/pages-1": {
+    "max": 0.381819442,
+    "n": 230,
+    "p50": 0.141498334,
+    "p99": 0.348339451
+   },
+   "recent/warm/pages-5": {
+    "max": 0.230657436,
+    "n": 2,
+    "p50": 0.218418762,
+    "p99": 0.218418762
+   }
+  },
+  "lookup_seconds_cold": {
+   "max": 0.380884913,
+   "n": 217,
+   "p50": 0.226698744,
+   "p99": 0.364079598
+  },
+  "lookup_seconds_warm": {
+   "max": 0.381819442,
+   "n": 3224,
+   "p50": 0.05269178,
+   "p99": 0.234054051
+  },
+  "lookups_per_second": 6.25,
+  "missed_slots": {
+   "no fixture sample in this tier": 1961
+  },
+  "not_exact": 0,
+  "outcomes": {
+   "absent": 147,
+   "found": 3294
+  },
+  "query_http_seconds": {
+   "max": 0.147412897,
+   "n": 7230,
+   "p50": 0.011244362,
+   "p99": 0.077436951
+  },
+  "span_seconds": 550.2,
+  "stale_retries": 26
+ },
+ "timeline": {
+  "cycle_ms": {
+   "max": 7494,
+   "n": 106,
+   "p50": 4676,
+   "p99": 6966
+  },
+  "cycle_ms_with_seal": {
+   "max": 5423,
+   "n": 3,
+   "p50": 4780,
+   "p99": 4780
+  },
+  "drops": [
+   {
+    "cycle": 55,
+    "digest": "d5310e294bedbccab2b16db1ed1508e0906f183b31d895231ad2df6031d93540",
+    "end": 3505,
+    "shard_id": 0,
+    "start": 1001
+   },
+   {
+    "cycle": 98,
+    "digest": "33f71d4c1e666c5ee08a26c0486c28dca57e730800ea18a834f65a8b79d8961b",
+    "end": 6014,
+    "shard_id": 1,
+    "start": 3506
+   }
+  ],
+  "errors": [],
+  "kinds": {
+   "block": 6799,
+   "bootstrap": 1,
+   "cycle": 109,
+   "drop": 2,
+   "lag": 108,
+   "seal": 4,
+   "sync": 1
+  },
+  "prepare_ms": {
+   "max": 6856,
+   "n": 106,
+   "p50": 4208,
+   "p99": 6427
+  },
+  "publish_s": {
+   "max": 0.703,
+   "n": 106,
+   "p50": 0.439,
+   "p99": 0.674
+  },
+  "recent_dir_segments": [
+   [
+    1
+   ]
+  ],
+  "recent_page_segments": [
+   1
+  ],
+  "recent_records": {
+   "max": 30728,
+   "n": 109,
+   "p50": 21481,
+   "p99": 30697
+  },
+  "seals": [
+   {
+    "bootstrap": true,
+    "bucket_counts": [
+     20006
+    ],
+    "decided_tip": 6200,
+    "digest": "d5310e294bedbccab2b16db1ed1508e0906f183b31d895231ad2df6031d93540",
+    "end": 3505,
+    "shard_id": 0,
+    "start": 1001
+   },
+   {
+    "bootstrap": null,
+    "bucket_counts": [
+     20000
+    ],
+    "decided_tip": 7275,
+    "digest": "33f71d4c1e666c5ee08a26c0486c28dca57e730800ea18a834f65a8b79d8961b",
+    "end": 6014,
+    "shard_id": 1,
+    "start": 3506
+   },
+   {
+    "bootstrap": null,
+    "bucket_counts": [
+     20004
+    ],
+    "decided_tip": 9775,
+    "digest": "6c1415ea9d582713f83b1e92d6fce40bd58a2fa40d75cdf96493d03e13cbb690",
+    "end": 8516,
+    "shard_id": 2,
+    "start": 6015
+   },
+   {
+    "bootstrap": null,
+    "bucket_counts": [
+     20006
+    ],
+    "decided_tip": 12275,
+    "digest": "1c8d4dfe8a48519b9889253b6c41f70ffe165c54eeae6a4541d7aeb9b9c4b28b",
+    "end": 11005,
+    "shard_id": 3,
+    "start": 8517
+   }
+  ]
+ },
+ "verify": {
+  "archive_chain_sha256": "cec7e968de8596fc50f7e61591ed29ecc5857b3d704d63939a9369f94f7488b0",
+  "map_sha256": "d7637361fd9a6822c163ee62727d33dc332e4f2631690f013c9104e464d44937",
+  "ok": true,
+  "problems": [],
+  "queued": 0,
+  "reproduced_seals": 4,
+  "revisions_verified": 3,
+  "seals": 4,
+  "through": 12999,
+  "unreproduced_verified": 0
+ }
+}
