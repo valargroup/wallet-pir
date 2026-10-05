@@ -761,6 +761,29 @@ class HookTests(Base):
         self.assertEqual(self.fake.text('router-01', P.CADDYFILE), ROUTER)
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
 
+    def test_rollback_never_puts_older_bytes_over_another_writer(self):
+        poc = self.poc()
+        poc.deploy('router-hook', poc.plan_sha256())
+        # A history publisher redeploy rewrites fleet.json after the hook.
+        redeployed = json.dumps({**json.loads(self.fake.text('coordinator', P.HISTORY_FLEET)),
+                                 'managed_recent_workers': ['recent-02']})
+        self.fake.put('coordinator', P.HISTORY_FLEET, redeployed, 0o600)
+        before = len(self.fake.mutations())
+        with self.assertRaisesRegex(P.PocError, 'rollback refused before any change: %s on coordinator changed'
+                                    % P.HISTORY_FLEET):
+            self.poc().rollback(poc.transaction.id)
+        self.assertEqual(self.fake.mutations()[before:], [])
+        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), redeployed)
+        self.assertEqual(self.fake.text('coordinator', P.LIVE_FLEET),
+                         (ROOT / 'transparent/ops/scripts/transparent-live-fleet.py').read_text())
+        self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
+        # Put back the bytes the hook wrote, and the same rollback proceeds.
+        self.fake.put('coordinator', P.HISTORY_FLEET, json.dumps({**json.loads(self.fleet), 'route_imports': [GLOB]}),
+                      0o600)
+        self.poc().rollback(poc.transaction.id)
+        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), self.fleet)
+        self.assertEqual(self.fake.files[('coordinator', P.LIVE_FLEET)], OLD_ADAPTER)
+
     def test_hook_refuses_an_unreviewed_adapter_or_a_rejected_composition(self):
         self.fake.put('coordinator', P.LIVE_FLEET, b'something else', 0o755)
         poc = self.poc()

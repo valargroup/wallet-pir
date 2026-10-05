@@ -1466,12 +1466,35 @@ class Poc:
             self.ex.write(host, entry['path'], entry['previous'].encode(),
                           entry['previous_mode'] or entry['mode'] or 0o600)
 
+    def drifted(self, transaction):
+        """Journaled files that hold neither the bytes the transaction wrote nor its prior bytes.
+
+        Another writer owns those bytes now (a history publisher redeploy of
+        fleet.json, or a later display transaction), and putting the prior
+        bytes back would silently undo its change. Entries are checked newest
+        first against what the restore would leave, so a path changed twice
+        in one transaction is judged step by step.
+        """
+        current, problems = {}, []
+        for entry in reversed(transaction.data['changes']):
+            key = (entry['host'], entry['path'])
+            if key not in current:
+                current[key] = self.ex.sha256(self.host(entry['host']), entry['path'])
+            if current[key] not in (entry['new_sha256'], entry['previous_sha256']):
+                problems.append('%s on %s changed since %s wrote it' % (entry['path'], entry['host'], transaction.id))
+            current[key] = entry['previous_sha256']
+        return problems
+
     def restore(self, transaction):
         """Undo a transaction's effects from its journal alone; safe to repeat.
 
-        Units start again only after every file and daemon-reload is back.
+        Refused before any effect if a journaled file has another writer's
+        bytes. Units start again only after every file and daemon-reload is back.
         """
         data = transaction.data
+        drifted = self.drifted(transaction)
+        require(not drifted, 'rollback refused before any change: %s; roll back later transactions first, '
+                'or use txid-display-retire, which removes the hook by content' % '; '.join(drifted))
         transaction.finish('rolling-back')
         for step in reversed([s for s in data['undo'] if s['when'] == 'pre']):
             self.apply(step['host'], step)
