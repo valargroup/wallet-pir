@@ -128,6 +128,41 @@ Accepted leakage remains range, table kind, page count, and timing. This does no
 hide size or authenticate metadata against consensus. It is a trusted-publisher
 service qualified against independent facts.
 
+## Tiered display publication (proof of concept)
+
+A proof of concept, not adopted, publishes display tables apart from history
+shards so that the anonymity set and query size no longer follow history
+geometry. History-attached archive tables cost about 469 KB of query bytes for
+an inline lookup; the tiered `txid-2k` tables cost about 93 KB.
+
+- **Time tiers.** Sealed archive shards are immutable and never rebuilt. One
+  recent shard covers `[S, tip]` and is rebuilt per block. The client picks the
+  shard from the transaction's height. A seal takes the smallest oldest range in
+  which every bucket holds `archive_target` real txids, provided the remainder
+  keeps `recent_floor` and the range ends at least `reorg_margin` blocks below
+  the tip. The rule is monotone, so bootstrap and incremental sealing produce
+  identical shards. A bounded window drops the oldest archive from the map.
+- **Buckets.** `H("transparent-txid-display/bucket/v1" ‖ txid) mod N` selects a
+  bucket, a separate directory table; both row choices stay inside it. N is a
+  manifest parameter. Overflow pages are shard-scoped and not bucketed.
+- **Publication.** A separate map (`txid-shards.json`), content-pure sealed
+  manifests with absolute shard ids, and a recent revision lineage. The
+  `txid-2k` geometry (2,048 rows × 4,096 B for both tables, 40,200 B per query
+  upload) lives in a display-only registry.
+- **Transcript.** Map, manifest and setup as needed, then exactly two directory
+  queries and exactly `pages` page queries, whatever the answer.
+- **Leakage** adds the bucket and the tier to range, table kind, page count and
+  timing. The tier follows from the shard id. Page-count classes are far below
+  the shard's set: a single overflow page is about 10% of recent records.
+
+Source: `transparent-shard/src/display/` (format and seal rule),
+`transparent-filter-server/src/txid_display/` (`txid-display-controller`),
+`transparent-shard-server/src/display/` (`transparent-txid-server`,
+`txid-control`, `txid-inventory`) and the `txid-display-*` deploy commands.
+[Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md) covers
+synthetic chains only; nothing is deployed. Open gates are in
+[remaining work](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
+
 ## Reproduce the native demo
 
 Run from the repository root:

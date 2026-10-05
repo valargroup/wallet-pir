@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Tiered txid display proof of concept, 2026-10-05
+
+Source for a separately published, time-tiered and hash-bucketed txid display
+([design](txid-display.md#tiered-display-publication-proof-of-concept)) passed
+its package and ops tests at `1f89cac0`. Only local, synthetic evidence exists;
+nothing is deployed.
+
+- **End to end.** Two workers behind a local proxy and the controller replaying
+  12,000 synthetic blocks: 4 seals and 2 window drops reproduced by `verify`;
+  0 audit violations over 112 maps; 4,931 of 4,931 lookups exact.
+- **Rebuild.** Under recent-01's planned limits (1 CPU, 1 build thread), per-block
+  freshness stayed at 7–12 s up to 60k recent records. It reached 22 s at 70k,
+  where the directory needs a second segment.
+- **Bandwidth.** Metered bytes equal computed bytes. Warm transcripts are
+  92.6 KB inline and 277.8 KB at 4 pages. Cold transcripts reach 279.1 KB at
+  3 pages and 325.4 KB at 4 pages.
+- **Buckets.** No bandwidth change at this shard size. N=4 costs more memory per
+  txid and gives smaller classes than N=1.
+
+Page-count classes stay below 10k. Production access is the open prerequisite.
+[Evidence](../evidence/txid-display-tiered-2026-10-05/README.md);
+[gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
+
 ## Publication freshness profile, 2026-10-03
 
 A local benchmark profiled attempt 14's failed freshness, measured at serial

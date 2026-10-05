@@ -299,6 +299,35 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Tiered txid display proof of concept (2026-10-05)
+
+Design and leakage: [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept).
+Roman's decisions: production side by side with history, which stays untouched;
+N=1 buckets; no paid infrastructure; commit to `main`.
+
+- [x] Format, seal rule, controller, display worker, reference client, load and
+  bandwidth tools, and the `txid-display-*` deploy commands, with package and ops tests.
+- [x] [Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md):
+  seals and window drops reproduced by `verify`, 0 audit violations, all lookups
+  exact, metered bytes equal computed, recent bench and bucket ablation.
+- [ ] Main CI green at the pushed SHA; `transparent-txid-display` release artifact.
+- [ ] Production access for the deploying account: a key on the coordinator, and through it
+  archive-03, recent-01 and the router; a `wallet-pir-deploy` inventory with pinned `known_hosts`.
+- [ ] One consolidated production change sheet approved by Roman: Terraform 8095
+  plan, router render diff and the reconciler/control-sessions restarts, credential,
+  unit limits, the 20 QPS load plan, scaler mode, and the seal parameters
+  (local benches support `archive_target` 40,000 and `max_recent_records` 55,000).
+- [ ] Deploy in order: W0 baseline, `stage`, `ingest-start`, `firewall`,
+  `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`.
+- [ ] Measure each criterion live and write the production results:
+  - anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
+  - recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max;
+  - archives: sealed digests unchanged across rebuilds and seals;
+  - latency: p99 at most 500 ms at the 20 QPS reference, with history p99 against W0;
+  - bandwidth: under 300 KB per lookup over HTTPS, inline and overflow;
+  - growth: seals and drops with no operator action across several boundaries.
+- [ ] Roman decides whether to leave it running, `stop` or `retire`.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

@@ -7,6 +7,7 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Tiered txid display proof of concept](txid-display-tiered-2026-10-05/README.md) | Local release-fast runs on synthetic journals: seals and window drops reproduced, all lookups exact, metered bytes equal computed, recent-01-shaped rebuild bench and bucket ablation; includes a failed first run and a harness gap; not deployed, not real-chain packing |
 | [Changed-native activity candidate `c3c66b9b`](activity-metadata-2026-10-04/README.md) | Supplemental fat-LTO build manifest for the 13 tools absent from exact-head CI, plus focused and mutation checks of the candidate's preparation and qualification guards; source and fixture evidence only, nothing staged, gated or deployed |
 | [Prewarm hint assurance](prewarm-hint-assurance-2026-10-04/README.md) | Source-level follow-up to the prewarm hint: recent-only dispatch, derivation and provenance, independent known-answer vectors, forced reference fallback and mutation results; no timing re-measured, not deployed |
 | [Recent-worker prewarm hint](prewarm-hint-2026-10-03/README.md) | Local release-fast comparison on the retained synthetic recent-8k tails: two-table runtime build at two threads −30% to −37% (4.81 s → 3.05 s at 97% fill), identical hints, masks and answers, unchanged peak memory; not deployed and not a freshness qualification |

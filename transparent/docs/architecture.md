@@ -71,6 +71,14 @@ stage adds history/display lanes to one coordinator, preserves local send facts,
 and keeps confirmation, fee availability, financial coverage and display
 completeness independent. A display failure cannot authorize public lookup.
 
+A separate [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept)
+exists as a proof of concept. Sealed archive shards and one per-block recent
+shard, with hash buckets inside each, are published by
+`txid-display-controller` from the display sidecars. They are served by
+`transparent-txid-server` in archive-owner and recent-replica roles, which share
+the native runtime, cache and admission code but not `ShardSet`. History
+manifests and serving are unchanged. It is source and local evidence only.
+
 ## Component ownership
 
 | Component | Source | Responsibility |

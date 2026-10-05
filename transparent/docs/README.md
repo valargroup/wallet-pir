@@ -19,7 +19,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 8. [Regression and conformance tests](testing.md): accepted-anchor recovery, fixed fixtures, and manual release validation.
 9. [Elastic recent replicas](elastic-recent.md): inventory, membership, scaler and actuator formats for the automatically scaled recent tier.
 
-10. [Txid display PIR](txid-display.md): opt-in server tables, native HTTP demo and subsequent wallet integration.
+10. [Txid display PIR](txid-display.md): opt-in server tables, native HTTP demo, the tiered proof of concept and subsequent wallet integration.
 
 ## Product boundaries
 
