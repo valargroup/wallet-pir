@@ -499,8 +499,15 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
         LookupResult::PlacementUnknown
     );
     // A client that still holds the old map is answered from the retired
-    // snapshot that holds the dropped archive.
+    // snapshot that holds the dropped archive, while it is resident.
     found(&stale, old, 150).await;
+    // p2's prepare evicted the retired recent revision. A stale client is
+    // sent to refresh its map rather than costing the replica a cold build.
+    let builds = world.recent.builds();
+    let report = found(&stale, moved, 210).await;
+    assert_eq!(report.stale_retries, 1);
+    assert_eq!(report.digest.as_deref(), Some(a1.digest.as_str()));
+    assert_eq!(world.recent.builds(), builds);
     for worker in [&world.archive, &world.recent] {
         let collected = worker.command(DisplayCommand::Collect).await.unwrap();
         assert_eq!(collected["removed"], serde_json::json!([]));

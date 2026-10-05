@@ -134,6 +134,8 @@ struct Inner {
     max_query_bytes: usize,
     warm: WarmState,
     prewarm_slots: usize,
+    /// Set once a successor is active; see [`DisplayState::retire`].
+    retired: AtomicBool,
 }
 
 /// One publication snapshot: a loaded set and the shared runtime.
@@ -244,6 +246,7 @@ impl DisplayState {
                     pins: Mutex::new(Vec::new()),
                 },
                 prewarm_slots,
+                retired: AtomicBool::new(false),
             }),
         })
     }
@@ -354,14 +357,54 @@ impl DisplayState {
         Arc::strong_count(&self.inner) > 1
     }
 
-    /// Drops residency pins: every one, or those of `digests`. A retired or
-    /// invalidated revision stays servable on demand but is not an obligation.
+    /// Drops residency pins: every one, or those of `digests`. An invalidated
+    /// revision is no longer an obligation.
     pub(crate) fn release_pins(&self, digests: Option<&BTreeSet<String>>) {
         let mut pins = self.inner.warm.pins.lock().unwrap();
         match digests {
             None => pins.clear(),
             Some(digests) => pins.retain(|(digest, _)| !digests.contains(digest)),
         }
+    }
+
+    /// Marks a snapshot superseded by an activation and drops its pins. It
+    /// keeps answering clients on its map, but only from runtimes still
+    /// resident: the next prepare evicts them, and a cold build for a stale
+    /// map would take a build slot from the candidate the next activation
+    /// waits for. Such a client is sent to refresh its map (409) instead.
+    pub(crate) fn retire(&self) {
+        self.inner.retired.store(true, Ordering::Release);
+        self.release_pins(None);
+    }
+
+    pub fn is_retired(&self) -> bool {
+        self.inner.retired.load(Ordering::Acquire)
+    }
+
+    /// The runtimes of `segments` of `table`, if all are resident; for a
+    /// retired snapshot, which never builds.
+    fn resident(
+        &self,
+        shard_id: u64,
+        digest: &str,
+        table: DisplayTable,
+        segments: std::ops::Range<u32>,
+    ) -> Result<Vec<RuntimeHandle>, RequestError> {
+        segments
+            .map(|segment| {
+                self.inner
+                    .runtime
+                    .cache
+                    .cached(&runtime_key(digest, table, segment))
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                Metrics::incr(&self.inner.runtime.metrics.stale_revisions);
+                RequestError::Stale {
+                    shard_id,
+                    digest: digest.to_string(),
+                }
+            })
     }
 
     fn shared(&self, revision: &DisplayRevision, table: DisplayTable) -> Arc<SharedParams> {
@@ -815,8 +858,13 @@ async fn setup(
         Ok(resolved) => resolved,
         Err(error) => return error.into_response(&map_digest),
     };
-    let key = runtime_key(&digest, table, segment);
-    let handle =
+    let handle = if state.is_retired() {
+        match state.resident(shard_id, &digest, table, segment..segment + 1) {
+            Ok(mut handles) => handles.pop().expect("one segment"),
+            Err(error) => return error.into_response(&map_digest),
+        }
+    } else {
+        let key = runtime_key(&digest, table, segment);
         match tokio::time::timeout(pending.remaining(), runtime.cache.get(key, shared, source))
             .await
         {
@@ -827,7 +875,8 @@ async fn setup(
                 return RequestError::from(AdmissionError::DeadlineExceeded)
                     .into_response(&map_digest);
             }
-        };
+        }
+    };
     pending.complete();
     let built = handle.get();
     let body = SetupResponse {
@@ -885,6 +934,15 @@ async fn query_inner(
                 .ok_or_else(|| RequestError::Bad(format!("{label} is not held")))?;
             Ok((table, state.shared(revision, table), sources))
         });
+    // A retired snapshot is refused before the body is queued if a segment
+    // has already gone; the check is repeated when the handles are taken.
+    let segments = |sources: &[SegmentSource]| 0..sources.len() as u32;
+    let resolved = resolved.and_then(|(table, shared, sources)| {
+        if state.is_retired() {
+            state.resident(shard_id, &digest, table, segments(&sources))?;
+        }
+        Ok((table, shared, sources))
+    });
     let (table, shared, sources) = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
@@ -972,28 +1030,39 @@ async fn query_inner(
 
     // Every segment's runtime is held before any is evaluated, so a tight
     // budget cannot evict one segment while another builds.
-    let mut handles = Vec::with_capacity(sources.len());
-    for (segment, source) in sources.into_iter().enumerate() {
-        let key = runtime_key(&digest, table, segment as u32);
-        match tokio::time::timeout(
-            admitted.remaining(),
-            runtime.cache.get(key, shared.clone(), source),
-        )
-        .await
-        {
-            Ok(Ok(handle)) => handles.push(handle),
-            Ok(Err(error)) => {
+    let handles = if state.is_retired() {
+        match state.resident(shard_id, &digest, table, segments(&sources)) {
+            Ok(handles) => handles,
+            Err(error) => {
                 Metrics::incr(&metrics.query_errors);
-                return RequestError::from(error).into_response(&map_digest);
-            }
-            Err(_) => {
-                Metrics::incr(&metrics.deadline_exceeded);
-                Metrics::incr(&metrics.query_errors);
-                return RequestError::from(AdmissionError::DeadlineExceeded)
-                    .into_response(&map_digest);
+                return error.into_response(&map_digest);
             }
         }
-    }
+    } else {
+        let mut handles = Vec::with_capacity(sources.len());
+        for (segment, source) in sources.into_iter().enumerate() {
+            let key = runtime_key(&digest, table, segment as u32);
+            match tokio::time::timeout(
+                admitted.remaining(),
+                runtime.cache.get(key, shared.clone(), source),
+            )
+            .await
+            {
+                Ok(Ok(handle)) => handles.push(handle),
+                Ok(Err(error)) => {
+                    Metrics::incr(&metrics.query_errors);
+                    return RequestError::from(error).into_response(&map_digest);
+                }
+                Err(_) => {
+                    Metrics::incr(&metrics.deadline_exceeded);
+                    Metrics::incr(&metrics.query_errors);
+                    return RequestError::from(AdmissionError::DeadlineExceeded)
+                        .into_response(&map_digest);
+                }
+            }
+        }
+        handles
+    };
 
     let memory = match runtime
         .cache

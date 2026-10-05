@@ -501,10 +501,10 @@ impl DisplayLive {
                 state: next.state,
                 publication: next.publication,
             });
-            // Predecessors stay answerable for stale-map clients but are no
-            // longer residency obligations.
+            // Predecessors stay answerable for stale-map clients from what is
+            // resident, but are no longer residency obligations.
             if let Some(old) = old {
-                old.state.release_pins(None);
+                old.state.retire();
                 inner.retired.write().unwrap().push(old);
             }
             // The active snapshot pins what it names; staging has done its job.
@@ -778,13 +778,28 @@ async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response
     if invalid() {
         return refused();
     }
-    let response = service::router(state)
+    let response = service::router(state.clone())
         .oneshot(request)
         .await
         .expect("infallible router");
     // A reorg during evaluation must not release an orphaned answer.
     if invalid() {
         return refused();
+    }
+    // A retired snapshot refuses what is no longer resident under its own,
+    // superseded map; the client is sent to the active one.
+    if response.status() == StatusCode::CONFLICT && state.is_retired() {
+        return json(
+            StatusCode::CONFLICT,
+            serde_json::json!({
+                "error": format!(
+                    "revision {} is no longer served",
+                    digest.as_deref().unwrap_or_default()
+                ),
+                "retry": "refresh the txid map",
+                "map_sha256": live.active_sha256(),
+            }),
+        );
     }
     response
 }
