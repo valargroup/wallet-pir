@@ -126,6 +126,11 @@ impl DisplayCache {
         self.start = height + 1;
     }
 
+    /// Records from the start through the tip.
+    pub fn record_count(&self) -> u64 {
+        self.blocks.iter().map(|b| b.records.len() as u64).sum()
+    }
+
     /// Seal-rule counts from `height` to the tip.
     pub fn counts_from(&self, height: u64) -> &[HeightCounts] {
         let from = (height.saturating_sub(self.start) as usize).min(self.counts.len());
@@ -182,6 +187,7 @@ mod tests {
         assert_eq!(cache.counts_from(12).len(), 3);
         assert_eq!(cache.records(11..=13).len(), 3);
         assert_eq!(cache.archive_counts(10..=14), vec![5]);
+        assert_eq!(cache.record_count(), 5);
         cache.truncate_after(12);
         assert_eq!(cache.tip().unwrap().0, 12);
         cache.drop_through(10);

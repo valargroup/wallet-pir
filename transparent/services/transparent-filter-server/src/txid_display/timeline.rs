@@ -1,8 +1,8 @@
 //! What the controller did and when: the measurement record.
 //!
 //! `<root>/timeline.jsonl` gets one JSON object per event, each with `kind`
-//! and `unix_ms`: `block`, `cycle`, `seal`, `drop`, `reorg`, `error`, `lag`
-//! and `bootstrap`. Lines are appended and never rewritten, so a reader can
+//! and `unix_ms`: `block`, `cycle`, `seal`, `drop`, `reorg`, `error`, `lag`,
+//! `stall`, `sync`, `halt` and `bootstrap`. Lines are appended and never rewritten, so a reader can
 //! follow the file while the controller runs.
 //!
 //! `<root>/tooling/heights.bin` maps txids to heights for fixture tooling:

@@ -431,6 +431,10 @@ struct Fake {
     activations: usize,
     /// Hold every stage reply this long.
     stage_delay: Duration,
+    /// After this many stages, the next prepare finds the worker restarted:
+    /// staging is lost and the prepare fails.
+    restart_after_stages: Option<usize>,
+    stages: usize,
 }
 
 fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
@@ -449,6 +453,7 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
             let digest = dir.file_name().unwrap().to_string_lossy().into_owned();
             match verify_dir(&dir, &digest) {
                 Ok(manifest) if manifest.sealed => {
+                    state.stages += 1;
                     state.staged.insert(digest.clone());
                     json!({"ok": true, "digest": digest, "built": 2, "seconds": 0.0})
                 }
@@ -478,6 +483,14 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                 .map(|s| s.manifest_digest.clone())
                 .collect();
             command["sealed"] = json!(sealed);
+            if state
+                .restart_after_stages
+                .is_some_and(|n| state.stages >= n)
+            {
+                state.restart_after_stages = None;
+                state.staged.clear();
+                return fail("worker restarted".into());
+            }
             if let (true, Some((_, _, served))) = (role == "archive-owner", &state.active) {
                 if let Some(new) = sealed
                     .iter()
@@ -899,6 +912,66 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
         }
         sealed = sealed_count(map);
     }
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_archive_owner_that_lost_staging_is_staged_again() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 124, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    let started = bootstrap_at(&journal, &root, &layout, 112).len();
+    let (log, states) = spawn_fakes(
+        temp.path(),
+        &[("archive", "archive-owner"), ("recent", "recent-replica")],
+    );
+    states["archive"].lock().unwrap().restart_after_stages = Some(1);
+    let workers = vec![
+        socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
+        socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
+    ];
+    let settings = Settings {
+        max_recent_records: Some(1),
+        ..settings()
+    };
+    let run = run_script(&root, &journal, advance(112, 124, 4), workers, settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert!(run.active.seals.len() > started);
+    let digest = &run.active.seals[started].digest;
+    let log = log.lock().unwrap().clone();
+    let position = |pred: &dyn Fn(&(String, Value)) -> bool| -> Vec<usize> {
+        (0..log.len()).filter(|i| pred(&log[*i])).collect()
+    };
+    let stages = position(&|(w, c)| {
+        w == "archive"
+            && c["operation"] == "stage"
+            && c["directory"].as_str().unwrap().ends_with(digest.as_str())
+    });
+    assert_eq!(stages.len(), 2, "staged again after the restart");
+    // The archive owner refused the seal once, then took it once staged
+    // again; without that, every cycle would repeat the refusal.
+    let naming = position(&|(w, c)| {
+        w == "archive" && c["operation"] == "prepare" && c["sealed"].to_string().contains(digest)
+    });
+    assert!(naming[0] < stages[1] && stages[1] < naming[1]);
+    assert_eq!(
+        states["recent"].lock().unwrap().active.as_ref().unwrap().0,
+        run.active.map_sha256
+    );
+    let events = read_timeline(&root).unwrap();
+    let seals: Vec<_> = events
+        .iter()
+        .filter(|e| e["kind"] == "seal" && e["bootstrap"].is_null())
+        .map(|e| e["shard_id"].as_u64().unwrap())
+        .collect();
+    assert_eq!(seals.iter().collect::<BTreeSet<_>>().len(), seals.len());
+    // The unsealed range exceeded its bound: one alert, not one per loop.
+    let lag = events
+        .iter()
+        .filter(|e| e["kind"] == "lag" && e["reason"] == "recent_records")
+        .count();
+    assert_eq!(lag, 1);
 }
 
 #[tokio::test(flavor = "multi_thread")]

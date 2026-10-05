@@ -46,6 +46,10 @@ use transparent_shard::manifest::PublishedRevision;
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.
 const WORKER_COLLECT_EVERY: u64 = 20;
+/// Consecutive failed cycles after which publication counts as stalled.
+const STALL_FAILURES: u32 = 5;
+/// How often a standing recent-shard bound alert repeats.
+const LAG_ALERT_EVERY: Duration = Duration::from_secs(60);
 /// Invalidations recent replicas have not acknowledged, and the lowest
 /// rollback since the last activation.
 pub const INVALIDATE_FILE: &str = "invalidate.json";
@@ -55,7 +59,8 @@ pub struct Settings {
     pub trust_sealed: bool,
     /// Unused candidates kept besides the active and worker-held ones.
     pub retain_candidates: usize,
-    /// Above this many recent records, every cycle writes a `lag` alert.
+    /// Above this many unsealed records in the cache, a `lag` alert repeats
+    /// every minute: the next recent shard would hold them all.
     pub max_recent_records: Option<u64>,
     /// Return once a finite source is exhausted and fully published.
     pub exit_when_idle: bool,
@@ -137,6 +142,8 @@ struct SealJob {
     stage_s: f64,
     attempts: u32,
     retry_at: Option<Instant>,
+    /// Staged again after an archive owner lost it; its `seal` event stands.
+    restaged: bool,
 }
 
 impl SealJob {
@@ -286,6 +293,7 @@ pub struct Controller {
     rollback: Option<RollbackRecord>,
     /// What `invalidate.json` holds.
     saved_invalidations: Invalidations,
+    lag_alerted: Option<Instant>,
     last_cycle: Value,
     maps: Vec<DisplayMap>,
     _lock: std::fs::File,
@@ -430,6 +438,7 @@ impl Controller {
             retry_at: None,
             rollback: saved_invalidations.rollback.clone(),
             saved_invalidations,
+            lag_alerted: None,
             last_cycle: Value::Null,
             maps: Vec::new(),
             _lock: lock,
@@ -640,10 +649,12 @@ impl Controller {
                             .record("error", json!({"stage": "cycle", "error": error}));
                         self.retry_at = Some(Instant::now() + backoff(self.failures));
                         self.failures += 1;
+                        self.stalled(&error);
                         self.collect_local();
                     }
                 }
             }
+            self.check_recent_bound();
             self.update_status();
             if let Some(reason) = &self.halted {
                 return Ok(Outcome::Halted(reason.clone()));
@@ -775,6 +786,62 @@ impl Controller {
         Ok(())
     }
 
+    /// Alerts once cycles keep failing: workers keep serving the last
+    /// activation, so nothing else shows that the tip stopped advancing.
+    fn stalled(&self, error: &str) {
+        if self.failures < STALL_FAILURES {
+            return;
+        }
+        tracing::error!(
+            alert = "txid_display_publication_stalled",
+            failures = self.failures,
+            published_tip = self.published_tip.0,
+            tip = self.cache.tip().map(|t| t.0),
+            %error,
+            "display publication keeps failing; workers serve the last activation"
+        );
+        if self.failures == STALL_FAILURES {
+            self.timeline.record(
+                "stall",
+                json!({"failures": self.failures, "published_tip": self.published_tip.0,
+                    "tip": self.cache.tip().map(|t| t.0), "error": error,
+                    "queued": self.queue.len()}),
+            );
+        }
+    }
+
+    /// Alerts while the unsealed range outgrows its bound, whether or not
+    /// cycles succeed: the next recent shard would hold all of it.
+    fn check_recent_bound(&mut self) {
+        let Some(max) = self.settings.max_recent_records else {
+            return;
+        };
+        let records = self.cache.record_count();
+        if records <= max {
+            self.lag_alerted = None;
+            return;
+        }
+        if self
+            .lag_alerted
+            .is_some_and(|t| t.elapsed() < LAG_ALERT_EVERY)
+        {
+            return;
+        }
+        self.lag_alerted = Some(Instant::now());
+        tracing::error!(
+            alert = "txid_display_recent_lag",
+            records,
+            max,
+            queued = self.queue.len(),
+            "unsealed records exceed the recent bound; sealing is behind"
+        );
+        self.timeline.record(
+            "lag",
+            json!({"reason": "recent_records", "records": records, "max": max,
+                "queued": self.queue.len(), "published_tip": self.published_tip.0}),
+        );
+    }
+
     /// Queues every seal the rule makes over the unqueued part of the cache.
     fn plan(&mut self) {
         let Some((tip, _)) = self.cache.tip() else {
@@ -798,8 +865,47 @@ impl Controller {
                 stage_s: 0.0,
                 attempts: 0,
                 retry_at: None,
+                restaged: false,
             });
         }
+    }
+
+    /// Stages again any staged seal a known archive owner no longer holds:
+    /// staging lives in the worker's memory, so a restart loses it. Until it
+    /// is staged again, cycles publish without it and recent replicas keep
+    /// advancing. Returns whether any was.
+    fn restage_lost(&mut self) -> bool {
+        let mut any = false;
+        for job in self
+            .queue
+            .iter_mut()
+            .filter(|j| j.state == JobState::Staged)
+        {
+            let digest = &job.shard.as_ref().expect("built").digest;
+            let lost: Vec<String> = self
+                .fleet
+                .archive_owners()
+                .filter(|w| {
+                    w.known
+                        && !w.staged.contains(digest)
+                        && !w.sealed.as_ref().is_some_and(|s| s.contains(digest))
+                })
+                .map(|w| w.config.name.clone())
+                .collect();
+            if !lost.is_empty() {
+                self.timeline.record(
+                    "error",
+                    json!({"stage": "seal_stage", "shard_id": job.shard_id,
+                        "error": "archive owners lost the staged seal", "workers": lost}),
+                );
+                job.state = JobState::Built;
+                job.attempts = 0;
+                job.retry_at = None;
+                job.restaged = true;
+                any = true;
+            }
+        }
+        any
     }
 
     /// Starts the next seal build and the next staging, one of each at a time.
@@ -878,8 +984,9 @@ impl Controller {
                 .collect();
             if targets.is_empty() {
                 job.state = JobState::Staged;
-                let record = seal_event(job);
-                self.timeline.record("seal", record);
+                if !job.restaged {
+                    self.timeline.record("seal", seal_event(job));
+                }
                 return;
             }
             job.state = JobState::Staging;
@@ -977,8 +1084,9 @@ impl Controller {
                 } else {
                     job.state = JobState::Staged;
                     job.stage_s = seconds;
-                    let record = seal_event(job);
-                    self.timeline.record("seal", record);
+                    if !job.restaged {
+                        self.timeline.record("seal", seal_event(job));
+                    }
                 }
             }
         }
@@ -990,7 +1098,21 @@ impl Controller {
         let started = Instant::now();
         let (tip, tip_hash) = self.cache.tip().ok_or_else(|| retry("empty cache"))?;
         let tip_hash = tip_hash.to_display_hex();
-        let staged: Vec<&SealJob> = self.queue.iter().take(self.publishable()).collect();
+        let errors = self
+            .fleet
+            .refresh((&self.active.map_sha256, &self.map))
+            .await;
+        self.record_worker_errors("status", errors);
+        if self.restage_lost() {
+            // Nothing else may wake the loop to start it.
+            self.schedule();
+        }
+        let count = self.publishable();
+        if count == 0 && (tip, &tip_hash) == (self.published_tip.0, &self.published_tip.1) {
+            // Only a seal was due, and it is being staged again.
+            return Ok(());
+        }
+        let staged: Vec<&SealJob> = self.queue.iter().take(count).collect();
         let new_seals: Vec<SealRecord> = staged.iter().map(|j| j.record()).collect();
         let mut archives: Vec<DisplayMapEntry> = self
             .map
@@ -1052,11 +1174,6 @@ impl Controller {
         let (candidate, sha) = write_candidate(&self.root, &map).map_err(retry)?;
         let candidate_ms = ms(candidate_started);
 
-        let errors = self
-            .fleet
-            .refresh((&self.active.map_sha256, &self.map))
-            .await;
-        self.record_worker_errors("status", errors);
         self.deliver_invalidations().await;
         // The rollback record vouches only for what replicas held when it was
         // made. This candidate may reach some replicas without being
@@ -1127,23 +1244,6 @@ impl Controller {
             "workers": report.workers,
         });
         self.timeline.record("cycle", self.last_cycle.clone());
-        if let Some(max) = self
-            .settings
-            .max_recent_records
-            .filter(|max| recent.manifest.records > *max)
-        {
-            tracing::error!(
-                alert = "txid_display_recent_lag",
-                records = recent.manifest.records,
-                max,
-                "recent shard exceeds its bound; sealing is behind"
-            );
-            self.timeline.record(
-                "lag",
-                json!({"reason": "recent_records", "records": recent.manifest.records,
-                    "max": max, "queued": self.queue.len()}),
-            );
-        }
         self.collect().await;
         Ok(())
     }
@@ -1271,6 +1371,7 @@ impl Controller {
             "queue": self.queue.iter().map(SealJob::summary).collect::<Vec<_>>(),
             "last_cycle": self.last_cycle,
             "failures": self.failures,
+            "stalled": self.failures >= STALL_FAILURES,
             "workers": self.fleet.workers.iter().map(|w| json!({
                 "name": w.config.name, "role": w.config.role.as_str(), "known": w.known,
                 "expected": w.expected, "staged": w.staged,
