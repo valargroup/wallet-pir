@@ -142,6 +142,20 @@ enum Command {
         #[arg(long)]
         scratch: Option<PathBuf>,
     },
+    /// Write a journal of synthetic blocks with display sidecars, for local
+    /// replay and benches only.
+    SynthJournal {
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        start: u64,
+        #[arg(long)]
+        blocks: u64,
+        #[arg(long, default_value_t = 8)]
+        mean_records: u64,
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
     /// Build recent shards of synthetic records and report shape and time.
     BenchRecent {
         #[arg(
@@ -300,6 +314,19 @@ async fn main() -> Result<(), BoxError> {
             if report["ok"] != true {
                 std::process::exit(1);
             }
+        }
+        Command::SynthJournal {
+            out,
+            start,
+            blocks,
+            mean_records,
+            seed,
+        } => {
+            let records = controller::synth_journal(&out, start, blocks, mean_records, seed)?;
+            print(&serde_json::json!({
+                "journal": out, "start": start, "blocks": blocks, "records": records,
+                "genesis": controller::SYNTHETIC_GENESIS,
+            }));
         }
         Command::BenchRecent {
             records,

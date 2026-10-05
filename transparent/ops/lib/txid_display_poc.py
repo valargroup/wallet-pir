@@ -529,7 +529,7 @@ class Poc:
                 extra = ' --runtime-cache-dir %s --runtime-cache-max-bytes %d' % (RUNTIME_CACHE, spec['disk_cache_bytes'])
             files['unit:' + key] = units.render(self.template('transparent-txid-display-worker.service.in'), {
                 'RELEASE': self.release_dir, 'LISTEN': self.upstream(key), 'ROLE': ROLES[key],
-                'COLLECT_ROOT': PUBLICATIONS,
+                'COLLECT_ROOT': PUBLICATIONS, 'STAGED_ROOT': STAGED,
                 'CACHE_BYTES': str(spec['cache_bytes']), 'BUILD_SLOTS': str(spec['build_slots']),
                 'QUERY_SLOTS': str(spec['query_slots']), 'RETAIN_REVISIONS': str(spec['retain_revisions']),
                 'EXTRA_ARGS': extra, 'BUILD_THREADS': str(spec['build_threads']), 'MEMORY_MAX': spec['memory_max'],

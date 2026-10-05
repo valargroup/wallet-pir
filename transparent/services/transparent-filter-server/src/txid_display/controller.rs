@@ -1685,6 +1685,49 @@ pub fn bench_recent(
     Ok(out)
 }
 
+/// Genesis identity of journals written by [`synth_journal`]; never a real chain.
+pub const SYNTHETIC_GENESIS: &str =
+    "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
+
+/// Writes a v3 journal of synthetic blocks `[start, start + blocks)` with
+/// display sidecars and no history events, for local replay and benches.
+///
+/// Each block holds between half and one and a half times `mean_records`
+/// records of [`synthetic_records`]' size mix. Deterministic in `seed`.
+pub fn synth_journal(
+    out: &std::path::Path,
+    start: u64,
+    blocks: u64,
+    mean_records: u64,
+    seed: u64,
+) -> Result<u64, BoxError> {
+    use sha2::{Digest, Sha256};
+    let mut store = crate::events::EventStore::open(out, SYNTHETIC_GENESIS, start)?;
+    if store.next_height() != start {
+        return Err("synthetic journal directory is not empty".into());
+    }
+    let mut total = 0;
+    for height in start..start + blocks {
+        let block_seed = u64::from_le_bytes(
+            Sha256::digest([seed.to_le_bytes(), height.to_le_bytes()].concat())[..8]
+                .try_into()
+                .unwrap(),
+        );
+        let count = mean_records / 2 + block_seed % (mean_records + 1);
+        let records = synthetic_records(count, block_seed);
+        let hash = transparent_filter::BlockHash::from_internal_bytes(
+            Sha256::digest([b"synthetic".as_slice(), &block_seed.to_le_bytes()].concat()).into(),
+        );
+        store.append_block_with_display(height, hash, &[], &records)?;
+        total += count;
+        if (height - start + 1) % 1_000 == 0 {
+            store.commit()?;
+        }
+    }
+    store.commit()?;
+    Ok(total)
+}
+
 /// Records with a recent-era size mix: about 90% inline payloads of 50-110
 /// bytes, 9% one page, and 1% two to fifteen pages.
 pub fn synthetic_records(

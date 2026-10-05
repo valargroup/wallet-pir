@@ -546,12 +546,14 @@ class PlanTests(Base):
             self.assertIn('\n' + line + '\n', archive)
         self.assertIn('--runtime-cache-dir /srv/transparent-txid-display/runtime-cache', archive)
         self.assertIn('--control-socket /run/transparent-txid-display/control.sock', archive)
-        # `collect` deletes on disk only under a collect root: the adapter's
-        # publications directory, where every cycle's candidate lands.
+        # `collect` deletes on disk only under its collect roots: the adapter's
+        # publications directory, where every cycle's candidate lands, and its
+        # staged directory, where sealed revisions wait to be named.
         publications = json.loads(files['fleet.json'])['workers']
         for key, unit in (('archive', archive), ('recent', recent)):
             argv = [line for line in unit.splitlines() if line.startswith('ExecStart=')][0].split()
-            self.assertEqual(argv[argv.index('--collect-root') + 1], publications[key]['publications'])
+            roots = [argv[i + 1] for i, a in enumerate(argv) if a == '--collect-root']
+            self.assertEqual(roots, [publications[key]['publications'], publications[key]['staged']])
             self.assertEqual(argv[argv.index('--active-record') + 1], P.ACTIVE_RECORD)
         self.assertNotIn('runtime-cache', recent)
         for line in ('MemoryMax=1.5G', 'CPUQuota=100%', 'Environment=TRANSPARENT_BUILD_THREADS=1'):
