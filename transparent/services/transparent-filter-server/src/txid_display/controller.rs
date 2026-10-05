@@ -1720,7 +1720,7 @@ pub fn synth_journal(
         );
         store.append_block_with_display(height, hash, &[], &records)?;
         total += count;
-        if (height - start + 1) % 1_000 == 0 {
+        if (height - start + 1).is_multiple_of(1_000) {
             store.commit()?;
         }
     }
