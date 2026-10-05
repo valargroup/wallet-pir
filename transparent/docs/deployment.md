@@ -2997,3 +2997,61 @@ not stop a service, change routes, qualify the historical prototype as the new
 candidate, or prove deployed freshness. The reader's 30-second bound is inside
 the existing host/fleet timing budgets, which remain unchanged. A full five-host
 locked survey must run freshly before any production effect.
+
+
+### Loaded quality-alert shadow evidence
+
+Deployed qualification uses `activity_quality_shadow.py` to observe the running
+coordinator APM independently of files describing desired configuration. It pins
+the existing `pir-apm` executable to the artifact in
+[the shared-layer manifest](../../enhance/evidence/shared-layers-2026-09-30/manifest.json)
+(source `aeaee4b7`, CI `36678333148`). It requires the exact systemd main PID,
+start ticks, boot, executable path and cgroup, a bounded executable hash, and
+exactly one explicit `PIR_APM_QUALITY_ALERT_MODE=shadow` entry in that process's
+environment. Absence, duplicates, active mode, unknown values, unreadable data,
+a different binary, or identity drift refuse. Environment data and unrelated
+credential values never leave the reader. The observation has a ten-second
+bound within the existing qualification deadline.
+
+Preflight retains this proof; health samples retain a renewed proof at least
+every 60 seconds; a final forced observation is retained before the result is
+sealed. APM restart or identity change fails the interval. The quality supervisor
+must still remain stopped. A mocked or incomplete path without runtime evidence
+remains unqualified, and a failed final observation produces a failed result.
+This closes the missing APM-mode interface, without changing the APM binary,
+configuration, incident store, notification mode of other families, or supervisor.
+Actual candidate qualification remains required. Capacity continuation, cache
+corruption and independently verified rollback/redeployment retain their separate
+missing assurance until their real interfaces and evidence pass review.
+
+
+### Independent retained rollback evidence
+
+`activity_rollback_evidence.py` independently rechecks a successful original
+rollback before the `rollback-redeploy` qualification owner can use it. It binds
+the same reviewed recipe and distinct original/redeploy journals, and derives
+all paths from the validated original product inputs and routing namespace. The
+private rollback recovery and both canonical HTTPS recoveries must retain their
+exact raw native reports, owner commands, original phase timestamps, input
+hashes and nonempty completed results. The historical reader remains `12ce` and
+these reports prove only the restored v10 service; they never qualify c3.
+
+The reader reopens the original committed SQLite files and recomputes exact
+events, trusted anchor, schema, coverage and metadata availability against the
+retained sample. It uses read-only immutable SQLite connections only after
+refusing links and WAL/SHM/journal sidecars. Inputs, reports and store files are
+hashed before and after the read. Changed bytes, foreign paths/commands, missing
+origins, incomplete classes or a stale original phase refuse. A cooperative
+60-second inspection bound, 1,024 files, 2 GiB total evidence bytes, 256 stores
+per recovery and 128 MiB per store bound the read. SQLite progress callbacks
+and event limits also refuse overruns. These bounds do not authorize truncating
+or skipping a larger evidence set. Native journal snapshot safety remains a
+separate writer-quiescence operation.
+
+Candidate recovery uses the time already elapsed since the actual redeploy
+commit to consume its 900-second allowance. Starting a later owner cannot reset
+that clock. A future/expired commit or a final canonical proof after 900 seconds
+fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
+(740 total). No rollback or redeploy is synthesized: root must perform both
+through the guarded deployment wrapper and retain their actual raw evidence.
+The lifecycle gate remains open until those executions and reinspection pass.

@@ -45,6 +45,8 @@ import urllib.error
 import urllib.request
 
 from wallet_pir_ops import ancillary_baseline as A
+import activity_quality_shadow as QS
+import activity_rollback_evidence as RE
 from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_map
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
@@ -192,8 +194,7 @@ EFFECT_SECONDS = {'client-reopen':INTERRUPT_SECONDS+CONTINUATION_SECONDS+120,
 POST_SECONDS = 300
 MEMORY = {'capacity':('10G', '12G')}
 MISSING = {
-    'all': ['quality alerts: their shadow state is APM configuration with no coordinator interface; '
-            'only the stopped quality supervisor is verified'],
+    'all': [],
     'capacity': ['heavy continuation: incomplete heavy stores resume through the pinned loadtest\'s existing '
                  '--scenario-worker protocol; that adapter is an unproven interface candidate until real '
                  'measurements are reviewed, and an exact outcome deletes the store natively'],
@@ -202,9 +203,6 @@ MISSING = {
                       'real measurements are reviewed, and an exact outcome deletes the store natively'],
     'archive-restart': ['cache corruption: injecting a corrupt runtime/disk cache needs destructive file mutation '
                         'with no reviewed native interface; only an archive-owner restart and cache reload run'],
-    'rollback-redeploy': ['rolled-back service probe: the v10 state is proven only by the recipe\'s own '
-                          'verify-rollback/verify-service phases; this owner probes the redeployed candidate, timed '
-                          'from its own start, and retains the redeploy-commit-to-proof wall time'],
 }
 
 
@@ -410,6 +408,8 @@ def plan(request):
             'candidate_sha':C.SOURCE_SHA, 'candidate_identity':C.identity(), 'historical_release_sha':C.HISTORICAL_SHA,
             'activity':activity(request), 'unit':unit_name(sha), 'properties':list(properties(kind)),
             'bounds':bounds(), 'headroom':HEADROOM, 'missing_assurance':missing,
+            'quality_shadow':{'unit':QS.UNIT,'binary_sha256':QS.BINARY_SHA256,
+                              'mode':'explicit loaded shadow','interval_seconds':REMOTE_HEALTH_INTERVAL},
             'effects':'private qualification receipts, owned client processes'+
                       (' and one fixed, restorable unit transition' if request.get('fault') in FAULT_ACTION else '')}
 
@@ -869,6 +869,12 @@ def verify_rollback_redeploy(original, redeploy, latest, recipe_sha256):
             'rollback_started_unix':rollback_started, 'rollback_seconds':rollback_ended-rollback_started,
             'phases':{e['name']:e['seconds'] for e in rollback}, 'redeploy_created_unix':redeploy['created'],
             'redeploy_committed_unix':steps[-1]['started']+steps[-1]['seconds']}
+
+
+def redeploy_recovery_start(committed_unix):
+    age=time.time()-committed_unix
+    require(0<=age<RECOVERY_SECONDS,'redeployment proof window already expired or future')
+    return time.monotonic()-age
 
 
 def retained_request(sha):
@@ -1800,6 +1806,9 @@ class Qualification:
                 sum(h['worker'] is not None and h['worker']['role'] == 'recent-replica' for h in hosts) >= 2 and
                 sum(h['worker'] is not None and h['worker']['role'] == 'archive-owner' for h in hosts) >= 1,
                 'deployment lacks its coordinator, router, recent replicas or an archive owner')
+        if self.request.get('fault')=='rollback-redeploy':
+            _,original_spec=candidate_spec(original)
+            self.rollback_evidence['independent']=RE.verify(original,original_spec)
         self.spec, self.reference, self.hosts = spec, reference, hosts
         self.ssh = P.descriptors.load_inventory(inventory)
         return {'transaction':record['id'], 'recipe_sha256':record['recipe_sha256'], 'spec':reference, 'inventory':spec['inventory'],
@@ -1912,6 +1921,7 @@ class Qualification:
         for name in ('examples/rate-query', 'transparent-loadtest'):
             artifact(name)
         quality_stopped(commands(self.deadline))
+        shadow = self.quality_assurance(force=True)
         local = local_resources(commands(self.deadline))
         floors(local)
         hosts = self.all_hosts('identity', running=running)
@@ -1920,7 +1930,7 @@ class Qualification:
         self.kind_preflight()
         if not running:
             require(self.status()['status'] == 'absent', 'qualification already owned; inspect/reconcile, never replay')
-        return {'deployment':deployment, 'local':local, 'remote':{h:v for h, v in hosts.items() if h != 'coordinator'},
+        return {'deployment':deployment, 'local':local, 'quality_shadow':shadow, 'remote':{h:v for h, v in hosts.items() if h != 'coordinator'},
                 'coordinator':hosts['coordinator'], 'ready':ready, 'public':public}
 
     # Owner lifecycle ------------------------------------------------------------
@@ -2006,9 +2016,19 @@ class Qualification:
             if effect.get('unit') and effect.get('status') not in ('passed', 'restored') or pending:
                 result = dict(result or {}, status='failed' if (result or {}).get('status') == 'passed' else (result or {}).get('status'),
                               fenced='owned unit effect requires reconcile restoration')
+            missing=list(self.plan_value['missing_assurance'])
+            if not hasattr(self,'quality_proof'):
+                missing.append('quality shadow runtime evidence missing')
+            else:
+                try:
+                    proof=self.quality_assurance(force=True)
+                    write_once(self.directory/'raw/quality-shadow-final.json',proof)
+                except BaseException as error:
+                    missing.append('quality shadow final verification failed')
+                    result=dict(result or {},status='failed',quality_error_type=type(error).__name__)
             result = dict(result or {}, plan_sha256=self.plan_sha, request_sha256=self.sha, ended_unix=time.time(),
-                          missing_assurance=self.plan_value['missing_assurance'], qualified=False if result is None else
-                          result.get('status') == 'passed' and not self.plan_value['missing_assurance'])
+                          missing_assurance=missing, qualified=False if result is None else
+                          result.get('status') == 'passed' and not missing)
             write_once(self.directory/'result.json', result)
             seal(self.directory)
             record = self.status()
@@ -2132,6 +2152,16 @@ class Qualification:
         require(not session_members(c['identity']['session'] for c in self.record.get('children', []) if c.get('identity')),
                 'owned client descendants are still running')
 
+    def quality_assurance(self, *, force=False):
+        now=time.monotonic()
+        if force or not hasattr(self,'quality_proof') or now-self.quality_checked>=REMOTE_HEALTH_INTERVAL:
+            proof=QS.observe(commands(self.deadline))
+            if hasattr(self,'quality_proof'):
+                require(QS.same_process(self.quality_proof,proof),'quality APM restarted during qualification')
+            self.quality_proof=proof
+            self.quality_checked=time.monotonic()
+        return self.quality_proof
+
     # Health -----------------------------------------------------------------------
     def health(self, stream, allowed=()):
         """One local sample plus any finished remote samples; violations raise."""
@@ -2144,6 +2174,8 @@ class Qualification:
         quality_stopped(commands_)
         changes = unit_changes(self.baseline['local'], sample, allowed)
         require(not changes, 'unexpected restart or OOM: '+', '.join(changes))
+        stream.write(json.dumps({'quality_shadow':self.quality_assurance()})+'\n')
+        stream.flush()
         if self.monitor is not None:
             results, error, last = self.monitor.take()
             for unix, remote in results:
@@ -2612,8 +2644,11 @@ class Qualification:
         elif fault == 'rollback-redeploy':
             # Root performed both through schema-rollback/schema-deploy; this owner
             # only binds their journals and never synthesizes either outcome.
-            effect.update(self.rollback_evidence, source='retained schema journals', status='passed')
+            require(self.rollback_evidence.get('independent',{}).get('kind')=='independent-retained-rollback-v1',
+                    'independent rollback raw evidence is missing')
+            effect.update(self.rollback_evidence, source='retained journals plus independent raw reinspection', status='passed')
             require(effect['rollback_seconds'] <= RECOVERY_SECONDS, 'rollback restore exceeded 900 seconds')
+            started=redeploy_recovery_start(effect['redeploy_committed_unix'])
         else:
             role, operation = FAULT_ACTION[fault]
             host = request.get('target') or next(h['host'] for h in self.hosts if h['role'] == role)
@@ -2642,6 +2677,8 @@ class Qualification:
             # Restore time is the reviewed rollback itself; redeploy then needs exact recovery.
             recovered['restore_seconds'] = self.rollback_evidence['rollback_seconds']
             recovered['redeploy_commit_to_proof_seconds'] = time.time()-self.rollback_evidence['redeploy_committed_unix']
+            require(0<=recovered['redeploy_commit_to_proof_seconds']<=RECOVERY_SECONDS,
+                    'redeployed canonical proof exceeded 900 seconds from actual commit')
         # Faulted units have new processes; quiescence is re-based after recovery.
         local = local_resources(commands(self.deadline))
         with (raw/'health.jsonl').open('a') as health:

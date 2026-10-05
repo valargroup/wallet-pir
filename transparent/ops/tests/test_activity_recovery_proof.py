@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -53,6 +54,16 @@ class RecoveryTests(unittest.TestCase):
 
     def check(self, schema='transparent-shard-v11'):
         return M.inspect_store(self.path,self.sample,schema)
+
+    def test_retained_reinspection_is_immutable_bounded_and_refuses_sidecars(self):
+        value=M.inspect_store(self.path,self.sample,'transparent-shard-v11',deadline=time.monotonic()+5)
+        self.assertEqual(value['events'],1)
+        sidecar=Path(str(self.path)+'-wal');sidecar.write_bytes(b'fixture')
+        with self.assertRaisesRegex(ValueError,'sidecars'):
+            M.inspect_store(self.path,self.sample,'transparent-shard-v11',deadline=time.monotonic()+5)
+        self.assertEqual(sidecar.read_bytes(),b'fixture');sidecar.unlink()
+        with self.assertRaisesRegex(ValueError,'deadline'):
+            M.inspect_store(self.path,self.sample,'transparent-shard-v11',deadline=time.monotonic()-1)
 
     def test_nonempty_persisted_metadata_and_trusted_anchor_survive_reopen(self):
         result = self.check()

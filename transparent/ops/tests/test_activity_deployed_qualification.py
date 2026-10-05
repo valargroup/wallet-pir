@@ -455,6 +455,16 @@ def journal(identifier, status, *, rollback=True, created=1000.0, value=None):
             'created':created, 'events':events}
 
 
+class RedeployClockTests(unittest.TestCase):
+    def test_real_commit_age_consumes_the_same_900_second_budget(self):
+        with patch.object(Q.time,'time',return_value=10000),patch.object(Q.time,'monotonic',return_value=2000):
+            start=Q.redeploy_recovery_start(9400)
+            self.assertEqual(start,1400)
+            self.assertEqual(Q.Deadline(Q.RECOVERY_SECONDS,start=start).remaining(),300)
+            for timestamp in (9100,9000,10001):
+                with self.assertRaisesRegex(ValueError,'expired or future'):Q.redeploy_recovery_start(timestamp)
+
+
 class RollbackJournalTests(unittest.TestCase):
     def setUp(self):
         self.original = journal('transparent-schema-1', 'rolled-back')
@@ -594,6 +604,11 @@ class FakeSystem:
         return self.control_status
 
 
+def shadow_fixture():
+    return {'pid':777,'start_ticks':123,'boot_id':'38feb427-561c-4b5f-b164-aca94f4e310a',
+            'unit':Q.QS.UNIT,'binary_sha256':Q.QS.BINARY_SHA256,'quality_alert_mode':'shadow','observed_unix':time.time()}
+
+
 REAL_READLINK = os.readlink
 
 
@@ -647,7 +662,7 @@ class OwnerTests(unittest.TestCase):
                      patch.object(Q, 'ROOT', self.root/'qualification'), patch.object(Q, 'SOURCES', self.root/'sources'),
                      patch.object(Q.ProductionLock, 'PATH', self.root/'lock'),
                      patch.object(Q.ProductionLock, 'MACHINE_ID', self.root/'machine'),
-                     patch.object(Q.ProductionLock, 'ROOT_UID', os.geteuid()), patch.object(Q, 'commands', FakeCommands),
+                     patch.object(Q.ProductionLock, 'ROOT_UID', os.geteuid()), patch.object(Q, 'commands', FakeCommands), patch.object(Q.QS,'observe',return_value=shadow_fixture()),
                      patch.dict(os.environ)):
             item.start(); self.addCleanup(item.stop)
         self.assertFalse((schema_fence.SCHEMA_STATE/schema_fence.SCHEMA_POINTER).exists())
@@ -707,7 +722,7 @@ class OwnerTests(unittest.TestCase):
         self.assertEqual(record['children'][0]['status'], 'exited')
         result = json.loads((q.directory/'result.json').read_text())
         self.assertEqual(result['status'], 'passed')
-        self.assertFalse(result['qualified'])  # quality-alert assurance remains missing
+        self.assertFalse(result['qualified'])  # this mocked preflight supplied no runtime shadow proof
         with self.assertRaises(ValueError):
             schema_fence.local_schema_fence()
         with self.assertRaisesRegex(ValueError, 'still alive'):
@@ -1341,7 +1356,7 @@ class FlowTests(unittest.TestCase):
         q.baseline = {'local':{'units':{}}, 'remote':{'router':{'resources':{'oom':0, 'oom_kill':0, 'restarts':'0', 'pid':'9'}}}}
         stream = open(os.devnull, 'w'); self.addCleanup(stream.close)
         sample = {'unix':1, 'memory_available':.5, 'disk_available':{'/':.5}, 'units':{}}
-        with patch.object(Q, 'local_resources', lambda commands=None: sample), patch.object(Q, 'commands', FakeCommands):
+        with patch.object(Q, 'local_resources', lambda commands=None: sample), patch.object(Q, 'commands', FakeCommands), patch.object(Q.QS,'observe',return_value=shadow_fixture()):
             monitor = Q.RemoteMonitor(q)
             monitor.results = [(1, {'router':{'resources':{'oom':0, 'oom_kill':1, 'restarts':'0', 'pid':'9'}}})]
             q.monitor = monitor
@@ -1664,7 +1679,7 @@ class FlowTests(unittest.TestCase):
         q = self.fault_owner(request('fault', fault='router-restart'))
         q.remote = lambda host, operation, action: (None, {'status':'passed'})
         q.readiness = lambda: {'recent-1':ready()}
-        with patch.object(Q, 'local_resources', lambda commands=None: {'units':{}}), patch.object(Q, 'commands', FakeCommands):
+        with patch.object(Q, 'local_resources', lambda commands=None: {'units':{}}), patch.object(Q, 'commands', FakeCommands), patch.object(Q.QS,'observe',return_value=shadow_fixture()):
             result = q.fault()
             self.assertEqual(result['status'], 'passed')
             changed = self.fault_owner(dict(request('fault', fault='router-restart'), attempt=2))
@@ -1891,6 +1906,30 @@ class ContinuationTests(unittest.TestCase):
             q.seed_trial()
 
 
+class QualityEvidenceTests(unittest.TestCase):
+    def test_periodic_and_forced_observations_refuse_a_restart(self):
+        value=request();q=Q.Qualification(SimpleNamespace(lock={}),value,durable.digest(value))
+        clock=Clock();proof=shadow_fixture()
+        with patch.object(Q.time,'monotonic',clock),patch.object(Q.QS,'observe',return_value=proof) as observe:
+            self.assertEqual(q.quality_assurance(),proof)
+            clock.sleep(Q.REMOTE_HEALTH_INTERVAL-1);q.quality_assurance()
+            self.assertEqual(observe.call_count,1)
+            clock.sleep(1);q.quality_assurance()
+            self.assertEqual(observe.call_count,2)
+            q.quality_assurance(force=True);self.assertEqual(observe.call_count,3)
+            observe.return_value=dict(proof,pid=proof['pid']+1)
+            with self.assertRaisesRegex(ValueError,'restarted'):q.quality_assurance(force=True)
+            self.assertEqual(q.quality_proof,proof)
+
+    def test_probe_failure_cannot_refresh_old_proof(self):
+        value=request();q=Q.Qualification(SimpleNamespace(lock={}),value,durable.digest(value))
+        with patch.object(Q.QS,'observe',return_value=shadow_fixture()):q.quality_assurance()
+        checked=q.quality_checked
+        with patch.object(Q.QS,'observe',side_effect=ValueError('shadow unavailable')):
+            with self.assertRaisesRegex(ValueError,'unavailable'):q.quality_assurance(force=True)
+        self.assertEqual(q.quality_checked,checked)
+
+
 class HealthTests(unittest.TestCase):
     def sample(self, memory=.5, restarts='0', oom=0):
         return {'unix':1, 'memory_available':memory, 'disk_available':{'/':.5},
@@ -1910,7 +1949,7 @@ class HealthTests(unittest.TestCase):
             with patch.object(Q, 'local_resources', lambda commands=None: current), patch.object(Q, 'commands', commands):
                 with self.assertRaisesRegex(ValueError, message):
                     q.health(stream)
-        with patch.object(Q, 'local_resources', lambda commands=None: self.sample(restarts='1')), patch.object(Q, 'commands', FakeCommands):
+        with patch.object(Q, 'local_resources', lambda commands=None: self.sample(restarts='1')), patch.object(Q, 'commands', FakeCommands), patch.object(Q.QS,'observe',return_value=shadow_fixture()):
             q.health(stream, allowed=(Q.PUBLISHER,))
             q.all_hosts = lambda operation, running: {'router':{'resources':{'oom':0, 'oom_kill':1, 'restarts':'0', 'pid':'9'}}}
             with self.assertRaisesRegex(ValueError, 'remote restart or OOM'):
@@ -1993,7 +2032,9 @@ class DeploymentTests(unittest.TestCase):
         redeploy = journal('transparent-schema-1', 'committed', rollback=False, created=7000, value=self.record['recipe'])
         self.records = {'transparent-schema-0':original, 'transparent-schema-1':redeploy}
         q = self.qualification(kind='fault', fault='rollback-redeploy', rolled_back_transaction='transparent-schema-0')
-        q.deployment()
+        with patch.object(Q.RE,'verify',return_value={'kind':'independent-retained-rollback-v1'}) as reader:
+            q.deployment()
+            self.assertEqual(reader.call_args.args[0]['id'],'transparent-schema-0')
         self.assertEqual(q.rollback_evidence['rolled_back_transaction'], 'transparent-schema-0')
         self.records['transparent-schema-0'] = dict(original, status='rollback-failed')
         with self.assertRaises(ValueError):

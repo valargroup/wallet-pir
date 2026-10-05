@@ -49,8 +49,17 @@ def event(raw, schema):
                 fee=None, input_count=None, shielded=None, raw=raw)
 
 
-def inspect_store(path, sample, schema):
-    with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro', uri=True)) as db:
+def inspect_store(path, sample, schema, *, deadline=None):
+    # Retained-evidence reinspection may never create WAL/SHM state. The caller
+    # verifies immutable file bytes before and after this read.
+    if deadline is not None:
+        require(time.monotonic()<deadline, 'retained store inspection deadline exceeded')
+        require(all(not Path(str(path)+suffix).exists() for suffix in ('-wal','-shm','-journal')),
+                'retained store has SQLite sidecars')
+    uri=path.resolve().as_uri()+'?mode=ro'+('&immutable=1' if deadline is not None else '')
+    with closing(sqlite3.connect(uri, uri=True, timeout=1 if deadline is not None else 5)) as db:
+        if deadline is not None:
+            db.set_progress_handler(lambda: int(time.monotonic()>=deadline), 1000)
         require(db.execute('PRAGMA integrity_check').fetchone() == ('ok',), 'reopened SQLite integrity failure')
         meta = dict(db.execute('SELECT key,value FROM wallet_meta'))
         require(meta.get('schema_version') == '4', 'recovery reader fence is not the current store version')
@@ -70,6 +79,8 @@ def inspect_store(path, sample, schema):
         events = []
         for table in ('receives', 'spends'):
             for raw, script, height, revision in db.execute('SELECT event,hex(script),height,revision_digest FROM '+table):
+                if deadline is not None:
+                    require(time.monotonic()<deadline and len(events)<1000000, 'retained store inspection exceeds bound')
                 decoded = event(bytes(raw), schema)
                 require(script.lower() in selection and decoded['height'] == height and
                         isinstance(revision, str) and re.fullmatch('[0-9a-f]{64}', revision), 'event/source attribution disagrees')
