@@ -8,9 +8,10 @@
 tip was first seen; it shares nothing with the controller, so the controller's
 own timeline cannot vouch for itself. `mapwatch` polls the public display map
 every second and keeps every distinct map and manifest it sees, with each
-manifest checked against its digest. It records window drops and, as a stop
-trigger, any sealed shard whose range or digest changes. Output is JSONL with
-unix timestamps; nothing secret is written.
+manifest checked against its digest. It records window drops (sealed ids below
+the new first shard) and, as a stop trigger, any sealed shard whose range or
+digest changes, that is unsealed again, or that leaves the map out of order.
+Output is JSONL with unix timestamps; nothing secret is written.
 """
 import argparse
 import base64
@@ -125,7 +126,7 @@ class MapWatch:
         shards = mapping.get('shards', [])
         for entry in shards:
             self.manifest(entry)
-        self.check_sealed(digest, shards)
+        self.check_sealed(digest, mapping)
         self.emit('map', map_sha256=digest, header_sha256=headers.get('x-txid-map-sha256'),
                   observed_unix=round(observed, 6), shards=len(shards),
                   first_shard_id=mapping.get('first_shard_id'), start_height=mapping.get('start_height'),
@@ -150,15 +151,30 @@ class MapWatch:
             return
         self.save('manifests', digest, body)
 
-    def check_sealed(self, map_sha256, shards):
+    def check_sealed(self, map_sha256, mapping):
+        """Sealed shards are immutable; only the window's oldest may leave the map.
+
+        A sealed id that is still listed but unsealed, has another identity,
+        or vanished at or above the new `first_shard_id` is a stop trigger
+        (`sealed_changed`). Only ids below `first_shard_id` are window drops.
+        """
+        shards = mapping.get('shards', [])
+        listed = {e['shard_id']: e for e in shards}
         current = {e['shard_id']: (e['start_height'], e['end_height'], e['manifest_digest'])
                    for e in shards if e.get('sealed')}
-        for shard_id, identity in current.items():
-            previous = self.sealed.get(shard_id)
-            if previous is not None and previous != identity:
-                self.emit('sealed_changed', shard_id=shard_id, previous=list(previous), current=list(identity),
+        first = mapping.get('first_shard_id')
+        dropped = []
+        for shard_id, previous in sorted(self.sealed.items()):
+            if shard_id not in listed and isinstance(first, int) and shard_id < first:
+                dropped.append(shard_id)
+                continue
+            identity = current.get(shard_id)
+            if identity != previous:
+                entry = listed.get(shard_id)
+                self.emit('sealed_changed', shard_id=shard_id, previous=list(previous),
+                          current=None if identity is None else list(identity),
+                          state='changed' if identity else 'unsealed' if entry else 'removed',
                           map_sha256=map_sha256)
-        dropped = sorted(set(self.sealed) - set(current))
         if dropped:
             self.emit('window_drop', shard_ids=dropped, map_sha256=map_sha256)
         self.sealed = {**{k: v for k, v in self.sealed.items() if k not in dropped}, **current}

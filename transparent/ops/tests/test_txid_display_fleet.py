@@ -360,6 +360,37 @@ class ObserverTests(unittest.TestCase):
             self.assertEqual(saved, sorted(digest[i] + '.json' for i in (0, 1, 2)))
             self.assertEqual(len(list((Path(tmp) / 'maps').iterdir())), 3)
 
+    def test_mapwatch_drops_only_below_the_window_and_flags_any_other_loss(self):
+        def entry(i, sealed, end):
+            return {'shard_id': i, 'start_height': i * 10, 'end_height': end, 'sealed': sealed,
+                    'manifest_digest': 'd%d' % i}
+        maps = [
+            {'first_shard_id': 0, 'shards': [entry(0, True, 9), entry(1, True, 19), entry(2, True, 29),
+                                             entry(3, False, 35)]},
+            # A reorg reached sealed shard 2: listed again, but unsealed.
+            {'first_shard_id': 0, 'shards': [entry(0, True, 9), entry(1, True, 19), entry(2, False, 28)]},
+            # Shard 1 vanished from the middle while 0 stayed: not a window drop.
+            {'first_shard_id': 0, 'shards': [entry(0, True, 9), entry(2, False, 29)]},
+            # The window advanced past 0; 1 is still missing above it.
+            {'first_shard_id': 1, 'shards': [entry(2, False, 30)]},
+        ]
+        bodies = iter(json.dumps(m).encode() for m in maps)
+
+        def fetch(url):
+            return (200, {}, next(bodies)) if url.endswith('/v1/txid/shards') else (404, {}, b'')
+        with tempfile.TemporaryDirectory() as tmp:
+            events = []
+            watch = O.MapWatch('https://pir.example/v1/txid/shards', tmp, fetch,
+                               lambda event, **fields: events.append((event, fields)))
+            for _ in maps:
+                watch.poll()
+        seen = [(event, fields.get('shard_id', fields.get('shard_ids')), fields.get('state'))
+                for event, fields in events if event in ('sealed_changed', 'window_drop')]
+        self.assertEqual(seen, [
+            ('sealed_changed', 2, 'unsealed'),
+            ('sealed_changed', 1, 'removed'), ('sealed_changed', 2, 'unsealed'),
+            ('sealed_changed', 1, 'removed'), ('sealed_changed', 2, 'unsealed'), ('window_drop', [0], None)])
+
 
 if __name__ == '__main__':
     unittest.main()
