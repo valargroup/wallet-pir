@@ -177,7 +177,7 @@ class Coordinator(unittest.TestCase):
         self.script.write_bytes(b'# fictional reconciler script\n')
         self.fragment = root/CA.UNIT
         self.argv = ['/usr/bin/python3', str(self.script), '/opt/transparent-publisher/fleet.json', '--reconcile']
-        self.fragment.write_text('[Service]\nType=simple\nExecStart=%s\nRestart=on-failure\n' % ' '.join(self.argv))
+        self.fragment.write_text('[Service]\nType=simple\nExecStart = %s\nRestart=on-failure\n' % ' '.join(self.argv))
         self.machine = root/'machine-id'
         self.machine.write_text(CA.COORDINATOR+'\n')
         self.unit = {'Id': CA.UNIT, 'ActiveState': 'active', 'SubState': 'running', 'MainPID': '200',
@@ -236,6 +236,13 @@ class Coordinator(unittest.TestCase):
         (self.proc.root/'stat').write_text('cpu 0\nbtime %d\n' % int(time.time()-3600))
         self.refused('changed after its process started')
 
+    def test_fragment_needs_one_literal_exec_start(self):
+        for text in ('ExecStart=%s\nExecStart=%s\n', 'ExecStart=-%s\n%s', 'ExecStart="%s"\n%s', 'ExecStart=%s $X\n%s'):
+            fragment = (text % (' '.join(self.argv), '')).encode()
+            with self.assertRaises(ValueError):
+                CA.exec_start(fragment)
+        self.assertEqual(CA.exec_start(self.fragment.read_bytes()), self.argv)
+
     def test_main_process_must_match_exact_exec_start(self):
         self.proc.add(200, ppid=1, start=500, exe='/usr/bin/python3.12', argv=[*self.argv, '--extra'],
                       cgroup=UNIT_SCOPE, children=(201,))
@@ -252,9 +259,17 @@ class Coordinator(unittest.TestCase):
                 'UserKnownHostsFile=/k', '-i', '/id', '-oControlMaster=no', '-oProxyCommand=false',
                 '-oControlPath=/opt/transparent-publisher/state/ssh/c-0', 'root@'+WORKER_IP, CA.CONTROL_COMMAND]
         for case in ({'argv': argv}, {'cgroup': '0::/system.slice/transparent-control-sessions.service'},
-                     {'ppid': 1}, {'argv': ['ssh', 'root@'+WORKER_IP, CA.CONTROL_COMMAND]}):
+                     {'ppid': 1}, {'argv': ['ssh', 'root@'+WORKER_IP, CA.CONTROL_COMMAND]},
+                     {'argv': b'ssh\0'+b'x'*5000+b'\0'}):
             self.client(**case)
             self.assertEqual(self.snapshot()['clients'], [], case)
+        # A client still connecting is not listed and does not void the snapshot.
+        self.proc.rows.clear()
+        self.client()
+        self.proc.rows[-1] = self.proc.rows[-1].replace(' 01 ', ' 02 ')
+        self.proc.flush()
+        value = self.snapshot()
+        self.assertEqual((value['status'], value['clients']), ('verified', []))
         self.client(start=400)
         self.refused('predates its parent')
 

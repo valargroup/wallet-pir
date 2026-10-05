@@ -269,8 +269,11 @@ def pinned_bytes(path, digest, tick):
 
 def exec_start(fragment):
     """The single literal ExecStart argv of the pinned fragment."""
-    lines = [line.strip() for line in fragment.decode().splitlines()]
-    starts = [line[len('ExecStart='):] for line in lines if line.startswith('ExecStart=')]
+    starts = []
+    for line in fragment.decode().splitlines():
+        key, separator, value = line.partition('=')
+        if separator and key.strip() == 'ExecStart':
+            starts.append(value.strip())
     require(len(starts) == 1 and starts[0] and not any(c in starts[0] for c in '%$\\"\'') and
             starts[0][0] not in '-@+!:|', 'reconciler ExecStart is not one literal command')
     argv = starts[0].split()
@@ -293,14 +296,21 @@ def client(pid, main, scope, proc):
     require(current['start_ticks'] >= main['start_ticks'], 'reconciler child predates its parent')
     if executable(pid, proc) != SSH or uid(pid, proc) != 0 or group(pid, proc) != scope:
         return None
-    argv = [a.decode() for a in command(pid, proc).split(b'\0')[:-1]]
+    try:
+        argv = [a.decode() for a in command(pid, proc).split(b'\0')[:-1]]
+    except (ValueError, UnicodeError):
+        return None
     if (len(argv) != 13 or argv[:5] != ['ssh', '-oBatchMode=yes', '-oConnectTimeout=3', '-oStrictHostKeyChecking=yes', '-o']
             or not argv[5].startswith('UserKnownHostsFile=/') or argv[6] != '-i' or not argv[7].startswith('/')
             or argv[8:11] != ['-oControlMaster=no', '-oControlPersist=no', '-oControlPath=none']
             or not argv[11].startswith('root@') or HOSTNAME.fullmatch(argv[11][5:]) is None
             or argv[12] != CONTROL_COMMAND):
         return None
-    link = connection(pid, proc)
+    try:
+        link = connection(pid, proc)
+    except ValueError:
+        # Still connecting or closing: never a client, never a refusal by itself.
+        return None
     require(kernel(pid, proc) == current, 'reconciler client changed during observation')
     return {'pid': pid, 'start_ticks': current['start_ticks'], 'destination': argv[11][5:], 'connection': link}
 

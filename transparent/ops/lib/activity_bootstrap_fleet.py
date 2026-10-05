@@ -156,6 +156,9 @@ def local(binding,host,*,holder=None,skip=None,recovery=None,deadline=None,sourc
                      tick=tick,select=select,refuse=refuse,ancillary=authorities,
                      pending={c['pid']:c for c in found})
     tick()
+    # A control that exited between the two scans is gone, not pending.
+    live={(p['pid'],p['start_ticks']) for p in result['pending']}
+    found=[c for c in found if (c['pid'],c['start_ticks']) in live]
     result.update(bootstrap=KIND,machine_id=machine,observed_unix=time.time(),
                   inventory_sha256=INVENTORY_SHA,ancillary=ancillary,controls=found,
                   control_rejections=rejected[:S.BOUNDS['listed']])
@@ -185,7 +188,7 @@ def verify(value,binding,host,holder=None,attributed=None):
     identities=sorted((c['pid'],c['start_ticks']) for c in controls)
     require((host.startswith('worker-') or not controls) and isinstance(value.get('control_rejections'),list) and
             len(value['control_rejections'])<=S.BOUNDS['listed'] and value.get('pending_count')==len(controls) and
-            isinstance(value.get('pending'),list) and
+            isinstance(value.get('pending'),list) and all(isinstance(p,dict) for p in value['pending']) and
             sorted((p.get('pid'),p.get('start_ticks')) for p in value['pending'])==identities,
             'bootstrap survey pending controls are partial or foreign')
     require(not controls or isinstance(attributed,list) and
