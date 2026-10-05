@@ -8,7 +8,8 @@ stdin (the operation) is not observable, so it is never labelled read-only:
 this module attributes ownership only, and only by two independent kernel
 observations of one TCP connection:
 
-- worker (`controls`): an exact `shard-control` argv whose parent is root's
+- worker (`controls`): an exact `shard-control` argv and pinned executable
+  bytes whose parent is root's
   login shell running exactly `-c <fixed command>` as its own session leader,
   whose parent is an sshd session process holding exactly one established TCP
   connection, all in one root SSH session scope, with no other children;
@@ -54,6 +55,9 @@ SCRIPT_SHA256 = 'f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a08
 CONTROL = ('/usr/local/bin/shard-control', '/run/transparent-pir/control.sock')
 CONTROL_COMMAND = shlex.join(CONTROL)+' || [ "$?" -eq 1 ]'
 CONTROL_SHA256 = 'c5827d6ffd4521742577b98784b6f9b557b1e5724e88146716af2ae3f917dad8'
+# The installed portable worker shard-control (activity_input_stage pin).
+CONTROL_EXE_SHA256 = '6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170'
+MAX_EXE = 128 << 20
 SSH = '/usr/bin/ssh'
 SSHD = ('/usr/sbin/sshd', '/usr/lib/openssh/sshd-session')
 SESSION = re.compile(r'0::/user\.slice/user-0\.slice/session-[0-9]{1,10}\.scope')
@@ -111,6 +115,18 @@ def command(pid, proc):
 
 def executable(pid, proc):
     return os.readlink(proc/str(pid)/'exe')
+
+
+def executable_sha256(pid, proc, tick):
+    """The running inode's bytes through the kernel link, bounded."""
+    sha, size = hashlib.sha256(), 0
+    with (proc/str(pid)/'exe').open('rb') as stream:
+        while chunk := stream.read(1 << 20):
+            tick()
+            size += len(chunk)
+            require(size <= MAX_EXE, 'control executable exceeds bound')
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 def group(pid, proc):
@@ -176,13 +192,14 @@ def root_shell(passwd=None):
     return shell
 
 
-def chain(pid, proc, shell, sessions):
+def chain(pid, proc, shell, sessions, tick=lambda: None):
     """One exact reconciler-shaped worker control, or a ValueError naming the first mismatch."""
     p = kernel(pid, proc)
     require(p is not None and p['state'] != 'Z' and not p['kernel'], 'control process absent')
     raw = command(pid, proc)
     require(raw == b'\0'.join(c.encode() for c in CONTROL)+b'\0', 'control argv differs')
-    require(executable(pid, proc) == CONTROL[0], 'control executable differs')
+    require(executable(pid, proc) == CONTROL[0] and executable_sha256(pid, proc, tick) == CONTROL_EXE_SHA256,
+            'control executable differs')
     require(uid(pid, proc) == 0, 'control process is not root')
     scope = group(pid, proc)
     require(SESSION.fullmatch(scope) is not None, 'control process is not in a root SSH session scope')
@@ -233,7 +250,7 @@ def controls(*, proc=Path('/proc'), tick=lambda: None, shell=None):
         candidates += 1
         require(candidates <= MAX_CANDIDATES, 'worker control candidates exceed bound')
         try:
-            found.append(chain(pid, proc, shell, sessions))
+            found.append(chain(pid, proc, shell, sessions, tick))
         except (OSError, ValueError) as error:
             rejected.append({'pid': pid, 'reason': (str(error) if isinstance(error, ValueError)
                                                     else type(error).__name__)[:120]})

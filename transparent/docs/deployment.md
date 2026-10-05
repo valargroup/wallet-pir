@@ -1063,7 +1063,8 @@ runs `shard-control` on workers over SSH; there it lives in an SSH session scope
 not a baseline unit, and its operation (stdin) is not observable, so it is never
 treated as read-only. `ops/lib/wallet_pir_ops/control_attribution.py`, embedded
 with the survey, attributes ownership only. A worker reports a control as pending
-only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`), root's login shell
+only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`) and pinned
+executable bytes (`6dfe78fa…`, the staged portable worker pin), root's login shell
 running exactly the reconciler's `-c` command as its session leader with no other
 child, an sshd session process in the same root `session-N.scope` holding exactly
 one established TCP connection, and stable start ticks. Everything else stays
@@ -1078,7 +1079,10 @@ any refusal. An address, key, name or argv alone never admits anything. Controls
 carried by a shared `transparent-control-sessions` master, controls whose client
 has exited (for example after the reconciler's preparation timeout), and any host
 checking only itself, including worker source staging, still refuse. A changed
-reconciler fragment or script requires reviewing new pins.
+reconciler fragment or script, or a new worker `shard-control`, requires reviewing
+new pins. Candidate execution (`activity_candidate_execution.survey`) and deployed
+qualification owner surveys do not use this attribution and still refuse such
+controls.
 
 Read-only preflight checks every host without creating a lock or owner.
 Use `schema-source-preflight --private-evidence-file FILE` on the local

@@ -91,11 +91,18 @@ class Worker(unittest.TestCase):
               cgroup=scope, children=(102,))
         p.add(102, ppid=101, start=starts[2], exe=CA.CONTROL[0], argv=control or list(CA.CONTROL), cgroup=scope,
               pgid=101, session=101, children=control_children, uid=uid)
+        # The fixture's exe is a link name only; its bytes are this fictional binary.
+        self.binary = p.root/'shard-control-bytes'
+        self.binary.write_bytes(b'fictional shard-control')
         if not p.rows:
             p.tcp(555, (WORKER_IP, 22), (COORDINATOR_IP, 40000))
 
-    def observe(self):
-        return CA.controls(proc=self.proc.root, shell='/bin/bash')
+    def observe(self, digest=None):
+        def bytes_of(pid, proc, tick):
+            return hashlib.sha256(self.binary.read_bytes()).hexdigest()
+        with patch.object(CA, 'CONTROL_EXE_SHA256', digest or hashlib.sha256(b'fictional shard-control').hexdigest()), \
+                patch.object(CA, 'executable_sha256', bytes_of):
+            return CA.controls(proc=self.proc.root, shell='/bin/bash')
 
     def rejected(self, reason):
         found, rejected = self.observe()
@@ -131,6 +138,38 @@ class Worker(unittest.TestCase):
         self.rejected('not root')
         self.build(control_children=(103,))
         self.rejected('has children')
+
+    def test_root_observed_worker_shape_joins_its_coordinator_client(self):
+        # Root's read-only worker-1 sample (diagnostic, not authorization):
+        # listener sshd in ssh.service -> session sshd -> bash -> shard-control.
+        scope = '0::/user.slice/user-0.slice/session-216762.scope'
+        p = self.proc
+        p.rows.clear()
+        p.add(224472, ppid=1, start=10, exe='/usr/sbin/sshd', argv=['sshd: /usr/sbin/sshd -D [listener]'],
+              cgroup='0::/system.slice/ssh.service', children=(3462661,))
+        p.add(3462661, ppid=224472, start=2000, exe='/usr/sbin/sshd', argv=['sshd: root@notty'], cgroup=scope,
+              children=(3462706,), sockets=(56255379,))
+        p.add(3462706, ppid=3462661, start=2001, exe='/usr/bin/bash', argv=['bash', '-c', CA.CONTROL_COMMAND],
+              cgroup=scope, children=(3462707,))
+        p.add(3462707, ppid=3462706, start=2002, exe=CA.CONTROL[0], argv=list(CA.CONTROL), cgroup=scope,
+              pgid=3462706, session=3462706)
+        p.rows.append('   0: 0A008E0A:0016 03008E0A:CE46 01 00000000:00000000 00:00000000 00000000     0        0 56255379 1')
+        p.flush()
+        found = [f for f in self.observe()[0] if f['pid'] == 3462707]
+        self.assertEqual(found[0]['connection'], {'local': ['10.142.0.10', 22], 'remote': ['10.142.0.3', 52806]})
+        self.assertEqual(hashlib.sha256(b'bash\0-c\0'+CA.CONTROL_COMMAND.encode()+b'\0').hexdigest(),
+                         'b331347d4557cd941ec8874a5d273cc1eeba928106073e6384feb2b548ed00b8')
+        snapshot = {'kind': CA.KIND, 'status': 'verified', 'machine_id': CA.COORDINATOR, 'monotonic': time.monotonic(),
+                    'main': {'pid': 4015133, 'start_ticks': 270361979},
+                    'clients': [{'pid': 4100000, 'start_ticks': 270400000, 'connection':
+                                 {'local': ['10.142.0.3', 52806], 'remote': ['10.142.0.10', 22]}}]}
+        self.assertEqual(CA.attribute(found, [snapshot])[0]['reconciler'], {'pid': 4015133, 'start_ticks': 270361979})
+        with self.assertRaises(ValueError):
+            CA.attribute(found, [dict(snapshot, clients=[])])
+
+    def test_other_control_binary_bytes_are_rejected(self):
+        found, rejected = self.observe(digest='0'*64)
+        self.assertEqual((found, [r['reason'] for r in rejected]), ([], ['control executable differs']))
 
     def test_reused_pid_lineage_is_rejected(self):
         self.build(starts=(1000, 1003, 1002))
@@ -364,6 +403,9 @@ class Kernel(unittest.TestCase):
         self.assertEqual(child.stdout.readline(), b'ready\n')
         link = CA.connection(child.pid, Path('/proc'))
         self.assertEqual(link, {'local': list(peer), 'remote': list(server.getsockname())})
+        with open(os.path.realpath(sys.executable), 'rb') as stream:
+            expected = hashlib.sha256(stream.read()).hexdigest()
+        self.assertEqual(CA.executable_sha256(child.pid, Path('/proc'), lambda: None), expected)
         # The real host has no reconciler-shaped control and never raises.
         found, _ = CA.controls()
         self.assertEqual(found, [])
