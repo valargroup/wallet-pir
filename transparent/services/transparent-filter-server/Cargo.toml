@@ -55,6 +55,10 @@ path = "src/bin/script-sample.rs"
 name = "filter-sweep"
 path = "src/bin/filter-sweep.rs"
 
+[[bin]]
+name = "txid-display-controller"
+path = "src/bin/txid-display-controller.rs"
+
 [dependencies]
 pir-observability = { path = "../../../shared/pir-observability" }
 transparent-blocks = { path = "../../crates/transparent-blocks" }

@@ -9,10 +9,17 @@
 //!   sidecars.
 //! - [`publisher`] writes revisions and candidate publications, bootstraps a
 //!   root from the journal and verifies what is on disk.
+//! - [`source`] supplies blocks: live from the node, replayed from an ingested
+//!   journal, or scripted by tests.
+//! - [`serving`] drives display workers over their control protocol.
+//! - [`controller`] is the loop that seals, rebuilds and publishes.
 //! - [`timeline`] records what happened and when, for measurement.
 
 pub mod cache;
+pub mod controller;
 pub mod publisher;
+pub mod serving;
+pub mod source;
 pub mod timeline;
 
 pub use crate::publication::BoxError;
