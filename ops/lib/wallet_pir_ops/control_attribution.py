@@ -456,17 +456,3 @@ def verify_snapshot(value):
                 type(c['pid']) is int and type(c['start_ticks']) is int and isinstance(c['destination'], str) and
                 connection(c['connection']) for c in value['clients']), 'verified reconciler snapshot invalid')
     return value
-
-
-def verify_attributed(found):
-    """Exact shape of `attribute` results; their bindings are recomputed only by `attribute`."""
-    require(isinstance(found, list) and len(found) <= MAX_CANDIDATES, 'control attributions invalid')
-    for item in found:
-        require(isinstance(item, dict) and set(item) == {'control', 'reconciler', 'client', 'connection'} and
-                all(isinstance(item[k], dict) and set(item[k]) == {'pid', 'start_ticks'} and
-                    type(item[k]['pid']) is int and type(item[k]['start_ticks']) is int
-                    for k in ('control', 'reconciler', 'client')) and
-                isinstance(item['connection'], dict) and set(item['connection']) == {'local', 'remote'} and
-                all(isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and type(v[1]) is int
-                    for v in item['connection'].values()), 'control attribution invalid')
-    return found

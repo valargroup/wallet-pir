@@ -290,7 +290,7 @@ class RetainedSurvey(unittest.TestCase):
     """
     SERVICE='0::/system.slice/transparent-shard-server.service'
 
-    def spawn(self,argv,executable=None,service=False):
+    def spawn(self,argv,executable=None,cgroup=None):
         child=subprocess.Popen(argv,executable=executable,start_new_session=True,stdin=subprocess.DEVNULL,
                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         def stop():
@@ -305,25 +305,25 @@ class RetainedSurvey(unittest.TestCase):
                 self.assertLess(time.monotonic(),deadline);time.sleep(.01)
             found+=[int(x) for x in Path('/proc/%d/task/%d/children'%(child.pid,child.pid)).read_text().split()]
         self.tracked.update(found)
-        if service:self.service.update(found)
+        if cgroup:self.service.update(dict.fromkeys(found,cgroup))
         return [G.S.process(pid) for pid in found]
 
     def setUp(self):
         scratch=tempfile.TemporaryDirectory();self.addCleanup(scratch.cleanup)
         root=Path(scratch.name);os.chmod(root,0o700)
-        self.tracked,self.service=set(),set()
+        self.tracked,self.service=set(),{}
         machine=Path('/etc/machine-id').read_text().strip()
         for name,value in (('ROOT',root/'ops'),('INPUTS',root/'ops/input-staging'),('LOCK',root/'production.lock'),
                            ('PINS',{**G.PINS,'coordinator':machine}),('FENCE',lambda **kw:None)):
             p=patch.object(G,name,value);p.start();self.addCleanup(p.stop)
         own=G.S.ancestors()
         def scan(*a,**k):
-            return [dict(p,cgroup=self.SERVICE) if p['pid'] in self.service else p
+            return [dict(p,cgroup=self.service[p['pid']]) if p['pid'] in self.service else p
                     for p in REAL_SCAN(*a,**k) if p['pid'] in self.tracked or p['pid'] in own]
         for target,name,value in ((G.S,'scan',scan),(G.os,'geteuid',lambda:0)):
             p=patch.object(target,name,value);p.start();self.addCleanup(p.stop)
         # The reconciler service main (a baseline-class process) and its SSH client child.
-        self.main,self.client=self.spawn(['transparent-shard-server','-c','sleep 600 & wait'],'/bin/sh',service=True)
+        self.main,self.client=self.spawn(['transparent-shard-server','-c','sleep 600 & wait'],'/bin/sh',self.SERVICE)
         self.boot=G.S.boot_id()
 
     def snapshot(self):
@@ -386,76 +386,104 @@ class RetainedSurvey(unittest.TestCase):
             return value
         finally:path.unlink()
 
-    def test_completed_locked_survey_does_not_make_baseline_services_owners_of_the_next_survey(self):
+    def retained(self):
+        """A completed locked source survey: its owner, and its directory relative to input-staging."""
         lease=self.fleet(SimpleNamespace(verify=lambda:None))
-        # The successful locked run persisted its own owner and every raw reply.
-        record=json.loads((G.INPUTS/(lease+'.json')).read_text())
-        self.assertEqual(record['status'],'staged')
+        self.assertEqual(json.loads((G.INPUTS/(lease+'.json')).read_text())['status'],'staged')
         [directory]=(G.INPUTS/'fleet-surveys').glob('*/*')
+        return lease,directory.relative_to(G.INPUTS)
+
+    def test_completed_locked_survey_does_not_make_baseline_services_owners_of_the_next_survey(self):
+        lease,relative=self.retained()
+        directory=G.INPUTS/relative
         names=sorted(p.name for p in directory.iterdir())
         self.assertEqual(names,sorted([h+'.json' for h in G.PINS]+['worker-2.attribution.json']))
         coordinator=json.loads((directory/'coordinator.json').read_text())
         self.assertIn(self.main['pid'],[p['pid'] for p in coordinator['baseline_bound']])
         self.assertEqual([h['pid'] for h in coordinator['lock']['holders']],[os.getpid()])
         for name in names:
-            self.assertIsNotNone(G.retained(json.loads((directory/name).read_text())),name)
-        # A read-only proof that embeds every reply, as a durable owner record would keep it.
-        nested=self.fleet(None)
-        self.assertIn('control_attribution',nested['surveys']['worker-2'])
-        # An exited owner: a zombie until cleanup, so its PID cannot be reused meanwhile.
-        dead=self.spawn(['sleep','600'])[0];os.killpg(dead['pid'],signal.SIGKILL)
-        while G.S.process(dead['pid'])['state']!='Z':time.sleep(.01)
-        owner={'kind':'source-bootstrap-lease-v1','request_sha256':'e'*64,'status':'staged','boot_id':self.boot,
-               'started_unix':time.time(),'fleet':nested}
-        self.write('e'*64+'.json',G.S.canonical(dict(owner,pid=dead['pid'],start_ticks=dead['start_ticks'])))
+            self.assertIsNotNone(G.retained('input-staging',str(relative/name),json.loads((directory/name).read_text())),name)
 
         # The next (candidate upload) survey: every file read and hashed, nothing adopted.
         value,binding=self.survey()
         G.verify(value,binding,'coordinator')
         self.assertEqual(value['associated_count'],0)
-        self.assertEqual(value['inventory']['evidence'],len(names)+len(nested['surveys']))
-        self.assertGreaterEqual(value['inventory']['json_files'],len(names)+3)
+        self.assertEqual(value['inventory']['evidence'],len(names))
+        self.assertEqual(value['inventory']['json_files'],len(names)+3)
+        # The durable owner keeps its top-level and fleet proof owner identity; the reply keeps its holder.
+        _,references,_,_,_=G.S.owner_inventory(G.namespaces(),evidence=G.retained)
+        me=G.S.process(os.getpid())['start_ticks']
+        self.assertEqual(sorted((r['record'].rsplit('/',1)[-1],r['key'],r['pid'],r['start_ticks']) for r in references),
+                         sorted([('coordinator.json','survey-holder',os.getpid(),me),
+                                 (lease+'.json','pid',os.getpid(),me),(lease+'.json','pid',os.getpid(),me)]))
         # Before the fix, and for any caller without `evidence`, the replies name owners.
-        with patch.object(G,'retained',lambda value:None):
+        with patch.object(G,'retained',lambda *a:None):
             value,binding=self.survey()
         self.assertLessEqual({self.main['pid'],self.client['pid']},{pid for pid,_ in self.associated(value)})
-        # Both the retained replies and the proof nested in the durable owner name them.
-        self.assertLessEqual({p['record'].split('/')[1] for p in value['associated']},{'fleet-surveys','e'*64+'.json'})
+        self.assertEqual({p['record'].split('/')[1] for p in value['associated']},{'fleet-surveys'})
         with self.assertRaisesRegex(ValueError,'unfinished, live or unattributed'):G.verify(value,binding,'coordinator')
         _,references,_,_,_=G.S.owner_inventory(G.namespaces())
         self.assertIn(self.main['pid'],[r['pid'] for r in references])
 
-        # A genuine owner, completed or not, and its descendants still refuse, even beside nested evidence.
+    def test_true_owners_and_misplaced_tampered_or_nested_evidence_still_refuse(self):
+        lease,relative=self.retained()
+        request,nonce=relative.parts[1:]
+        coordinator=json.loads((G.INPUTS/relative/'coordinator.json').read_text())
+        attribution=json.loads((G.INPUTS/relative/'worker-2.attribution.json').read_text())
+        owner=json.loads((G.INPUTS/(lease+'.json')).read_text())
         live,descendant=self.spawn(['sh','-c','sleep 600 & wait'])
+        # A genuine owner, completed or not, with its fleet proof and result, and its descendants.
         found=self.associated(self.refused('f'*64+'.json',G.S.canonical(
             dict(owner,request_sha256='f'*64,pid=live['pid'],start_ticks=live['start_ticks']))))
         self.assertIn((live['pid'],'recorded-process'),found)
         self.assertEqual({pid for pid,_ in found},{live['pid'],descendant['pid']})
-        # A survey's lock holder remains an owner identity.
+        # A proof embedding replies (as a read-only preflight returns it) is not exempt inside a durable owner.
+        nested=self.fleet(None)
+        dead=self.spawn(['sleep','600'])[0];os.killpg(dead['pid'],signal.SIGKILL)
+        while G.S.process(dead['pid'])['state']!='Z':time.sleep(.01)  # a zombie until cleanup: no PID reuse
+        found=self.associated(self.refused('e'*64+'.json',G.S.canonical(
+            dict(owner,request_sha256='e'*64,pid=dead['pid'],start_ticks=dead['start_ticks'],fleet=nested))))
+        self.assertIn(self.main['pid'],{pid for pid,_ in found})
+        # At its exact place, a reply's lock holder remains an owner identity.
+        other='0'*48
+        moved=lambda value,**binding:dict(value,binding=dict(value['binding'],**binding))
         holder={k:v for k,v in self.main.items() if k in G.S.SUMMARY}
-        smuggled=dict(coordinator,lock={'path':coordinator['lock']['path'],
-                                        'holders':[dict(holder,pid=live['pid'],start_ticks=live['start_ticks'])]})
-        self.assertIn((live['pid'],'recorded-process'),
-                      self.associated(self.refused('fleet-surveys/x/'+'0'*48+'/coordinator.json',G.S.canonical(smuggled))))
-        # Tampered, foreign or partial reports and attributions are walked as owner records.
-        attribution=json.loads((directory/'worker-2.attribution.json').read_text())
-        bound=coordinator['baseline_bound']
-        for changed in (dict(coordinator,note={'pid':live['pid']}),
-                        dict(coordinator,machine_id=G.PINS['worker-1']),
-                        dict(coordinator,binding=dict(coordinator['binding'],host='worker-1')),
-                        dict(coordinator,baseline_bound=[dict(bound[0],child_pid=live['pid'])]),
-                        dict(coordinator,baseline_bound_count=len(bound)+1),
-                        dict(coordinator,classes={'names':[],'roots':[]}),
-                        dict(attribution,snapshots=[dict(s,clients=[dict(c,extra=1) for c in s['clients']])
-                                                    for s in attribution['snapshots']]),
-                        dict(attribution,host='coordinator')):
-            self.assertIsNone(G.retained(changed))
-            found=self.associated(self.refused('fleet-surveys/x/'+'1'*48+'/coordinator.json',G.S.canonical(changed)))
-            self.assertIn(self.main['pid'],{pid for pid,_ in found})
+        smuggled=dict(moved(coordinator,nonce=other),lock={'path':coordinator['lock']['path'],
+                      'holders':[dict(holder,pid=live['pid'],start_ticks=live['start_ticks'])]})
+        self.assertIn((live['pid'],'recorded-process'),self.associated(
+            self.refused('fleet-surveys/%s/%s/coordinator.json'%(request,other),G.S.canonical(smuggled))))
+        # Tampered content at an exactly bound place, or exact content at another place, is an owner record.
+        bound=coordinator['baseline_bound'];place='fleet-surveys/%s/%s/'%(request,other)
+        cases=[(place+'coordinator.json',dict(moved(coordinator,nonce=other),note={'pid':live['pid']})),
+               (place+'coordinator.json',dict(moved(coordinator,nonce=other),machine_id=G.PINS['worker-1'])),
+               (place+'coordinator.json',dict(moved(coordinator,nonce=other),
+                                               baseline_bound=[dict(bound[0],child_pid=live['pid'])])),
+               (place+'coordinator.json',dict(moved(coordinator,nonce=other),baseline_bound_count=len(bound)+1)),
+               (place+'coordinator.json',dict(moved(coordinator,nonce=other),classes={'names':[],'roots':[]})),
+               (place+'coordinator.json',coordinator),
+               ('fleet-surveys/%s/%s/coordinator.json'%('1'*64,nonce),coordinator),
+               (place+'router.json',moved(coordinator,nonce=other)),
+               (place+'worker-1.json',moved(coordinator,nonce=other,host='worker-1')),
+               (place+'sub/coordinator.json',moved(coordinator,nonce=other)),
+               ('d'*64+'.json',coordinator),
+               (place+'worker-2.attribution.json',dict(moved(attribution,nonce=other),snapshots=[
+                   dict(v,clients=[dict(c,extra=1) for c in v['clients']]) for v in attribution['snapshots']])),
+               (place+'worker-2.attribution.json',attribution),
+               (place+'coordinator.attribution.json',moved(attribution,nonce=other,host='coordinator'))]
+        for name,changed in cases:
+            self.assertIsNone(G.retained('input-staging',name,changed),name)
+            found=self.associated(self.refused(name,G.S.canonical(changed)))
+            self.assertTrue({self.main['pid'],self.client['pid']}&{pid for pid,_ in found},name)
+        # Another namespace never holds retained replies.
+        path=G.ROOT/'schema'/place/'coordinator.json';path.parent.mkdir(parents=True)
+        path.write_bytes(G.S.canonical(moved(coordinator,nonce=other)))
+        self.assertIsNone(G.retained('schema',place+'coordinator.json',moved(coordinator,nonce=other)))
+        value,binding=self.survey();path.unlink()
+        self.assertIn(self.main['pid'],{pid for pid,_ in self.associated(value)})
         # Malformed bytes or a link refuse outright.
-        value=self.refused('fleet-surveys/x/'+'2'*48+'/coordinator.json',G.S.canonical(coordinator)[:-1])
+        value=self.refused(place+'coordinator.json',G.S.canonical(moved(coordinator,nonce=other))[:-1])
         self.assertTrue(any(r.startswith('owner record unreadable') for r in value['blocked']))
-        link=G.INPUTS/'fleet-surveys/x/link.json';link.symlink_to(directory/'coordinator.json')
+        link=G.INPUTS/place/'router.json';link.symlink_to(G.INPUTS/relative/'router.json')
         value,binding=self.survey();link.unlink()
         self.assertTrue(any('link or special file' in r for r in value['blocked']))
         # A foreign operational process outside every baseline unit still refuses.
@@ -463,6 +491,52 @@ class RetainedSurvey(unittest.TestCase):
         value,binding=self.survey()
         self.assertTrue(any('not bound to a baseline service' in r for r in value['blocked']))
         with self.assertRaises(ValueError):G.verify(value,binding,'coordinator')
+
+    def test_production_shaped_coordinator_reply_with_ancillary_units_is_evidence(self):
+        """The pinned coordinator's reply lists the prototype, canonical load and its native child."""
+        _,relative=self.retained()
+        coordinator=json.loads((G.INPUTS/relative/'coordinator.json').read_text())
+        (G.INPUTS/relative/'coordinator.json').unlink()
+        A=G.A;unit='/system.slice/'+A.LOAD;boot=A.PINS[A.PROTOTYPE]['boot_id']
+        load,child=self.spawn(['sh','-c','sleep 600 & wait'],cgroup='0::'+unit)
+        pin=A.PINS[A.LOAD];prototype=A.PINS[A.PROTOTYPE]
+        units={A.PROTOTYPE:{'pid':prototype['pid'],'start_ticks':prototype['start_ticks'],'state':'S','status':'verified',
+                            'unit':A.PROTOTYPE,'boot_id':boot,'cgroup':'/system.slice/'+A.PROTOTYPE,'exe':'/usr/bin/python3',
+                            'listeners':[['tcp','0100007F',8192]],
+                            **{k:prototype[k] for k in ('exe_sha256','command_sha256','fragment_sha256')}},
+               A.LOAD:{'pid':load['pid'],'start_ticks':load['start_ticks'],'state':'S','status':'verified','unit':A.LOAD,
+                       'boot_id':boot,'cgroup':unit,'exe':'/bin/sh',
+                       **{k:pin[k] for k in ('exe_sha256','command_sha256','fragment_sha256')}}}
+        children=[{'pid':child['pid'],'start_ticks':child['start_ticks'],'state':'S','unit':A.LOAD,'boot_id':boot,
+                   'cgroup':unit,**pin['child'],'parent_pid':load['pid'],'parent_start_ticks':load['start_ticks'],
+                   'pgid':load['pid'],'session':load['pid']}]
+        ancillary={'kind':A.KIND,'pins_sha256':A.PINS_SHA256,'machine_id':A.COORDINATOR,'boot_id':boot,'units':units,
+                   'load_children':children,'route':{'sha256':'1'*64,'bytes':10,'prototype_port_excluded':True},
+                   'observed_unix':coordinator['observed_unix']}
+        listed={k:v for k,v in self.main.items() if k in G.S.SUMMARY}
+        bound=[dict(listed,pid=load['pid'],start_ticks=load['start_ticks'],cgroup='0::'+unit,unit=A.LOAD,
+                    exe_sha256=pin['exe_sha256'],**{'class':['transparent-loadtest']})]
+        value=dict(coordinator,machine_id=A.COORDINATOR,boot_id=boot,ancillary=ancillary,
+                   baseline_bound=coordinator['baseline_bound']+bound,
+                   baseline_bound_count=coordinator['baseline_bound_count']+1)
+        with patch.dict(G.PINS,coordinator=A.COORDINATOR),patch.object(G.S,'boot_id',lambda:boot):
+            name=str(relative/'coordinator.json')
+            self.assertEqual(G.retained('input-staging',name,value),[{'pid':os.getpid(),
+                             'start_ticks':G.S.process(os.getpid())['start_ticks'],'boot_id':boot}])
+            self.write(name,G.S.canonical(value))
+            def observe(evidence):
+                return G.S.observe(G.namespaces(),classes=G.CLASSES,baseline=G.BASELINE,binding={},evidence=evidence)
+            clear=observe(G.retained)
+            self.assertEqual((clear['associated_count'],clear['blocked']),(0,[]))
+            self.assertEqual(clear['inventory']['evidence'],6)
+            # As root saw it: service mains, the load and its child become owners of the historical survey.
+            poisoned={(p['pid'],p['association']) for p in observe(None)['associated']}
+            self.assertLessEqual({(load['pid'],'recorded-process'),(self.main['pid'],'recorded-process')},poisoned)
+            self.assertIn(child['pid'],{pid for pid,_ in poisoned})
+            for changed in (dict(ancillary,units=dict(units,**{A.LOAD:dict(units[A.LOAD],note=1)})),
+                            dict(ancillary,load_children=[dict(children[0],extra_pid=1)]),
+                            dict(ancillary,pins_sha256='0'*64)):
+                self.assertIsNone(G.retained('input-staging',name,dict(value,ancillary=changed)))
 
 
 if __name__=='__main__':unittest.main()
