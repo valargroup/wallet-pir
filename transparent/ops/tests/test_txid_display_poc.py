@@ -45,6 +45,10 @@ IMPORT = '\timport ' + GLOB
 HOSTS = {'coordinator': 'coordinator', 'archive': 'archive-03', 'recent': 'recent-01', 'router': 'router-01'}
 VPC = {'archive': '10.142.0.5', 'recent': '10.142.0.6'}
 LOAD = '/opt/transparent-5qps-20260929/status.json'
+ADAPTER = '/srv/transparent-activity/ops/sources/%s/transparent/ops/scripts/transparent-live-fleet.py' % ('e' * 40)
+FLEET = '/opt/transparent-publisher/v11/fleet.json'
+MEMBERSHIP = '/opt/transparent-publisher/v11/state/membership.json'
+HISTORY_EXEC = '{ path=/usr/bin/python3 ; argv[]=/usr/bin/python3 -B %s %s --reconcile }' % (ADAPTER, FLEET)
 WRAPPER = '/opt/enhance-pir/ops/wallet-pir-terraform.sh'
 TF_ROOT = '/opt/enhance-pir/infra/production'
 MAP = 'c' * 64
@@ -95,7 +99,7 @@ def request():
                        'rpc_cookie': '/root/.cache/zakura/.cookie'},
         'router': {'import_glob': GLOB, 'live_fleet_sha256': sha256(OLD_ADAPTER)},
         'terraform': {'wrapper': WRAPPER, 'root': TF_ROOT},
-        'history': {'load_status': LOAD},
+        'history': {'load_status': LOAD, 'adapter': ADAPTER, 'fleet': FLEET, 'membership': MEMBERSHIP},
         'measure': {'output': '/srv/zakura/txid-display-poc/measure', 'public_url': 'https://pir.example'},
         'baseline': {'coordinator': {'mem_available_bytes': 48 << 30}, 'archive': {'mem_available_bytes': 12 << 30},
                      'recent': {'mem_available_bytes': 12 << 30}},
@@ -163,7 +167,7 @@ class Fake(Executor):
 
     def healthy(self, now=NOW):
         coordinator = 'coordinator'
-        self.put(coordinator, P.MEMBERSHIP, json.dumps({'routed_recent': 2, 'updated_unix': now}))
+        self.put(coordinator, MEMBERSHIP, json.dumps({'routed_recent': 2, 'updated_unix': now}))
         self.put(coordinator, LOAD, json.dumps({'mode': 'running', 'utc': '2027-01-15T08:00:00+00:00',
                                                 'trailing_60s': {'exact': 300, 'errors': 0}}))
         for host in HOSTS.values():
@@ -252,7 +256,7 @@ class Fake(Executor):
 
     def render_history(self):
         """The history adapter's next render: the import before metadata in each site."""
-        fleet = json.loads(self.text('coordinator', P.HISTORY_FLEET))
+        fleet = json.loads(self.text('coordinator', FLEET))
         lines = [line for line in ROUTER.split('\n')]
         imports = fleet.get('route_imports') or []
         rendered = []
@@ -333,6 +337,9 @@ class Fake(Executor):
             if len(argv) == 1:
                 return 1, 'Error: "usage: txid-control SOCKET < command.json"\n'
             return 1, 'Error: Error("EOF while parsing a value", line: 1, column: 0)\n'
+        if command == 'systemctl' and argv[1] == 'show' and 'ExecStart' in argv:
+            default = HISTORY_EXEC if argv[2] in P.HISTORY_DAEMONS else ''
+            return 0, self.unit(host, argv[2]).get('exec', default) + '\n'
         if command == 'systemctl' and argv[1] == 'show':
             state = self.unit(host, argv[2])
             return 0, ('LoadState=%(load)s\nActiveState=%(active)s\nSubState=%(sub)s\nResult=%(result)s\n'
@@ -484,6 +491,8 @@ class RequestTests(Base):
             (('router', 'import_glob'), '/etc/caddy/.hidden/*.caddy'),
             (('release', 'binaries', 'txid-control'), KeyError), (('measure', 'public_url'), 'http://pir.example'),
             (('baseline', 'archive'), {}),
+            (('history', 'adapter'), '/srv/transparent-activity/ops/sources/x/transparent-fleet-scaler.py'),
+            (('history', 'fleet'), '/opt/transparent-publisher/v11/../fleet.json'), (('history', 'membership'), KeyError),
         ]
         for path, value in refused:
             with self.subTest(path=path, value=value), self.assertRaises(P.PocError):
@@ -660,9 +669,9 @@ class PreflightTests(Base):
 
     def test_history_health_refusals(self):
         cases = [
-            (lambda f: f.put('coordinator', P.MEMBERSHIP, json.dumps({'routed_recent': 1, 'updated_unix': NOW})),
+            (lambda f: f.put('coordinator', MEMBERSHIP, json.dumps({'routed_recent': 1, 'updated_unix': NOW})),
              'routes 1 recent'),
-            (lambda f: f.put('coordinator', P.MEMBERSHIP, json.dumps({'routed_recent': 2, 'updated_unix': NOW - 600})),
+            (lambda f: f.put('coordinator', MEMBERSHIP, json.dumps({'routed_recent': 2, 'updated_unix': NOW - 600})),
              'stale'),
             (lambda f: f.history.update(freshness_seconds=45), 'freshness 45'),
             (lambda f: f.history.update(ready_replicas=1), 'ready recent'),
@@ -674,6 +683,10 @@ class PreflightTests(Base):
              'not exact'),
             (lambda f: f.put('coordinator', os.path.dirname(LOAD) + '/latched.json', '{}'), 'latched'),
             (lambda f: f.put('coordinator', P.ACTUATOR_OPERATION, '{}'), 'actuator'),
+            # A schema cutover moved history to another adapter and fleet.
+            (lambda f: f.unit('coordinator', P.HISTORY_DAEMONS[0]).update(
+                exec='{ argv[]=/usr/bin/python3 -B /opt/transparent-publisher/transparent-live-fleet.py '
+                     '/opt/transparent-publisher/fleet.json }'), 'reconciler.service does not run'),
         ]
         for mutate, pattern in cases:
             with self.subTest(pattern=pattern):
@@ -808,9 +821,9 @@ class StageTests(Base):
 class HookTests(Base):
     def setUp(self):
         super().setUp()
-        self.fake.put('coordinator', P.LIVE_FLEET, OLD_ADAPTER, 0o755)
+        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
         self.fleet = json.dumps({'roster': '/opt/transparent-publisher/roster.json', 'public_host': 'pir.example'})
-        self.fake.put('coordinator', P.HISTORY_FLEET, self.fleet, 0o600)
+        self.fake.put('coordinator', FLEET, self.fleet, 0o600)
         self.fake.put('router-01', P.CADDYFILE, ROUTER)
 
     def test_hook_validates_first_installs_restarts_and_waits_for_the_render(self):
@@ -818,10 +831,10 @@ class HookTests(Base):
         poc.deploy('router-hook', poc.plan_sha256())
         validate = [argv for argv in self.fake.commands('router-01') if argv[0] == 'caddy']
         self.assertEqual(len(validate), 1)
-        self.assertEqual(self.fake.text('coordinator', P.LIVE_FLEET),
+        self.assertEqual(self.fake.text('coordinator', ADAPTER),
                          (ROOT / 'transparent/ops/scripts/transparent-live-fleet.py').read_text())
-        self.assertEqual(self.fake.modes[('coordinator', P.LIVE_FLEET)], 0o755)
-        self.assertEqual(json.loads(self.fake.text('coordinator', P.HISTORY_FLEET))['route_imports'], [GLOB])
+        self.assertEqual(self.fake.modes[('coordinator', ADAPTER)], 0o755)
+        self.assertEqual(json.loads(self.fake.text('coordinator', FLEET))['route_imports'], [GLOB])
         restarts = [m[2] for m in self.fake.mutations('coordinator') if m[1] == 'systemctl']
         self.assertEqual(restarts, [('restart', unit) for unit in P.HISTORY_DAEMONS])
         self.assertEqual(self.fake.text('router-01', P.CADDYFILE).count(IMPORT), 2)
@@ -829,16 +842,16 @@ class HookTests(Base):
         record = self.journal(poc.transaction.id)
         self.assertEqual(record['status'], 'committed')
         previous = {entry['path']: entry['previous'] for entry in record['changes']}
-        self.assertEqual(previous, {P.LIVE_FLEET: OLD_ADAPTER.decode(), P.HISTORY_FLEET: self.fleet})
+        self.assertEqual(previous, {ADAPTER: OLD_ADAPTER.decode(), FLEET: self.fleet})
         self.assertFalse(record['events'][-2]['other_changes'])
         self.assertTrue(any(m[2].startswith(P.TRANSACTIONS + '/' + poc.transaction.id + '/files/')
                             for m in self.fake.mutations('coordinator') if m[1] == 'write'))
 
         rollback = self.poc()
         rollback.rollback(poc.transaction.id)
-        self.assertEqual(self.fake.files[('coordinator', P.LIVE_FLEET)], OLD_ADAPTER)
-        self.assertEqual(self.fake.modes[('coordinator', P.LIVE_FLEET)], 0o755)
-        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), self.fleet)
+        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
+        self.assertEqual(self.fake.modes[('coordinator', ADAPTER)], 0o755)
+        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
         self.assertEqual(self.fake.text('router-01', P.CADDYFILE), ROUTER)
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'rolled-back')
 
@@ -846,36 +859,36 @@ class HookTests(Base):
         poc = self.poc()
         poc.deploy('router-hook', poc.plan_sha256())
         # A history publisher redeploy rewrites fleet.json after the hook.
-        redeployed = json.dumps({**json.loads(self.fake.text('coordinator', P.HISTORY_FLEET)),
+        redeployed = json.dumps({**json.loads(self.fake.text('coordinator', FLEET)),
                                  'managed_recent_workers': ['recent-02']})
-        self.fake.put('coordinator', P.HISTORY_FLEET, redeployed, 0o600)
+        self.fake.put('coordinator', FLEET, redeployed, 0o600)
         before = len(self.fake.mutations())
         with self.assertRaisesRegex(P.PocError, 'rollback refused before any change: %s on coordinator changed'
-                                    % P.HISTORY_FLEET):
+                                    % FLEET):
             self.poc().rollback(poc.transaction.id)
         self.assertEqual(self.fake.mutations()[before:], [])
-        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), redeployed)
-        self.assertEqual(self.fake.text('coordinator', P.LIVE_FLEET),
+        self.assertEqual(self.fake.text('coordinator', FLEET), redeployed)
+        self.assertEqual(self.fake.text('coordinator', ADAPTER),
                          (ROOT / 'transparent/ops/scripts/transparent-live-fleet.py').read_text())
         self.assertEqual(self.journal(poc.transaction.id)['status'], 'committed')
         # Put back the bytes the hook wrote, and the same rollback proceeds.
-        self.fake.put('coordinator', P.HISTORY_FLEET, json.dumps({**json.loads(self.fleet), 'route_imports': [GLOB]}),
+        self.fake.put('coordinator', FLEET, json.dumps({**json.loads(self.fleet), 'route_imports': [GLOB]}),
                       0o600)
         self.poc().rollback(poc.transaction.id)
-        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), self.fleet)
-        self.assertEqual(self.fake.files[('coordinator', P.LIVE_FLEET)], OLD_ADAPTER)
+        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
+        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
 
     def test_hook_refuses_an_unreviewed_adapter_or_a_rejected_composition(self):
-        self.fake.put('coordinator', P.LIVE_FLEET, b'something else', 0o755)
+        self.fake.put('coordinator', ADAPTER, b'something else', 0o755)
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'neither the reviewed one'):
             poc.deploy('router-hook', poc.plan_sha256())
-        self.fake.put('coordinator', P.LIVE_FLEET, OLD_ADAPTER, 0o755)
+        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
         self.fake.caddy_rejects = lambda path, config: IMPORT in config
         with self.assertRaisesRegex(P.PocError, 'caddy rejected'):
             poc.deploy('router-hook', poc.plan_sha256())
-        self.assertEqual(self.fake.files[('coordinator', P.LIVE_FLEET)], OLD_ADAPTER)
-        self.assertEqual(self.fake.text('coordinator', P.HISTORY_FLEET), self.fleet)
+        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
+        self.assertEqual(self.fake.text('coordinator', FLEET), self.fleet)
         self.assertFalse([m for m in self.fake.mutations() if m[1] == 'systemctl'])
 
     def test_hook_waits_for_the_history_render_and_fails_without_it(self):
@@ -1239,8 +1252,8 @@ class StopAndRetireTests(DeployedFleet):
 
     def test_retire_removes_units_route_and_hook_keeps_data_and_closes_the_firewall(self):
         hook = self.poc()
-        self.fake.put('coordinator', P.LIVE_FLEET, OLD_ADAPTER, 0o755)
-        self.fake.put('coordinator', P.HISTORY_FLEET, json.dumps({'public_host': 'pir.example'}), 0o600)
+        self.fake.put('coordinator', ADAPTER, OLD_ADAPTER, 0o755)
+        self.fake.put('coordinator', FLEET, json.dumps({'public_host': 'pir.example'}), 0o600)
         self.fake.put('router-01', P.CADDYFILE, ROUTER)
         hook.deploy('router-hook', hook.plan_sha256())
         self.fake.put('coordinator', '%s/%s' % (TF_ROOT, P.TFVARS), hook.render()['tfvars'], 0o600)
@@ -1256,8 +1269,8 @@ class StopAndRetireTests(DeployedFleet):
             self.assertLess(mutations.index(('disable', unit)), mutations.index('/etc/systemd/system/' + unit))
         self.assertEqual(self.fake.unit('coordinator', P.MAPWATCH_UNIT)['load'], 'not-found')
         self.assertIsNone(self.fake.text('router-01', '/etc/caddy/txid-display/routes.caddy'))
-        self.assertEqual(self.fake.files[('coordinator', P.LIVE_FLEET)], OLD_ADAPTER)
-        self.assertNotIn('route_imports', json.loads(self.fake.text('coordinator', P.HISTORY_FLEET)))
+        self.assertEqual(self.fake.files[('coordinator', ADAPTER)], OLD_ADAPTER)
+        self.assertNotIn('route_imports', json.loads(self.fake.text('coordinator', FLEET)))
         self.assertIsNone(self.fake.text('coordinator', '%s/%s' % (TF_ROOT, P.TFVARS)))
         record = self.journal(poc.transaction.id)
         self.assertEqual(record['status'], 'planned')

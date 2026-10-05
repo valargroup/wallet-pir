@@ -95,13 +95,10 @@ TRANSIENT = (INGEST_UNIT, SMOKE_UNIT, BOOTSTRAP_UNIT, OBSERVER_UNIT, MAPWATCH_UN
 JOURNAL_WRITERS = (INGEST_UNIT, SMOKE_UNIT, BOOTSTRAP_UNIT)
 CADDYFILE = '/etc/caddy/Caddyfile'
 PUBLISHER = '/opt/transparent-publisher'
-LIVE_FLEET = PUBLISHER + '/transparent-live-fleet.py'
-HISTORY_FLEET = PUBLISHER + '/fleet.json'
 HISTORY_DAEMONS = ('transparent-replica-reconciler.service', 'transparent-control-sessions.service')
 # The existing read-only history deploy credentials, reused by the adapter.
 DEPLOY_KEY = PUBLISHER + '/credentials/deploy-ssh'
 KNOWN_HOSTS = PUBLISHER + '/credentials/known_hosts'
-MEMBERSHIP = PUBLISHER + '/state/membership.json'
 ACTUATOR_OPERATION = PUBLISHER + '/scaler/journal/operation.json'
 HISTORY_STATUS = 'http://127.0.0.1:8094/v1/status'
 NODE_STATE = 'state/v29/mainnet'
@@ -300,8 +297,12 @@ def validate(request, inventory):
     terraform = exact(request['terraform'], ('wrapper', 'root'), 'terraform')
     plain_path(terraform['wrapper'], 'terraform.wrapper', history=True)
     plain_path(terraform['root'], 'terraform.root', history=True)
-    history = exact(request['history'], ('load_status',), 'history')
-    plain_path(history['load_status'], 'history.load_status', history=True)
+    # Schema cutovers move history's adapter, fleet and state, so the request names them.
+    history = exact(request['history'], ('load_status', 'adapter', 'fleet', 'membership'), 'history')
+    for key, value in history.items():
+        plain_path(value, 'history.' + key, history=True)
+    require(posixpath.basename(history['adapter']) == 'transparent-live-fleet.py',
+            'history.adapter must be the deployed transparent-live-fleet.py')
     measure = exact(request['measure'], ('output', 'public_url'), 'measure')
     plain_path(measure['output'], 'measure.output')
     require(isinstance(measure['public_url'], str) and PUBLIC_URL.fullmatch(measure['public_url']),
@@ -492,6 +493,14 @@ class Poc:
         return '%s/%s' % (self.release_dir, name)
 
     @property
+    def live_fleet(self):
+        return self.request['history']['adapter']
+
+    @property
+    def history_fleet(self):
+        return self.request['history']['fleet']
+
+    @property
     def import_line(self):
         return '\timport ' + self.request['router']['import_glob']
 
@@ -666,10 +675,10 @@ class Poc:
                 'release': {key: list(names) for key, names in HOST_RELEASE.items()},
                 'templates': {name: file_sha256(self.root / path) for name, path in sorted(RELEASE_FILES.items())},
                 'router_hook': {
-                    'host': 'coordinator', 'script': LIVE_FLEET,
+                    'host': 'coordinator', 'script': self.live_fleet,
                     'previous_sha256': self.request['router']['live_fleet_sha256'],
                     'new_sha256': file_sha256(self.root / 'transparent/ops/scripts/transparent-live-fleet.py'),
-                    'fleet_config': HISTORY_FLEET, 'route_imports': [self.request['router']['import_glob']],
+                    'fleet_config': self.history_fleet, 'route_imports': [self.request['router']['import_glob']],
                     'restart': list(HISTORY_DAEMONS), 'router_dir': self.routes_dir},
                 'terraform': {
                     'root': self.request['terraform']['root'], 'wrapper': self.request['terraform']['wrapper'],
@@ -709,6 +718,11 @@ class Poc:
         return {'load': state.get('LoadState', ''), 'active': state.get('ActiveState', ''),
                 'sub': state.get('SubState', ''), 'result': state.get('Result', ''),
                 'restarts': int(state.get('NRestarts') or 0), 'fragment': state.get('FragmentPath', '')}
+
+    def exec_start(self, key, unit):
+        _, output = self.run(key, ['systemctl', 'show', unit, '--no-pager', '-p', 'ExecStart', '--value'], 30,
+                             check=False)
+        return output
 
     def running(self, key, unit):
         return self.unit_state(key, unit)['active'] in ('active', 'activating', 'reloading', 'deactivating')
@@ -797,7 +811,11 @@ class Poc:
         """History must be healthy before display adds anything beside it."""
         problems = []
         coordinator = self.host('coordinator')
-        membership = self.read_json('coordinator', MEMBERSHIP)
+        for unit in HISTORY_DAEMONS:
+            command = self.exec_start('coordinator', unit)
+            if self.live_fleet not in command or self.history_fleet not in command:
+                problems.append('%s does not run %s with %s' % (unit, self.live_fleet, self.history_fleet))
+        membership = self.read_json('coordinator', self.request['history']['membership'])
         if membership is None:
             problems.append('history membership.json is missing')
         else:
@@ -1150,10 +1168,10 @@ class Poc:
         plan = self.plan()['router_hook']
         coordinator, router = self.host('coordinator'), self.host('router')
         glob = self.request['router']['import_glob']
-        current = self.ex.sha256(coordinator, LIVE_FLEET)
+        current = self.ex.sha256(coordinator, self.live_fleet)
         require(current in (plan['previous_sha256'], plan['new_sha256']),
                 'deployed history adapter %s is neither the reviewed one nor this checkout' % current)
-        fleet = self.read_json('coordinator', HISTORY_FLEET)
+        fleet = self.read_json('coordinator', self.history_fleet)
         require(isinstance(fleet, dict), 'history fleet.json is missing')
         require(fleet.get('route_imports') in (None, [], [glob]), 'history fleet.json imports other routes')
         before = self.ex.read(router, CADDYFILE)
@@ -1167,10 +1185,10 @@ class Poc:
         # Loaded code persists in these daemons; activations exec the script fresh.
         transaction.undo('post', 'coordinator', 'restart', units=list(HISTORY_DAEMONS))
         script = (self.root / 'transparent/ops/scripts/transparent-live-fleet.py').read_bytes()
-        changed = transaction.change('coordinator', LIVE_FLEET, script, 0o755)
+        changed = transaction.change('coordinator', self.live_fleet, script, 0o755)
         # The history adapter's own atomic_json serialization.
-        changed |= transaction.change('coordinator', HISTORY_FLEET, json.dumps({**fleet, 'route_imports': [glob]}),
-                                      0o600)
+        changed |= transaction.change('coordinator', self.history_fleet,
+                                      json.dumps({**fleet, 'route_imports': [glob]}), 0o600)
         if changed:
             self.apply('coordinator', {'op': 'restart', 'units': list(HISTORY_DAEMONS)})
         rendered = self.wait('the history router render with the import hook', self.hook_rendered, 900)
@@ -1638,14 +1656,14 @@ class Poc:
         changed = False
         hooks = self.transactions('deploy-router-hook', 'committed')
         script = next((entry for hook in reversed(hooks) for entry in hook.data['changes']
-                       if entry['path'] == LIVE_FLEET and entry['previous'] is not None), None)
+                       if entry['path'] == self.live_fleet and entry['previous'] is not None), None)
         transaction.undo('post', 'coordinator', 'restart', units=list(HISTORY_DAEMONS))
-        if script and self.ex.sha256(coordinator, LIVE_FLEET) == self.plan()['router_hook']['new_sha256']:
-            changed |= transaction.change('coordinator', LIVE_FLEET, script['previous'], 0o755)
-        fleet = self.read_json('coordinator', HISTORY_FLEET)
+        if script and self.ex.sha256(coordinator, self.live_fleet) == self.plan()['router_hook']['new_sha256']:
+            changed |= transaction.change('coordinator', self.live_fleet, script['previous'], 0o755)
+        fleet = self.read_json('coordinator', self.history_fleet)
         if isinstance(fleet, dict) and 'route_imports' in fleet:
             fleet.pop('route_imports')
-            changed |= transaction.change('coordinator', HISTORY_FLEET, json.dumps(fleet), 0o600)
+            changed |= transaction.change('coordinator', self.history_fleet, json.dumps(fleet), 0o600)
         if changed:
             self.apply('coordinator', {'op': 'restart', 'units': list(HISTORY_DAEMONS)})
 
@@ -1682,9 +1700,9 @@ class Poc:
             except ValueError:
                 ready = None
             result['workers'][key] = {'http': status, 'ready': ready}
-        fleet = self.read_json('coordinator', HISTORY_FLEET) or {}
+        fleet = self.read_json('coordinator', self.history_fleet) or {}
         result['router_hook'] = {'route_imports': fleet.get('route_imports'),
-                                 'adapter_sha256': self.ex.sha256(self.host('coordinator'), LIVE_FLEET)}
+                                 'adapter_sha256': self.ex.sha256(self.host('coordinator'), self.live_fleet)}
         recent = []
         for path in sorted(self.journal_dir.glob('txid-display-*.json'), key=lambda p: p.stat().st_mtime)[-10:]:
             data = json.loads(path.read_text())
