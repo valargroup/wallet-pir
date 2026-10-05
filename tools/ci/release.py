@@ -23,6 +23,10 @@ BINARIES = {
     'transparent-filter': ['transparent-filter-server'],
     'transparent-shard': ['transparent-shard-server', 'shard-assign', 'shard-prune'],
     'transparent-publisher': ['transparent-publish-controller', 'transparent-shard-server', 'shard-control', 'shard-assign'],
+    # Tiered txid display proof of concept beside history; deployed only by
+    # `wallet-pir-deploy.py txid-display-*` (transparent/ops/lib/txid_display_poc.py).
+    'transparent-txid-display': ['transparent-txid-server', 'txid-control', 'txid-inventory',
+                                 'txid-display-controller', 'transparent-event-ingest'],
     # Status roles and controller, from the native target like
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],
@@ -35,6 +39,11 @@ FILES = {
     'transparent-filter': ['transparent/ops/deploy/transparent-filter-server.service'],
     'transparent-shard': ['transparent/ops/deploy/transparent-shard-server.service', 'transparent/ops/deploy/transparent-Caddyfile'],
     'transparent-publisher': [],
+    'transparent-txid-display': ['transparent/ops/deploy/transparent-txid-display-worker.service.in',
+                                 'transparent/ops/deploy/transparent-txid-display-controller.service.in',
+                                 'transparent/ops/deploy/txid-display-routes.caddy.in',
+                                 'transparent/ops/scripts/txid-display-fleet.py',
+                                 'transparent/ops/scripts/txid-display-observe.py'],
     'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
                    'enhance/ops/deploy/status-controller-qualification.service.in'],
 }

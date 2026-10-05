@@ -23,7 +23,7 @@ OPS = {'check-ops-enhance', 'check-ops-shared', 'check-ops-control-sessions',
        'check-ops-deploy', 'check-ops-contracts', 'check-ops-parents', 'check-ops-fleet',
        'check-ops-publication', 'check-ops-burst', 'check-ops-regression-recut',
        'check-ops-regression-fixtures', 'check-ops-observation', 'check-ops-stage-timing',
-       'check-ops-membership', 'check-ops-elastic', 'check-ops-scaler-fast'}
+       'check-ops-membership', 'check-ops-elastic', 'check-ops-scaler-fast', 'check-ops-txid-display'}
 HELPERS = OPS | {'check-docs', 'check-tools', 'check-reports'}
 
 
@@ -69,6 +69,9 @@ def route(path):
         return {'check-ops-elastic'}, {'transparent_infra', 'ops'}
     if path.startswith('ops/lib/'):
         return OPS, {'ops'}
+    if path.startswith('ops/infra/digitalocean/production/'):
+        # The txid display deploy pins this root's firewall sources.
+        return {'check-ops-shared', 'check-ops-contracts', 'check-ops-deploy', 'check-ops-txid-display'}, {'ops'}
     if path.startswith('ops/tests/control_sessions/') or 'control-session' in path:
         return {'check-ops-control-sessions'}, {'ops'}
     if path.startswith(('ops/tests/deploy/', 'ops/scripts/wallet-pir-deploy', 'ops/scripts/deploy-')):
@@ -78,7 +81,9 @@ def route(path):
     if path.startswith('enhance/ops/'):
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts'}, {'ops'}
     if path.startswith('transparent/ops/'):
-        if 'scaler' in path or 'membership_model' in path:
+        if 'txid_display' in path or 'txid-display' in path:
+            targets = {'check-ops-txid-display'}
+        elif 'scaler' in path or 'membership_model' in path:
             targets = {'check-ops-scaler-fast'}
         elif 'elastic' in path or 'test_transparent_plan' in path:
             targets = {'check-ops-elastic'}

@@ -382,7 +382,9 @@ jobs:
           --bin enhance-pir-server --bin enhance-pir-load-test
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
           --bin transparent-shard-server --bin shard-assign --bin shard-prune
-          --bin shard-control --bin transparent-publish-controller --features enhance-pir/cli
+          --bin shard-control --bin transparent-publish-controller
+          --bin transparent-txid-server --bin txid-control --bin txid-inventory
+          --bin txid-display-controller --bin transparent-event-ingest --features enhance-pir/cli
       - name: Assemble checksummed release bundles
         env:
           SHA: ${{ github.sha }}
@@ -456,6 +458,14 @@ jobs:
         with:
           name: transparent-publisher-${{ github.sha }}
           path: release-bundles/transparent-publisher.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transparent-txid-display-${{ github.sha }}
+          path: release-bundles/transparent-txid-display.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error
