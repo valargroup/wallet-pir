@@ -1097,6 +1097,66 @@ class OwnerFindingTests(unittest.TestCase):
 
 
 class RemoteTests(unittest.TestCase):
+    def test_cache_restore_authorizes_service_before_mutating_cache(self):
+        actor=self.actor('cache-corrupt-restart',cache_manifests=['a'*64])
+        original=Q.unit_identity(self.system,Q.H.WORKER)
+        record={'original':original,'phase':'verified','after':original}
+        cache=SimpleNamespace(restore=unittest.mock.Mock())
+        changed=copy.deepcopy(original);changed['FragmentPath']='foreign.service'
+        reused=copy.deepcopy(original);reused['process']['start_ticks']+=1
+        stopped=copy.deepcopy(original);stopped.update(ActiveState='inactive',MainPID='0')
+        for current in (changed,reused,stopped):
+            effect=SimpleNamespace(settled=lambda deadline:current)
+            if current is stopped:record['phase']='intent'
+            with self.assertRaises(ValueError):actor.restore_cache(effect,record,Q.Deadline(60),None,cache)
+        cache.restore.assert_not_called()
+
+    def test_cache_requests_require_sealed_digests_and_no_path_operands(self):
+        valid=self.remote('cache-corrupt-restart',cache_manifests=['a'*64])
+        Q.remote_validate(valid)
+        for change in ({'cache_manifests':[]},{'cache_manifests':['/tmp/cache']},
+                       {'cache_manifests':['a'*64,'a'*64]},{'cache_path':'/tmp/cache'},{'role':'router'}):
+            with self.assertRaises(ValueError):Q.remote_validate({**valid,**change})
+        with self.assertRaises(ValueError):Q.remote_validate(self.remote('cache-corrupt-restart'))
+
+    def test_cache_rejection_native_proof_and_restore_are_required_for_success(self):
+        for rejection in (True,False):
+            with self.subTest(rejection=rejection):
+                # Each fictional action has its own immutable identity/namespace.
+                actor=self.actor('cache-corrupt-restart',cache_manifests=[('a' if rejection else 'b')*64])
+                self.system.ready.update(mode='warm',role='archive-owner')
+                events=[];directory=self.root/('cache-'+str(rejection));directory.mkdir()
+                class Cache:
+                    def capture(inner,pid,manifests):
+                        events.append('capture');actor_record['cache']={'kind':'owned-cache-corruption-v1','phase':'captured'}
+                    def corrupt(inner):
+                        events.append('corrupt');self.assertTrue(self.system.empty_cgroup(self.system.state(Q.H.WORKER)))
+                        actor_record['cache']['phase']='corrupted'
+                    def restore(inner):events.append('restore');actor_record['cache']['phase']='restored'
+                cache=Cache();cache.directory=directory
+                def factory(record,*args):
+                    nonlocal actor_record
+                    actor_record=record;return cache
+                actor_record={}
+                run=self.system.run
+                def native(argv,**options):
+                    if argv[0]=='journalctl':
+                        return b'runtime cache length mismatch runtime cache rejected; rebuilding\n' if rejection else b'other log\n'
+                    return run(argv,**options)
+                observation=self.system.cache_observation
+                def observed():return {**observation(),'runtime_cache':{'misses':1,'pending_saves':0,'write_failures':0}}
+                with patch.object(actor,'cache_fault',side_effect=factory),patch.object(self.system,'run',side_effect=native), \
+                     patch.object(self.system,'cache_observation',side_effect=observed), \
+                     patch.dict(Q.C.ARTIFACTS,{'transparent-shard-server':'e'*64}):
+                    result=actor.run('act')
+                self.assertEqual(result['status'],'passed' if rejection else 'restored')
+                self.assertEqual(events,['capture','corrupt','restore'])
+                self.assertEqual(result['cache']['phase'],'restored')
+                if rejection:
+                    self.assertTrue((directory/'native-rejection.log').is_file())
+                    self.assertEqual(result['cache']['native']['runtime_cache']['misses'],1)
+                else:self.assertNotIn('native',result['cache'])
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()

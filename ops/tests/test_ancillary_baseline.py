@@ -13,6 +13,61 @@ sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'lib'))
 from wallet_pir_ops import ancillary_baseline as A, owner_survey as S
 
 class Retained(unittest.TestCase):
+    def make_child(self):
+        pid=501;parent=333;base=self.proc/str(pid);base.mkdir()
+        fields=['0']*23;fields[0]='S';fields[1:4]=[str(parent)]*3;fields[19]='1234'
+        (base/'stat').write_text(str(pid)+' (query) '+' '.join(fields))
+        (base/'cgroup').write_text('0::/system.slice/'+A.LOAD+'\n')
+        command=b'fictional native query\0';(base/'cmdline').write_bytes(command)
+        binary=self.root/'rate-query';binary.write_bytes(b'fictional native binary');(base/'exe').symlink_to(binary)
+        self.pins[A.LOAD]['child'].update(exe=str(binary),exe_sha256=hashlib.sha256(binary.read_bytes()).hexdigest(),
+            command_sha256=hashlib.sha256(command).hexdigest())
+        (self.proc/str(parent)/'task'/str(parent)/'children').write_text(str(pid)+' ')
+        return base
+
+    def test_exact_load_child_is_bound_and_every_other_descendant_refuses(self):
+        self.make_child();proof=self.observe();cap=proof['load_children'][0]
+        item=dict(cap,ppid=cap['parent_pid'],argv=[cap['exe']],cgroup='0::'+cap['cgroup'])
+        allowed=A.authorities(proof,A.COORDINATOR);classes={'names':[],'roots':[str(self.root)+'/']}
+        bound,foreign,errors=S.operational([item],set(),classes,(),ancillary=allowed)
+        self.assertEqual((len(bound),foreign,errors),(1,[],[]));self.assertTrue(A.authorized(proof,A.COORDINATOR,item))
+        for change in ({'ppid':2},{'pgid':2},{'session':2},{'pid':502},{'start_ticks':1235},
+                       {'command_sha256':'0'*64},{'cgroup':item['cgroup']+'/child'}):
+            changed={**item,**change}
+            self.assertFalse(A.authorized(proof,A.COORDINATOR,changed))
+            self.assertEqual(len(S.operational([changed],set(),classes,(),ancillary=allowed)[1]),1)
+        for change in ({'parent_start_ticks':1},{'exe_sha256':'0'*64},{'parent_pid':2}):
+            altered=copy.deepcopy(proof);altered['load_children'][0].update(change)
+            with self.assertRaisesRegex(ValueError,'child provenance'):A.authorities(altered,A.COORDINATOR)
+
+    def test_child_drift_extra_child_and_bad_parentage_refuse(self):
+        base=self.make_child()
+        for path,raw in ((base/'cmdline',b'changed'),(self.root/'rate-query',b'changed'),
+                         (base/'cgroup',b'0::/other'),
+                         (self.proc/'333/task/333/children',b'501 502')):
+            before=path.read_bytes();path.write_bytes(raw)
+            with self.assertRaises(ValueError):self.observe()
+            path.write_bytes(before)
+        path=base/'stat';before=path.read_text();fields=before.rsplit(')',1)[1].split();fields[1]='2'
+        path.write_text('501 (query) '+' '.join(fields))
+        with self.assertRaisesRegex(ValueError,'parent, group or session'):self.observe()
+
+    def test_deleted_executable_decoration_matches_survey_without_weakening_hash(self):
+        original=os.readlink
+        def decorated(path):
+            value=original(path)
+            return value+' (deleted)' if str(path).endswith('/exe') else value
+        with patch.object(A.os,'readlink',side_effect=decorated):
+            proof=self.observe()
+        cap=proof['units'][A.PROTOTYPE]
+        self.assertFalse(cap['exe'].endswith(' (deleted)'))
+        item=dict(pid=cap['pid'],start_ticks=cap['start_ticks'],exe=cap['exe'],
+                  command_sha256=cap['command_sha256'],cgroup='0::'+cap['cgroup'])
+        self.assertTrue(A.authorized(proof,A.COORDINATOR,item))
+        binary=self.root/(A.PROTOTYPE+'.exe');binary.write_bytes(b'changed')
+        with patch.object(A.os,'readlink',side_effect=decorated):
+            with self.assertRaisesRegex(ValueError,'executable differs'):self.observe()
+
     def setUp(self):
         temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
         self.root=Path(temporary.name).resolve();self.proc=self.root/'proc';self.props={}
@@ -32,6 +87,7 @@ class Retained(unittest.TestCase):
             self.props[unit]=dict(Id=unit,ActiveState='active',SubState='running',MainPID=str(pid),NRestarts='0',
                 ControlGroup='/system.slice/'+unit,FragmentPath=str(fragment),DropInPaths='',NeedDaemonReload='no')
             (base/'fd').mkdir()
+            children=base/'task'/str(pid)/'children';children.parent.mkdir(parents=True);children.write_text('')
         pid=self.pins[A.PROTOTYPE]['pid'];(self.proc/str(pid)/'fd/0').symlink_to('socket:[123]')
         net=self.proc/'net';net.mkdir()
         (net/'tcp').write_text('header\n 0: 0100007F:2000 00000000:0000 0A 0 0 0 0 0 123\n');(net/'tcp6').write_text('header\n')

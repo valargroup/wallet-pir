@@ -269,8 +269,9 @@ class Commands:
             require(type(value) is int and value >= 0, 'worker omitted or malformed cache persistence counter')
             metrics[name] = value
         ready = {k:ready.get(k) for k in ('ready','mode','map_sha256','binary_sha256','warm_runtimes',
-                                        'target_runtimes','prewarm_failed','prewarm_finished')}
-        return {'ready':ready, 'metrics':metrics}
+                                        'target_runtimes','prewarm_failed','prewarm_finished','role','worker_id')}
+        return {'ready':ready, 'metrics':metrics, 'runtime_cache':{k:cache.get(k) for k in
+                ('hits','misses','pending_saves','write_failures','bytes','limit_bytes')}}
 
     def cache_resources(self):
         return self.service_resources(WORKER, CACHE)

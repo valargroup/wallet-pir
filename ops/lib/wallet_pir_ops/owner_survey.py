@@ -485,7 +485,9 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS, ancillary
         if retained is not None:
             if retained['unit'] in ANCILLARY_UNITS and item.get('start_ticks')==retained['start_ticks'] and item.get('exe')==retained['exe'] and \
                     item.get('cgroup','').strip() in (retained['cgroup'],'0::'+retained['cgroup']) and \
-                    item.get('command_sha256')==retained['command_sha256']:
+                    item.get('command_sha256')==retained['command_sha256'] and \
+                    ('parent_pid' not in retained or (item.get('ppid')==retained['parent_pid'] and
+                      item.get('pgid')==retained['pgid'] and item.get('session')==retained['session'])):
                 bound.append(dict(item,unit=retained['unit'],exe_sha256=retained['exe_sha256'],ancillary=True))
                 continue
             unattributed.append(item)

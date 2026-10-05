@@ -252,6 +252,8 @@ def parser():
         command.add_argument('--host', help='stage another pinned host from the root coordinator under its production lock')
         command.add_argument('--recovery-transaction', help='inert source repair for this failed transaction only')
         command.add_argument('--recovery-recipe-sha256')
+        if name == 'preflight':
+            command.add_argument('--private-evidence-file', help='exclusive local private file for exact fleet replies, including refusal')
         if name not in ('status','reconcile'):
             command.add_argument('--archive', required=True)
     for name in ('schema-plan', 'schema-preflight', 'schema-deploy'):
@@ -530,7 +532,8 @@ def main(argv=None, executor=None, out=print, **options):
             recovery = ({'transaction':args.recovery_transaction,'recipe_sha256':args.recovery_recipe_sha256}
                         if args.recovery_transaction else None)
             try:
-                module.SourceStage(inventory, out, target=args.host, recovery=recovery,attempt=args.attempt).run(args.command.removeprefix('schema-source-'),
+                module.SourceStage(inventory, out, target=args.host, recovery=recovery,attempt=args.attempt,
+                    private_evidence_file=getattr(args,'private_evidence_file',None)).run(args.command.removeprefix('schema-source-'),
                     args.source_sha, args.sha256, getattr(args, 'archive', None))
             except module.Unknown as error:
                 out(str(error))

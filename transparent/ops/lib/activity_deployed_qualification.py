@@ -47,6 +47,7 @@ import urllib.request
 from wallet_pir_ops import ancillary_baseline as A
 import activity_quality_shadow as QS
 import activity_rollback_evidence as RE
+import activity_cache_fault as CF
 from wallet_pir_ops import durable, inherited_lock, schema_fence, transparent_map
 from wallet_pir_ops.deploy.remote import ProductionLock, SSHExecutor
 
@@ -129,12 +130,12 @@ FAULTS = ('client-reopen', 'publication-interruption', 'recent-worker-loss', 'ar
           'router-restart', 'rollback-redeploy')
 FAULT_TARGET = {'recent-worker-loss':'recent-replica', 'archive-restart':'archive-owner'}
 FAULT_ACTION = {'publication-interruption':('coordinator', 'stop-start'), 'recent-worker-loss':('worker', 'stop-start'),
-                'archive-restart':('worker', 'restart'), 'router-restart':('router', 'restart')}
+                'archive-restart':('worker', 'cache-corrupt-restart'), 'router-restart':('router', 'restart')}
 REMOTE_UNITS = {'worker':H.WORKER, 'router':'caddy.service'}
 REMOTE_DISK = {'worker':H.CACHE, 'router':Path('/')}
-REMOTE_OPERATIONS = {'worker':('probe', 'identity', 'control-status', 'await-preparation', 'restart', 'stop-start'),
+REMOTE_OPERATIONS = {'worker':('probe', 'identity', 'control-status', 'await-preparation', 'restart', 'stop-start', 'cache-corrupt-restart'),
                      'router':('probe', 'identity', 'restart')}
-EFFECTS = ('restart', 'stop-start')
+EFFECTS = ('restart', 'stop-start', 'cache-corrupt-restart')
 COORDINATOR_UNITS = (*H.AUTHORITY, H.FILTER, H.LOAD)
 PUBLISHER = H.AUTHORITY[0]
 RECOVERY_SECONDS = 900
@@ -146,6 +147,8 @@ UNIT_SECONDS = {'stop':90, 'start':90}
 REMOTE_BOUND = {'probe':30, 'identity':90, 'control-status':15, 'await-preparation':PREPARATION_WAIT_SECONDS+15,
                 'restart':UNIT_SECONDS['stop']+UNIT_SECONDS['start'],
                 'stop-start':UNIT_SECONDS['stop']+LOSS_HOLD_SECONDS+UNIT_SECONDS['start'], 'reconcile':240}
+CACHE_IO_SECONDS = 60
+REMOTE_BOUND['cache-corrupt-restart'] = UNIT_SECONDS['stop']+CACHE_IO_SECONDS+UNIT_SECONDS['start']
 # A failed effect gets this much more to restore its owned unit before replying.
 RESTORE_SECONDS = UNIT_SECONDS['start']+60
 SSH_MARGIN = 30
@@ -189,7 +192,7 @@ EFFECT_SECONDS = {'client-reopen':INTERRUPT_SECONDS+CONTINUATION_SECONDS+120,
                   'publication-interruption':REMOTE_BOUND['await-preparation']+SSH_MARGIN+OWNER_SURVEY_SECONDS+
                                              REMOTE_BOUND['control-status']+SSH_MARGIN+STOP_EFFECT_SECONDS,
                   'recent-worker-loss':REMOTE_BOUND['stop-start']+RESTORE_SECONDS+SSH_MARGIN,
-                  'archive-restart':REMOTE_BOUND['restart']+RESTORE_SECONDS+SSH_MARGIN,
+                  'archive-restart':REMOTE_BOUND['cache-corrupt-restart']+RESTORE_SECONDS+SSH_MARGIN,
                   'router-restart':REMOTE_BOUND['restart']+RESTORE_SECONDS+SSH_MARGIN, 'rollback-redeploy':0}
 POST_SECONDS = 300
 MEMORY = {'capacity':('10G', '12G')}
@@ -201,8 +204,8 @@ MISSING = {
     'client-reopen': ['interrupted-store continuation: the interrupted store resumes through the pinned loadtest\'s '
                       'existing --scenario-worker protocol; that adapter is an unproven interface candidate until '
                       'real measurements are reviewed, and an exact outcome deletes the store natively'],
-    'archive-restart': ['cache corruption: injecting a corrupt runtime/disk cache needs destructive file mutation '
-                        'with no reviewed native interface; only an archive-owner restart and cache reload run'],
+    'archive-restart': ['cache corruption: the owned immutable-inode replacement and restoration adapter '
+                        'remains unqualified until reviewed real native rejection, rebuild and canonical recovery evidence'],
 }
 
 
@@ -1412,7 +1415,8 @@ class UnitEffect:
 # --- remote fixed actor --------------------------------------------------------
 
 def remote_validate(request):
-    require(isinstance(request, dict) and set(request) == {'version', 'source_sha', 'qualification_sha256', 'host',
+    extra={'cache_manifests'} if isinstance(request,dict) and request.get('operation')=='cache-corrupt-restart' else set()
+    require(isinstance(request, dict) and set(request)-extra == {'version', 'source_sha', 'qualification_sha256', 'host',
             'role', 'machine_id', 'coordinator_machine_id', 'transaction', 'operation'}, 'invalid remote qualification request')
     require(request['version'] == 1 and type(request['version']) is int and
             isinstance(request['source_sha'], str) and re.fullmatch('[0-9a-f]{40}', request['source_sha']) and
@@ -1423,6 +1427,11 @@ def remote_validate(request):
             request['machine_id'] != request['coordinator_machine_id'], 'invalid remote qualification identity')
     require(request['role'] in REMOTE_OPERATIONS and request['operation'] in REMOTE_OPERATIONS[request['role']],
             'unsupported remote qualification operation')
+    if extra:
+        manifests=request.get('cache_manifests')
+        require(isinstance(manifests,list) and 1<=len(manifests)<=4096 and
+                all(isinstance(m,str) and HEX.fullmatch(m) for m in manifests) and manifests==sorted(set(manifests)),
+                'cache fault requires exact canonical sealed manifest identities')
     return request
 
 
@@ -1482,6 +1491,73 @@ class RemoteActor:
 
     def save(self, record):
         durable.atomic_json(self.path, record, mode=0o600)
+
+    def cache_fault(self, record, deadline, lock):
+        def stopped():
+            state=self.commands.state(self.unit)
+            return (state.get('ActiveState') in ('inactive','failed') and state.get('MainPID') in ('0','') and
+                    self.commands.empty_cgroup(state))
+        return CF.CacheFault(self.sha,record,lambda:self.save(record),deadline,lock,stopped)
+
+    def restore_cache(self, effect, record, deadline, lock, cache=None):
+        # Authorize the service before touching its cache, including after owner loss.
+        current=effect.settled(deadline)
+        original=record['original'];phase=record.get('phase')
+        require(all(current.get(k)==original.get(k) for k in ('FragmentPath','DropInPaths','ControlGroup')),
+                'cache restoration service definition changed; foreign state remains fenced')
+        if current['ActiveState']=='active':
+            same_service(original,current)
+            expected=record.get('after',{}).get('process')
+            if expected is not None:
+                require(current.get('process')==expected,'cache restoration worker changed after the owned start')
+            elif current.get('process')==original['process']:
+                require(phase in ('intent','stopping'),'original cache worker contradicts owned phase')
+            else:
+                require(phase=='starting','cache worker changed without an owned start')
+        else:
+            require(current['ActiveState'] in ('inactive','failed') and phase in ('stopping','stopped','starting','verified') and
+                    current.get('MainPID') in ('0','') and self.commands.empty_cgroup(current),
+                    'cache restoration requires an owned stopped worker')
+        cache=cache or self.cache_fault(record,deadline.child(CACHE_IO_SECONDS),lock)
+        cache.deadline=deadline.child(CACHE_IO_SECONDS)
+        cache.restore()
+
+    def corrupt_cache_restart(self, effect, record, deadline, lock):
+        observation=self.commands.cache_observation()
+        before=observation['ready']
+        require(before.get('ready') is True and before.get('mode')=='warm' and before.get('role')=='archive-owner' and
+                before.get('binary_sha256')==C.ARTIFACTS['transparent-shard-server'],
+                'cache fault requires the warm candidate archive owner')
+        require(record['before']['memory_available']*5>=record['before']['memory_total'] and
+                record['before']['disk_available']*5>=record['before']['disk_total'],'cache fault headroom below20percent')
+        cache=self.cache_fault(record,deadline.child(CACHE_IO_SECONDS),lock)
+        cache.capture(int(record['original']['MainPID']),self.request['cache_manifests'])
+        require(unit_identity(self.commands,self.unit)==record['original'],'cache worker changed before owned stop')
+        record['cache']['before_ready']=before;self.save(record)
+        effect.stop(deadline)
+        cache.deadline=deadline.child(CACHE_IO_SECONDS)
+        cache.corrupt()
+        effect.start(deadline)
+        effect.verify(deadline,changed=True,ready=True)
+        while True:
+            observed=self.commands.cache_observation();runtime=observed.get('runtime_cache',{})
+            if runtime.get('pending_saves')==0:break
+            deadline.sleep(1)
+        require(observed['ready'].get('ready') is True and observed['ready'].get('role')=='archive-owner' and
+                observed['ready'].get('binary_sha256')==before['binary_sha256'] and
+                type(runtime.get('misses')) is int and runtime['misses']>=1 and runtime.get('write_failures')==0,
+                'candidate did not complete the rejected-cache rebuild')
+        pid=int(record['after']['MainPID'])
+        raw=self.commands.run(['journalctl','-b','--no-pager','--output=cat','--lines=512','_PID='+str(pid)],timeout=deadline.timeout(5))
+        require(len(raw)<=65536 and any(b'runtime cache length mismatch' in line and
+                b'runtime cache rejected; rebuilding' in line for line in raw.splitlines()),
+                'native rejected-cache evidence is missing')
+        path=cache.directory/'native-rejection.log'
+        with path.open('xb') as stream:os.fchmod(stream.fileno(),0o600);stream.write(raw);stream.flush();os.fsync(stream.fileno());os.fchmod(stream.fileno(),0o400)
+        record['cache'].update(native={'ready':observed['ready'],'runtime_cache':runtime,
+            'log_sha256':hashlib.sha256(raw).hexdigest(),'log':str(path),'worker_pid':pid})
+        self.save(record)
+        self.restore_cache(effect,record,deadline,lock,cache)
 
     def ready(self, deadline, current):
         """Worker readiness on its fixed local endpoint, from the restored executable."""
@@ -1568,7 +1644,9 @@ class RemoteActor:
             signal.signal(signal.SIGPIPE, signal.SIG_IGN)
             signal.signal(signal.SIGTERM, interrupted)
             try:
-                if operation == 'restart':
+                if operation == 'cache-corrupt-restart':
+                    self.corrupt_cache_restart(effect,record,deadline,lock)
+                elif operation == 'restart':
                     effect.restart(deadline)
                 else:
                     effect.stop(deadline)
@@ -1583,7 +1661,10 @@ class RemoteActor:
                 record.update(status='failed', error_type=type(error).__name__, error=str(error)[:500], ended_unix=time.time())
                 self.save(record)
                 try:
-                    effect.restore(Deadline(RESTORE_SECONDS))
+                    restoration=Deadline(RESTORE_SECONDS)
+                    self.commands.deadline=restoration
+                    if 'cache' in record:self.restore_cache(effect,record,restoration,lock)
+                    effect.restore(restoration)
                 except Exception as again:
                     record.update(status='failed', restore_error=str(again)[:500])
             finally:
@@ -1617,6 +1698,7 @@ class RemoteActor:
             require(not alive(record['owner']), 'remote action owner is still alive')
             effect = UnitEffect(self.unit, record, lambda: self.save(record), self.commands, self.ready)
             try:
+                if 'cache' in record:self.restore_cache(effect,record,deadline,lock)
                 effect.restore(deadline)
             finally:
                 self.save(record)
@@ -1825,10 +1907,12 @@ class Qualification:
     def remote(self, host, operation, action):
         """One closed remote call; a lost or unstructured reply leaves the outcome unknown."""
         entry = next(h for h in self.hosts if h['host'] == host)
-        request = remote_validate({'version':1, 'source_sha':self.request['source_sha'], 'qualification_sha256':self.sha,
+        value={'version':1, 'source_sha':self.request['source_sha'], 'qualification_sha256':self.sha,
                                    'host':host, 'role':entry['role'], 'machine_id':entry['machine_id'],
                                    'coordinator_machine_id':self.inventory.lock['machine_id'],
-                                   'transaction':self.request['transaction'], 'operation':operation})
+                                   'transaction':self.request['transaction'], 'operation':operation}
+        if operation=='cache-corrupt-restart':value['cache_manifests']=self.record['effect']['cache_manifests']
+        request=remote_validate(value)
         target = self.ssh.hosts[host]
         require(target.get('machine_id') == entry['machine_id'], 'remote machine differs from the deployed host plan')
         sudo = target.get('user', self.ssh.ssh.get('user', 'root')) != 'root'
@@ -2061,6 +2145,7 @@ class Qualification:
             require(json.loads((OWNERS/'latest.json').read_bytes()) == {'request_sha256':self.sha}, 'reconcile the latest qualification first')
             record = self.status()
             require(record['status'] in ('launching', 'running', 'finished'), 'qualification does not require reconciliation')
+            self.record=record
             commands_ = commands(self.deadline)
             state = commands_.state(self.unit)
             # The owner's cgroup holds every child, including one started before its
@@ -2651,6 +2736,9 @@ class Qualification:
             started=redeploy_recovery_start(effect['redeploy_committed_unix'])
         else:
             role, operation = FAULT_ACTION[fault]
+            if operation=='cache-corrupt-restart':
+                effect['cache_manifests']=sorted(set(self.baseline['public']['sealed'].values()))
+                self.save(self.record)
             host = request.get('target') or next(h['host'] for h in self.hosts if h['role'] == role)
             entry = next(h for h in self.hosts if h['host'] == host)
             allowed = (host,)
@@ -2661,6 +2749,13 @@ class Qualification:
             try:
                 _, reply = self.remote(host, operation, 'act')
                 action.update(status=reply['status'], phase=reply.get('phase'), error=reply.get('error'))
+                if operation=='cache-corrupt-restart':
+                    cache=reply.get('cache',{})
+                    require(cache.get('kind')=='owned-cache-corruption-v1' and cache.get('phase')=='restored' and
+                            isinstance(cache.get('native'),dict) and
+                            isinstance(cache['native'].get('log_sha256'),str) and HEX.fullmatch(cache['native']['log_sha256']),
+                            'remote cache fault omitted its native and exact restoration evidence')
+                    action['cache']=cache
             except Unknown as error:
                 action.update(status='unknown', error=str(error)[:300])
                 raise

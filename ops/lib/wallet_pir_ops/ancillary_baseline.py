@@ -33,6 +33,11 @@ PINS = {
         'exe_sha256':'e50d468e8b0adfb05733f5b87b3cff34829c4a8c1aea50c865aa8bdfe4bb150f',
         'command_sha256':'cc591974c7784df6e28663fe60b3d68ed1cdd22ab4efd3e2dc4680160f5b0d67'},
 }
+PINS[LOAD]['child'] = {
+    'exe':'/srv/transparent-activity/canonical-load/v11/rate-query',
+    'exe_sha256':'3d8d0cdaf497e03cf747e7f233eb2a73c4148aabcd8618a4e56324544e705895',
+    'command_sha256':'994a923fa04b286c16a58ead73d71e18d60c1dee7c6a2b11e97f09e91c7040de',
+}
 PINS_SHA256 = hashlib.sha256(json.dumps(PINS,sort_keys=True,separators=(',',':')).encode()).hexdigest()
 BOOT = re.compile('[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}')
 MAX_EXE = 128 << 20
@@ -126,13 +131,44 @@ def service(unit,boot,tick,proc):
     group=(base/'cgroup').read_text().strip()
     require(group=='0::/system.slice/'+unit,'ancillary process cgroup differs')
     result=dict(current,status='verified',unit=unit,boot_id=boot,cgroup='/system.slice/'+unit,
-                exe=os.readlink(base/'exe'),exe_sha256=pin['exe_sha256'],command_sha256=pin['command_sha256'],
+                # owner_survey uses the same kernel decoration normalization;
+                # the live inode's bytes, PID/start/boot and command stay pinned.
+                exe=os.readlink(base/'exe').removesuffix(' (deleted)'),exe_sha256=pin['exe_sha256'],command_sha256=pin['command_sha256'],
                 fragment_sha256=pin['fragment_sha256'])
     if unit==PROTOTYPE:
         require(listeners(pid,proc)==[['tcp','0100007F',8192]],'historical prototype is not exclusively loopback8192')
         result['listeners']=[['tcp','0100007F',8192]]
     tick();require(kernel(pid,proc)==current and properties(unit)==before,'ancillary identity changed during observation')
     return result
+
+
+def load_child(parent, tick, proc):
+    """Only the exact direct native query of the independently verified load main."""
+    if parent['status'] == 'absent':return []
+    tick();pid=parent['pid'];base=proc/str(pid)
+    listing=base/'task'/str(pid)/'children'
+    with listing.open('rb') as stream:raw=stream.read(257)
+    require(len(raw)<=256,'load child list exceeds bound')
+    children=raw.split();require(len(children)<=1,'load service has unexpected direct children')
+    if not children:return []
+    require(children[0].isdigit(),'invalid load child identity')
+    child=int(children[0]);require(child>1 and child!=pid,'invalid load child PID')
+    path=proc/str(child);fields=(path/'stat').read_text().rsplit(')',1)[1].split()
+    current=kernel(child,proc);require(current is not None and current['state']!='Z','load child absent')
+    require([int(x) for x in fields[1:4]]==[pid,pid,pid],'load child parent, group or session differs')
+    pin=PINS[LOAD]['child']
+    with (path/'cmdline').open('rb') as stream:command=stream.read(65537)
+    require(len(command)<=65536 and hashlib.sha256(command).hexdigest()==pin['command_sha256'],
+            'load child command differs')
+    require(os.readlink(path/'exe').removesuffix(' (deleted)')==pin['exe'] and
+            hashed(path/'exe',MAX_EXE,tick)==pin['exe_sha256'],'load child executable differs')
+    require((path/'cgroup').read_text().strip()=='0::'+parent['cgroup'],'load child cgroup differs')
+    value=dict(current,unit=LOAD,boot_id=parent['boot_id'],cgroup=parent['cgroup'],**pin,
+               parent_pid=pid,parent_start_ticks=parent['start_ticks'],pgid=pid,session=pid)
+    tick();require(kernel(child,proc)==current and (path/'stat').read_text().rsplit(')',1)[1].split()==fields and
+                   listing.read_bytes()==raw and kernel(pid,proc)=={k:parent[k] for k in ('pid','start_ticks','state')} and
+                   service(LOAD,parent['boot_id'],tick,proc)==parent,'load child or parent changed during observation')
+    return [value]
 
 
 def observe(machine,*,tick=lambda:None,proc=Path('/proc')):
@@ -148,6 +184,7 @@ def observe(machine,*,tick=lambda:None,proc=Path('/proc')):
     result={'kind':KIND,'pins_sha256':PINS_SHA256,'machine_id':machine,'boot_id':boot,'units':{},'route':None}
     if machine==COORDINATOR:
         result['units']={unit:service(unit,boot,check,proc) for unit in UNITS}
+        result['load_children']=load_child(result['units'][LOAD],check,proc)
     if machine in (COORDINATOR,ROUTER):result['route']=route()
     check();result['observed_unix']=time.time()
     return result
@@ -176,17 +213,32 @@ def verify(proof,machine):
         if unit==PROTOTYPE:
             require(all(value.get(k)==pin[k] for k in ('pid','start_ticks','boot_id')) and
                     value.get('listeners')==[['tcp','0100007F',8192]],'prototype proof differs')
+    children=proof.get('load_children',[])
+    require(isinstance(children,list) and len(children)<=1 and (machine==COORDINATOR or not children),
+            'load child proof invalid')
+    for child in children:
+        parent=proof['units'][LOAD];pin=PINS[LOAD]['child']
+        require(isinstance(child,dict) and parent.get('status')=='verified' and child.get('unit')==LOAD and
+                child.get('boot_id')==parent['boot_id'] and child.get('cgroup')==parent['cgroup'] and
+                child.get('parent_pid')==child.get('pgid')==child.get('session')==parent['pid'] and
+                child.get('parent_start_ticks')==parent['start_ticks'] and type(child.get('pid')) is int and
+                child['pid']>1 and child['pid']!=parent['pid'] and type(child.get('start_ticks')) is int and
+                child['start_ticks']>0 and child.get('state')!='Z' and all(child.get(k)==v for k,v in pin.items()),
+                'load child provenance differs')
     return proof
 
 
 def authorities(proof,machine):
     verify(proof,machine)
-    return {v['pid']:v for v in proof['units'].values() if v['status']=='verified'}
+    return {v['pid']:v for v in [*proof['units'].values(),*proof.get('load_children',[])]
+            if v.get('status')=='verified' or 'parent_pid' in v}
 
 
 def authorized(proof,machine,item):
     value=authorities(proof,machine).get(item['pid'])
     if value is None:return False
     group=item.get('cgroup','').strip()
-    return item.get('start_ticks',item.get('start'))==value['start_ticks'] and item.get('exe')==value['exe'] and \
+    lineage=('parent_pid' not in value or (item.get('ppid')==value['parent_pid'] and
+             item.get('pgid')==value['pgid'] and item.get('session')==value['session']))
+    return lineage and item.get('start_ticks',item.get('start'))==value['start_ticks'] and item.get('exe')==value['exe'] and \
            group in (value['cgroup'],'0::'+value['cgroup']) and item.get('command_sha256')==value['command_sha256']

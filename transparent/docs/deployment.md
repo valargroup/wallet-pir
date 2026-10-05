@@ -1058,8 +1058,17 @@ receipts, then associates live processes and descendants. It preserves the
 existing baseline list plus the exact ancillary reader described below. A
 service name alone does not authorize an exception.
 
-Read-only preflight checks every host without creating a lock or owner. Stage
-first holds the coordinator production lock and persists its request, real
+Read-only preflight checks every host without creating a lock or owner.
+Use `schema-source-preflight --private-evidence-file FILE` on the local
+coordinator client to preserve exact bounded wire replies even on refusal.
+The file must be new, with no links in its path; creation precedes transport,
+its final permissions are 0400, and survey contents are never included in the
+refusal message. The remote helper retains at most five one-MiB replies in
+memory, including the reply that fails verification; it writes no host file.
+Truncated or malformed replies remain failure evidence, never clearance.
+Refusal diagnostics identify only a reviewed component, function and line.
+
+Stage first holds the coordinator production lock and persists its request, real
 PID/start/boot identity and latest input fence. Only a new nonce bound to the
 request, complete five-host replies, absence of foreign owners and verified lock
 holder permit archive reception. Raw replies are retained privately before
@@ -2106,8 +2115,9 @@ by PID, start ticks, executable (including a ` (deleted)` suffix) and leading
 arguments, and a live unit by name, active state and main PID. A survivor that
 no retained record or product unit accounts for, such as a historical
 prototype service with unverified code or identity, refuses every preflight and
-effect. The exact ancillary reader below can attribute only its reviewed main
-process; it never authorizes descendants or overrides retained-owner association.
+effect. The exact ancillary reader below can attribute its reviewed main
+process and the one independently pinned direct load query; other descendants
+and retained-owner associations still refuse.
 Reconciliation runs at preflight, every 60 seconds
 during load, freshness and capacity, and immediately before and after each
 fault effect.
@@ -2395,9 +2405,22 @@ external interfaces, not weaker gates:
   `--scenario-worker` protocol of the pinned loadtest. No native code changed.
   The adapter is an unproven interface candidate until real measurements are
   reviewed. Whether a resume reuses partial work is recorded, not asserted.
-- **Cache corruption.** No reviewed, non-destructive way exists to inject cache
-  corruption. `archive-restart` exercises only an archive-owner restart and
-  cache reload.
+- **Cache corruption.** The draft `archive-restart` adapter selects one read-only
+  runtime cache inode actually mapped by the pinned warm candidate archive worker,
+  with a canonical sealed manifest prefix and matching native header identity.
+  After the owned worker stops and its cgroup empties, it retains the original
+  inode in a request-owned recovery directory and installs a deliberately invalid
+  64-byte header as a new inode under the existing native `.lock`. It never writes
+  to an existing mapped inode. Durable phases precede each rename; the original
+  hash, inode, native rejection log and rebuilt cache counters are retained.
+  Restoration authorizes the owned service first, preserves the displaced bytes,
+  and refuses an unexplained replacement. Disk and memory headroom remain at
+  least 20 percent. Each hash/rename stage shares a maximum 60-second child
+  deadline inside the unchanged 240-second action bound; failed restoration has
+  the existing 150-second limit, and canonical recovery still has 900 seconds.
+  Filesystem IO checks the deadline cooperatively between bounded reads. This
+  adapter remains unqualified until real native rejection, rebuild, exact cache
+  restoration and canonical wallet recovery evidence are reviewed.
 - **Rolled-back service probe.** The v10 state is proven only by the recipe's
   own `verify-rollback` and `verify-service` phases. The owner probes the
   redeployed candidate, timed from its own start, and records the time from the
@@ -2979,6 +3002,14 @@ PID/start/boot identity; its loaded executable, raw command and unit fragment
 must match the immutable hashes in the reader. The load service can have a new
 PID/start after an owned restart, but requires the same reviewed executable,
 command and fragment. Neither unit can gain ordinary name-only baseline status.
+Linux's ` (deleted)` executable decoration is normalized consistently with the
+owner reader; executable bytes are still independently hashed through `/proc`.
+The load's sole direct `rate-query` child must match its fixed executable path,
+historical release binary hash and reviewed command hash. Its parent must be
+the verified load main, with matching process group, session, cgroup and boot;
+parent and child identities are read again afterwards. A changed command,
+binary, parent, session or cgroup refuses. More than one direct child refuses.
+This only attributes existing historical load; it supplies no candidate gate.
 
 Active units require exact systemd identity, no drop-ins, no pending reload,
 zero automatic restarts and the exact main-process cgroup. Hashing and process
@@ -2990,9 +3021,10 @@ are not retained. A stopped unit grants no process authority. Other hosts grant
 none; their machine pins and complete owner surveys remain mandatory.
 
 The outer owner guards still reject processes associated with retained owners,
-unattributed operational processes, descendants, partial or stale fleet replies
+unattributed operational processes, other descendants, partial or stale fleet replies
 and resource floors below 20 percent. An ancillary capsule authorizes only the
-exact surveyed main PID/start/executable/cgroup and command identity. It does
+exact surveyed main or pinned direct query PID/start/executable/cgroup and
+command identity, plus the query's parent/group/session. It does
 not stop a service, change routes, qualify the historical prototype as the new
 candidate, or prove deployed freshness. The reader's 30-second bound is inside
 the existing host/fleet timing budgets, which remain unchanged. A full five-host

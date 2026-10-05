@@ -29,6 +29,28 @@ class SourceStageError(ValueError):
     pass
 
 
+def refusal_site(error):
+    """Identify reviewed guard code without serializing exception data or locals."""
+    codes = {}
+    for label, symbol in (('bootstrap', '_BOOTSTRAP_FLEET'), ('survey', '_SURVEY'),
+                          ('fence', '_FENCE'), ('ancillary', '_ANCILLARY')):
+        module = globals().get(symbol)
+        namespace = getattr(module, '__dict__', {})
+        for name, value in namespace.items():
+            code = getattr(value, '__code__', None)
+            if (code is not None and getattr(value, '__globals__', None) is namespace
+                    and name != 'require' and re.fullmatch('[A-Za-z_][A-Za-z_0-9]{0,63}', name)):
+                codes[code] = (label, name)
+    result = None
+    trace = error.__traceback__
+    while trace is not None:
+        identity = codes.get(trace.tb_frame.f_code)
+        if identity is not None and 1 <= trace.tb_lineno <= 5000:
+            result = {'component': identity[0], 'function': identity[1], 'line': trace.tb_lineno}
+        trace = trace.tb_next
+    return result
+
+
 def require(ok, message):
     if not ok:
         raise SourceStageError(message)
@@ -383,6 +405,7 @@ def reconcile_source(request,lock,proof,root=STAGE_ROOT):
 
 def main():
     request = json.loads(sys.argv[1])
+    preflight_surveys = {}
     try:
         require(set(request)-{'recovery','coordinator_fleet','guard_attempt'} ==
                 {'mode','source_sha','sha256','machine_id'} and
@@ -441,18 +464,24 @@ def main():
             if request.get('recovery') is not None:
                 local_schema_fence(recovery=request['recovery'])
             if request['mode']=='preflight' and 'coordinator_fleet' not in request:
+                def retain_preflight(host, raw):
+                    # Read-only preflight keeps replies in memory, never on a host.
+                    # Hex preserves exact bytes, including invalid or truncated JSON.
+                    preflight_surveys[host] = {'bytes':len(raw), 'truncated':len(raw)>_BOOTSTRAP_FLEET.MAX_REPLY,
+                        'hex':raw[:_BOOTSTRAP_FLEET.MAX_REPLY].hex()}
                 proof=_BOOTSTRAP_FLEET.fleet(request,None,verify_receipt,_BOOTSTRAP_REMOTE_CODE,
-                                       recovery=request.get('recovery'))
+                                       recovery=request.get('recovery'), retain=retain_preflight)
             else:proof=request.get('coordinator_fleet')
             result = stage(request, PinnedHostLock(None), sys.stdin.buffer)
             if request['mode']=='preflight':result['fleet']=proof
         if request['mode']=='status' and request['machine_id']==_BOOTSTRAP_FLEET.PINS['coordinator']:
             result['coordinator_owner']=_BOOTSTRAP_FLEET.status(request)
-        print(json.dumps({'ok': True, 'result': result}))
+        print(json.dumps({'ok': True, 'result': result, 'preflight_surveys':preflight_surveys}))
     except Exception as error:
         # No raw paths, request arguments, stderr or archive contents in errors.
         message = str(error) if isinstance(error, SourceStageError) else type(error).__name__
-        print(json.dumps({'ok': False, 'error': message}))
+        print(json.dumps({'ok': False, 'error': message, 'refusal_site': refusal_site(error),
+                          'preflight_surveys':preflight_surveys}))
 
 
 if __name__ == '__main__':

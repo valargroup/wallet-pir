@@ -84,8 +84,9 @@ MAX_COMPRESSED = 64 << 20  # v1 bound shared with the transmitted root helper.
 
 
 class SourceStage:
-    def __init__(self, inventory, out=print, target=None, recovery=None, attempt=1):
+    def __init__(self, inventory, out=print, target=None, recovery=None, attempt=1, private_evidence_file=None):
         self.inventory, self.out = inventory, out
+        self.private_evidence_file = private_evidence_file
         self.recovery = recovery
         if type(attempt) is not int or not 1 <= attempt <= 100:raise ValueError("invalid source fleet attempt")
         self.attempt = attempt
@@ -122,7 +123,17 @@ class SourceStage:
         prefix = ['sudo', '-n', '--'] if entry.get('sudo') else []
         command = command_for(prefix, request)
         handle = Path(archive).open('rb') if archive else subprocess.DEVNULL
+        evidence = None
         try:
+            path = getattr(self, 'private_evidence_file', None)
+            if path is not None:
+                if request.get('mode') != 'preflight':
+                    raise ValueError('private source survey evidence is preflight-only')
+                path = Path(path).absolute()
+                if any(p.is_symlink() for p in (path, *path.parents)):
+                    raise ValueError('private evidence path contains a link')
+                evidence = os.fdopen(os.open(path, os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, 0o600), 'wb')
+                os.fchmod(evidence.fileno(), 0o600)
             transport = self.executor.transport(self.host)
             transport = [*transport[:-1], '-oControlMaster=no', '-oControlPath=none', transport[-1]]
             try:
@@ -130,7 +141,14 @@ class SourceStage:
                                         capture_output=True, timeout=1800, **inherited_lock.options())
             except (subprocess.TimeoutExpired, OSError):
                 raise Unknown('source staging transport outcome unknown; observe coordinator owner and reconcile') from None
+            if evidence is not None:
+                # Bounded exact wire reply stays private even when parsing/guards refuse.
+                evidence.write(result.stdout[:12 << 20]); evidence.flush(); os.fsync(evidence.fileno())
+                if len(result.stdout) > 12 << 20:
+                    raise Unknown('source reply exceeds private evidence bound; retained prefix cannot clear guards')
         finally:
+            if evidence is not None:
+                os.fchmod(evidence.fileno(), 0o400); evidence.close()
             if archive:
                 handle.close()
         # Keep arbitrary remote stderr/argv out of user-facing errors.
@@ -143,11 +161,20 @@ class SourceStage:
         except (ValueError, UnicodeError):
             raise Unknown('source staging reply invalid; observe coordinator owner and reconcile') from None
         if not reply.get('ok'):
-            raise ValueError('source staging refused: '+reply['error'])
+            site = reply.get('refusal_site')
+            suffix = ''
+            if (isinstance(site, dict) and set(site) == {'component','function','line'} and
+                    site['component'] in ('bootstrap','survey','fence','ancillary') and
+                    isinstance(site['function'],str) and re.fullmatch('[A-Za-z_][A-Za-z_0-9]{0,63}',site['function']) and
+                    type(site['line']) is int and 1 <= site['line'] <= 5000):
+                suffix = ' (reviewed guard %s.%s:%d)' % (site['component'],site['function'],site['line'])
+            raise ValueError('source staging refused: '+reply['error']+suffix)
         self.out(json.dumps(reply['result'], sort_keys=True))
         return reply['result']
 
     def run(self, mode, source, checksum, archive=None):
+        if getattr(self, 'private_evidence_file', None) is not None and (mode != 'preflight' or self.target is not None):
+            raise ValueError('private survey evidence requires a coordinator preflight')
         request = self.request(mode, source, checksum)
         if mode in ('plan', 'preflight', 'stage'):
             if archive is None:
