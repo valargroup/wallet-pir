@@ -13,7 +13,7 @@ pub const ROW_BYTES: usize = 4096;
 /// Twice the supported 2 MB transaction ceiling allows varint expansion.
 pub const MAX_RECORD_BYTES: usize = 4_000_000;
 pub const MAX_OUTPUTS: usize = 2_000_000 / 9;
-const FRAGMENT_BYTES: usize = ROW_BYTES - 4 - 2 - 40;
+pub(crate) const FRAGMENT_BYTES: usize = ROW_BYTES - 4 - 2 - 40;
 
 #[derive(Debug, thiserror::Error)]
 #[error("invalid txid display data: {0}")]
@@ -165,7 +165,7 @@ pub struct DirectoryEntry {
     pub inline: Vec<u8>,
 }
 impl DirectoryEntry {
-    fn encode(&self) -> Vec<u8> {
+    pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = self.txid.0.to_vec();
         for v in [self.total, self.first_page, self.pages] {
             out.extend(v.to_le_bytes());
@@ -174,7 +174,7 @@ impl DirectoryEntry {
         out.extend(&self.inline);
         out
     }
-    fn decode(bytes: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn decode(bytes: &[u8]) -> Result<Self, Error> {
         if bytes.len() < 46 {
             return Err(bad("directory entry"));
         }
@@ -206,7 +206,7 @@ impl DirectoryEntry {
         })
     }
 }
-fn u32_at(b: &[u8], i: usize) -> Result<u32, Error> {
+pub(crate) fn u32_at(b: &[u8], i: usize) -> Result<u32, Error> {
     Ok(u32::from_le_bytes(
         b.get(i..i + 4)
             .ok_or_else(|| bad("truncated u32"))?
@@ -214,7 +214,7 @@ fn u32_at(b: &[u8], i: usize) -> Result<u32, Error> {
             .unwrap(),
     ))
 }
-fn entries(row: &[u8]) -> Result<Vec<&[u8]>, Error> {
+pub(crate) fn entries(row: &[u8]) -> Result<Vec<&[u8]>, Error> {
     if row.len() != ROW_BYTES {
         return Err(bad("row width"));
     }
@@ -243,7 +243,7 @@ fn entries(row: &[u8]) -> Result<Vec<&[u8]>, Error> {
     }
     Ok(out)
 }
-fn push(row: &mut Vec<u8>, entry: &[u8]) -> bool {
+pub(crate) fn push(row: &mut Vec<u8>, entry: &[u8]) -> bool {
     if row.len() + 2 + entry.len() > ROW_BYTES {
         return false;
     }
@@ -253,7 +253,7 @@ fn push(row: &mut Vec<u8>, entry: &[u8]) -> bool {
     row.extend(entry);
     true
 }
-fn finish(mut row: Vec<u8>) -> Vec<u8> {
+pub(crate) fn finish(mut row: Vec<u8>) -> Vec<u8> {
     row.resize(ROW_BYTES, 0);
     row
 }
@@ -334,7 +334,7 @@ pub struct BuiltTables {
     pub payload_bytes: u64,
     pub page_rows: u64,
 }
-fn segments(mut rows: Vec<Vec<u8>>, count: usize) -> Vec<Vec<u8>> {
+pub(crate) fn segments(mut rows: Vec<Vec<u8>>, count: usize) -> Vec<Vec<u8>> {
     if rows.is_empty() {
         rows.push(vec![0; 4]);
     }
