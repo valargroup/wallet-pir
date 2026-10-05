@@ -429,3 +429,44 @@ def verify_controls(found):
     require(len({i['pid'] for i in found}) == len(found) and len({i['sshd']['pid'] for i in found}) == len(found),
             'worker control evidence repeats a process')
     return found
+
+
+def verify_snapshot(value):
+    """Exact shape of one retained `authority` result, verified or refused; freshness is `attribute`'s."""
+    def connection(link):
+        return (isinstance(link, dict) and set(link) == {'local', 'remote'} and
+                all(isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and type(v[1]) is int
+                    for v in link.values()))
+    require(isinstance(value, dict) and value.get('kind') == KIND and
+            all(type(value.get(k)) in (int, float) for k in ('observed_unix', 'monotonic')), 'reconciler snapshot invalid')
+    if value.get('status') == 'refused':
+        require(set(value) == {'kind', 'status', 'observed_unix', 'monotonic', 'reason'} and
+                isinstance(value['reason'], str) and len(value['reason']) <= 200, 'refused reconciler snapshot invalid')
+        return value
+    require(value.get('status') == 'verified' and
+            set(value) == {'kind', 'status', 'machine_id', 'boot_id', 'unit', 'fragment_sha256', 'script_sha256',
+                           'script_source', 'main', 'clients', 'observed_unix', 'monotonic'} and
+            value['machine_id'] == COORDINATOR and value['unit'] == UNIT and isinstance(value['boot_id'], str) and
+            value['fragment_sha256'] == FRAGMENT_SHA256 and value['script_sha256'] == SCRIPT_SHA256 and
+            value['script_source'] == SCRIPT_SOURCE and isinstance(value['main'], dict) and
+            set(value['main']) == {'pid', 'start_ticks', 'command_sha256'} and type(value['main']['pid']) is int and
+            type(value['main']['start_ticks']) is int and isinstance(value['main']['command_sha256'], str) and
+            isinstance(value['clients'], list) and len(value['clients']) <= MAX_CANDIDATES and
+            all(isinstance(c, dict) and set(c) == {'pid', 'start_ticks', 'destination', 'connection'} and
+                type(c['pid']) is int and type(c['start_ticks']) is int and isinstance(c['destination'], str) and
+                connection(c['connection']) for c in value['clients']), 'verified reconciler snapshot invalid')
+    return value
+
+
+def verify_attributed(found):
+    """Exact shape of `attribute` results; their bindings are recomputed only by `attribute`."""
+    require(isinstance(found, list) and len(found) <= MAX_CANDIDATES, 'control attributions invalid')
+    for item in found:
+        require(isinstance(item, dict) and set(item) == {'control', 'reconciler', 'client', 'connection'} and
+                all(isinstance(item[k], dict) and set(item[k]) == {'pid', 'start_ticks'} and
+                    type(item[k]['pid']) is int and type(item[k]['start_ticks']) is int
+                    for k in ('control', 'reconciler', 'client')) and
+                isinstance(item['connection'], dict) and set(item['connection']) == {'local', 'remote'} and
+                all(isinstance(v, list) and len(v) == 2 and isinstance(v[0], str) and type(v[1]) is int
+                    for v in item['connection'].values()), 'control attribution invalid')
+    return found

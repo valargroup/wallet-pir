@@ -1101,6 +1101,42 @@ new pins. Candidate execution (`activity_candidate_execution.survey`) and deploy
 qualification owner surveys do not use this attribution and still refuse such
 controls.
 
+A locked bootstrap run retains every raw reply and attribution snapshot under
+`input-staging/fleet-surveys/<request>/<nonce>/`. Those replies list the
+baseline services, ancillary units, controls and reconciler clients they
+observed, with PIDs, start ticks and cgroups. A survey is forensic evidence, not
+ownership. The bootstrap survey still reads, bounds, hashes and parses every
+file, and refuses links and malformed JSON. It passes `owner_survey` an
+`evidence` recognizer (`activity_bootstrap_fleet.retained`), which is asked about
+every JSON object at any depth. It matches content, not a path or name. It
+accepts two shapes:
+
+- An exact bootstrap survey report: exactly the `observe` keys plus the bootstrap
+  keys, the same bounds, classes, baseline, namespaces and inventory pin, a
+  binding whose host matches the machine pin, consistent counts and listings
+  with only retained summary fields, retained ancillary provenance with exactly
+  its written keys, and control shapes consistent with `pending` and any
+  `control_attribution`.
+- An exact `<worker>.attribution` snapshot pair in the shape `authority` writes,
+  with the pinned reconciler fragment and script.
+
+A recognized report contributes only its lock holders, bound to that report's
+boot. Everything else it lists is an observation. Recognition narrows only its
+own subtree. Top-level identities of durable owners, including completed
+`staged` or `reconciled` owners, any `fleet` proof `owner`, and their sessions,
+cgroups and descendants, stay references. The same applies when a durable record
+embeds a proof's `surveys`. A value with an unknown or missing field, a foreign
+machine or host, an inconsistent count or changed pins is walked like any
+other owner record, so every PID it names still counts.
+
+Limits: a pin change (bounds, classes, baseline, ancillary pins or reconciler
+pins) makes older retained replies unrecognized, so later surveys refuse again
+until root reviews that change. A reply edited into a different but still exact
+shape can hide only PIDs that appear in no owner record. Callers without
+`evidence`, including candidate execution
+(`activity_candidate_execution.survey`), keep treating every recorded PID as an
+owner. They still refuse when these replies name live services.
+
 Read-only preflight checks every host without creating a lock or owner.
 Use `schema-source-preflight --private-evidence-file FILE` on the local
 coordinator client to preserve exact bounded wire replies even on refusal.

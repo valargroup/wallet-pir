@@ -10,6 +10,12 @@ admits it only when `control_attribution` binds its exact connection to a
 verified direct client of the running replica reconciler, observed on the
 coordinator immediately before or after that worker's survey. A host checking
 only itself (`local` plus `verify` without attributions) refuses it.
+
+Retained fleet survey replies and attribution snapshots stay in the
+input-staging namespace. `retained` recognizes them, wherever they appear, by
+their exact content, so a later survey does not treat the services they
+observed as owners. Every file is still read, parsed and hashed, and anything
+that does not validate is walked as an owner record.
 """
 import hashlib
 import importlib
@@ -69,6 +75,77 @@ FENCE = None
 
 def require(ok,message):
     if not ok:raise ValueError(message)
+
+
+def namespaces():
+    return (('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
+            ('input-staging',INPUTS),('source-staging',ROOT/'staging'))
+
+
+# Keys `local` adds to an owner survey; `fleet` adds `control_attribution`.
+SURVEY_KEYS = frozenset(('bootstrap','machine_id','observed_unix','inventory_sha256','ancillary','controls',
+                         'control_rejections','pending','pending_count'))
+SELECTED_KEYS = ({'name','sha256','status'},{'name','sha256','status','source','archive'})
+
+
+def survey_binding(value):
+    require(isinstance(value,dict) and set(value)=={'request_sha256','nonce','host','skip'} and
+            isinstance(value['request_sha256'],str) and re.fullmatch('[0-9a-f]{64}',value['request_sha256']) and
+            isinstance(value['nonce'],str) and re.fullmatch('[0-9a-f]{48}',value['nonce']) and value['host'] in PINS and
+            (value['skip'] is None or isinstance(value['skip'],str) and re.fullmatch('[0-9a-f]{64}',value['skip'])),
+            'retained bootstrap survey binding invalid')
+    return value['host']
+
+
+def retained_survey(value):
+    """Owner identities of one exact retained `local` result, as `fleet` keeps it."""
+    holders=S.report(value,S.BOUNDS,SURVEY_KEYS|({'control_attribution'} if 'control_attribution' in value else set()))
+    require(holders is not None,'retained survey is not an exact owner survey')
+    host=survey_binding(value['binding'])
+    require(value['bootstrap']==KIND and value['machine_id']==PINS[host] and value['euid']==0 and
+            value['inventory_sha256']==INVENTORY_SHA and value['classes']==CLASSES and
+            value['baseline']==list(BASELINE) and value['namespaces']==[[n,str(path)] for n,path in namespaces()] and
+            S.number(value['observed_unix']) and all(set(item) in SELECTED_KEYS for item in value['selected']),
+            'retained survey identity differs')
+    A.verify_retained(value['ancillary'],value['machine_id'])
+    controls=CA.verify_controls(value['controls'])
+    identities=sorted((c['pid'],c['start_ticks']) for c in controls)
+    require((host.startswith('worker-') or not controls) and value['pending_count']==len(controls) and
+            sorted((p['pid'],p['start_ticks']) for p in value['pending'])==identities and
+            isinstance(value['control_rejections'],list) and len(value['control_rejections'])<=S.BOUNDS['listed'] and
+            all(isinstance(r,dict) and set(r)=={'pid','reason'} and type(r['pid']) is int and isinstance(r['reason'],str)
+                for r in value['control_rejections']),'retained survey controls invalid')
+    if 'control_attribution' in value:
+        attribution=value['control_attribution']
+        require(isinstance(attribution,dict) and set(attribution)=={'attributed','snapshots'} and
+                isinstance(attribution['snapshots'],list) and len(attribution['snapshots'])==2 and
+                all(CA.verify_snapshot(v) for v in attribution['snapshots']) and
+                sorted((a['control']['pid'],a['control']['start_ticks'])
+                       for a in CA.verify_attributed(attribution['attributed']))==identities,
+                'retained survey attribution invalid')
+    return holders
+
+
+def retained(value):
+    """Owner identities of an exact retained bootstrap survey or attribution; None for anything else.
+
+    Retained replies are forensic evidence: the services, ancillary units,
+    controls and reconciler clients they list were observed, not owned. Only
+    a survey's lock holder is an owner identity. A malformed, tampered or
+    unknown value returns None, so `owner_survey` walks every PID it names.
+    """
+    try:
+        if value.get('kind')==S.KIND:
+            return retained_survey(value)
+        if set(value)=={'host','binding','snapshots'}:
+            require(isinstance(value['host'],str) and value['host'].startswith('worker-') and
+                    survey_binding(value['binding'])==value['host'] and isinstance(value['snapshots'],list) and
+                    len(value['snapshots'])==2 and all(CA.verify_snapshot(v) for v in value['snapshots']),
+                    'retained attribution invalid')
+            return []
+    except (ValueError,TypeError,KeyError,AttributeError):
+        pass
+    return None
 
 
 def no_links(path):
@@ -155,11 +232,10 @@ def local(binding,host,*,holder=None,skip=None,recovery=None,deadline=None,sourc
             controls,failures=CA.controls(tick=tick,pids=[p['pid'] for p in processes])
             found.extend(controls);rejected.extend(failures)
         return {c['pid']:c for c in found}
-    result=S.observe((('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
-                      ('input-staging',INPUTS),('source-staging',ROOT/'staging')),
+    result=S.observe(namespaces(),
                      classes=CLASSES,baseline=BASELINE,binding=binding,lock_path=LOCK,holder=holder,
                      tick=tick,select=select,refuse=refuse,ancillary=authorities,
-                     pending=control_candidates)
+                     pending=control_candidates,evidence=retained)
     tick()
     # A control that exited between the two scans is gone, not pending.
     live={(p['pid'],p['start_ticks']) for p in result['pending']}
@@ -178,9 +254,7 @@ def verify(value,binding,host,holder=None,attributed=None):
             -1<=time.time()-value['observed_unix']<=SECONDS and value.get('bounds')==S.BOUNDS and
             value.get('classes')==CLASSES and
             value.get('classes_sha256')==hashlib.sha256(S.canonical(CLASSES)).hexdigest() and
-            value.get('namespaces')==[[n,str(path)] for n,path in
-                (('schema',ROOT/'schema'),('host-actions',ROOT/'host-actions'),
-                 ('input-staging',INPUTS),('source-staging',ROOT/'staging'))] and
+            value.get('namespaces')==[[n,str(path)] for n,path in namespaces()] and
             value.get('baseline')==list(BASELINE) and isinstance(value.get('inventory'),dict) and
             isinstance(value['inventory'].get('sha256'),str) and re.fullmatch('[0-9a-f]{64}',value['inventory']['sha256']) and
             type(value.get('selected_count')) is int and 0<=value['selected_count']<=S.BOUNDS['selected'] and
