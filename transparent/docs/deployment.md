@@ -147,6 +147,19 @@ Operator commands on the coordinator:
   repartition|restore`: replace archive owners; see
   [archive owner changes](#archive-owner-changes).
 
+Each worker schema has its own fleet configuration, state and scaler directories
+(v11: `/opt/transparent-publisher/v11/fleet.json`, `v11/state`, `v11/scaler`).
+The scaler reads worker upstreams only from that schema's `state/inventory.json`;
+without it, it scrapes nothing and holds. The schema cutover seeds that inventory
+from the installed roster and initial assignment. To seed it by hand, run
+`transparent-fleet-inventory.py --fleet-config <schema>/fleet.json init`,
+then restore the roster's bytes, since the cutover recipe pins them.
+APM's `PIR_APM_SCALER_STATUS`, the actuator's `actuator.json` (`fleet_config`,
+`scaler_dir`) and the kill switch must name the same schema's directories as the
+scaler. The schema recipe does not manage the actuator's units, so a rollback
+would leave an actuator pointed at the wrong schema. Keep the actuator disabled
+and the scaler in `observe` until the recipe covers the actuator.
+
 ## Geometry and schema cutovers
 
 Use `recent-4k-8k` (4096 directory / 8192 page rows) for the recent tier and

@@ -340,11 +340,17 @@ class ProductSeed(unittest.TestCase):
             path=self.root/name;path.write_bytes(data)
             return {'path':str(path),'sha256':M.H.checksum(path)}
         self.product.spec={'source_sha':'b'*40,'publication_sha256':'a'*64,'recent_from':3000000,
-                           'assignment':entry('assignment.json',b'{"schema":"fixture"}'),
+                           'assignment':entry('assignment.json',json.dumps({'workers':[
+                               {'id':'r1','role':'recent-replica','shards':[2]},{'id':'r2','role':'recent-replica','shards':[2]},
+                               {'id':'a1','role':'archive-owner','shards':[0,1]}]}).encode()),
                            'load':{'binary':entry('rate-query',b'fixture executable'),'fixture':entry('fixture.json',b'{}'),
                                    'pins':entry('pins.json',b'{}'),'policy':entry('policy.json',b'{"mode":"observe"}')}}
         publisher=self.root/'publisher';(publisher/'v11/state').mkdir(parents=True)
-        (publisher/'v11/roster.json').write_text(json.dumps(self.product.rows))
+        self.roster=[dict(w,ssh_host=w['upstream'].split(':')[0],cache_bytes=1,memory_max='1G',build_slots=1,
+                          intent='enrolled',origin='static',role='archive-owner' if w['id']=='a1' else 'recent-replica',
+                          **({'archive_range':[0,1]} if w['id']=='a1' else {'replica_group':'recent'}))
+                     for w in self.product.rows]
+        (publisher/'v11/roster.json').write_text(json.dumps(self.roster,indent=2))
         publication=self.root/'publications/initial';publication.mkdir(parents=True)
         self.publisher,self.publication=publisher,publication
         self.product.root=self.root/'proof'
@@ -370,7 +376,18 @@ class ProductSeed(unittest.TestCase):
         self.assertEqual(json.loads((self.publication.parent/'active.json').read_text())['height'],3500738)
         self.assertEqual((M.LOAD_ROOT/'rate-query').stat().st_mode&0o777,0o755)
         self.assertEqual(json.loads((self.publisher/'v11/scaler/policy.json').read_text())['mode'],'observe')
+        inventory=json.loads((state/'inventory.json').read_text())
+        self.assertEqual((inventory['revision'],inventory['partition']),(1,{'ranges':[{'id':'a0','first':0,'last':1}]}))
+        self.assertEqual(json.loads((state/'inventory.d/1.json').read_text()),inventory)
+        self.assertEqual(M.INVENTORY.roster_view(inventory),self.roster)
+        self.assertEqual((self.publisher/'v11/roster.json').read_text(),json.dumps(self.roster,indent=2))
         with self.assertRaisesRegex(ValueError,'already exists'):self.product.seed()
+
+    def test_roster_the_inventory_cannot_reproduce_refuses_before_fleet_state_write(self):
+        self.roster[2]['archive_range']=[0,2]
+        (self.publisher/'v11/roster.json').write_text(json.dumps(self.roster))
+        with self.assertRaisesRegex(ValueError,'reproduce the installed roster'):self.product.seed()
+        self.assertEqual(list((self.publisher/'v11/state').iterdir()),[])
 
     def test_changed_assignment_refuses_before_first_fleet_state_write(self):
         Path(self.product.spec['assignment']['path']).write_bytes(b'changed')

@@ -6,6 +6,41 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Scaler inputs after the v11 cutover, 2026-10-06
+
+History was cut over to schema v11 on 2026-10-03 at 17:35 UTC. The status
+entries below do not record that cutover.
+
+- **Scaler blind since the cutover.** The cutover seeded
+  `/opt/transparent-publisher/v11/state` without `inventory.json`. The scaler
+  reads worker upstreams only from the inventory, so it scraped nothing. All
+  3,951 decisions it logged from its start at 2026-10-03 17:56 UTC to
+  2026-10-06 12:31 UTC held on "inventory missing"; nearly all also held on
+  "metrics: not scraped". Routing was unaffected: v11
+  membership showed both recent replicas and archive-03 serving.
+- **Inventory seeded.** At 13:26 UTC, `transparent-fleet-inventory.py init`
+  wrote revision 1 from the v11 roster and active assignment: three static
+  members and archive range `a0` 0–81. It regenerated `v11/roster.json` with
+  identical content. The original bytes of that file and `credentials/known_hosts`
+  were then restored. From 13:28 the scaler, still in `observe`, reported
+  "steady: desired 2, serving 2, offered 4.0 qps" with p50 8 ms and p99 24 ms.
+  The cutover seed now writes the inventory itself.
+- **Actuator disabled.** `transparent-fleet-actuator` still used the pre-v11
+  `scaler/actuator.json` with the pre-v11 fleet configuration, and its
+  `scaler/policy.json` was `act`. A manual scale-out would have created a
+  droplet and then failed against the stale pre-v11 membership. At 13:26 UTC
+  `/opt/transparent-publisher/scaler/disabled` was created; each run now logs
+  `actuator_disabled`.
+- **APM re-pointed.** pir-apm's `scaling` family (shadow mode) had read the
+  pre-v11 `scaler/status.json`, last written 2026-10-03 17:35:37 UTC. At 13:27 UTC
+  its drop-in was changed to `v11/scaler/status.json` and pir-apm was restarted.
+  Backups are in `/root/v11-inventory-seed-20261006` on the coordinator.
+- **Open.**
+  - The actuator stays disabled and the scaler stays in `observe` until the
+    schema recipe covers the actuator unit.
+  - `v11/state` held 12,436 per-publication files after three days. The recipe
+    caps a captured candidate namespace at 512 entries.
+
 ## Tiered txid display proof of concept, 2026-10-05
 
 Source for a separately published, time-tiered and hash-bucketed txid display
