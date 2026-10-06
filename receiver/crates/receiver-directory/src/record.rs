@@ -1,3 +1,4 @@
+//! Payment records and their fixed-width row encoding.
 use crate::{Error, Hash};
 
 /// Full canonical receiver. The same encoding is shared by refund and incoming keys.
@@ -5,11 +6,13 @@ use crate::{Error, Hash};
 pub struct Receiver([u8; 43]);
 
 impl Receiver {
+    /// Accept only bytes that decode to a valid Ironwood address.
     pub fn from_bytes(bytes: [u8; 43]) -> Result<Self, Error> {
         Option::<orchard::Address>::from(orchard::Address::from_raw_address_bytes(&bytes))
             .map(|_| Self(bytes))
             .ok_or(Error::Malformed)
     }
+    /// The raw 43-byte address.
     pub fn as_bytes(&self) -> &[u8; 43] {
         &self.0
     }
@@ -40,9 +43,11 @@ pub struct Record {
     pub payment: Payment,
 }
 
+/// Encoded size of one [`Record`].
 pub const RECORD_BYTES: usize = 285;
 
 impl Record {
+    /// Encode one row slot. A page outside its total is malformed.
     pub fn encode(&self) -> Result<[u8; RECORD_BYTES], Error> {
         if self.total == 0 || self.page >= self.total {
             return Err(Error::Malformed);

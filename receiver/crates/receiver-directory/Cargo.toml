@@ -22,7 +22,3 @@ rusqlite = { version = "0.37", features = ["bundled"], optional = true }
 incrementalmerkletree = { version = "0.8", features = ["legacy-api"] }
 hex = "0.4"
 tempfile = "3"
-
-[[example]]
-name = "witness_refresh"
-required-features = ["store"]

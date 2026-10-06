@@ -1,35 +1,17 @@
-use receiver_directory::{
-    extract::Action,
-    snapshot::{Manifest, Snapshot, PROFILE},
-    Payment, Receiver, Record,
+//! Receiver PIR evaluation and the HTTP service that wallets reach through a [`Transport`].
+#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+mod common;
+use common::{manifest, receiver, record};
+use receiver_directory::{snapshot::Snapshot, Record};
+use receiver_pir::{
+    server::Server,
+    transport::{DirectoryClient, Transport},
+    AcceptedCoverage, Client, Error, MIN_ROWS,
 };
-use receiver_pir::{http::HttpClient, server::Server, AcceptedCoverage, Error, MIN_ROWS};
 use receiver_pir_server::{Publication, Publications};
 use std::{num::NonZeroU32, time::Duration};
 
-fn fixture() -> Action {
-    let v: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../crates/receiver-directory/tests/fixtures/zero-ovk-action.json"
-    ))
-    .unwrap();
-    fn field<const N: usize>(v: &serde_json::Value, key: &str) -> [u8; N] {
-        hex::decode(v["action"][key].as_str().unwrap())
-            .unwrap()
-            .try_into()
-            .unwrap()
-    }
-    Action {
-        cv: field(&v, "cv"),
-        nullifier: field(&v, "nullifier"),
-        cmx: field(&v, "cmx"),
-        ephemeral_key: field(&v, "ephemeralKey"),
-        enc_ciphertext: field(&v, "encCiphertext"),
-        out_ciphertext: field(&v, "outCiphertext"),
-    }
-}
-fn receiver() -> Receiver {
-    fixture().recover_receiver().unwrap().unwrap()
-}
+/// The chain anchor that [`manifest`] ends at.
 fn accepted() -> AcceptedCoverage {
     AcceptedCoverage {
         genesis: [1; 32],
@@ -41,41 +23,10 @@ fn accepted() -> AcceptedCoverage {
 fn snapshot(count: u32) -> Snapshot {
     snapshot_rows(count, MIN_ROWS)
 }
+/// A publication of `rows` rows with `count` pages for the fixture receiver.
 fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
-    let manifest = Manifest {
-        profile: PROFILE.into(),
-        genesis: [1; 32],
-        start_height: 100,
-        start_parent: [2; 32],
-        start_position: 200,
-        end_height: 101,
-        end_hash: [3; 32],
-        end_position: 300,
-        rows,
-        salt: [4; 32],
-        records: 0,
-        data_sha256: [0; 32],
-    };
-    let records: Vec<_> = (0..count)
-        .map(|page| Record {
-            receiver: receiver(),
-            page,
-            total: count,
-            payment: Payment {
-                height: 101,
-                block_hash: [3; 32],
-                txid: [page as u8; 32],
-                tx_index: page,
-                action_index: 0,
-                position: 200 + u64::from(page),
-                action_nullifier: [5; 32],
-                cmx: [6; 32],
-                ephemeral_key: [7; 32],
-                ciphertext_prefix: [8; 52],
-            },
-        })
-        .collect();
-    Snapshot::build(manifest, &records).unwrap()
+    let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
+    Snapshot::build(manifest(rows), &records).unwrap()
 }
 struct Running {
     origin: String,
@@ -113,7 +64,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.clone(),
     ))
     .await;
-    let old = HttpClient::connect(&server.origin, http(), accepted())
+    let old = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     let old_id = hex::encode(old.manifest().id().unwrap());
@@ -141,7 +92,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     let mut anchor = accepted();
     anchor.height = 102;
     anchor.hash = [9; 32];
-    let new = HttpClient::connect(&server.origin, http(), anchor)
+    let new = connect(&server.origin, Http(http()), anchor, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -152,14 +103,9 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         2
     );
 
-    let file = receiver_pir::transport::DirectoryClient::connect_for_work(
-        &server.origin,
-        http(),
-        anchor,
-        10_000,
-    )
-    .await
-    .unwrap();
+    let file = connect(&server.origin, Http(http()), anchor, 10_000)
+        .await
+        .unwrap();
     assert_eq!(
         file.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
             .await
@@ -191,6 +137,19 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
             .status(),
         reqwest::StatusCode::GONE
     );
+    assert_eq!(
+        http()
+            .get(format!(
+                "{}/v1/receiver/public/{}",
+                server.origin,
+                "00".repeat(32)
+            ))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        reqwest::StatusCode::CONFLICT
+    );
     assert!(matches!(old.witnesses().await, Err(Error::Revision)));
     assert!(matches!(
         new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
@@ -207,7 +166,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.epoch()
     ));
     anchor.hash = [10; 32];
-    let recovered = HttpClient::connect(&server.origin, http(), anchor)
+    let recovered = connect(&server.origin, Http(http()), anchor, 0)
         .await
         .unwrap();
     assert!(recovered
@@ -224,10 +183,50 @@ fn http() -> reqwest::Client {
         .unwrap()
 }
 
+/// A wallet transport over reqwest. It maps 409 and 410 to [`Error::Revision`].
+struct Http(reqwest::Client);
+
+impl Transport for Http {
+    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+        read(self.0.get(url), limit).await
+    }
+    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+        read(self.0.post(url).body(body), limit).await
+    }
+}
+
+/// Send `request` and return its successful body, failing if it exceeds `limit` bytes.
+async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, Error> {
+    let failed = |e: reqwest::Error| Error::Transport(e.to_string());
+    let response = request.send().await.map_err(failed)?;
+    match response.status() {
+        reqwest::StatusCode::CONFLICT | reqwest::StatusCode::GONE => return Err(Error::Revision),
+        status if !status.is_success() => return Err(Error::Transport(status.to_string())),
+        _ => {}
+    }
+    let body = response.bytes().await.map_err(failed)?;
+    if body.len() > limit {
+        return Err(Error::Malformed);
+    }
+    Ok(body.to_vec())
+}
+
+/// Connect to the publication `origin` advertises, accepted at `accepted`, for
+/// `remaining` lookups.
+async fn connect<T: Transport>(
+    origin: &str,
+    http: T,
+    accepted: AcceptedCoverage,
+    remaining: usize,
+) -> Result<DirectoryClient<T>, Error> {
+    let manifest = DirectoryClient::fetch_manifest(origin, &http).await?;
+    DirectoryClient::connect_manifest(origin, http, accepted, manifest, remaining).await
+}
+
 #[tokio::test]
 async fn retrieve_complete_history_and_enforce_limits_over_http() {
     let server = serve(snapshot(2)).await;
-    let client = HttpClient::connect(&server.origin, http(), accepted())
+    let client = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     let payments = client
@@ -269,7 +268,7 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .unwrap();
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
     let absent = serve(snapshot(0)).await;
-    let client = HttpClient::connect(&absent.origin, http(), accepted())
+    let client = connect(&absent.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     assert!(client
@@ -277,57 +276,6 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .await
         .unwrap()
         .is_empty());
-}
-
-/// Public chain fixture only. Supply the previously verified backfill manifest, never a wallet DB.
-#[tokio::test]
-#[ignore = "requires local mainnet publication; set RECEIVER_MAINNET_MANIFEST"]
-async fn known_mainnet_refund_over_encrypted_http() {
-    mainnet_lookup().await;
-}
-
-async fn mainnet_lookup() -> Payment {
-    let path = std::path::PathBuf::from(std::env::var("RECEIVER_MAINNET_MANIFEST").unwrap());
-    let publication = Publication::load(&path).unwrap();
-    let revision = hex::encode(publication.manifest().revision().unwrap());
-    fn rpc_hash(s: &str) -> [u8; 32] {
-        let mut b = hex::decode(s).unwrap();
-        b.reverse();
-        b.try_into().unwrap()
-    }
-    // Anchor independently verified against the canonical node at backfill completion.
-    let accepted = AcceptedCoverage {
-        genesis: rpc_hash("00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08"),
-        required_start: 3428143,
-        height: 3497109,
-        hash: rpc_hash("00000000001a95c9545f79c6cceda87a7ba1e4bb06398f0559d39a330afb6fc5"),
-    };
-    let server = serve_publication(publication).await;
-    let client = HttpClient::connect(&server.origin, http(), accepted)
-        .await
-        .unwrap();
-    let found = client
-        .lookup(receiver(), NonZeroU32::new(10).unwrap(), accepted)
-        .await
-        .unwrap();
-    assert_eq!(found.len(), 1);
-    let p = &found[0];
-    assert_eq!(p.position, 610503);
-    assert_eq!((p.height, p.tx_index, p.action_index), (3496114, 16, 0));
-    assert_eq!(
-        p.txid,
-        rpc_hash("2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653")
-    );
-    let a = fixture();
-    assert_eq!(p.action_nullifier, a.nullifier);
-    assert_eq!(p.cmx, a.cmx);
-    assert_eq!(p.ephemeral_key, a.ephemeral_key);
-    assert_eq!(p.ciphertext_prefix, a.enc_ciphertext[..52]);
-    println!(
-        "Verified mainnet receiver lookup: revision={revision}, position={}, height={}",
-        p.position, p.height
-    );
-    found.into_iter().next().unwrap()
 }
 
 #[tokio::test]
@@ -363,7 +311,7 @@ async fn reject_incomplete_or_inconsistent_pagination() {
         }
         data.manifest.data_sha256 = Sha256::digest(&data.data).into();
         let server = serve(data).await;
-        let client = HttpClient::connect(&server.origin, http(), accepted())
+        let client = connect(&server.origin, Http(http()), accepted(), 0)
             .await
             .unwrap();
         assert!(
@@ -374,43 +322,6 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             "fault {fault} must not produce partial success"
         );
     }
-}
-
-/// This is an authenticated public-output test, not a wallet ownership or witness test.
-#[tokio::test]
-#[ignore = "requires mainnet publication and ENHANCE_PIR_ORIGIN for an isolated integration service"]
-async fn known_mainnet_refund_through_receiver_and_enhance_pir() {
-    let payment = mainnet_lookup().await;
-    let origin = std::env::var("ENHANCE_PIR_ORIGIN").unwrap();
-    let mut client = enhance_pir::client::EnhancePirClient::connect(&origin)
-        .await
-        .unwrap();
-    assert_eq!(client.manifest().network, "main");
-    assert_eq!(client.manifest().pool, "ironwood");
-    assert!(client.manifest().anchor_height >= u64::from(payment.height));
-    let (enhancement, timing) = client
-        .query_position_with_timing(payment.position)
-        .await
-        .unwrap();
-    let mut enc_ciphertext = [0; 580];
-    enc_ciphertext[..52].copy_from_slice(&payment.ciphertext_prefix);
-    enc_ciphertext[52..].copy_from_slice(enhancement.enc_ciphertext_suffix());
-    let joined = Action {
-        cv: *enhancement.cv_net(),
-        nullifier: payment.action_nullifier,
-        cmx: payment.cmx,
-        ephemeral_key: payment.ephemeral_key,
-        enc_ciphertext,
-        out_ciphertext: *enhancement.out_ciphertext(),
-    };
-    let expected = fixture();
-    assert_eq!(joined.enc_ciphertext, expected.enc_ciphertext);
-    assert_eq!(joined.cv, expected.cv);
-    assert_eq!(joined.out_ciphertext, expected.out_ciphertext);
-    assert_eq!(joined.recover_receiver().unwrap(), Some(receiver()));
-    println!("Authenticated receiver + Enhance result: position={}, generation={}, anchor_height={}, anchor_hash={}, enhance_query_ms={}",
-        payment.position, client.manifest().generation, client.manifest().anchor_height,
-        client.manifest().anchor_block_hash, timing.total.as_millis());
 }
 
 #[tokio::test]
@@ -426,7 +337,7 @@ async fn common_witness_file_uses_the_same_publication() {
     let server =
         serve_publication(Publication::new(Server::new(snapshot).unwrap(), Some(proof)).unwrap())
             .await;
-    let client = HttpClient::connect(&server.origin, http(), accepted())
+    let client = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     let proof = client.witnesses().await.unwrap();
@@ -435,55 +346,11 @@ async fn common_witness_file_uses_the_same_publication() {
 }
 
 #[tokio::test]
-async fn host_transport_handles_setup_queries_and_revision_errors() {
-    use receiver_pir::transport::{DirectoryClient, Transport};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    struct Host {
-        http: reqwest::Client,
-        gets: AtomicUsize,
-        posts: AtomicUsize,
-    }
-    impl Transport for Host {
-        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-            self.gets.fetch_add(1, Ordering::SeqCst);
-            Transport::get(&self.http, url, limit).await
-        }
-        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
-            self.posts.fetch_add(1, Ordering::SeqCst);
-            Transport::post(&self.http, url, body, limit).await
-        }
-    }
-    let server = serve(snapshot(2)).await;
-    let host = Host {
-        http: http(),
-        gets: AtomicUsize::new(0),
-        posts: AtomicUsize::new(0),
-    };
-    let client = DirectoryClient::connect(&server.origin, &host, accepted())
-        .await
-        .unwrap();
-    let payments = client
-        .lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
-        .await
-        .unwrap();
-    assert_eq!(payments.len(), 2);
-    assert_eq!(host.gets.load(Ordering::SeqCst), 2);
-    assert_eq!(host.posts.load(Ordering::SeqCst), 2);
-    let missing = host
-        .get(
-            &format!("{}/v1/receiver/public/{}", server.origin, "00".repeat(32)),
-            1024,
-        )
-        .await;
-    assert!(matches!(missing, Err(Error::Revision)));
-}
-
-#[tokio::test]
 async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
-    use receiver_pir::transport::{prefer_directory_file, DirectoryClient, Transport};
+    use receiver_pir::transport::prefer_directory_file;
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Counted {
-        http: reqwest::Client,
+        http: Http,
         up: AtomicUsize,
         down: AtomicUsize,
         posts: AtomicUsize,
@@ -507,16 +374,15 @@ async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
     let server = serve(snapshot(1)).await;
     for count in [50, 250, 10_000] {
         let host = Counted {
-            http: http(),
+            http: Http(http()),
             up: AtomicUsize::new(0),
             down: AtomicUsize::new(0),
             posts: AtomicUsize::new(0),
             gets: AtomicUsize::new(0),
         };
-        let mut client =
-            DirectoryClient::connect_for_work(&server.origin, &host, accepted(), count)
-                .await
-                .unwrap();
+        let mut client = connect(&server.origin, &host, accepted(), count)
+            .await
+            .unwrap();
         assert_eq!(
             prefer_directory_file(client.manifest(), count).unwrap(),
             count >= 250
@@ -556,9 +422,8 @@ async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
 
 #[tokio::test]
 async fn directory_file_rejects_bad_digest_length_and_pagination() {
-    use receiver_pir::transport::{DirectoryClient, Transport};
     struct Corrupt {
-        http: reqwest::Client,
+        http: Http,
         truncate: bool,
     }
     impl Transport for Corrupt {
@@ -580,10 +445,10 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
     let server = serve(snapshot(2)).await;
     for truncate in [false, true] {
         assert!(matches!(
-            DirectoryClient::connect_for_work(
+            connect(
                 &server.origin,
                 Corrupt {
-                    http: http(),
+                    http: Http(http()),
                     truncate
                 },
                 accepted(),
@@ -593,7 +458,7 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
             Err(Error::Malformed)
         ));
     }
-    let client = DirectoryClient::connect_for_work(&server.origin, http(), accepted(), 250)
+    let client = connect(&server.origin, Http(http()), accepted(), 250)
         .await
         .unwrap();
     assert!(matches!(
@@ -610,4 +475,131 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
             .len(),
         2
     );
+}
+
+#[test]
+fn encrypted_publication_roundtrip_and_fail_closed() {
+    let records = [record(0, 2), record(1, 2)];
+    let server = Server::new(Snapshot::build(manifest(MIN_ROWS), &records).unwrap()).unwrap();
+    let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
+    let first = client.prepare(receiver(), 0).unwrap();
+    let second = client.prepare(receiver(), 0).unwrap();
+    assert_ne!(
+        first.body(),
+        second.body(),
+        "fresh encryption even for the same receiver"
+    );
+    assert_eq!(
+        first.body().len(),
+        receiver_pir::query_bytes(MIN_ROWS).unwrap()
+    );
+    let answer = server.respond(first.body()).unwrap();
+    assert_eq!(
+        answer.len(),
+        receiver_pir::response_bytes(MIN_ROWS).unwrap()
+    );
+    assert!(
+        client.decode(second, &answer).is_err(),
+        "reject another request's answer"
+    );
+    assert_eq!(
+        client.decode(first, &answer).unwrap(),
+        Some(records[0].clone())
+    );
+    let q = client.prepare(receiver(), 1).unwrap();
+    let a = server.respond(q.body()).unwrap();
+    assert_eq!(client.decode(q, &a).unwrap(), Some(records[1].clone()));
+    let q = client.prepare(receiver(), 2).unwrap();
+    let a = server.respond(q.body()).unwrap();
+    assert!(
+        client.decode(q, &a).is_err(),
+        "missing continuation is not absence"
+    );
+
+    let mut anchor = accepted();
+    anchor.hash[0] ^= 1;
+    assert!(Client::new(server.manifest().clone(), server.public(), anchor).is_err());
+    anchor = accepted();
+    anchor.required_start = 99;
+    assert!(Client::new(server.manifest().clone(), server.public(), anchor).is_err());
+    let mut public = server.public().to_vec();
+    public[0] ^= 1;
+    assert!(Client::new(server.manifest().clone(), &public, accepted()).is_err());
+    let mut stale = server.manifest().clone();
+    stale.directory.salt[0] ^= 1;
+    let stale = Client::new(stale, server.public(), accepted()).unwrap();
+    let q = stale.prepare(receiver(), 0).unwrap();
+    assert!(matches!(server.respond(q.body()), Err(Error::Revision)));
+    assert!(server.respond(&[]).is_err());
+    let mut malformed = client.prepare(receiver(), 0).unwrap().body().to_vec();
+    malformed[52..60].fill(255);
+    assert!(server.respond(&malformed).is_err());
+    println!(
+        "public_bytes={} query_bytes={} response_bytes={}",
+        server.public().len(),
+        receiver_pir::query_bytes(MIN_ROWS).unwrap(),
+        receiver_pir::response_bytes(MIN_ROWS).unwrap()
+    );
+}
+
+#[test]
+fn reject_corrupt_rows_before_preprocessing() {
+    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[]).unwrap();
+    snapshot.data[0] ^= 1;
+    assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
+    assert!(matches!(
+        Server::new(Snapshot::build(manifest(4096), &[]).unwrap()),
+        Err(Error::Unsupported)
+    ));
+}
+
+#[test]
+fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
+    for rows in [16_384, 32_768, receiver_pir::MAX_ROWS] {
+        let mut m = manifest(rows);
+        // Select the upper half so truncating to the previous geometry cannot pass.
+        while receiver_directory::snapshot::row_for(&m, &receiver(), 0).unwrap() < rows as usize / 2
+        {
+            m.salt[0] = m.salt[0].wrapping_add(1);
+        }
+        let records = [record(0, 2), record(1, 2)];
+        let server = Server::new(Snapshot::build(m, &records).unwrap()).unwrap();
+        let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
+        assert_eq!(
+            server.public().len(),
+            receiver_pir::public_bytes(rows).unwrap()
+        );
+        for record in records {
+            let q = client.prepare(receiver(), record.page).unwrap();
+            assert_eq!(q.body().len(), receiver_pir::query_bytes(rows).unwrap());
+            let answer = server.respond(q.body()).unwrap();
+            assert_eq!(answer.len(), receiver_pir::response_bytes(rows).unwrap());
+            assert_eq!(client.decode(q, &answer).unwrap(), Some(record));
+        }
+        let mut wrong_size = client.prepare(receiver(), 0).unwrap().body().to_vec();
+        wrong_size.truncate(receiver_pir::query_bytes(MIN_ROWS).unwrap());
+        assert!(matches!(server.respond(&wrong_size), Err(Error::Malformed)));
+    }
+}
+
+#[test]
+fn geometry_contract_and_transport_cost_use_the_same_bounds() {
+    for rows in [0, 1, 4096, 8193, 131072, u32::MAX] {
+        assert!(receiver_pir::validate_rows(rows).is_err());
+        assert!(receiver_pir::query_bytes(rows).is_err());
+    }
+    for rows in [MIN_ROWS, 16_384, 32_768, receiver_pir::MAX_ROWS] {
+        let m = receiver_pir::Manifest {
+            protocol: receiver_pir::PROTOCOL.into(),
+            directory: manifest(rows),
+            public_digest: [0; 32],
+        };
+        m.validate().unwrap();
+        let per_lookup =
+            receiver_pir::query_bytes(rows).unwrap() + receiver_pir::response_bytes(rows).unwrap();
+        let crossover =
+            (rows as usize * receiver_directory::snapshot::ROW_BYTES).div_ceil(per_lookup);
+        assert!(!receiver_pir::transport::prefer_directory_file(&m, crossover - 1).unwrap());
+        assert!(receiver_pir::transport::prefer_directory_file(&m, crossover).unwrap());
+    }
 }

@@ -1,3 +1,5 @@
+use incrementalmerkletree::frontier::CommitmentTree;
+use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
 use receiver_directory::{
     snapshot::{Manifest, PROFILE},
     witness::{WitnessCache, WitnessSnapshot},
@@ -30,11 +32,18 @@ fn leaves(len: usize) -> Vec<Hash> {
         })
         .collect()
 }
+/// A reused cache must match a fresh build, whose root must match an independent tree.
 fn compare(cache: &mut WitnessCache, cmxs: &[Hash], positions: BTreeSet<u32>) {
     let manifest = manifest(cmxs.len());
     let full = WitnessSnapshot::build(&manifest, cmxs, &positions).unwrap();
     let cached = cache.build(&manifest, cmxs, &positions).unwrap();
     assert_eq!(cached.encode(), full.encode());
+    let mut tree = CommitmentTree::<MerkleHashOrchard, 32>::empty();
+    for cmx in cmxs {
+        let cmx = ExtractedNoteCommitment::from_bytes(cmx).unwrap();
+        tree.append(MerkleHashOrchard::from_cmx(&cmx)).unwrap();
+    }
+    assert_eq!(full.root(), tree.root().to_bytes());
     for position in positions {
         assert_eq!(
             cached.path(position, cmxs[position as usize]).unwrap(),

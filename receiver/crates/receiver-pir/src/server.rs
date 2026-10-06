@@ -11,6 +11,7 @@ use receiver_directory::{
 };
 use sha2::{Digest, Sha256};
 
+/// A publication prepared for PIR evaluation.
 pub struct Server {
     manifest: Manifest,
     id: Hash,
@@ -74,9 +75,12 @@ impl Server {
         })
     }
 
+    /// The session manifest that clients fetch.
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
+
+    /// The public setup that clients download once per session.
     pub fn public(&self) -> &[u8] {
         &self.public
     }
@@ -86,6 +90,7 @@ impl Server {
         self.rows.clone()
     }
 
+    /// Answer one encrypted query for this session, rejecting any other length or session.
     pub fn respond(&self, body: &[u8]) -> Result<Vec<u8>, Error> {
         if body.len() != query_bytes(self.manifest.directory.rows)? || &body[..4] != MAGIC {
             return Err(Error::Malformed);

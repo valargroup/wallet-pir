@@ -9,13 +9,11 @@ description = "Receiver PIR serving with immutable publications and atomic sessi
 receiver-pir = { path = "../../crates/receiver-pir", features = ["server"] }
 receiver-directory = { path = "../../crates/receiver-directory" }
 axum = "0.7"
-clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 serde_json = "1"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "net", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 
 [dev-dependencies]
-receiver-pir = { path = "../../crates/receiver-pir", features = ["http", "server"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 sha2 = "0.10"
-enhance-pir = { path = "../../../enhance/crates/enhance-pir" }
+tokio = { version = "1", features = ["macros", "net"] }

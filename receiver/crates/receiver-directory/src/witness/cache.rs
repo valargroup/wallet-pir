@@ -1,4 +1,4 @@
-use super::{validate_inputs, WitnessSnapshot};
+use super::WitnessSnapshot;
 use crate::{snapshot::Manifest, Error, Hash};
 use incrementalmerkletree::Hashable;
 use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
@@ -21,7 +21,20 @@ impl WitnessCache {
         commitments: &[Hash],
         positions: &BTreeSet<u32>,
     ) -> Result<WitnessSnapshot, Error> {
-        validate_inputs(manifest, commitments, positions)?;
+        manifest.validate()?;
+        if manifest.start_position != 0
+            || manifest.end_position != commitments.len() as u64
+            || commitments.is_empty()
+            || positions
+                .iter()
+                .any(|p| u64::from(*p) >= manifest.end_position)
+        {
+            return Err(Error::Coverage);
+        }
+        // A depth-32 tree holds at most 2^32 leaves.
+        if commitments.len() as u64 > 1 << 32 {
+            return Err(Error::Capacity);
+        }
         self.levels.resize_with(33, Vec::new);
         let shared = self.levels[0]
             .iter()

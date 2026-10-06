@@ -2,31 +2,12 @@
 
 ## Unreleased
 
-- Share the 8192–65536 row geometry contract across publication, PIR serving and
-  clients. Grow publications without changing protocols, retain exact per-session
-  message bounds, and calculate file crossover costs for the advertised size.
-
-
-- Add an immutable common row-file endpoint and adaptive client discovery.
-  Remaining uncached PIR bytes select the transport. File length and SHA-256
-  are checked before the existing row decoder is used, with shared sessions
-  and witness data across bounded wallet batches.
-
-- Add common inclusion-proof snapshots, bounded HTTP retrieval and a local refresh
-  helper. Commitment indexing preserves coinbase positions and rewind semantics.
-  Continuous publication reuses unchanged commitment subtrees in a disposable
-  memory cache, with stage timing logs for publication processing.
-
-- Add authenticated zero-OVK receiver extraction and shared, versioned payment
-  records with pagination, coverage validation, and deterministic PIR row layouts.
-- Add a standalone, resumable mainnet indexer with coinbase exclusion, atomic
-  block storage, bounded concurrent downloads, batch anchor validation, reorg
-  rollback, and immutable local publications. Continuous serving follows the
-  canonical tip, rotates publications without restarting HTTP, and revokes
-  orphaned sessions using the Enhance publication lifecycle.
-- Add reusable encrypted receiver lookups bound to one accepted publication,
-  with bounded HTTP downloads, revision-bound setup and witnesses, and
-  complete-history pagination checks.
-- Add a bounded loopback PIR service and a public mainnet refund lookup test.
-- Verify a real refund through both encrypted lookups with authenticated output
-  recovery.
+- Add the receiver directory: authenticated zero-OVK receiver extraction,
+  paginated fixed-width records, deterministic publications from 8192 to 65536
+  rows and common `IWPROOF1` witness files.
+- Add encrypted receiver lookups (`ironwood-receiver-pir-v1-q48`) and a row-file
+  mode chosen by remaining work, both bound to one accepted publication and run
+  over a host-supplied transport.
+- Add the `receiver-directory` indexer and HTTP service: resumable mainnet
+  backfill with batch anchor checks and reorg rollback, and continuous canonical
+  serving that rotates publications and revokes orphaned sessions.

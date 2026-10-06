@@ -1,4 +1,4 @@
-//! Common proof data for the POC. Every wallet downloads the same bytes.
+//! Common inclusion proofs for one publication. Every wallet downloads the same bytes.
 //! Proofs authenticate inclusion only against a root independently accepted by the wallet.
 use crate::{snapshot::Manifest, Error, Hash};
 use incrementalmerkletree::Hashable;
@@ -17,13 +17,14 @@ const NODE: usize = 37;
 pub const MAX_WITNESS_BYTES: usize = 64 * 1024 * 1024;
 const MAGIC: &[u8; 8] = b"IWPROOF1";
 
+/// Sibling nodes for every payment position in one publication, bound to its revision.
 pub struct WitnessSnapshot {
-    pub genesis: Hash,
-    pub directory_revision: Hash,
-    pub height: u32,
-    pub block_hash: Hash,
-    pub tree_size: u64,
-    pub root: Hash,
+    genesis: Hash,
+    directory_revision: Hash,
+    height: u32,
+    block_hash: Hash,
+    tree_size: u64,
+    root: Hash,
     nodes: BTreeMap<(u8, u32), MerkleHashOrchard>,
 }
 impl WitnessSnapshot {
@@ -33,39 +34,13 @@ impl WitnessSnapshot {
         commitments: &[Hash],
         positions: &BTreeSet<u32>,
     ) -> Result<Self, Error> {
-        validate_inputs(manifest, commitments, positions)?;
-        let mut level = commitments
-            .iter()
-            .map(|cmx| {
-                Option::<ExtractedNoteCommitment>::from(ExtractedNoteCommitment::from_bytes(cmx))
-                    .map(|c| MerkleHashOrchard::from_cmx(&c))
-                    .ok_or(Error::Malformed)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let mut nodes = BTreeMap::new();
-        for depth in 0..32u8 {
-            for position in positions {
-                let index = (*position >> depth) ^ 1;
-                if let Some(hash) = level.get(index as usize) {
-                    nodes.insert((depth, index), *hash);
-                }
-            }
-            let empty = MerkleHashOrchard::empty_root(depth.into());
-            level = level
-                .chunks(2)
-                .map(|pair| {
-                    MerkleHashOrchard::combine(
-                        depth.into(),
-                        &pair[0],
-                        pair.get(1).unwrap_or(&empty),
-                    )
-                })
-                .collect();
-        }
-        if level.len() != 1 {
-            return Err(Error::Capacity);
-        }
-        Self::from_nodes(manifest, level[0].to_bytes(), nodes)
+        WitnessCache::default().build(manifest, commitments, positions)
+    }
+
+    /// The file's tree root. Like every path, it is untrusted until checked against the
+    /// wallet's own chain.
+    pub fn root(&self) -> Hash {
+        self.root
     }
 
     fn from_nodes(
@@ -88,6 +63,7 @@ impl WitnessSnapshot {
         Ok(snapshot)
     }
 
+    /// Serialize as the `IWPROOF1` file that every wallet downloads.
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(HEADER + NODE * self.nodes.len());
         out.extend_from_slice(MAGIC);
@@ -180,22 +156,4 @@ impl WitnessSnapshot {
         }
         Ok(path.map(|h| h.to_bytes()))
     }
-}
-
-fn validate_inputs(
-    manifest: &Manifest,
-    commitments: &[Hash],
-    positions: &BTreeSet<u32>,
-) -> Result<(), Error> {
-    manifest.validate()?;
-    if manifest.start_position != 0
-        || manifest.end_position != commitments.len() as u64
-        || commitments.is_empty()
-        || positions
-            .iter()
-            .any(|p| u64::from(*p) >= manifest.end_position)
-    {
-        return Err(Error::Coverage);
-    }
-    Ok(())
 }

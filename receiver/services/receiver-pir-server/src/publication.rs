@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// One revision prepared for serving, with its optional common witness file.
 pub struct Publication {
     pub(crate) server: Server,
     pub(crate) witnesses: Option<Bytes>,
@@ -58,6 +59,7 @@ impl Publication {
         Self::new(Server::new(Snapshot { manifest, data })?, proof).map_err(Into::into)
     }
 
+    /// The directory manifest this publication serves.
     pub fn manifest(&self) -> &Manifest {
         &self.server.manifest().directory
     }
@@ -87,6 +89,7 @@ struct State {
 pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
+    /// The recovery epoch. Every revocation advances it.
     pub fn epoch(&self) -> u64 {
         self.0.read().unwrap().epoch
     }

@@ -1,26 +1,12 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
-use crate::zakura::{ZakuraClient, ZakuraError};
+use crate::zakura::{VerboseBlock, ZakuraClient, ZakuraError};
 use receiver_directory::{
     extract::Action,
     store::{Checkpoint, IndexedBlock},
     Payment,
 };
-use serde::Deserialize;
 use serde_json::json;
 use zakura_chain::{block::Block, serialization::ZcashDeserialize};
-
-#[derive(Deserialize)]
-struct Trees {
-    trees: Tree,
-}
-#[derive(Deserialize)]
-struct Tree {
-    ironwood: Option<Size>,
-}
-#[derive(Deserialize)]
-struct Size {
-    size: u64,
-}
 
 /// Bounds retained block memory and the amount of work before an anchor check.
 pub const MAX_RECEIVER_BATCH_BLOCKS: u32 = 64;
@@ -38,7 +24,7 @@ impl ZakuraClient {
         let position = if u64::from(height) < enhance_pir::ACTIVATION_HEIGHT {
             0
         } else {
-            let result: Trees = self.call("getblock", json!([displayed, 1])).await?;
+            let result: VerboseBlock = self.call("getblock", json!([displayed, 1])).await?;
             result
                 .trees
                 .ironwood

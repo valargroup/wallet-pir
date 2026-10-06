@@ -7,6 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// The network and chain boundary that a database is bound to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Config {
     pub genesis: Hash,
@@ -15,6 +16,7 @@ pub struct Config {
     pub start_position: u64,
 }
 
+/// A block's height and hash, with the note position after it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Checkpoint {
     pub height: u32,
@@ -34,6 +36,7 @@ pub struct IndexedBlock {
     pub commitments: Vec<Hash>,
 }
 
+/// The indexer's SQLite database of contiguous public coverage.
 pub struct Store {
     db: Connection,
     config: Config,
@@ -74,14 +77,9 @@ impl Store {
         Ok(Self { db, config })
     }
 
+    /// Build the publication's common proofs, reusing unchanged subtrees from `cache`.
     /// Old indexes without all commitments must be rebuilt before producing proofs.
-    pub fn witnesses(&self, manifest: &Manifest) -> Result<crate::witness::WitnessSnapshot, Error> {
-        let (commitments, positions) = self.witness_inputs(manifest)?;
-        crate::witness::WitnessSnapshot::build(manifest, &commitments, &positions)
-    }
-
-    /// Build identical proof bytes while reusing unchanged commitment subtrees.
-    pub fn witnesses_cached(
+    pub fn witnesses(
         &self,
         manifest: &Manifest,
         cache: &mut crate::witness::WitnessCache,
@@ -127,6 +125,7 @@ impl Store {
         Ok((commitments, positions))
     }
 
+    /// The last stored block, or the configured boundary when none is stored.
     pub fn tip(&self) -> Result<Checkpoint, Error> {
         tip(&self.db, &self.config)
     }
@@ -228,6 +227,7 @@ impl Store {
         Ok(())
     }
 
+    /// The stored block at `height`, or the boundary just below the configured start.
     pub fn checkpoint(&self, height: u32) -> Result<Checkpoint, Error> {
         if height == self.config.start_height - 1 {
             return Ok(boundary(&self.config));

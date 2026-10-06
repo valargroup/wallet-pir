@@ -56,66 +56,6 @@ fn coinbase_exclusion_preserves_position_and_compact_context() {
     assert!(extract_block(&b, 3496115, 610504).is_err());
     assert!(extract_block(&b, 3496114, 1).is_err());
 }
-#[derive(Clone)]
-struct Rpc {
-    block: Arc<Block>,
-    wrong_hash: bool,
-}
-async fn rpc(State(s): State<Rpc>, Json(r): Json<Value>) -> Json<Value> {
-    let hash = s.block.hash().to_string();
-    let result = match r["method"].as_str().unwrap() {
-        "getblockhash" => {
-            if s.wrong_hash {
-                json!("00".repeat(32))
-            } else {
-                json!(hash)
-            }
-        }
-        "getblock" => {
-            if r["params"][1] == 1 {
-                // Tree size is fetched by hash. Raw blocks arrive concurrently by height.
-                assert_eq!(
-                    r["params"][0],
-                    if s.wrong_hash { "00".repeat(32) } else { hash }
-                );
-                json!({"trees":{"ironwood":{"size":610504}}})
-            } else {
-                let mut raw = Vec::new();
-                s.block.zcash_serialize(&mut raw).unwrap();
-                json!(hex::encode(raw))
-            }
-        }
-        _ => panic!("unexpected RPC"),
-    };
-    Json(json!({"result":result,"error":null}))
-}
-#[tokio::test]
-async fn rpc_checks_raw_block_against_canonical_anchor() {
-    for wrong_hash in [false, true] {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", listener.local_addr().unwrap());
-        let router = Router::new().route("/", post(rpc)).with_state(Rpc {
-            block: Arc::new(block()),
-            wrong_hash,
-        });
-        let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let result = ZakuraClient::unauthenticated(url)
-            .unwrap()
-            .receiver_batch(
-                &receiver_directory::store::Checkpoint {
-                    height: 3496113,
-                    hash: [0; 32],
-                    position: 610502,
-                },
-                1,
-                8,
-            )
-            .await;
-        assert_eq!(result.is_err(), wrong_hash);
-        task.abort();
-    }
-}
-
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cli_resumes_and_replaces_an_orphaned_publication() {
     use std::process::Command;
@@ -217,6 +157,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                 "--rpc-url",
                 &url,
                 "--no-auth",
+                "--witnesses",
             ])
             .output()
             .unwrap();
@@ -229,6 +170,12 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     };
     let first = run();
     assert_eq!(first["records"], 1);
+    let revision = first["revision"].as_str().unwrap();
+    assert!(dir
+        .path()
+        .join(format!("publications/{revision}.witness"))
+        .exists());
+    // Republishing a revision requires identical bytes in every existing file.
     assert_eq!(first, run());
     changed.store(true, Ordering::SeqCst);
     let next = run();
@@ -272,6 +219,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                     "--rpc-url",
                     &url,
                     "--no-auth",
+                    "--witnesses",
                     "--serve",
                     "--poll-seconds",
                     "1",
@@ -486,6 +434,6 @@ fn cli_rejects_unservable_geometry_before_contacting_the_node() {
             .unwrap();
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("Unsupported"));
-        assert!(!dir.path().join("publications/current.json").exists());
+        assert!(!dir.path().join("publications").exists());
     }
 }

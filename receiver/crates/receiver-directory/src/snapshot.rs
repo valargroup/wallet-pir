@@ -1,10 +1,15 @@
+//! Immutable publications: manifests, row placement and row decoding.
 use crate::{Error, Hash, Receiver, Record, RECORD_BYTES};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// The directory format a manifest commits to.
 pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
+/// Bytes per row. Unused trailing bytes are zero.
 pub const ROW_BYTES: usize = 4096;
+/// Records per row.
 pub const SLOTS: usize = ROW_BYTES / RECORD_BYTES;
+/// Largest supported row count.
 pub const MAX_ROWS: u32 = 65536;
 
 /// Coverage includes empty blocks and excludes coinbase recipients, not their note positions.
@@ -25,6 +30,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// Check the profile, coverage order and geometry bounds.
     pub fn validate(&self) -> Result<(), Error> {
         if self.profile != PROFILE
             || self.start_height > self.end_height
@@ -80,6 +86,7 @@ pub fn row_for(manifest: &Manifest, receiver: &Receiver, page: u32) -> Result<us
     Ok((u32::from_le_bytes(digest[..4].try_into().unwrap()) & (manifest.rows - 1)) as usize)
 }
 
+/// A manifest and the complete row data it commits to.
 #[derive(Clone)]
 pub struct Snapshot {
     pub manifest: Manifest,

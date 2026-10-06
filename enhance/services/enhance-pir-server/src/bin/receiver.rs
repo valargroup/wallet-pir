@@ -150,9 +150,7 @@ async fn check_serving(publications: &Publications, rpc: &ZakuraClient) -> Resul
     }
     let tip = rpc.tip_height().await?;
     for (height, hash) in anchors {
-        if u64::from(height) > tip
-            || rpc.block_hash(u64::from(height)).await?.parse::<Hash>()?.0 != hash
-        {
+        if u64::from(height) > tip || !is_canonical(rpc, height, hash).await? {
             publications.revoke();
             eprintln!("revoked noncanonical receiver sessions");
             break;
@@ -193,14 +191,7 @@ async fn refresh(
     }
     let mut tip = store.tip()?;
     // A saved hash, not elapsed time or provider status, decides which data survives.
-    while tip.height > node_tip
-        || rpc
-            .block_hash(u64::from(tip.height))
-            .await?
-            .parse::<Hash>()?
-            .0
-            != tip.hash
-    {
+    while tip.height > node_tip || !is_canonical(rpc, tip.height, tip.hash).await? {
         if tip.height < args.start_height {
             return Err("reorg crossed the configured boundary; rebuild explicitly".into());
         }
@@ -252,7 +243,7 @@ async fn refresh(
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
         if rows > MAX_ROWS {
-            return Err("directory exceeds prototype geometry; no publication created".into());
+            return Err("directory exceeds the maximum row count; no publication created".into());
         }
         match store.snapshot(rows) {
             Ok(s) => break s,
@@ -261,24 +252,23 @@ async fn refresh(
         }
     };
     log_stage("directory", started);
-    if rpc
-        .block_hash(u64::from(snapshot.manifest.end_height))
-        .await?
-        .parse::<Hash>()?
-        .0
-        != snapshot.manifest.end_hash
+    if !is_canonical(
+        rpc,
+        snapshot.manifest.end_height,
+        snapshot.manifest.end_hash,
+    )
+    .await?
     {
         return Err("chain changed before publication; rerun to reconcile".into());
     }
     if args.witnesses {
         let started = std::time::Instant::now();
-        let proof = store
-            .witnesses_cached(&snapshot.manifest, witness_cache)?
-            .encode();
+        let proof = store.witnesses(&snapshot.manifest, witness_cache)?.encode();
         log_stage("witness_prepare", started);
         let started = std::time::Instant::now();
         let dir = args.data_dir.join("publications");
         std::fs::create_dir_all(&dir)?;
+        // Witnesses are not covered by the revision, so a rebuild replaces them.
         let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
         temp.write_all(&proof)?;
         temp.as_file().sync_all()?;
@@ -289,12 +279,12 @@ async fn refresh(
         log_stage("witness_write", started);
         eprintln!("witness_bytes={}", proof.len());
     }
-    if rpc
-        .block_hash(u64::from(snapshot.manifest.end_height))
-        .await?
-        .parse::<Hash>()?
-        .0
-        != snapshot.manifest.end_hash
+    if !is_canonical(
+        rpc,
+        snapshot.manifest.end_height,
+        snapshot.manifest.end_hash,
+    )
+    .await?
     {
         return Err("chain changed while building proofs; rerun to reconcile".into());
     }
@@ -310,13 +300,8 @@ async fn refresh(
         let publication = tokio::task::spawn_blocking(move || Publication::load(&path)).await??;
         log_stage("pir_prepare", started);
         let started = std::time::Instant::now();
-        if rpc
-            .block_hash(u64::from(publication.manifest().end_height))
-            .await?
-            .parse::<Hash>()?
-            .0
-            != publication.manifest().end_hash
-        {
+        let anchor = publication.manifest();
+        if !is_canonical(rpc, anchor.end_height, anchor.end_hash).await? {
             serving.revoke();
             return Err("chain changed during PIR preparation; retrying".into());
         }
@@ -355,34 +340,36 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Write revision files before atomically replacing the public manifest pointer.
+/// Durably write a revision's row file, then its manifest, and return the revision ID.
 fn publish(root: &Path, snapshot: &Snapshot) -> Result<String> {
     std::fs::create_dir_all(root)?;
     let revision = hex::encode(snapshot.manifest.revision()?);
+    write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
-    for (name, bytes) in [
-        (format!("{revision}.rows"), snapshot.data.as_slice()),
-        (format!("{revision}.json"), manifest.as_slice()),
-    ] {
-        let destination = root.join(name);
-        let mut temp = tempfile::NamedTempFile::new_in(root)?;
-        temp.write_all(bytes)?;
-        temp.as_file().sync_all()?;
-        match temp.persist_noclobber(&destination) {
-            Ok(_) => (),
-            Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
-                // An existing content-addressed revision must have identical bytes.
-                if std::fs::read(destination)? != bytes {
-                    return Err("existing revision differs".into());
-                }
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-    let mut current = tempfile::NamedTempFile::new_in(root)?;
-    current.write_all(&manifest)?;
-    current.as_file().sync_all()?;
-    current.persist(root.join("current.json"))?;
+    write_revision_file(root, &format!("{revision}.json"), &manifest)?;
     std::fs::File::open(root)?.sync_all()?;
     Ok(revision)
+}
+
+/// Atomically write one content-addressed revision file. An existing file must be identical.
+fn write_revision_file(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
+    let destination = root.join(name);
+    let mut temp = tempfile::NamedTempFile::new_in(root)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    match temp.persist_noclobber(&destination) {
+        Ok(_) => (),
+        Err(e) if e.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if std::fs::read(destination)? != bytes {
+                return Err("existing revision differs".into());
+            }
+        }
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
+
+/// Whether `hash` is the node's canonical block at `height`.
+async fn is_canonical(rpc: &ZakuraClient, height: u32, hash: [u8; 32]) -> Result<bool> {
+    Ok(rpc.block_hash(u64::from(height)).await?.parse::<Hash>()?.0 == hash)
 }

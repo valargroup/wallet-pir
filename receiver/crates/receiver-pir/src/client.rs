@@ -7,6 +7,7 @@ use rand::{rngs::OsRng, Rng};
 use receiver_directory::{snapshot, Hash, Receiver, Record};
 use sha2::{Digest, Sha256};
 
+/// A PIR session for one manifest, accepted against the caller's chain anchor.
 pub struct Client {
     manifest: Manifest,
     id: Hash,
@@ -24,12 +25,14 @@ pub struct Query {
 }
 
 impl Query {
+    /// The request body to POST.
     pub fn body(&self) -> &[u8] {
         &self.body
     }
 }
 
 impl Client {
+    /// Check the manifest against `accepted` and the public setup against its digest.
     pub fn new(
         manifest: Manifest,
         public: &[u8],
@@ -62,6 +65,7 @@ impl Client {
         })
     }
 
+    /// The session manifest.
     pub fn manifest(&self) -> &Manifest {
         &self.manifest
     }
@@ -86,6 +90,7 @@ impl Client {
         })
     }
 
+    /// Decode the answer to `query`, rejecting another request's or revision's response.
     pub fn decode(&self, query: Query, response: &[u8]) -> Result<Option<Record>, Error> {
         if query.body[4..36] != self.id {
             return Err(Error::Revision);

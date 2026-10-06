@@ -8,6 +8,7 @@ use orchard::{
 };
 use zcash_note_encryption::{try_output_recovery_with_ovk, EphemeralKeyBytes, ShieldedOutput};
 
+/// The Ironwood Action fields that zero-OVK recovery reads.
 pub struct Action {
     pub cv: Hash,
     pub nullifier: Hash,

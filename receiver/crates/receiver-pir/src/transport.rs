@@ -15,7 +15,9 @@ use std::{collections::BTreeSet, num::NonZeroU32};
 /// 409/410 to [`Error::Revision`]. Do not follow redirects or retry in cleartext.
 #[allow(async_fn_in_trait)]
 pub trait Transport {
+    /// GET `url`, returning a body of at most `limit` bytes.
     async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error>;
+    /// POST `body` to `url`, returning a body of at most `limit` bytes.
     async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error>;
 }
 
@@ -57,24 +59,10 @@ pub fn prefer_directory_file(manifest: &Manifest, remaining_lookups: usize) -> R
 }
 
 impl<T: Transport> DirectoryClient<T> {
-    /// Initialize against an independently accepted terminal anchor. Reconnect for a new revision.
-    pub async fn connect(origin: &str, http: T, accepted: AcceptedCoverage) -> Result<Self, Error> {
-        Self::connect_for_work(origin, http, accepted, 0).await
-    }
-
-    /// Select a transport for the whole remaining job and reuse it across batches.
-    /// A file failure is an error, never a receiver-dependent public request.
-    pub async fn connect_for_work(
-        origin: &str,
-        http: T,
-        accepted: AcceptedCoverage,
-        remaining_lookups: usize,
-    ) -> Result<Self, Error> {
-        let manifest = Self::fetch_manifest(origin, &http).await?;
-        Self::connect_manifest(origin, http, accepted, manifest, remaining_lookups).await
-    }
-
     /// Use the exact advertised revision whose anchor the caller independently checked.
+    /// `remaining_lookups` selects PIR or the row file for the whole job; reuse the client
+    /// across batches and reconnect for a new revision. A file failure is an error, never
+    /// a receiver-dependent public request.
     pub async fn connect_manifest(
         origin: &str,
         http: T,
@@ -134,6 +122,7 @@ impl<T: Transport> DirectoryClient<T> {
         Ok(manifest)
     }
 
+    /// The session manifest.
     pub fn manifest(&self) -> &Manifest {
         match &self.session {
             DiscoverySession::Pir(client) => client.manifest(),

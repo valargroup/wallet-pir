@@ -56,19 +56,20 @@ struct RpcError {
     message: String,
 }
 
+/// The tree sizes from a verbose `getblock` response.
 #[derive(Deserialize)]
-struct VerboseBlock {
-    trees: BlockTrees,
+pub(crate) struct VerboseBlock {
+    pub(crate) trees: BlockTrees,
 }
 
 #[derive(Deserialize)]
-struct BlockTrees {
-    ironwood: Option<TreeSize>,
+pub(crate) struct BlockTrees {
+    pub(crate) ironwood: Option<TreeSize>,
 }
 
 #[derive(Deserialize)]
-struct TreeSize {
-    size: u64,
+pub(crate) struct TreeSize {
+    pub(crate) size: u64,
 }
 
 impl ZakuraClient {

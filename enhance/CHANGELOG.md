@@ -2,9 +2,6 @@
 
 ## 0.0.1 — Unreleased
 
-- Allow an explicitly selected canonical RPC without authentication through
-  `--zakura-no-auth`, mutually exclusive with cookie and fixture modes.
-
 - Introduce the `enhance-pir` client and protocol crate for schema 11,
   `ironwood-enhance-pir-v7`, with 653-byte Ironwood ciphertext-suffix records
   and the `simplepir-p16-q48-v1` query profile.

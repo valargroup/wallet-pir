@@ -1,7 +1,5 @@
 //! Encrypted row retrieval. Results are candidates for wallet validation, not chain proofs.
 mod client;
-#[cfg(feature = "http")]
-pub mod http;
 #[cfg(feature = "server")]
 pub mod server;
 pub mod transport;
@@ -14,16 +12,19 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
+/// The session protocol, including its fixed 48-bit query encoding.
 pub const PROTOCOL: &str = "ironwood-receiver-pir-v1-q48";
 /// Smallest served directory. Publications grow by powers of two up to `MAX_ROWS`.
 pub const MIN_ROWS: u32 = 8192;
 pub use receiver_directory::snapshot::MAX_ROWS;
+/// Request header length: [`MAGIC`], the session ID and a fresh nonce.
 pub const HEADER_BYTES: usize = 52;
 /// Leading bytes of every request header, which responses echo.
 pub const MAGIC: &[u8; 4] = b"RPQ1";
 /// Bound on a serialized directory or session manifest, read before parsing.
 pub const MAX_MANIFEST_BYTES: usize = 16384;
 
+/// Why a connection, lookup or evaluation failed.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]
@@ -42,9 +43,6 @@ pub enum Error {
     Transport(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[cfg(feature = "http")]
-    #[error(transparent)]
-    Http(#[from] reqwest::Error),
 }
 
 /// Both the directory and its PIR setup belong to one immutable session.
@@ -56,6 +54,7 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// Check the directory manifest, the protocol and the supported geometry.
     pub fn validate(&self) -> Result<(), Error> {
         self.directory.validate()?;
         if self.protocol != PROTOCOL {
@@ -64,6 +63,7 @@ impl Manifest {
         validate_rows(self.directory.rows)
     }
 
+    /// The session ID that pins every route and request to this manifest.
     pub fn id(&self) -> Result<Hash, Error> {
         self.validate()?;
         let mut h = Sha256::new();
@@ -83,6 +83,7 @@ pub struct AcceptedCoverage {
 }
 
 impl AcceptedCoverage {
+    /// Fail unless `m` ends at this anchor and covers the required history.
     pub fn check(&self, m: &snapshot::Manifest) -> Result<(), Error> {
         Ok(m.accept(self.genesis, self.required_start, self.height, self.hash)?)
     }

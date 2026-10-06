@@ -7,8 +7,10 @@ pub mod store;
 pub mod witness;
 
 pub use record::{Payment, Receiver, Record, RECORD_BYTES};
+/// A 32-byte hash in protocol byte order.
 pub type Hash = [u8; 32];
 
+/// Why directory data or coverage was rejected.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("malformed receiver directory data")]
