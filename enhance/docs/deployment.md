@@ -228,6 +228,40 @@ workers, routers or ingress.
    `enhance-staged.rejected-<unix time>`, and continues on the live journal. A
    staged directory without `rebuild.json` (a rebuild in progress) is left alone.
 
+Adoption verification is one streaming pass over both journals: fixed-size chunks,
+two reused buffers, the staged records digest computed during the comparison, and
+no in-memory copy of either journal. It runs before the coordinator opens its
+control state and binds its HTTP listener, so the adopted journal is in place before
+serving resumes; block catch-up and spent-output fetching stay in the poll loop after
+the listener serves the restored snapshot. A restart without a completed staged
+rebuild only checks for `enhance-staged/rebuild.json`. A locally measured adoption of
+700,000 records in 50,000 blocks took 2.1 seconds with a warm page cache and grew peak
+memory by under 1 MiB ([evidence](../evidence/mixed-fee-publication-2026-10-06/README.md));
+a cold cache reads about 0.9 GB more slowly, and that time adds to the restart's
+listener gap.
+
+### Exact-record oracles during a repair
+
+Two operator checks pin exact record bytes: the deploy exact-answer check, which runs
+`enhance-pir-load-test --oracle` against a pinned oracle file, and the external
+`pir-monitor` canary oracle (`PIR_MONITOR_ORACLE`, pinned by
+`PIR_MONITOR_ORACLE_SHA256`; see [alerting](observability-alerting.md)). A record
+whose fee is repaired no longer matches an oracle captured before the repair. For any
+historical record repair:
+
+1. Regenerate both oracles from an independent chain oracle (canonical transactions
+   read from the node and decoded without the coordinator's producer), not from the
+   repaired journal or a served answer. Record the new oracle digests.
+2. Put the external monitor in shadow mode (`PIR_MONITOR_ALERT_MODE=shadow`) for the
+   whole window, from the coordinator restart until the repaired generation is
+   published and verified.
+3. Deploy with `--skip-exact-check`, because before adoption and the next publication
+   the coordinator still serves the old bytes and neither oracle can pass.
+4. After the coordinator logs the adoption and publishes the next block's
+   generation, run the exact-answer check by hand with the regenerated oracle. Then
+   install the regenerated, re-pinned monitor oracle and return the monitor to
+   active mode only after its canary passes.
+
 Adoption refuses changes in sealed shards; repairing a sealed shard requires a
 recovery-fenced republication that this procedure does not provide.
 

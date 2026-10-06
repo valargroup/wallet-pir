@@ -505,6 +505,28 @@ impl JournalSnapshot {
         Ok(self.records.metadata()?.len() - self.tree_size() * self.layout.record_bytes as u64)
     }
 
+    /// Fills `buffer`, a whole number of records, with committed records from `start`.
+    pub fn read_records_into(&self, start: u64, buffer: &mut [u8]) -> Result<(), StoreError> {
+        use std::os::unix::fs::FileExt;
+        let record_bytes = self.layout.record_bytes;
+        if !buffer.len().is_multiple_of(record_bytes) {
+            return Err(StoreError::Invariant("partial record buffer".into()));
+        }
+        let count = (buffer.len() / record_bytes) as u64;
+        if start
+            .checked_add(count)
+            .is_none_or(|end| end > self.manifest.tree_size)
+        {
+            return Err(StoreError::Invariant(format!(
+                "records {start}+{count} exceed the snapshot's {} positions",
+                self.manifest.tree_size
+            )));
+        }
+        self.records
+            .read_exact_at(buffer, start * record_bytes as u64)?;
+        Ok(())
+    }
+
     /// Raw bytes of `count` committed records from `start`.
     pub fn read_records(&self, start: u64, count: usize) -> Result<Vec<u8>, StoreError> {
         use std::os::unix::fs::FileExt;

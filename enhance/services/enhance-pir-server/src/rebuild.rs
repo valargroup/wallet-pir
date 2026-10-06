@@ -121,30 +121,53 @@ fn sync_dir(path: &Path) -> Result<(), std::io::Error> {
     File::open(path)?.sync_all()
 }
 
-/// Compares the first `staged.tree_size()` records of two journals, counting
-/// changed records and records without a fee. Returns changed positions only
-/// when `collect` is set.
+/// One streaming pass over two journals.
+struct Comparison {
+    changed: u64,
+    absent: u64,
+    /// SHA-256 of the new journal's committed records, in file order.
+    records_sha256: String,
+}
+
+/// Compares the first `new.tree_size()` records of two journals with the fee
+/// oracle, counting changed and fee-absent records and hashing `new`.
+///
+/// Reads both files once in fixed-size chunks through two reused buffers, so
+/// memory stays near 2 × `COMPARE_RECORDS` records whatever the journal size.
+/// A changed record in a `sealed` shard is an error.
 fn compare_journals(
     old: &JournalSnapshot,
     new: &JournalSnapshot,
-    collect: bool,
-) -> Result<(u64, u64, Vec<u64>), RebuildError> {
-    let (mut changed, mut absent, mut positions) = (0, 0, Vec::new());
+    sealed: &BTreeSet<u64>,
+) -> Result<Comparison, RebuildError> {
+    let shard_positions = ENHANCE_LAYOUT.shard_positions() as u64;
+    let (mut changed, mut absent) = (0, 0);
+    let mut hasher = Sha256::new();
+    let mut old_bytes = vec![0u8; COMPARE_RECORDS * RECORD_BYTES];
+    let mut new_bytes = vec![0u8; COMPARE_RECORDS * RECORD_BYTES];
     let mut start = 0;
     while start < new.tree_size() {
         let count = (new.tree_size() - start).min(COMPARE_RECORDS as u64) as usize;
-        let old_bytes = old.read_records(start, count)?;
-        let new_bytes = new.read_records(start, count)?;
-        for (index, (o, n)) in old_bytes
+        let (old_chunk, new_chunk) = (
+            &mut old_bytes[..count * RECORD_BYTES],
+            &mut new_bytes[..count * RECORD_BYTES],
+        );
+        old.read_records_into(start, old_chunk)?;
+        new.read_records_into(start, new_chunk)?;
+        hasher.update(&*new_chunk);
+        for (index, (o, n)) in old_chunk
             .chunks_exact(RECORD_BYTES)
-            .zip(new_bytes.chunks_exact(RECORD_BYTES))
+            .zip(new_chunk.chunks_exact(RECORD_BYTES))
             .enumerate()
         {
             let position = start + index as u64;
             if fee_only_change(o, n).map_err(|reason| RebuildError::Oracle { position, reason })? {
                 changed += 1;
-                if collect {
-                    positions.push(position);
+                if sealed.contains(&(position / shard_positions)) {
+                    return Err(RebuildError::Refused(format!(
+                        "changed record {position} is in sealed shard {}",
+                        position / shard_positions
+                    )));
                 }
             }
             if n[RECORD_FLAGS_OFFSET] & FLAG_HAS_FEE == 0 {
@@ -153,7 +176,11 @@ fn compare_journals(
         }
         start += count as u64;
     }
-    Ok((changed, absent, positions))
+    Ok(Comparison {
+        changed,
+        absent,
+        records_sha256: hex::encode(hasher.finalize()),
+    })
 }
 
 fn is_prefix(staged: &[BlockEntry], live: &[BlockEntry]) -> bool {
@@ -312,8 +339,12 @@ pub async fn rebuild_journal(
             "staged records file has a tail".into(),
         ));
     }
-    let (changed_records, absent_fee_records, _) = compare_journals(&source, &staged, false)?;
-    let records_sha256 = sha256_file(&config.output.join("records.bin"))?;
+    // The staged file has no tail, so hashing its committed records hashes the file.
+    let Comparison {
+        changed: changed_records,
+        absent: absent_fee_records,
+        records_sha256,
+    } = compare_journals(&source, &staged, &BTreeSet::new())?;
     let manifest_sha256 = hex::encode(Sha256::digest(staged.manifest_bytes()));
     let receipt = Receipt {
         format: RECEIPT_FORMAT.into(),
@@ -392,11 +423,6 @@ fn verify_staged(data_dir: &Path, staged_dir: &Path, live_dir: &Path) -> Result<
     if staged.uncommitted_bytes().map_err(|e| e.to_string())? != 0 {
         return Err("staged records file has a tail".into());
     }
-    if sha256_file(&staged_dir.join("records.bin")).map_err(|e| e.to_string())?
-        != receipt.records_sha256
-    {
-        return Err("staged records digest differs from the receipt".into());
-    }
     let last = staged.blocks().last().ok_or("staged journal is empty")?;
     if last.height != receipt.height
         || last.hash != receipt.block_hash
@@ -409,23 +435,22 @@ fn verify_staged(data_dir: &Path, staged_dir: &Path, live_dir: &Path) -> Result<
     if !is_prefix(staged.blocks(), live.blocks()) {
         return Err("staged blocks are not a prefix of the live journal".into());
     }
-    let (changed, absent, positions) =
-        compare_journals(&live, &staged, true).map_err(|e| e.to_string())?;
-    if changed != receipt.changed_records || absent != receipt.absent_fee_records {
-        return Err(format!(
-            "receipt counts {}/{} differ from the journals' {changed}/{absent}",
-            receipt.changed_records, receipt.absent_fee_records
-        ));
-    }
     let sealed = sealed_shards(data_dir)?;
-    let shard_positions = ENHANCE_LAYOUT.shard_positions() as u64;
-    if let Some(position) = positions
-        .iter()
-        .find(|p| sealed.contains(&(**p / shard_positions)))
+    // One streaming pass: oracle, sealed shards and the records digest. The
+    // staged file has no tail, so the digest covers all of `records.bin`.
+    let comparison = compare_journals(&live, &staged, &sealed).map_err(|e| e.to_string())?;
+    if comparison.records_sha256 != receipt.records_sha256 {
+        return Err("staged records digest differs from the receipt".into());
+    }
+    if comparison.changed != receipt.changed_records
+        || comparison.absent != receipt.absent_fee_records
     {
         return Err(format!(
-            "changed record {position} is in sealed shard {}",
-            position / shard_positions
+            "receipt counts {}/{} differ from the journals' {}/{}",
+            receipt.changed_records,
+            receipt.absent_fee_records,
+            comparison.changed,
+            comparison.absent
         ));
     }
     Ok(receipt)
@@ -530,6 +555,95 @@ mod tests {
         bytes[RECORD_FLAGS_OFFSET + 1..RECORD_FEE_OFFSET].copy_from_slice(&100u32.to_le_bytes());
         bytes[RECORD_FEE_OFFSET..].copy_from_slice(&fee.unwrap_or(0).to_le_bytes());
         bytes
+    }
+
+    fn status_kib(field: &str) -> u64 {
+        fs::read_to_string("/proc/self/status")
+            .unwrap()
+            .lines()
+            .find_map(|line| line.strip_prefix(field))
+            .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+            .unwrap()
+    }
+
+    /// Writes a journal of `blocks` blocks with `per_block` records each,
+    /// streaming records; `fee` sets the fee of every other record.
+    fn write_journal(dir: &Path, blocks: u64, per_block: u64, fee: bool) {
+        fs::create_dir_all(dir).unwrap();
+        let mut records = std::io::BufWriter::new(File::create(dir.join("records.bin")).unwrap());
+        for position in 0..blocks * per_block {
+            let paid = fee && position % 2 == 0;
+            let mut bytes = record(paid.then_some(10_000), 3);
+            bytes[..8].copy_from_slice(&position.to_le_bytes());
+            records.write_all(&bytes).unwrap();
+        }
+        records.into_inner().unwrap().sync_all().unwrap();
+        let entries: Vec<_> = (0..blocks)
+            .map(|b| {
+                serde_json::json!({"height": 3_400_000 + b, "hash": format!("{b:064x}"),
+                    "first_position": b * per_block, "action_count": per_block})
+            })
+            .collect();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 7, "record_bytes": RECORD_BYTES, "records_per_row": 33,
+                "table": "enhance", "tree_size": blocks * per_block, "blocks": entries,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Startup cost of adoption at production scale (about 700,000 records in
+    /// 50,000 blocks). Ignored by default: it writes about 1 GB. Run with
+    /// `cargo test --profile release-fast -p enhance-pir-server --lib
+    /// adoption_streams -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn adoption_streams_a_production_sized_journal() {
+        let (blocks, per_block) = (50_000, 14);
+        let root = tempfile::tempdir().unwrap();
+        write_journal(&root.path().join("enhance"), blocks, per_block, false);
+        let staged = root.path().join(STAGED_DIR);
+        write_journal(&staged, blocks, per_block, true);
+        let manifest = fs::read(staged.join("manifest.json")).unwrap();
+        let receipt = Receipt {
+            format: RECEIPT_FORMAT.into(),
+            receipt_id: "measure-1".into(),
+            binary_source_revision: "test".into(),
+            binary_sha256: "test".into(),
+            height: 3_400_000 + blocks - 1,
+            block_hash: format!("{:064x}", blocks - 1),
+            tree_size: blocks * per_block,
+            records_sha256: sha256_file(&staged.join("records.bin")).unwrap(),
+            manifest_sha256: hex::encode(Sha256::digest(&manifest)),
+            changed_records: blocks * per_block / 2,
+            absent_fee_records: blocks * per_block / 2,
+            completed_unix_seconds: 0,
+        };
+        fs::write(
+            staged.join(RECEIPT_FILE),
+            serde_json::to_vec(&receipt).unwrap(),
+        )
+        .unwrap();
+        // Reset the peak so fixture construction does not mask adoption.
+        fs::write("/proc/self/clear_refs", "5").unwrap();
+        let before = status_kib("VmRSS:");
+        let started = Instant::now();
+        let adopted = adopt_staged(root.path()).unwrap();
+        let seconds = started.elapsed().as_secs_f64();
+        let growth = status_kib("VmHWM:").saturating_sub(before);
+        println!(
+            "{}",
+            serde_json::json!({"records": blocks * per_block, "blocks": blocks,
+                "journal_bytes": blocks * per_block * RECORD_BYTES as u64,
+                "adoption_seconds": seconds, "peak_rss_growth_kib": growth,
+                "page_cache": "warm (files just written)"})
+        );
+        assert!(matches!(adopted, Adoption::Adopted { .. }), "{adopted:?}");
+        // Two 2.7 MB chunk buffers plus parsed manifests; never a journal copy.
+        assert!(growth < 64 * 1024, "peak RSS grew {growth} KiB");
     }
 
     #[test]

@@ -427,7 +427,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             } else {
                 std::fs::write(mode_path, mode)?;
             }
-            // Before the journal opens. A rejected rebuild never stops startup.
+            // Before control state, the HTTP listener and the journal open, so
+            // serving resumes on the adopted journal. Verification streams both
+            // journals; chain catch-up stays in the poll loop after serving
+            // starts. A rejected rebuild never stops startup.
             match enhance_pir_server::rebuild::adopt_staged(&data_dir)? {
                 enhance_pir_server::rebuild::Adoption::None => {}
                 enhance_pir_server::rebuild::Adoption::Adopted {
