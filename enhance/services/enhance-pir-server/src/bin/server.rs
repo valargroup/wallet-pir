@@ -52,6 +52,29 @@ enum Command {
         #[arg(long, default_value_t = 2)]
         concurrency: usize,
     },
+    /// Offline re-derivation of a coordinator journal's records from chain into
+    /// a staged journal that a restarted coordinator adopts. Reads the source
+    /// without its lock; only fee metadata may differ.
+    RebuildJournal {
+        /// Coordinator data directory holding `enhance/`.
+        #[arg(long)]
+        source: PathBuf,
+        /// Staged journal, normally `<data-dir>/enhance-staged`.
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value = "http://127.0.0.1:8232")]
+        zakura_rpc_url: String,
+        #[arg(long)]
+        zakura_cookie: PathBuf,
+        /// Last height to rebuild; defaults to the source journal's tip.
+        #[arg(long)]
+        through_height: Option<u64>,
+        /// Non-empty blocks fetched concurrently.
+        #[arg(long, default_value_t = 8)]
+        concurrency: usize,
+        #[arg(long, default_value_t = enhance_pir_server::fee::DEFAULT_CACHE_OUTPUTS)]
+        cache_outputs: usize,
+    },
     /// Offline repair of journal-referenced rows from a peer row archive.
     RepairRows {
         #[arg(long)]
@@ -133,6 +156,9 @@ enum Command {
         fixture_append_records: u64,
         #[arg(long, default_value_t = 10)]
         poll_seconds: u64,
+        /// Transparent outputs retained across blocks to price Ironwood transactions.
+        #[arg(long, default_value_t = enhance_pir_server::fee::DEFAULT_CACHE_OUTPUTS)]
+        prevout_cache_outputs: usize,
         #[arg(long, default_value_t = 1.0)]
         capacity_fallback_rows_per_second: f64,
         #[arg(long, default_value_t = 21600.0)]
@@ -240,6 +266,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             )
             .await?;
         }
+        Command::RebuildJournal {
+            source,
+            output,
+            zakura_rpc_url,
+            zakura_cookie,
+            through_height,
+            concurrency,
+            cache_outputs,
+        } => {
+            let receipt = enhance_pir_server::rebuild::rebuild_journal(
+                ZakuraClient::from_cookie_file(&zakura_rpc_url, &zakura_cookie)?,
+                enhance_pir_server::rebuild::RebuildConfig {
+                    source,
+                    output,
+                    through_height,
+                    concurrency,
+                    cache_outputs,
+                },
+            )
+            .await?;
+            println!("{}", serde_json::to_string(&receipt)?);
+        }
         Command::RepairRows {
             data_dir,
             source_rows,
@@ -344,6 +392,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             fixture_records,
             fixture_append_records,
             poll_seconds,
+            prevout_cache_outputs,
             capacity_fallback_rows_per_second,
             capacity_readiness_seconds,
             capacity_burst_rows,
@@ -377,6 +426,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             } else {
                 std::fs::write(mode_path, mode)?;
+            }
+            // Before the journal opens. A rejected rebuild never stops startup.
+            match enhance_pir_server::rebuild::adopt_staged(&data_dir)? {
+                enhance_pir_server::rebuild::Adoption::None => {}
+                enhance_pir_server::rebuild::Adoption::Adopted {
+                    receipt_id,
+                    height,
+                    changed_records,
+                    previous,
+                } => tracing::info!(
+                    %receipt_id, height, changed_records, previous = %previous.display(),
+                    "adopted staged Enhance journal rebuild"
+                ),
+                enhance_pir_server::rebuild::Adoption::Rejected { reason, moved_to } => {
+                    tracing::error!(
+                        %reason, moved_to = %moved_to.display(),
+                        "rejected staged Enhance journal rebuild; serving the live journal"
+                    )
+                }
             }
             let routers = packing_router_config
                 .map(
@@ -444,6 +512,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let rpc = zakura_cookie
                 .map(|cookie| ZakuraClient::from_cookie_file(&zakura_rpc_url, &cookie))
                 .transpose()?;
+            let prevouts = enhance_pir_server::zakura::Prevouts::new(prevout_cache_outputs);
             loop {
                 if let Err(error) = coordinator.reconcile().await {
                     tracing::error!(%error, "publication recovery blocked");
@@ -508,7 +577,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                             .committed_height()
                             .map_or(enhance_pir::ACTIVATION_HEIGHT, |h| h + 1);
                         for height in next..=tip {
-                            journal.append_block(&rpc.block(height).await?)?;
+                            journal.append_block(&rpc.block(height, &prevouts).await?)?;
                         }
                         journal
                             .highest_committed()
