@@ -480,7 +480,12 @@ pub fn adopt_staged(data_dir: &Path) -> Result<Adoption, std::io::Error> {
     } else {
         live_dir.clone()
     };
-    match verify_staged(data_dir, &staged_dir, &compare_dir) {
+    let verified = if !interrupted && previous.as_ref().is_some_and(|p| p.exists()) {
+        Err("the rollback copy for this receipt already exists".to_string())
+    } else {
+        verify_staged(data_dir, &staged_dir, &compare_dir)
+    };
+    match verified {
         Ok(receipt) => {
             let previous = previous.expect("verified receipt id");
             if !interrupted {

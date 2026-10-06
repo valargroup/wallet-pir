@@ -310,15 +310,14 @@ mod tests {
     #[test]
     fn cache_evicts_whole_transactions_by_output_budget() {
         let make = |seed: u8, count: usize| {
-            let tx = reparse(Transaction::V4 {
+            reparse(Transaction::V4 {
                 inputs: vec![spend(seed, 0)],
                 outputs: (0..count).map(|i| output(1 + i as i64)).collect(),
                 lock_time: LockTime::unlocked(),
                 expiry_height: zakura_chain::block::Height(0),
                 joinsplit_data: None,
                 sapling_shielded_data: None,
-            });
-            tx
+            })
         };
         let mut cache = OutputCache::new(5);
         let first = make(1, 4);

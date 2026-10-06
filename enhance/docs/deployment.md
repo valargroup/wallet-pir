@@ -13,8 +13,8 @@ three hosts. Its focused workload was stopped early at the operator's request;
 the memory observation is promising but not a completed qualification.
 
 The binaries are `enhance-pir-server`, `enhance-pir-cli` and
-`enhance-pir-load-test`. Server subcommands are `coordinator`, `worker`, `exercise`
-and `repair-rows`. Protocol v7 retains schema-11 records and q48, but changes
+`enhance-pir-load-test`. Server subcommands are `coordinator`, `worker`, `exercise`,
+`repair-rows` and `rebuild-journal`. Protocol v7 retains schema-11 records and q48, but changes
 routing, session identity and framing. v6 clients and serving state are incompatible.
 Use fresh controller, worker, hint and cache directories. A schema-11 canonical
 journal may be copied while stopped and validated; older-width journals must be
@@ -176,6 +176,66 @@ which is enough for a no-op check or an already staged release.
 
 The tool does not drain or pause public queries, so plan the query-route
 maintenance window as in the September 24 rollout.
+
+## Repairing historical fees
+
+Coordinators built before the [whole-transaction fee rule](architecture.md#record-metadata-and-fees)
+published fee-absent records for Ironwood transactions with transparent, Sapling or
+Orchard parts. The journal stores only encoded records, so installing and restarting
+the fixed binary repairs new blocks only. History is repaired offline from chain and
+then adopted by the coordinator at startup. Neither step touches `control/`,
+workers, routers or ingress.
+
+1. Build the server with its source revision recorded in the receipt:
+   `WALLET_PIR_SOURCE_REVISION=$(git rev-parse HEAD) cargo build --locked --release -p enhance-pir-server`.
+2. While the coordinator keeps serving, rebuild into the staged directory of its
+   data directory:
+
+   ```sh
+   enhance-pir-server rebuild-journal \
+     --source <data-dir> --output <data-dir>/enhance-staged \
+     --zakura-rpc-url <archive RPC> --zakura-cookie <cookie> \
+     [--through-height H] [--concurrency 8] [--cache-outputs 250000]
+   ```
+
+   It reads `<data-dir>/enhance` without the coordinator's journal lock, stops at
+   the source tip (or `H`), checks every block hash with batched `getblockhash`,
+   re-derives every non-empty block with the coordinator's producer and the final
+   Ironwood tree size with `getblock` verbosity 2. A regenerated record may differ
+   from the old one only in flag bit 2 and bytes 645..653, and only where the old
+   record had no fee. Any other difference, a hash or action-count mismatch, or an
+   unresolvable spent output aborts the run. Choose `H` a few blocks below the tip
+   if a reorganization near the tip is likely. An interrupted run resumes from the
+   staged tip when started again with the same arguments. Progress is printed to
+   stderr as JSON lines every 30 seconds.
+3. On success the tool writes `enhance-staged/rebuild.json` last, after the staged
+   journal is durable, and prints it. The receipt records the source revision and
+   binary SHA-256, `H`, its block hash and tree size, SHA-256 digests of
+   `records.bin` and `manifest.json`, the changed-record count and the count still
+   without a fee (coinbase outputs). A completed output is never overwritten.
+4. Restart the coordinator. Before opening its journal it verifies the receipt
+   digests, that the staged blocks (height, hash, first position, action count) are a
+   prefix of the live journal, that every staged record differs from the live one
+   only in the fee fields, and that no changed position lies in a sealed shard
+   (`recovery.sealed` in the control state). It then renames `enhance` to
+   `enhance.before-rebuild-<receipt id>`, renames `enhance-staged` to `enhance` and
+   syncs the data directory. A crash between the renames completes on the next start.
+   It logs `adopted staged Enhance journal rebuild` with the receipt id, `H` and the
+   changed count, then ingests `H+1` to the tip with the fixed producer. Repaired
+   records reach wallets with the next publication, which follows the next block.
+5. If any check fails, it logs `rejected staged Enhance journal rebuild` at error
+   level with the reason, renames the staged directory to
+   `enhance-staged.rejected-<unix time>`, and continues on the live journal. A
+   staged directory without `rebuild.json` (a rebuild in progress) is left alone.
+
+Adoption refuses changes in sealed shards; repairing a sealed shard requires a
+recovery-fenced republication that this procedure does not provide.
+
+To roll back the data, stop the coordinator, move `enhance` aside, rename
+`enhance.before-rebuild-<receipt id>` back to `enhance` and start the coordinator.
+Its next publication serves the old records again. Keep the preserved directory
+until the repaired publication has been checked; it is the only copy of the
+pre-rebuild journal.
 
 ## Direct SSH rollout and rollback
 

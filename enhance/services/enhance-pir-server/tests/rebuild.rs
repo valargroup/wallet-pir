@@ -238,7 +238,7 @@ async fn rebuild_resumes_and_coordinator_adopts_only_fee_repairs() {
         let spend_later = Mixed::new(vec![spend(&later, 0)], &[], -180_000).build();
         [
             c.push_block(H, &[fixture(), same.clone(), spend_same], 0),
-            c.push_block(H + 1, &[later.clone()], 1),
+            c.push_block(H + 1, std::slice::from_ref(&later), 1),
             c.push_block(H + 2, &[change, spend_later], 2),
             c.push_block(H + 3, &[ironwood_coinbase((H + 3) as u32)], 3),
         ]

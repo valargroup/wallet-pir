@@ -90,6 +90,34 @@ Storage ownership, query coordinates and serving placement are separate:
 | Session | Content, geometry, setup and packing material used by the wallet | Digest of the bound material and domain recovery epoch |
 | Placement | Ready evaluation replicas serving the domain; router assignments are separate | Placement revision |
 
+## Record metadata and fees
+
+The coordinator derives each record's metadata from the canonical block. Every
+Ironwood action of a transaction carries the same expiry, transparent input and
+output flags, and fee. The fee is the whole transaction's: the remaining value of
+its transaction value pool, that is transparent inputs minus transparent outputs
+plus the Sprout, Sapling, Orchard and Ironwood value balances. It is not attributed
+to an account or to individual actions.
+
+A coinbase transaction has no fee of its own; its records have the fee-absent flag.
+For any other transaction, every spent transparent output must be known. The
+producer resolves spent outputs only for non-coinbase transactions with Ironwood
+actions and transparent inputs: first from earlier transactions in the same block,
+then from a bounded cache of recent outputs (`--prevout-cache-outputs`, default
+250,000 outputs, whole transactions evicted oldest first), then with one JSON-RPC 2.0
+batch of `getrawtransaction` calls per 256 missing transactions. Returned
+transactions must have the requested txid. A missing transaction (-5), an output
+index past the transaction's outputs, a duplicate input, a negative value pool, or
+any RPC or batch-shape error fails the whole block; the coordinator retries it at
+the next poll. The producer never publishes zero, a guess or a partial input total.
+Blocks without such a transaction issue no extra RPC.
+
+Cache entries are keyed by outpoint, and a txid commits to its outputs, so an entry
+remains correct after a reorganization. Coordinators before this rule published a
+fee only for pure-Ironwood transactions. A restart with the fixed binary does not
+change records already in the journal; [deployment](deployment.md#repairing-historical-fees)
+describes the offline rebuild and its adoption.
+
 ## Placement, serving state and admission
 
 Each query domain is placed on `r` workers from a pool, with `r = 2` by default.

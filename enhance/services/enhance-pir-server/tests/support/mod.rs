@@ -336,7 +336,7 @@ async fn handle(
     }
     let hold = chain.lock().unwrap().hold;
     if let (Some(hold), Some("getblock")) = (hold, request["method"].as_str()) {
-        if request["params"][0] == hold.to_string() {
+        if request["params"][0].as_str() == Some(hold.to_string().as_str()) {
             while chain.lock().unwrap().hold == Some(hold) {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
