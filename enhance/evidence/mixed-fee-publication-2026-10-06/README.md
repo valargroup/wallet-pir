@@ -80,3 +80,24 @@ twelve positions answer over HTTP PIR with the expected fees.
 - Synthetic transactions carry invalid proofs and signatures; fee derivation does
   not need them, consensus validity is trusted to the node.
 - No measurement of rebuild throughput or cache hit rate on real chain history.
+
+## Follow-up: streaming adoption (source `64fd17a`)
+
+Adoption verification now reads both journals once in 4,096-record chunks through
+two reused buffers, computes the staged records digest during that comparison and
+checks sealed shards inline instead of collecting changed positions. It still runs
+before the coordinator binds its HTTP listener; chain catch-up remains in the poll
+loop. Metadata and gzipped logs are in [followup/](followup/manifest.json).
+
+| Command | Result |
+| --- | --- |
+| `make check-fast BASE=031a23cb` | pass |
+| `RUST_TEST_THREADS=1 cargo test ... --test rpc` | pass; 10 tests (run one clippy-only edit earlier) |
+| `cargo clippy ... -- -D warnings` | pass |
+| `cargo build ... --features native-reinspiring --bins` | pass |
+| ignored `adoption_streams_a_production_sized_journal`, 3 runs | pass |
+
+The measurement adopts synthetic journals of 700,000 records (457.1 MB each) in
+50,000 blocks: 2.15, 2.11 and 2.11 seconds with a warm page cache, and peak resident
+memory grew by 708 KiB each time. Cold-cache time on a coordinator disk was not
+measured; it adds to the restart's listener gap only on a restart that adopts.

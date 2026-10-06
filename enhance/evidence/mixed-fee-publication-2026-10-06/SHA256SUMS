@@ -1,4 +1,10 @@
-a883777a849e8519145b5a26b0a0cf5715d8feb314446634f7c55c5214a05eab  ./README.md
+71469ecf32fc2dccb2254529e30fb11f44e1c459ab7a56150a0eeb3ba9db585a  ./README.md
+b7f629f7882a57663deee2b865e35bbbcb2cf192088bdc74d3b20f5099ddc8e3  ./followup/adoption-measure.log.gz
+270b14e910ff6b805f4d14039d2711b0915f48d5c31a85bcbe1311840bb5963d  ./followup/check-fast-2.log.gz
+312178af7d95c7214cab7ee9bedcde6619912b41d8aa1431a566128e865fb162  ./followup/clippy-2.log.gz
+4ffa29d899c1cf9b7dd62cee8219ff6a1e370c0d61283dfdac7cf2f64329c628  ./followup/manifest.json
+34d202065534bb9d2de3fbfc5ca6874be4029cacf0913bf7f18831153d409dd3  ./followup/native-build-2.log.gz
+a4ccb1e51d3e349a6f652e7483cc30276d5f6bd009f084b5a107353ee9ab9893  ./followup/rpc-tests-2.log.gz
 dab4117d164e782e1d8b1a0aae85e266ea86d095f7c7e8ea673d4e52a3c792eb  ./manifest.json
 f6934cb5216135c89fdd792906e492565bde62962be40dfd019d5945f932b5c5  ./raw/check-fast.log.gz
 59d36f7c64d6c1e1c5549c98b7f10e97dc69e1f75e37be84ecfffd14e06389b8  ./raw/check-package-fee.log.gz
