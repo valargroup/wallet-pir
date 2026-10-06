@@ -9,7 +9,10 @@
     "enhance-pir-load-test",
     "enhance-pir-server",
     "pir-apm",
-    "pir-monitor"
+    "pir-monitor",
+    "receiver-directory",
+    "receiver-pir",
+    "receiver-pir-server"
   ],
   "transparent": [
     "transparent-native",

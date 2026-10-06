@@ -38,7 +38,7 @@ def commands(group, groups, lint=False, compile_only=False):
     runner = ['cargo', 'test', '--no-run'] if compile_only else ['bash', 'tools/ci/full-test.sh']
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in ordinary for arg in ('-p', name)],
-               *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
+               *(['--features', 'enhance-pir/cli', '--features', 'receiver-directory/store'] if group == 'enhance' else
                  ['--features', 'transparent-filter/cli'] if group == 'transparent' else [])]]
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',
