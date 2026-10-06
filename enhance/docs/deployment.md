@@ -1,6 +1,6 @@
 # Enhance PIR deployment
 
-The current production server release is the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
+The most recent production change is the [October 6 mixed-transaction fee repair](../evidence/mixed-fee-production-2026-10-06/README.md): a coordinator-only deploy of `2474cdbb` (native v9) through the deploy CLI, with historical records rebuilt from chain and adopted. The other roles kept their binaries. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
 
 The initial v7 SSH rollout used `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
 under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)

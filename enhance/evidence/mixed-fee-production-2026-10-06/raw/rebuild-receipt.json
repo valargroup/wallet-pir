@@ -1,0 +1,14 @@
+{
+  "format": "enhance-journal-rebuild-v1",
+  "receipt_id": "3508622-ddbb96b832e22e2f",
+  "binary_source_revision": "unrecorded",
+  "binary_sha256": "cfeaa3baa40ec82e79489d6a77f60212610cdd0dbcee1014daec5106c726cc60",
+  "height": 3508622,
+  "block_hash": "00000000006f7ac12593aaf256c76d46a139170d9a28445e9b35a82ceea3aa8b",
+  "tree_size": 696096,
+  "records_sha256": "ddbb96b832e22e2f55f256be7b44ad51a1d0b1f519d2378c6673a60dd09a5cb7",
+  "manifest_sha256": "a6badab280fae7102dc1b4c3d5d77ffbe8691cdf5f69293551c5c7c0e548e25f",
+  "changed_records": 374853,
+  "absent_fee_records": 7027,
+  "completed_unix_seconds": 1791314400
+}

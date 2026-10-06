@@ -18,6 +18,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Mixed-transaction fee repair in production](mixed-fee-production-2026-10-06/README.md) —
+  coordinator-only deploy of `2474cdbb`, historical records rebuilt from chain and
+  adopted (374,853 records gained exact fees), independent-oracle and public
+  exact-answer acceptance, four seconds of coordinator-route 502s.
 - [Mixed-transaction fee publication](mixed-fee-publication-2026-10-06/README.md) —
   exact whole-transaction fees for Ironwood transactions with transparent, Sapling
   or Orchard parts; offline journal rebuild and verified coordinator adoption;

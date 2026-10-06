@@ -1,0 +1,75 @@
+{
+ "run_id": "mixed-fee-production-2026-10-06",
+ "recorded_at_utc": "2026-10-06T20:05:00Z",
+ "kind": "production deployment and historical record repair (Enhance coordinator only)",
+ "source_revision": "2474cdbb896ee9cf46c8a99c4967c7104cb3cbb6",
+ "artifact": {
+  "name": "enhance-pir-native-2474cdbb896ee9cf46c8a99c4967c7104cb3cbb6",
+  "ci_run": 37502862955,
+  "archive_sha256": "add6035a9a46ebaec469ea7bd0643b647bc39a74251d53bd131b5bedb68eddc8",
+  "binary_sha256": "cfeaa3baa40ec82e79489d6a77f60212610cdd0dbcee1014daec5106c726cc60",
+  "profile": "release",
+  "rustflags": "-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq",
+  "features": [
+   "native-reinspiring"
+  ]
+ },
+ "previous_binary_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+ "protocol": "ironwood-enhance-pir-v9-native-two-mask-m29",
+ "schema_version": 11,
+ "deploy_transaction": "enhance-20261006T194503Z-cfeaa3baa40e-219a4e",
+ "roles_changed": [
+  "coordinator"
+ ],
+ "rebuild": {
+  "receipt_id": "3508622-ddbb96b832e22e2f",
+  "through_height": 3508622,
+  "block_hash": "00000000006f7ac12593aaf256c76d46a139170d9a28445e9b35a82ceea3aa8b",
+  "tree_size": 696096,
+  "changed_records": 374853,
+  "absent_fee_records": 7027,
+  "seconds": 1550.1,
+  "blocks": 80480,
+  "command": "enhance-pir-server rebuild-journal --source <canonical> --output <canonical>/enhance-staged --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie <cookie> --concurrency 8 --cache-outputs 2000000 (nice 15, ionice best-effort 7)"
+ },
+ "host": {
+  "role": "Enhance coordinator (also local zakurad archive node)",
+  "cpu": "Intel Xeon Gold 6548N, 8 vCPU",
+  "memory_gib": 63,
+  "os": "Ubuntu 24.04"
+ },
+ "timeline_utc": {
+  "rebuild_start": "18:54",
+  "rebuild_end": "19:20",
+  "deploy_start": "19:45:03",
+  "restart": "19:45:33",
+  "adopted": "19:45:35",
+  "first_repaired_generation_published_by": "19:47:25",
+  "first_repaired_generation": 9839
+ },
+ "downtime": {
+  "public_enhance_init_502_seconds": 4,
+  "status_errors": 0,
+  "query_path_restarted": false
+ },
+ "oracle": {
+  "tool": "tools/record_oracle.py",
+  "independent_of": "zakura-chain and Enhance code; uses node verbose JSON RPC only",
+  "pinned_oracles": {
+   "positions": 28,
+   "changed": 17,
+   "anchor_height": 3494753,
+   "monitor_oracle_sha256": "9a9ffef77e23d2f2e1002fdf1fe8396a8c7637c8e354151a7d00e97ba3df164f",
+   "exact_check_oracle_sha256": "284ceff738511fa99af52d7a0a1f0f0ced45206d71d5b324559d16ed5da2d514"
+  }
+ },
+ "results": {
+  "baseline_live": "raw/baseline-live-compare.json",
+  "staged": "raw/staged-compare.json",
+  "live_after": "raw/live-after-compare.json",
+  "exact_new_oracle": "raw/exact-new.json",
+  "exact_old_oracle": "raw/exact-old.json",
+  "exact_window": "raw/exact-window.json"
+ },
+ "privacy": "aggregate counts only; no transaction ids or wallet identifiers"
+}

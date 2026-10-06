@@ -1,0 +1,20 @@
+{
+  "protocol": "ironwood-enhance-pir-v9-native-two-mask-m29",
+  "seconds": 59.590626531,
+  "concurrency": 2,
+  "offered_qps": 2.0,
+  "completed": 120,
+  "succeeded": 120,
+  "incorrect_answers": 0,
+  "errors": {},
+  "unstarted_arrivals": 0,
+  "correct_queries_per_second": 2.0137395255875363,
+  "p50_ms": 88.639,
+  "p95_ms": 114.239,
+  "p99_ms": 133.375,
+  "scheduled_p99_ms": 135.167,
+  "exact_answer_oracle": true,
+  "warmup_errors": {},
+  "warmup_correct_answers": 215,
+  "warmup_incorrect_answers": 0
+}

@@ -1,0 +1,113 @@
+{
+ "blocks": 500,
+ "records": 4164,
+ "equal": 1698,
+ "fee_only": 2466,
+ "non_fee": 0,
+ "with_fee": 4080,
+ "coinbase_absent": 84,
+ "mixed_with_fee": 2120,
+ "bad": [
+  {
+   "height": 3428146,
+   "position": 4,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428146,
+   "position": 5,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428146,
+   "position": 6,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428146,
+   "position": 7,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 488,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 489,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 490,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 491,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 492,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 493,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 494,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 495,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 496,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 497,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 498,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428180,
+   "position": 499,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428231,
+   "position": 904,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428231,
+   "position": 905,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428231,
+   "position": 906,
+   "kind": "fee-only"
+  },
+  {
+   "height": 3428664,
+   "position": 3329,
+   "kind": "fee-only"
+  }
+ ],
+ "journal_tree_size": 695361
+}

@@ -1,0 +1,12 @@
+{
+ "blocks": 249,
+ "records": 1024,
+ "equal": 1024,
+ "fee_only": 0,
+ "non_fee": 0,
+ "with_fee": 988,
+ "coinbase_absent": 36,
+ "mixed_with_fee": 559,
+ "bad": [],
+ "journal_tree_size": 696369
+}
