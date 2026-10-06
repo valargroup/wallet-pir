@@ -3038,7 +3038,7 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.18",
- "zakura-orchard 1.0.1",
+ "zakura-orchard 2.1.0",
  "zcash_note_encryption",
 ]
 

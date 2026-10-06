@@ -10,7 +10,7 @@ store = ["dep:rusqlite"]
 
 [dependencies]
 incrementalmerkletree = "0.8"
-orchard = { package = "zakura-orchard", version = "1.0.1", default-features = false }
+orchard = { package = "zakura-orchard", version = "2", default-features = false }
 zcash_note_encryption = "=0.4.2"
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
