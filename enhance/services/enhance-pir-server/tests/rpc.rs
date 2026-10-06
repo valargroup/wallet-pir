@@ -2,6 +2,11 @@
 //! The public transaction is real; the block envelope and the mixed
 //! transactions built from its actions are synthetic, not consensus-valid.
 mod support;
+// Producer fee derivation and the offline journal repair share the RPC double.
+#[path = "rpc/mixed_fee.rs"]
+mod mixed_fee;
+#[path = "rpc/rebuild.rs"]
+mod rebuild;
 
 use axum::{
     extract::State,

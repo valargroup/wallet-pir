@@ -1,12 +1,11 @@
 //! Exact fees of mixed transactions through the real producer path:
 //! serialized blocks and transactions served by a JSON-RPC test double.
-mod support;
 
+use crate::support::*;
 use enhance_pir::ACTIVATION_HEIGHT;
 use enhance_pir_server::fee::FeeError;
 use enhance_pir_server::zakura::{Prevouts, ZakuraClient, ZakuraError};
 use std::sync::{Arc, Mutex};
-use support::*;
 use zakura_chain::serialization::ZcashDeserialize;
 use zakura_chain::transaction::Transaction;
 
@@ -169,7 +168,7 @@ async fn orchard_and_ironwood_together() {
 
 /// Public mainnet V5 Sapling transaction; see fixtures/sapling-v5-1687106.md.
 fn sapling_bundle() -> zakura_chain::sapling::ShieldedData<zakura_chain::sapling::SharedAnchor> {
-    let raw = hex::decode(include_str!("fixtures/sapling-v5-1687106.hex").trim()).unwrap();
+    let raw = hex::decode(include_str!("../fixtures/sapling-v5-1687106.hex").trim()).unwrap();
     match Transaction::zcash_deserialize(raw.as_slice()).unwrap() {
         Transaction::V5 {
             sapling_shielded_data: Some(sapling),

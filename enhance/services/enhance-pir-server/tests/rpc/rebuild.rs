@@ -1,8 +1,8 @@
 //! Repairing fee-less history: an old journal (producer output with the old
 //! binary's missing fees), `rebuild-journal` against a trusted-RPC double with
 //! an interruption, then adoption by the real coordinator and HTTP PIR queries.
-mod support;
 
+use crate::support::*;
 use enhance_pir::client::EnhancePirClient;
 use enhance_pir::protocol::Manifest;
 use enhance_pir::types::{
@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use support::*;
 
 const H: u64 = ACTIVATION_HEIGHT;
 
