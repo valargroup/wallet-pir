@@ -9,6 +9,8 @@ pub mod exercise;
 pub mod ingest;
 pub mod internal_auth;
 pub mod ipir;
+/// Public receiver extraction for the standalone directory indexer.
+pub mod receiver;
 pub mod runtime;
 /// Isolated synthetic status-PIR backend; no production route is enabled implicitly.
 pub mod status;
@@ -18,8 +20,6 @@ pub mod types;
 pub mod wire;
 pub mod worker;
 pub mod zakura;
-/// Public receiver extraction for the standalone directory indexer.
-pub mod receiver;
 
 pub use enhance_pir::{EnhanceRecord, EnhanceRecordParts};
 

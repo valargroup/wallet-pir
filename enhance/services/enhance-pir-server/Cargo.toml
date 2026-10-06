@@ -63,7 +63,6 @@ zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git
 # Independent wallet Enhance client; the native feature follows the server feature.
 zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72", default-features = false, features = ["https-client"] }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
-tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }
 zcash_note_encryption = "=0.4.2"

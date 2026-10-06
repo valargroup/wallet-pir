@@ -4,6 +4,7 @@ use receiver_directory::{
     Payment, Receiver, Record,
 };
 use receiver_pir::{http::HttpClient, server::Server, AcceptedCoverage, Error, MIN_ROWS};
+use receiver_pir_server::{Publication, Publications};
 use std::{num::NonZeroU32, time::Duration};
 
 fn fixture() -> Action {
@@ -86,8 +87,13 @@ impl Drop for Running {
     }
 }
 async fn serve(snapshot: Snapshot) -> Running {
-    let app = receiver_pir_server::router(Server::new(snapshot).unwrap());
-    serve_router(app).await
+    serve_publication(Publication::new(Server::new(snapshot).unwrap(), None).unwrap()).await
+}
+/// Serve one prepared publication through the production router.
+async fn serve_publication(publication: Publication) -> Running {
+    let publications = Publications::default();
+    assert!(publications.publish(publication, 0));
+    serve_router(receiver_pir_server::router_with_publications(publications)).await
 }
 async fn serve_router(app: axum::Router) -> Running {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -98,7 +104,6 @@ async fn serve_router(app: axum::Router) -> Running {
 
 #[tokio::test]
 async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
-    use receiver_pir_server::{Publication, Publications};
     let publications = Publications::default();
     assert!(publications.publish(
         Publication::new(Server::new(snapshot(2)).unwrap(), None).unwrap(),
@@ -117,15 +122,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     next.manifest.end_hash = [9; 32];
     // Empty canonical extension: old payments remain unchanged.
     assert!(publications.publish(
-        Publication::new(
-            Server::new(Snapshot {
-                manifest: next.manifest.clone(),
-                data: next.data.clone()
-            })
-            .unwrap(),
-            None
-        )
-        .unwrap(),
+        Publication::new(Server::new(next.clone()).unwrap(), None).unwrap(),
         0
     ));
     let public = http()
@@ -291,9 +288,8 @@ async fn known_mainnet_refund_over_encrypted_http() {
 
 async fn mainnet_lookup() -> Payment {
     let path = std::path::PathBuf::from(std::env::var("RECEIVER_MAINNET_MANIFEST").unwrap());
-    let manifest: Manifest = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-    let revision = hex::encode(manifest.revision().unwrap());
-    let data = std::fs::read(path.with_file_name(format!("{revision}.rows"))).unwrap();
+    let publication = Publication::load(&path).unwrap();
+    let revision = hex::encode(publication.manifest().revision().unwrap());
     fn rpc_hash(s: &str) -> [u8; 32] {
         let mut b = hex::decode(s).unwrap();
         b.reverse();
@@ -306,7 +302,7 @@ async fn mainnet_lookup() -> Payment {
         height: 3497109,
         hash: rpc_hash("00000000001a95c9545f79c6cceda87a7ba1e4bb06398f0559d39a330afb6fc5"),
     };
-    let server = serve(Snapshot { manifest, data }).await;
+    let server = serve_publication(publication).await;
     let client = HttpClient::connect(&server.origin, http(), accepted)
         .await
         .unwrap();
@@ -336,13 +332,16 @@ async fn mainnet_lookup() -> Payment {
 
 #[tokio::test]
 async fn reject_incomplete_or_inconsistent_pagination() {
-    use receiver_directory::{snapshot::ROW_BYTES, RECORD_BYTES};
+    use receiver_directory::{
+        snapshot::{ROW_BYTES, SLOTS},
+        RECORD_BYTES,
+    };
     use sha2::{Digest, Sha256};
     // Model a faulty indexer that publishes correctly hashed but inconsistent page data.
     for fault in 0..3 {
         let mut data = snapshot(2);
         for row in data.data.as_chunks_mut::<ROW_BYTES>().0.iter_mut() {
-            for slot in row[..14 * RECORD_BYTES]
+            for slot in row[..SLOTS * RECORD_BYTES]
                 .as_chunks_mut::<RECORD_BYTES>()
                 .0
                 .iter_mut()
@@ -393,12 +392,17 @@ async fn known_mainnet_refund_through_receiver_and_enhance_pir() {
         .query_position_with_timing(payment.position)
         .await
         .unwrap();
-    let joined = Action::from_payment(
-        &payment,
-        enhancement.enc_ciphertext_suffix(),
-        *enhancement.cv_net(),
-        *enhancement.out_ciphertext(),
-    );
+    let mut enc_ciphertext = [0; 580];
+    enc_ciphertext[..52].copy_from_slice(&payment.ciphertext_prefix);
+    enc_ciphertext[52..].copy_from_slice(enhancement.enc_ciphertext_suffix());
+    let joined = Action {
+        cv: *enhancement.cv_net(),
+        nullifier: payment.action_nullifier,
+        cmx: payment.cmx,
+        ephemeral_key: payment.ephemeral_key,
+        enc_ciphertext,
+        out_ciphertext: *enhancement.out_ciphertext(),
+    };
     let expected = fixture();
     assert_eq!(joined.enc_ciphertext, expected.enc_ciphertext);
     assert_eq!(joined.cv, expected.cv);
@@ -419,12 +423,9 @@ async fn common_witness_file_uses_the_same_publication() {
     let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
         .unwrap()
         .encode();
-    let app =
-        receiver_pir_server::router_with_witnesses(Server::new(snapshot).unwrap(), Some(proof));
-    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let origin = format!("http://{}", socket.local_addr().unwrap());
-    let task = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-    let server = Running { origin, task };
+    let server =
+        serve_publication(Publication::new(Server::new(snapshot).unwrap(), Some(proof)).unwrap())
+            .await;
     let client = HttpClient::connect(&server.origin, http(), accepted())
         .await
         .unwrap();

@@ -28,5 +28,5 @@
   with bounded HTTP downloads, revision-bound setup and witnesses, and
   complete-history pagination checks.
 - Add a bounded loopback PIR service and a public mainnet refund lookup test.
-- Add shared compact/Enhance reconstruction and verify a real refund through
-  both encrypted lookups with authenticated output recovery.
+- Verify a real refund through both encrypted lookups with authenticated output
+  recovery.

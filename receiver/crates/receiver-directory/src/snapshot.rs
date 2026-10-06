@@ -60,7 +60,7 @@ impl Manifest {
 }
 
 /// Stable receiver identity; derivation index and purpose never leave the wallet.
-pub fn receiver_tag(genesis: &Hash, receiver: &Receiver) -> Hash {
+fn receiver_tag(genesis: &Hash, receiver: &Receiver) -> Hash {
     let mut h = Sha256::new();
     h.update(b"ironwood-receiver/v1/tag\0");
     h.update(genesis);
@@ -80,6 +80,7 @@ pub fn row_for(manifest: &Manifest, receiver: &Receiver, page: u32) -> Result<us
     Ok((u32::from_le_bytes(digest[..4].try_into().unwrap()) & (manifest.rows - 1)) as usize)
 }
 
+#[derive(Clone)]
 pub struct Snapshot {
     pub manifest: Manifest,
     pub data: Vec<u8>,

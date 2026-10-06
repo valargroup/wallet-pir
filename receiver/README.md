@@ -33,7 +33,7 @@ padding. A domain-separated SHA-256 of the genesis hash and receiver identifies
 the receiver. A second domain-separated hash of publication salt, receiver tag,
 and page selects a row. Full receiver bytes in the response disambiguate hash
 collisions. Bucket overflow rejects the candidate publication instead of omitting
-records. This geometry is a prototype, pending PIR bandwidth measurements.
+records. This geometry is a prototype.
 
 The manifest binds the network, profile, inclusive block coverage, boundary block
 hashes, starting and ending tree positions, row geometry, salt, record count, and
@@ -43,8 +43,7 @@ using results. An indexer can still omit payments. A digest is not a completenes
 proof, and PIR conceals a query rather than authenticating the chain.
 
 The directory crate does not send requests. The `receiver-pir` crate selects rows
-inside encrypted PIR queries. These rows are not the compact bulk-download format
-discussed for restores.
+inside encrypted PIR queries or, for large jobs, downloads the complete row file.
 
 ## Validation
 
@@ -88,7 +87,7 @@ checkpoint, counts all Actions to derive positions, then verifies the terminal
 block hash and tree size before returning a batch for storage. Tree metadata uses
 verbosity 1, which returns transaction IDs rather than full transactions. A
 64-block batch requires 67 RPC calls instead of 320. Concurrency is limited to 16
-and batches to 64 blocks. No database or publication format change is required.
+and batches to 64 blocks.
 
 Successful runs write `<revision>.rows` and `<revision>.json` under
 `publications/`, then atomically replace `current.json` with that manifest.
@@ -150,11 +149,12 @@ also fails and never returns partial success or absence. Empty page zero means n
 indexed payment within the accepted publication, not that an address is unused
 forever. The caller retains recovery work on every error.
 
-The measured wire payload is 14,336 bytes of reusable public setup, 135,220 bytes
-per request, and 5,172 bytes per response. Fifty single-page lookups therefore use
-7,033,936 bytes (6.71 MiB), plus the small manifest and HTTP/TLS overhead. Additional
-payments, retries, and follow-on note/witness/spentness retrieval are additional
-traffic. This measures the receiver lookup only, not complete wallet recovery.
+At 8,192 rows, the measured wire payload is 14,336 bytes of reusable public setup,
+135,220 bytes per request, and 5,172 bytes per response. Fifty single-page lookups
+therefore use 7,033,936 bytes (6.71 MiB), plus the small manifest and HTTP/TLS
+overhead. Additional payments, retries, and follow-on note/witness/spentness
+retrieval are additional traffic. This measures the receiver lookup only, not
+complete wallet recovery.
 
 `cargo test -p receiver-pir --all-features` exercises actual encrypted round trips,
 request/session binding, coverage, public setup corruption, missing continuations,
@@ -197,9 +197,11 @@ cargo run -p receiver-pir-server -- \
 ```
 
 Two admission slots bound request uploads and CPU evaluation together. Uploads
-have a 15-second deadline and exact protocol size limit. A disconnected request
-does not free its CPU slot until evaluation finishes. Oversized requests return
-413, malformed messages 400, stale sessions 409, and full admission 503.
+have a 15-second deadline and are capped at `query_bytes(MAX_ROWS)`, the largest
+supported request. Evaluation rejects any other length for the session. A
+disconnected request does not free its CPU slot until evaluation finishes.
+Oversized requests return 413, malformed messages 400, stale sessions 409, and
+full admission 503.
 
 `cargo test -p receiver-pir-server` covers actual HTTP queries, full pagination,
 absence, page budgets, malformed/oversized requests, and correctly hashed but
@@ -211,13 +213,6 @@ Its accepted anchor is fixed to the independently verified block at 3,497,109.
 No wallet data is used.
 
 ## Enhancement handoff
-
-`Action::from_payment` joins a directory payment's compact context with an
-Enhance record's ciphertext suffix, value commitment, and outgoing ciphertext.
-Construction performs no authentication. Wallets still trial decrypt with their
-receiving key and validate chain position, witness, and spentness before crediting
-funds. The directory crate takes byte arrays here, so it does not depend on an
-Enhance transport or a wallet implementation.
 
 The opt-in `known_mainnet_refund_through_receiver_and_enhance_pir` test adds an
 actual Enhance lookup using the returned position and authenticates the combined
@@ -242,12 +237,12 @@ errors. Parsers cap the file at 64 MiB before allocation and reject malformed,
 duplicate or unsorted entries. Each reconstructed path must match the commitment
 and file root. Wallets must additionally verify the root against their own chain.
 
-Every participating test wallet fetches the same `/v1/receiver/witness` bytes
-before looking up receivers. The file supplies inclusion paths. It does not
-establish ownership or absence of a spend. The measured mainnet publication at
-height 3,497,852 covers 20,911 payments and uses 4,033,115 witness bytes. Its fixed
-PIR row file is 32 MiB and stays on the server. A wallet downloads the proof file,
-PIR setup, and encrypted replies.
+Wallets fetch the same `/v1/receiver/witness/:session` bytes before looking up
+receivers. The file supplies inclusion paths. It does not establish ownership or
+absence of a spend. The measured mainnet publication at height 3,497,852 covers
+20,911 payments and uses 4,033,115 witness bytes. Its fixed row file is 32 MiB. A
+wallet downloads the proof file plus either the PIR setup and encrypted replies
+or the complete row file.
 
 For a continuously refreshed local service, build the integrated binary and run:
 

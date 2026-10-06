@@ -9,7 +9,7 @@ use axum::{
     Json, Router,
 };
 pub use publication::{Publication, Publications};
-use receiver_pir::{query_bytes, server::Server, Error, HEADER_BYTES, MAX_ROWS};
+use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
@@ -19,22 +19,8 @@ struct Service {
     slots: Arc<Semaphore>,
 }
 
-/// Limit uploads and CPU evaluation together. Cancellation never frees a still-running CPU slot.
-pub fn router(server: Server) -> Router {
-    router_with_witnesses(server, None)
-}
-
-/// Optional common proof file. Callers validate it against the served publication first.
-pub fn router_with_witnesses(server: Server, witnesses: Option<Vec<u8>>) -> Router {
-    let publications = Publications::default();
-    publications.publish(
-        Publication::new(server, witnesses).expect("validated publication"),
-        0,
-    );
-    router_with_publications(publications)
-}
-
 /// Serve the current publication while the owner prepares, validates and rotates revisions.
+/// Limit uploads and CPU evaluation together. Cancellation never frees a still-running CPU slot.
 pub fn router_with_publications(publications: Publications) -> Router {
     let service = Service {
         publications,
@@ -55,14 +41,10 @@ pub fn router_with_publications(publications: Publications) -> Router {
             }),
         )
         .route(
-            "/v1/receiver/public",
-            get(|State(s): State<Service>| async move { material(&s, None, Material::Public) }),
-        )
-        .route(
             "/v1/receiver/public/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, Some(&id), Material::Public)
+                    material(&s, &id, Material::Public)
                 },
             ),
         )
@@ -71,19 +53,15 @@ pub fn router_with_publications(publications: Publications) -> Router {
             "/v1/receiver/rows/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, Some(&id), Material::Rows)
+                    material(&s, &id, Material::Rows)
                 },
             ),
-        )
-        .route(
-            "/v1/receiver/witness",
-            get(|State(s): State<Service>| async move { material(&s, None, Material::Witness) }),
         )
         .route(
             "/v1/receiver/witness/:session",
             get(
                 |State(s): State<Service>, Path(id): Path<String>| async move {
-                    material(&s, Some(&id), Material::Witness)
+                    material(&s, &id, Material::Witness)
                 },
             ),
         )
@@ -96,38 +74,25 @@ enum Material {
     Rows,
 }
 
-fn material(s: &Service, id: Option<&str>, material: Material) -> Response {
-    let id = match id.map(|id| hex::decode(id).ok().and_then(|v| v.try_into().ok())) {
-        Some(Some(id)) => Some(id),
-        Some(None) => return StatusCode::BAD_REQUEST.into_response(),
-        None => None,
+fn material(s: &Service, id: &str, material: Material) -> Response {
+    let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
+        return StatusCode::BAD_REQUEST.into_response();
     };
-    match s.publications.select(id) {
-        Ok((p, _)) if matches!(material, Material::Rows) => (
-            [
-                (header::CONTENT_TYPE, "application/octet-stream"),
-                (header::CACHE_CONTROL, "no-store"),
-            ],
-            axum::body::Bytes::from_owner(p.server.rows()),
-        )
-            .into_response(),
-        Ok((p, _)) if matches!(material, Material::Witness) => match &p.witnesses {
-            Some(bytes) => (
-                [
-                    (header::CONTENT_TYPE, "application/octet-stream"),
-                    (header::CACHE_CONTROL, "no-store"),
-                ],
-                bytes.clone(),
-            )
-                .into_response(),
+    let p = match s.publications.select(Some(id)) {
+        Ok((p, _)) => p,
+        Err(status) => return status.into_response(),
+    };
+    match material {
+        Material::Public => binary(p.server.public().to_vec()),
+        Material::Rows => binary(axum::body::Bytes::from_owner(p.server.rows())),
+        Material::Witness => match &p.witnesses {
+            Some(bytes) => binary(bytes.clone()),
             None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         },
-        Ok((p, _)) => binary(p.server.public().to_vec()),
-        Err(status) => status.into_response(),
     }
 }
 
-fn binary(body: Vec<u8>) -> Response {
+fn binary(body: impl IntoResponse) -> Response {
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
@@ -155,7 +120,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Ok(Err(_)) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
         Err(_) => return StatusCode::REQUEST_TIMEOUT.into_response(),
     };
-    if body.len() < HEADER_BYTES || &body[..4] != b"RPQ1" {
+    if body.len() < HEADER_BYTES || &body[..4] != MAGIC {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let (publication, epoch) = match s.publications.select(Some(body[4..36].try_into().unwrap())) {

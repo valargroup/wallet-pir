@@ -1,5 +1,5 @@
 //! Authenticated recovery with the public all-zero OVK. This never uses wallet keys.
-use crate::{Error, Hash, Payment, Receiver};
+use crate::{Error, Hash, Receiver};
 use orchard::{
     keys::OutgoingViewingKey,
     note::{ExtractedNoteCommitment, Nullifier},
@@ -30,27 +30,6 @@ impl ShieldedOutput<IronwoodDomain, 580> for Action {
 }
 
 impl Action {
-    /// Join compact directory data with an enhancement record. This does not authenticate
-    /// the note or its chain position. The caller must decrypt and validate before crediting it.
-    pub fn from_payment(
-        payment: &Payment,
-        enc_ciphertext_suffix: &[u8; 528],
-        cv: Hash,
-        out_ciphertext: [u8; 80],
-    ) -> Self {
-        let mut enc_ciphertext = [0; 580];
-        enc_ciphertext[..52].copy_from_slice(&payment.ciphertext_prefix);
-        enc_ciphertext[52..].copy_from_slice(enc_ciphertext_suffix);
-        Self {
-            cv,
-            nullifier: payment.action_nullifier,
-            cmx: payment.cmx,
-            ephemeral_key: payment.ephemeral_key,
-            enc_ciphertext,
-            out_ciphertext,
-        }
-    }
-
     /// None means outside this recovery scheme, not an unused wallet address.
     pub fn recover_receiver(&self) -> Result<Option<Receiver>, Error> {
         let nf = Option::from(Nullifier::from_bytes(&self.nullifier)).ok_or(Error::Malformed)?;

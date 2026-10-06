@@ -2,9 +2,9 @@
 pub mod extract;
 pub mod record;
 pub mod snapshot;
-pub mod witness;
 #[cfg(feature = "store")]
 pub mod store;
+pub mod witness;
 
 pub use record::{Payment, Receiver, Record, RECORD_BYTES};
 pub type Hash = [u8; 32];

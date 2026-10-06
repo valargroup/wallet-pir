@@ -1,7 +1,10 @@
 //! Receiver discovery over a caller-supplied, bounded transport.
-use crate::{check_next, public_bytes, response_bytes, AcceptedCoverage, Client, Error, Manifest};
+use crate::{
+    check_next, public_bytes, response_bytes, AcceptedCoverage, Client, Error, Manifest,
+    MAX_MANIFEST_BYTES,
+};
 use receiver_directory::{
-    snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES},
+    snapshot::{lookup_row, row_for, ROW_BYTES},
     Payment, Receiver,
 };
 use sha2::{Digest, Sha256};
@@ -29,15 +32,16 @@ impl<T: Transport> Transport for &T {
 pub struct DirectoryClient<T> {
     origin: String,
     http: T,
+    /// Hex session ID that pins the setup, witness and row routes.
+    id: String,
     session: DiscoverySession,
 }
 
+// One session per client, so the variant size difference does not matter.
+#[allow(clippy::large_enum_variant)]
 enum DiscoverySession {
     Pir(Client),
-    File {
-        manifest: Manifest,
-        snapshot: Snapshot,
-    },
+    File { manifest: Manifest, rows: Vec<u8> },
 }
 
 /// Compares remaining uncached discovery traffic, including PIR uploads. Note
@@ -82,8 +86,8 @@ impl<T: Transport> DirectoryClient<T> {
         accepted.check(&manifest.directory)?;
         let id = hex::encode(manifest.id()?);
         let session = if prefer_directory_file(&manifest, remaining_lookups)? {
-            let snapshot = download_rows(&http, &origin, &manifest).await?;
-            DiscoverySession::File { manifest, snapshot }
+            let rows = download_rows(&http, &origin, &id, &manifest).await?;
+            DiscoverySession::File { manifest, rows }
         } else {
             let public = http
                 .get(
@@ -91,14 +95,12 @@ impl<T: Transport> DirectoryClient<T> {
                     public_bytes(manifest.directory.rows)?,
                 )
                 .await?;
-            if public.len() > public_bytes(manifest.directory.rows)? {
-                return Err(Error::Malformed);
-            }
             DiscoverySession::Pir(Client::new(manifest, &public, accepted)?)
         };
         Ok(Self {
             origin,
             http,
+            id,
             session,
         })
     }
@@ -111,8 +113,8 @@ impl<T: Transport> DirectoryClient<T> {
             return Ok(());
         }
         let manifest = self.manifest().clone();
-        let snapshot = download_rows(&self.http, &self.origin, &manifest).await?;
-        self.session = DiscoverySession::File { manifest, snapshot };
+        let rows = download_rows(&self.http, &self.origin, &self.id, &manifest).await?;
+        self.session = DiscoverySession::File { manifest, rows };
         Ok(())
     }
 
@@ -121,10 +123,10 @@ impl<T: Transport> DirectoryClient<T> {
         let bytes = http
             .get(
                 &format!("{}/v1/receiver/init", origin.trim_end_matches('/')),
-                16384,
+                MAX_MANIFEST_BYTES,
             )
             .await?;
-        if bytes.len() > 16384 {
+        if bytes.len() > MAX_MANIFEST_BYTES {
             return Err(Error::Malformed);
         }
         let manifest: Manifest = serde_json::from_slice(&bytes)?;
@@ -144,11 +146,7 @@ impl<T: Transport> DirectoryClient<T> {
         let bytes = self
             .http
             .get(
-                &format!(
-                    "{}/v1/receiver/witness/{}",
-                    self.origin,
-                    hex::encode(self.manifest().id()?)
-                ),
+                &format!("{}/v1/receiver/witness/{}", self.origin, self.id),
                 receiver_directory::witness::MAX_WITNESS_BYTES,
             )
             .await?;
@@ -171,17 +169,16 @@ impl<T: Transport> DirectoryClient<T> {
         let mut outputs = BTreeSet::new();
         for page in 0..max_pages.get() {
             let record = match &self.session {
-                DiscoverySession::File { snapshot, .. } => {
-                    let row = row_for(&snapshot.manifest, &receiver, page)?;
+                DiscoverySession::File { manifest, rows } => {
+                    let row = row_for(&manifest.directory, &receiver, page)?;
                     lookup_row(
-                        &snapshot.manifest,
+                        &manifest.directory,
                         &receiver,
                         page,
-                        &snapshot.data[row * ROW_BYTES..(row + 1) * ROW_BYTES],
+                        &rows[row * ROW_BYTES..(row + 1) * ROW_BYTES],
                     )?
                 }
                 DiscoverySession::Pir(client) => {
-                    // Every retry uses fresh encryption.
                     let query = client.prepare(receiver, page)?;
                     let body = self
                         .http
@@ -191,9 +188,6 @@ impl<T: Transport> DirectoryClient<T> {
                             response_bytes(client.manifest().directory.rows)?,
                         )
                         .await?;
-                    if body.len() > response_bytes(client.manifest().directory.rows)? {
-                        return Err(Error::Malformed);
-                    }
                     client.decode(query, &body)?
                 }
             };
@@ -224,9 +218,9 @@ impl<T: Transport> DirectoryClient<T> {
 async fn download_rows(
     http: &impl Transport,
     origin: &str,
+    id: &str,
     manifest: &Manifest,
-) -> Result<Snapshot, Error> {
-    let id = hex::encode(manifest.id()?);
+) -> Result<Vec<u8>, Error> {
     let limit = manifest.directory.rows as usize * ROW_BYTES;
     let data = http
         .get(&format!("{origin}/v1/receiver/rows/{id}"), limit)
@@ -236,8 +230,5 @@ async fn download_rows(
     {
         return Err(Error::Malformed);
     }
-    Ok(Snapshot {
-        manifest: manifest.directory.clone(),
-        data,
-    })
+    Ok(data)
 }

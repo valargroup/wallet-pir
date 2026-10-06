@@ -4,7 +4,7 @@ use receiver_directory::{
     snapshot::{Manifest, Snapshot, ROW_BYTES},
     Hash,
 };
-use receiver_pir::{server::Server, validate_rows};
+use receiver_pir::{server::Server, validate_rows, MAX_MANIFEST_BYTES};
 use std::{
     collections::VecDeque,
     fs::File,
@@ -38,9 +38,8 @@ impl Publication {
 
     /// Load only files named by the validated content-addressed directory revision.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let bytes = bounded(path, 16384)?;
+        let bytes = bounded(path, MAX_MANIFEST_BYTES)?;
         let manifest: Manifest = serde_json::from_slice(&bytes)?;
-        manifest.validate()?;
         validate_rows(manifest.rows)?;
         let revision = hex::encode(manifest.revision()?);
         let data = bounded(
@@ -75,6 +74,7 @@ fn bounded(path: &Path, limit: usize) -> Result<Vec<u8>, Box<dyn std::error::Err
     Ok(bytes)
 }
 
+#[derive(Default)]
 struct State {
     epoch: u64,
     current: Option<Arc<Publication>>,
@@ -83,19 +83,8 @@ struct State {
 }
 
 /// One current and one briefly retained canonical revision. Revocation also fences in-flight work.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Publications(Arc<RwLock<State>>);
-
-impl Default for Publications {
-    fn default() -> Self {
-        Self(Arc::new(RwLock::new(State {
-            epoch: 0,
-            current: None,
-            previous: None,
-            revoked: VecDeque::new(),
-        })))
-    }
-}
 
 impl Publications {
     pub fn epoch(&self) -> u64 {

@@ -3,7 +3,7 @@ name = "receiver-pir-server"
 version = "0.0.1"
 edition = "2021"
 license = "MIT"
-description = "Loopback service for receiver PIR integration tests"
+description = "Receiver PIR serving with immutable publications and atomic session revocation"
 
 [dependencies]
 receiver-pir = { path = "../../crates/receiver-pir", features = ["server"] }

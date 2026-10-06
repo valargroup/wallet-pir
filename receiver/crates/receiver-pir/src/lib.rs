@@ -19,7 +19,10 @@ pub const PROTOCOL: &str = "ironwood-receiver-pir-v1-q48";
 pub const MIN_ROWS: u32 = 8192;
 pub use receiver_directory::snapshot::MAX_ROWS;
 pub const HEADER_BYTES: usize = 52;
-const MAGIC: &[u8; 4] = b"RPQ1";
+/// Leading bytes of every request header, which responses echo.
+pub const MAGIC: &[u8; 4] = b"RPQ1";
+/// Bound on a serialized directory or session manifest, read before parsing.
+pub const MAX_MANIFEST_BYTES: usize = 16384;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

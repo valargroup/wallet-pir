@@ -40,9 +40,6 @@ struct Args {
     start_height: u32,
     #[arg(long)]
     end_height: Option<u32>,
-    /// Additional indexing delay. Serving follows the tip and requires zero.
-    #[arg(long, default_value_t = 0)]
-    confirmations: u32,
     /// Continuously reconcile the canonical chain and atomically rotate the loopback service.
     #[arg(long, conflicts_with = "end_height")]
     serve: bool,
@@ -65,10 +62,8 @@ async fn main() -> Result<()> {
     if u64::from(args.start_height) < enhance_pir::ACTIVATION_HEIGHT {
         return Err("start must be at or after Ironwood activation".into());
     }
-    if args.serve && (!args.bind.ip().is_loopback() || args.confirmations != 0) {
-        return Err(
-            "continuous serving requires a loopback bind and zero confirmation delay".into(),
-        );
+    if args.serve && !args.bind.ip().is_loopback() {
+        return Err("continuous serving requires a loopback bind".into());
     }
     let rpc = match &args.cookie {
         Some(p) => ZakuraClient::from_cookie_file(&args.rpc_url, p)?,
@@ -192,9 +187,7 @@ async fn refresh(
         },
     )?;
     let node_tip = u32::try_from(rpc.tip_height().await?)?;
-    let end = args
-        .end_height
-        .unwrap_or(node_tip.saturating_sub(args.confirmations));
+    let end = args.end_height.unwrap_or(node_tip);
     if end < args.start_height || end > node_tip {
         return Err("requested range is outside the available chain".into());
     }
