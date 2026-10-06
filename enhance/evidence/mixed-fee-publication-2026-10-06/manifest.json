@@ -12,11 +12,11 @@
   "host": {"role": "ephemeral development worker", "cpu": "Intel Xeon Platinum 8168 @ 2.70GHz, 8 visible, 3 allotted", "memory_gib": 31, "os": "Ubuntu 24.04.5 LTS"},
   "chain_data": "synthetic: public fixture tx f337d967...8d13 (Ironwood actions) and public Sapling tx ca6abd8e...ed59 (bundle only), with hand-set values; mock JSON-RPC node; no wallet identifiers",
   "commands": [
-    {"command": "make check-fast BASE=031a23cb", "log": "raw/check-fast.log", "exit": 0},
-    {"command": "RUST_TEST_THREADS=1 cargo test --locked --profile release-fast -p enhance-pir-server --test rpc --test canonical_record", "log": "raw/rpc-tests.log", "exit": 0},
-    {"command": "make check-package PACKAGE=enhance-pir-server TEST=fee", "log": "raw/check-package-fee.log", "exit": 0},
-    {"command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --all-targets -- -D warnings", "log": "raw/clippy.log", "exit": 0},
-    {"command": "cargo build --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --bins", "log": "raw/native-build.log", "exit": 0}
+    {"command": "make check-fast BASE=031a23cb", "log": "raw/check-fast.log.gz", "exit": 0},
+    {"command": "RUST_TEST_THREADS=1 cargo test --locked --profile release-fast -p enhance-pir-server --test rpc --test canonical_record", "log": "raw/rpc-tests.log.gz", "exit": 0},
+    {"command": "make check-package PACKAGE=enhance-pir-server TEST=fee", "log": "raw/check-package-fee.log.gz", "exit": 0},
+    {"command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --all-targets -- -D warnings", "log": "raw/clippy.log.gz", "exit": 0},
+    {"command": "cargo build --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --bins", "log": "raw/native-build.log.gz", "exit": 0}
   ],
   "results": {
     "check_fast_lib_bin_tests": "169 passed, 9 skipped by the fast-tier selection",

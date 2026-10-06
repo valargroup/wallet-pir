@@ -5,7 +5,7 @@ the `rebuild-journal` subcommand and coordinator adoption of a staged journal.
 Source `ab1ddeb` (base `031a23c`), package `enhance-pir-server`, `release-fast`
 profile with locked dependencies, default features; `native-reinspiring` was built
 but not tested. Machine-readable metadata is in [manifest.json](manifest.json),
-raw logs are under [raw/](raw/), checksums in [SHA256SUMS](SHA256SUMS).
+gzipped raw logs are under [raw/](raw/), checksums in [SHA256SUMS](SHA256SUMS).
 
 This is not a deployment, a production measurement or a qualification. No host was
 contacted. No production journal was rebuilt; the repair of a live journal remains
