@@ -83,8 +83,8 @@ pub fn fee_only_change(old: &[u8], new: &[u8]) -> Result<bool, String> {
     if old.len() != RECORD_BYTES || new.len() != RECORD_BYTES {
         return Err("record width".into());
     }
-    let new_record =
-        EnhanceRecord::from_bytes(new.try_into().expect("checked width")).map_err(|e| e.to_string())?;
+    let new_record = EnhanceRecord::from_bytes(new.try_into().expect("checked width"))
+        .map_err(|e| e.to_string())?;
     if old == new {
         return Ok(false);
     }
@@ -264,11 +264,7 @@ pub async fn rebuild_journal(
                 )));
             }
             let old = source.read_records(block.first_position, regenerated.len())?;
-            for (index, (o, n)) in old
-                .chunks_exact(RECORD_BYTES)
-                .zip(&regenerated)
-                .enumerate()
-            {
+            for (index, (o, n)) in old.chunks_exact(RECORD_BYTES).zip(&regenerated).enumerate() {
                 fee_only_change(o, n.as_bytes()).map_err(|reason| RebuildError::Oracle {
                     position: block.first_position + index as u64,
                     reason,
@@ -312,7 +308,9 @@ pub async fn rebuild_journal(
     }
     let staged = JournalSnapshot::read(&config.output, DatabaseId::Enhance, ENHANCE_LAYOUT)?;
     if staged.uncommitted_bytes()? != 0 {
-        return Err(RebuildError::Refused("staged records file has a tail".into()));
+        return Err(RebuildError::Refused(
+            "staged records file has a tail".into(),
+        ));
     }
     let (changed_records, absent_fee_records, _) = compare_journals(&source, &staged, false)?;
     let records_sha256 = sha256_file(&config.output.join("records.bin"))?;
@@ -439,10 +437,9 @@ fn sealed_shards(data_dir: &Path) -> Result<BTreeSet<u64>, String> {
     if !path.exists() {
         return Ok(BTreeSet::new());
     }
-    let state: serde_json::Value = serde_json::from_slice(
-        &fs::read(&path).map_err(|e| format!("control state: {e}"))?,
-    )
-    .map_err(|e| format!("control state: {e}"))?;
+    let state: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).map_err(|e| format!("control state: {e}"))?)
+            .map_err(|e| format!("control state: {e}"))?;
     let Some(sealed) = state.pointer("/recovery/sealed") else {
         return Err("control state has no recovery.sealed".into());
     };
@@ -503,7 +500,14 @@ pub fn adopt_staged(data_dir: &Path) -> Result<Adoption, std::io::Error> {
             if interrupted {
                 fs::rename(&compare_dir, &live_dir)?;
             }
-            let moved_to = data_dir.join(format!("{STAGED_DIR}.rejected-{}", now_seconds()));
+            let stamp = now_seconds();
+            let moved_to = (0..)
+                .map(|n| match n {
+                    0 => data_dir.join(format!("{STAGED_DIR}.rejected-{stamp}")),
+                    n => data_dir.join(format!("{STAGED_DIR}.rejected-{stamp}-{n}")),
+                })
+                .find(|path| !path.exists())
+                .expect("unbounded names");
             fs::rename(&staged_dir, &moved_to)?;
             sync_dir(data_dir)?;
             Ok(Adoption::Rejected { reason, moved_to })

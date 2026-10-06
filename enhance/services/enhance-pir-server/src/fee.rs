@@ -72,7 +72,10 @@ pub fn needs_prevouts(transaction: &Transaction) -> bool {
         .inputs()
         .iter()
         .any(|input| matches!(input, Input::Coinbase { .. }))
-        && transaction.inputs().iter().any(|input| input.outpoint().is_some())
+        && transaction
+            .inputs()
+            .iter()
+            .any(|input| input.outpoint().is_some())
 }
 
 /// Default cross-block budget, in transparent outputs.
@@ -228,7 +231,8 @@ mod tests {
         else {
             panic!("fixture is V6");
         };
-        ironwood_shielded_data.as_mut().unwrap().value_balance = Amount::try_from(ironwood).unwrap();
+        ironwood_shielded_data.as_mut().unwrap().value_balance =
+            Amount::try_from(ironwood).unwrap();
         reparse(Transaction::V6 {
             network_upgrade,
             lock_time,

@@ -246,7 +246,10 @@ impl ZakuraClient {
                 for outpoint in &wanted {
                     if let Some(tx) = in_block.get(&outpoint.hash) {
                         values.insert(*outpoint, output_value(outpoint, tx.outputs())?);
-                        prevouts.counts.same_block_hits.fetch_add(1, Ordering::Relaxed);
+                        prevouts
+                            .counts
+                            .same_block_hits
+                            .fetch_add(1, Ordering::Relaxed);
                     } else if let Some(value) = cache.get(outpoint) {
                         values.insert(*outpoint, value);
                         prevouts.counts.cache_hits.fetch_add(1, Ordering::Relaxed);
@@ -313,7 +316,10 @@ impl ZakuraClient {
         let entries = self
             .batch::<String>(
                 "getrawtransaction",
-                txids.iter().map(|txid| json!([txid.to_string(), 0])).collect(),
+                txids
+                    .iter()
+                    .map(|txid| json!([txid.to_string(), 0]))
+                    .collect(),
             )
             .await?;
         txids
@@ -367,21 +373,27 @@ impl ZakuraClient {
         if response.status() == StatusCode::UNAUTHORIZED {
             return Err(ZakuraError::InvalidCookie);
         }
-        let entries = match response.error_for_status()?.json::<serde_json::Value>().await? {
+        let entries = match response
+            .error_for_status()?
+            .json::<serde_json::Value>()
+            .await?
+        {
             serde_json::Value::Array(entries) => entries,
             other => {
                 // A node refusing the whole batch answers with one error object.
-                return Err(match other.pointer("/error/code").and_then(|c| c.as_i64()) {
-                    Some(code) => ZakuraError::Rpc(
-                        code,
-                        other
-                            .pointer("/error/message")
-                            .and_then(|m| m.as_str())
-                            .unwrap_or_default()
-                            .to_string(),
-                    ),
-                    None => ZakuraError::Batch("batch response is not an array".into()),
-                });
+                return Err(
+                    match other.pointer("/error/code").and_then(|c| c.as_i64()) {
+                        Some(code) => ZakuraError::Rpc(
+                            code,
+                            other
+                                .pointer("/error/message")
+                                .and_then(|m| m.as_str())
+                                .unwrap_or_default()
+                                .to_string(),
+                        ),
+                        None => ZakuraError::Batch("batch response is not an array".into()),
+                    },
+                );
             }
         };
         if entries.len() != requests.len() {
@@ -399,7 +411,9 @@ impl ZakuraClient {
                 .and_then(|id| id.as_u64())
                 .and_then(|id| usize::try_from(id).ok())
                 .filter(|id| *id < placed.len())
-                .ok_or_else(|| ZakuraError::Batch("batch entry id is missing or out of range".into()))?;
+                .ok_or_else(|| {
+                    ZakuraError::Batch("batch entry id is missing or out of range".into())
+                })?;
             if placed[id].is_some() {
                 return Err(ZakuraError::Batch(format!("batch id {id} appeared twice")));
             }
@@ -409,11 +423,16 @@ impl ZakuraClient {
                 (Some(error), _) => Err((error.code, error.message)),
                 (None, Some(result)) => Ok(result),
                 (None, None) => {
-                    return Err(ZakuraError::Batch(format!("batch entry {id} has no result")))
+                    return Err(ZakuraError::Batch(format!(
+                        "batch entry {id} has no result"
+                    )))
                 }
             });
         }
-        Ok(placed.into_iter().map(|entry| entry.expect("every id placed")).collect())
+        Ok(placed
+            .into_iter()
+            .map(|entry| entry.expect("every id placed"))
+            .collect())
     }
 
     /// Read every transaction type for the Status index and verify the raw

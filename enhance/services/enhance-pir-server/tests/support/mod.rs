@@ -85,7 +85,10 @@ pub struct Mixed {
     /// Orchard bundle since both pools share one encoding.
     pub orchard: Option<i64>,
     /// Sapling bundle and its value balance.
-    pub sapling: Option<(zakura_chain::sapling::ShieldedData<zakura_chain::sapling::SharedAnchor>, i64)>,
+    pub sapling: Option<(
+        zakura_chain::sapling::ShieldedData<zakura_chain::sapling::SharedAnchor>,
+        i64,
+    )>,
 }
 
 impl Mixed {
@@ -196,7 +199,10 @@ pub fn fixture_record(index: usize) -> EnhanceRecord {
 /// Asserts the record keeps the fixture action's encrypted fields.
 pub fn assert_fixture_action(record: &EnhanceRecord, index: usize) {
     let fixture = fixture_record(index);
-    assert_eq!(record.enc_ciphertext_suffix(), fixture.enc_ciphertext_suffix());
+    assert_eq!(
+        record.enc_ciphertext_suffix(),
+        fixture.enc_ciphertext_suffix()
+    );
     assert_eq!(record.cv_net(), fixture.cv_net());
     assert_eq!(record.out_ciphertext(), fixture.out_ciphertext());
     assert_eq!(record.metadata().expiry_height(), 3483371);
@@ -233,6 +239,8 @@ pub struct Chain {
     pub calls: Vec<String>,
     /// Count of HTTP requests that were batches.
     pub batches: usize,
+    /// `getblock` requests as (height, verbosity).
+    pub getblocks: Vec<(u64, u64)>,
 }
 
 impl Chain {
@@ -243,10 +251,7 @@ impl Chain {
 
     /// Appends a block at `height` holding `transactions`.
     pub fn push_block(&mut self, height: u64, transactions: &[Transaction], nonce: u8) -> String {
-        let previous = self
-            .blocks
-            .get(&(height - 1))
-            .map_or(0, |block| block.2);
+        let previous = self.blocks.get(&(height - 1)).map_or(0, |block| block.2);
         let actions: u64 = transactions
             .iter()
             .map(|tx| tx.ironwood_actions().count() as u64)
@@ -286,10 +291,13 @@ fn answer(chain: &mut Chain, request: &Value) -> Value {
             None => return error(-8, "Block height out of range"),
         },
         "getblock" => {
-            let Some(block) = chain.blocks.get(&height(&request["params"][0])) else {
+            let requested = height(&request["params"][0]);
+            let verbosity = request["params"][1].as_u64().unwrap();
+            chain.getblocks.push((requested, verbosity));
+            let Some(block) = chain.blocks.get(&requested) else {
                 return error(-8, "Block height out of range");
             };
-            match request["params"][1].as_u64().unwrap() {
+            match verbosity {
                 0 => json!(block.0),
                 2 => json!({"trees": {"ironwood": {"size": block.2}}}),
                 _ => panic!("unexpected verbosity"),
@@ -303,14 +311,12 @@ fn answer(chain: &mut Chain, request: &Value) -> Value {
             if chain.fault == Some(BatchFault::WrongTransaction) {
                 json!(chain.transactions.values().next().unwrap())
             } else {
-                match chain.transactions.get(request["params"][0].as_str().unwrap()) {
+                match chain
+                    .transactions
+                    .get(request["params"][0].as_str().unwrap())
+                {
                     Some(raw) => json!(raw),
-                    None => {
-                        return error(
-                            -5,
-                            "No such mempool or main chain transaction",
-                        )
-                    }
+                    None => return error(-5, "No such mempool or main chain transaction"),
                 }
             }
         }
@@ -338,7 +344,10 @@ async fn handle(
     }
     let mut chain = chain.lock().unwrap();
     let Value::Array(requests) = request else {
-        assert_eq!(request["jsonrpc"], "1.0", "single calls stay on JSON-RPC 1.0");
+        assert_eq!(
+            request["jsonrpc"], "1.0",
+            "single calls stay on JSON-RPC 1.0"
+        );
         return Ok(Json(answer(&mut chain, &request)));
     };
     chain.batches += 1;

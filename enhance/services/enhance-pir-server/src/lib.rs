@@ -30,8 +30,8 @@ mod response_body;
 
 pub mod packing_router;
 pub mod pool;
-pub mod rebuild;
 pub mod query_ingress;
+pub mod rebuild;
 mod serving_control;
 mod serving_fence;
 pub mod shutdown;

@@ -75,10 +75,7 @@ async fn transparent_spends_into_ironwood_publish_the_whole_fee() {
     node.history(&[&a, &b]);
     let first = Mixed::new(vec![spend(&a, 0)], &[], -400_000).build();
     let second = Mixed::new(vec![spend(&b, 0)], &[], -180_000).build();
-    let records = node
-        .records(H, &[first, second], &prevouts)
-        .await
-        .unwrap();
+    let records = node.records(H, &[first, second], &prevouts).await.unwrap();
     assert_eq!(records.len(), 4);
     for (i, record) in records.iter().enumerate() {
         assert_eq!(fee_and_flags(record), (Some(20_000), true, false));
@@ -238,7 +235,12 @@ async fn unresolvable_or_invalid_inputs_fail_the_block() {
         ZakuraError::MissingTransaction(txid) if txid == a.hash().to_string()
     ));
     assert!(matches!(
-        failure(&[&a], Mixed::new(vec![spend(&a, 1)], &[], -400_000).build(), None).await,
+        failure(
+            &[&a],
+            Mixed::new(vec![spend(&a, 1)], &[], -400_000).build(),
+            None
+        )
+        .await,
         ZakuraError::PrevoutIndex { outputs: 1, .. }
     ));
     assert!(matches!(
@@ -283,7 +285,12 @@ async fn unresolvable_or_invalid_inputs_fail_the_block() {
         ZakuraError::Fee(_, FeeError::DuplicateInput(_))
     ));
     assert!(matches!(
-        failure(&[&a], Mixed::new(vec![spend(&a, 0)], &[30_000], -400_000).build(), None).await,
+        failure(
+            &[&a],
+            Mixed::new(vec![spend(&a, 0)], &[30_000], -400_000).build(),
+            None
+        )
+        .await,
         ZakuraError::Fee(_, FeeError::Negative(_))
     ));
 }

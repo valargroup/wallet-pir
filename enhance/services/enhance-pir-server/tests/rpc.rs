@@ -81,7 +81,10 @@ fn answer(state: &Rpc, request: &Value) -> Value {
                 _ => panic!("unexpected verbosity"),
             }
         }
-        "getrawtransaction" => match state.transactions.get(request["params"][0].as_str().unwrap()) {
+        "getrawtransaction" => match state
+            .transactions
+            .get(request["params"][0].as_str().unwrap())
+        {
             Some(raw) => json!(raw),
             None => {
                 return json!({"result":null,"error":{"code":-5,"message":"No such transaction"},"id":request["id"]})
@@ -98,14 +101,19 @@ fn answer(state: &Rpc, request: &Value) -> Value {
 async fn assert_answers(client: &mut EnhancePirClient, expected: &[Vec<u8>]) {
     for (i, record) in expected.iter().enumerate() {
         assert_eq!(
-            client.query_position_with_timing(i as u64).await.unwrap().0.as_ref(),
+            client
+                .query_position_with_timing(i as u64)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
             record
         );
     }
     for position in 2..6u64 {
         let answer = client.query_position_with_timing(position).await.unwrap().0;
-        let record = enhance_pir::EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap())
-            .unwrap();
+        let record =
+            enhance_pir::EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap()).unwrap();
         support::assert_fixture_action(&record, position as usize % 2);
         assert_eq!(record.metadata().fee_zatoshis(), Some(20_000), "{position}");
         let flags = record.as_bytes()[enhance_pir::types::RECORD_FLAGS_OFFSET];
@@ -191,10 +199,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     let mixed = [
         support::Mixed::new(vec![support::spend(&same_block, 0)], &[], -400_000).build(),
         support::Mixed::new(
-            vec![
-                support::spend(&same_block, 1),
-                support::spend(&earlier, 0),
-            ],
+            vec![support::spend(&same_block, 1), support::spend(&earlier, 0)],
             &[100_000],
             -279_000,
         )
@@ -202,7 +207,10 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     ];
     let mut tail = Vec::new();
     for transaction in [&same_block, &mixed[0], &mixed[1]] {
-        tail.extend(zakura_chain::serialization::ZcashSerialize::zcash_serialize_to_vec(transaction).unwrap());
+        tail.extend(
+            zakura_chain::serialization::ZcashSerialize::zcash_serialize_to_vec(transaction)
+                .unwrap(),
+        );
     }
     let mut blocks = Vec::new();
     for nonce in [0, 1, 2] {
