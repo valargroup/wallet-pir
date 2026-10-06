@@ -1,0 +1,63 @@
+python3 tools/ci/fast.py --package "enhance-pir-server" --test "fee"   
+{
+  "packages": [
+    "enhance-pir-server"
+  ],
+  "helpers": [],
+  "groups": [],
+  "reasons": [
+    "explicit package check"
+  ]
+}
+TARGET_LEASE {"target": "/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0", "compatibility": "cab3e3274349c9d5b86e", "owner_pid": 1734811}
++ cargo fmt --all --check
+CHECK_STAGE {"stage": "format", "seconds": 2.112, "exit": 0}
++ cargo test --locked --profile release-fast -p enhance-pir-server --lib --bins --no-run
+    Finished `release-fast` profile [optimized] target(s) in 0.42s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+  Executable unittests src/lib.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-6ced68bb7c275bb6)
+  Executable unittests src/bin/server.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-3af028c0e706e067)
+  Executable unittests src/bin/status.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/status_pir-06108526f37d67a8)
+CHECK_STAGE {"stage": "compile:enhance-pir-server", "seconds": 0.478, "exit": 0}
+    Finished `release-fast` profile [optimized] target(s) in 0.42s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-6ced68bb7c275bb6)
+     Running unittests src/bin/server.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-3af028c0e706e067)
+     Running unittests src/bin/status.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/status_pir-06108526f37d67a8)
++ cargo test --locked --profile release-fast -p enhance-pir-server --lib --bins -- fee
+    Finished `release-fast` profile [optimized] target(s) in 0.41s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/lib.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-6ced68bb7c275bb6)
+
+running 7 tests
+test fee::tests::cache_evicts_whole_transactions_by_output_budget ... ok
+test fee::tests::coinbase_has_no_fee_and_reads_no_utxos ... ok
+test fee::tests::missing_duplicate_and_overspent_inputs_are_errors ... ok
+test fee::tests::pure_ironwood_fixture_keeps_its_fee ... ok
+test fee::tests::transparent_into_ironwood_publishes_the_whole_fee ... ok
+test rebuild::tests::oracle_accepts_only_added_fees ... ok
+test zakura::tests::canonical_ironwood_transaction_has_actual_fee_and_expiry ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 171 filtered out; finished in 0.02s
+
+     Running unittests src/bin/server.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/enhance_pir_server-3af028c0e706e067)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/bin/status.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/dev-lanes/cab3e3274349c9d5b86e/lane-0/release-fast/deps/status_pir-06108526f37d67a8)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+CHECK_STAGE {"stage": "tests:enhance-pir-server", "seconds": 0.487, "exit": 0}
+
+real	0m3.961s
+user	0m3.327s
+sys	0m0.628s
+exit=0

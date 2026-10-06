@@ -1,0 +1,31 @@
+   Compiling enhance-pir-server v0.0.1 (/var/lib/ai-dev/workspaces/t-90bf9210cb4247c9/a1/repos/wallet-pir/enhance/services/enhance-pir-server)
+    Finished `release-fast` profile [optimized] target(s) in 1m 29s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running tests/canonical_record.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/release-fast/deps/canonical_record-3ebda47da2945d77)
+
+running 1 test
+test canonical_transaction_records_match_frozen_oracle_across_publication ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 24.30s
+
+     Running tests/rpc.rs (/var/lib/ai-dev/cache/build/t-90bf9210cb4247c9/a1/wallet-pir/release-fast/deps/rpc-0686159935f56467)
+
+running 10 tests
+test canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplication ... ok
+test mixed_fee::coinbase_has_no_fee_and_needs_no_lookup ... ok
+test mixed_fee::multiple_inputs_with_transparent_change ... ok
+test mixed_fee::orchard_and_ironwood_together ... ok
+test mixed_fee::pure_ironwood_fixture_keeps_its_fee_without_extra_rpc ... ok
+test mixed_fee::same_block_and_cached_outputs_need_no_lookup ... ok
+test mixed_fee::sapling_and_ironwood_together ... ok
+test mixed_fee::transparent_spends_into_ironwood_publish_the_whole_fee ... ok
+test mixed_fee::unresolvable_or_invalid_inputs_fail_the_block ... ok
+test rebuild::rebuild_resumes_and_coordinator_adopts_only_fee_repairs ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 282.25s
+
+
+real	6m36.541s
+user	8m53.405s
+sys	2m23.192s

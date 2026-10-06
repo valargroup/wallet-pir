@@ -18,6 +18,11 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Mixed-transaction fee publication](mixed-fee-publication-2026-10-06/README.md) —
+  exact whole-transaction fees for Ironwood transactions with transparent, Sapling
+  or Orchard parts; offline journal rebuild and verified coordinator adoption;
+  local tests only, no production journal repaired.
+
 - [Shared layers: production checks and fixes](shared-layers-2026-09-30/README.md) —
   read-only deploy-CLI runs against production, Status control-account
   hardening, three alert fixes and the APM on a CI-built binary, with no

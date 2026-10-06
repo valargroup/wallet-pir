@@ -1,0 +1,7 @@
+753d8c7f1f74ba79df67b131ad80e02fbcf76cb1dacb977be0880c2e6e135148  ./README.md
+d566d73747f4fe2ad1cad2436a4923c975384be0c5d2ea4cebd35b06fc60bd9f  ./manifest.json
+9b84d0fc4b2933cac7aced725c987ae2d2c5dad05d52164369c9e99a488b610c  ./raw/check-fast.log
+f375242c9306e9b6ef54c27e2794c126c6e47a47d6e39bbe524f027aeb2fa3c9  ./raw/check-package-fee.log
+a944733987f9deb985279429c4522b59fa3bcc8aa1b87810a2b863aa942b0d02  ./raw/clippy.log
+305f9ae4e5919c64a0d0781c01b672037fe8b6b7cdddc7cdde80f7eaec774577  ./raw/native-build.log
+697bfd64075cbc56c5320ed4d4c194afd1ed84f1f2216d41d664824eb82b3af3  ./raw/rpc-tests.log

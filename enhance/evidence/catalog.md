@@ -4,6 +4,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [mixed-fee-publication-2026-10-06](mixed-fee-publication-2026-10-06/README.md) | Exact whole-transaction fees, journal rebuild and staged adoption: local producer, CLI and HTTP PIR tests |
 | [prod-soak-2026-09-27](prod-soak-2026-09-27/README.md) | Six-hour joint Enhance/Status production soak, freezes traced to fsync, and fixes deployed during the run |
 | [status-window-4096-2026-09-27](status-window-4096-2026-09-27/README.md) | Live Status window raised from 64 to 4,096 blocks; restart, occupancy and 10-minute 20 QPS check |
 | [status-cpu-host-2026-09-27](status-cpu-host-2026-09-27/README.md) | Status router/worker moved from the P4000 to a CPU droplet; cutover, APM re-arm and 30-minute 20 QPS gate |
