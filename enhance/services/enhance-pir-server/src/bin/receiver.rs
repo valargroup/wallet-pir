@@ -239,7 +239,7 @@ async fn refresh(
     log_stage("ingestion", started);
     let started = std::time::Instant::now();
     let records = store.counts()?.0;
-    // Start at half occupancy. A crowded bucket grows the entire candidate.
+    // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
         if rows > MAX_ROWS {

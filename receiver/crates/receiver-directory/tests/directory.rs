@@ -204,6 +204,68 @@ fn durable_coverage_atomic_failure_and_reorg() {
     assert!(store.snapshot(8).is_err());
 }
 
+#[cfg(feature = "store")]
+#[test]
+fn crowded_buckets_retry_the_salt_before_growing() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    // Twenty pages in two rows overflow when fifteen share a row. The block hash is
+    // the first salt, so choose one that crowds a row.
+    let crowded = |hash: [u8; 32]| {
+        let mut m = manifest(2);
+        m.salt = hash;
+        let first = (0..20)
+            .filter(|&page| row_for(&m, &receiver(), page).unwrap() == 0)
+            .count();
+        !(6..=14).contains(&first)
+    };
+    let hash = (0..=255).map(|k| [k; 32]).find(|h| crowded(*h)).unwrap();
+    let payments = (0..20)
+        .map(|page| {
+            let mut r = record(page, 20);
+            r.payment.height = 100;
+            r.payment.block_hash = hash;
+            (r.receiver, r.payment)
+        })
+        .collect();
+    store
+        .append(&IndexedBlock {
+            height: 100,
+            hash,
+            parent: [2; 32],
+            start_position: 200,
+            end_position: 220,
+            coinbase_actions: 0,
+            payments,
+            commitments: vec![[6; 32]; 20],
+        })
+        .unwrap();
+    let first = store.snapshot(2).unwrap();
+    assert_ne!(first.manifest.salt, hash);
+    assert_eq!(first.manifest.records, 20);
+    for page in 0..20 {
+        let found = lookup_row(
+            &first.manifest,
+            &receiver(),
+            page,
+            row(&first, &receiver(), page),
+        );
+        assert_eq!(found.unwrap().unwrap().page, page);
+    }
+    // A rebuild of the same coverage picks the same salt.
+    assert_eq!(
+        store.snapshot(2).unwrap().manifest.revision().unwrap(),
+        first.manifest.revision().unwrap()
+    );
+}
+
 #[test]
 fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
     use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};

@@ -9,7 +9,10 @@ use receiver_pir::{
     AcceptedCoverage, Client, Error, MIN_ROWS,
 };
 use receiver_pir_server::{Publication, Publications};
-use std::{num::NonZeroU32, time::Duration};
+use std::{
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 /// The chain anchor that [`manifest`] ends at.
 fn accepted() -> AcceptedCoverage {
@@ -26,7 +29,10 @@ fn snapshot(count: u32) -> Snapshot {
 /// A publication of `rows` rows with `count` pages for the fixture receiver.
 fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let records: Vec<_> = (0..count).map(|page| record(page, count)).collect();
-    Snapshot::build(manifest(rows), &records).unwrap()
+    let mut manifest = manifest(rows);
+    // Positions start at 200; a long history needs room after them.
+    manifest.end_position = manifest.end_position.max(200 + u64::from(count));
+    Snapshot::build(manifest, &records).unwrap()
 }
 struct Running {
     origin: String,
@@ -64,7 +70,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.clone(),
     ))
     .await;
-    let old = connect(&server.origin, Http(http()), accepted(), 0)
+    let mut old = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     let old_id = hex::encode(old.manifest().id().unwrap());
@@ -82,37 +88,19 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .await
         .unwrap();
     assert!(public.status().is_success());
-    assert_eq!(
-        old.lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(old.lookup(receiver(), accepted()).await.unwrap().len(), 2);
     let mut anchor = accepted();
     anchor.height = 102;
     anchor.hash = [9; 32];
-    let new = connect(&server.origin, Http(http()), anchor, 0)
+    let mut new = connect(&server.origin, Http(http()), anchor, 0)
         .await
         .unwrap();
-    assert_eq!(
-        new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(new.lookup(receiver(), anchor).await.unwrap().len(), 2);
 
-    let file = connect(&server.origin, Http(http()), anchor, 10_000)
+    let mut file = connect(&server.origin, Http(http()), anchor, 10_000)
         .await
         .unwrap();
-    assert_eq!(
-        file.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
+    assert_eq!(file.lookup(receiver(), anchor).await.unwrap().len(), 2);
 
     // Preparation started before the canonical guard detected the fork.
     let preparing_epoch = publications.epoch();
@@ -152,8 +140,7 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
     );
     assert!(matches!(old.witnesses().await, Err(Error::Revision)));
     assert!(matches!(
-        new.lookup(receiver(), NonZeroU32::new(2).unwrap(), anchor)
-            .await,
+        new.lookup(receiver(), anchor).await,
         Err(Error::Revision)
     ));
 
@@ -166,11 +153,11 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         publications.epoch()
     ));
     anchor.hash = [10; 32];
-    let recovered = connect(&server.origin, Http(http()), anchor, 0)
+    let mut recovered = connect(&server.origin, Http(http()), anchor, 0)
         .await
         .unwrap();
     assert!(recovered
-        .lookup(receiver(), NonZeroU32::new(1).unwrap(), anchor)
+        .lookup(receiver(), anchor)
         .await
         .unwrap()
         .is_empty());
@@ -211,6 +198,44 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
     Ok(body.to_vec())
 }
 
+/// A transport that counts requests and body bytes.
+struct Counted {
+    http: Http,
+    up: AtomicUsize,
+    down: AtomicUsize,
+    posts: AtomicUsize,
+    gets: AtomicUsize,
+}
+
+impl Counted {
+    /// A counting transport over a fresh client.
+    fn new() -> Self {
+        Self {
+            http: Http(http()),
+            up: AtomicUsize::new(0),
+            down: AtomicUsize::new(0),
+            posts: AtomicUsize::new(0),
+            gets: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl Transport for Counted {
+    async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        let data = Transport::get(&self.http, url, limit).await?;
+        self.down.fetch_add(data.len(), Ordering::Relaxed);
+        Ok(data)
+    }
+    async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+        self.posts.fetch_add(1, Ordering::Relaxed);
+        self.up.fetch_add(body.len(), Ordering::Relaxed);
+        let data = Transport::post(&self.http, url, body, limit).await?;
+        self.down.fetch_add(data.len(), Ordering::Relaxed);
+        Ok(data)
+    }
+}
+
 /// Connect to the publication `origin` advertises, accepted at `accepted`, for
 /// `remaining` lookups.
 async fn connect<T: Transport>(
@@ -226,28 +251,16 @@ async fn connect<T: Transport>(
 #[tokio::test]
 async fn retrieve_complete_history_and_enforce_limits_over_http() {
     let server = serve(snapshot(2)).await;
-    let client = connect(&server.origin, Http(http()), accepted(), 0)
+    let mut client = connect(&server.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
-    let payments = client
-        .lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
-        .await
-        .unwrap();
+    let payments = client.lookup(receiver(), accepted()).await.unwrap();
     assert_eq!(payments.len(), 2);
     assert_eq!(payments[0].position, 200);
     assert_eq!(payments[1].position, 201);
-    assert!(matches!(
-        client
-            .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
-            .await,
-        Err(Error::PageBudget)
-    ));
     let mut wrong = accepted();
     wrong.hash[0] ^= 1;
-    assert!(client
-        .lookup(receiver(), NonZeroU32::new(2).unwrap(), wrong)
-        .await
-        .is_err());
+    assert!(client.lookup(receiver(), wrong).await.is_err());
     let oversized = http()
         .post(format!("{}/v1/receiver/query", server.origin))
         .body(vec![
@@ -268,14 +281,31 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .unwrap();
     assert_eq!(malformed.status(), reqwest::StatusCode::BAD_REQUEST);
     let absent = serve(snapshot(0)).await;
-    let client = connect(&absent.origin, Http(http()), accepted(), 0)
+    let mut client = connect(&absent.origin, Http(http()), accepted(), 0)
         .await
         .unwrap();
     assert!(client
-        .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
+        .lookup(receiver(), accepted())
         .await
         .unwrap()
         .is_empty());
+}
+
+#[tokio::test]
+async fn long_histories_load_the_row_file() {
+    use receiver_pir::transport::MAX_PIR_PAGES;
+    let pir = MAX_PIR_PAGES as usize;
+    for (count, posts, gets) in [(MAX_PIR_PAGES, pir, 2), (MAX_PIR_PAGES + 1, 1, 3)] {
+        let server = serve(snapshot(count)).await;
+        let host = Counted::new();
+        let mut client = connect(&server.origin, &host, accepted(), 0).await.unwrap();
+        let payments = client.lookup(receiver(), accepted()).await.unwrap();
+        assert_eq!(payments.len(), count as usize);
+        assert!(payments.windows(2).all(|p| p[0].position < p[1].position));
+        // The manifest and PIR setup, plus the row file for the long history.
+        assert_eq!(host.gets.load(Ordering::Relaxed), gets);
+        assert_eq!(host.posts.load(Ordering::Relaxed), posts);
+    }
 }
 
 #[tokio::test]
@@ -311,14 +341,11 @@ async fn reject_incomplete_or_inconsistent_pagination() {
         }
         data.manifest.data_sha256 = Sha256::digest(&data.data).into();
         let server = serve(data).await;
-        let client = connect(&server.origin, Http(http()), accepted(), 0)
+        let mut client = connect(&server.origin, Http(http()), accepted(), 0)
             .await
             .unwrap();
         assert!(
-            client
-                .lookup(receiver(), NonZeroU32::new(5).unwrap(), accepted())
-                .await
-                .is_err(),
+            client.lookup(receiver(), accepted()).await.is_err(),
             "fault {fault} must not produce partial success"
         );
     }
@@ -348,38 +375,9 @@ async fn common_witness_file_uses_the_same_publication() {
 #[tokio::test]
 async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
     use receiver_pir::transport::prefer_directory_file;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    struct Counted {
-        http: Http,
-        up: AtomicUsize,
-        down: AtomicUsize,
-        posts: AtomicUsize,
-        gets: AtomicUsize,
-    }
-    impl Transport for Counted {
-        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
-            self.gets.fetch_add(1, Ordering::Relaxed);
-            let data = Transport::get(&self.http, url, limit).await?;
-            self.down.fetch_add(data.len(), Ordering::Relaxed);
-            Ok(data)
-        }
-        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
-            self.posts.fetch_add(1, Ordering::Relaxed);
-            self.up.fetch_add(body.len(), Ordering::Relaxed);
-            let data = Transport::post(&self.http, url, body, limit).await?;
-            self.down.fetch_add(data.len(), Ordering::Relaxed);
-            Ok(data)
-        }
-    }
     let server = serve(snapshot(1)).await;
     for count in [50, 250, 10_000] {
-        let host = Counted {
-            http: Http(http()),
-            up: AtomicUsize::new(0),
-            down: AtomicUsize::new(0),
-            posts: AtomicUsize::new(0),
-            gets: AtomicUsize::new(0),
-        };
+        let host = Counted::new();
         let mut client = connect(&server.origin, &host, accepted(), count)
             .await
             .unwrap();
@@ -389,11 +387,7 @@ async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
         );
         for _ in 0..count {
             assert_eq!(
-                client
-                    .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
-                    .await
-                    .unwrap()
-                    .len(),
+                client.lookup(receiver(), accepted()).await.unwrap().len(),
                 1
             );
         }
@@ -411,10 +405,7 @@ async fn adaptive_discovery_uses_remaining_work_and_reuses_verified_file() {
         client.use_file_for_work(10_000).await.unwrap();
         let requests = host.gets.load(Ordering::Relaxed);
         client.use_file_for_work(10_000).await.unwrap();
-        client
-            .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
-            .await
-            .unwrap();
+        client.lookup(receiver(), accepted()).await.unwrap();
         assert_eq!(host.gets.load(Ordering::Relaxed), requests);
         assert_eq!(requests, if count == 50 { 3 } else { 2 });
     }
@@ -438,8 +429,8 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
             }
             Ok(bytes)
         }
-        async fn post(&self, _: &str, _: Vec<u8>, _: usize) -> Result<Vec<u8>, Error> {
-            panic!("file mode never posts")
+        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+            Transport::post(&self.http, url, body, limit).await
         }
     }
     let server = serve(snapshot(2)).await;
@@ -458,21 +449,28 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
             Err(Error::Malformed)
         ));
     }
-    let client = connect(&server.origin, Http(http()), accepted(), 250)
+    // A PIR client that loads the file for a long history checks it the same way.
+    let long = serve(snapshot(receiver_pir::transport::MAX_PIR_PAGES + 1)).await;
+    let mut client = connect(
+        &long.origin,
+        Corrupt {
+            http: Http(http()),
+            truncate: false,
+        },
+        accepted(),
+        0,
+    )
+    .await
+    .unwrap();
+    assert!(matches!(
+        client.lookup(receiver(), accepted()).await,
+        Err(Error::Malformed)
+    ));
+    let mut client = connect(&server.origin, Http(http()), accepted(), 250)
         .await
         .unwrap();
-    assert!(matches!(
-        client
-            .lookup(receiver(), NonZeroU32::new(1).unwrap(), accepted())
-            .await,
-        Err(Error::PageBudget)
-    ));
     assert_eq!(
-        client
-            .lookup(receiver(), NonZeroU32::new(2).unwrap(), accepted())
-            .await
-            .unwrap()
-            .len(),
+        client.lookup(receiver(), accepted()).await.unwrap().len(),
         2
     );
 }

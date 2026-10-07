@@ -8,7 +8,7 @@ use receiver_directory::{
     Payment, Receiver,
 };
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, num::NonZeroU32};
+use std::collections::BTreeSet;
 
 /// Hosts supply their route policy, cancellation, and timeout for every request.
 /// Enforce `limit` while streaming, reject non-success responses, and map HTTP
@@ -46,6 +46,11 @@ enum DiscoverySession {
     File { manifest: Manifest, rows: Vec<u8> },
 }
 
+/// Pages one lookup reads over PIR; a receiver with more loads the row file instead.
+/// Each page is one sequential request, and a publication is served for only about a
+/// minute after the next replaces it, so a long walk could never finish in time.
+pub const MAX_PIR_PAGES: u32 = 16;
+
 /// Compares remaining uncached discovery traffic, including PIR uploads. Note
 /// retrieval is separate. Historical swap count and sunk traffic are irrelevant.
 pub fn prefer_directory_file(manifest: &Manifest, remaining_lookups: usize) -> Result<bool, Error> {
@@ -60,9 +65,10 @@ pub fn prefer_directory_file(manifest: &Manifest, remaining_lookups: usize) -> R
 
 impl<T: Transport> DirectoryClient<T> {
     /// Use the exact advertised revision whose anchor the caller independently checked.
-    /// `remaining_lookups` selects PIR or the row file for the whole job; reuse the client
-    /// across batches and reconnect for a new revision. A file failure is an error, never
-    /// a receiver-dependent public request.
+    /// `remaining_lookups` selects PIR or the row file for the job, and a long history
+    /// can also load the file (see [`Self::lookup`]). Reuse the client across batches and
+    /// reconnect for a new revision. A file failure is an error, never a
+    /// receiver-dependent public request.
     pub async fn connect_manifest(
         origin: &str,
         http: T,
@@ -95,9 +101,15 @@ impl<T: Transport> DirectoryClient<T> {
 
     /// Re-evaluate newly discovered work without discarding setup or a verified file.
     pub async fn use_file_for_work(&mut self, remaining_lookups: usize) -> Result<(), Error> {
-        if matches!(self.session, DiscoverySession::File { .. })
-            || !prefer_directory_file(self.manifest(), remaining_lookups)?
-        {
+        if prefer_directory_file(self.manifest(), remaining_lookups)? {
+            self.load_rows().await?;
+        }
+        Ok(())
+    }
+
+    /// Switch to the verified row file, downloading it unless it is already loaded.
+    async fn load_rows(&mut self) -> Result<(), Error> {
+        if matches!(self.session, DiscoverySession::File { .. }) {
             return Ok(());
         }
         let manifest = self.manifest().clone();
@@ -145,20 +157,27 @@ impl<T: Transport> DirectoryClient<T> {
         )?)
     }
 
-    /// Return every payment from one publication, or an error. No partial success or cleartext fallback.
-    /// Revalidate the anchor before crediting results if the wallet's chain changes while awaiting I/O.
+    /// Return every payment to `receiver` in one publication, or an error. No partial
+    /// success or cleartext fallback. A PIR session reads up to [`MAX_PIR_PAGES`] pages
+    /// over PIR and otherwise loads the file once and reads every page locally. Neither
+    /// hides from the directory that a receiver has several payments. Revalidate the
+    /// anchor before crediting results if the wallet's chain changes while awaiting I/O.
     pub async fn lookup(
-        &self,
+        &mut self,
         receiver: Receiver,
-        max_pages: NonZeroU32,
         accepted: AcceptedCoverage,
     ) -> Result<Vec<Payment>, Error> {
         accepted.check(&self.manifest().directory)?;
-        let mut records = Vec::new();
+        let mut records: Vec<receiver_directory::Record> = Vec::new();
         let mut outputs = BTreeSet::new();
-        for page in 0..max_pages.get() {
+        loop {
+            let page = records.len() as u32;
             let record = match &self.session {
                 DiscoverySession::File { manifest, rows } => {
+                    // A crafted file can hold a very long history; stay cancellable.
+                    if page % 256 == 255 {
+                        yield_now().await;
+                    }
                     let row = row_for(&manifest.directory, &receiver, page)?;
                     lookup_row(
                         &manifest.directory,
@@ -184,8 +203,13 @@ impl<T: Transport> DirectoryClient<T> {
                 // The row decoder permits absence only on page zero.
                 return Ok(Vec::new());
             };
-            if record.total > max_pages.get() {
-                return Err(Error::PageBudget);
+            if page == 0
+                && record.total > MAX_PIR_PAGES
+                && matches!(self.session, DiscoverySession::Pir(_))
+            {
+                // Read a long history from the row file instead.
+                self.load_rows().await?;
+                continue;
             }
             if let Some(previous) = records.last() {
                 check_next(previous, &record)?;
@@ -199,8 +223,28 @@ impl<T: Transport> DirectoryClient<T> {
                 return Ok(records.into_iter().map(|r| r.payment).collect());
             }
         }
-        Err(Error::PageBudget)
     }
+}
+
+/// Returns pending once, so a long synchronous walk lets the executor run timers and
+/// cancellation without depending on a particular runtime.
+async fn yield_now() {
+    struct YieldNow(bool);
+    impl std::future::Future for YieldNow {
+        type Output = ();
+        fn poll(
+            mut self: std::pin::Pin<&mut Self>,
+            cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<()> {
+            if self.0 {
+                return std::task::Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            std::task::Poll::Pending
+        }
+    }
+    YieldNow(false).await
 }
 
 // Every file entry point uses the same bound and digest check before decoding rows.

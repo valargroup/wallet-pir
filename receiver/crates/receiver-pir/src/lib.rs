@@ -37,8 +37,6 @@ pub enum Error {
     Pir,
     #[error("receiver publication changed")]
     Revision,
-    #[error("payment history exceeds the caller's page budget")]
-    PageBudget,
     #[error("receiver transport failed: {0}")]
     Transport(String),
     #[error(transparent)]

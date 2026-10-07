@@ -27,11 +27,12 @@ repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
-start at 8192 rows and double on bucket overflow up to 65536. Overflow at the
-maximum fails the candidate instead of dropping records. The manifest binds the
-network, profile, inclusive block coverage, boundary hashes, tree positions,
-geometry, salt, record count and the SHA-256 of the rows. Its own SHA-256 is the
-immutable revision.
+start at 8192 rows. A crowded bucket retries up to 16 salts derived from the
+terminal hash, the first being the hash itself, and only then doubles the table,
+up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
+records. The manifest binds the network, profile, inclusive block coverage,
+boundary hashes, tree positions, geometry, salt, record count and the SHA-256 of
+the rows. Its own SHA-256 is the immutable revision.
 
 ## Protocol
 
@@ -66,8 +67,8 @@ decrypts each payment with its own key and checks witness paths against its own
 tree root, never only the file's root. A directory match proves neither
 ownership nor spendability. An indexer can still omit payments, so an empty page
 zero means no indexed payment in that publication, not an unused address. Missing
-or inconsistent pages, an exhausted page budget and transport failures are
-errors, never absence or a cleartext fallback.
+or inconsistent pages and transport failures are errors, never absence or a
+cleartext fallback.
 
 ## Running the indexer and server
 
@@ -105,9 +106,10 @@ block against its own chain, then calls `connect_manifest` with the job's
 remaining lookup count. Small jobs use PIR. Larger ones (about 240 lookups at
 8192 rows) download the row file once and check its digest. `use_file_for_work`
 switches when new work arrives. `witnesses` fetches the common witness file, and
-`lookup` returns a receiver's complete history or an error. Reuse the client
-across batches and reconnect for a new revision. The server sees the mode, never
-the receivers.
+`lookup` returns a receiver's complete history or an error. Over PIR it reads up
+to `MAX_PIR_PAGES` (16) pages, and loads the row file for a longer history. Reuse the client across batches and reconnect for a new revision. The
+server sees the mode and the number of queries, so it learns how many lookups
+found several payments, but never which receivers were looked up.
 
 ## Tests
 

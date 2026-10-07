@@ -5,7 +5,11 @@ use crate::{
 };
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::Path;
+
+/// Salts a publication tries at one row count before the caller grows the table.
+pub const SALT_ATTEMPTS: u32 = 16;
 
 /// The network and chain boundary that a database is bound to.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,6 +246,9 @@ impl Store {
     }
 
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
+    /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
+    /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
+    /// overflowed at `rows`.
     pub fn snapshot(&mut self, rows: u32) -> Result<Snapshot, Error> {
         let tx = self.db.transaction()?;
         let anchor = tip(&tx, &self.config)?;
@@ -271,22 +278,28 @@ impl Store {
             }
             start = end;
         }
-        let manifest = Manifest {
-            profile: PROFILE.into(),
-            genesis: self.config.genesis,
-            start_height: self.config.start_height,
-            start_parent: self.config.start_parent,
-            start_position: self.config.start_position,
-            end_height: anchor.height,
-            end_hash: anchor.hash,
-            end_position: anchor.position,
-            rows,
-            salt: anchor.hash,
-            records: 0,
-            data_sha256: [0; 32],
-        };
         tx.commit()?;
-        Snapshot::build(manifest, &records)
+        for attempt in 0..SALT_ATTEMPTS {
+            let manifest = Manifest {
+                profile: PROFILE.into(),
+                genesis: self.config.genesis,
+                start_height: self.config.start_height,
+                start_parent: self.config.start_parent,
+                start_position: self.config.start_position,
+                end_height: anchor.height,
+                end_hash: anchor.hash,
+                end_position: anchor.position,
+                rows,
+                salt: salt(&anchor.hash, attempt),
+                records: 0,
+                data_sha256: [0; 32],
+            };
+            match Snapshot::build(manifest, &records) {
+                Err(Error::Capacity) => continue,
+                built => return built,
+            }
+        }
+        Err(Error::Capacity)
     }
 
     /// Counts are over contiguous stored coverage, including excluded coinbase Actions.
@@ -302,6 +315,18 @@ impl Store {
         ))
     }
 }
+/// The anchor hash first, so an uncrowded publication keeps its earlier salt.
+fn salt(anchor: &Hash, attempt: u32) -> Hash {
+    if attempt == 0 {
+        return *anchor;
+    }
+    let mut h = Sha256::new();
+    h.update(b"ironwood-receiver/v1/salt\0");
+    h.update(anchor);
+    h.update(attempt.to_le_bytes());
+    h.finalize().into()
+}
+
 fn boundary(c: &Config) -> Checkpoint {
     Checkpoint {
         height: c.start_height - 1,
