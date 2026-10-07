@@ -155,6 +155,13 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
+      - name: Read repository Rust toolchain
+        id: helper-toolchain
+        run: python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.helper-toolchain.outputs.toolchain }}
+          components: rustfmt, clippy
       # Parses and lints every ops script, compiles every jq program the deploy
       # scripts run, and evaluates the transparent ones against payloads
       # `operator_payloads.rs` serialized from the server's own types. This
