@@ -1060,3 +1060,60 @@ fn txid_live_lookup() {
     );
     assert_eq!(routes(&http.take_log()), [Route::Query, Route::Query]);
 }
+
+#[test]
+fn refresh_map_observes_a_new_publication() {
+    let _serial = serial();
+    let env = env();
+    // A deployment of its own: this test publishes, the shared one never does.
+    let world = env.rt.block_on(World::start());
+    let mut http = Http::new(&world.url);
+    let mut client = env.client();
+    let hex32 = |digest: [u8; 32]| hex::encode(digest);
+
+    let first = client.refresh_map(&mut http, &never).unwrap();
+    assert_eq!(hex32(first), world.p0.1);
+    assert_eq!(client.map_sha256(), Some(world.p0.1.as_str()));
+    assert_eq!(routes(&http.take_log()), [Route::Map]);
+    let added = synth::record(30, 1, 25, 0);
+    assert_eq!(
+        client.lookup(&mut http, added.txid.0, 265, &never).unwrap(),
+        TxidLookup::PlacementUnknown(Placement::Above)
+    );
+    // Unchanged publication: the same digest again.
+    assert_eq!(client.refresh_map(&mut http, &never).unwrap(), first);
+
+    // The recent shard grows to 270 with one more record.
+    let mut records = world.r0_records.clone();
+    records.push(added.clone());
+    let grown = synth::write_shard(
+        world.root.path(),
+        &spec(1, 200, 270, false, &world.a0.digest),
+        &records,
+    )
+    .unwrap();
+    let p1 = synth::write_candidate(
+        world.root.path(),
+        &params(1),
+        &[world.a0.clone(), grown.clone()],
+        "grown",
+    )
+    .unwrap();
+    env.rt.block_on(world.recent.publish(&p1.0, &p1.1));
+    http.take_log();
+
+    let second = client.refresh_map(&mut http, &never).unwrap();
+    assert_ne!(second, first);
+    assert_eq!(hex32(second), p1.1);
+    assert_eq!(client.map_sha256(), Some(p1.1.as_str()));
+    assert_eq!(routes(&http.take_log()), [Route::Map]);
+    // The refreshed map is the one lookups use: no further map fetch.
+    let provenance = found(
+        client.lookup(&mut http, added.txid.0, 265, &never).unwrap(),
+        &added,
+    );
+    assert_eq!(provenance.map_sha256, p1.1);
+    assert_eq!(provenance.manifest_digest, grown.digest);
+    assert!(!routes(&http.take_log()).contains(&Route::Map));
+    env.rt.block_on(async move { drop(world) });
+}

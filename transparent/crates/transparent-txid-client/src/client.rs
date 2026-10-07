@@ -171,6 +171,25 @@ impl TxidDisplayClient {
         self.map.as_ref().map(|cached| cached.sha256.as_str())
     }
 
+    /// Fetches the map now, without a lookup, and returns its SHA-256.
+    ///
+    /// The map is validated as a lookup validates it (the
+    /// `X-Txid-Map-Sha256` header and the canonical encoding) and, once
+    /// valid, replaces the cached map, so [`Self::map_sha256`] reports it.
+    /// On any error the previously cached map is kept. Sends exactly one
+    /// `GET /v1/txid/shards` unless `cancel` returns true first; statuses
+    /// map to errors as in [`Self::lookup`], with no retry.
+    pub fn refresh_map(
+        &mut self,
+        transport: &mut impl TxidTransport,
+        cancel: &dyn Fn() -> bool,
+    ) -> Result<[u8; 32], TxidError> {
+        let cached = self.map(transport, cancel, true)?;
+        let mut sha256 = [0; 32];
+        hex::decode_to_slice(&cached.sha256, &mut sha256).expect("a hex SHA-256");
+        Ok(sha256)
+    }
+
     /// Forgets the map so the next lookup fetches it again.
     pub fn invalidate_map(&mut self) {
         self.map = None;
@@ -794,6 +813,87 @@ mod tests {
                 "connection refused".into()
             )))
         );
+    }
+
+    fn map(start_height: u64) -> DisplayMap {
+        DisplayMap {
+            schema: display::DISPLAY_SCHEMA.into(),
+            network: "main".into(),
+            genesis_hash: "00".repeat(32),
+            seal: display::DisplaySealParams {
+                n_archive: 1,
+                n_recent: 1,
+                archive_target: 1,
+                recent_floor: 1,
+                reorg_margin: 1,
+            },
+            start_height,
+            first_shard_id: 0,
+            shards: Vec::new(),
+        }
+    }
+
+    fn map_reply(body: Vec<u8>, header: Option<String>) -> Result<TxidReply, TransportError> {
+        Ok(TxidReply {
+            map_sha256: header,
+            body,
+            ..reply(200)
+        })
+    }
+
+    #[test]
+    fn refresh_map_validates_and_replaces_only_on_success() {
+        let (a, b) = (map(10), map(20));
+        let digest = |m: &DisplayMap| -> [u8; 32] { Sha256::digest(m.to_bytes()).into() };
+        let mut transport = Scripted::default();
+        transport
+            .replies
+            .push_back(map_reply(a.to_bytes(), Some(a.sha256())));
+        // A wrong header, a missing header, a non-canonical body, then 503.
+        transport
+            .replies
+            .push_back(map_reply(b.to_bytes(), Some(a.sha256())));
+        transport.replies.push_back(map_reply(b.to_bytes(), None));
+        let compact = serde_json::to_vec(&b).unwrap();
+        let compact_sha = hex::encode(Sha256::digest(&compact));
+        transport
+            .replies
+            .push_back(map_reply(compact, Some(compact_sha)));
+        transport.replies.push_back(Ok(TxidReply {
+            retry_after: Some("2".into()),
+            ..reply(503)
+        }));
+        transport
+            .replies
+            .push_back(map_reply(b.to_bytes(), Some(b.sha256())));
+
+        let mut client = TxidDisplayClient::new();
+        assert_eq!(client.map_sha256(), None);
+        assert_eq!(client.refresh_map(&mut transport, &never), Ok(digest(&a)));
+        assert_eq!(client.map_sha256(), Some(a.sha256().as_str()));
+        for expected in [
+            TxidError::Protocol(ProtocolKind::MapHeader),
+            TxidError::Protocol(ProtocolKind::MapHeader),
+            TxidError::Protocol(ProtocolKind::MapCanonical),
+            TxidError::Unavailable {
+                retry_after: Some(Duration::from_secs(2)),
+            },
+        ] {
+            assert_eq!(client.refresh_map(&mut transport, &never), Err(expected));
+            assert_eq!(client.map_sha256(), Some(a.sha256().as_str()));
+        }
+        assert_eq!(client.refresh_map(&mut transport, &never), Ok(digest(&b)));
+        assert_eq!(client.map_sha256(), Some(b.sha256().as_str()));
+        assert_eq!(
+            client.refresh_map(&mut transport, &|| true),
+            Err(TxidError::Cancelled)
+        );
+        // Only the map was ever asked for: no init, no query.
+        assert_eq!(transport.sent.len(), 6);
+        assert!(transport
+            .sent
+            .iter()
+            .all(|r| r.route == Route::Map && r.method == Method::Get));
     }
 
     #[test]

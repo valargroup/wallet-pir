@@ -185,6 +185,9 @@ reference it is tested against.
   is the map SHA-256, shard id, revision, manifest digest and tier. Otherwise
   it returns `Absent`, `PlacementUnknown(Below | Above)` or `Unsupported`. The
   client caches native profiles, init, the map, manifests and setups.
+  `refresh_map(transport, cancel)` fetches and validates only the map and
+  returns its SHA-256. A wallet calls it to re-check coverage when no lookup
+  is due. A valid map replaces the cached one, so `map_sha256()` reports it.
 - **Transcript.** Requests are sent one at a time: init, map, manifest and
   setups when not cached, then exactly two directory queries, even when the
   rows coincide. A paged record then sends exactly `pages` page queries.
