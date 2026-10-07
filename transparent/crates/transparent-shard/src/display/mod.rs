@@ -29,6 +29,7 @@ pub use tables::{
     BuiltDisplay, VerifiedDisplay,
 };
 
+use crate::layout::Geometry;
 use crate::txid::{self, DirectoryEntry};
 use sha2::{Digest, Sha256};
 use transparent_events::Txid;
@@ -112,6 +113,77 @@ impl DisplayTable {
     }
 }
 
+impl DisplayTable {
+    /// The native table kind this table is served as.
+    pub fn kind(&self) -> DisplayKind {
+        match self {
+            Self::Directory(_) => DisplayKind::TxDirectory,
+            Self::Pages => DisplayKind::TxPages,
+        }
+    }
+}
+
+/// The history table kind whose native parameters, row count and row width
+/// a display table uses. Seeds are derived from the history schema and this
+/// kind's name, so the parameters are exactly the history display tables'.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum DisplayKind {
+    TxDirectory,
+    TxPages,
+}
+
+impl DisplayKind {
+    /// The history table name, which the native seeds are derived from.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TxDirectory => "txdirectory",
+            Self::TxPages => "txpages",
+        }
+    }
+
+    /// Rows in one segment of this table, at `geometry`.
+    pub fn rows(self, geometry: &Geometry) -> u64 {
+        match self {
+            Self::TxDirectory => geometry.directory_rows,
+            Self::TxPages => geometry.page_rows,
+        }
+    }
+
+    /// Bytes in one row of this table, at any geometry.
+    pub fn row_bytes(self, _geometry: &Geometry) -> u32 {
+        txid::ROW_BYTES as u32
+    }
+}
+
+/// The published seed a native table's public query setup is derived from,
+/// for the table named `table` (history or display kind) of `geometry_name`.
+///
+/// Distinct per geometry *and* per table. The two tables of one geometry have
+/// different row counts, so their public parameters already differ; two
+/// geometries have different row counts again. Deriving the seed from both
+/// names means a client that mixed any of them up fails its own re-derivation
+/// check rather than decoding a row against the wrong table's setup — which
+/// would not error, it would return plausible nonsense.
+///
+/// Domain-separated by the history schema string, so a future schema reusing
+/// these names does not reuse their seeds.
+pub fn setup_seed_named(geometry_name: &str, table: &str) -> u64 {
+    let digest = Sha256::new()
+        .chain_update(crate::manifest::SCHEMA.as_bytes())
+        .chain_update(b"/setup-seed\0")
+        .chain_update(geometry_name.as_bytes())
+        .chain_update(b"\0")
+        .chain_update(table.as_bytes())
+        .finalize();
+    u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"))
+}
+
+/// The setup seed of a display table kind at `geometry`, as `/v1/txid/init`
+/// publishes it.
+pub fn setup_seed(geometry: &Geometry, kind: DisplayKind) -> u64 {
+    setup_seed_named(geometry.name, kind.as_str())
+}
+
 /// Binds a query to one revision and one table, buckets included, so a body
 /// prepared for one bucket is refused by another bucket's runtime.
 pub fn query_binding(manifest_digest: &str, table: DisplayTable) -> [u8; 8] {
@@ -153,6 +225,34 @@ mod tests {
         }
         assert_eq!(DisplayTable::Directory(3).file_name(1), "directory-3.1.bin");
         assert_eq!(DisplayTable::Pages.file_name(0), "pages.0.bin");
+    }
+
+    /// Seeds are published by every running server; they must never move.
+    #[test]
+    fn setup_seeds_are_golden() {
+        for (geometry, kind, seed) in [
+            (&TXID_2K, DisplayKind::TxDirectory, 0x57a7_3ced_5e98_120a),
+            (&TXID_2K, DisplayKind::TxPages, 0x6231_4f48_472b_6e15),
+            (
+                &geometry::TXID_4K,
+                DisplayKind::TxDirectory,
+                0x28bc_e699_56cc_2d7e,
+            ),
+            (
+                &geometry::TXID_4K,
+                DisplayKind::TxPages,
+                0x95df_53a3_e525_1353,
+            ),
+        ] {
+            assert_eq!(
+                setup_seed(geometry, kind),
+                seed,
+                "{} {kind:?}",
+                geometry.name
+            );
+        }
+        assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
+        assert_eq!(DisplayTable::Pages.kind(), DisplayKind::TxPages);
     }
 
     #[test]

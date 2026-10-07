@@ -213,26 +213,10 @@ impl Table {
     }
 }
 
-/// The published seed a table's public query setup is derived from.
-///
-/// Distinct per geometry *and* per table. The two tables of one geometry have
-/// different row counts, so their public parameters already differ; two
-/// geometries have different row counts again. Deriving the seed from both
-/// names means a client that mixed any of them up fails its own re-derivation
-/// check rather than decoding a row against the wrong table's setup — which
-/// would not error, it would return plausible nonsense.
-///
-/// Domain-separated by the schema string, so a future schema reusing these
-/// names does not reuse their seeds.
+/// The published seed a table's public query setup is derived from; see
+/// [`transparent_shard::display::setup_seed_named`], which clients share.
 pub fn setup_seed(geometry: &Geometry, table: Table) -> u64 {
-    let mut hasher = Sha256::new();
-    hasher.update(SCHEMA.as_bytes());
-    hasher.update(b"/setup-seed\0");
-    hasher.update(geometry.name.as_bytes());
-    hasher.update(b"\0");
-    hasher.update(table.as_str().as_bytes());
-    let digest = hasher.finalize();
-    u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"))
+    transparent_shard::display::setup_seed_named(geometry.name, table.as_str())
 }
 
 /// Where one segment's bytes are, and what they must be.

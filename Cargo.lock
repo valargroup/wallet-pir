@@ -4323,6 +4323,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "transparent-txid-client"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "transparent-events",
+ "transparent-native",
+ "transparent-shard",
+]
+
+[[package]]
 name = "transparent-wallet"
 version = "0.1.0"
 dependencies = [

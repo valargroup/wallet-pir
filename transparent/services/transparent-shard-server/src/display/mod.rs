@@ -36,15 +36,15 @@ pub mod synth;
 use crate::assignment::WorkerRole;
 use crate::runtime::RuntimeKey;
 use crate::shardset::Table;
-use transparent_shard::display::DisplayTable;
+use transparent_shard::display::{DisplayKind, DisplayTable};
 
 /// The history table kind whose native parameters, row count and row width
 /// a display table uses. Seeds are derived from the history schema and this
 /// kind's name, so the parameters are exactly the history display tables'.
 pub fn kind(table: DisplayTable) -> Table {
-    match table {
-        DisplayTable::Directory(_) => Table::TxDirectory,
-        DisplayTable::Pages => Table::TxPages,
+    match table.kind() {
+        DisplayKind::TxDirectory => Table::TxDirectory,
+        DisplayKind::TxPages => Table::TxPages,
     }
 }
 
