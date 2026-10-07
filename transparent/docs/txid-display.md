@@ -204,6 +204,15 @@ reference it is tested against.
   epoch, response length and decoding. Transport failures return `Transport`.
 - **Bandwidth.** Measured body bytes in the in-process tests are in the
   [status](status.md#wallet-txid-client-2026-10-07).
+## Sizing and routing qualification
+
+The [sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md)
+compare implemented bytes with compact proposals and independent lookup/overflow
+routing. The whole-range probability study supports a sizing recommendation with
+clustered uncertainty; it does not qualify a population anonymity minimum. In particular, global overflow does
+not erase the containing lookup range exposed by the current reference helper.
+Future measurement and implementation gates remain in
+[remaining work](remaining-work.md#txid-display-sizing-and-independent-routing).
 
 ## Reproduce the native demo
 
