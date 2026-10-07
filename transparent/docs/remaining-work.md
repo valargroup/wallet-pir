@@ -310,16 +310,16 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [x] [Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md):
   seals and window drops reproduced by `verify`, 0 audit violations, all lookups
   exact, metered bytes equal computed, recent bench and bucket ablation.
-- [ ] Main CI green at the pushed SHA; `transparent-txid-display` release artifact.
-- [ ] Production access for the deploying account: a key on the coordinator, and through it
+- [x] Main CI green at `d191f86b` (CI full run 37388223909);
+  `transparent-txid-display` release artifact.
+- [x] Production access for the deploying account through the coordinator to
   archive-03, recent-01 and the router; a `wallet-pir-deploy` inventory with pinned `known_hosts`.
-- [ ] One consolidated production change sheet approved by Roman: Terraform 8095
-  plan, router render diff and the reconciler/control-sessions restarts, credential,
-  unit limits, the 20 QPS load plan, scaler mode, and the seal parameters
-  (local benches support `archive_target` 40,000 and `max_recent_records` 55,000).
-- [ ] Deploy in order: W0 baseline, `stage`, `ingest-start`, `firewall`,
-  `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`.
-- [ ] Measure each criterion live and write the production results:
+- [x] Production change applied with `archive_target` 40,000 and N=1 buckets.
+- [x] Deployed in order on 2026-10-06: W0 baseline, `stage`, `ingest-start`, `firewall`,
+  `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`
+  ([status](status.md#tiered-txid-display-in-production-2026-10-07)).
+- [ ] Measure each criterion live and write the production results (a 20 QPS run
+  started 2026-10-07):
   - anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
   - recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max;
   - archives: sealed digests unchanged across rebuilds and seals;

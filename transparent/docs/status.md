@@ -41,12 +41,35 @@ entries below do not record that cutover.
   - `v11/state` held 12,436 per-publication files after three days. The recipe
     caps a captured candidate namespace at 512 entries.
 
+## Tiered txid display in production, 2026-10-07
+
+The tiered txid display proof of concept has served beside history since
+2026-10-06. History was not changed. Deployed from release `d191f86b`
+(CI full run 37388223909, success), with `archive_target` 40,000 and N=1 buckets.
+
+- **Deploy.** Ten `txid-display-*` transactions committed between 12:31 and
+  13:23 UTC on 2026-10-06, in order: stage, ingest smoke, ingest start,
+  firewall, router hook, bootstrap, workers, route, measure start, controller.
+  Each has a recorded rollback. The deploy state is kept outside the repository.
+- **Serving.** `/v1/txid/` on transparent-pir.valargroup.dev routes to port
+  8095 on archive-03 (archive owner) and recent-01 (recent replica). The
+  controller, observer and map watcher run on the coordinator.
+- **Health at 13:55 UTC on 2026-10-07.** All txid units active with 0 restarts.
+  Both workers were ready and warm: archive-03 with 26 of 26 runtimes through
+  height 3,502,508, recent-01 with 2 of 2 through 3,509,538, against a public
+  height of 3,509,537. The controller reported 13 archives and 47,268 recent
+  records, with 15.7 s from block to serving on its latest cycle.
+- **Open.** A 20 QPS measurement run started at 13:53 UTC on 2026-10-07; no
+  acceptance results are recorded yet. Every live criterion remains open, as
+  does Roman's keep, stop or retire decision
+  ([gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05)).
+
 ## Tiered txid display proof of concept, 2026-10-05
 
 Source for a separately published, time-tiered and hash-bucketed txid display
 ([design](txid-display.md#tiered-display-publication-proof-of-concept)) passed
-its package and ops tests at `1f89cac0`. Only local, synthetic evidence exists;
-nothing is deployed.
+its package and ops tests at `1f89cac0`. Only local, synthetic evidence existed
+on this date; the production deployment is recorded above.
 
 - **End to end.** Two workers behind a local proxy and the controller replaying
   12,000 synthetic blocks: 4 seals and 2 window drops reproduced by `verify`;
@@ -60,7 +83,7 @@ nothing is deployed.
 - **Buckets.** No bandwidth change at this shard size. N=4 costs more memory per
   txid and gives smaller classes than N=1.
 
-Page-count classes stay below 10k. Production access is the open prerequisite.
+Page-count classes stay below 10k.
 [Evidence](../evidence/txid-display-tiered-2026-10-05/README.md);
 [gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
 

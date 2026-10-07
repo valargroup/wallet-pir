@@ -160,7 +160,9 @@ Source: `transparent-shard/src/display/` (format and seal rule),
 `transparent-shard-server/src/display/` (`transparent-txid-server`,
 `txid-control`, `txid-inventory`) and the `txid-display-*` deploy commands.
 [Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md) covers
-synthetic chains only; nothing is deployed. Open gates are in
+synthetic chains only. It has run in production beside history since
+2026-10-06 ([status](status.md#tiered-txid-display-in-production-2026-10-07)),
+unaccepted. Open gates are in
 [remaining work](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
 
 ## Reproduce the native demo
