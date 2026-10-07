@@ -17,7 +17,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayMap, DisplaySealParams, DisplayTable, TXID_2K};
+use transparent_shard::display::{
+    self, DisplayRecentMap, DisplaySealParams, DisplayTable, TXID_2K,
+};
 use transparent_shard::txid::TransparentDisplayRecord;
 use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
@@ -193,6 +195,17 @@ fn never() -> bool {
 
 const ABSENT: [u8; 32] = [0xee; 32];
 
+/// SHA-256 of the recent map the fixture publication serves.
+fn recent_sha256(world: &World) -> String {
+    recent_sha256_of(&world.p0.0)
+}
+
+/// SHA-256 of the recent map a publication directory holds.
+fn recent_sha256_of(publication: &Path) -> String {
+    let bytes = std::fs::read(publication.join(display::split::RECENT_MAP_FILE)).unwrap();
+    hex::encode(Sha256::digest(bytes))
+}
+
 fn routes(log: &[Sent]) -> Vec<Route> {
     log.iter().map(|s| s.route).collect()
 }
@@ -266,6 +279,12 @@ fn inline_found_exact_transcript() {
             Tier::Recent,
         ),
     ] {
+        // An archive height needs its index chunk; the recent entry is in
+        // the recent map itself.
+        let chunk: &[Route] = match tier {
+            Tier::Archive => &[Route::MapChunk],
+            Tier::Recent => &[],
+        };
         let mut client = env.client();
         let mut http = env.http();
         let record = &records[40];
@@ -276,27 +295,23 @@ fn inline_found_exact_transcript() {
             record,
         );
         let log = http.take_log();
-        // Cold: init, map, manifest, the bucket's one directory setup, then
-        // exactly two directory queries.
-        assert_eq!(
-            routes(&log),
-            [
-                Route::Init,
-                Route::Map,
-                Route::Manifest,
-                Route::Setup,
-                Route::Query,
-                Route::Query
-            ]
-        );
+        // Cold: init, the recent map, the index chunk for an archive, the
+        // manifest, the bucket's one directory setup, then exactly two
+        // directory queries.
+        let expected: Vec<Route> = [Route::Init, Route::Map]
+            .into_iter()
+            .chain(chunk.iter().copied())
+            .chain([Route::Manifest, Route::Setup, Route::Query, Route::Query])
+            .collect();
+        assert_eq!(routes(&log), expected);
         assert_queries(&log, 0);
-        assert!(log[3].path.ends_with("/setup/directory-0/0"));
+        assert!(log[log.len() - 3].path.ends_with("/setup/directory-0/0"));
         assert_eq!(provenance.shard_id, shard_id);
         assert_eq!(&provenance.manifest_digest, digest);
         assert_eq!(provenance.tier, tier);
         assert_eq!(provenance.revision, 0);
         assert_eq!(Some(provenance.map_sha256.as_str()), client.map_sha256());
-        assert_eq!(provenance.map_sha256, env.world.p0.1);
+        assert_eq!(provenance.map_sha256, recent_sha256(&env.world));
         let (up, down) = body_bytes(&log);
         eprintln!("bandwidth inline cold {tier:?}: up {up} B, down {down} B");
         // Warm: the same two queries only.
@@ -438,12 +453,12 @@ fn unsupported_schema_codec() {
         TxidLookup::Unsupported
     );
     assert_eq!(routes(&http.take_log()), [Route::Init]);
-    // A map schema this client does not know, canonical and correctly
+    // A recent map schema this client does not know, canonical and correctly
     // announced.
     let mut http = env.http();
     http.tamper = Some(Box::new(|request, reply| {
         if request.route == Route::Map {
-            let mut map: DisplayMap = serde_json::from_slice(&reply.body).unwrap();
+            let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
             map.schema = "transparent-txid-display-shard-v2".into();
             reply.body = map.to_bytes();
             reply.map_sha256 = Some(map.sha256());
@@ -469,7 +484,8 @@ fn stale_409_refresh_retry_once_then_stale() {
     let _serial = serial();
     let env = env();
     let record = &env.world.a0_records[40];
-    // One 409: the map is fetched again and the whole lookup retried.
+    // One 409: the recent map is fetched again and the whole lookup
+    // retried. The index chunk is cached by digest and not fetched again.
     let mut http = env.http();
     let mut left = 1;
     http.intercept = Some(Box::new(move |request| {
@@ -491,6 +507,7 @@ fn stale_409_refresh_retry_once_then_stale() {
         [
             Route::Init,
             Route::Map,
+            Route::MapChunk,
             Route::Manifest,
             Route::Setup,
             Route::Query,
@@ -498,6 +515,13 @@ fn stale_409_refresh_retry_once_then_stale() {
             Route::Query,
             Route::Query
         ]
+    );
+    // The refetch is the recent map alone, the same bytes as the first.
+    let maps: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Map).collect();
+    assert_eq!(maps[0].reply_bytes, maps[1].reply_bytes);
+    eprintln!(
+        "bandwidth map refetch after a 409: down {} B",
+        maps[1].reply_bytes
     );
     // Every query 409: one retry, then Stale.
     let mut http = env.http();
@@ -526,6 +550,7 @@ fn stale_409_refresh_retry_once_then_stale() {
         [
             Route::Init,
             Route::Map,
+            Route::MapChunk,
             Route::Manifest,
             Route::Map,
             Route::Manifest
@@ -752,15 +777,47 @@ fn tampered_length_protocol_never_absent() {
 #[test]
 fn tampered_map_canonical_protocol_never_absent() {
     let _serial = serial();
-    // Compact rather than pretty, correctly announced.
+    // Pretty rather than compact, correctly announced.
     assert_tampered(
         ABSENT,
         150,
         ProtocolKind::MapCanonical,
         on(Route::Map, |reply| {
-            let map: DisplayMap = serde_json::from_slice(&reply.body).unwrap();
-            reply.body = serde_json::to_vec(&map).unwrap();
+            let map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
+            reply.body = serde_json::to_vec_pretty(&map).unwrap();
             reply.map_sha256 = Some(hex::encode(Sha256::digest(&reply.body)));
+        }),
+    );
+}
+
+#[test]
+fn tampered_index_chunk_protocol_never_absent() {
+    let _serial = serial();
+    // One byte changed, or appended: no longer the digest the map names.
+    assert_tampered(
+        ABSENT,
+        150,
+        ProtocolKind::Map,
+        on(Route::MapChunk, |reply| reply.body[10] ^= 1),
+    );
+    assert_tampered(
+        ABSENT,
+        150,
+        ProtocolKind::Map,
+        on(Route::MapChunk, |reply| reply.body.push(b' ')),
+    );
+    // A recent map naming a chunk whose entries it does not chain to,
+    // correctly announced: the chunk's digest matches, its contents do not.
+    assert_tampered(
+        ABSENT,
+        150,
+        ProtocolKind::Map,
+        on(Route::Map, |reply| {
+            let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
+            map.chunks[0].start_height += 1;
+            map.start_height += 1;
+            reply.body = map.to_bytes();
+            reply.map_sha256 = Some(map.sha256());
         }),
     );
 }
@@ -787,8 +844,9 @@ fn cancel_stops_before_next_request() {
     let _serial = serial();
     let env = env();
     let record = &env.world.a0_records[41];
-    // Cold paged lookup: init, map, manifest, setup, 2 queries, setup, 1 page.
-    for allowed in 0..8 {
+    // Cold paged lookup: init, map, chunk, manifest, setup, 2 queries, setup,
+    // 1 page.
+    for allowed in 0..9 {
         let mut http = env.http();
         let sent = Cell::new(0usize);
         let cancel = || {
@@ -954,10 +1012,12 @@ fn differential_vs_reference_txdisplay() {
                     expected.digest.as_deref(),
                     Some(provenance.manifest_digest.as_str())
                 );
+                // The reference reads the full map, the client the recent map.
                 assert_eq!(
                     expected.map_sha256.as_deref(),
-                    Some(provenance.map_sha256.as_str())
+                    Some(env.world.p0.1.as_str())
                 );
+                assert_eq!(provenance.map_sha256, recent_sha256(&env.world));
             }
             (LookupResult::Absent, TxidLookup::Absent)
             | (LookupResult::PlacementUnknown, TxidLookup::PlacementUnknown(_))
@@ -1072,8 +1132,9 @@ fn refresh_map_observes_a_new_publication() {
     let hex32 = |digest: [u8; 32]| hex::encode(digest);
 
     let first = client.refresh_map(&mut http, &never).unwrap();
-    assert_eq!(hex32(first), world.p0.1);
-    assert_eq!(client.map_sha256(), Some(world.p0.1.as_str()));
+    let p0 = recent_sha256_of(&world.p0.0);
+    assert_eq!(hex32(first), p0);
+    assert_eq!(client.map_sha256(), Some(p0.as_str()));
     assert_eq!(routes(&http.take_log()), [Route::Map]);
     let added = synth::record(30, 1, 25, 0);
     assert_eq!(
@@ -1104,15 +1165,16 @@ fn refresh_map_observes_a_new_publication() {
 
     let second = client.refresh_map(&mut http, &never).unwrap();
     assert_ne!(second, first);
-    assert_eq!(hex32(second), p1.1);
-    assert_eq!(client.map_sha256(), Some(p1.1.as_str()));
+    let p1_recent = recent_sha256_of(&p1.0);
+    assert_eq!(hex32(second), p1_recent);
+    assert_eq!(client.map_sha256(), Some(p1_recent.as_str()));
     assert_eq!(routes(&http.take_log()), [Route::Map]);
     // The refreshed map is the one lookups use: no further map fetch.
     let provenance = found(
         client.lookup(&mut http, added.txid.0, 265, &never).unwrap(),
         &added,
     );
-    assert_eq!(provenance.map_sha256, p1.1);
+    assert_eq!(provenance.map_sha256, p1_recent);
     assert_eq!(provenance.manifest_digest, grown.digest);
     assert!(!routes(&http.take_log()).contains(&Route::Map));
     env.rt.block_on(async move { drop(world) });

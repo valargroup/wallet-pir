@@ -319,7 +319,9 @@ impl DisplayMapEntry {
     }
 }
 
-/// `GET /v1/txid/shards`: the shards currently served, oldest first.
+/// `GET /v1/txid/shards`: the shards currently served, oldest first. Clients
+/// read the [split map](super::split) instead; this full listing is kept for
+/// clients built before it.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DisplayMap {
     pub schema: String,
@@ -343,19 +345,7 @@ impl DisplayMap {
     }
 
     pub fn shard_for_height(&self, height: u64) -> Option<&DisplayMapEntry> {
-        let index = self
-            .shards
-            .binary_search_by(|shard| {
-                if shard.end_height < height {
-                    std::cmp::Ordering::Less
-                } else if shard.start_height > height {
-                    std::cmp::Ordering::Greater
-                } else {
-                    std::cmp::Ordering::Equal
-                }
-            })
-            .ok()?;
-        self.shards.get(index)
+        find_by_height(&self.shards, height)
     }
 
     pub fn shard(&self, shard_id: u64) -> Option<&DisplayMapEntry> {
@@ -385,38 +375,7 @@ impl DisplayMap {
                     shard.shard_id
                 ));
             }
-            if shard.end_height < shard.start_height {
-                return Err(format!(
-                    "display shard {} ends before it starts",
-                    shard.shard_id
-                ));
-            }
-            if display_by_name(&shard.geometry).is_none() {
-                return Err(format!("display shard {} geometry", shard.shard_id));
-            }
-            let expected_buckets = if shard.sealed {
-                self.seal.n_archive
-            } else {
-                self.seal.n_recent
-            };
-            if shard.n_buckets != expected_buckets
-                || shard.directory_segments.len() != shard.n_buckets as usize
-                || shard.directory_segments.contains(&0)
-                || shard.page_segments == 0
-            {
-                return Err(format!("display shard {} tables", shard.shard_id));
-            }
-            if shard.manifest_digest.len() != 64 {
-                return Err(format!("display shard {} digest", shard.shard_id));
-            }
-            if shard.sealed
-                && (shard.revision != 0 || shard.min_bucket_records < self.seal.archive_target)
-            {
-                return Err(format!(
-                    "sealed display shard {} is below its bucket target or not content-pure",
-                    shard.shard_id
-                ));
-            }
+            check_entry(&self.seal, shard)?;
             if !shard.sealed && index + 1 != self.shards.len() {
                 return Err(format!(
                     "unsealed display shard {} is not last",
@@ -424,18 +383,80 @@ impl DisplayMap {
                 ));
             }
             if let Some(previous) = index.checked_sub(1).map(|i| &self.shards[i]) {
-                if shard.start_height != previous.end_height + 1
-                    || shard.parent_block_hash != previous.terminal_block_hash
-                {
-                    return Err(format!(
-                        "display shard {} does not chain to {}",
-                        shard.shard_id, previous.shard_id
-                    ));
-                }
+                check_chain(previous, shard)?;
             }
         }
         Ok(())
     }
+}
+
+/// Checks one listed shard on its own: range, geometry, tables, digest, and
+/// for a sealed shard the bucket target and content purity.
+pub(crate) fn check_entry(seal: &DisplaySealParams, shard: &DisplayMapEntry) -> Result<(), String> {
+    if shard.end_height < shard.start_height {
+        return Err(format!(
+            "display shard {} ends before it starts",
+            shard.shard_id
+        ));
+    }
+    if display_by_name(&shard.geometry).is_none() {
+        return Err(format!("display shard {} geometry", shard.shard_id));
+    }
+    let expected_buckets = if shard.sealed {
+        seal.n_archive
+    } else {
+        seal.n_recent
+    };
+    if shard.n_buckets != expected_buckets
+        || shard.directory_segments.len() != shard.n_buckets as usize
+        || shard.directory_segments.contains(&0)
+        || shard.page_segments == 0
+    {
+        return Err(format!("display shard {} tables", shard.shard_id));
+    }
+    if shard.manifest_digest.len() != 64 {
+        return Err(format!("display shard {} digest", shard.shard_id));
+    }
+    if shard.sealed && (shard.revision != 0 || shard.min_bucket_records < seal.archive_target) {
+        return Err(format!(
+            "sealed display shard {} is below its bucket target or not content-pure",
+            shard.shard_id
+        ));
+    }
+    Ok(())
+}
+
+/// Checks `shard` starts right after `previous`, at the next height and on
+/// its terminal block.
+pub(crate) fn check_chain(
+    previous: &DisplayMapEntry,
+    shard: &DisplayMapEntry,
+) -> Result<(), String> {
+    if shard.start_height != previous.end_height + 1
+        || shard.parent_block_hash != previous.terminal_block_hash
+    {
+        return Err(format!(
+            "display shard {} does not chain to {}",
+            shard.shard_id, previous.shard_id
+        ));
+    }
+    Ok(())
+}
+
+/// The listed shard covering `height`, in a contiguous list ordered by height.
+pub(crate) fn find_by_height(shards: &[DisplayMapEntry], height: u64) -> Option<&DisplayMapEntry> {
+    let index = shards
+        .binary_search_by(|shard| {
+            if shard.end_height < height {
+                std::cmp::Ordering::Less
+            } else if shard.start_height > height {
+                std::cmp::Ordering::Greater
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
+        .ok()?;
+    shards.get(index)
 }
 
 #[cfg(test)]

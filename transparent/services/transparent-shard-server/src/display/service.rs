@@ -629,6 +629,8 @@ pub fn router(state: DisplayState) -> Router {
         .route("/metrics", get(metrics))
         .route("/v1/txid/init", get(init))
         .route("/v1/txid/shards", get(shard_map))
+        .route("/v1/txid/map", get(recent_map))
+        .route("/v1/txid/map/:base/:digest", get(index_chunk))
         .route(
             "/v1/txid/shards/:shard_id/revisions/:digest/manifest",
             get(manifest),
@@ -755,6 +757,56 @@ async fn shard_map(State(state): State<DisplayState>) -> Response {
             ("cache-control", "no-cache"),
         ],
         set.map_json.clone(),
+    )
+        .into_response()
+}
+
+/// The recent map of the split. Not cacheable: it changes every block.
+async fn recent_map(State(state): State<DisplayState>) -> Response {
+    let split = &state.inner.set.split;
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("x-txid-map-sha256", split.recent_sha256.as_str()),
+            ("cache-control", "no-cache"),
+        ],
+        split.recent_bytes.clone(),
+    )
+        .into_response()
+}
+
+/// One index chunk, by base shard id and digest. Addressed by its content, so
+/// cacheable forever; a digest no map of this snapshot names is stale.
+async fn index_chunk(
+    State(state): State<DisplayState>,
+    AxumPath((base, digest)): AxumPath<(u64, String)>,
+) -> Response {
+    let map_digest = state.inner.set.map_digest.clone();
+    let Some((chunk_base, bytes)) = state.inner.set.chunk(&digest) else {
+        Metrics::incr(&state.metrics().stale_revisions);
+        return json(
+            StatusCode::CONFLICT,
+            serde_json::json!({
+                "error": format!("index chunk {digest} is no longer served"),
+                "retry": "refresh the txid map",
+                "map_sha256": map_digest,
+            }),
+        );
+    };
+    if chunk_base != base {
+        return RequestError::Bad(format!(
+            "index chunk {digest} starts at shard {chunk_base}, not {base}"
+        ))
+        .into_response(&map_digest);
+    }
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "public, max-age=31536000, immutable"),
+        ],
+        bytes.to_vec(),
     )
         .into_response()
 }

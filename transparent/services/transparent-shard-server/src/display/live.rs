@@ -789,9 +789,9 @@ fn collect_directories(
     Ok(removed)
 }
 
-/// Picks the snapshot holding a digest-addressed request's revision, newest
-/// first, so a client on a superseded map is answered from what it fetched.
-/// Tier and role are then checked inside that snapshot.
+/// Picks the snapshot holding a digest-addressed request's revision or index
+/// chunk, newest first, so a client on a superseded map is answered from what
+/// it fetched. Tier and role are then checked inside that snapshot.
 async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response {
     let path = request.uri().path().to_owned();
     let digest = path
@@ -800,6 +800,10 @@ async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response
         .windows(2)
         .find(|w| w[0] == "revisions")
         .map(|w| w[1].to_owned());
+    let chunk = path
+        .strip_prefix("/v1/txid/map/")
+        .and_then(|rest| rest.split('/').nth(1))
+        .map(str::to_owned);
     let (state, map_sha256) = {
         let active = live.0.active.read().unwrap();
         let Some(active) = active.as_ref() else {
@@ -807,19 +811,25 @@ async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response
             return live.unpublished(&path);
         };
         let mut state = active.state.clone();
-        if let Some(digest) = &digest {
-            if state.set().revision(digest).is_none() {
-                if let Some(old) = live
-                    .0
-                    .retired
-                    .read()
-                    .unwrap()
-                    .iter()
-                    .rev()
-                    .find(|a| a.state.set().revision(digest).is_some())
-                {
-                    state = old.state.clone();
-                }
+        let holds = |set: &DisplaySet| {
+            digest
+                .as_ref()
+                .is_none_or(|digest| set.revision(digest).is_some())
+                && chunk
+                    .as_ref()
+                    .is_none_or(|chunk| set.chunk(chunk).is_some())
+        };
+        if !holds(state.set()) {
+            if let Some(old) = live
+                .0
+                .retired
+                .read()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|a| holds(a.state.set()))
+            {
+                state = old.state.clone();
             }
         }
         (state, active.publication.map_sha256.clone())
@@ -858,7 +868,7 @@ async fn dispatch(State(live): State<DisplayLive>, request: Request) -> Response
             serde_json::json!({
                 "error": format!(
                     "revision {} is no longer served",
-                    digest.as_deref().unwrap_or_default()
+                    digest.as_deref().or(chunk.as_deref()).unwrap_or_default()
                 ),
                 "retry": "refresh the txid map",
                 "map_sha256": live.active_sha256(),

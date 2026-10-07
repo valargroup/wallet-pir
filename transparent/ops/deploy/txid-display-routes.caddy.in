@@ -3,6 +3,9 @@
 # opt-in route_imports hook. Path handles sort by specificity, so archive data
 # requests reach the archive owner and every other /v1/txid/ request, metadata
 # included, reaches the recent replica. A seal changes neither handle.
+# The split map (the recent map and its index chunks) is gzipped when the client
+# accepts it; the full /v1/txid/shards listing is served exactly as before.
+	@txid_split_map path /v1/txid/map /v1/txid/map/*
 	handle /v1/txid/archive/* {
 		reverse_proxy @ARCHIVE_UPSTREAM@ {
 			lb_try_duration 2s
@@ -14,6 +17,7 @@
 		}
 	}
 	handle /v1/txid/* {
+		encode @txid_split_map gzip
 		reverse_proxy @RECENT_UPSTREAM@ {
 			lb_try_duration 2s
 			health_uri /v1/ready

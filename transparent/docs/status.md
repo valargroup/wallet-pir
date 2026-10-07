@@ -6,6 +6,43 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Split txid display map, 2026-10-07
+
+The split map ([design](txid-display.md#split-map)) is on `main`, not deployed.
+Workers serve `/v1/txid/map` and `/v1/txid/map/{base}/{sha256}` beside the
+unchanged `/v1/txid/shards`; `transparent-txid-client` reads only the split.
+Live workers and already-built clients are unaffected until a release is
+deployed, and the ignored `txid_live_lookup` test fails against production
+until then, because production does not serve `/v1/txid/map`.
+
+Map body bytes per lookup, from `transparent-txid-client/tests/map_bytes.rs`
+on synthetic maps with the live entry shape. Gzip is level 6, as the sizing
+used; the route snippet gzips the two new routes when the client accepts it.
+
+| Entries | Full map, raw / gzip | Cold archive lookup | Cold recent lookup | Warm | After a 409 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 14 (13 archives, 1 chunk) | 8,854 / 1,941 | 7,074 / 2,171 | 912 / 547 | 0 | 912 / 547 |
+| 426 (425 archives, 14 chunks) | 259,264 / 46,258 | 17,300 / 4,817 | 2,227 / 1,134 | 0 | 2,227 / 1,134 |
+
+A cold archive lookup fetches the recent map and one chunk; a full 32-archive
+chunk is 15,073 B raw and 3,683 B gzipped. A 409 refetches the recent map
+alone; a chunk is refetched only after a seal or window drop changes its
+digest. The recent map holds one 64-hex digest per chunk, so after a 409 it
+costs about 1.1 KB gzipped at 426 entries, not the 0.5 KB the plan assumed.
+
+With the sizing's formula (104,700 B for a cold inline lookup without its
+map), a cold inline lookup at 426 entries costs 109.5 KB gzipped and 122.0 KB
+raw, against 364 KB with the full map; a cold 4-page lookup costs 315.2 KB
+gzipped. Warm lookups do not change.
+
+In the in-process tests (`release-fast`), 22 client tests pass and one live
+test is ignored. They include a new chunk-tampering test, and the transcript,
+409, cancellation and differential tests requalified for the chunk request.
+On the two-entry fixture a cold inline archive lookup moves 80,400 B up and
+35,902 B down, and a 409 refetch moves 880 B. Seven tiered display tests
+pass, including the split map served beside the unchanged full map across a
+seal, from a retired snapshot for a client on the old recent map.
+
 ## Wallet txid client, 2026-10-07
 
 The synchronous wallet client `transparent-txid-client`

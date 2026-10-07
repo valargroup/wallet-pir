@@ -40,6 +40,7 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use transparent_filter::BlockHash;
+use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
 use transparent_shard::display::{plan_seals, DisplayManifest, DisplayMap, DisplayMapEntry};
 use transparent_shard::manifest::PublishedRevision;
 
@@ -1442,9 +1443,27 @@ pub fn verify(root: &Path, journal: &Path, scratch: Option<&Path>) -> Result<Val
             Err(error) => problems.push(format!("shard {}: {error}", entry.shard_id)),
         }
     }
+    // The split map, when the candidate has one, must be the full map's.
+    let split = map.split()?;
+    let split_written = active.directory.join(RECENT_MAP_FILE).exists();
+    if split_written {
+        let files = std::iter::once((RECENT_MAP_FILE.to_string(), &split.recent_bytes)).chain(
+            split
+                .chunks
+                .iter()
+                .map(|chunk| (index_file(&chunk.sha256), &chunk.bytes)),
+        );
+        for (name, expected) in files {
+            if std::fs::read(active.directory.join(&name)).ok().as_ref() != Some(expected) {
+                problems.push(format!("{name} differs from the split of the map"));
+            }
+        }
+    }
     let store = EventStore::open_existing(journal)?;
     let through = store.covered_through().ok_or("the journal is empty")?;
     let mut report = json!({"map_sha256": active.map_sha256, "revisions_verified": map.shards.len(),
+        "recent_map_sha256": split.recent_sha256, "index_chunks": split.chunks.len(),
+        "split_written": split_written,
         "seals": active.seals.len(), "archive_chain_sha256": active.archive_chain_sha256(),
         "through": through});
     if !active.seals.is_empty() {

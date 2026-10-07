@@ -14,7 +14,8 @@ use std::time::{Duration, Instant};
 use transparent_events::Txid;
 use transparent_native::{NativeScheme, TableProfile};
 use transparent_shard::display::{
-    self, display_by_name, DisplayKind, DisplayManifest, DisplayMap, DisplayMapEntry, DisplayTable,
+    self, display_by_name, DisplayIndexChunk, DisplayKind, DisplayManifest, DisplayMapEntry,
+    DisplayRecentMap, DisplayTable,
 };
 use transparent_shard::layout::Geometry;
 use transparent_shard::txid::{self, TransparentDisplayRecord};
@@ -57,7 +58,7 @@ struct Init {
 }
 
 struct CachedMap {
-    map: DisplayMap,
+    map: DisplayRecentMap,
     sha256: String,
     fetched: Instant,
 }
@@ -98,6 +99,8 @@ pub struct TxidDisplayClient {
     profiles: ProfileCache,
     init: Option<Arc<Init>>,
     map: Option<Arc<CachedMap>>,
+    /// Index chunks by digest; immutable, so kept while the map names them.
+    chunks: HashMap<String, Arc<DisplayIndexChunk>>,
     manifests: HashMap<String, Arc<DisplayManifest>>,
     setups: HashMap<(String, DisplayTable, u32), Arc<Setup>>,
 }
@@ -157,6 +160,7 @@ impl TxidDisplayClient {
             profiles,
             init: None,
             map: None,
+            chunks: HashMap::new(),
             manifests: HashMap::new(),
             setups: HashMap::new(),
         }
@@ -166,18 +170,18 @@ impl TxidDisplayClient {
         self.profiles.clone()
     }
 
-    /// The SHA-256 of the map this client holds, if any.
+    /// The SHA-256 of the recent map this client holds, if any.
     pub fn map_sha256(&self) -> Option<&str> {
         self.map.as_ref().map(|cached| cached.sha256.as_str())
     }
 
-    /// Fetches the map now, without a lookup, and returns its SHA-256.
+    /// Fetches the recent map now, without a lookup, and returns its SHA-256.
     ///
     /// The map is validated as a lookup validates it (the
     /// `X-Txid-Map-Sha256` header and the canonical encoding) and, once
     /// valid, replaces the cached map, so [`Self::map_sha256`] reports it.
     /// On any error the previously cached map is kept. Sends exactly one
-    /// `GET /v1/txid/shards` unless `cancel` returns true first; statuses
+    /// `GET /v1/txid/map` unless `cancel` returns true first; statuses
     /// map to errors as in [`Self::lookup`], with no retry.
     pub fn refresh_map(
         &mut self,
@@ -190,7 +194,8 @@ impl TxidDisplayClient {
         Ok(sha256)
     }
 
-    /// Forgets the map so the next lookup fetches it again.
+    /// Forgets the recent map so the next lookup fetches it again. Cached
+    /// index chunks stay: they are named by digest.
     pub fn invalidate_map(&mut self) {
         self.map = None;
     }
@@ -199,8 +204,8 @@ impl TxidDisplayClient {
     /// the caller's accepted chain supplies. `cancel` is polled before every
     /// request.
     ///
-    /// A 409 refreshes the map and retries the whole lookup once; a second
-    /// 409 is [`TxidError::Stale`]. Nothing else is retried.
+    /// A 409 refreshes the recent map and retries the whole lookup once; a
+    /// second 409 is [`TxidError::Stale`]. Nothing else is retried.
     pub fn lookup(
         &mut self,
         transport: &mut impl TxidTransport,
@@ -301,7 +306,8 @@ impl TxidDisplayClient {
         Ok(Attempt::Done(TxidLookup::Found { record, provenance }))
     }
 
-    /// Init, map, placement and manifest: everything before a query.
+    /// Init, recent map, index chunk, placement and manifest: everything
+    /// before a query.
     fn locate(
         &mut self,
         transport: &mut impl TxidTransport,
@@ -327,9 +333,22 @@ impl TxidDisplayClient {
                 Placement::Below,
             ))));
         }
-        let Some(entry) = cached.map.shard_for_height(height) else {
-            // The shape check makes the shards contiguous, so only the tip
-            // is left; a map that is not fresh may not have reached it yet.
+        let entry = match cached.map.chunk_for_height(height) {
+            Some(index) => self
+                .chunk(transport, cancel, &cached.map, index)?
+                .shard_for_height(height)
+                .cloned(),
+            None => cached
+                .map
+                .recent
+                .as_ref()
+                .filter(|recent| height <= recent.end_height)
+                .cloned(),
+        };
+        let Some(entry) = entry else {
+            // The shape and chunk checks make the shards contiguous, so only
+            // the tip is left; a map that is not fresh may not have reached
+            // it yet.
             return Ok(Err(
                 if !refresh && cached.fetched.elapsed() >= ABOVE_REFRESH_AGE {
                     Attempt::RefreshForAbove
@@ -338,7 +357,6 @@ impl TxidDisplayClient {
                 },
             ));
         };
-        let entry = entry.clone();
         let Some(geometry) = display_by_name(&entry.geometry) else {
             return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
         };
@@ -406,21 +424,26 @@ impl TxidDisplayClient {
         if reply.map_sha256.as_deref().map(str::trim) != Some(sha256.as_str()) {
             return Err(TxidError::Protocol(ProtocolKind::MapHeader));
         }
-        let map: DisplayMap =
+        let map: DisplayRecentMap =
             serde_json::from_slice(&reply.body).map_err(protocol(ProtocolKind::Map))?;
         if map.to_bytes() != reply.body {
             return Err(TxidError::Protocol(ProtocolKind::MapCanonical));
         }
-        // Revisions the new map no longer lists are never asked for again.
-        let listed: HashSet<&str> = map
-            .shards
-            .iter()
-            .map(|entry| entry.manifest_digest.as_str())
-            .collect();
-        self.manifests
-            .retain(|digest, _| listed.contains(digest.as_str()));
+        // Chunks the new map no longer names are never asked for again. A
+        // sealed revision is final, so its manifest and setups stay while its
+        // shard is listed; a superseded recent revision's go.
+        let named: HashSet<&str> = map.chunks.iter().map(|c| c.sha256.as_str()).collect();
+        self.chunks
+            .retain(|digest, _| named.contains(digest.as_str()));
+        let archives = map.first_shard_id..map.first_shard_id + map.archives;
+        let recent = map.recent.as_ref().map(|r| r.manifest_digest.as_str());
+        self.manifests.retain(|digest, manifest| {
+            Some(digest.as_str()) == recent
+                || (manifest.sealed && archives.contains(&manifest.shard_id))
+        });
+        let manifests = &self.manifests;
         self.setups
-            .retain(|(digest, _, _), _| listed.contains(digest.as_str()));
+            .retain(|(digest, _, _), _| manifests.contains_key(digest));
         let cached = Arc::new(CachedMap {
             map,
             sha256,
@@ -428,6 +451,43 @@ impl TxidDisplayClient {
         });
         self.map = Some(cached.clone());
         Ok(cached)
+    }
+
+    /// Index chunk `index` of `map`, fetched unless cached, and checked
+    /// against the digest and the position the map gives it.
+    fn chunk(
+        &mut self,
+        transport: &mut impl TxidTransport,
+        cancel: &dyn Fn() -> bool,
+        map: &DisplayRecentMap,
+        index: usize,
+    ) -> Result<Arc<DisplayIndexChunk>, TxidError> {
+        let digest = &map.chunks[index].sha256;
+        let chunk = match self.chunks.get(digest) {
+            Some(chunk) => chunk.clone(),
+            None => {
+                let reply = send(
+                    transport,
+                    cancel,
+                    TxidRequest::new(Route::MapChunk, map.chunk_path(index), Vec::new()),
+                )?;
+                if hex::encode(Sha256::digest(&reply.body)) != *digest {
+                    return Err(TxidError::Protocol(ProtocolKind::Map));
+                }
+                let chunk: DisplayIndexChunk =
+                    serde_json::from_slice(&reply.body).map_err(protocol(ProtocolKind::Map))?;
+                if chunk.to_bytes() != reply.body {
+                    return Err(TxidError::Protocol(ProtocolKind::MapCanonical));
+                }
+                Arc::new(chunk)
+            }
+        };
+        // Checked on every use: a cached chunk may sit at another position
+        // of a newer map.
+        map.check_chunk(index, &chunk)
+            .map_err(protocol(ProtocolKind::Map))?;
+        self.chunks.insert(digest.clone(), chunk.clone());
+        Ok(chunk)
     }
 
     fn manifest(
@@ -815,8 +875,8 @@ mod tests {
         );
     }
 
-    fn map(start_height: u64) -> DisplayMap {
-        DisplayMap {
+    fn map(start_height: u64) -> DisplayRecentMap {
+        DisplayRecentMap {
             schema: display::DISPLAY_SCHEMA.into(),
             network: "main".into(),
             genesis_hash: "00".repeat(32),
@@ -829,7 +889,10 @@ mod tests {
             },
             start_height,
             first_shard_id: 0,
-            shards: Vec::new(),
+            archives: 0,
+            chunk_shards: display::INDEX_CHUNK_SHARDS,
+            chunks: Vec::new(),
+            recent: None,
         }
     }
 
@@ -844,7 +907,7 @@ mod tests {
     #[test]
     fn refresh_map_validates_and_replaces_only_on_success() {
         let (a, b) = (map(10), map(20));
-        let digest = |m: &DisplayMap| -> [u8; 32] { Sha256::digest(m.to_bytes()).into() };
+        let digest = |m: &DisplayRecentMap| -> [u8; 32] { Sha256::digest(m.to_bytes()).into() };
         let mut transport = Scripted::default();
         transport
             .replies
@@ -854,11 +917,11 @@ mod tests {
             .replies
             .push_back(map_reply(b.to_bytes(), Some(a.sha256())));
         transport.replies.push_back(map_reply(b.to_bytes(), None));
-        let compact = serde_json::to_vec(&b).unwrap();
-        let compact_sha = hex::encode(Sha256::digest(&compact));
+        let pretty = serde_json::to_vec_pretty(&b).unwrap();
+        let pretty_sha = hex::encode(Sha256::digest(&pretty));
         transport
             .replies
-            .push_back(map_reply(compact, Some(compact_sha)));
+            .push_back(map_reply(pretty, Some(pretty_sha)));
         transport.replies.push_back(Ok(TxidReply {
             retry_after: Some("2".into()),
             ..reply(503)

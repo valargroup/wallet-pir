@@ -355,9 +355,14 @@ starts dropping archives around mid-December 2026.
   experiments are done.
 - [x] Code: reservation true-up and `shard-residency` display geometries
   (source only; no release carries them yet).
-- [ ] Code: split display map; ops caps,
-  `workers --replace-active` and the new archive host; Terraform resource;
-  full CI and a release (G2).
+- [x] Code: split display map, on `main` beside the unchanged full map (source
+  only; no release carries it yet); measured in
+  [status](status.md#split-txid-display-map-2026-10-07). After a 409 it costs
+  about 1.1 KB gzipped at 426 entries, not 0.5 KB.
+- [ ] Code: ops caps, `workers --replace-active` and the new archive host;
+  Terraform resource; full CI and a release (G2).
+- [ ] Retire `/v1/txid/shards` once deployed wallets use the split map; a
+  later approved deploy.
 - [ ] P0, read-only: real disk-cache entry lengths on archive-03; coordinator
   free disk, inodes and node state.
 - [ ] G3, Roman: approve the change sheet. Then run P1–P5: provision, stage,

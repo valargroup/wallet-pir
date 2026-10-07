@@ -3324,6 +3324,12 @@ queries already name, so it adds no leakage. The work:
 Estimate: 2–4 days. The cold 4-page lookup stays above 300 KB, as it already
 does today.
 
+The split is built on `main` and not deployed
+([measurements](status.md#split-txid-display-map-2026-10-07)). At 426 entries
+it costs 4.8 KB gzipped cold and 1.1 KB after a 409; the recent map's 14 chunk
+digests make the refetch about twice the 0.5 KB sized above. Workers keep
+serving `/v1/txid/shards` unchanged beside it.
+
 ### Ingest from genesis on the coordinator
 
 - **Node.** `event-ingest --txid-display --start-height 0` reads the
@@ -3384,7 +3390,9 @@ its cached map's `start_height`. At cutover:
   retries it. The brief says rows are re-armed when the map digest changes.
   That logic is in wallet-libraries and is not verified here. The digest also
   changes at every recent rebuild.
-- With the split map, wallets need the new client before the cutover.
+- A client built before the split keeps working through `/v1/txid/shards`,
+  but pays the full map, about 259 KB at cutover, cold and after every 409.
+  Wallets should carry the split-map client before the cutover.
 
 ### Code before any production step
 

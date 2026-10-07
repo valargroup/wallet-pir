@@ -6,7 +6,7 @@
 //! `txid-shards.json`. Block hashes are a deterministic function of height, so
 //! adjacent shards chain. Nothing here is used to serve.
 
-use super::set::{MANIFEST_FILE, MAP_FILE};
+use super::set::{index_file, MANIFEST_FILE, MAP_FILE, RECENT_MAP_FILE};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use transparent_events::{FeeState, TransactionMetadata, Txid};
@@ -222,8 +222,9 @@ pub fn map(params: &DisplaySealParams, shards: &[Published]) -> DisplayMap {
     }
 }
 
-/// Writes `<root>/candidate-<label>/`: a hard link of every shard and the map,
-/// written last. Returns the directory and the map's SHA-256.
+/// Writes `<root>/candidate-<label>/`: a hard link of every shard, the split
+/// map, and the full map, written last. Returns the directory and the full
+/// map's SHA-256.
 pub fn write_candidate(
     root: &Path,
     params: &DisplaySealParams,
@@ -240,6 +241,11 @@ pub fn write_candidate(
     for shard in shards {
         link_revision(&shard.dir, &dir.join(&shard.digest))?;
     }
+    let split = map.split()?;
+    for chunk in &split.chunks {
+        std::fs::write(dir.join(index_file(&chunk.sha256)), &chunk.bytes)?;
+    }
+    std::fs::write(dir.join(RECENT_MAP_FILE), &split.recent_bytes)?;
     std::fs::write(dir.join(MAP_FILE), map.to_bytes())?;
     Ok((dir, map.sha256()))
 }

@@ -7,13 +7,18 @@
 //! everything the server publishes against its own derivation, and caches
 //! native profiles, the init document, the map, manifests and setups.
 //!
-//! A lookup sends, in order and one at a time: init, map, the shard's
-//! manifest and the bucket's directory setups when they are not cached, then
-//! exactly two directory queries (even when both candidate rows coincide).
-//! A paged record then fetches the pages setups when not cached and sends
-//! exactly `pages` page queries. An absent txid sends the same two directory
-//! queries. Placement comes from the caller's mined height; nothing is asked
-//! to discover it, so placement and support results send no query.
+//! A lookup sends, in order and one at a time: init, the recent map, the
+//! archive index chunk covering the height (archive heights only), the
+//! shard's manifest and the bucket's directory setups when they are not
+//! cached, then exactly two directory queries (even when both candidate rows
+//! coincide). A paged record then fetches the pages setups when not cached
+//! and sends exactly `pages` page queries. An absent txid sends the same two
+//! directory queries. Placement comes from the caller's mined height; nothing
+//! is asked to discover it, so placement and support results send no query.
+//!
+//! The map is split (see `transparent_shard::display::split`): a small
+//! recent map, refetched after every 409, and immutable index chunks of 32
+//! archives, cached by digest. The full `/v1/txid/shards` listing is not read.
 //!
 //! Any validation failure is [`TxidError::Protocol`], never
 //! [`TxidLookup::Absent`].
@@ -45,16 +50,20 @@ impl Method {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
     Init,
+    /// The recent map.
     Map,
+    /// One archive index chunk.
+    MapChunk,
     Manifest,
     Setup,
     Query,
 }
 
 impl Route {
-    pub const ALL: [Route; 5] = [
+    pub const ALL: [Route; 6] = [
         Route::Init,
         Route::Map,
+        Route::MapChunk,
         Route::Manifest,
         Route::Setup,
         Route::Query,
@@ -65,7 +74,8 @@ impl Route {
     pub fn template(self) -> &'static str {
         match self {
             Route::Init => "/v1/txid/init",
-            Route::Map => "/v1/txid/shards",
+            Route::Map => "/v1/txid/map",
+            Route::MapChunk => "/v1/txid/map/{shard}/{digest}",
             Route::Manifest => "/v1/txid/shards/{shard}/revisions/{digest}/manifest",
             Route::Setup => {
                 "/v1/txid/{tier}/shards/{shard}/revisions/{digest}/setup/{table}/{segment}"
@@ -88,7 +98,8 @@ impl Route {
 /// prefixes its base URL. A `POST` body is `application/octet-stream` and its
 /// length must be declared (`Content-Length`). Neither path nor body carries
 /// the txid; the path carries shard id, revision digest, tier and table,
-/// which the map already makes public.
+/// which the map already makes public, and an index chunk's path its base
+/// shard id and digest, which the recent map makes public.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TxidRequest {
     pub method: Method,
@@ -130,7 +141,7 @@ pub struct TxidReply {
     pub status: u16,
     /// The raw `Retry-After` header, if any.
     pub retry_after: Option<String>,
-    /// The raw `X-Txid-Map-Sha256` header, if any.
+    /// The raw `X-Txid-Map-Sha256` header, if any: the recent map's digest.
     pub map_sha256: Option<String>,
     pub body: Vec<u8>,
 }
@@ -186,7 +197,7 @@ impl Tier {
 /// Which publication answered a lookup.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Provenance {
-    /// SHA-256 of the map the lookup used, hex.
+    /// SHA-256 of the recent map the lookup used, hex.
     pub map_sha256: String,
     pub shard_id: u64,
     pub revision: u32,
@@ -226,9 +237,10 @@ pub enum TxidLookup {
 pub enum ProtocolKind {
     /// The init document does not parse.
     Init,
-    /// The map does not parse or is malformed.
+    /// The recent map or an index chunk does not parse or is malformed, or
+    /// a chunk is not the one the recent map names.
     Map,
-    /// The map is not in its canonical encoding.
+    /// The recent map or an index chunk is not in its canonical encoding.
     MapCanonical,
     /// The `X-Txid-Map-Sha256` header is missing or disagrees with the map.
     MapHeader,

@@ -5,13 +5,19 @@
 //!   canonical `manifest.json` and segment files. A revision is written once;
 //!   writing it again verifies the existing bytes instead, and a difference
 //!   is a hard error because a published identity never changes content.
+//! - `index/<sha256>.json` holds one archive index chunk of the split map
+//!   (`transparent_shard::display::split`), written once when a seal or a
+//!   window drop first produces it.
 //! - `candidate-<tip>-<hash>-<nanos>/` is one publication: a hard link of
-//!   every revision the map names, then `txid-shards.json`, written last.
+//!   every revision the map names and of every index chunk
+//!   (`txid-index-<sha256>.json`), the recent map `txid-map.json`, then
+//!   `txid-shards.json`, written last.
 //! - `display-root.json` pins what every shard depends on (geometry, seal
 //!   parameters, chain, start), and `active.json` names the activated
 //!   candidate together with every seal made since the start.
 //!
-//! `sealed/` is never collected. Candidates and recent revisions are.
+//! `sealed/` is never collected. Candidates, recent revisions and index
+//! chunks no retained candidate links are.
 
 use super::cache::flatten;
 use super::timeline::{HeightIndex, Timeline};
@@ -23,6 +29,7 @@ use std::io::Read;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
+use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
 use transparent_shard::display::{
     build_shard, display_by_name, plan_seals, verify, verify_rows, DisplayManifest, DisplayMap,
     DisplayMapEntry, DisplaySealParams, DisplayTable, ManifestHeader, DISPLAY_SCHEMA, MAX_BUCKETS,
@@ -38,6 +45,7 @@ pub const ACTIVE_FILE: &str = "active.json";
 pub const HALTED_FILE: &str = "halted.json";
 pub const SEALED_DIR: &str = "sealed";
 pub const RECENT_DIR: &str = "recent";
+pub const INDEX_DIR: &str = "index";
 pub const CANDIDATE_PREFIX: &str = "candidate-";
 
 /// What every shard of a root depends on. Written once by `bootstrap`; a
@@ -368,7 +376,8 @@ pub fn publish_shard(
     })
 }
 
-/// Writes one candidate: a hard link of every named revision, then the map.
+/// Writes one candidate: a hard link of every named revision and index
+/// chunk, the recent map, then the full map.
 ///
 /// Returns the candidate directory and the map's SHA-256, which is its
 /// identity on the control protocol.
@@ -386,6 +395,15 @@ pub fn write_candidate(root: &Path, map: &DisplayMap) -> Result<(PathBuf, String
         let tier = if entry.sealed { SEALED_DIR } else { RECENT_DIR };
         link_revision(&root.join(tier), &directory, &entry.manifest_digest)?;
     }
+    let split = map.split()?;
+    let index = root.join(INDEX_DIR);
+    std::fs::create_dir_all(&index)?;
+    for chunk in &split.chunks {
+        let name = format!("{}.json", chunk.sha256);
+        write_immutable(&index, &name, &chunk.bytes)?;
+        std::fs::hard_link(index.join(&name), directory.join(index_file(&chunk.sha256)))?;
+    }
+    write_atomic(&directory.join(RECENT_MAP_FILE), &split.recent_bytes)?;
     let bytes = map.to_bytes();
     write_atomic(&directory.join(MAP_FILE), &bytes)?;
     Ok((directory, hex::encode(Sha256::digest(&bytes))))
@@ -433,10 +451,27 @@ pub fn collect(
         }
     }
     let mut linked = BTreeSet::new();
+    let mut chunks = BTreeSet::new();
     for candidate in &retained {
         for entry in std::fs::read_dir(candidate)?.filter_map(Result::ok) {
             if entry.file_type().is_ok_and(|t| t.is_dir()) {
                 linked.insert(entry.file_name());
+            } else if let Some(sha) = entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("txid-index-"))
+            {
+                chunks.insert(sha.to_string());
+            }
+        }
+    }
+    let index = root.join(INDEX_DIR);
+    if index.is_dir() {
+        for entry in std::fs::read_dir(&index)?.filter_map(Result::ok) {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().is_ok_and(|t| t.is_file()) && !chunks.contains(&name) {
+                std::fs::remove_file(entry.path())?;
+                removed.push(entry.path());
             }
         }
     }
@@ -1018,5 +1053,46 @@ mod tests {
             std::fs::read_dir(root.join(SEALED_DIR)).unwrap().count(),
             done.seals.len()
         );
+    }
+
+    #[test]
+    fn candidates_link_the_split_map_and_collection_drops_unlinked_chunks() {
+        let temp = tempfile::tempdir().unwrap();
+        let journal = temp.path().join("journal");
+        fixture::write_journal(&journal, 100, 125, 0);
+        let store = EventStore::open_existing(&journal).unwrap();
+        let layout = fixture::layout(&store, 101, 100);
+        let root = temp.path().join("root");
+        let done = bootstrap(&store, &root, &layout, 125).unwrap();
+        assert!(done.seals.len() >= 2);
+        let split = done.map.split().unwrap();
+        let stored = |sha: &str| root.join(INDEX_DIR).join(format!("{sha}.json"));
+        assert_eq!(
+            std::fs::read(done.candidate.join(RECENT_MAP_FILE)).unwrap(),
+            split.recent_bytes
+        );
+        for chunk in &split.chunks {
+            let linked = done.candidate.join(index_file(&chunk.sha256));
+            assert_eq!(std::fs::read(&linked).unwrap(), chunk.bytes);
+            assert_eq!(
+                std::fs::metadata(&linked).unwrap().ino(),
+                std::fs::metadata(stored(&chunk.sha256)).unwrap().ino()
+            );
+        }
+
+        // The window drops the oldest archive: the oldest chunk is rewritten
+        // under a new digest, and the one only the old candidate linked goes.
+        let mut dropped = done.map.clone();
+        dropped.shards.remove(0);
+        dropped.first_shard_id += 1;
+        dropped.start_height = dropped.shards[0].start_height;
+        let (next, _) = write_candidate(&root, &dropped).unwrap();
+        let moved = dropped.split().unwrap();
+        assert_ne!(moved.chunks[0].sha256, split.chunks[0].sha256);
+        let removed = collect(&root, &BTreeSet::from([next.clone()]), 0).unwrap();
+        assert!(removed.contains(&stored(&split.chunks[0].sha256)));
+        assert!(!stored(&split.chunks[0].sha256).exists());
+        assert!(stored(&moved.chunks[0].sha256).exists());
+        assert!(next.join(index_file(&moved.chunks[0].sha256)).exists());
     }
 }

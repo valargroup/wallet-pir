@@ -444,6 +444,94 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
     found(&world.client(), &world.r0_records[40], 230).await;
 }
 
+/// Status, headers and body of one GET through the edge.
+async fn raw(world: &World, path: &str) -> (u16, reqwest::header::HeaderMap, Vec<u8>) {
+    let response = reqwest::get(format!("{}{path}", world.url)).await.unwrap();
+    let status = response.status().as_u16();
+    let headers = response.headers().clone();
+    (status, headers, response.bytes().await.unwrap().to_vec())
+}
+
+fn header<'a>(headers: &'a reqwest::header::HeaderMap, name: &str) -> &'a str {
+    headers.get(name).unwrap().to_str().unwrap()
+}
+
+/// The recent map and index chunks are served beside the full map, which is
+/// unchanged; a seal moves the recent map and the newest chunk, and a client
+/// still holding the old recent map gets its chunk from the retired snapshot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_split_map_is_served_beside_the_unchanged_full_map() {
+    use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
+    use transparent_shard::display::{DisplayIndexChunk, DisplayRecentMap};
+    let world = World::start().await;
+    let file = |dir: &Path, name: &str| std::fs::read(dir.join(name)).unwrap();
+
+    let (status, headers, full) = raw(&world, "/v1/txid/shards").await;
+    assert_eq!(status, 200);
+    assert_eq!(full, file(&world.p0.0, "txid-shards.json"));
+    assert_eq!(header(&headers, "x-txid-map-sha256"), world.p0.1);
+
+    let (status, headers, recent) = raw(&world, "/v1/txid/map").await;
+    assert_eq!(status, 200);
+    assert_eq!(recent, file(&world.p0.0, RECENT_MAP_FILE));
+    assert_eq!(
+        header(&headers, "x-txid-map-sha256"),
+        hex::encode(Sha256::digest(&recent))
+    );
+    assert_eq!(header(&headers, "cache-control"), "no-cache");
+    let map: DisplayRecentMap = serde_json::from_slice(&recent).unwrap();
+    map.check_shape().unwrap();
+    assert_eq!((map.archives, map.chunks.len()), (1, 1));
+    assert_eq!(
+        map.recent.as_ref().unwrap().manifest_digest,
+        world.r0.digest
+    );
+
+    let digest = map.chunks[0].sha256.clone();
+    let (status, headers, chunk) = raw(&world, &map.chunk_path(0)).await;
+    assert_eq!(status, 200);
+    assert_eq!(chunk, file(&world.p0.0, &index_file(&digest)));
+    assert_eq!(hex::encode(Sha256::digest(&chunk)), digest);
+    assert_eq!(
+        header(&headers, "cache-control"),
+        "public, max-age=31536000, immutable"
+    );
+    let parsed: DisplayIndexChunk = serde_json::from_slice(&chunk).unwrap();
+    map.check_chunk(0, &parsed).unwrap();
+    assert_eq!(parsed.shards[0].manifest_digest, world.a0.digest);
+    // The right digest under another base is a bad request; an unknown
+    // digest is stale.
+    assert_eq!(
+        raw(&world, &format!("/v1/txid/map/32/{digest}")).await.0,
+        400
+    );
+    let unknown = "ab".repeat(32);
+    assert_eq!(
+        raw(&world, &format!("/v1/txid/map/0/{unknown}")).await.0,
+        409
+    );
+
+    // A seal: shard 1 joins chunk 0, so the chunk and the recent map move.
+    let Seal { a1, r1, p1, .. } = Seal::write(&world);
+    world.archive.publish(&p1.0, &p1.1).await;
+    world.recent.publish(&p1.0, &p1.1).await;
+    let (_, _, full) = raw(&world, "/v1/txid/shards").await;
+    assert_eq!(full, file(&p1.0, "txid-shards.json"));
+    let (_, _, moved) = raw(&world, "/v1/txid/map").await;
+    let moved: DisplayRecentMap = serde_json::from_slice(&moved).unwrap();
+    assert_eq!((moved.archives, moved.chunks.len()), (2, 1));
+    assert_ne!(moved.chunks[0].sha256, digest);
+    assert_eq!(moved.recent.as_ref().unwrap().manifest_digest, r1.digest);
+    let (status, _, sealed) = raw(&world, &moved.chunk_path(0)).await;
+    assert_eq!(status, 200);
+    let sealed: DisplayIndexChunk = serde_json::from_slice(&sealed).unwrap();
+    moved.check_chunk(0, &sealed).unwrap();
+    assert_eq!(sealed.shards[1].manifest_digest, a1.digest);
+    // The chunk the old recent map names is still answered.
+    let (status, _, old) = raw(&world, &map.chunk_path(0)).await;
+    assert_eq!((status, old), (200, chunk));
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn misaddressed_requests_are_refused() {
     let root = tempfile::tempdir().unwrap();

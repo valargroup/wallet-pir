@@ -16,6 +16,12 @@
 //! role's revision is refused with 421, as a history worker refuses an
 //! unassigned shard.
 //!
+//! **The split map.** Besides the full map (`/v1/txid/shards`, kept for
+//! clients built before the split), every worker serves the recent map
+//! (`/v1/txid/map`) and the archive index chunks
+//! (`/v1/txid/map/{base}/{sha256}`) derived from the same map; see
+//! `transparent_shard::display::split`.
+//!
 //! **Tiers in the path.** Data-plane routes name the tier,
 //! `/v1/txid/{archive|recent}/...`, so a static edge route can send archive
 //! traffic to its owner without knowing which shard ids are sealed. The tier

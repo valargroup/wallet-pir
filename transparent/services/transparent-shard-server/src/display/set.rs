@@ -3,6 +3,11 @@
 //! A publication directory holds `txid-shards.json` and one directory per
 //! revision, named by its manifest digest: every archive the map names and
 //! the recent shard, each hard-linked from the publisher's immutable store.
+//! Beside them the controller writes the split map, `txid-map.json` and one
+//! `txid-index-<sha256>.json` per index chunk. The split is derived from the
+//! full map here too: files that are present must equal the derivation, and
+//! a directory without them (written before the split) is served from the
+//! derivation alone.
 //! Every manifest is read and checked, whatever the worker's role, so any
 //! worker can serve the map and every manifest. Tables are verified only for
 //! the revisions the role serves: streamed SHA-256 per segment, then every
@@ -22,7 +27,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use transparent_shard::display::{self, DisplayManifest, DisplayMap, DisplayTable};
+use transparent_shard::display::{self, DisplayManifest, DisplayMap, DisplayTable, SplitMap};
 use transparent_shard::layout::Geometry;
 use transparent_shard::txid::{self, ROW_BYTES};
 
@@ -30,6 +35,30 @@ use transparent_shard::txid::{self, ROW_BYTES};
 pub const MAP_FILE: &str = "txid-shards.json";
 /// The manifest file of a revision directory.
 pub const MANIFEST_FILE: &str = "manifest.json";
+pub use display::split::{index_file, RECENT_MAP_FILE};
+
+/// Checks the split files of `dir`, when the controller wrote them, against
+/// the split derived from its map.
+fn check_split_files(dir: &Path, split: &SplitMap) -> Result<(), LoadError> {
+    let path = dir.join(RECENT_MAP_FILE);
+    if !path.exists() {
+        return Ok(());
+    }
+    if read(&path)? != split.recent_bytes {
+        return Err(invalid(
+            "txid-map.json differs from the split of the display map",
+        ));
+    }
+    for chunk in &split.chunks {
+        if read(&dir.join(index_file(&chunk.sha256)))? != chunk.bytes {
+            return Err(invalid(format!(
+                "index chunk {} differs from the split of the display map",
+                chunk.sha256
+            )));
+        }
+    }
+    Ok(())
+}
 
 fn read(path: &Path) -> Result<Vec<u8>, LoadError> {
     std::fs::read(path).map_err(|source| LoadError::Io {
@@ -262,6 +291,10 @@ pub struct DisplaySet {
     /// The map exactly as served; `map_digest` is its SHA-256.
     pub map_json: Vec<u8>,
     pub map_digest: String,
+    /// The recent map and index chunks listing the same shards.
+    pub split: SplitMap,
+    /// Index chunk positions in `split.chunks`, by digest.
+    chunks: BTreeMap<String, usize>,
     pub role: WorkerRole,
     /// The map's revisions in map order, then retained superseded recent
     /// revisions, newest first.
@@ -301,6 +334,16 @@ impl DisplaySet {
             return Err(invalid("display map is not in its canonical serialization"));
         }
         let map_digest = hex::encode(Sha256::digest(&map_json));
+        let split = map
+            .split()
+            .map_err(|error| invalid(format!("display map does not split: {error}")))?;
+        check_split_files(dir, &split)?;
+        let chunks = split
+            .chunks
+            .iter()
+            .enumerate()
+            .map(|(index, chunk)| (chunk.sha256.clone(), index))
+            .collect();
 
         let mut found: BTreeMap<String, DisplayRevision> = BTreeMap::new();
         for entry in std::fs::read_dir(dir).map_err(|source| LoadError::Io {
@@ -425,11 +468,19 @@ impl DisplaySet {
             map,
             map_json,
             map_digest,
+            split,
+            chunks,
             role,
             revisions,
             by_digest,
             excess,
         })
+    }
+
+    /// The index chunk with this digest, its base shard id and bytes.
+    pub fn chunk(&self, sha256: &str) -> Option<(u64, &[u8])> {
+        let chunk = &self.split.chunks[*self.chunks.get(sha256)?];
+        Some((chunk.chunk.base_shard_id, &chunk.bytes))
     }
 
     /// Any revision this set knows, held or not.

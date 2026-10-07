@@ -17,6 +17,7 @@
 pub mod geometry;
 pub mod manifest;
 pub mod seal;
+pub mod split;
 pub mod tables;
 
 pub use geometry::{display_by_name, DISPLAY_PROFILES, TXID_2K, TXID_4K};
@@ -24,6 +25,10 @@ pub use manifest::{
     DisplayBucket, DisplayLayout, DisplayManifest, DisplayMap, DisplayMapEntry, ManifestHeader,
 };
 pub use seal::{archive_boundary, height_counts, plan_seals, DisplaySealParams, HeightCounts};
+pub use split::{
+    chunk_base, DisplayChunkRef, DisplayIndexChunk, DisplayRecentMap, SplitChunk, SplitMap,
+    INDEX_CHUNK_SHARDS,
+};
 pub use tables::{
     build_shard, directory_rows_for, find_directory_unique, verify, verify_rows, BuiltBucket,
     BuiltDisplay, VerifiedDisplay,
