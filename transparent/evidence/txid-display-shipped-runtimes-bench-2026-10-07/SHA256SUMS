@@ -1,6 +1,6 @@
 377e7a462bc6cadcbb642455c826a719d4244e1b52ed5178e017cc1c85fb55c3  ./README.md
 9c141313e6b3a5bbf9f5602641f791ef50e43c7f35b3d87abc35aafc06b142c3  ./harness/analyze.py
-8288c9f63754727a90f34a97b03a3dd951d4c246efef1b292353b172640a508a  ./harness/bench.sh
+628610e9d1609794871cdda2f05f20913b0eb3386e0fc13fe94e866dccd52bac  ./harness/bench.sh
 d7d804c31b2955ecd1a8d346a9ce04c98a9ca207f02b71717ccc132c62adb731  ./manifest.json
 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  ./raw/run1/baseline-controller.log
 14e8592e9ae3fbf246d3df63106d0a42cda11a6f0ba4c0a43ea475a97a8cae52  ./raw/run1/baseline-timeline.jsonl
