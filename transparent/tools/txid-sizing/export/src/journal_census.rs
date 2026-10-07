@@ -327,7 +327,7 @@ impl Pages {
             "uncapped_page_query_sum":self.queries.iter().map(|((t,side),n)|json!({"threshold":t,"size_population":side_name(*side),"queries":n})).collect::<Vec<_>>(),"demand":demands,"layout_options":layouts,
             "packing":"txid-sorted per archive, exact v1 fragment envelope; shared tables concatenate independently packed archives (conservative extra partial rows)",
             "qualification":"Stored sizes replay the v1 packer. Exact-fee endpoint scenarios can have row-order discontinuities; separate safe page bounds use minimum entry bytes /4092 and maximum next-fit demand <= min(max fragments,ceil(2*max entry bytes/4092)). These safe bounds cover every interior fee width. Directory endpoint allocations are scenarios, not interval bounds.",
-            "memory":"Encoded allocations and source reservation formula only; includes independent per-archive 4096-row directories for the three size scenarios; excludes journal reader, identity SQLite, compiler and runtime overhead; not native RSS or latency."})
+            "memory":"Encoded allocations and source reservation formula only; includes coarse per-archive 4096-row directories for the three size scenarios; excludes journal reader, identity SQLite, compiler and runtime overhead; not native RSS or latency."})
     }
 }
 fn side_name(side: usize) -> &'static str {
@@ -346,6 +346,7 @@ struct RouteModel {
     coarse: bool,
     lookups: usize,
     overflows: usize,
+    shared_archives: usize, // zero means global/independent overflow hash routing
     era_visible: bool,
     requests_visible: bool,
 }
@@ -361,8 +362,25 @@ fn models() -> Vec<RouteModel> {
                         coarse,
                         lookups,
                         overflows,
+                        shared_archives: 0,
                         era_visible,
                         requests_visible,
+                    });
+                }
+            }
+        }
+    }
+    for coarse in [true, false] {
+        for lookups in if coarse { vec![1] } else { vec![1, 4, 16, 64] } {
+            for shared_archives in [1, 4, 16, 64] {
+                for full in [false, true] {
+                    out.push(RouteModel {
+                        coarse,
+                        lookups,
+                        overflows: 1,
+                        shared_archives,
+                        era_visible: full,
+                        requests_visible: full,
                     });
                 }
             }
@@ -385,6 +403,8 @@ fn route_key(r: &Shape, size: usize, t: usize, m: RouteModel, archive: usize) ->
     };
     let overflow = if size <= t {
         usize::MAX
+    } else if let Some(group) = archive.checked_div(m.shared_archives) {
+        group
     } else {
         (r.overflow_hash % m.overflows as u64) as usize
     };
@@ -444,6 +464,7 @@ struct Routes {
     // Hash models accumulate across archives; coarse models finalize each archive.
     pending: Vec<Vec<BTreeMap<RouteKey, [u64; 2]>>>,
     result: Vec<Vec<Candidates>>,
+    lookup_entries: BTreeMap<(usize, usize, usize), Vec<u64>>,
 }
 impl Routes {
     fn new() -> Self {
@@ -456,9 +477,35 @@ impl Routes {
                 .map(|_| (0..7).map(|_| Candidates::default()).collect())
                 .collect(),
             models,
+            lookup_entries: BTreeMap::new(),
         }
     }
     fn add(&mut self, records: &[Shape], archive: usize) {
+        for r in records {
+            for t in THRESHOLDS {
+                for side in 0..5 {
+                    let size = r.sizes[side.min(2)];
+                    let extent = match side {
+                        0..=2 => 48 + if size <= t { size } else { 0 },
+                        3 => 48 + if r.sizes[2] > t { 0 } else { r.sizes[1] },
+                        _ => {
+                            48 + if r.sizes[1] <= t {
+                                r.sizes[2].min(t)
+                            } else {
+                                0
+                            }
+                        }
+                    };
+                    for buckets in [1, 4, 16, 64] {
+                        let values = self
+                            .lookup_entries
+                            .entry((t, side, buckets))
+                            .or_insert_with(|| vec![0; buckets]);
+                        values[(r.lookup_hash % buckets as u64) as usize] += extent as u64;
+                    }
+                }
+            }
+        }
         for (i, &m) in self.models.iter().enumerate() {
             for (j, t) in THRESHOLDS.into_iter().enumerate() {
                 let groups = &mut self.pending[i][j];
@@ -479,6 +526,19 @@ impl Routes {
                 }
                 if m.coarse {
                     self.result[i][j].add(std::mem::take(groups));
+                } else if m.shared_archives > 0 && (archive + 1).is_multiple_of(m.shared_archives) {
+                    // Only overflow classes close at a shared-group boundary.
+                    // Inline opens expose no page group and retain global classes.
+                    let keys: Vec<_> = groups
+                        .keys()
+                        .filter(|k| k.1 != usize::MAX)
+                        .copied()
+                        .collect();
+                    let mut closed = BTreeMap::new();
+                    for key in keys {
+                        closed.insert(key, groups.remove(&key).unwrap());
+                    }
+                    self.result[i][j].add(closed);
                 }
             }
         }
@@ -489,14 +549,30 @@ impl Routes {
             for (j, t) in THRESHOLDS.into_iter().enumerate() {
                 self.result[i][j].add(std::mem::take(&mut self.pending[i][j]));
                 out.push(json!({"threshold":t,"lookup":if m.coarse {"chronological-40000-record-archive"} else {"independent-hash"},
-                "lookup_hash_buckets":(!m.coarse).then_some(m.lookups),"overflow_hash_buckets":m.overflows,
+                "lookup_hash_buckets":(!m.coarse).then_some(m.lookups),
+                "overflow_kind":if m.shared_archives>0 {"chronological-shared-pages"} else {"independent-hash"},
+                "overflow_hash_buckets":(m.shared_archives==0).then_some(m.overflows),
+                "archives_per_pages_table":(m.shared_archives>0).then_some(m.shared_archives),
                 "era_visible":m.era_visible,"logical_fragment_count_and_initial_query_count_visible":m.requests_visible,
                 "candidates":self.result[i][j].report()}));
             }
         }
-        json!({"models":out,"candidate_unit":"Distinct real txids; identity uniqueness checked in disk SQLite. Never padding, outputs or fragments.",
+        let fixed: u64 = 14848 + 16 + 32 + 2 * 2048 * 8 + 8 + 2048 * 2048 * 2 * 8;
+        let budgets:Vec<_>=self.lookup_entries.iter().map(|(&(t,side,buckets),bytes)|{
+            // 75% is an explicit planning density, not a proved packing bound.
+            let segments:Vec<_>=bytes.iter().map(|b|(4*b).div_ceil(3*4096*(ROW as u64-4)).max(1)).collect();
+            let n:u64=segments.iter().sum();
+            json!({"threshold":t,"size_population":if side<3 {side_name(side)} else if side==3 {"safe_entry_bytes_lower"} else {"safe_entry_bytes_upper"},
+                "lookup_hash_buckets":buckets,"entry_bytes_per_bucket":bytes,
+                "budget_segments_per_bucket":segments,"directory_geometry_rows":4096,"planning_density":0.75,
+                "encoded_database_bytes_budget":n*4096*ROW as u64,
+                "native_preprocessing_reservation_bytes_budget":n*(4096*ROW as u64+fixed)})
+        }).collect();
+        json!({"models":out,"independent_hash_directory_budgets":budgets,
+            "directory_entry_byte_basis":"Stored sizes are measured; exact-fee scenarios and safe entry-byte bounds are hypothetical supported-codec bytes, not resolved fees.",
+            "directory_budget_qualification":"Per-bucket entry totals with a 75% density planning assumption; not hashed-row replay, native RSS/latency or guaranteed segment counts. Safe entry-byte bounds cover interior fee widths; their allocation budgets remain projections.","candidate_unit":"Distinct real txids; identity uniqueness checked in disk SQLite. Never padding, outputs or fragments.",
             "bounds":"Every possible unknown fee width is covered by the endpoint route keys (width span < fragment capacity). Definite members have exactly one possible route key; possible members can have several. Histograms count classes, not weighted transaction probabilities. A class with zero definite members need not exist in the realized exact-fee population.",
-            "observables":"Initial lookup bucket, inline/overflow branch, broad overflow hash bucket; optionally era and logical fragment count plus directory-choice coincidence. One fixed snapshot/revision. Timing, retries, exact shared-page query counts, page segment counts and differing refresh revisions are NOT modeled and can further narrow classes.",
+            "observables":"Initial lookup bucket, inline/overflow branch, broad overflow hash bucket OR the public chronological shared-pages group ID; optionally era and logical fragment count plus directory-choice coincidence. One fixed snapshot/revision. Timing, retries, exact shared-page query counts, page segment counts and differing refresh revisions are NOT modeled and can further narrow classes.",
             "policy":"K=5 is a diagnostic control; K=1000/10000 are engineering policies, not formal anonymity guarantees. Global overflow cannot widen an already exposed lookup bucket. Cover traffic and padding are not counted as real candidates."})
     }
 }
@@ -661,6 +737,10 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         (
             "metadata",
             include_bytes!("../../../../crates/transparent-events/src/lib.rs").as_slice(),
+        ),
+        (
+            "native_budget_reference",
+            include_bytes!("../../../../../shared/pir-native/src/lib.rs").as_slice(),
         ),
         ("census", include_bytes!("journal_census.rs").as_slice()),
         ("lock", include_bytes!("../Cargo.lock").as_slice()),
@@ -977,6 +1057,103 @@ mod tests {
             v["candidates"]["definite_candidates_per_possible_class"]["min"],
             0
         );
+    }
+    #[test]
+    fn shared_page_group_narrows_hash_lookup_and_inline_classes_stay_global() {
+        let mut routes = Routes::new();
+        let first = vec![
+            Shape::new([1; 32], [129; 3], 1, 0),
+            Shape::new([2; 32], [100; 3], 1, 0),
+        ];
+        let second = vec![
+            Shape::new([3; 32], [129; 3], 1, 1),
+            Shape::new([4; 32], [129; 3], 1, 1),
+            Shape::new([5; 32], [100; 3], 1, 1),
+        ];
+        routes.add(&first, 0);
+        routes.add(&second, 1);
+        let output = routes.report();
+        let models = output["models"].as_array().unwrap();
+        let find = |k| {
+            models
+                .iter()
+                .find(|v| {
+                    v["threshold"] == 128
+                        && v["lookup"] == "independent-hash"
+                        && v["lookup_hash_buckets"] == 1
+                        && v["archives_per_pages_table"] == k
+                        && v["era_visible"] == false
+                })
+                .unwrap()
+        };
+        // k=1 gives overflow classes of 1 and 2, plus one global inline class of 2.
+        assert_eq!(find(1)["candidates"]["possible_classes"], 3);
+        assert_eq!(
+            find(1)["candidates"]["definite_candidates_per_possible_class"]["min"],
+            1
+        );
+        // k=4 merges the two overflow cohorts; inline still has two real txids.
+        assert_eq!(find(4)["candidates"]["possible_classes"], 2);
+        assert_eq!(
+            find(4)["candidates"]["definite_candidates_per_possible_class"]["min"],
+            2
+        );
+        assert_eq!(
+            find(4)["candidates"]["definite_candidates_per_possible_class"]["max"],
+            3
+        );
+    }
+    #[test]
+    fn hash_directory_budget_uses_real_bucket_bytes_and_safe_fee_membership() {
+        let mut routes = Routes::new();
+        routes.add(
+            &[
+                Shape::new([1; 32], [100; 3], 1, 0),
+                Shape::new([2; 32], [400; 3], 1, 0),
+            ],
+            0,
+        );
+        let output = routes.report();
+        let budgets = output["independent_hash_directory_budgets"]
+            .as_array()
+            .unwrap();
+        let v = budgets
+            .iter()
+            .find(|v| {
+                v["threshold"] == 128
+                    && v["size_population"] == "stored"
+                    && v["lookup_hash_buckets"] == 4
+            })
+            .unwrap();
+        assert_eq!(
+            v["entry_bytes_per_bucket"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_u64().unwrap())
+                .sum::<u64>(),
+            196
+        );
+        let mut routes = Routes::new();
+        routes.add(&[Shape::new([3; 32], [127, 128, 135], 1, 0)], 0);
+        let output = routes.report();
+        let budgets = output["independent_hash_directory_budgets"]
+            .as_array()
+            .unwrap();
+        let bytes = |side| {
+            budgets
+                .iter()
+                .find(|v| {
+                    v["threshold"] == 128
+                        && v["size_population"] == side
+                        && v["lookup_hash_buckets"] == 1
+                })
+                .unwrap()["entry_bytes_per_bucket"][0]
+                .as_u64()
+                .unwrap()
+        };
+        assert_eq!(bytes("safe_entry_bytes_lower"), 48);
+        assert_eq!(bytes("safe_entry_bytes_upper"), 176);
     }
     #[test]
     fn journal_reader_fixture_orphans_missing_checksum_and_writer_lock() {
