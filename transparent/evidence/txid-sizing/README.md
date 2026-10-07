@@ -10,7 +10,9 @@ authorized. See the [census handoff](../../tools/txid-sizing/JOURNAL-CENSUS.md).
 ## Coordinator journal tooling (2026-10-07)
 
 The [local validation receipt](journal-tooling-validation.json) pins the new
-census helper, synthetic algorithm profile and focused checks. It contains no
+census helper, synthetic algorithm profile and focused checks. The separate
+[eligibility guard receipt](journal-eligibility-validation.json) records the later
+coinbase/ineligible-record refusals without rewriting that earlier receipt. It contains no
 coordinator census results; the fixed-anchor JSON and ingest exclusion/source
 receipt are still required. The [exact command](../../tools/txid-sizing/JOURNAL-CENSUS.md)
 compares independent routing, shared pages and smaller page tables.
