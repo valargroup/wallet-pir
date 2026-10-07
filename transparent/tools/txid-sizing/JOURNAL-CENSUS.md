@@ -63,11 +63,14 @@ included. The checkpoint can cover more blocks than the selected anchor.
   formula. Safe page bounds do not assert directory allocation bounds. These
   are table byte/reservation estimates, **not native RSS or latency**.
 - `joint_routes`: chronological archive lookup versus independent 1/4/16/64
-  hash buckets, with global or 4/16-bucket overflow. Each is reported for route
+  hash buckets, with global or 4/16-bucket overflow, plus the public group ID of
+  pages shared across k=1/4/16/64 chronological archives. Each is reported for route
   observables alone and with era, logical fragment count and deduplicated initial
   directory-choice count. One fixed snapshot/revision is assumed. Distinct txids
   are checked globally in SQLite; padding, outputs and fragments are never real
-  candidates. Definite/possible memberships cover every unknown-fee width,
+  candidates. Inline classes retain global membership when no page request
+  exposes a group; shared overflow group IDs can narrow a hash lookup.
+  Definite/possible memberships cover every unknown-fee width,
   including branch and fragment-count discontinuities. Possible classes with
   zero definite candidates need not exist after fees are known. Five-candidate
   controls and K=1000/10000 counts are diagnostic engineering policies, not
@@ -75,6 +78,12 @@ included. The checkpoint can cover more blocks than the selected anchor.
 
 Timing, retries, actual shared-page request coalescing, page segment counts and
 changing publication revisions remain unmodeled and can narrow intersections.
+Hash-directory budgets use actual bucket assignments and stored/scenario/safe
+entry-byte totals with an explicit 75% planning density at 4096 rows. They are
+allocation projections, not hashed-row packing or guaranteed segment counts.
+Compare those directory budgets with each page allocation; the per-archive
+replay uses chronological directories.
+
 Shared pages, independent routing, alternate thresholds and smaller geometries
 are layout proposals; the tool does not claim current servers implement them.
 Compact script/manifest/envelope proposals retain their separate sampled findings.

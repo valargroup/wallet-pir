@@ -1,0 +1,20 @@
+{
+  "additional_observables": [
+    "Public chronological shared-pages group ID",
+    "Inline records expose no shared-pages group"
+  ],
+  "canonical_population_result_received": false,
+  "clippy_all_targets": "passed with -D warnings",
+  "directory_budget_basis": "Actual hash bucket entry-byte totals with safe unknown-fee membership bounds; allocation projected at explicit 75% planning density, not packing replay",
+  "independent_hash_directory_budget_options": 140,
+  "rust_release_fast": "44 passed; one explicit synthetic profiler ignored",
+  "schema": "txid-sizing-journal-shared-route-validation-v1",
+  "source_sha256": "c1810df8c62976c828f758dc5051ef11bfe61f930286f1f1ed1568f349f15f16",
+  "synthetic_profile": {
+    "elapsed_seconds": 2.045316282,
+    "layout_options": 560,
+    "qualification": "Algorithm profile before equivalent checked_div lint fix; excludes journal reads, disk identity checks and native PIR; not chain throughput, RSS or latency",
+    "records": 40000,
+    "route_models": 490
+  }
+}

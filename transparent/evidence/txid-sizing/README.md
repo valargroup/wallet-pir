@@ -12,7 +12,9 @@ authorized. See the [census handoff](../../tools/txid-sizing/JOURNAL-CENSUS.md).
 The [local validation receipt](journal-tooling-validation.json) pins the new
 census helper, synthetic algorithm profile and focused checks. The separate
 [eligibility guard receipt](journal-eligibility-validation.json) records the later
-coinbase/ineligible-record refusals without rewriting that earlier receipt. It contains no
+coinbase/ineligible-record refusals without rewriting that earlier receipt. The
+[shared-route receipt](journal-shared-route-validation.json) validates observable
+shared-page group intersections and bounded hash-directory projections. These contain no
 coordinator census results; the fixed-anchor JSON and ingest exclusion/source
 receipt are still required. The [exact command](../../tools/txid-sizing/JOURNAL-CENSUS.md)
 compares independent routing, shared pages and smaller page tables.
