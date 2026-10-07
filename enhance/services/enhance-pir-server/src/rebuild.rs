@@ -140,7 +140,6 @@ fn compare_journals(
     new: &JournalSnapshot,
     sealed: &BTreeSet<u64>,
 ) -> Result<Comparison, RebuildError> {
-    let shard_positions = ENHANCE_LAYOUT.shard_positions() as u64;
     let (mut changed, mut absent) = (0, 0);
     let mut hasher = Sha256::new();
     let mut old_bytes = vec![0u8; COMPARE_RECORDS * RECORD_BYTES];
@@ -163,10 +162,10 @@ fn compare_journals(
             let position = start + index as u64;
             if fee_only_change(o, n).map_err(|reason| RebuildError::Oracle { position, reason })? {
                 changed += 1;
-                if sealed.contains(&(position / shard_positions)) {
+                let shard = query_shard(position);
+                if sealed.contains(&shard) {
                     return Err(RebuildError::Refused(format!(
-                        "changed record {position} is in sealed shard {}",
-                        position / shard_positions
+                        "changed record {position} is in sealed shard {shard}"
                     )));
                 }
             }
@@ -181,6 +180,19 @@ fn compare_journals(
         absent,
         records_sha256: hex::encode(hasher.finalize()),
     })
+}
+
+/// Query-domain id of a journal position.
+///
+/// `recovery.sealed` stores the ids `Lifecycle::coverage` assigns. A domain
+/// holds `max_shard_rows` × records per row (1,081,344 records). The storage
+/// layout's `shard_positions` is the 8,192-row unit inside that domain, so
+/// dividing by it places three quarters of a sealed domain, and every record
+/// of every later domain, outside the sealed set.
+fn query_shard(position: u64) -> u64 {
+    let span = enhance_pir::protocol::Geometry::default().max_shard_rows
+        * enhance_pir::RECORDS_PER_ROW as u64;
+    position / span
 }
 
 fn is_prefix(staged: &[BlockEntry], live: &[BlockEntry]) -> bool {
@@ -644,6 +656,65 @@ mod tests {
         assert!(matches!(adopted, Adoption::Adopted { .. }), "{adopted:?}");
         // Two 2.7 MB chunk buffers plus parsed manifests; never a journal copy.
         assert!(growth < 64 * 1024, "peak RSS grew {growth} KiB");
+    }
+
+    /// One block of `positions` sparse records. Only `at` is a real record;
+    /// the rest are zero holes, which compare equal and carry no fee.
+    fn sparse_journal(dir: &Path, positions: u64, at: u64, fee: Option<u64>) {
+        use std::os::unix::fs::FileExt;
+        fs::create_dir_all(dir).unwrap();
+        let file = File::create(dir.join("records.bin")).unwrap();
+        file.set_len(positions * RECORD_BYTES as u64).unwrap();
+        file.write_all_at(&record(fee, 0), at * RECORD_BYTES as u64)
+            .unwrap();
+        fs::write(
+            dir.join("manifest.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "version": 7, "record_bytes": RECORD_BYTES, "records_per_row": 33,
+                "table": "enhance", "tree_size": positions,
+                "blocks": [{"height": 3_400_000, "hash": "11".repeat(32),
+                    "first_position": 0, "action_count": positions}],
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn query_shard_uses_the_coverage_span_not_the_layout_unit() {
+        let span = enhance_pir::protocol::Geometry::default().max_shard_rows
+            * enhance_pir::RECORDS_PER_ROW as u64;
+        let unit = ENHANCE_LAYOUT.shard_positions() as u64;
+        assert_eq!(span, 32_768 * 33);
+        assert_eq!(unit * 4, span);
+        assert_eq!(query_shard(0), 0);
+        assert_eq!(query_shard(unit), 0, "second layout unit is still domain 0");
+        assert_eq!(query_shard(span - 1), 0);
+        assert_eq!(query_shard(span), 1);
+    }
+
+    /// A fee added in the second 8,192-row unit of query domain 0 must be
+    /// refused when that domain is sealed. Dividing by the layout unit would
+    /// call this position shard 1 and adopt it.
+    #[test]
+    fn query_shard_sealed_domain_covers_every_layout_unit() {
+        let unit = ENHANCE_LAYOUT.shard_positions() as u64;
+        let positions = unit + 1;
+        let root = tempfile::tempdir().unwrap();
+        let old = root.path().join("old");
+        let new = root.path().join("new");
+        sparse_journal(&old, positions, unit, None);
+        sparse_journal(&new, positions, unit, Some(20_000));
+        let old = JournalSnapshot::read(&old, DatabaseId::Enhance, ENHANCE_LAYOUT).unwrap();
+        let new = JournalSnapshot::read(&new, DatabaseId::Enhance, ENHANCE_LAYOUT).unwrap();
+        let Err(refused) = compare_journals(&old, &new, &BTreeSet::from([0])) else {
+            panic!("sealed domain 0 must refuse a change in its second unit");
+        };
+        let message = refused.to_string();
+        assert!(message.contains("sealed shard 0"), "{message}");
+        assert!(message.contains(&format!("record {unit}")), "{message}");
+        // The next domain's id must not swallow a change that is still in domain 0.
+        assert!(compare_journals(&old, &new, &BTreeSet::from([1])).is_ok());
     }
 
     #[test]
