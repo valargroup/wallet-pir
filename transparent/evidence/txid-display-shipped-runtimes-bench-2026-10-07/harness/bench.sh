@@ -71,7 +71,7 @@ EOF
   cat >"$dir/workers.json" <<EOF
 {"workers":[{"name":"recent","role":"recent-replica","transport":{"socket":"$dir/control.sock"}}]}
 EOF
-  log "$name: replay $REPLAY_BLOCKS blocks, one per ${STEP_MS} ms, controller flags: $*"
+  log "$name: replay $REPLAY_BLOCKS blocks, one per ${STEP_MS} ms, controller flags: ${*:-none}"
   TRANSPARENT_BUILD_THREADS=2 taskset -c "$CONTROLLER_CPUS" "$BIN/txid-display-controller" run \
     --root "$dir/root" --journal "$dir/journal" --mode replay --workers "$dir/workers.json" \
     --blocks-per-step 1 --step-interval-ms "$STEP_MS" --replay-end $((BOOT_THROUGH + REPLAY_BLOCKS)) \
