@@ -226,13 +226,15 @@ impl Iterator for RowCoefficients<'_> {
 }
 
 /// Geometries whose runtime hint skips trailing zero blocks and is computed
-/// by [`native::batched_hint`]: the recent tails rebuilt at every publication.
-/// Every other geometry, the archives included, keeps the reference product
-/// over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
+/// by [`native::batched_hint`]: the recent tails and the display tables, whose
+/// recent shard is rebuilt at every block. Every other geometry, the history
+/// archives included, keeps the reference product over every block.
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 5] = [
     &transparent_shard::layout::RECENT_8K,
     &transparent_shard::layout::RECENT_4K,
     &transparent_shard::layout::RECENT_4K_8K,
+    &transparent_shard::display::TXID_2K,
+    &transparent_shard::display::TXID_4K,
 ];
 
 fn uses_batched_hint(geometry: &Geometry) -> bool {
@@ -897,6 +899,7 @@ mod tests {
     }
 
     use super::*;
+    use transparent_shard::display::TXID_2K;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
@@ -1019,14 +1022,19 @@ mod tests {
     }
 
     /// The batched hint changes nothing a client or the disk cache sees. At
-    /// the deployed geometry, for a full directory and a partly filled page
-    /// table, the runtime publishes the masks of one prepared from the
-    /// reference hint over every block, answers byte for byte as it does, and
-    /// decodes to the selected row.
+    /// the deployed history and display geometries, for a full directory and
+    /// a partly filled page table, the runtime publishes the masks of one
+    /// prepared from the reference hint over every block, answers byte for
+    /// byte as it does, and decodes to the selected row.
     #[test]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
-        for (table, filled) in [(Table::Directory, 8_192), (Table::Pages, 5_000)] {
-            let shared = SharedParams::build(&RECENT_8K, table).unwrap();
+        for (geometry, table, filled) in [
+            (&RECENT_8K, Table::Directory, 8_192),
+            (&RECENT_8K, Table::Pages, 5_000),
+            (&TXID_2K, Table::TxDirectory, 2_048),
+            (&TXID_2K, Table::TxPages, 700),
+        ] {
+            let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
             let mut rows = vec![0u8; profile.rows * profile.row_bytes];
             for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1068,18 +1076,21 @@ mod tests {
                 assert_eq!(
                     row,
                     &rows[at..at + profile.row_bytes],
-                    "{table:?} row {selected}"
+                    "{} {table:?} row {selected}",
+                    geometry.name
                 );
             }
         }
     }
 
-    /// Only the recent geometries take the batched hint, and their deployed
-    /// masks are within its capacity, so it never silently falls back there.
-    /// Both archive geometries, and any geometry added later, keep the
-    /// reference product over every block.
+    /// Only the recent history geometries and the display geometries take the
+    /// batched hint, and their deployed masks are within its capacity, so it
+    /// never silently falls back there. Both history archive geometries, and
+    /// any history geometry added later, keep the reference product over every
+    /// block.
     #[test]
     fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
+        use transparent_shard::display::DISPLAY_PROFILES;
         use transparent_shard::layout::{ARCHIVE_32K, PROFILES};
         for geometry in PROFILES {
             assert_eq!(
@@ -1092,8 +1103,14 @@ mod tests {
         assert!(!uses_batched_hint(&ARCHIVE_32K));
         assert!(!uses_batched_hint(&ARCHIVE_WIDE));
         assert!(uses_batched_hint(&RECENT_8K));
+        assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
         for geometry in BATCHED_HINT_GEOMETRIES {
-            for table in [Table::Directory, Table::Pages] {
+            let tables = if DISPLAY_PROFILES.contains(geometry) {
+                [Table::TxDirectory, Table::TxPages]
+            } else {
+                [Table::Directory, Table::Pages]
+            };
+            for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();
                 assert_eq!(
                     native::batched_hint::path(&shared.profile.masks).unwrap(),
