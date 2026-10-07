@@ -13,6 +13,7 @@ use std::{
 };
 use transparent_events::{encode_varint, FeeState, MAX_MONEY};
 use transparent_shard::txid::{candidate_rows, TransparentDisplayRecord, CODEC};
+use transparent_shard::txid_v2x::{DisplayInput, CODEC as CODEC_V2X};
 
 const THRESHOLDS: [usize; 7] = [128, 192, 256, 384, 512, 768, 1024];
 const ARCHIVE: usize = 40_000;
@@ -577,10 +578,80 @@ impl Routes {
     }
 }
 
+/// Size and layout accumulators for one record population.
+#[derive(Default)]
+struct Population {
+    domains: BTreeMap<String, Domain>,
+    archives: Vec<Shape>,
+    pages: Pages,
+}
+impl Population {
+    fn add(
+        &mut self,
+        domains: &[String],
+        record: &TransparentDisplayRecord,
+        sizes: [usize; 3],
+        height: u64,
+    ) {
+        for domain in domains {
+            self.domains
+                .entry(domain.clone())
+                .or_default()
+                .add(record, sizes);
+        }
+        self.archives.push(Shape::new(
+            record.txid.0,
+            sizes,
+            height,
+            self.pages.archives as usize,
+        ));
+    }
+    fn report(self) -> Value {
+        json!({"domains":self.domains.iter().map(|(k,d)|(k.clone(),d.report())).collect::<BTreeMap<_,_>>(),
+            "pages":self.pages.report()})
+    }
+}
+
+/// What the experimental v2x input list adds to each record, per domain.
+#[derive(Default)]
+struct Overhead {
+    records: u64,
+    inputs: u64,
+    extra_bytes: u64,
+    script_bytes: u64,
+    extra: Hist,
+    per_input: Hist,
+}
+impl Overhead {
+    fn add(&mut self, inputs: &[DisplayInput]) {
+        let extra: usize = inputs.iter().map(DisplayInput::encoded_len).sum();
+        self.records += 1;
+        self.inputs += inputs.len() as u64;
+        self.extra_bytes += extra as u64;
+        *self.extra.entry(extra).or_default() += 1;
+        for input in inputs {
+            self.script_bytes += input.script.len() as u64;
+            *self.per_input.entry(input.encoded_len()).or_default() += 1;
+        }
+    }
+    fn report(&self) -> Value {
+        let mean = |n: u64, d: u64| (d > 0).then(|| n as f64 / d as f64);
+        json!({"records":self.records,"inputs":self.inputs,"extra_bytes":self.extra_bytes,
+            "input_script_bytes":self.script_bytes,
+            "mean_extra_bytes_per_record":mean(self.extra_bytes,self.records),
+            "mean_extra_bytes_per_input":mean(self.extra_bytes,self.inputs),
+            "extra_bytes_per_record":histogram_report(&self.extra),
+            "encoded_bytes_per_input":histogram_report(&self.per_input)})
+    }
+}
+
 pub fn collect(args: &[String]) -> Result<Value, AnyError> {
+    // `--v2x` reads an experimental `--txid-display-inputs` journal instead.
+    let v2x = args.first().map(String::as_str) == Some("--v2x");
+    let args = &args[usize::from(v2x)..];
     if !(3..=4).contains(&args.len()) {
         return Err(
-            "usage: --journal-census JOURNAL ANCHOR_HEIGHT ANCHOR_HASH_OR_--anchor-from-journal [SCRATCH_DIR]".into(),
+            "usage: --journal-census [--v2x] JOURNAL ANCHOR_HEIGHT ANCHOR_HASH_OR_--anchor-from-journal [SCRATCH_DIR]".into(),
         );
     }
     let dir = Path::new(&args[0]);
@@ -630,10 +701,13 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     let scratch = tempfile::tempdir_in(scratch_parent)?;
     let mut identities = Connection::open(scratch.path().join("identities.sqlite"))?;
     identities.execute_batch("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-32768; CREATE TABLE ids(txid BLOB PRIMARY KEY) WITHOUT ROWID;")?;
-    let mut domains: BTreeMap<String, Domain> = BTreeMap::new();
-    let mut archives = Vec::with_capacity(ARCHIVE);
-    let mut pages = Pages::default();
-    let mut routes = Routes::new();
+    // v1: the stored records. v2x: [with inputs, inputs stripped (= v1)].
+    let mut populations: Vec<Population> = (0..1 + usize::from(v2x))
+        .map(|_| Population::default())
+        .collect();
+    let mut overhead: BTreeMap<String, Overhead> = BTreeMap::new();
+    // Joint route models are a v1 question; v2x reports sizes and pages only.
+    let mut routes = (!v2x).then(Routes::new);
     let mut digest = Sha256::new();
     let mut source_bytes = 0u64;
     let mut sidecar_digest = Sha256::new();
@@ -644,13 +718,27 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         digest.update(height.to_le_bytes());
         digest.update(block.block_hash.internal_bytes());
         let path = dir
-            .join("display-v1")
+            .join(if v2x {
+                display_journal::V2X_DIR
+            } else {
+                "display-v1"
+            })
             .join(format!("{}.bin", block.block_hash.to_display_hex()));
         source_bytes += std::fs::metadata(&path)?.len();
         // Use the existing checksum/extent/duplicate/canonical-codec reader.
         // Do not load events.bin; event replay adds no display sizing facts.
-        let records = display_journal::read(dir, block.block_hash)?;
-        if records.iter().filter(|r| r.coinbase).count() != 1 {
+        let records: Vec<(TransparentDisplayRecord, Option<Vec<DisplayInput>>)> = if v2x {
+            display_journal::read_inputs(dir, block.block_hash)?
+                .into_iter()
+                .map(|r| (r.record, Some(r.inputs)))
+                .collect()
+        } else {
+            display_journal::read(dir, block.block_hash)?
+                .into_iter()
+                .map(|r| (r, None))
+                .collect()
+        };
+        if records.iter().filter(|(r, _)| r.coinbase).count() != 1 {
             return Err("display block must contain exactly one eligible coinbase".into());
         }
         let mut sidecar = File::open(&path)?;
@@ -663,7 +751,7 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         let txn = identities.transaction()?;
         {
             let mut insert = txn.prepare_cached("INSERT INTO ids VALUES (?1)")?;
-            for record in &records {
+            for (record, inputs) in &records {
                 if !record.coinbase
                     && record.metadata.transparent_input_count == 0
                     && record.outputs.is_empty()
@@ -679,25 +767,35 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
                 } else {
                     "non_coinbase"
                 };
-                for domain in [
+                let names = [
                     "all".to_string(),
                     category.to_string(),
                     era(height).to_string(),
                     format!("{}/{}", era(height), category),
-                ] {
-                    domains.entry(domain).or_default().add(record, sizes);
+                ];
+                if let Some(inputs) = inputs {
+                    // v2x bytes are exactly the v1 bytes plus the input list.
+                    let extra: usize = inputs.iter().map(DisplayInput::encoded_len).sum();
+                    populations[0].add(&names, record, sizes.map(|s| s + extra), height);
+                    populations[1].add(&names, record, sizes, height);
+                    for name in &names {
+                        overhead.entry(name.clone()).or_default().add(inputs);
+                    }
+                } else {
+                    populations[0].add(&names, record, sizes, height);
                 }
-                archives.push(Shape::new(
-                    record.txid.0,
-                    sizes,
-                    height,
-                    pages.archives as usize,
-                ));
                 n += 1;
-                if archives.len() == ARCHIVE {
-                    routes.add(&archives, pages.archives as usize);
-                    pages.add(&mut archives);
-                    archives.clear();
+                if populations[0].archives.len() == ARCHIVE {
+                    if let Some(routes) = &mut routes {
+                        routes.add(
+                            &populations[0].archives,
+                            populations[0].pages.archives as usize,
+                        );
+                    }
+                    for p in &mut populations {
+                        p.pages.add(&mut p.archives);
+                        p.archives.clear();
+                    }
                 }
             }
         }
@@ -709,10 +807,17 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
             );
         }
     }
-    let partial_archive_records = archives.len();
-    if !archives.is_empty() {
-        routes.add(&archives, pages.archives as usize);
-        pages.add(&mut archives);
+    let partial_archive_records = populations[0].archives.len();
+    if partial_archive_records > 0 {
+        if let Some(routes) = &mut routes {
+            routes.add(
+                &populations[0].archives,
+                populations[0].pages.archives as usize,
+            );
+        }
+        for p in &mut populations {
+            p.pages.add(&mut p.archives);
+        }
     }
     let identity_count: u64 = identities.query_row("SELECT count(*) FROM ids", [], |r| r.get(0))?;
     if identity_count != n {
@@ -735,6 +840,10 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
             include_bytes!("../../../../crates/transparent-shard/src/txid.rs").as_slice(),
         ),
         (
+            "codec_v2x",
+            include_bytes!("../../../../crates/transparent-shard/src/txid_v2x.rs").as_slice(),
+        ),
+        (
             "metadata",
             include_bytes!("../../../../crates/transparent-events/src/lib.rs").as_slice(),
         ),
@@ -748,24 +857,41 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
     .into_iter()
     .map(|(name, bytes)| (name, hex::encode(Sha256::digest(bytes))))
     .collect();
-    let output = json!({"schema":"txid-display-journal-census-v1","codec":CODEC,
-        "source":{"start_height":0,"anchor_height":end,"anchor_hash_display":expected,"anchor_hash_external_expectation":!derive_anchor,"journal_version":store.version(),
+    let source = json!({"start_height":0,"anchor_height":end,"anchor_hash_display":expected,"anchor_hash_external_expectation":!derive_anchor,"journal_version":store.version(),
             "journal_covered_through":store.covered_through(),"era_boundaries":ERAS,"checkpoint_hex":hex::encode(checkpoint),
             "block_membership_sha256":hex::encode(digest.finalize()),
             "sidecar_content_digest_chain_sha256":hex::encode(sidecar_digest.finalize()),"sidecar_bytes_read":source_bytes,
             "sidecar_validation":"existing reader checks SHA256, hash envelope, unique block txids and canonical display encoding",
             "chain_consensus_independently_validated":false,"parser_git_pin":"af944f5194ef2e9921bc96af017629450375013c",
             "compiled_source_file_sha256":pins,
-            "binary_sha256":hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"ingest_executable_and_source_pin":Value::Null},
-        "measurement":{"elapsed_seconds":start.elapsed().as_secs_f64(),"partial_archive_records":partial_archive_records,"distinct_display_records":n,"committed_blocks":end+1,
+            "binary_sha256":hex::encode(Sha256::digest(std::fs::read(std::env::current_exe()?)?)),"ingest_executable_and_source_pin":Value::Null});
+    let measurement = json!({"elapsed_seconds":start.elapsed().as_secs_f64(),"partial_archive_records":partial_archive_records,"distinct_display_records":n,"committed_blocks":end+1,
             "total_chain_transactions":Value::Null,"shielded_only_exclusions":Value::Null,
-            "inventory_limit":"Display sidecars cannot reveal excluded shielded-only transactions. Attach the ingest's independent canonical transaction/exclusion receipt; no exclusion count is inferred from events or empty sidecars."},
-        "fee_policy":{"unknown_exact_fee_encoded_bytes":[varlen(0),varlen(MAX_MONEY)],"MAX_MONEY":MAX_MONEY,
-            "unknown_is_measured_exact_fee":false,"exact_zero_and_nonapplicable_distinct":true},
-        "domains":domains.iter().map(|(k,d)|(k.clone(),d.report())).collect::<BTreeMap<_,_>>(),
-        "pages":pages.report(),"joint_routes":routes.report(),
-        "limitations":"Full committed eligible-sidecar census conditional on ingest completeness, not independent full-chain transaction/exclusion audit. Current codec only; thresholds above 128, independent/shared routing and small page geometries are proposals. No native benchmark, service change or production qualification."});
-    Ok(output)
+            "inventory_limit":"Display sidecars cannot reveal excluded shielded-only transactions. Attach the ingest's independent canonical transaction/exclusion receipt; no exclusion count is inferred from events or empty sidecars."});
+    let fee_policy = json!({"unknown_exact_fee_encoded_bytes":[varlen(0),varlen(MAX_MONEY)],"MAX_MONEY":MAX_MONEY,
+            "unknown_is_measured_exact_fee":false,"exact_zero_and_nonapplicable_distinct":true});
+    if v2x {
+        let mut populations = populations.into_iter();
+        let with_inputs = populations.next().unwrap().report();
+        let stripped = populations.next().unwrap().report();
+        return Ok(
+            json!({"schema":"txid-display-journal-census-v2x","codec":CODEC_V2X,
+            "stripped_codec":CODEC,"source":source,"measurement":measurement,"fee_policy":fee_policy,
+            "populations":{"with_inputs":with_inputs,"inputs_stripped":stripped},
+            "input_overhead":overhead.iter().map(|(k,o)|(k.clone(),o.report())).collect::<BTreeMap<_,_>>(),
+            "limitations":"EXPERIMENTAL unpublished v2x records from an --txid-display-inputs journal. with_inputs sizes are v1 sizes plus the encoded input list; inputs_stripped re-derives the v1 encoding of the same records. Exact-fee scenarios add the same input bytes. Pages replay the v1 fragment envelope for both populations; joint route models are not computed. No native benchmark, service change or production qualification."}),
+        );
+    }
+    let routes = routes.expect("v1 census computes routes");
+    let mut populations = populations.into_iter();
+    let stored = populations.next().unwrap();
+    Ok(
+        json!({"schema":"txid-display-journal-census-v1","codec":CODEC,
+        "source":source,"measurement":measurement,"fee_policy":fee_policy,
+        "domains":stored.domains.iter().map(|(k,d)|(k.clone(),d.report())).collect::<BTreeMap<_,_>>(),
+        "pages":stored.pages.report(),"joint_routes":routes.report(),
+        "limitations":"Full committed eligible-sidecar census conditional on ingest completeness, not independent full-chain transaction/exclusion audit. Current codec only; thresholds above 128, independent/shared routing and small page geometries are proposals. No native benchmark, service change or production qualification."}),
+    )
 }
 
 pub fn run(args: &[String]) -> Result<(), AnyError> {
@@ -882,6 +1008,129 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("duplicate txid"));
+    }
+    #[test]
+    fn v2x_journal_reports_with_inputs_and_stripped_populations() {
+        use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
+        let dir = tempfile::tempdir().unwrap();
+        let hash = transparent_filter::BlockHash::from_display_hex(
+            transparent_filter::MAINNET_GENESIS_DISPLAY,
+        )
+        .unwrap();
+        let mut coinbase = record(1);
+        coinbase.coinbase = true;
+        coinbase.metadata.transparent_input_count = 0;
+        coinbase.metadata.fee = FeeState::NotApplicable;
+        let mut spend = record(2);
+        spend.metadata.transparent_input_count = 2;
+        // Empty prevout scripts are not indexed, so no spend events are needed.
+        let inputs: Vec<_> = [(3u8, 0usize), (4, 200)]
+            .into_iter()
+            .map(|(tag, script)| DisplayInput {
+                prevout_txid: transparent_events::Txid([tag; 32]),
+                prevout_index: 1,
+                value: 5,
+                script: vec![0x6a; script],
+            })
+            .collect();
+        let records = [
+            TransparentDisplayRecordV2x {
+                record: coinbase.clone(),
+                inputs: vec![],
+            },
+            TransparentDisplayRecordV2x {
+                record: spend.clone(),
+                inputs: inputs.clone(),
+            },
+        ];
+        let mut store =
+            EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+        store
+            .append_block_with_display_inputs(0, hash, &[], &records)
+            .unwrap();
+        store.commit().unwrap();
+        drop(store);
+        let journal = dir.path().to_str().unwrap().to_string();
+        let args = vec![
+            "--v2x".to_string(),
+            journal.clone(),
+            "0".into(),
+            "--anchor-from-journal".into(),
+        ];
+        let output = collect(&args).unwrap();
+        assert_eq!(output["schema"], "txid-display-journal-census-v2x");
+        assert_eq!(output["measurement"]["distinct_display_records"], 2);
+        let extra = 32 + 1 + 1 + 1 + 32 + 1 + 1 + 2 + 200;
+        let overhead = &output["input_overhead"]["all"];
+        assert_eq!(overhead["inputs"], 2);
+        assert_eq!(overhead["extra_bytes"], extra);
+        assert_eq!(overhead["mean_extra_bytes_per_record"], extra as f64 / 2.0);
+        assert_eq!(output["input_overhead"]["coinbase"]["extra_bytes"], 0);
+        let pops = &output["populations"];
+        let size = |pop: &str, domain: &str| {
+            pops[pop]["domains"][domain]["sizes"]["stored"]["max"]
+                .as_u64()
+                .unwrap() as usize
+        };
+        let v1 = spend.encode().unwrap().len();
+        assert_eq!(size("inputs_stripped", "non_coinbase"), v1);
+        assert_eq!(size("with_inputs", "non_coinbase"), v1 + extra);
+        assert_eq!(
+            size("with_inputs", "coinbase"),
+            size("inputs_stripped", "coinbase")
+        );
+        let coverage = |pop: &str, t: &str| {
+            pops[pop]["domains"]["all"]["thresholds"][t]["stored"]["inline"].clone()
+        };
+        assert_eq!(coverage("inputs_stripped", "128"), 2);
+        assert_eq!(coverage("with_inputs", "128"), 1);
+        assert_eq!(coverage("with_inputs", "384"), 2);
+        for pop in ["with_inputs", "inputs_stripped"] {
+            let pages = &pops[pop]["pages"];
+            assert_eq!(pages["archives"], 1);
+            assert!(pages["demand"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|d| d["era"] == "Sprout" && d["threshold"] == 128));
+            // k x geometry: 7 thresholds, 5 size populations, 4 k, 4 geometries.
+            assert_eq!(
+                pages["layout_options"].as_array().unwrap().len(),
+                7 * 5 * 16
+            );
+        }
+        let demand = |pop: &str| {
+            pops[pop]["pages"]["demand"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|d| {
+                    d["threshold"] == 128 && d["size_population"] == "stored" && d["era"] == "all"
+                })
+                .unwrap()["page_rows"]["max"]
+                .clone()
+        };
+        assert_eq!(demand("inputs_stripped"), 0);
+        assert_eq!(demand("with_inputs"), 1);
+        assert!(output.get("joint_routes").is_none());
+        // Neither reader accepts the other's journal.
+        assert!(collect(&args[1..]).is_err());
+        let v1_dir = tempfile::tempdir().unwrap();
+        let mut store = EventStore::open(
+            v1_dir.path(),
+            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            0,
+        )
+        .unwrap();
+        store
+            .append_block_with_display(0, hash, &[], &[coinbase, spend])
+            .unwrap();
+        store.commit().unwrap();
+        drop(store);
+        let mut args = args;
+        args[1] = v1_dir.path().to_str().unwrap().to_string();
+        assert!(collect(&args).is_err());
+        assert!(collect(&args[1..]).is_ok());
     }
     #[test]
     fn incomplete_and_ineligible_sidecar_records_are_refused() {

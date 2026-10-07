@@ -88,6 +88,33 @@ Shared pages, independent routing, alternate thresholds and smaller geometries
 are layout proposals; the tool does not claim current servers implement them.
 Compact script/manifest/envelope proposals retain their separate sampled findings.
 
+## Experimental v2x journal (`--v2x`)
+
+`--journal-census --v2x JOURNAL ANCHOR_HEIGHT ANCHOR [SCRATCH_DIR]` reads a journal
+written by `event-ingest --txid-display-inputs` (`display-v2x/` sidecars, the
+unpublished `transparent-txid-display-v2x` codec in
+[the display contract](../../docs/txid-display.md#experimental-input-listing-record-v2x-unpublished)).
+The same anchor, lock, eligibility and duplicate-txid checks apply; a v1 journal is
+refused in this mode and a v2x journal without the flag.
+
+```bash
+nice -n 19 ionice -c 3 cargo run --locked --profile release-fast \
+  --manifest-path transparent/tools/txid-sizing/export/Cargo.toml -- \
+  --journal-census --v2x /srv/txid-display-genesis/v2x/journal \
+  3508673 --anchor-from-journal > /tmp/txid-display-v2x-census.json
+```
+
+The JSON has schema `txid-display-journal-census-v2x` and two populations over the
+same records: `populations.with_inputs` (v2x bytes) and
+`populations.inputs_stripped` (the identical records' v1 encoding). Each carries
+the v1 report's `domains` (size distributions, exact-fee scenarios, inline
+coverage at 128/192/256/384/512/768/1024, frontiers) and `pages` (per-40,000-record
+archive page-row demand p50/p99/max by era, and k=1/4/16/64 shared pages at
+256/512/1024/4096 rows). A v2x record's bytes are its v1 bytes plus its encoded
+input list, so exact-fee scenarios add the same input bytes. `input_overhead`
+reports, per domain, inputs, extra bytes per record (histogram, mean) and encoded
+bytes per input. Joint route models are not computed in this mode.
+
 ## Required receipt and bounded follow-up
 
 **Display sidecars do not retain shielded-only exclusions or total transaction
