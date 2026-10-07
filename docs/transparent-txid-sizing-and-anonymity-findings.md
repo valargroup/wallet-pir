@@ -27,6 +27,26 @@ open. Production codecs, consumers, deployment and hardware qualification are
 unchanged. [Remaining milestones](../transparent/docs/remaining-work.md#txid-display-sizing-and-independent-routing)
 separate the bounded findings from subsequent implementation and release work.
 
+## Coordinator census handoff (2026-10-07)
+
+The sampled 128-byte recommendation above remains unchanged. Roman reports an
+independent genesis display ingest running to height 3,508,673 on the coordinator;
+this checkout has neither run that ingest nor received its result. The new
+[read-only journal census command](../transparent/tools/txid-sizing/JOURNAL-CENSUS.md)
+uses the existing committed-index and checksum-validating sidecar readers, shared
+fee states and current display codec. It reports the requested size frontiers,
+era/coinbase breakdowns, 40,000-record archive page demand, shared k-archive pages,
+256/512/1024-row alternatives and distinct-candidate route intersections.
+
+Stored bytes are measured separately from hypothetical exact-fee size bounds.
+Packing endpoints are scenarios, with separate conservative page bounds covering
+interior fee widths. Table allocations and preprocessing reservations are source
+budgets, not native RSS or latency. Exact page/segment counts, timing and changing
+revisions still require later joint-route qualification. The sidecar format cannot
+count shielded-only exclusions: canonical total/eligible/exclusion counts and
+ingest source/executable pins must accompany the coordinator JSON. Until that
+receipt arrives, complete canonical-population qualification remains open.
+
 ## Source gate, anchor and probability design
 
 The source/throughput choice completed at **00:57 UTC on 2026-10-04**, within
