@@ -412,6 +412,31 @@ impl EventStore {
         self.append_block(height, block_hash, &ordinary)
     }
 
+    /// [`Self::append_block_with_display`] for the EXPERIMENTAL v2x records:
+    /// the sidecar goes to `display-v2x/` instead of `display-v1/`, with the
+    /// same write-before-checkpoint ordering. Such a journal is census-only;
+    /// its blocks have no v1 display facts and refuse `events_at`.
+    pub fn append_block_with_display_inputs(
+        &mut self,
+        height: u64,
+        block_hash: BlockHash,
+        events: &[(ScriptBytes, TransparentEvent)],
+        records: &[transparent_shard::txid_v2x::TransparentDisplayRecordV2x],
+    ) -> Result<(), EventStoreError> {
+        if height != self.next_height() {
+            return Err(EventStoreError::Invariant("display append height".into()));
+        }
+        crate::display_journal::validate_input_events(records, events)?;
+        let (oversized, ordinary): (Vec<_>, Vec<_>) =
+            events.iter().cloned().partition(|(script, _)| {
+                script.as_slice().len() > crate::display_journal::JOURNAL_SCRIPT_LIMIT
+            });
+        crate::display_journal::write_inputs_with_events(
+            &self.dir, block_hash, records, &oversized,
+        )?;
+        self.append_block(height, block_hash, &ordinary)
+    }
+
     pub fn display_at(
         &self,
         height: u64,

@@ -297,6 +297,40 @@ not erase the containing lookup range exposed by the current reference helper.
 Future measurement and implementation gates remain in
 [remaining work](remaining-work.md#txid-display-sizing-and-independent-routing).
 
+### Experimental input-listing record (v2x, unpublished)
+
+`transparent-txid-display-v2x` is an EXPERIMENTAL measurement codec. It is not
+published, has no compatibility promise, and no server, controller, publisher,
+table builder or wallet client reads it. It exists to measure, over a full-chain
+ingest, what richer records would cost in bytes and page rows.
+
+A v2x record is the v1 record plus every transparent input in transaction order:
+prevout txid (32 bytes, internal order), prevout index, the resolved value and the
+resolved raw locking script of the output it spends. A coinbase lists no inputs.
+The payload is version byte `0xf2`, then the v1 body unchanged, then exactly
+`transparent_input_count` inputs, each `txid ‖ LEB128 index ‖ LEB128 value ‖
+LEB128 script length ‖ script`. The count is not repeated. Replacing the version
+byte with 1 and dropping the input list gives the record's v1 encoding byte for
+byte, so a v2x record costs exactly its inputs' encoded bytes more than v1.
+Decoding refuses truncation, trailing bytes, non-canonical integers, an input list
+that disagrees with the input count, duplicate outpoints, input totals above
+`MAX_MONEY`, and, without shielded components, input values that do not equal
+outputs plus the exact fee. Input scripts are bounded at 2 MB each and the record
+at 64 MiB; prevout scripts are not bounded by the spending transaction's size, so
+these are measurement ceilings that stop an ingest loudly rather than consensus
+bounds.
+
+`event-ingest --txid-display-inputs` (implies display mode) writes block sidecars
+under `display-v2x/` (envelope magic `TPIRTX2X`, 256 MiB block ceiling) instead of
+`display-v1/`, with the same write-before-checkpoint ordering, checksum and
+immutability. Inputs come from the previous outputs extraction already resolves
+for spend events; no lookup is added. Each spend event must match its listed input
+and every indexable input must have one. The default and `--txid-display` paths
+are unchanged: a test pins the v1 sidecar bytes, and the events, blocks and
+checkpoint files are identical between modes. A v2x journal is census-only: its
+blocks have no v1 display facts, and reading their events refuses rather than
+silently dropping oversized-script events that only the v2x sidecar holds.
+
 ## Reproduce the native demo
 
 Run from the repository root:

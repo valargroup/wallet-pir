@@ -36,7 +36,7 @@
 //! irrelevant. Near the tip it means a height can be briefly absent, which
 //! surfaces as [`StateError::MissingBlock`] rather than as a wrong answer.
 
-use crate::extract::{extract_block, outpoint_label, PreviousOutputs};
+use crate::extract::{extract_block_with_inputs, outpoint_label, PreviousOutputs};
 use crate::ingest::BuiltEvents;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -153,6 +153,16 @@ impl StateReader {
     /// and append them in order. The RPC path could not do that, because every
     /// block wrote the output cache the next one read.
     pub fn block_events(&self, height: u64) -> Result<BuiltEvents, crate::ingest::BoxError> {
+        self.block_events_with_inputs(height, false)
+    }
+
+    /// [`Self::block_events`], optionally listing each display record's
+    /// resolved inputs for the experimental v2x sidecar. No extra lookups.
+    pub fn block_events_with_inputs(
+        &self,
+        height: u64,
+        with_inputs: bool,
+    ) -> Result<BuiltEvents, crate::ingest::BoxError> {
         let block_height = to_height(height)?;
         let block = self
             .db
@@ -168,11 +178,17 @@ impl StateReader {
             cache_hits: 0,
             cache: BlockOutputCache::new(32_768, 8 * 1024 * 1024, 1_024),
         };
-        let extracted = extract_block(&block.transactions, &mut previous, event_height)?;
+        let extracted = extract_block_with_inputs(
+            &block.transactions,
+            &mut previous,
+            event_height,
+            with_inputs,
+        )?;
         Ok(BuiltEvents {
             block_hash,
             events: extracted.events,
             display: extracted.display,
+            display_inputs: extracted.display_inputs,
             // Named for the field the RPC path fills. These are local database
             // reads, and a run reporting thousands of them per second is
             // reporting that, not network traffic.

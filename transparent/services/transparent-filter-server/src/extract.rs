@@ -89,6 +89,19 @@ pub fn extract_block(
     previous: &mut impl PreviousOutputs,
     height: u32,
 ) -> Result<ExtractedBlock, ExtractError> {
+    extract_block_with_inputs(transactions, previous, height, false)
+}
+
+/// [`extract_block`], optionally also listing each display record's resolved
+/// inputs for the experimental v2x sidecar. The listing reuses the previous
+/// outputs this extraction already resolved; it performs no extra lookup and
+/// changes nothing else in the result.
+pub fn extract_block_with_inputs(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+    height: u32,
+    with_inputs: bool,
+) -> Result<ExtractedBlock, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
     let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
@@ -106,6 +119,7 @@ pub fn extract_block(
 
     let mut events: Vec<IndexedEvent> = Vec::new();
     let mut display = Vec::new();
+    let mut display_inputs = Vec::new();
 
     for (transaction_index, transaction) in transactions.iter().enumerate() {
         let txid = Txid(transaction.hash().0);
@@ -187,6 +201,28 @@ pub fn extract_block(
             record
                 .encode()
                 .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            if with_inputs {
+                // Transaction input order; the coinbase input spends nothing.
+                let mut inputs = Vec::new();
+                for input in transaction.inputs() {
+                    let Input::PrevOut { outpoint, .. } = input else {
+                        continue;
+                    };
+                    let output = &prevouts
+                        .get(outpoint)
+                        .ok_or_else(|| {
+                            ExtractError::MissingPreviousOutput(outpoint_label(outpoint))
+                        })?
+                        .output;
+                    inputs.push(transparent_shard::txid_v2x::DisplayInput {
+                        prevout_txid: Txid(outpoint.hash.0),
+                        prevout_index: outpoint.index,
+                        value: u64::from(output.value),
+                        script: output.lock_script.as_raw_bytes().to_vec(),
+                    });
+                }
+                display_inputs.push(inputs);
+            }
             display.push(record);
         }
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
@@ -245,12 +281,18 @@ pub fn extract_block(
         }
     }
 
-    Ok(ExtractedBlock { events, display })
+    Ok(ExtractedBlock {
+        events,
+        display,
+        display_inputs,
+    })
 }
 
 pub struct ExtractedBlock {
     pub events: Vec<IndexedEvent>,
     pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
+    /// Aligned with `display` when inputs were requested, otherwise empty.
+    pub display_inputs: Vec<Vec<transparent_shard::txid_v2x::DisplayInput>>,
 }
 
 pub fn extract_events(
@@ -736,6 +778,110 @@ mod tests {
         for (_, event) in events_of(&transactions, &mut previous) {
             assert_eq!(TransparentEvent::from_bytes(&event.to_bytes()), Ok(event));
         }
+    }
+
+    /// Listing inputs for the experimental v2x sidecar must not change what
+    /// the default and `--txid-display` paths extract or write, and must not
+    /// add a lookup.
+    #[test]
+    fn listing_inputs_changes_nothing_else_and_needs_no_extra_lookup() {
+        let funding = transaction(vec![coinbase_input()], vec![output(p2pkh(11))]);
+        let outside = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 3,
+        };
+        let same_block = OutPoint {
+            hash: funding.hash(),
+            index: 0,
+        };
+        let mut big = output(vec![0x51; 10_001]);
+        big.value = Amount::try_from(500).unwrap();
+        let transactions = vec![
+            funding.clone(),
+            transaction(
+                vec![prevout_input(outside), prevout_input(same_block)],
+                vec![output(p2pkh(12)), big],
+            ),
+        ];
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(outside, vec![0x52; 12_000]);
+        previous.values.insert(outside, 600);
+        let plain = extract_block(&transactions, &mut previous.clone(), 7).unwrap();
+        let mut counted = previous.clone();
+        let listed = extract_block_with_inputs(&transactions, &mut counted, 7, true).unwrap();
+        assert_eq!(counted.lookups, 1, "only the outside prevout is looked up");
+        assert_eq!(listed.events, plain.events);
+        assert_eq!(listed.display, plain.display);
+        assert!(plain.display_inputs.is_empty());
+        assert_eq!(listed.display_inputs.len(), listed.display.len());
+        assert!(
+            listed.display_inputs[0].is_empty(),
+            "coinbase lists no inputs"
+        );
+        let inputs = &listed.display_inputs[1];
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(
+            (
+                inputs[0].prevout_txid,
+                inputs[0].prevout_index,
+                inputs[0].value
+            ),
+            (Txid([9; 32]), 3, 600)
+        );
+        assert_eq!(inputs[0].script, vec![0x52; 12_000]);
+        assert_eq!(inputs[1].prevout_txid, Txid(funding.hash().0));
+        assert_eq!(
+            (inputs[1].value, inputs[1].script.clone()),
+            (1000, p2pkh(11))
+        );
+
+        let v1 = tempfile::tempdir().unwrap();
+        let v2x = tempfile::tempdir().unwrap();
+        let hash = transparent_filter::BlockHash::from_internal_bytes([5; 32]);
+        let open = |dir: &std::path::Path| {
+            crate::events::EventStore::open(dir, transparent_filter::MAINNET_GENESIS_DISPLAY, 7)
+                .unwrap()
+        };
+        let mut store = open(v1.path());
+        store
+            .append_block_with_display(7, hash, &plain.events, &plain.display)
+            .unwrap();
+        store.commit().unwrap();
+        let records: Vec<_> = listed
+            .display
+            .iter()
+            .cloned()
+            .zip(listed.display_inputs.iter().cloned())
+            .map(
+                |(record, inputs)| transparent_shard::txid_v2x::TransparentDisplayRecordV2x {
+                    record,
+                    inputs,
+                },
+            )
+            .collect();
+        let mut store = open(v2x.path());
+        store
+            .append_block_with_display_inputs(7, hash, &listed.events, &records)
+            .unwrap();
+        store.commit().unwrap();
+        let name = format!("{}.bin", hash.to_display_hex());
+        // The journal itself is identical; only the sidecar family differs.
+        for file in ["events.bin", "blocks.bin", "checkpoint.bin"] {
+            assert_eq!(
+                std::fs::read(v1.path().join(file)).unwrap(),
+                std::fs::read(v2x.path().join(file)).unwrap(),
+                "{file}"
+            );
+        }
+        assert!(!v2x.path().join("display-v1").exists());
+        assert!(!v1.path().join("display-v2x").exists());
+        assert!(v2x.path().join("display-v2x").join(&name).exists());
+        assert_eq!(
+            crate::display_journal::read_inputs(v2x.path(), hash).unwrap(),
+            records
+        );
+        assert_eq!(store.display_at(7).ok(), None);
+        assert!(store.events_at(7).is_err(), "census-only journal");
     }
 
     #[test]
