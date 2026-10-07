@@ -11,7 +11,9 @@
 //! - `candidate-<tip>-<hash>-<nanos>/` is one publication: a hard link of
 //!   every revision the map names and of every index chunk
 //!   (`txid-index-<sha256>.json`), the recent map `txid-map.json`, then
-//!   `txid-shards.json`, written last.
+//!   `txid-shards.json`, written last. With `--ship-runtimes` the controller
+//!   then adds the recent revision's prepared runtimes as plain `.runtime`
+//!   files at the candidate root; collection removes them with it.
 //! - `display-root.json` pins what every shard depends on (geometry, seal
 //!   parameters, chain, start), and `active.json` names the activated
 //!   candidate together with every seal made since the start.

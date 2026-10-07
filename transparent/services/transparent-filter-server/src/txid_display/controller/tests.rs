@@ -1406,3 +1406,115 @@ mod live {
         server.abort();
     }
 }
+
+/// Shipped runtime files at the root of `candidate`, by name.
+fn shipped_files(candidate: &Path) -> BTreeSet<String> {
+    listing(candidate)
+        .into_iter()
+        .filter(|name| name.ends_with(".runtime") || name.ends_with(".partial"))
+        .collect()
+}
+
+/// With `--ship-runtimes` every candidate carries one runtime per table
+/// segment of its recent revision, as plain files at its root; the cycle
+/// records the prebuild; revision directories still hold exactly their
+/// manifests' files; and collection removes a candidate with its files.
+#[tokio::test(flavor = "multi_thread")]
+async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
+    use transparent_shard_server::display::prebuild::build_shipped;
+    use transparent_shard_server::display::set::DisplayRevision;
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let settings = Settings {
+        ship_runtimes: Some(build_shipped),
+        retain_candidates: 1,
+        ..settings()
+    };
+    let run = run_script(&root, &journal, advance(112, 125, 3), vec![], settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let cycles: Vec<Value> = read_timeline(&root)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e["kind"] == "cycle")
+        .collect();
+    assert!(cycles.len() >= 4, "{} cycles", cycles.len());
+    let map = run.maps.last().unwrap();
+    let recent = map.shards.last().unwrap();
+    let candidate = &run.active.directory;
+    let targets = DisplayRevision::read(&candidate.join(&recent.manifest_digest))
+        .unwrap()
+        .targets();
+    let files = shipped_files(candidate);
+    assert_eq!(files.len(), targets.len());
+    assert!(files.iter().all(|name| name.ends_with(".runtime")));
+    for cycle in &cycles {
+        assert!(cycle["prebuild_ms"].is_u64(), "{cycle}");
+        assert_eq!(cycle["prebuild_failures"], 0);
+        let shipped = cycle["shipped"].as_array().unwrap();
+        assert_eq!(shipped.len(), targets.len());
+        assert_eq!(
+            cycle["shipped_bytes"].as_u64().unwrap(),
+            shipped.iter().map(|f| f["bytes"].as_u64().unwrap()).sum::<u64>()
+        );
+    }
+    for entry in &map.shards {
+        verify_dir(&candidate.join(&entry.manifest_digest), &entry.manifest_digest).unwrap();
+    }
+    // Collection kept the active candidate and one other; nothing shipped
+    // is left anywhere else under the root.
+    let candidates: Vec<_> = listing(&root)
+        .into_iter()
+        .filter(|n| n.starts_with(CANDIDATE_PREFIX))
+        .collect();
+    assert!(candidates.len() <= 2, "{candidates:?}");
+    assert!(shipped_files(&root).is_empty());
+    for tier in ["recent", "sealed"] {
+        for revision in listing(&root.join(tier)) {
+            assert!(shipped_files(&root.join(tier).join(revision)).is_empty());
+        }
+    }
+}
+
+/// A prebuild failure is counted, leaves no file behind and never stops the
+/// cycle: the candidate is published without runtimes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_prebuild_still_publishes_without_runtimes() {
+    fn fails(revision: &Path, candidate: &Path) -> Result<Vec<Shipped>, String> {
+        assert!(revision.starts_with(candidate));
+        std::fs::write(candidate.join("ab-cd.partial"), b"half").unwrap();
+        std::fs::write(candidate.join("ab-cd.runtime"), b"half").unwrap();
+        Err("no room to build".into())
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let settings = Settings {
+        ship_runtimes: Some(fails),
+        ..settings()
+    };
+    let run = run_script(&root, &journal, advance(112, 118, 3), vec![], settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(run.active.tip, 118);
+    let events = read_timeline(&root).unwrap();
+    let cycles: Vec<_> = events.iter().filter(|e| e["kind"] == "cycle").collect();
+    assert!(cycles.len() >= 2, "{} cycles", cycles.len());
+    for (index, cycle) in cycles.iter().enumerate() {
+        assert!(cycle["prebuild_ms"].is_null());
+        assert_eq!(cycle["prebuild_failures"], index as u64 + 1);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["kind"] == "error" && e["stage"] == "prebuild")
+            .count(),
+        cycles.len()
+    );
+    assert!(shipped_files(&run.active.directory).is_empty());
+}

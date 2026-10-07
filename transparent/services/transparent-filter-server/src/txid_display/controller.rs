@@ -43,6 +43,8 @@ use transparent_filter::BlockHash;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
 use transparent_shard::display::{plan_seals, DisplayManifest, DisplayMap, DisplayMapEntry};
 use transparent_shard::manifest::PublishedRevision;
+use transparent_shard_server::display::prebuild::Shipped;
+use transparent_shard_server::runtime::disk::ShippedRuntimes;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.
@@ -55,9 +57,17 @@ const LAG_ALERT_EVERY: Duration = Duration::from_secs(60);
 /// rollback since the last activation.
 pub const INVALIDATE_FILE: &str = "invalidate.json";
 
+/// Builds a revision's runtimes into a candidate directory; see
+/// [`transparent_shard_server::display::prebuild::build_shipped`].
+pub type Prebuild = fn(&Path, &Path) -> Result<Vec<Shipped>, String>;
+
 pub struct Settings {
     /// Skip re-verifying sealed revisions at startup.
     pub trust_sealed: bool,
+    /// Build the recent revision's runtimes into each candidate, so recent
+    /// replicas load them instead of building (`--ship-runtimes`). A failed
+    /// build is counted and the candidate ships without them.
+    pub ship_runtimes: Option<Prebuild>,
     /// Unused candidates kept besides the active and worker-held ones.
     pub retain_candidates: usize,
     /// Above this many unsealed records in the cache, a `lag` alert repeats
@@ -74,6 +84,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             trust_sealed: false,
+            ship_runtimes: None,
             retain_candidates: 3,
             max_recent_records: None,
             exit_when_idle: false,
@@ -295,6 +306,8 @@ pub struct Controller {
     /// What `invalidate.json` holds.
     saved_invalidations: Invalidations,
     lag_alerted: Option<Instant>,
+    /// Cycles whose runtime prebuild failed since this process started.
+    prebuild_failures: u64,
     last_cycle: Value,
     maps: Vec<DisplayMap>,
     _lock: std::fs::File,
@@ -440,6 +453,7 @@ impl Controller {
             rollback: saved_invalidations.rollback.clone(),
             saved_invalidations,
             lag_alerted: None,
+            prebuild_failures: 0,
             last_cycle: Value::Null,
             maps: Vec::new(),
             _lock: lock,
@@ -1174,6 +1188,7 @@ impl Controller {
         let candidate_started = Instant::now();
         let (candidate, sha) = write_candidate(&self.root, &map).map_err(retry)?;
         let candidate_ms = ms(candidate_started);
+        let prebuild = self.prebuild(&candidate, &recent.digest).await;
 
         self.deliver_invalidations().await;
         // The rollback record vouches only for what replicas held when it was
@@ -1232,7 +1247,12 @@ impl Controller {
             "cycle": self.active.cycle, "tip": tip, "tip_hash": tip_hash,
             "first_observed_ms": fresh.iter().map(|f| f.1).min(),
             "build_s": t.build_s, "verify_s": t.verify_s, "digest_s": t.digest_s,
-            "write_s": t.write_s, "candidate_ms": candidate_ms, "ship_ms": report.ship_ms,
+            "write_s": t.write_s, "candidate_ms": candidate_ms,
+            "prebuild_ms": prebuild.as_ref().map(|p| p.0),
+            "shipped_bytes": prebuild.as_ref().map(|p| p.1.iter().map(|f| f.bytes).sum::<u64>()),
+            "shipped": prebuild.as_ref().map(|p| &p.1),
+            "prebuild_failures": self.prebuild_failures,
+            "ship_ms": report.ship_ms,
             "prepare_ms": report.prepare_ms, "activate_ms": report.activate_ms,
             "activated_ms": activated_ms, "cycle_ms": ms(started),
             "freshness_ms": fresh.iter().map(|f| activated_ms.saturating_sub(f.1)).collect::<Vec<_>>(),
@@ -1247,6 +1267,35 @@ impl Controller {
         self.timeline.record("cycle", self.last_cycle.clone());
         self.collect().await;
         Ok(())
+    }
+
+    /// With `--ship-runtimes`, builds the recent revision's runtimes into the
+    /// candidate root; returns the milliseconds taken and the files written.
+    /// A failure is logged and counted, its files are removed, and the
+    /// candidate ships without runtimes: replicas then build their own.
+    async fn prebuild(&mut self, candidate: &Path, recent: &str) -> Option<(u64, Vec<Shipped>)> {
+        let build = self.settings.ship_runtimes?;
+        let started = Instant::now();
+        let (revision, root) = (candidate.join(recent), candidate.to_path_buf());
+        let built = tokio::task::spawn_blocking(move || build(&revision, &root))
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+        match built {
+            Ok(files) => Some((ms(started), files)),
+            Err(error) => {
+                self.prebuild_failures += 1;
+                tracing::warn!(%error, failures = self.prebuild_failures,
+                    "runtime prebuild failed; the candidate ships without runtimes");
+                self.timeline.record(
+                    "error",
+                    json!({"stage": "prebuild", "error": error, "failures": self.prebuild_failures}),
+                );
+                if let Err(error) = remove_shipped(candidate) {
+                    tracing::error!(%error, "could not remove partial shipped runtimes");
+                }
+                None
+            }
+        }
     }
 
     /// Activates the current candidate on workers that are behind it, such as
@@ -1373,6 +1422,7 @@ impl Controller {
             "last_cycle": self.last_cycle,
             "failures": self.failures,
             "stalled": self.failures >= STALL_FAILURES,
+            "prebuild_failures": self.prebuild_failures,
             "workers": self.fleet.workers.iter().map(|w| json!({
                 "name": w.config.name, "role": w.config.role.as_str(), "known": w.known,
                 "expected": w.expected, "staged": w.staged,
@@ -1381,6 +1431,21 @@ impl Controller {
         });
         *self.settings.status.write().unwrap() = status;
     }
+}
+
+/// Removes every shipped runtime file, finished or partial, from a
+/// candidate's root.
+fn remove_shipped(candidate: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(candidate)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file()
+            && (ShippedRuntimes::is_entry(&name) || name.ends_with(".partial"))
+        {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn seal_event(job: &SealJob) -> Value {

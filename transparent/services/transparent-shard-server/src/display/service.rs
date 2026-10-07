@@ -13,7 +13,8 @@ use super::{kind, runtime_key, tier};
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{
-    disk::DiskCache, warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams,
+    disk::{DiskCache, ShippedRuntimes},
+    warm_bytes, CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
 };
 use crate::service::{ReadinessMode, ServiceConfig};
 use crate::shardset::{SegmentSource, Table};
@@ -87,32 +88,40 @@ impl DisplayRuntime {
     }
 
     /// Finds or builds the runtime of one segment, retrying transient
-    /// admission pressure as the prewarm does. Also says whether it had to be
-    /// produced: an operation reports its own builds this way, not as a delta
-    /// of the process-wide counter, which concurrent stages and requests move.
+    /// admission pressure as the prewarm does. Also says whether and how it
+    /// had to be produced (`None` when it was resident): an operation reports
+    /// its own builds this way, not as a delta of the process-wide counter,
+    /// which concurrent stages and requests move.
+    ///
+    /// `shipped` is tried before a restore or build, for an unsealed revision
+    /// only: archives are built once per seal by `stage`, and are never
+    /// shipped.
     pub(crate) async fn runtime(
         &self,
         revision: &DisplayRevision,
         table: DisplayTable,
         segment: u32,
         cancelled: &AtomicBool,
-    ) -> Result<(RuntimeHandle, bool), CacheError> {
+        shipped: Option<&ShippedRuntimes>,
+    ) -> Result<(RuntimeHandle, Option<Produced>), CacheError> {
         let source = revision
             .segment(table, segment)
             .cloned()
             .ok_or_else(|| CacheError::Failed("display segment is not held".into()))?;
         let key = runtime_key(&revision.digest, table, segment);
         if let Some(handle) = self.cache.cached(&key) {
-            return Ok((handle, false));
+            return Ok((handle, None));
         }
         let shared = self
             .params(revision.geometry, kind(table))
             .map_err(CacheError::Failed)?;
+        let shipped = shipped.filter(|_| !revision.manifest.sealed);
         crate::prewarm::retry(cancelled, std::time::Duration::from_secs(30), || {
-            self.cache.get(key.clone(), shared.clone(), source.clone())
+            self.cache
+                .get_from(key.clone(), shared.clone(), source.clone(), shipped.cloned())
         })
         .await
-        .map(|handle| (handle, true))
+        .map(|(handle, produced)| (handle, Some(produced)))
     }
 }
 
@@ -125,7 +134,33 @@ struct WarmState {
     count: AtomicU64,
     /// Targets that were not resident when the prewarm reached them.
     built: AtomicU64,
+    /// Of those, loaded from shipped runtimes, and refused ones produced
+    /// here instead; and the self-checks' summed time.
+    shipped: AtomicU64,
+    shipped_fallbacks: AtomicU64,
+    self_check_micros: AtomicU64,
     pins: Mutex<Vec<(String, RuntimeHandle)>>,
+}
+
+impl WarmState {
+    /// Counts how the prewarm came by one target.
+    fn record(&self, produced: Option<Produced>) {
+        let Some(produced) = produced else {
+            return;
+        };
+        self.built.fetch_add(1, Ordering::Relaxed);
+        match produced {
+            Produced::Shipped { check_micros } => {
+                self.shipped.fetch_add(1, Ordering::Relaxed);
+                self.self_check_micros
+                    .fetch_add(check_micros, Ordering::Relaxed);
+            }
+            Produced::Fallback => {
+                self.shipped_fallbacks.fetch_add(1, Ordering::Relaxed);
+            }
+            Produced::Joined | Produced::Restored | Produced::Built => {}
+        }
+    }
 }
 
 struct Inner {
@@ -247,6 +282,9 @@ impl DisplayState {
                     cancelled: AtomicBool::new(false),
                     count: AtomicU64::new(0),
                     built: AtomicU64::new(0),
+                    shipped: AtomicU64::new(0),
+                    shipped_fallbacks: AtomicU64::new(0),
+                    self_check_micros: AtomicU64::new(0),
                     pins: Mutex::new(Vec::new()),
                 },
                 prewarm_slots,
@@ -284,16 +322,20 @@ impl DisplayState {
                         };
                         match inner
                             .runtime
-                            .runtime(revision, table, segment, &inner.warm.cancelled)
+                            .runtime(
+                                revision,
+                                table,
+                                segment,
+                                &inner.warm.cancelled,
+                                inner.set.shipped.as_ref(),
+                            )
                             .await
                         {
-                            Ok((handle, built)) => {
+                            Ok((handle, produced)) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) {
                                     break;
                                 }
-                                if built {
-                                    inner.warm.built.fetch_add(1, Ordering::Relaxed);
-                                }
+                                inner.warm.record(produced);
                                 inner.warm.count.fetch_add(1, Ordering::Release);
                                 if inner.warm.mode == ReadinessMode::Warm {
                                     inner.warm.pins.lock().unwrap().push((digest, handle));
@@ -349,6 +391,17 @@ impl DisplayState {
     /// for this snapshot.
     pub fn built(&self) -> u64 {
         self.inner.warm.built.load(Ordering::Relaxed)
+    }
+
+    /// Of [`Self::built`], runtimes loaded from shipped files, shipped ones
+    /// refused and produced here instead, and the self-checks' summed time.
+    pub fn shipped(&self) -> (u64, u64, std::time::Duration) {
+        let warm = &self.inner.warm;
+        (
+            warm.shipped.load(Ordering::Relaxed),
+            warm.shipped_fallbacks.load(Ordering::Relaxed),
+            std::time::Duration::from_micros(warm.self_check_micros.load(Ordering::Relaxed)),
+        )
     }
 
     pub fn is_warm(&self) -> bool {

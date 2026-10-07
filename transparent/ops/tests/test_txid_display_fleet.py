@@ -173,6 +173,26 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(self.ship(name='e' * 64, link_dest=str(self.publications / ('f' * 64)))[0], 0)
         self.assertFalse([a for a in self.calls('rsync')[-1] if a.endswith('f' * 64)])
 
+    def test_runtimes_shipped_at_the_candidate_root_travel_with_it(self):
+        # `--ship-runtimes` writes plain files beside the revisions; the
+        # adapter carries them unchanged, and a later candidate's new runtime
+        # is copied in full while its unchanged revision is still linked.
+        first = 'f' * 64 + '-' + '1' * 64 + '.runtime'
+        (self.source / first).write_bytes(b'r' * 8192)
+        previous = self.publications / PREVIOUS
+        self.assertEqual(self.ship(name=PREVIOUS)[0], 0)
+        self.assertEqual((previous / first).read_bytes(), b'r' * 8192)
+        (self.source / first).unlink()
+        second = '2' * 64 + '-' + '3' * 64 + '.runtime'
+        (self.source / second).write_bytes(b's' * 8192)
+        self.assertEqual(self.ship(link_dest=str(previous))[0], 0)
+        final = self.publications / DIGEST
+        self.assertEqual(sorted(p.name for p in final.iterdir() if p.is_file()), sorted([second, 'txid-shards.json']))
+        self.assertEqual((final / second).read_bytes(), b's' * 8192)
+        self.assertEqual((final / second).stat().st_nlink, 1)
+        self.assertEqual((final / REVISION / 'pages.0.bin').stat().st_ino,
+                         (previous / REVISION / 'pages.0.bin').stat().st_ino)
+
     def test_a_torn_copy_is_never_published_and_resumes(self):
         with patch.dict(os.environ, SHIM_RSYNC_FAIL='1'):
             code, reply = self.ship()

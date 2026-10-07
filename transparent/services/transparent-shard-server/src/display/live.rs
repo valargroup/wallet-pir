@@ -343,11 +343,11 @@ impl DisplayLive {
             let (handle, produced) = self
                 .0
                 .runtime
-                .runtime(&revision, table, segment, &NOT_CANCELLED)
+                .runtime(&revision, table, segment, &NOT_CANCELLED, None)
                 .await
                 .map_err(|e| format!("staging {} {segment}: {e}", table.label()))?;
             handles.push(handle);
-            built += u64::from(produced);
+            built += u64::from(produced.is_some());
         }
         tracing::info!(digest = %digest, built, seconds = started.elapsed().as_secs_f64(), "display revision staged");
         self.0.staged.lock().unwrap().insert(
@@ -369,10 +369,19 @@ impl DisplayLive {
         let started = std::time::Instant::now();
         let epoch = self.0.epoch.load(Ordering::Acquire);
         let prepared = |state: &DisplayState, built: u64| {
+            // An already active map was produced by an earlier prepare.
+            let (shipped, fallbacks, check) = if built > 0 {
+                state.shipped()
+            } else {
+                Default::default()
+            };
             reply(serde_json::json!({
                 "warm": true,
                 "built": built,
                 "reused": (state.warm_target() as u64).saturating_sub(built),
+                "shipped": shipped,
+                "shipped_fallbacks": fallbacks,
+                "self_check_ms": check.as_secs_f64() * 1e3,
                 "seconds": started.elapsed().as_secs_f64(),
             }))
         };

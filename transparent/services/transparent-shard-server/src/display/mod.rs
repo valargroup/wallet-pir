@@ -35,6 +35,7 @@
 //! share a cache entry.
 
 pub mod live;
+pub mod prebuild;
 pub mod service;
 pub mod set;
 pub mod synth;

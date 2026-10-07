@@ -169,6 +169,51 @@ unaccepted. Open gates are in
 Extending coverage below 3,407,001 requires a fresh lineage: the
 [backfill plan](deployment.md#txid-display-backfill-below-3407001-proposed).
 
+### Shipped recent runtimes
+
+Every block the recent replica prepares each table of the new recent revision:
+it encodes the database, computes the hint and the two-mask preprocessing. With
+`txid-display-controller run --ship-runtimes` (off by default) the controller
+does that work once instead and ships the result with the candidate.
+
+- **Controller.** After writing a candidate it builds every table segment of the
+  recent revision on the runtime build pool (`TRANSPARENT_BUILD_THREADS`) and
+  writes each runtime, in the runtime disk-cache entry format, as a plain file
+  at the candidate root: `<sha256(key)>-<identity>.runtime`, beside the revision
+  directories. Never inside one, whose files must be exactly its manifest's, and
+  never as a subdirectory, which a worker would read as a revision. The cycle
+  records `prebuild_ms`, `shipped_bytes`, the files and `prebuild_failures`. A
+  failed build is logged and counted, its files are removed, and the candidate
+  ships without runtimes. Archives are not shipped: they are built once per seal
+  by `stage`.
+- **Transport.** The fleet adapter's `rsync` carries the files unchanged. They
+  are named by revision, so every block's files are copied in full; collection
+  deletes them with their candidate on both sides.
+- **Worker.** When a publication directory holds any `.runtime` file, the
+  prewarm tries the file for each unsealed table segment before restoring or
+  building. It is found by the same identity a disk-cache entry is: revision
+  digest, table, segment, geometry, source SHA-256, setup seed, scheme,
+  transport and format, so one made for anything else is not found. It is loaded
+  read-only under the restore path's slot and memory reservation, keeps its
+  preprocessing mapped from the shipped file, and is never saved to the worker's
+  own disk cache.
+- **Self-check.** After every load the worker reads the segment, verifying its
+  SHA-256 as a restore does, and checks the runtime end to end: its encoded
+  database must equal the segment coefficient for coefficient, and a fresh
+  client query for one randomly sampled populated row must decode, under the
+  published masks, to that row. A missing, rejected or failing file is counted
+  (`shipped_fallbacks` in the prepare reply,
+  `transparent_shard_shipped_fallbacks_total`) and the table is built locally.
+  The prepare reply also reports `shipped` and `self_check_ms`.
+- **Trust.** The coordinator is trusted, as for Enhance packing state. The file
+  checksum detects corruption only. The disk format's own checks already bind
+  the published masks to the preprocessing; the self-check adds that the
+  database is the segment's and, for the sampled row, that the preprocessing
+  answers for that database. Wallets see the same published masks, digests,
+  epochs and answers as from a local build, and the wire format is unchanged.
+
+[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md).
+
 ### Split map
 
 The full map (`GET /v1/txid/shards`, 632 B per entry) costs about 259 KB at

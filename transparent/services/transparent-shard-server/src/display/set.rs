@@ -7,7 +7,9 @@
 //! `txid-index-<sha256>.json` per index chunk. The split is derived from the
 //! full map here too: files that are present must equal the derivation, and
 //! a directory without them (written before the split) is served from the
-//! derivation alone.
+//! derivation alone. With `--ship-runtimes` it also writes the recent
+//! revision's runtimes there as plain `.runtime` files; their presence marks
+//! the set as shipped (see `super::prebuild`).
 //! Every manifest is read and checked, whatever the worker's role, so any
 //! worker can serve the map and every manifest. Tables are verified only for
 //! the revisions the role serves: streamed SHA-256 per segment, then every
@@ -21,6 +23,7 @@
 
 use super::{kind, runtime_key, serves};
 use crate::assignment::WorkerRole;
+use crate::runtime::disk::ShippedRuntimes;
 use crate::shardset::{LoadError, SegmentSource};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -302,6 +305,9 @@ pub struct DisplaySet {
     by_digest: BTreeMap<String, usize>,
     /// Superseded revisions past the retention bound: logged, not served.
     pub excess: Vec<PathBuf>,
+    /// The publication directory, when the publisher shipped runtimes as
+    /// plain files beside its revisions; see [`ShippedRuntimes`].
+    pub shipped: Option<ShippedRuntimes>,
 }
 
 impl DisplaySet {
@@ -346,6 +352,7 @@ impl DisplaySet {
             .collect();
 
         let mut found: BTreeMap<String, DisplayRevision> = BTreeMap::new();
+        let mut shipped = None;
         for entry in std::fs::read_dir(dir).map_err(|source| LoadError::Io {
             path: dir.to_path_buf(),
             source,
@@ -357,6 +364,8 @@ impl DisplaySet {
             if entry.path().is_dir() {
                 let revision = DisplayRevision::read(&entry.path())?;
                 found.insert(revision.digest.clone(), revision);
+            } else if ShippedRuntimes::is_entry(&entry.file_name().to_string_lossy()) {
+                shipped = Some(ShippedRuntimes::new(dir.to_path_buf()));
             }
         }
 
@@ -474,6 +483,7 @@ impl DisplaySet {
             revisions,
             by_digest,
             excess,
+            shipped,
         })
     }
 
