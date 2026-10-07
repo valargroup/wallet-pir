@@ -23,6 +23,8 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 11. [Txid sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md): whole-range probability sizing bounds, codec proposals and joint routing limits.
 
+12. [Txid display shipped runtimes plan](txid-display-shipped-runtimes-plan.md): handoff design for building the recent display runtimes on the coordinator and loading them on the worker, with tests, benchmarks, deploy order and acceptance targets.
+
 ## Product boundaries
 
 Active transparent recovery uses `transparent/crates/transparent-events`, `transparent/crates/transparent-filter`, `transparent/crates/transparent-shard`, `transparent/crates/transparent-txid-client`, `transparent/crates/transparent-wallet`, `transparent/crates/transparent-wallet-store`, `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.
