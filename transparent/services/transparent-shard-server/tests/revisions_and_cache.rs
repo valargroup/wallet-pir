@@ -640,11 +640,14 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
     );
     assert_eq!(metrics.evictions.load(Ordering::Relaxed), 0);
     assert_eq!(cache.entries(), 1);
-    assert_eq!(cache.resident_bytes(), budget);
+    // Charged what it holds, which leaves less than a second bound free.
+    let charged = held.get().held_bytes();
+    assert_eq!(cache.resident_bytes(), charged);
+    assert!(charged + one_runtime(Table::Pages) > budget);
     cache.evict_unpinned();
     assert_eq!(
         cache.resident_bytes(),
-        budget,
+        charged,
         "trimming preserves live handles"
     );
 
@@ -664,6 +667,147 @@ async fn a_runtime_in_use_is_not_evicted_to_make_room() {
     cache.evict_unpinned();
     assert_eq!(cache.resident_bytes(), 0);
     assert_eq!(cache.entries(), 0);
+}
+
+/// A built runtime is charged what it holds, not its reservation, so a
+/// budget that could carry one bound and one built runtime now holds both
+/// without evicting either. The charge on the cached one could only fall, so
+/// every admission that succeeded before still succeeds.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_built_runtime_returns_its_unused_reservation_to_the_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, new) = two_revisions(dir.path());
+    let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
+    let shard = set.revision(&new).expect("the current revision");
+    let shared = |table| Arc::new(SharedParams::build(shard.geometry, table).unwrap());
+    let budget = shared(Table::Directory).held_bytes() + one_runtime(Table::Pages);
+    assert!(
+        budget < one_runtime(Table::Directory) + one_runtime(Table::Pages),
+        "charged at the bound, the second runtime would have been refused"
+    );
+    let metrics = Arc::new(Metrics::default());
+    let cache = RuntimeCache::new(budget, 1, metrics.clone());
+    let mut handles = Vec::new();
+    for table in [Table::Directory, Table::Pages] {
+        handles.push(
+            cache
+                .get(
+                    (new.clone(), table, 0),
+                    shared(table),
+                    shard.segment(table, 0).unwrap().clone(),
+                )
+                .await
+                .expect("both fit at their built size"),
+        );
+    }
+    let held: u64 = handles.iter().map(|handle| handle.get().held_bytes()).sum();
+    assert_eq!(cache.resident_bytes(), held);
+    assert_eq!(metrics.resident_bytes.load(Ordering::Relaxed), held);
+    assert_eq!(metrics.cache_entries.load(Ordering::Relaxed), 2);
+    assert_eq!(metrics.evictions.load(Ordering::Relaxed), 0);
+    assert_eq!(metrics.overloads.load(Ordering::Relaxed), 0);
+    drop(handles);
+    cache.evict_unpinned();
+    assert_eq!(cache.resident_bytes(), 0);
+    assert_eq!(metrics.evictions.load(Ordering::Relaxed), 2);
+}
+
+/// A warm worker is checked against its runtimes' built size plus one bound
+/// per runtime the prewarm can have in flight, on both its memory and its
+/// disk cache, and becomes ready under exactly that budget: every target
+/// warm, nothing evicted or refused, each snapshot charged its file length.
+/// A restart restores both from disk at the same charge.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
+    use transparent_shard_server::runtime::disk::DiskCache;
+    use transparent_shard_server::runtime::warm_bytes;
+    use transparent_shard_server::service::ReadinessMode;
+    let root = tempfile::tempdir().unwrap();
+    let dir = root.path().join("set");
+    std::fs::create_dir(&dir).unwrap();
+    two_revisions(&dir);
+    let tables = [Table::Directory, Table::Pages]
+        .map(|table| SharedParams::build(&GEOMETRY, table).unwrap());
+    // One restore and one build at a time, so one runtime can be in flight.
+    let needed = warm_bytes(&tables, 1);
+    let planned: u64 = tables.iter().map(SharedParams::held_bytes).sum();
+    assert!(
+        needed < one_runtime(Table::Directory) + one_runtime(Table::Pages),
+        "the reservation check refused this budget"
+    );
+    let entries: u64 = tables.iter().map(DiskCache::planned_entry_bytes).sum();
+    let excess = tables
+        .iter()
+        .map(|shared| DiskCache::entry_bytes(shared) - DiskCache::planned_entry_bytes(shared))
+        .max()
+        .unwrap();
+    let disk = |name, limit| {
+        let mut disk = DiskCache::new(root.path().join(name), limit).unwrap();
+        disk.restore_slots = 1;
+        disk
+    };
+    let open = || ShardSet::open(&dir, DEFAULT_RETAIN_REVISIONS).unwrap();
+    let preflight = disk("cache", entries + excess).check_set(&open()).unwrap();
+    assert_eq!(preflight["missing_bytes"], entries);
+    assert_eq!(preflight["assignment_bytes"], entries);
+    assert!(disk("short", entries + excess - 1)
+        .check_set(&open())
+        .is_err());
+    let config = |cache_bytes| ServiceConfig {
+        cache_bytes,
+        readiness: ReadinessMode::Warm,
+        ..ServiceConfig::default()
+    };
+    assert!(ServiceState::build_with_disk(
+        open(),
+        config(needed - 1),
+        Some(disk("cache", entries + excess))
+    )
+    .is_err());
+
+    let warm = |state: ServiceState| async move {
+        state.spawn_prewarm().await.unwrap();
+        let (status, body) = get(&state, "/v1/ready").await;
+        assert_eq!(status, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+        let ready: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(ready["warm_runtimes"], 2);
+        assert_eq!(ready["target_runtimes"], 2);
+        assert_eq!(ready["prewarm_failed"], 0);
+        let metrics = state.metrics().clone();
+        assert_eq!(metrics.target_runtimes.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.cache_entries.load(Ordering::Relaxed), 2);
+        assert_eq!(metrics.evictions.load(Ordering::Relaxed), 0);
+        assert_eq!(metrics.overloads.load(Ordering::Relaxed), 0);
+        assert!(metrics.resident_bytes.load(Ordering::Relaxed) <= planned);
+        tokio::time::timeout(std::time::Duration::from_secs(60), async {
+            while metrics.disk_save_pending.load(Ordering::Relaxed) != 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        (state, metrics)
+    };
+    let cold = disk("cache", entries + excess);
+    let (state, metrics) =
+        warm(ServiceState::build_with_disk(open(), config(needed), Some(cold.clone())).unwrap())
+            .await;
+    assert_eq!(metrics.builds.load(Ordering::Relaxed), 2);
+    assert_eq!(metrics.disk_write_failures.load(Ordering::Relaxed), 0);
+    assert_eq!(
+        cold.used_bytes().unwrap(),
+        entries,
+        "both written at four-byte words"
+    );
+    drop(state);
+
+    let (_state, metrics) =
+        warm(ServiceState::build_with_disk(open(), config(needed), Some(cold.clone())).unwrap())
+            .await;
+    assert_eq!(metrics.builds.load(Ordering::Relaxed), 0);
+    assert_eq!(metrics.disk_hits.load(Ordering::Relaxed), 2);
+    // A restored matrix is mapped at four-byte words: exactly the plan.
+    assert_eq!(metrics.resident_bytes.load(Ordering::Relaxed), planned);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -732,10 +876,19 @@ async fn revision_churn_bounds_runtimes_and_collects_idle_snapshots() {
         })
         .await
         .unwrap();
+        // Each pair is charged its built size, not its reservation.
+        let built = [Table::Directory, Table::Pages]
+            .map(|table| SharedParams::build(&GEOMETRY, table).unwrap().held_bytes());
         assert_eq!(
-            metrics.resident_bytes.load(Ordering::Relaxed),
-            pair * 2,
+            metrics.cache_entries.load(Ordering::Relaxed),
+            4,
             "only the current and preparing pair remain resident, even with spare cache capacity"
+        );
+        let resident = metrics.resident_bytes.load(Ordering::Relaxed);
+        assert!(resident <= (built[0] + built[1]) * 2, "{resident}");
+        assert!(
+            resident < pair * 2,
+            "the pairs are charged below their bound"
         );
         live.command(Command::Activate {
             expected,

@@ -112,9 +112,17 @@ impl DiskCache {
         fixed + shared.profile.prepared_min_bytes()..=fixed + shared.profile.prepared_max_bytes()
     }
 
-    /// The largest valid entry, which is what budgets are charged.
+    /// The largest valid entry, which is what a write reserves before it
+    /// starts. Once written, an entry is charged its file length.
     pub fn entry_bytes(shared: &SharedParams) -> u64 {
         *Self::entry_bytes_range(shared).end()
+    }
+
+    /// An entry's length with its compiled matrix at four-byte words, the
+    /// counterpart of [`SharedParams::held_bytes`] and what plans charge an
+    /// entry not yet written.
+    pub fn planned_entry_bytes(shared: &SharedParams) -> u64 {
+        *Self::entry_bytes_range(shared).start()
     }
 
     pub fn load(
@@ -200,6 +208,12 @@ impl DiskCache {
 
     /// The cross-process lock bounds concurrent writes. No active/rollback entry
     /// is evicted to make room: deployment prunes unreferenced revisions later.
+    ///
+    /// Like the memory cache, a write reserves the largest valid entry before
+    /// it starts, and once it is renamed into place the entry counts at its
+    /// file length, so the bound's excess returns to the budget for the next
+    /// write. Writers are serialized by the lock, so at most one entry is ever
+    /// charged its bound.
     pub fn save(
         &self,
         key: &RuntimeKey,
@@ -276,10 +290,16 @@ impl DiskCache {
     /// Required additional persistent bytes and one atomic-write temporary.
     /// Source tables have already passed ShardSet verification. Cache contents
     /// are still checksum-validated on restore; a length in range is only sizing.
-    /// Budgets are charged at the largest valid entry.
+    ///
+    /// Entries are charged as [`Self::save`] leaves them: each missing entry at
+    /// its planned four-byte-word length, plus the bound's excess once, for the
+    /// single write the directory lock lets run at a time. That never exceeds
+    /// charging every missing entry its bound, as this check once did.
+    /// `temporary_bytes` stays the largest valid entry.
     pub fn check_set(&self, set: &crate::shardset::ShardSet) -> io::Result<serde_json::Value> {
         let mut params = std::collections::HashMap::new();
         let mut missing = 0u64;
+        let mut excess = 0u64;
         let mut largest = 0u64;
         let mut total = 0u64;
         for shard in set.current() {
@@ -291,9 +311,9 @@ impl DiskCache {
                     .entry((shard.geometry.name, table))
                     .or_insert_with(|| SharedParams::build(shard.geometry, table));
                 let shared = shared.as_ref().map_err(|e| invalid(e))?;
-                let bytes = Self::entry_bytes(shared);
+                let bytes = Self::planned_entry_bytes(shared);
                 let valid = Self::entry_bytes_range(shared);
-                largest = largest.max(bytes);
+                largest = largest.max(Self::entry_bytes(shared));
                 for segment in 0..shard.segments(table) {
                     total = total.saturating_add(bytes);
                     let source = shard.segment(table, segment).expect("published segment");
@@ -305,12 +325,13 @@ impl DiskCache {
                         .unwrap_or(0);
                     if !valid.contains(&present) {
                         missing = missing.saturating_add(bytes);
+                        excess = excess.max(Self::entry_bytes(shared) - bytes);
                     }
                 }
             }
         }
         let used = self.used_bytes()?;
-        if used.saturating_add(missing) > self.max_bytes {
+        if used.saturating_add(missing).saturating_add(excess) > self.max_bytes {
             return Err(io::Error::other(format!(
                 "runtime cache needs {missing} additional bytes with {used} retained; limit {}",
                 self.max_bytes
@@ -789,6 +810,7 @@ mod cache_integration_tests {
             .await
             .unwrap();
         assert!(std::ptr::eq(handle.get(), again.get()));
+        let held = handle.get().held_bytes();
         drop(handle);
         drop(again);
         cache.evict_unpinned();
@@ -796,7 +818,10 @@ mod cache_integration_tests {
             cache.work_memory.reserved_bytes(),
             shared.reserved_bytes() + SAVE_SCRATCH_BYTES
         );
-        assert_eq!(cache.resident_bytes(), shared.reserved_bytes());
+        // The writer's work reservation keeps the bound for serialization
+        // scratch; the cache charges the runtime what it holds.
+        assert_eq!(cache.resident_bytes(), held);
+        assert!(held < shared.reserved_bytes());
         assert_eq!(Metrics::get(&metrics.builds), 1);
         // RAII unlock also prevents a test failure from leaving a blocking task
         // stuck during runtime shutdown.

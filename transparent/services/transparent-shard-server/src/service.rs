@@ -38,7 +38,7 @@
 
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
-use crate::runtime::{CacheError, RuntimeCache, RuntimeHandle, SharedParams};
+use crate::runtime::{warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams};
 use crate::shardset::{LoadedShard, ShardSet, Table};
 use axum::extract::{Path as AxumPath, Request, State};
 use axum::http::StatusCode;
@@ -279,26 +279,6 @@ impl ServiceState {
         if params.is_empty() {
             return Err("the shard set names no geometry to serve".into());
         }
-        // What every current assigned runtime reserves together. In warm mode
-        // that has to fit the cache with nothing evicted: an assignment that
-        // needs eviction to be served is a worker that thrashes, and it is
-        // refused here rather than discovered under load.
-        let mut assigned_reserved = 0u64;
-        for shard in set.current() {
-            for table in Table::ALL {
-                if shard.segments(table) == 0 {
-                    continue;
-                }
-                let shared = &params[&(shard.geometry.name, table)];
-                assigned_reserved += shared.reserved_bytes() * u64::from(shard.segments(table));
-            }
-        }
-        if config.readiness == ReadinessMode::Warm && assigned_reserved > config.cache_bytes {
-            return Err(format!(
-                "the assignment needs {assigned_reserved} bytes of runtimes, the cache budget is {}",
-                config.cache_bytes
-            ));
-        }
         let target = set
             .current()
             .map(|s| {
@@ -308,13 +288,33 @@ impl ServiceState {
                     .sum::<usize>()
             })
             .sum();
-        Metrics::set(&metrics.target_runtimes, target as u64);
         let cache = previous.map(|s| s.inner.cache.clone()).unwrap_or_else(|| {
             Arc::new(
                 RuntimeCache::new(config.cache_bytes, config.build_slots, metrics.clone())
                     .with_disk(disk),
             )
         });
+        // What every current assigned runtime holds together once built, plus
+        // the bound for as many as the prewarm can have in flight. In warm
+        // mode that has to fit the cache with nothing evicted: an assignment
+        // that needs eviction to be served is a worker that thrashes, and it
+        // is refused here rather than discovered under load.
+        let mut assigned = Vec::new();
+        for shard in set.current() {
+            for table in Table::ALL {
+                for _ in 0..shard.segments(table) {
+                    assigned.push(params[&(shard.geometry.name, table)].as_ref());
+                }
+            }
+        }
+        let assigned_bytes = warm_bytes(assigned, cache.prewarm_concurrency());
+        if config.readiness == ReadinessMode::Warm && assigned_bytes > config.cache_bytes {
+            return Err(format!(
+                "the assignment needs {assigned_bytes} bytes of runtimes, the cache budget is {}",
+                config.cache_bytes
+            ));
+        }
+        Metrics::set(&metrics.target_runtimes, target as u64);
         let prewarm_slots = cache.prewarm_concurrency();
         Ok(Self {
             inner: Arc::new(Inner {

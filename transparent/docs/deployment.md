@@ -3205,8 +3205,8 @@ Publish a fresh lineage from height 1 on a **dedicated display archive host**
 (DigitalOcean `m-8vcpu-64gb`, about $336 a month at list price; check the price
 before approval). Three changes come first:
 
-1. **Reservation true-up.** Admit each runtime at its built size rather than at
-   the 8-byte-word bound.
+1. **Reservation true-up.** Charge each runtime its built size rather than the
+   8-byte-word bound. Done in source; not yet released or deployed.
 2. **Split display map.** A small recent map plus immutable archive index
    chunks.
 3. **Ops support.** A larger window, the new host, and a way to move workers to
@@ -3249,8 +3249,19 @@ reservation:
 | `txid-2k` | 72.05 MiB | 40.05 MiB | 40.3–41.3 MiB (directory); pages within allocator noise |
 | `txid-4k` | 80.05 MiB | 48.05 MiB | 48.2–48.3 MiB (both tables) |
 
-The worker admits runtimes against the reservation. Without a true-up, genesis
-needs 59.8 GiB held and an `m-16vcpu-128gb` host at about $672 a month. The
+Released workers charge every runtime its reservation. Without the true-up,
+genesis needs 59.8 GiB held and an `m-16vcpu-128gb` host at about $672 a month.
+With it (source only; no release carries it yet), the cache still
+admits each build against the reservation but charges a built runtime what it
+holds, so the worker's charge per runtime is:
+
+| Geometry | Charged before | Charged after (built, four-byte words) | Measured steady increments |
+|---|---:|---:|---|
+| `txid-2k` | 72.05 MiB | 40.05 MiB | 40.3–41.3 MiB |
+| `txid-4k` | 80.05 MiB | 48.05 MiB | 48.2–48.3 MiB |
+
+The warm-fit check plans 850 `txid-2k` runtimes at 33.4 GiB: 33.2 GiB built,
+plus one bound's excess for each of four runtimes in flight. The
 rows were synthetic: the tool's premise is that the size depends only on the
 geometry. P0 confirms this on real tables by reading the length of the display
 disk-cache entries on archive-03.
@@ -3377,10 +3388,11 @@ its cached map's `start_height`. At cutover:
 
 ### Code before any production step
 
-1. **Reservation true-up** (`transparent-shard-server` runtime cache). Reserve
-   the bound before a build, then release the difference once the prepared
-   size is known. The disk cache charges entries the same way. Add tests and
-   the measured sizes.
+1. **Reservation true-up** (`transparent-shard-server` runtime cache). Done in
+   source: the cache reserves the bound before a build and releases the
+   difference once the runtime exists; the disk cache and the warm-fit and
+   disk preflight checks charge entries the same way. See
+   [the architecture](architecture.md#serving-and-publication).
 2. **Split display map**, as described in [The map](#the-map).
 3. **Ops** (`transparent/ops/lib/txid_display_poc.py`):
    - raise the `max_archive_shards` and `archives` caps from 64 to 1,024;
@@ -3393,10 +3405,11 @@ its cached map's `start_height`. At cutover:
      new host.
 4. **Infrastructure** (`ops/infra/digitalocean/production`): a display-archive
    droplet resource and its firewall rule for port 8095 from the router.
-5. **`shard-residency`** reads display geometries. The measurement used a
-   two-line extension that is kept as a
+5. **`shard-residency`** reads display geometries. Done with code item 1: the
+   measurement's
    [patch](../evidence/txid-display-backfill-sizing-2026-10-07/residency/shard-residency-display.patch)
-   and is not on `main`. Land it with code item 1.
+   is on `main`, and the tool also prints each runtime's charge after the
+   true-up.
 
 ### Ordered steps
 

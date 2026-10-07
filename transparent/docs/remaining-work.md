@@ -353,7 +353,9 @@ starts dropping archives around mid-December 2026.
 - [ ] G1, Roman: choose the display-archive host. `m-8vcpu-64gb` is
   recommended at today's layout; the decision is deferred until the layout
   experiments are done.
-- [ ] Code: reservation true-up; split display map; ops caps,
+- [x] Code: reservation true-up and `shard-residency` display geometries
+  (source only; no release carries them yet).
+- [ ] Code: split display map; ops caps,
   `workers --replace-active` and the new archive host; Terraform resource;
   full CI and a release (G2).
 - [ ] P0, read-only: real disk-cache entry lengths on archive-03; coordinator

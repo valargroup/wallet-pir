@@ -48,11 +48,12 @@ struct Cli {
     #[arg(long, default_value_t = 6)]
     runtimes: usize,
 
-    /// Which of the geometry's two tables to measure.
+    /// Which of the geometry's two tables to measure: `directory` or
+    /// `pages`, or `txdirectory` or `txpages` for a display geometry.
     #[arg(long, default_value = "directory")]
     table: String,
 
-    /// Which registry geometry to measure.
+    /// Which registry geometry to measure, history or display.
     ///
     /// The reservation the serving cache makes is a formula over the scheme,
     /// and this is what checks it against a real process. Measure every
@@ -81,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let table = match cli.table.as_str() {
         "directory" => Table::Directory,
         "pages" => Table::Pages,
+        "txdirectory" => Table::TxDirectory,
+        "txpages" => Table::TxPages,
         other => return Err(format!("unknown table {other:?}").into()),
     };
     if cli.runtimes < 2 {
@@ -88,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let geometry: &'static Geometry = geometry_by_name(&cli.geometry)
+        .or_else(|| transparent_shard::display::display_by_name(&cli.geometry))
         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
 
     let plaintext = table.rows(geometry) * u64::from(table.row_bytes(geometry));
@@ -108,8 +112,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // in under the real slope would turn a bounded cache back into an
     // unbounded one.
     println!(
-        "cache reserves {:.2} MiB per runtime",
-        mib(shared.reserved_bytes())
+        "cache reserves {:.2} MiB per runtime before a build, plans {:.2} MiB built",
+        mib(shared.reserved_bytes()),
+        mib(shared.held_bytes())
     );
 
     // Held for every build and never rebuilt, so the plaintext is charged once
@@ -136,11 +141,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         held.push(TableRuntime::build(&shared, &rows)?);
         let elapsed = started.elapsed();
         let now = rss();
+        // What the cache charges this runtime once it is built.
+        let charged = held.last().expect("just built").held_bytes();
         println!(
-            "  runtime {:>2}: +{:>7.2} MiB   (RSS {:>8.2} MiB)   built in {:>6.2} s",
+            "  runtime {:>2}: +{:>7.2} MiB   (RSS {:>8.2} MiB)   charged {:>6.2} MiB   built in {:>6.2} s",
             index + 1,
             mib(now.saturating_sub(previous)),
             mib(now),
+            mib(charged),
             elapsed.as_secs_f64(),
         );
         if index == 0 {
@@ -163,11 +171,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // overstates a shard by about 20% -- in the direction that makes a fleet
     // look more expensive than it is, which is still a wrong number to size on.
     //
-    // The other table is charged at its reservation rather than measured, since
-    // measuring it means a second run. Under the SimplePIR P14 runtime this tool
-    // established the reservation within 0.3% at 32,768 rows and 3.4% at
-    // 65,536. The native reservation charges the two-mask preprocessing at its
-    // eight-byte-word bound, so it errs high; re-measure before sizing on it.
+    // The other table is charged at its planned built size rather than
+    // measured, since measuring it means a second run. That is what the cache
+    // charges it once built; the reservation, which charges the compiled
+    // matrix at eight-byte words, is held only while a build is in flight.
     let other = match table {
         Table::Directory => Table::Pages,
         Table::Pages => Table::Directory,
@@ -175,13 +182,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Table::TxPages => Table::TxDirectory,
     };
     let other_shared = SharedParams::build(geometry, other)?;
-    let other_reserved = other_shared.reserved_bytes();
-    let per_shard = mib(marginal as u64) + mib(other_reserved);
+    let other_planned = other_shared.held_bytes();
+    let per_shard = mib(marginal as u64) + mib(other_planned);
     println!(
-        "per shard: {:.2} MiB measured {} + {:.2} MiB reserved {} = {per_shard:.2} MiB",
+        "per shard: {:.2} MiB measured {} + {:.2} MiB planned {} = {per_shard:.2} MiB",
         mib(marginal as u64),
         table.as_str(),
-        mib(other_reserved),
+        mib(other_planned),
         other.as_str(),
     );
     // Shard counts measured over the complete genesis-to-tip journal, per

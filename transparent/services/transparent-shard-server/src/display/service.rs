@@ -12,7 +12,9 @@ use super::set::{DisplayRevision, DisplaySet};
 use super::{kind, runtime_key, tier};
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
-use crate::runtime::{disk::DiskCache, CacheError, RuntimeCache, RuntimeHandle, SharedParams};
+use crate::runtime::{
+    disk::DiskCache, warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams,
+};
 use crate::service::{ReadinessMode, ServiceConfig};
 use crate::shardset::{SegmentSource, Table};
 use axum::extract::{Path as AxumPath, Request, State};
@@ -214,17 +216,19 @@ impl DisplayState {
         if params.is_empty() {
             return Err("the display set names no geometry to serve".into());
         }
-        let mut reserved = 0u64;
-        let mut target = 0usize;
+        // Each held table at its built size, plus the bound for as many as
+        // the prewarm can have in flight; see `runtime::warm_bytes`.
+        let mut held = Vec::new();
         for revision in set.current().iter().filter(|r| r.held()) {
             for (table, _) in revision.targets() {
-                reserved += params[&(revision.geometry.name, kind(table))].reserved_bytes();
-                target += 1;
+                held.push(params[&(revision.geometry.name, kind(table))].as_ref());
             }
         }
-        if config.readiness == ReadinessMode::Warm && reserved > config.cache_bytes {
+        let target = held.len();
+        let needed = warm_bytes(held, runtime.cache.prewarm_concurrency());
+        if config.readiness == ReadinessMode::Warm && needed > config.cache_bytes {
             return Err(format!(
-                "the role's display tables need {reserved} bytes of runtimes, the cache budget is {}",
+                "the role's display tables need {needed} bytes of runtimes, the cache budget is {}",
                 config.cache_bytes
             ));
         }
