@@ -169,6 +169,93 @@ with 52% of host memory available
 - **16 GiB / 19G** keeps the floor only while history stays at its current size.
 - **NU5 and Sapling** do not fit at all.
 
+## Genesis addendum (Roman's decision, 2026-10-07)
+
+Roman chose a genesis floor after the first pass. The sections above are kept
+as that first pass; their 3,000,000 recommendation is now the no-spend fallback
+in the [plan](../../docs/deployment.md#archive-03-budget).
+[genesis.py](genesis.py) reuses `sizing.py`'s inputs and functions and writes
+[genesis.json](genesis.json); `sizing.json` is unchanged.
+
+**Counts**, with the display start at 1 because height 0 is the journal parent:
+
+| Range | History txids | Bracket |
+|---|---:|---|
+| 1–419,199 (before Sapling) | 3,995,879 | 3,836,468–4,029,196 |
+| 1–653,599 (before Blossom) | 5,600,755 | — |
+| 1–3,407,000 (whole backfill) | 16,460,524 | 16,330,448–16,491,125 |
+| 3,407,001–3,509,639 | 567,880 display records, exact | — |
+| Total display records | ≈17,028,404 | — |
+
+**Checks against the orchestrator's first pass:**
+
+- **Confirmed:** about 4.0M before Sapling; 17.0M in total; 425 archives (it
+  said 423) and 850 runtimes; 59.8 GiB reserved; 33.2 GiB at four-byte words;
+  71 GB of archive disk; at least 5.8 h of ingest.
+- **Corrected:** the new journal holds about **42.7 GB** of events, not 27 GB.
+  It covers the whole chain at the v3 journal's 120.6 B per event. On top of
+  that come at least 14.4 GB of sidecar allocation.
+- **Refined:** the map is 259 KB at 426 entries in the live entry shape, with
+  synthetic hashes, against the orchestrator's 268 KB.
+
+### Measured runtime size
+
+[residency/](residency) holds the full `shard-residency` output: six runtimes
+per table, held at once, release-fast on this host. The source was `8cccfa44`
+plus a two-line extension of the tool to display geometries and tables:
+[residency/shard-residency-display.patch](residency/shard-residency-display.patch).
+Apply it with `git apply` to reproduce; it is not on `main`. The later batched display hint on `main` (`07f90675`) changes build
+time, not prepared size.
+
+| Geometry | Reservation | Four-byte size | Steady increments (runtimes 3–6) |
+|---|---:|---:|---|
+| `txid-2k` directory | 72.05 MiB | 40.05 MiB | 48.5, 40.3, 40.3, 41.3 MiB |
+| `txid-2k` pages | 72.05 MiB | 40.05 MiB | 54.2, 46.2, 47.4, 34.8 MiB (allocator noise; mean 45.6) |
+| `txid-4k` directory | 80.05 MiB | 48.05 MiB | 51.3, 54.7, 48.3, 48.3 MiB |
+| `txid-4k` pages | 80.05 MiB | 48.05 MiB | 48.3, 48.2, 48.2, 48.3 MiB |
+
+The tool's printed slope includes the noisy second build and so reads higher.
+The sizing uses the four-byte size. Rows were synthetic: the tool states that
+size is a function of the geometry and bytes. Real-table confirmation is P0,
+which reads the length of the display disk-cache entries on archive-03.
+
+### Variants, hosts and map designs
+
+All variants are in `genesis.json`. Usable host memory is the host's memory
+minus the 20% floor and 1.5 GiB for the system. Archive-03 allows display at
+most 14G.
+
+| Variant | Accounting | Archives | Held | Cache, one year | `MemoryMax` | Disk | Fits |
+|---|---|---:|---:|---:|---:|---:|---|
+| `txid-2k` everywhere | reservation | 425 | 59.8 GiB | 75.7 GiB | 85G | 71.3 GB | `m-16vcpu-128gb` |
+| `txid-2k` everywhere | four-byte | 425 | 33.2 GiB | 42.1 GiB | 48G | 42.8 GB | `m-8vcpu-64gb` and up |
+| `txid-4k` at 80k below 3,407,001 | reservation | 206 + 14 | 34.2 GiB | 47.3 GiB | 54G | 43.8 GB | `m-16vcpu-128gb` |
+| `txid-4k` at 80k below 3,407,001 | four-byte | 206 + 14 | 20.4 GiB | 27.9 GiB | 32G | 29.1 GB | `m-8vcpu-64gb` and up |
+| `txid-4k` at 80k below Blossom | reservation | 70 + 285 | 51.0 GiB | 66.0 GiB | 74G | 61.9 GB | `m-16vcpu-128gb` |
+| `txid-4k` at 80k below Blossom | four-byte | 70 + 285 | 28.9 GiB | 37.2 GiB | 42G | 38.1 GB | `m-8vcpu-64gb` and up |
+
+Old-archive lookups cost 92.5 KB inline and 277.5 KB at 4 pages for `txid-2k`,
+and 117.6 KB and 352.8 KB for `txid-4k`. These are computed as queries ×
+(upload + 5,648 B + 400 B of headers).
+
+Map designs at 426 entries:
+
+- **One map:** 258,988 B raw, 59,757 B gzipped.
+- **Split:** a 32-entry chunk is 19,681 B raw (4,896 gzipped); a recent map with
+  an index pointer is 1,170 B (528 gzipped).
+- **Cold lookups** (the formula's cold inline less its 15 KB map, plus the map):
+  - uncompressed: 364 KB inline, 569 KB at 4 pages;
+  - gzip: 164 KB and 370 KB;
+  - split: 110 KB and 316 KB.
+
+**Ingest from genesis:**
+
+- 3,509,640 blocks and about 42.7 GB of events.
+- 3,509,640 sidecar files in one directory: at least 14.4 GB allocated, about
+  1.05 GB of payload, and 10.5M fsyncs.
+- A publication root of about 7.1 GB.
+- At least 5.8 h at the history ingest rate.
+
 ## Not measured, and why
 
 No deploy inventory was available, so these could not be read:
@@ -187,7 +274,8 @@ re-measured here.
 
 ## Provenance
 
-- Source: `8cccfa44` (wallet-pir `main`). Python 3.12 standard library only.
+- Source: `8cccfa44` (wallet-pir `main`). Python 3.12 standard library only;
+  residency runs as described in the genesis addendum.
 - Host: roman-dev-2 (DigitalOcean premium Intel, 8 vCPU, 31 GiB), shared
   development host.
 - Machine-readable metadata: [manifest.json](manifest.json); checksums:

@@ -1,5 +1,8 @@
-0853a9d9da0d0fe457293361667f3cc7e9c0f4cc06559e1c5502790ba776d0a5  ./README.md
+3c5b73e4b6d82beb70426440ee95add2724a3cd7d3b80156fa5f82612dcd7fca  ./README.md
 257c666f2b42c9c81841170ecd8183e5f006d53e7f1d68b07afa6e8718621940  ./capture.py
+da1a2c212c5f9f8bd3b3d74bb8f454f2a83d6478530b90240aaa9712d278e81f  ./genesis-manifest.json
+f7c2142626deeb5cec7728ab9a47c73142e003320e99e1eedc7b464da90dc6fc  ./genesis.json
+8301a96baaf438139284c03caf0ec6ec39341a48d0581dce72d85bc9b545457e  ./genesis.py
 072f49aee6e629111b41db08aeb8800ca40bf9e34d9be06dfaee71ea7246674e  ./inputs/capture.json
 9088902b3fbbbc60f0f91c469f82ac5e9a70e9ac3141618cf805b19ae75fdd33  ./inputs/history-shards.json
 309867e788121f314577fb7f4db53d93d51f7b135700356153d4f6dc89343a5f  ./inputs/txid-manifest-00.json
@@ -18,5 +21,10 @@ f43977b8f3eae4148ab10d1be424e3240bbe67fc9b9ad3cee749f30e463af808  ./inputs/txid-
 5fa049cbf8786e9bf97075124225dc15901e1fbc99f4cf11b8f364d99d0ff342  ./inputs/txid-manifest-13.json
 39acc96fe99ab2fce53b0888ce6b74c8bb90e6120877b3d8592ce0d8573cd5a8  ./inputs/txid-shards.json
 5678fd9f11c24995a385d65b067fa984b371d9ecbf7021e49a5d16266f0c50d8  ./manifest.json
+360c708947e841f15bd3d7fcdc98b3ed81ecc89c2d87a0d945dfafe1f53e339e  ./residency/shard-residency-display.patch
+2fa278278d595e3699d1e1bec4ad6c12d6d56fc29f8b98241c882910854aa71a  ./residency/txid-2k-txdirectory.txt
+836e4d36754dd52ad5ffa764e5c5e679cddf458dea445e9afca4088d92ca3253  ./residency/txid-2k-txpages.txt
+52cbaea53dbe42027a04d4b0cea89a7d9c9552277c44e342197fde8ecc8fade5  ./residency/txid-4k-txdirectory.txt
+90375a6637fd8cc560b69b976d4206a4d0e7d7a6bf2df0fe10a3b58c8fe257d8  ./residency/txid-4k-txpages.txt
 86aa0e96634b956e55b62227c763f8ac43b14572cae3bd1a0d21f8c77c7f325f  ./sizing.json
 80e2d67a2bf0f31d5c4276dae61b84709f71eb63b95e298c76b162c0ee82abf6  ./sizing.py

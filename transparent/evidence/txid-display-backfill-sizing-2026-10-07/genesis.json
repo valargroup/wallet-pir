@@ -1,0 +1,370 @@
+{
+ "tip": 3509639,
+ "counts": {
+  "pre_sapling_1_419199": {
+   "history_txids_lower": 3836468,
+   "history_txids_estimate": 3995879,
+   "history_txids_upper": 4029196
+  },
+  "pre_blossom_1_653599": 5600755,
+  "backfill_1_3407000": {
+   "lower": 16330448,
+   "estimate": 16460524,
+   "upper": 16491125
+  },
+  "display_3407001_tip_exact": 567880,
+  "total_display_records_estimate": 17028404,
+  "history_txids_0_tip_estimate": 17029131
+ },
+ "variants": [
+  {
+   "variant": "A txid-2k everywhere",
+   "accounting": "reserved",
+   "old_geometry": "txid-2k",
+   "old_target": 40000,
+   "old_boundary": 3407001,
+   "old_archives": 411,
+   "txid_2k_archives": 14,
+   "runtimes": 850,
+   "held_gib": 59.8,
+   "growth_gib_per_year": 8.2,
+   "window_with_one_year": 484,
+   "cache_gib_one_year": 75.7,
+   "memory_max_gib_one_year": 85,
+   "disk_gb": 71.3,
+   "old_archive_lookup_bytes": {
+    "inline": 92496,
+    "pages_3": 231240,
+    "pages_4": 277488
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": false
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  },
+  {
+   "variant": "A txid-2k everywhere",
+   "accounting": "floor",
+   "old_geometry": "txid-2k",
+   "old_target": 40000,
+   "old_boundary": 3407001,
+   "old_archives": 411,
+   "txid_2k_archives": 14,
+   "runtimes": 850,
+   "held_gib": 33.2,
+   "growth_gib_per_year": 4.6,
+   "window_with_one_year": 484,
+   "cache_gib_one_year": 42.1,
+   "memory_max_gib_one_year": 48,
+   "disk_gb": 42.8,
+   "old_archive_lookup_bytes": {
+    "inline": 92496,
+    "pages_3": 231240,
+    "pages_4": 277488
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": true
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  },
+  {
+   "variant": "B txid-4k at 80,000 below 3,407,001",
+   "accounting": "reserved",
+   "old_geometry": "txid-4k",
+   "old_target": 80000,
+   "old_boundary": 3407001,
+   "old_archives": 206,
+   "txid_2k_archives": 14,
+   "runtimes": 440,
+   "held_gib": 34.2,
+   "growth_gib_per_year": 8.2,
+   "window_with_one_year": 279,
+   "cache_gib_one_year": 47.3,
+   "memory_max_gib_one_year": 54,
+   "disk_gb": 43.8,
+   "old_archive_lookup_bytes": {
+    "inline": 117584,
+    "pages_3": 293960,
+    "pages_4": 352752
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": false
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  },
+  {
+   "variant": "B txid-4k at 80,000 below 3,407,001",
+   "accounting": "floor",
+   "old_geometry": "txid-4k",
+   "old_target": 80000,
+   "old_boundary": 3407001,
+   "old_archives": 206,
+   "txid_2k_archives": 14,
+   "runtimes": 440,
+   "held_gib": 20.4,
+   "growth_gib_per_year": 4.6,
+   "window_with_one_year": 279,
+   "cache_gib_one_year": 27.9,
+   "memory_max_gib_one_year": 32,
+   "disk_gb": 29.1,
+   "old_archive_lookup_bytes": {
+    "inline": 117584,
+    "pages_3": 293960,
+    "pages_4": 352752
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": true
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  },
+  {
+   "variant": "C txid-4k at 80,000 below Blossom only",
+   "accounting": "reserved",
+   "old_geometry": "txid-4k",
+   "old_target": 80000,
+   "old_boundary": 653600,
+   "old_archives": 70,
+   "txid_2k_archives": 285,
+   "runtimes": 710,
+   "held_gib": 51.0,
+   "growth_gib_per_year": 8.2,
+   "window_with_one_year": 414,
+   "cache_gib_one_year": 66.0,
+   "memory_max_gib_one_year": 74,
+   "disk_gb": 61.9,
+   "old_archive_lookup_bytes": {
+    "inline": 117584,
+    "pages_3": 293960,
+    "pages_4": 352752
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": false
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  },
+  {
+   "variant": "C txid-4k at 80,000 below Blossom only",
+   "accounting": "floor",
+   "old_geometry": "txid-4k",
+   "old_target": 80000,
+   "old_boundary": 653600,
+   "old_archives": 70,
+   "txid_2k_archives": 285,
+   "runtimes": 710,
+   "held_gib": 28.9,
+   "growth_gib_per_year": 4.6,
+   "window_with_one_year": 414,
+   "cache_gib_one_year": 37.2,
+   "memory_max_gib_one_year": 42,
+   "disk_gb": 38.1,
+   "old_archive_lookup_bytes": {
+    "inline": 117584,
+    "pages_3": 293960,
+    "pages_4": 352752
+   },
+   "host_fit": [
+    {
+     "host": "archive-03 (shared with history)",
+     "usable_memory_max_gib": 14,
+     "fits": false
+    },
+    {
+     "host": "m-4vcpu-32gb",
+     "usable_memory_max_gib": 24.1,
+     "fits": false
+    },
+    {
+     "host": "m-8vcpu-64gb",
+     "usable_memory_max_gib": 49.7,
+     "fits": true
+    },
+    {
+     "host": "m-16vcpu-128gb",
+     "usable_memory_max_gib": 100.9,
+     "fits": true
+    }
+   ]
+  }
+ ],
+ "map": {
+  "entries": 426,
+  "live_bytes": 8854,
+  "live_gzip": 1857,
+  "full_raw": 258988,
+  "full_gzip": 59757,
+  "chunk_32_raw": 19681,
+  "chunk_32_gzip": 4896,
+  "recent_map_raw": 1170,
+  "recent_map_gzip": 528,
+  "designs": {
+   "one map, uncompressed (today)": {
+    "cold_map_bytes": 258988,
+    "refetch_bytes": 258988,
+    "cold_inline_lookup": 363688,
+    "cold_4_page_lookup": 569388
+   },
+   "one map, gzip at the router": {
+    "cold_map_bytes": 59757,
+    "refetch_bytes": 59757,
+    "cold_inline_lookup": 164457,
+    "cold_4_page_lookup": 370157
+   },
+   "recent map + immutable 32-entry index chunks, gzip": {
+    "cold_map_bytes": 5424,
+    "refetch_bytes": 528,
+    "cold_inline_lookup": 110124,
+    "cold_4_page_lookup": 315824
+   }
+  }
+ },
+ "ingest": {
+  "journal_start_height": 0,
+  "display_start_height": 1,
+  "blocks": 3509640,
+  "event_bytes": 42726853043,
+  "sidecar_files": 3509640,
+  "sidecar_min_allocation_bytes": 14375485440,
+  "sidecar_payload_bytes": 1049493271,
+  "fsyncs": 10528920,
+  "hours_at_history_rate": 5.82,
+  "publication_root_bytes": 7130316800
+ },
+ "constants": {
+  "runtime": {
+   "txid-2k": {
+    "reserved": 75545144,
+    "floor": 41990712,
+    "rows": 2048
+   },
+   "txid-4k": {
+    "reserved": 83933752,
+    "floor": 50379320,
+    "rows": 4096
+   }
+  },
+  "query_up": {
+   "txid-2k": 40200,
+   "txid-4k": 52744
+  },
+  "query_down": 5648,
+  "headers": 400,
+  "year_archives": 58.4,
+  "hosts": [
+   [
+    "archive-03 (shared with history)",
+    null,
+    null,
+    0
+   ],
+   [
+    "m-4vcpu-32gb",
+    32,
+    100,
+    168
+   ],
+   [
+    "m-8vcpu-64gb",
+    64,
+    200,
+    336
+   ],
+   [
+    "m-16vcpu-128gb",
+    128,
+    400,
+    672
+   ]
+  ],
+  "archive03_display_memory_max_gib": 14
+ }
+}

@@ -108,6 +108,23 @@ The tiered txid display proof of concept has served beside history since
 
 ## Txid display backfill sizing, 2026-10-07
 
+**Genesis display ingest running.** The orchestrator reports that a genesis
+display ingest has run on the coordinator since 16:47 UTC on 2026-10-07:
+
+- unit `transparent-txid-display-genesis-ingest`;
+- `event-ingest --txid-display --start-height 0`, under the proof of concept's
+  ingest limits;
+- into `/srv/zakura/txid-display-genesis/journal`;
+- expected to finish around 21:15 UTC.
+
+This task did not observe it: it had no deploy inventory or SSH. Nothing
+serves from that journal yet. Bootstrap, the cutover and the host remain
+proposals.
+
+**Host decision deferred.** The display-archive host is not chosen yet. It waits
+on layout experiments on real data. For example, shared or smaller page tables
+could shrink page-table memory and change the host class.
+
 Planning only; nothing was changed. At 16:05 UTC the public maps had these
 values:
 
@@ -121,8 +138,12 @@ values:
 - **Map transfer.** The display map is served uncompressed, at 632 B per shard.
 
 The live root's window of 24 archives starts dropping archives around
-mid-December 2026 at the current seal rate. The recommended backfill is a fresh
-lineage from 3,000,000, held to 12 GiB on archive-03
+mid-December 2026 at the current seal rate. Roman then chose a genesis floor.
+That is about 425 archives, which do not fit archive-03. The plan is a fresh
+lineage on a dedicated 64 GB host, after a reservation true-up and a split
+display map. Six runtimes per table on roman-dev-2 measured `txid-2k` and
+`txid-4k` runtimes at the four-byte matrix size, 44% and 40% below the
+reservation
 ([plan](deployment.md#txid-display-backfill-below-3407001-proposed),
 [evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md),
 [gates](remaining-work.md#txid-display-backfill-below-3407001-proposed-2026-10-07)).

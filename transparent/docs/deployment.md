@@ -3184,50 +3184,162 @@ The lifecycle gate remains open until those executions and reinspection pass.
 
 Proposed on 2026-10-07; nothing here is approved or deployed. The serving
 target stays as recorded in
-[status](status.md#tiered-txid-display-in-production-2026-10-07). The counts,
-formulas and limits come from the
-[sizing evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md).
-Open gates are in
+[status](status.md#tiered-txid-display-in-production-2026-10-07). Roman chose
+a **genesis** coverage floor. Counts, formulas and measurements come from the
+[sizing evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md),
+including its genesis addendum. Open gates are in
 [remaining work](remaining-work.md#txid-display-backfill-below-3407001-proposed-2026-10-07).
+
+Height 0 cannot be a display record. Bootstrap needs the display start above
+the journal start, because the journal start's block is the display's parent.
+So the journal starts at 0 and the display at 1. The genesis coinbase is the
+one transaction left out, and it is unspendable.
 
 ### Recommendation
 
-Rebuild the display publication as a fresh lineage from **height 3,000,000** on
-archive-03, with these settings:
+The host choice is **deferred** until layout experiments on real data are done.
+Shared or smaller page tables, for example, could change the host class. The
+sizing below assumes today's `txid-2k` layout.
 
-| Setting | Now | Proposed |
-|---|---|---|
-| Display cache (`units.archive.cache_bytes`) | 4 GiB | 12 GiB |
-| `MemoryMax` | 6G | 14G |
-| Disk runtime cache | 8 GiB in the request shape | 12 GiB |
-| `max_archive_shards` | 24 | 75 |
-| Geometry, buckets, targets | `txid-2k`, N=1, `archive_target` 40,000, `recent_floor` 10,000, `reorg_margin` 100 | unchanged |
+Publish a fresh lineage from height 1 on a **dedicated display archive host**
+(DigitalOcean `m-8vcpu-64gb`, about $336 a month at list price; check the price
+before approval). Three changes come first:
 
-The new lineage has these properties:
+1. **Reservation true-up.** Admit each runtime at its built size rather than at
+   the 8-byte-word bound.
+2. **Split display map.** A small recent map plus immutable archive index
+   chunks.
+3. **Ops support.** A larger window, the new host, and a way to move workers to
+   a new lineage.
 
-- **Size.** About 68 sealed archives at cutover (66–72 within the count bracket)
-  and 136 archive runtimes. That is 9.6 GiB reserved, between 5.7 GB and
-  10.3 GB resident.
-- **Coverage.** Lookups from 3,000,000 (mid-July 2025) are covered. After about
-  eight more seals (roughly seven weeks at today's rate), the window drops the
-  oldest archive about every 6.25 days. It then keeps roughly 15 months of
-  transparent history.
-- **Cost.** No new host and no spending. Query bytes per lookup are unchanged.
-- **Memory.** On 2026-09-29, before display existed, archive-03 had about 52%
-  of its 64 GiB available, about 33 GiB. The 20% floor leaves about 20 GiB.
-  History may still grow from 41.35 GiB reserved to its full 48 GiB cache, which
-  leaves about 14 GiB. 14G is therefore the largest display `MemoryMax` that
-  keeps the floor in the worst case.
+Keep `txid-2k`, N=1, `archive_target` 40,000, `recent_floor` 10,000 and
+`reorg_margin` 100 everywhere. Set `max_archive_shards` to 1,000. Recent-01
+keeps the recent role, and archive-03 goes back to history alone.
 
-NU5 (1,687,104) needs about 169 archives and 23.8 GiB reserved. Sapling
-(419,200) needs about 325 archives and 45.7 GiB. Neither fits archive-03 beside
-history; the options are listed at the end of this section. Even 2,500,000
-(about 100 archives, 14.1 GiB) would fill a 16 GiB cache with a 19G `MemoryMax`
-at cutover. That breaks the floor once history grows into its cache.
+What this gives:
 
-Without a backfill, the live root still loses coverage. It is fixed at 24
-archives and holds 13. At the current rate it drops its first archive, and the
-display floor rises above 3,407,001, around mid-December 2026.
+- **Size at cutover.** About 425 sealed archives and 850 runtimes: 17.03M
+  records, of which 16.46M lie below 3,407,001 (bracket 16.33–16.49M).
+- **Memory.** 33.2 GiB held at the measured runtime size. The display unit
+  starts at a 48G `MemoryMax`, inside the host's 20% floor. Growth is about
+  4.6 GiB a year at the live seal rate, so the host lasts about 1.5 years
+  before a resize or the denser geometry below.
+- **Disk on the host.** About 43 GB for tables and the disk runtime cache, on a
+  200 GB disk.
+- **Lookups.** Per-lookup query bytes are unchanged: 92.5 KB inline and 277.5 KB
+  at 4 pages, warm. With the split map, a cold inline lookup costs about
+  110 KB and a refetch after a 409 about 0.5 KB.
+- **Coverage.** Every transparent transaction since height 1. A 1,000-archive
+  window lasts about 10 years at the current seal rate, so nothing is dropped
+  in practice.
+
+Genesis does not fit archive-03 under any variant. Display can take at most
+14G there (see [the archive-03 budget](#archive-03-budget)), and the smallest
+genesis configuration needs a 26G `MemoryMax` at cutover.
+
+### Measured runtime memory
+
+`shard-residency`, extended to display geometries, built six runtimes of each
+table on roman-dev-2 ([raw output](../evidence/txid-display-backfill-sizing-2026-10-07/residency)).
+The steady increments match the four-byte-word size rather than the
+reservation:
+
+| Geometry | Reservation per runtime | Four-byte size | Measured steady increments |
+|---|---:|---:|---|
+| `txid-2k` | 72.05 MiB | 40.05 MiB | 40.3–41.3 MiB (directory); pages within allocator noise |
+| `txid-4k` | 80.05 MiB | 48.05 MiB | 48.2–48.3 MiB (both tables) |
+
+The worker admits runtimes against the reservation. Without a true-up, genesis
+needs 59.8 GiB held and an `m-16vcpu-128gb` host at about $672 a month. The
+rows were synthetic: the tool's premise is that the size depends only on the
+geometry. P0 confirms this on real tables by reading the length of the display
+disk-cache entries on archive-03.
+
+### Host and memory options for genesis
+
+All figures are at cutover, plus one year of growth at the live seal rate.
+"Usable" means the host's memory minus the 20% floor and 1.5 GiB for the system.
+
+| Option | Archives | Held | `MemoryMax` with a year of growth | Fits | Disk | Old-archive lookup, inline / 4 pages |
+|---|---:|---:|---:|---|---:|---|
+| `txid-2k`, reservation as today | 425 | 59.8 GiB | 85G | 128 GB host only | 71 GB | 92.5 / 277.5 KB |
+| **`txid-2k` + true-up (recommended)** | 425 | 33.2 GiB | 48G | 64 GB host (49.7 GiB usable) | 43 GB | 92.5 / 277.5 KB |
+| `txid-4k` at 80,000 below 3,407,001 + true-up | 206 + 14 | 20.4 GiB | 32G | 64 GB host; not 32 GB (24.1 GiB usable) | 29 GB | 117.6 / 352.8 KB |
+| `txid-4k` at 80,000 below Blossom (653,600) + true-up | 70 + 285 | 28.9 GiB | 42G | 64 GB host | 38 GB | 117.6 / 352.8 KB |
+| archive-03, any variant | — | — | needs ≥26G | no: 14G available | — | — |
+
+**Larger old archives** need a seal rule, root and controller that take a
+geometry and target per height range. Today all three take one per root. The
+client already reads each shard's geometry from the map, so it needs no format
+change. Larger archives lower memory per txid by about 40% but do not drop a
+host size class. They also add 25 KB to every old lookup and take 4-page old
+lookups over 300 KB. Keep this as the lever for when growth outgrows the 64 GB
+host.
+
+### The map
+
+Today one map lists every shard: 632 B per entry, served uncompressed. A client
+fetches it cold and again after every 409. Recent rebuilds move the recent
+revision every block, so a wallet loop over recent transactions pays that
+refetch often. At 426 entries:
+
+| Design | Cold map | Refetch after a 409 | Cold inline lookup | Cold 4-page lookup |
+|---|---:|---:|---:|---:|
+| One map, uncompressed (today) | 259 KB | 259 KB | 364 KB | 569 KB |
+| One map, gzip at the router | 60 KB | 60 KB | 164 KB | 370 KB |
+| **Recent map + 32-entry archive index chunks, gzip** | 5.4 KB | 0.5 KB | 110 KB | 316 KB |
+
+Gzip is a one-line `encode` in `txid-display-routes.caddy.in` and passes the
+inline criterion. But a busy client still pays 60 KB per block crossing, and
+the map grows by about 6 KB gzipped each year.
+
+The proposed fix splits the map:
+
+- **Recent map.** Small: the seal parameters, the start, the archive count, the
+  digests of the index chunks, and the recent entry.
+- **Index chunks.** Immutable, of 32 archives each, addressed by absolute shard
+  id. A client caches a chunk forever and fetches only the one that covers its
+  height.
+
+A chunk discloses a 32-archive range, which is coarser than the shard id that
+queries already name, so it adds no leakage. The work:
+
+- the display map format and its shape check;
+- the controller writing chunks on each seal;
+- a worker route for chunks;
+- `transparent-txid-client` support;
+- the bandwidth formula, tests and a requalification.
+
+Estimate: 2–4 days. The cold 4-page lookup stays above 300 KB, as it already
+does today.
+
+### Ingest from genesis on the coordinator
+
+- **Node.** `event-ingest --txid-display --start-height 0` reads the
+  coordinator's Zebra state through `--state-dir` (`<cache_dir>/state/v29/mainnet`),
+  the same input the full v3 journal was built from. The display journal must
+  be new: the full v3 journal has no sidecars, and `display_at` refuses a block
+  without one.
+- **Disk.**
+  - About 42.7 GB of events (120.6 B per event).
+  - 3,509,640 sidecar files: at least 14.4 GB allocated at 4 KiB each, holding
+    about 1.05 GB of payload.
+  - About 7.1 GB for the publication root.
+  - Recent revisions.
+
+  Plan for at least 70 GB free with 20% headroom, beside the current display
+  journal and root until acceptance.
+- **Inodes.** At least 3.51M, all in one flat `display-v1/` directory, with
+  three fsyncs per block (10.5M in total). Check `df -i` on the journal
+  filesystem in P0.
+- **Time.** At least 5.8 h at the full v3 history rate of 167 blocks/s.
+  Sidecar fsyncs are unmeasured, so plan for 6–12 h. The ingest runs under the
+  existing ingest unit limits beside the live display, which keeps serving.
+- **Bootstrap.** A count pass over 3.51M sidecars, then about 6.4 min to publish
+  425 shards, then `verify`, which repeats both. Worker prepare on the new host
+  takes about 28–47 min cold: 425 runtime pairs at the 2026-10-05 bench rates.
+  That is within `ready_timeout_seconds` (at most 7,200 s). Restarts warm from
+  the disk runtime cache.
 
 ### Why a fresh lineage
 
@@ -3235,139 +3347,115 @@ Prepending archives to the live publication is not possible:
 
 - **The journal cannot grow downward.** The display journal's start (3,407,000)
   is fixed in its `meta.json`, and `event-ingest` only appends.
-- **The full v3 history journal has no sidecars.** Its blocks were written
-  without display, and `display_at` refuses a block with no sidecar.
 - **The root is fixed at bootstrap.** `display-root.json` pins `start_height`,
   the seal parameters, `max_archive_shards` and the geometry. `bootstrap`
-  refuses an existing root, and the controller's `run` reads the root file
-  rather than its flags.
+  refuses an existing root, and the controller's `run` reads the root file.
 - **Shard ids and the chain start at the root.** Shard 0 starts at
   `start_height` and ids are contiguous. Each manifest chains its predecessor's
   terminal block hash and manifest digest. The controller halts if a later map
   changes a sealed entry.
-- **Boundaries would not line up anyway.** The seal rule is monotone forward
-  from its start. Run from a lower start, it places boundaries that do not fall
-  on 3,407,001, so the 13 live archives cannot be reused.
+- **Boundaries would not line up.** The seal rule is monotone forward from its
+  start, so a lower start places boundaries that do not fall on 3,407,001.
 
-A new lineage needs a new display journal from S − 1 and a new root. It rebuilds
-the 13 live archives under new ids and digests, at about 1 minute of publisher
-time. Building a separate frozen archive lineage below 3,407,001 would avoid
-that rebuild, but it changes the map format and the client. That is not
-proposed.
+The 13 live archives are therefore rebuilt under new ids. The live root is
+fixed at 24 archives. Without a cutover it starts dropping archives, and its
+floor rises above 3,407,001, around mid-December 2026.
 
 ### Effect on clients
 
-- **The map changes completely.** Its `start_height` drops to 3,000,000 and
-  every shard id from 0 upward names a different range and digest. Native
-  setups are per geometry and table, so they do not change.
-- **In-flight lookups retry.** A lookup bound to the old map gets the existing
-  409 for a stale revision or binding. The client refetches the map and retries
-  once, as it already does when the recent revision moves.
-- **Not-covered rows become eligible.** Wallet rows below the old floor are now
-  inside the map. The brief says the wallet re-arms not-covered rows when
-  `map_sha256` changes. The map digest already changes with every recent
-  rebuild, so re-arming is not tied to the cutover. That wallet logic lives in
-  wallet-libraries and is not verified here.
-- **Bandwidth.** Warm lookups stay at 92.6 KB inline and 277.8 KB at 4 pages.
-  The map grows from 14 entries (8.9 KB) to about 70 (44–48 KB, served
-  uncompressed), so a cold inline lookup rises from about 120 KB to about
-  150 KB.
+`transparent-txid-client` returns `PlacementUnknown(Below)` for a height under
+its cached map's `start_height`. At cutover:
+
+- The map's start drops to 1, and every shard id names a new range and digest.
+- An in-flight lookup gets the existing 409, refreshes the map and retries once.
+- Native setups are per geometry and do not change.
+- A wallet row recorded as below coverage becomes eligible only once the wallet
+  retries it. The brief says rows are re-armed when the map digest changes.
+  That logic is in wallet-libraries and is not verified here. The digest also
+  changes at every recent rebuild.
+- With the split map, wallets need the new client before the cutover.
 
 ### Code before any production step
 
-1. **Ops request bounds** (`transparent/ops/lib/txid_display_poc.py`). Raise the
-   `controller.max_archive_shards` and `controller.archives` caps from 64, for
-   example to 512. Refuse a request whose `units.archive.cache_bytes` cannot
-   hold `max_archive_shards + 1` archives at 151.1 MB each, with a 10% margin.
-   Add ops tests.
-2. **Worker lineage replacement** in the same module. Today the `workers` phase
-   restarts a serving worker onto its own active record. The controller's
-   90-second prepare cannot build about 136 cold runtimes, and a warm switch
-   would hold old and new archives together (≈11.4–12.4 GiB, no margin). Add a
-   journaled `--replace-active <old map sha256>` mode that, per worker:
-   1. backs up and removes `active.json`;
-   2. installs the new unit limits and restarts the worker empty;
-   3. ships the new bootstrap candidate, runs `--verify-only`, then prepares and
-      activates it under `ready_timeout_seconds`.
-
-   Do the archive owner first, then the recent replica. Rollback restores the
-   backed-up record and unit bytes, and the worker returns to the old map.
-3. **Optional: compress the display map.** Add gzip/zstd `encode` for
-   `/v1/txid/shards` in `txid-display-routes.caddy.in`. That makes the map 4.7×
-   smaller.
-
-No change is needed in the format, seal rule, controller, worker binary or
-client.
+1. **Reservation true-up** (`transparent-shard-server` runtime cache). Reserve
+   the bound before a build, then release the difference once the prepared
+   size is known. The disk cache charges entries the same way. Add tests and
+   the measured sizes.
+2. **Split display map**, as described in [The map](#the-map).
+3. **Ops** (`transparent/ops/lib/txid_display_poc.py`):
+   - raise the `max_archive_shards` and `archives` caps from 64 to 1,024;
+   - refuse a request whose archive cache cannot hold its window at the
+     true-up size with a 10% margin;
+   - add `workers --replace-active <old map sha256>`. It backs up and removes a
+     worker's active record, restarts it on new limits, prepares and activates
+     the new candidate, and rolls back by restoring the record;
+   - point the request's archive host and the route's archive upstream at the
+     new host.
+4. **Infrastructure** (`ops/infra/digitalocean/production`): a display-archive
+   droplet resource and its firewall rule for port 8095 from the router.
+5. **`shard-residency`** reads display geometries. The measurement used a
+   two-line extension that is kept as a
+   [patch](../evidence/txid-display-backfill-sizing-2026-10-07/residency/shard-residency-display.patch)
+   and is not on `main`. Land it with code item 1.
 
 ### Ordered steps
 
-Each production step runs through `wallet-pir-deploy.py txid-display-*`,
-holding the production lock and recording its rollback. A new request names a
-new `journal.data_dir`, `journal.start_height` 2,999,999 and a new
-`publication.root`; the old directories stay untouched.
+Each production step runs through `wallet-pir-deploy.py txid-display-*` or
+the Terraform wrapper, holding the production lock and recording its rollback.
 
 | Step | What happens | Duration | Rollback |
 |---|---|---|---|
-| P0 Preflight, read-only | Record archive-03 MemAvailable, the display worker's RSS per runtime and free disk on `/srv`. Record the coordinator's free disk and inodes, and the node state cache. Record a history W0 baseline. Refuse if archive-03 would fall below 20% available at the new `MemoryMax`, or either host below 20% free disk. | minutes | none |
-| P1 `deploy --phase stage` | Install the release carrying code items 1–2 and the new request. | minutes | `rollback` of the transaction |
-| P2 `ingest-start` | 10-block smoke, then `event-ingest --txid-display --start-height 2999999` into the new directory under the existing ingest limits (4 workers, `CPUQuota` 400%, `CPUWeight`/`IOWeight` 20, nice 10). It runs beside the live controller, which keeps serving. Verify block count equals sidecar count, then a spot check, then `ingest-stop`. | ≈1–2 h for 509,641 blocks: 0.85 h at the history ingest rate, plus unmeasured sidecar fsyncs | `ingest-stop`; the new directory is inert |
-| P3 `bootstrap --start-height 3000000 --through-height <journal end>`, then `verify` | Publish about 68 archives and the recent shard into the new root on the coordinator, then reproduce every sealed digest. | minutes | none needed; the new root is unused |
-| P4 Cutover, in one maintenance window | `stop` withdraws `/v1/txid/` with a 503 and stops the old controller. `workers --replace-active` runs on archive-03, then recent-01. `route` restores the snippet. The `controller` phase starts the controller on the new root and journal, which catches up to the tip. | ≈10–15 min of display 503; history untouched | `controller` and `workers` rollbacks restore the old unit, the old active record and the old controller, which catches up from its own journal. `stop` withdraws in under 60 s. |
-| P5 `measure-start` | 20 QPS run with samples drawn from 3,000,000–3,407,000 and above. | the existing criteria's duration | `measure-stop` |
-| P6 Delete the old journal and root | After acceptance only. | minutes | irreversible; separate approval |
+| P0 Preflight, read-only | Read archive-03's display disk-cache entry lengths to confirm four-byte runtimes on real tables. Read the coordinator's free disk, `df -i` and node state, and record the history W0 baseline. | minutes | none |
+| P1 Provision (spend) | Terraform plan and apply for the display-archive host and its firewall rule. | about 30 min | Terraform destroy of the new resources |
+| P2 `deploy --phase stage` | Install the release carrying code items 1–3 on the coordinator, the new host and recent-01. | minutes | `rollback` of the transaction |
+| P3 Ingest from 0 | **Already running** since 16:47 UTC on 2026-10-07 as `transparent-txid-display-genesis-ingest` into `/srv/zakura/txid-display-genesis/journal` ([status](status.md#txid-display-backfill-sizing-2026-10-07)). Remaining: verify block count equals sidecar count, run a spot check, and stop the unit before bootstrap. | reported ETA about 21:15 UTC | stop the unit; the journal is inert |
+| P4 `bootstrap --start-height 1 --through-height <journal end>`, then `verify` | Publish about 425 archives into a new root on the coordinator and reproduce every sealed digest. | about 15–40 min | none needed; the new root is unused |
+| P5 Cutover, in one maintenance window | `stop` withdraws `/v1/txid/` and stops the old controller. `workers --replace-active` runs on the new host, then recent-01. `route` names the new archive upstream. The `controller` phase starts on the new root and catches up. | about 30–50 min of display 503, dominated by the cold prepare; history untouched | restore the old route, worker records and controller; `stop` withdraws in under 60 s |
+| P6 `measure-start` | 20 QPS with samples spread from height 1 to the tip. | the existing criteria's duration | `measure-stop` |
+| P7 Retire the display worker on archive-03, then delete the old journal and root | After acceptance only. | minutes | deletion is irreversible; separate approval |
 
-Acceptance adds three checks to the existing
+Acceptance adds four checks to the existing
 [criteria](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05):
 
-- every sampled lookup below 3,407,001 matches an independent decode of the
-  canonical transaction;
-- the first window drop happens when the 76th archive seals, with no operator
-  action;
-- archive-03 stays at or above 20% available memory, and history p99 is within
-  the W0 baseline.
+- sampled lookups in every era match an independent decode of the canonical
+  transaction;
+- cold and refetch map bytes match the split-map figures;
+- the new host stays at or above 20% available memory;
+- history p99 is within W0.
 
 ### Cost
 
-- **Infrastructure:** $0, with no new host.
-- **Coordinator:** about 1–2 h of niced ingest CPU, and about 5 GB of disk for
-  the new journal and root while the old ones are kept. The journal is about
-  1.5 GB of events plus 509,641 sidecar files, at least 2.1 GB allocated.
-- **Archive-03:** 8 GiB more display cache, `MemoryMax` from 6G to 14G, and about
-  12 GB more disk (tables and disk runtime cache).
-- **Downtime:** one 10–15 minute display outage.
-- **Engineering:** code items 1–2 with tests, CI and a release.
+- **Host:** about $336 a month for the display-archive host (list price, to be
+  checked). Without the true-up, about $672 a month.
+- **Coordinator:** 6–12 h of niced ingest CPU, and about 70 GB of disk while the
+  old journal and root are kept.
+- **Archive-03:** loses its display unit, freeing up to 6G for history.
+- **Downtime:** one display outage of about 30–50 minutes.
+- **Engineering:** code items 1–4, with CI and a release.
 
 ### Gates that need Roman
 
 | Gate | Decision |
 |---|---|
-| G1 | Floor and budget: 3,000,000 at 12 GiB / 14G and a 75-archive window, or one of the options below |
-| G2 | Merge code items 1–2 after full CI and cut a release |
-| G3 | Approve this change sheet for P0–P5, including the archive-03 memory raise beside history and the display outage |
+| G1 | **Spend:** approve the dedicated `m-8vcpu-64gb` display-archive host for genesis coverage |
+| G2 | Merge code items 1–4 after full CI and cut a release |
+| G3 | Approve this change sheet for P0–P6, including the outage and the route change |
 | G4 | Live acceptance, then keep, stop or retire (the proof of concept's existing gate) |
-| G5 | Delete the old display journal and root |
+| G5 | Retire the archive-03 display worker and delete the old display journal and root |
 
-### Options if more coverage is wanted
+### Archive-03 budget
 
-1. **True up the reservation (code, no spend).** Admission charges each runtime
-   at 75.5 MB, assuming 8-byte matrix words. If P0 shows resident runtimes near
-   the 4-byte bound (42 MB), reserving the built size instead of the bound
-   roughly doubles the window at the same 12 GiB. That is about 135 archives,
-   with today's floor near 2.0–2.1M.
-2. **Larger archives below 3,407,001 (code and requalification).** Use a
-   per-height geometry and target, for example the existing `txid-4k` at about
-   80,000 records. It reserves 83.9 MB per runtime, so memory per txid falls
-   44%. Directory queries to those archives cost 58.4 KB instead of 45.8 KB, so
-   an inline lookup rises to 116.8 KB. NU5 would need about 78 such archives
-   (13.1 GB) plus the recent-era window, which still exceeds 12 GiB without
-   option 1. The seal rule, root and controller take one geometry and target
-   per root today.
-3. **A separate display archive host (spend).** Move all display archives off
-   archive-03 to a dedicated memory-optimized host. NU5 then needs about 24 GiB
-   reserved, and the co-tenancy risk with history goes away. Only the archive
-   upstream in the route changes.
-4. **Cutoff (recommended).** As above. The window rolls forward on its own.
+Archive-03 is shared with the history archive owner. That owner has a 48 GiB
+cache, 41.35 GiB of it reserved, with `MemoryMax` 56G. It was observed at about
+52% available on 2026-09-29. Taking off the 20% floor and leaving room for
+history to fill its cache leaves at most a 14G display `MemoryMax`. At the
+reservation, that is a 75-archive window, which today reaches back to about
+2.82M. With the true-up it is about 135 archives, about 2.0–2.1M.
 
-This plan does not build a frozen-prefix lineage, a per-height geometry, a
-second display archive owner, client map caching, the reservation true-up or
-any wallet change.
+That is the most a no-spend option can cover, and it is the fallback if G1 is
+declined. The first-pass sizing for that fallback (a 3,000,000 floor) remains
+in the evidence.
+
+This plan does not build a frozen-prefix lineage, per-height geometry, a second
+display archive owner, client changes beyond the split map, or any wallet
+change.

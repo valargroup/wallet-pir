@@ -1,0 +1,36 @@
+diff --git a/transparent/services/transparent-shard-server/src/bin/shard-residency.rs b/transparent/services/transparent-shard-server/src/bin/shard-residency.rs
+index 777ff854..ef87c242 100644
+--- a/transparent/services/transparent-shard-server/src/bin/shard-residency.rs
++++ b/transparent/services/transparent-shard-server/src/bin/shard-residency.rs
+@@ -48,11 +48,12 @@ struct Cli {
+     #[arg(long, default_value_t = 6)]
+     runtimes: usize,
+ 
+-    /// Which of the geometry's two tables to measure.
++    /// Which of the geometry's two tables to measure: `directory` or
++    /// `pages`, or `txdirectory` or `txpages` for a display geometry.
+     #[arg(long, default_value = "directory")]
+     table: String,
+ 
+-    /// Which registry geometry to measure.
++    /// Which registry geometry to measure, history or display.
+     ///
+     /// The reservation the serving cache makes is a formula over the scheme,
+     /// and this is what checks it against a real process. Measure every
+@@ -81,6 +82,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     let table = match cli.table.as_str() {
+         "directory" => Table::Directory,
+         "pages" => Table::Pages,
++        "txdirectory" => Table::TxDirectory,
++        "txpages" => Table::TxPages,
+         other => return Err(format!("unknown table {other:?}").into()),
+     };
+     if cli.runtimes < 2 {
+@@ -88,6 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
+     }
+ 
+     let geometry: &'static Geometry = geometry_by_name(&cli.geometry)
++        .or_else(|| transparent_shard::display::display_by_name(&cli.geometry))
+         .ok_or_else(|| format!("unknown geometry {:?}", cli.geometry))?;
+ 
+     let plaintext = table.rows(geometry) * u64::from(table.row_bytes(geometry));
