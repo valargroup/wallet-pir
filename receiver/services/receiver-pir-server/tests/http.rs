@@ -32,7 +32,7 @@ fn snapshot_rows(count: u32, rows: u32) -> Snapshot {
     let mut manifest = manifest(rows);
     // Positions start at 200; a long history needs room after them.
     manifest.end_position = manifest.end_position.max(200 + u64::from(count));
-    Snapshot::build(manifest, &records).unwrap()
+    Snapshot::build(manifest, &records, &[], &[]).unwrap()
 }
 struct Running {
     origin: String,
@@ -249,6 +249,40 @@ async fn connect<T: Transport>(
 }
 
 #[tokio::test]
+async fn wallets_test_receivers_against_the_publication_filters() {
+    /// Flips a bit of every filter file it fetches.
+    struct Tampered(Http);
+    impl Transport for Tampered {
+        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+            let mut bytes = Transport::get(&self.0, url, limit).await?;
+            if url.contains("/filters/") {
+                *bytes.last_mut().unwrap() ^= 1;
+            }
+            Ok(bytes)
+        }
+        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+            Transport::post(&self.0, url, body, limit).await
+        }
+    }
+    let server = serve(snapshot(1)).await;
+    let transport = Http(http());
+    let manifest = DirectoryClient::fetch_manifest(&server.origin, &transport)
+        .await
+        .unwrap();
+    let filters = DirectoryClient::fetch_filters(&server.origin, &transport, &manifest)
+        .await
+        .unwrap();
+    let key = manifest.directory.salt;
+    assert_eq!(filters.paid.matches(&key, &[receiver()]), [true]);
+    assert_eq!(filters.recent.matches(&key, &[receiver()]), [false]);
+    let tampered = Tampered(Http(http()));
+    assert!(matches!(
+        DirectoryClient::fetch_filters(&server.origin, &tampered, &manifest).await,
+        Err(Error::Malformed)
+    ));
+}
+
+#[tokio::test]
 async fn retrieve_complete_history_and_enforce_limits_over_http() {
     let server = serve(snapshot(2)).await;
     let mut client = connect(&server.origin, Http(http()), accepted(), 0)
@@ -357,7 +391,7 @@ async fn common_witness_file_uses_the_same_publication() {
     let mut manifest = snapshot(0).manifest;
     manifest.start_position = 0;
     manifest.end_position = 1;
-    let snapshot = Snapshot::build(manifest, &[]).unwrap();
+    let snapshot = Snapshot::build(manifest, &[], &[], &[]).unwrap();
     let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
         .unwrap()
         .encode();
@@ -478,7 +512,8 @@ async fn directory_file_rejects_bad_digest_length_and_pagination() {
 #[test]
 fn encrypted_publication_roundtrip_and_fail_closed() {
     let records = [record(0, 2), record(1, 2)];
-    let server = Server::new(Snapshot::build(manifest(MIN_ROWS), &records).unwrap()).unwrap();
+    let server =
+        Server::new(Snapshot::build(manifest(MIN_ROWS), &records, &[], &[]).unwrap()).unwrap();
     let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
     let first = client.prepare(receiver(), 0).unwrap();
     let second = client.prepare(receiver(), 0).unwrap();
@@ -542,11 +577,11 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
 
 #[test]
 fn reject_corrupt_rows_before_preprocessing() {
-    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[]).unwrap();
+    let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &[], &[]).unwrap();
     snapshot.data[0] ^= 1;
     assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
     assert!(matches!(
-        Server::new(Snapshot::build(manifest(4096), &[]).unwrap()),
+        Server::new(Snapshot::build(manifest(4096), &[], &[], &[]).unwrap()),
         Err(Error::Unsupported)
     ));
 }
@@ -561,7 +596,7 @@ fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
             m.salt[0] = m.salt[0].wrapping_add(1);
         }
         let records = [record(0, 2), record(1, 2)];
-        let server = Server::new(Snapshot::build(m, &records).unwrap()).unwrap();
+        let server = Server::new(Snapshot::build(m, &records, &[], &[]).unwrap()).unwrap();
         let client = Client::new(server.manifest().clone(), server.public(), accepted()).unwrap();
         assert_eq!(
             server.public().len(),

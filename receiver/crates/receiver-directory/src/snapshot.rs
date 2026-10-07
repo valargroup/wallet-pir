@@ -1,10 +1,13 @@
 //! Immutable publications: manifests, row placement and row decoding.
-use crate::{Error, Hash, Receiver, Record, RECORD_BYTES};
+use crate::{
+    filter::{Filter, Filters},
+    Error, Hash, Receiver, Record, RECORD_BYTES,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 /// The directory format a manifest commits to.
-pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
+pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v2";
 /// Bytes per row. Unused trailing bytes are zero.
 pub const ROW_BYTES: usize = 4096;
 /// Records per row.
@@ -27,6 +30,8 @@ pub struct Manifest {
     pub salt: Hash,
     pub records: u64,
     pub data_sha256: Hash,
+    /// Commits to the publication's [`Filters`] file.
+    pub filters_sha256: Hash,
 }
 
 impl Manifest {
@@ -86,16 +91,25 @@ pub fn row_for(manifest: &Manifest, receiver: &Receiver, page: u32) -> Result<us
     Ok((u32::from_le_bytes(digest[..4].try_into().unwrap()) & (manifest.rows - 1)) as usize)
 }
 
-/// A manifest and the complete row data it commits to.
+/// A manifest and the row data and filters it commits to.
 #[derive(Clone)]
 pub struct Snapshot {
     pub manifest: Manifest,
     pub data: Vec<u8>,
+    /// The encoded [`Filters`].
+    pub filters: Vec<u8>,
 }
 
 impl Snapshot {
     /// Bucket overflow fails the whole candidate. It never drops records or coverage.
-    pub fn build(mut manifest: Manifest, records: &[Record]) -> Result<Self, Error> {
+    /// The paid filter holds the records' receivers; `recent` and `seen` come from the
+    /// publisher's swap provider data (see [`crate::filter`]).
+    pub fn build(
+        mut manifest: Manifest,
+        records: &[Record],
+        recent: &[Receiver],
+        seen: &[Receiver],
+    ) -> Result<Self, Error> {
         manifest.records = records.len() as u64;
         manifest.validate()?;
         let mut data = vec![0; manifest.rows as usize * ROW_BYTES];
@@ -141,7 +155,18 @@ impl Snapshot {
             return Err(Error::Malformed);
         }
         manifest.data_sha256 = Sha256::digest(&data).into();
-        Ok(Self { manifest, data })
+        let filters = Filters {
+            paid: Filter::build(&manifest.salt, records.iter().map(|r| &r.receiver)),
+            recent: Filter::build(&manifest.salt, recent),
+            seen: Filter::build(&manifest.salt, seen),
+        }
+        .encode();
+        manifest.filters_sha256 = Sha256::digest(&filters).into();
+        Ok(Self {
+            manifest,
+            data,
+            filters,
+        })
     }
 }
 

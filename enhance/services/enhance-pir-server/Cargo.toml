@@ -57,6 +57,8 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
+zcash_address = "0.13"
+zcash_protocol = "0.10"
 
 [dev-dependencies]
 zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72" }

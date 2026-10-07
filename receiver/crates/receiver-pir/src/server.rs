@@ -17,6 +17,7 @@ pub struct Server {
     id: Hash,
     public: Vec<u8>,
     rows: std::sync::Arc<[u8]>,
+    filters: std::sync::Arc<[u8]>,
     server: IPIRServer<u16>,
     top: TopKeyImages<'static>,
     preprocessed: Vec<QueryPackPreprocessed<'static>>,
@@ -29,9 +30,11 @@ impl Server {
         let p = profile(snapshot.manifest.rows)?;
         if snapshot.data.len() != snapshot.manifest.rows as usize * ROW_BYTES
             || Hash::from(Sha256::digest(&snapshot.data)) != snapshot.manifest.data_sha256
+            || Hash::from(Sha256::digest(&snapshot.filters)) != snapshot.manifest.filters_sha256
         {
             return Err(Error::Malformed);
         }
+        receiver_directory::filter::Filters::decode(&snapshot.filters)?;
         let client = IPIRClient::new(p);
         let setup =
             client.generate_public_query_setup_simplepir_from_seed(setup_seed(&snapshot.manifest)?);
@@ -69,6 +72,7 @@ impl Server {
             id,
             public,
             rows: snapshot.data.into(),
+            filters: snapshot.filters.into(),
             server,
             top,
             preprocessed,
@@ -88,6 +92,11 @@ impl Server {
     /// Identical immutable directory bytes for every caller, already digest-checked.
     pub fn rows(&self) -> std::sync::Arc<[u8]> {
         self.rows.clone()
+    }
+
+    /// The publication's filter file, identical for every caller and already checked.
+    pub fn filters(&self) -> std::sync::Arc<[u8]> {
+        self.filters.clone()
     }
 
     /// Answer one encrypted query for this session, rejecting any other length or session.

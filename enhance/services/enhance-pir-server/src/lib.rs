@@ -9,6 +9,7 @@ pub mod exercise;
 pub mod ingest;
 pub mod internal_auth;
 pub mod ipir;
+pub mod near;
 /// Public receiver extraction for the standalone directory indexer.
 pub mod receiver;
 pub mod runtime;

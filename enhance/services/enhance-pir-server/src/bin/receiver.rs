@@ -1,12 +1,13 @@
 //! Resumable public-chain indexer and continuous canonical receiver PIR service.
 use clap::Parser;
 use enhance_pir_server::{
+    near::{Explorer, Feed},
     receiver::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
     zakura::ZakuraClient,
 };
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
-    store::{Config, Store},
+    store::{Config, ProviderStore, Store},
     witness::WitnessCache,
     Error,
 };
@@ -20,6 +21,10 @@ use std::{
 use zakura_chain::{block::Hash, parameters::Network};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
+/// How long a swap provider receiver stays in the recent filter.
+const RECENT_SECS: i64 = 24 * 60 * 60;
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -53,6 +58,12 @@ struct Args {
     /// Maximum simultaneous raw-block RPC requests.
     #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..=i64::from(MAX_RECEIVER_CONCURRENCY)))]
     concurrency: u32,
+    /// Where the NEAR feed starts on its first read, in Unix seconds; a day ago by
+    /// default. The feed runs while serving when `NEAR_INTENTS_EXPLORER` holds a key.
+    #[arg(long)]
+    near_since: Option<i64>,
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
+    near_poll_seconds: u64,
 }
 
 #[tokio::main]
@@ -98,6 +109,31 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
         }
     });
+    if let Some(key) = std::env::var("NEAR_INTENTS_EXPLORER")
+        .ok()
+        .filter(|k| !k.is_empty())
+    {
+        let path = args.data_dir.join("provider.sqlite");
+        let since = args.near_since.unwrap_or_else(|| unix_now() - RECENT_SECS);
+        let poll = Duration::from_secs(args.near_poll_seconds);
+        let mut explorer = Explorer::new(key)?;
+        tokio::spawn(async move {
+            loop {
+                match ProviderStore::open(&path) {
+                    Ok(mut store) => {
+                        for feed in [Feed::Payouts, Feed::Refunds] {
+                            match explorer.sync(&mut store, feed, since).await {
+                                Ok(n) => eprintln!("near feed={} receivers={n}", feed.name()),
+                                Err(e) => eprintln!("near feed={} deferred: {e}", feed.name()),
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("near provider store unavailable: {e}"),
+                }
+                tokio::time::sleep(poll).await;
+            }
+        });
+    }
     let http = tokio::spawn(async move { axum::serve(listener, app).await });
     let refresh_loop = async {
         loop {
@@ -239,13 +275,15 @@ async fn refresh(
     log_stage("ingestion", started);
     let started = std::time::Instant::now();
     let records = store.counts()?.0;
+    let (recent, seen) = ProviderStore::open(args.data_dir.join("provider.sqlite"))?
+        .sets(unix_now() - RECENT_SECS)?;
     // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
         if rows > MAX_ROWS {
             return Err("directory exceeds the maximum row count; no publication created".into());
         }
-        match store.snapshot(rows) {
+        match store.snapshot(rows, &recent, &seen) {
             Ok(s) => break s,
             Err(Error::Capacity) => rows *= 2,
             Err(e) => return Err(e.into()),
@@ -327,7 +365,8 @@ async fn refresh(
         serde_json::json!({"revision":revision,"start_height":snapshot.manifest.start_height,
         "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
         "actions":snapshot.manifest.end_position-snapshot.manifest.start_position,
-        "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len()})
+        "excluded_coinbase_actions":store.counts()?.1,"rows":rows,"row_bytes":snapshot.data.len(),
+        "filter_bytes":snapshot.filters.len(),"recent_receivers":recent.len(),"seen_receivers":seen.len()})
     );
     Ok(())
 }
@@ -340,11 +379,13 @@ fn log_stage(stage: &str, started: std::time::Instant) {
     );
 }
 
-/// Durably write a revision's row file, then its manifest, and return the revision ID.
+/// Durably write a revision's row and filter files, then its manifest, and return the
+/// revision ID.
 fn publish(root: &Path, snapshot: &Snapshot) -> Result<String> {
     std::fs::create_dir_all(root)?;
     let revision = hex::encode(snapshot.manifest.revision()?);
     write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
+    write_revision_file(root, &format!("{revision}.filters"), &snapshot.filters)?;
     let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
     write_revision_file(root, &format!("{revision}.json"), &manifest)?;
     std::fs::File::open(root)?.sync_all()?;
@@ -367,6 +408,14 @@ fn write_revision_file(root: &Path, name: &str, bytes: &[u8]) -> Result<()> {
         Err(e) => return Err(e.into()),
     }
     Ok(())
+}
+
+/// Seconds since the Unix epoch.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs() as i64
 }
 
 /// Whether `hash` is the node's canonical block at `height`.

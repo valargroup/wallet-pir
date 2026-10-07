@@ -1,5 +1,6 @@
 //! Receiver discovery records. A match is a candidate, never proof of ownership or spendability.
 pub mod extract;
+pub mod filter;
 pub mod record;
 pub mod snapshot;
 #[cfg(feature = "store")]

@@ -46,6 +46,7 @@ pub fn manifest(rows: u32) -> Manifest {
         salt: [4; 32],
         records: 0,
         data_sha256: [0; 32],
+        filters_sha256: [0; 32],
     }
 }
 

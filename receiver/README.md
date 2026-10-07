@@ -30,9 +30,29 @@ hash of the salt, the receiver's tag and the page selects a row. Publications
 start at 8192 rows. A crowded bucket retries up to 16 salts derived from the
 terminal hash, the first being the hash itself, and only then doubles the table,
 up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
-records. The manifest binds the network, profile, inclusive block coverage,
-boundary hashes, tree positions, geometry, salt, record count and the SHA-256 of
-the rows. Its own SHA-256 is the immutable revision.
+records. The manifest (profile `ironwood-zero-ovk-receiver-v2`) binds the network,
+inclusive block coverage, boundary hashes, tree positions, geometry, salt, record
+count and the SHA-256 of the rows and of the filter file. Its own SHA-256 is the
+immutable revision.
+
+## Filters
+
+Each publication carries an `IWFLT1` filter file with three Golomb-coded sets of
+receivers, keyed by the salt, so a wallet can test its receivers before looking
+any up:
+
+- `paid`: every receiver with a payment in the publication.
+- `recent`: every Orchard receiver a swap provider was given in the last 24 hours,
+  as a payout or refund address, in any status.
+- `seen`: every Orchard payout address a swap provider was given since the feed
+  started.
+
+Values come from a domain-separated SHA-256 of the salt and receiver and use Rice
+parameter 10, so a receiver outside a set matches it about once in 1,024 tests.
+Each set is its count and byte length (little endian) followed by its bits, about
+1.4 bytes per receiver. Every wallet downloads the same file, so testing it
+reveals nothing. The publisher is trusted for the sets' completeness, as for the
+rows.
 
 ## Protocol
 
@@ -47,6 +67,7 @@ the public PIR setup. Its domain-separated digest is the session ID.
 | `POST /v1/receiver/query` | One encrypted row query |
 | `GET /v1/receiver/rows/:session` | Complete row file |
 | `GET /v1/receiver/witness/:session` | Common witness file |
+| `GET /v1/receiver/filters/:session` | Filter file |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, packing keys and the
 encrypted row selection. The response echoes that 52-byte header. The receiver
@@ -86,8 +107,8 @@ against the saved parent, heights, Action positions, terminal hash and tree size
 before it is stored. A restart rewinds to the last saved canonical block. A reorg
 below the start height needs a rebuild in a new directory.
 
-Each run writes `<revision>.rows`, `<revision>.json` and, with `--witnesses`,
-`<revision>.witness` under `publications/`. Witnesses need commitments from
+Each run writes `<revision>.rows`, `<revision>.filters`, `<revision>.json` and,
+with `--witnesses`, `<revision>.witness` under `publications/`. Witnesses need commitments from
 position zero, so the index must start at Ironwood activation. With `--serve`,
 the process polls every `--poll-seconds` (default 10), publishes each new
 canonical tip and serves on a loopback `--bind` (default `127.0.0.1:18380`)
@@ -96,14 +117,21 @@ session on a mismatch or failed check. A recovery epoch fences work that began
 before a revocation. The previous revision stays available for 60 seconds. See
 [the DigitalOcean deployment](ops/digitalocean/README.md).
 
+The swap provider sets come from the NEAR Intents explorer. While serving with a
+partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out of
+ZEC every `--near-poll-seconds` (default 60), whichever app created it, into
+`provider.sqlite`. Its first read starts a day back, or at `--near-since`. The key
+is never logged. Without a key, the recent and seen sets stay empty.
+
 ## Wallet use
 
 `receiver_pir::transport::DirectoryClient` runs over a host `Transport` that
 applies the wallet's route policy, cancellation and timeouts. A transport
 enforces response limits while streaming, rejects redirects and maps 409 and 410
 to `Error::Revision`. A wallet calls `fetch_manifest`, accepts the manifest's end
-block against its own chain, then calls `connect_manifest` with the job's
-remaining lookup count. Small jobs use PIR. Larger ones (about 240 lookups at
+block against its own chain and calls `fetch_filters`, which checks the filter
+file against the manifest. It tests its receivers with `Filter::matches` and calls
+`connect_manifest` with the remaining lookup count only if any need a lookup. Small jobs use PIR. Larger ones (about 240 lookups at
 8192 rows) download the row file once and check its digest. `use_file_for_work`
 switches when new work arrives. `witnesses` fetches the common witness file, and
 `lookup` returns a receiver's complete history or an error. Over PIR it reads up

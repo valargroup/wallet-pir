@@ -13,3 +13,8 @@
 - Add the `receiver-directory` indexer and HTTP service: resumable mainnet
   backfill with batch anchor checks and reorg rollback, and continuous canonical
   serving that rotates publications and revokes orphaned sessions.
+- Add `IWFLT1` publication filters (directory profile
+  `ironwood-zero-ovk-receiver-v2`): paid receivers, and the receivers a swap
+  provider was given recently or ever as a payout address, served at
+  `/v1/receiver/filters/:session` and fetched with `fetch_filters`. The indexer
+  reads the NEAR Intents explorer feed when given a partner key.

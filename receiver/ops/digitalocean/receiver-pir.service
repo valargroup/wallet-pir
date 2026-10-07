@@ -5,6 +5,8 @@ Wants=network-online.target
 [Service]
 User=receiver-pir
 Group=receiver-pir
+# NEAR_INTENTS_EXPLORER=<partner key>; optional, root-owned, mode 0600.
+EnvironmentFile=-/etc/receiver-pir/near.env
 ExecStart=/opt/receiver-pir/current/receiver-directory --serve --data-dir /srv/receiver-pir/index --rpc-url http://159.65.183.89:8232 --no-auth --witnesses --min-rows 8192 --concurrency 12 --poll-seconds 10
 Restart=on-failure
 RestartSec=15

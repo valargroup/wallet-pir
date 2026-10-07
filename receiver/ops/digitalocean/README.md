@@ -21,7 +21,10 @@ wallet data. No Enhance service runs on this Droplet.
    and point `/opt/receiver-pir/current` at it.
 5. Set the node's RPC URL in `receiver-pir.service` and the public host name in
    `Caddyfile`, then install them in `/etc/systemd/system` and `/etc/caddy`.
-6. Enable and start `receiver-pir` and `caddy`. Keep port 18380 and the RPC node
+6. For the recent and seen filters, put the NEAR Intents explorer partner key in
+   `/etc/receiver-pir/near.env` as `NEAR_INTENTS_EXPLORER=<key>`, owned by root
+   with mode 0600. Without it the service publishes those sets empty.
+7. Enable and start `receiver-pir` and `caddy`. Keep port 18380 and the RPC node
    private.
 
 The service prunes obsolete publication files, keeping the SQLite index and the

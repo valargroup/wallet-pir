@@ -248,8 +248,14 @@ impl Store {
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
-    /// overflowed at `rows`.
-    pub fn snapshot(&mut self, rows: u32) -> Result<Snapshot, Error> {
+    /// overflowed at `rows`. `recent` and `seen` fill the swap provider filters (see
+    /// [`ProviderStore::sets`]).
+    pub fn snapshot(
+        &mut self,
+        rows: u32,
+        recent: &[Receiver],
+        seen: &[Receiver],
+    ) -> Result<Snapshot, Error> {
         let tx = self.db.transaction()?;
         let anchor = tip(&tx, &self.config)?;
         if anchor.height < self.config.start_height {
@@ -293,8 +299,9 @@ impl Store {
                 salt: salt(&anchor.hash, attempt),
                 records: 0,
                 data_sha256: [0; 32],
+                filters_sha256: [0; 32],
             };
-            match Snapshot::build(manifest, &records) {
+            match Snapshot::build(manifest, &records, recent, seen) {
                 Err(Error::Capacity) => continue,
                 built => return built,
             }
@@ -315,6 +322,84 @@ impl Store {
         ))
     }
 }
+/// Receivers a swap provider was given, for the recent and seen filters. It is kept
+/// apart from chain coverage: the provider's data is not chain data and survives rewinds.
+pub struct ProviderStore {
+    db: Connection,
+}
+
+impl ProviderStore {
+    /// Opens or creates the provider database.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
+        let db = Connection::open(path)?;
+        db.busy_timeout(std::time::Duration::from_secs(5))?;
+        db.execute_batch(
+            "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
+            CREATE TABLE IF NOT EXISTS receivers (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+                payout INTEGER NOT NULL CHECK(payout IN (0,1)), seen_at INTEGER NOT NULL,
+                PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS cursors (feed TEXT PRIMARY KEY, created_at INTEGER NOT NULL);",
+        )?;
+        Ok(Self { db })
+    }
+
+    /// Records receivers from swaps that `feed` created up to `cursor`, its new
+    /// position: `true` marks a payout address and `false` a refund address, each
+    /// with its swap's creation time. A receiver keeps its latest time.
+    pub fn record(
+        &mut self,
+        feed: &str,
+        receivers: &[(Receiver, bool, i64)],
+        cursor: i64,
+    ) -> Result<(), Error> {
+        let tx = self.db.transaction()?;
+        for (receiver, payout, seen_at) in receivers {
+            tx.execute(
+                "INSERT INTO receivers VALUES (?1,?2,?3) ON CONFLICT(receiver,payout)
+                 DO UPDATE SET seen_at=MAX(seen_at,excluded.seen_at)",
+                params![receiver.as_bytes(), payout, seen_at],
+            )?;
+        }
+        tx.execute(
+            "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
+             DO UPDATE SET created_at=MAX(created_at,excluded.created_at)",
+            params![feed, cursor],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The creation time of the newest swap recorded from `feed`.
+    pub fn cursor(&self, feed: &str) -> Result<Option<i64>, Error> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT created_at FROM cursors WHERE feed=?1",
+                [feed],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The receivers seen at or after `since`, payout or refund, and every payout
+    /// receiver.
+    pub fn sets(&self, since: i64) -> Result<(Vec<Receiver>, Vec<Receiver>), Error> {
+        let read = |sql: &str, arg: i64| -> Result<Vec<Receiver>, Error> {
+            let mut query = self.db.prepare(sql)?;
+            let rows = query.query_map([arg], |r| r.get::<_, Vec<u8>>(0))?;
+            rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
+                .collect()
+        };
+        Ok((
+            read(
+                "SELECT DISTINCT receiver FROM receivers WHERE seen_at>=?1",
+                since,
+            )?,
+            read("SELECT receiver FROM receivers WHERE payout=?1", 1)?,
+        ))
+    }
+}
+
 /// The anchor hash first, so an uncrowded publication keeps its earlier salt.
 fn salt(anchor: &Hash, attempt: u32) -> Hash {
     if attempt == 0 {

@@ -47,6 +47,10 @@ impl Publication {
             &path.with_file_name(format!("{revision}.rows")),
             manifest.rows as usize * ROW_BYTES,
         )?;
+        let filters = bounded(
+            &path.with_file_name(format!("{revision}.filters")),
+            receiver_directory::filter::MAX_FILTERS_BYTES,
+        )?;
         let proof_path = path.with_file_name(format!("{revision}.witness"));
         let proof = if proof_path.exists() {
             Some(bounded(
@@ -56,7 +60,12 @@ impl Publication {
         } else {
             None
         };
-        Self::new(Server::new(Snapshot { manifest, data })?, proof).map_err(Into::into)
+        let snapshot = Snapshot {
+            manifest,
+            data,
+            filters,
+        };
+        Self::new(Server::new(snapshot)?, proof).map_err(Into::into)
     }
 
     /// The directory manifest this publication serves.
@@ -116,7 +125,7 @@ impl Publications {
             };
             if id.len() == 64
                 && id.bytes().all(|c| c.is_ascii_hexdigit())
-                && matches!(extension, "json" | "rows" | "witness")
+                && matches!(extension, "json" | "rows" | "witness" | "filters")
                 && !keep.iter().any(|k| k == id)
                 && entry.file_type()?.is_file()
             {

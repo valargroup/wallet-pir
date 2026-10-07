@@ -134,6 +134,29 @@ impl<T: Transport> DirectoryClient<T> {
         Ok(manifest)
     }
 
+    /// Downloads `manifest`'s filters, identical for every wallet, so a wallet can test its
+    /// receivers before deciding whether to look any up.
+    pub async fn fetch_filters(
+        origin: &str,
+        http: &T,
+        manifest: &Manifest,
+    ) -> Result<receiver_directory::filter::Filters, Error> {
+        let bytes = http
+            .get(
+                &format!(
+                    "{}/v1/receiver/filters/{}",
+                    origin.trim_end_matches('/'),
+                    hex::encode(manifest.id()?)
+                ),
+                receiver_directory::filter::MAX_FILTERS_BYTES,
+            )
+            .await?;
+        if <[u8; 32]>::from(Sha256::digest(&bytes)) != manifest.directory.filters_sha256 {
+            return Err(Error::Malformed);
+        }
+        Ok(receiver_directory::filter::Filters::decode(&bytes)?)
+    }
+
     /// The session manifest.
     pub fn manifest(&self) -> &Manifest {
         match &self.session {

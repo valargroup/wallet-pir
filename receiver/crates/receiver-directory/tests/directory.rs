@@ -41,8 +41,14 @@ fn wire_layout_and_strict_empty_slots() {
 #[test]
 fn pages_share_one_revision_and_build_order_is_stable() {
     let records = [record(0, 2), record(1, 2)];
-    let s = Snapshot::build(manifest(8), &records).unwrap();
-    let reversed = Snapshot::build(manifest(8), &[records[1].clone(), records[0].clone()]).unwrap();
+    let s = Snapshot::build(manifest(8), &records, &[], &[]).unwrap();
+    let reversed = Snapshot::build(
+        manifest(8),
+        &[records[1].clone(), records[0].clone()],
+        &[],
+        &[],
+    )
+    .unwrap();
     assert_eq!(
         s.manifest.revision().unwrap(),
         reversed.manifest.revision().unwrap()
@@ -59,7 +65,7 @@ fn pages_share_one_revision_and_build_order_is_stable() {
             Some(r.clone())
         );
     }
-    let empty = Snapshot::build(manifest(8), &[]).unwrap();
+    let empty = Snapshot::build(manifest(8), &[], &[], &[]).unwrap();
     assert!(lookup_row(
         &empty.manifest,
         &records[0].receiver,
@@ -77,10 +83,72 @@ fn pages_share_one_revision_and_build_order_is_stable() {
         ),
         Err(Error::MissingPage)
     ));
-    assert!(Snapshot::build(manifest(8), &records[..1]).is_err());
-    assert!(Snapshot::build(manifest(8), &records[1..]).is_err());
-    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(1, 2)]).is_err());
-    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(0, 1)]).is_err());
+    assert!(Snapshot::build(manifest(8), &records[..1], &[], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &records[1..], &[], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(1, 2)], &[], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(0, 1)], &[], &[]).is_err());
+}
+
+/// A valid receiver other than [`receiver`].
+fn other_receiver() -> Receiver {
+    let sk = orchard::keys::SpendingKey::from_bytes([3; 32]).unwrap();
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    let address = fvk.address_at(0u32, orchard::keys::Scope::External);
+    Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+}
+
+#[test]
+fn publications_commit_to_their_filters() {
+    use receiver_directory::filter::Filters;
+    use sha2::{Digest, Sha256};
+    let (paid, provider) = (receiver(), other_receiver());
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &[provider], &[provider]).unwrap();
+    assert_eq!(
+        <[u8; 32]>::from(Sha256::digest(&s.filters)),
+        s.manifest.filters_sha256
+    );
+    let filters = Filters::decode(&s.filters).unwrap();
+    let key = s.manifest.salt;
+    assert_eq!(filters.paid.matches(&key, &[paid, provider]), [true, false]);
+    assert_eq!(
+        filters.recent.matches(&key, &[paid, provider]),
+        [false, true]
+    );
+    assert_eq!(filters.seen.matches(&key, &[paid, provider]), [false, true]);
+    // The provider's data is part of the revision.
+    let without = Snapshot::build(manifest(8), &[record(0, 1)], &[], &[]).unwrap();
+    assert_ne!(
+        without.manifest.revision().unwrap(),
+        s.manifest.revision().unwrap()
+    );
+}
+
+#[cfg(feature = "store")]
+#[test]
+fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
+    use receiver_directory::store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    let (payout, refund) = (receiver(), other_receiver());
+    assert_eq!(store.cursor("near-payouts").unwrap(), None);
+    store
+        .record(
+            "near-payouts",
+            &[(payout, true, 100), (payout, true, 50)],
+            100,
+        )
+        .unwrap();
+    store
+        .record("near-refunds", &[(refund, false, 200)], 200)
+        .unwrap();
+    store.record("near-payouts", &[], 90).unwrap();
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
+    let (recent, seen) = store.sets(150).unwrap();
+    assert_eq!((recent, seen), (vec![refund], vec![payout]));
+    // Reopening keeps everything.
+    drop(store);
+    let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    assert_eq!(store.sets(100).unwrap().0.len(), 2);
 }
 
 #[test]
@@ -97,10 +165,10 @@ fn coverage_anchor_and_position_are_required() {
     }
     let mut r = record(0, 1);
     r.payment.position = 300;
-    assert!(Snapshot::build(m.clone(), &[r]).is_err());
+    assert!(Snapshot::build(m.clone(), &[r], &[], &[]).is_err());
     let mut r = record(0, 1);
     r.payment.block_hash = [9; 32];
-    assert!(Snapshot::build(m, &[r]).is_err());
+    assert!(Snapshot::build(m, &[r], &[], &[]).is_err());
 }
 
 #[test]
@@ -109,10 +177,13 @@ fn overflow_and_bad_padding_fail_closed() {
     let mut m = manifest(4);
     let overflow = (0..100).any(|i| {
         m.salt[0] = i;
-        matches!(Snapshot::build(m.clone(), &records), Err(Error::Capacity))
+        matches!(
+            Snapshot::build(m.clone(), &records, &[], &[]),
+            Err(Error::Capacity)
+        )
     });
     assert!(overflow);
-    let s = Snapshot::build(manifest(8), &[record(0, 1)]).unwrap();
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &[], &[]).unwrap();
     let r = receiver();
     let mut b = row(&s, &r, 0).to_vec();
     b[ROW_BYTES - 1] = 1;
@@ -132,7 +203,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
         start_position: 200,
     };
     let mut store = Store::open(&path, config.clone()).unwrap();
-    assert!(store.snapshot(8).is_err());
+    assert!(store.snapshot(8, &[], &[]).is_err());
     let empty = IndexedBlock {
         height: 100,
         hash: [10; 32],
@@ -144,7 +215,10 @@ fn durable_coverage_atomic_failure_and_reorg() {
         commitments: vec![],
     };
     store.append(&empty).unwrap();
-    assert_eq!(store.snapshot(8).unwrap().manifest.end_height, 100);
+    assert_eq!(
+        store.snapshot(8, &[], &[]).unwrap().manifest.end_height,
+        100
+    );
     let mut r = record(0, 1);
     r.payment.position = 202;
     let mut block = IndexedBlock {
@@ -163,7 +237,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     let mut store = Store::open(&path, config.clone()).unwrap();
     assert_eq!(store.tip().unwrap().position, 204);
     assert_eq!(store.counts().unwrap(), (1, 2));
-    let old = store.snapshot(8).unwrap();
+    let old = store.snapshot(8, &[], &[]).unwrap();
     assert_eq!(
         lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
             .unwrap()
@@ -191,7 +265,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     block.coinbase_actions = 0;
     block.payments[0].1.block_hash = block.hash;
     store.append(&block).unwrap();
-    let new = store.snapshot(8).unwrap();
+    let new = store.snapshot(8, &[], &[]).unwrap();
     assert_ne!(
         old.manifest.revision().unwrap(),
         new.manifest.revision().unwrap()
@@ -201,7 +275,7 @@ fn durable_coverage_atomic_failure_and_reorg() {
     wrong.genesis = [99; 32];
     assert!(Store::open(&path, wrong).is_err());
     store.rewind(99, config.start_parent).unwrap();
-    assert!(store.snapshot(8).is_err());
+    assert!(store.snapshot(8, &[], &[]).is_err());
 }
 
 #[cfg(feature = "store")]
@@ -247,7 +321,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
             commitments: vec![[6; 32]; 20],
         })
         .unwrap();
-    let first = store.snapshot(2).unwrap();
+    let first = store.snapshot(2, &[], &[]).unwrap();
     assert_ne!(first.manifest.salt, hash);
     assert_eq!(first.manifest.records, 20);
     for page in 0..20 {
@@ -261,7 +335,12 @@ fn crowded_buckets_retry_the_salt_before_growing() {
     }
     // A rebuild of the same coverage picks the same salt.
     assert_eq!(
-        store.snapshot(2).unwrap().manifest.revision().unwrap(),
+        store
+            .snapshot(2, &[], &[])
+            .unwrap()
+            .manifest
+            .revision()
+            .unwrap(),
         first.manifest.revision().unwrap()
     );
 }
@@ -353,7 +432,7 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
         commitments: vec![[1; 32], [2; 32], payment.cmx],
     };
     store.append(&block).unwrap();
-    let first = store.snapshot(8).unwrap();
+    let first = store.snapshot(8, &[], &[]).unwrap();
     let mut cache = WitnessCache::default();
     // A fresh cache builds from scratch; the reused one must match it byte for byte.
     let full = |store: &Store, m| {
@@ -378,7 +457,7 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     block.commitments = vec![[3; 32], [4; 32]];
     block.payments.clear();
     store.append(&block).unwrap();
-    let second = store.snapshot(8).unwrap();
+    let second = store.snapshot(8, &[], &[]).unwrap();
     assert_eq!(
         store
             .witnesses(&second.manifest, &mut cache)
@@ -400,7 +479,7 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     block.hash = [5; 32];
     block.commitments[0] = [9; 32];
     store.append(&block).unwrap();
-    let replacement = store.snapshot(8).unwrap();
+    let replacement = store.snapshot(8, &[], &[]).unwrap();
     assert_eq!(
         store
             .witnesses(&replacement.manifest, &mut cache)

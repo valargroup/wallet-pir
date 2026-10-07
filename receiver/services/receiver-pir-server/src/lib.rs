@@ -65,6 +65,14 @@ pub fn router_with_publications(publications: Publications) -> Router {
                 },
             ),
         )
+        .route(
+            "/v1/receiver/filters/:session",
+            get(
+                |State(s): State<Service>, Path(id): Path<String>| async move {
+                    material(&s, &id, Material::Filters)
+                },
+            ),
+        )
         .with_state(service)
 }
 
@@ -72,6 +80,7 @@ enum Material {
     Public,
     Witness,
     Rows,
+    Filters,
 }
 
 fn material(s: &Service, id: &str, material: Material) -> Response {
@@ -85,6 +94,7 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     match material {
         Material::Public => binary(p.server.public().to_vec()),
         Material::Rows => binary(axum::body::Bytes::from_owner(p.server.rows())),
+        Material::Filters => binary(axum::body::Bytes::from_owner(p.server.filters())),
         Material::Witness => match &p.witnesses {
             Some(bytes) => binary(bytes.clone()),
             None => StatusCode::SERVICE_UNAVAILABLE.into_response(),

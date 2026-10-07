@@ -21,6 +21,7 @@ fn manifest(len: usize) -> Manifest {
         salt: [3; 32],
         records: 0,
         data_sha256: [0; 32],
+        filters_sha256: [0; 32],
     }
 }
 fn leaves(len: usize) -> Vec<Hash> {
