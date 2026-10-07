@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Wallet txid client, 2026-10-07
+
+The synchronous wallet client `transparent-txid-client`
+([design](txid-display.md#wallet-client)) passed its unit tests and 20
+in-process tests in `transparent-shard-server/tests/txid_client.rs`. The
+in-process tests ran in `release-fast` against the two-worker display fixture.
+They cover the transcript, 409/503/421 handling, tampering, cancellation, route
+whitelisting and a differential check against the reference client on 95
+lookups. Body bytes per lookup, excluding HTTP headers (up / down):
+
+| Lookup | Up | Down |
+| --- | ---: | ---: |
+| Inline or absent, cold (init, map, manifest, setup) | 80,400 | 36,031 |
+| Inline or absent, warm | 80,400 | 11,296 |
+| 1 page, cold | 120,600 | 61,804 |
+| 2 pages, warm | 160,800 | 22,592 |
+| 5 pages, warm | 281,400 | 39,536 |
+
+The ignored `txid_live_lookup` test passed once against production at 16:38 UTC.
+It found mainnet txid `fd4667e1…effbf` at height 3,410,000 in archive shard 0,
+with a cold transfer of 80,400 B up and 43,379 B down. These are not acceptance
+measurements.
+
 ## Scaler inputs after the v11 cutover, 2026-10-06
 
 History was cut over to schema v11 on 2026-10-03 at 17:35 UTC. The status

@@ -165,6 +165,41 @@ synthetic chains only. It has run in production beside history since
 unaccepted. Open gates are in
 [remaining work](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
 
+### Wallet client
+
+`transparent/crates/transparent-txid-client` is the wallet's client for this
+publication: synchronous, with no HTTP stack or async runtime. The tooling
+client in `transparent-shard-server/examples/support/txdisplay.rs` remains the
+reference it is tested against.
+
+- **API.** The wallet implements `TxidTransport::send(TxidRequest) ->
+  TxidReply`. A request has a method, an origin-relative `path()`, a loggable
+  route `template()` without ids or digests, and a body (`POST` bodies are
+  `application/octet-stream` with a declared length). A reply carries the raw
+  status, `Retry-After`, `X-Txid-Map-Sha256` and body; the client interprets
+  them. `TxidDisplayClient::lookup(transport, txid, mined_height, cancel)`
+  takes the txid in internal byte order and the height from the wallet's
+  accepted chain. It returns `Found { record, provenance }`, where provenance
+  is the map SHA-256, shard id, revision, manifest digest and tier. Otherwise
+  it returns `Absent`, `PlacementUnknown(Below | Above)` or `Unsupported`. The
+  client caches native profiles, init, the map, manifests and setups.
+- **Transcript.** Requests are sent one at a time: init, map, manifest and
+  setups when not cached, then exactly two directory queries, even when the
+  rows coincide. A paged record then sends exactly `pages` page queries.
+  `Absent` sends the same two queries. Placement and support results send no
+  query. A height above a map older than 30 s refetches the map once before
+  `Above`. `cancel` is polled before every request.
+- **Errors.** A 409 refetches the map and retries the whole lookup once, then
+  returns `Stale`. A 503 returns `Unavailable { retry_after }`, as do 429 and
+  other 5xx statuses; the client does not retry. A 400, 408, 411, 421 or other
+  4xx returns `Refused(status)` without a retry. Any validation failure returns
+  `Protocol(kind)` and never `Absent`. Validation covers the map header and
+  canonical form, the manifest against its map entry, init parameters against
+  the local derivation, setup identity, length and digest, and per-frame binding,
+  epoch, response length and decoding. Transport failures return `Transport`.
+- **Bandwidth.** Measured body bytes in the in-process tests are in the
+  [status](status.md#wallet-txid-client-2026-10-07).
+
 ## Reproduce the native demo
 
 Run from the repository root:

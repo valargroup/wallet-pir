@@ -4317,6 +4317,7 @@ dependencies = [
  "transparent-filter-server",
  "transparent-native",
  "transparent-shard",
+ "transparent-txid-client",
  "transparent-wallet",
  "transparent-wallet-store",
  "zakura-chain 9.0.0",

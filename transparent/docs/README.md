@@ -23,7 +23,7 @@ The contract governs intended behavior; code establishes implementation; deploym
 
 ## Product boundaries
 
-Active transparent recovery uses `transparent/crates/transparent-events`, `transparent/crates/transparent-filter`, `transparent/crates/transparent-shard`, `transparent/crates/transparent-wallet`, `transparent/crates/transparent-wallet-store`, `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.
+Active transparent recovery uses `transparent/crates/transparent-events`, `transparent/crates/transparent-filter`, `transparent/crates/transparent-shard`, `transparent/crates/transparent-txid-client`, `transparent/crates/transparent-wallet`, `transparent/crates/transparent-wallet-store`, `transparent/services/transparent-filter-server`, and `transparent/services/transparent-shard-server`.
 
 Validation tools live under `transparent/tools/`: load tests, regression fixtures, and the
 current-shard `transparent-measure` command used by the backfill workflow.

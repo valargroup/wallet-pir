@@ -616,9 +616,6 @@ impl TxidDisplayClient {
         );
         let mut unique = BTreeMap::new();
         for &row in rows {
-            if cancel() {
-                return Err(TxidError::Cancelled);
-            }
             let (secret, upload) = target
                 .profile
                 .prepare(row as usize)

@@ -318,6 +318,9 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [x] Deployed in order on 2026-10-06: W0 baseline, `stage`, `ingest-start`, `firewall`,
   `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`
   ([status](status.md#tiered-txid-display-in-production-2026-10-07)).
+- [x] Synchronous wallet client crate `transparent-txid-client` with
+  in-process transcript, error and tamper tests
+  ([wallet client](txid-display.md#wallet-client)).
 - [ ] Measure each criterion live and write the production results (a 20 QPS run
   started 2026-10-07):
   - anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
