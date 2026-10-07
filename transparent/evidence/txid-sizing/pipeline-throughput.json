@@ -1,0 +1,17 @@
+{
+  "schema": "txid-census-pipeline-preflight-v1",
+  "anchor_height": 3502662,
+  "anchor_hash": "0000000000228603173bfeb3650b51ceb92b1ac6b8b6392fa1fa9e9bac3acf7f",
+  "retained_raw_verified": 612,
+  "new_raw_blocks": 7200,
+  "seconds": 161.7749061975628,
+  "blocks_per_second": 44.50628449882835,
+  "projected_remaining_hours": 21.812468854145777,
+  "exceeds_limit": false,
+  "raw_bytes": 85633389,
+  "raw_bundle": "preflight-612-7811.raw",
+  "raw_bundle_sha256": "6d85178fcf1a805d28a541b89aea92531156afed9d3375c51eac5018be5dc91a",
+  "inventory_sha256": "f98887cbca5bb360af2fb66b20f1c96a5094bc839d5861f332357501546ce543",
+  "transport": "one persistent SSH session; height-string raw getblock; 45 requests/s paced; window 200",
+  "qualification": "RAW ACQUISITION ONLY; canonical parsing, UTXO and aggregates pending"
+}
