@@ -240,19 +240,23 @@ impl DiskCache {
         {
             return Err(io::Error::other("runtime disk cache budget exhausted"));
         }
-        self.write(key, shared, source_sha, runtime).map(|_| ())
+        self.write(key, shared, source_sha, runtime, true).map(|_| ())
     }
 
-    /// Writes one entry at [`Self::path`] through a fsynced `.partial` and an
-    /// atomic rename, without the cache's lock or budget, and returns its
-    /// length. [`Self::save`] calls it under both; a shipped-runtime writer
-    /// calls it alone on a directory nothing else writes to.
+    /// Writes one entry at [`Self::path`] through a `.partial` and an atomic
+    /// rename, without the cache's lock or budget, and returns its length.
+    /// [`Self::save`] calls it under both, `durable`: the file, then the
+    /// directory, are fsynced. A shipped-runtime writer calls it alone on a
+    /// directory nothing else writes to, not durable: a file lost to a crash
+    /// is only a counted fallback build on the worker, and fsyncing two
+    /// 40 MiB files would add over a second to every block.
     fn write(
         &self,
         key: &RuntimeKey,
         shared: &SharedParams,
         source_sha: &str,
         runtime: &TableRuntime,
+        durable: bool,
     ) -> io::Result<u64> {
         let path = self.path(key, shared, source_sha);
         let temp = path.with_extension("partial");
@@ -265,7 +269,11 @@ impl DiskCache {
                 output: BufWriter::with_capacity(
                     1 << 20,
                     HashWriter {
-                        output: IncrementalWriteback::new(&file),
+                        output: IncrementalWriteback {
+                            file: &file,
+                            pending: 0,
+                            sync: durable,
+                        },
                         hash: Sha256::new(),
                     },
                 ),
@@ -285,8 +293,10 @@ impl DiskCache {
             drop(writer);
             (&file).seek(SeekFrom::Start(32))?;
             (&file).write_all(&checksum)?;
-            file.sync_all()?;
-            crate::filecache::consumed(&file);
+            if durable {
+                file.sync_all()?;
+                crate::filecache::consumed(&file);
+            }
             let length = file.metadata()?.len();
             if !Self::entry_bytes_range(shared).contains(&length) {
                 return Err(invalid(
@@ -294,7 +304,9 @@ impl DiskCache {
                 ));
             }
             fs::rename(&temp, &path)?;
-            File::open(&self.directory)?.sync_all()?;
+            if durable {
+                File::open(&self.directory)?.sync_all()?;
+            }
             Ok(length)
         })();
         if result.is_err() {
@@ -485,8 +497,8 @@ impl ShippedRuntimes {
         self.0.load(key, shared, source_sha)
     }
 
-    /// Writes one runtime into the directory, atomically; returns its
-    /// length. For the publisher only.
+    /// Writes one runtime into the directory, atomically but not durably;
+    /// returns its length. For the publisher only.
     pub fn write(
         &self,
         key: &RuntimeKey,
@@ -494,7 +506,7 @@ impl ShippedRuntimes {
         source_sha: &str,
         runtime: &TableRuntime,
     ) -> io::Result<u64> {
-        self.0.write(key, shared, source_sha, runtime)
+        self.0.write(key, shared, source_sha, runtime, false)
     }
 }
 
@@ -517,12 +529,19 @@ impl<R: Read> Read for HashReader<R> {
 struct IncrementalWriteback<'a> {
     file: &'a File,
     pending: usize,
+    /// Off for a writer that does not fsync at all.
+    sync: bool,
 }
 impl<'a> IncrementalWriteback<'a> {
     const CHUNK: usize = 8 << 20;
 
+    #[cfg(test)]
     fn new(file: &'a File) -> Self {
-        Self { file, pending: 0 }
+        Self {
+            file,
+            pending: 0,
+            sync: true,
+        }
     }
 }
 impl Write for IncrementalWriteback<'_> {
@@ -533,7 +552,9 @@ impl Write for IncrementalWriteback<'_> {
         // Sync before accepting more data: a failed barrier must not report an
         // error after consuming bytes, which could make a retry duplicate them.
         if self.pending == Self::CHUNK {
-            self.file.sync_data()?;
+            if self.sync {
+                self.file.sync_data()?;
+            }
             self.pending = 0;
         }
         let n = self
