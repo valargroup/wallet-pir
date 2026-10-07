@@ -353,7 +353,8 @@ starts dropping archives around mid-December 2026.
   44% and 40% below the reservation (synthetic rows).
 - [ ] Genesis display ingest: started 16:47 UTC on 2026-10-07
   (`transparent-txid-display-genesis-ingest`), stopped at about 20:00 UTC
-  after it latched history's load on coordinator disk headroom
+  after it latched history's load on coordinator disk headroom. The partial
+  journal moved to a dedicated 150 GB volume at `/srv/txid-display-genesis`
   ([status](status.md#tiered-txid-display-in-production-2026-10-07)). Verify
   block count equals sidecar count and run a spot check.
 - [ ] Layout experiments on real data, such as shared or smaller page tables,

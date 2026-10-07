@@ -178,15 +178,20 @@ opt-in `route_imports` key, and added that key to its `fleet.json`.
   out once, and history p99 spiked to 845 ms once. Over about 40 hours
   without txid load, history p99 exceeded 300 ms in 213 minutes, max 2.77 s
   (the operating session's count; its samples are not retained).
-- **Open: history load latched.** At 19:53:04 UTC on 2026-10-07, history's
-  5 QPS load latched on "transparent-coordinator: disk headroom below 20%". A
-  separate session's full-chain genesis display ingest into
-  `/srv/zakura/txid-display-genesis` (25 GB at 12%) caused it, and was stopped
-  at about 20:00 UTC. Roman approved a dedicated 150 GB volume for that ingest
-  (`/srv/txid-display-genesis`, wallet-pir `983cbedb`); the journal moved there
-  and `/srv/zakura` was back to 233 GB free (78% used) at 20:12 UTC. Clearing
-  the latch (remove `latched.json`, restart `transparent-5qps-continuous`) was
-  still pending Roman's decision at 20:12 UTC.
+- **Disk headroom incident: cause fixed, latch pending.** At 19:53:04 UTC on
+  2026-10-07, history's 5 QPS load latched on "transparent-coordinator: disk
+  headroom below 20%". A separate session's full-chain genesis display ingest
+  into `/srv/zakura/txid-display-genesis` (25 GB at 12%) caused it.
+  - **Cause fixed.** The ingest was stopped at about 20:00 UTC. Roman approved
+    a dedicated 150 GB volume (Terraform, wallet-pir `983cbedb`), mounted at
+    `/srv/txid-display-genesis`. The partial journal was moved there, and
+    `/srv/zakura/txid-display-genesis` was deleted.
+  - **Headroom restored.** At 20:12 UTC `/srv/zakura` was 78% used, with
+    233 GB free.
+  - **Latch pending.** At 20:12 UTC `latched.json` from 19:53:04 was still
+    present: mode latched, permit deny. Clearing it means removing
+    `latched.json` and restarting `transparent-5qps-continuous`. That waits
+    on Roman's decision.
 - **Open.** Not measured live: the anonymity census and audit, `verify` of
   sealed digests, and growth across live seals. Roman's keep, stop or retire
   decision is open
@@ -205,8 +210,8 @@ display ingest has run on the coordinator since 16:47 UTC on 2026-10-07:
 - expected to finish around 21:15 UTC.
 
 It was stopped at about 20:00 UTC, after it pushed the coordinator's disk
-headroom below 20% and latched history's load. It now runs only on its own
-150 GB volume at `/srv/txid-display-genesis`
+headroom below 20% and latched history's load. Its partial journal now sits
+on a dedicated 150 GB volume at `/srv/txid-display-genesis`
 ([above](#tiered-txid-display-in-production-2026-10-07)).
 
 This task did not observe it: it had no deploy inventory or SSH. Nothing
