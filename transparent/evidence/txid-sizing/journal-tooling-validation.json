@@ -1,0 +1,51 @@
+{
+  "limits": [
+    "No complete canonical population measurement in this checkout",
+    "No population anonymity guarantee",
+    "No native RSS/latency measurement",
+    "Compact codecs retain their separate sampled evidence",
+    "No prior checkpoints or raw data rewritten"
+  ],
+  "main_ci_fix": {
+    "commit": "1f06c8b112f633f493ca87a4fe12e4556a5c4a55",
+    "fast_run": 37656353999,
+    "full_run": 37656353990,
+    "pushed": true,
+    "result": "Fast and Full failed: pre-existing full-suite inventory omits transparent-txid-client; no merge authorized while required gates are red",
+    "toolchain_step": "Rust 1.97.1 successfully installed before helper suites"
+  },
+  "model": {
+    "name": "gpt-6.1-sol",
+    "reasoning_effort": "medium",
+    "verified_from": "current runtime turn_context"
+  },
+  "retained_findings_checkpoint": "92142eeb",
+  "schema": "txid-sizing-journal-tooling-validation-v1",
+  "source_file_sha256": {
+    "transparent/tools/txid-sizing/export/Cargo.lock": "450fa371611227220dbaf45833e7af4e3ddca27849ffdcbc272882f3db917631",
+    "transparent/tools/txid-sizing/export/src/journal_census.rs": "03f012d4171237a1f4ed90ebc86d01e60507e09722ef646093d6592f988258ec"
+  },
+  "source_gate": {
+    "canonical_journal_result_received": false,
+    "ingest_executable_source_pin": null,
+    "interface": "Roman-owned coordinator display journal; no local RPC or host access",
+    "measured_anchor_hash": null,
+    "reported_target_height": 3508673,
+    "shielded_only_exclusions": null
+  },
+  "synthetic_profile": {
+    "elapsed_seconds": 0.841895306,
+    "layout_options": 560,
+    "qualification": "Analysis algorithm only; excludes coordinator disk reads, identity SQLite and native PIR",
+    "records": 40000,
+    "route_models": 210
+  },
+  "task_base": "4ce39fbb7f605d94d08a9cdb0f0f2d6505fb93b1",
+  "validation": {
+    "clippy_all_targets": "passed with -D warnings",
+    "docs_links": "passed",
+    "fast_scope": "attempted; helper stage fails at pre-existing unclassified transparent-txid-client, unrelated broad Cargo continuation stopped",
+    "python_tests": "32 passed",
+    "rust_release_fast": "41 passed, one bounded profiler ignored in normal suite; profiler explicitly passed separately"
+  }
+}

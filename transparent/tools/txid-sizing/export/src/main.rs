@@ -20,12 +20,22 @@ impl extract::PreviousOutputs for Previous {
     }
 }
 mod census;
+#[allow(dead_code)]
+#[path = "../../../../services/transparent-filter-server/src/display_journal.rs"]
+mod display_journal;
+#[allow(dead_code)]
+#[path = "../../../../services/transparent-filter-server/src/events.rs"]
+mod events;
+mod journal_census;
 mod shape;
 mod stream;
 fn main() -> Result<(), AnyError> {
     let args: Vec<_> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--shape-stream") {
         return shape::run();
+    }
+    if args.get(1).map(String::as_str) == Some("--journal-census") {
+        return journal_census::run(&args[2..]);
     }
     if args.get(1).map(String::as_str) == Some("--census") {
         return census::run(args.get(2).ok_or("census database path")?);
