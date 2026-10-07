@@ -1458,11 +1458,18 @@ async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
         assert_eq!(shipped.len(), targets.len());
         assert_eq!(
             cycle["shipped_bytes"].as_u64().unwrap(),
-            shipped.iter().map(|f| f["bytes"].as_u64().unwrap()).sum::<u64>()
+            shipped
+                .iter()
+                .map(|f| f["bytes"].as_u64().unwrap())
+                .sum::<u64>()
         );
     }
     for entry in &map.shards {
-        verify_dir(&candidate.join(&entry.manifest_digest), &entry.manifest_digest).unwrap();
+        verify_dir(
+            &candidate.join(&entry.manifest_digest),
+            &entry.manifest_digest,
+        )
+        .unwrap();
     }
     // Collection kept the active candidate and one other; nothing shipped
     // is left anywhere else under the root.

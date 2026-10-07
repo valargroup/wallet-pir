@@ -158,9 +158,13 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
         next.supersedes = recent.digest.clone();
         let records = synth::records(60, 11);
         let next = synth::write_shard(root, &next, &records[20..45]).unwrap();
-        let (dir, sha) =
-            synth::write_candidate(root, &params(), &[shards[0].clone(), next.clone()], "partial")
-                .unwrap();
+        let (dir, sha) = synth::write_candidate(
+            root,
+            &params(),
+            &[shards[0].clone(), next.clone()],
+            "partial",
+        )
+        .unwrap();
         build_shipped(&dir.join(&next.digest), &dir).unwrap();
         std::fs::remove_file(&runtime_files(&dir)[0]).unwrap();
         (dir, sha)
@@ -201,6 +205,9 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     assert!(removed.contains(&old.display().to_string()), "{removed:?}");
     assert!(!old.exists());
     assert_eq!(runtime_files(&dir).len(), targets.len());
-    assert!(partial.join(MAP_FILE).is_file(), "the active candidate stays");
+    assert!(
+        partial.join(MAP_FILE).is_file(),
+        "the active candidate stays"
+    );
     assert_eq!(runtime_files(&partial).len(), 2);
 }

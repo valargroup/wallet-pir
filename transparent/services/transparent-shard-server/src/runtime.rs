@@ -519,9 +519,9 @@ impl TableRuntime {
         let db = self.server.db();
         for col in 0..profile.cols {
             let column = &db[col * padded..col * padded + profile.rows];
-            if (0..profile.rows)
-                .any(|row| column[row] != native::row_coefficient(rows, profile.row_bytes, row, col))
-            {
+            if (0..profile.rows).any(|row| {
+                column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
+            }) {
                 return Err(format!("database column {col} differs from the segment"));
             }
         }

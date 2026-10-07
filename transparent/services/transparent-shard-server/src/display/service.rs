@@ -117,8 +117,12 @@ impl DisplayRuntime {
             .map_err(CacheError::Failed)?;
         let shipped = shipped.filter(|_| !revision.manifest.sealed);
         crate::prewarm::retry(cancelled, std::time::Duration::from_secs(30), || {
-            self.cache
-                .get_from(key.clone(), shared.clone(), source.clone(), shipped.cloned())
+            self.cache.get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                shipped.cloned(),
+            )
         })
         .await
         .map(|(handle, produced)| (handle, Some(produced)))

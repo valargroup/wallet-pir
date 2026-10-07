@@ -240,7 +240,8 @@ impl DiskCache {
         {
             return Err(io::Error::other("runtime disk cache budget exhausted"));
         }
-        self.write(key, shared, source_sha, runtime, true).map(|_| ())
+        self.write(key, shared, source_sha, runtime, true)
+            .map(|_| ())
     }
 
     /// Writes one entry at [`Self::path`] through a `.partial` and an atomic
@@ -1177,16 +1178,17 @@ mod shipped_tests {
                 )
                 .await
                 .unwrap();
-            assert!(
-                matches!(produced, Produced::Shipped { .. }),
-                "{produced:?}"
-            );
+            assert!(matches!(produced, Produced::Shipped { .. }), "{produced:?}");
             assert_eq!(Metrics::get(&metrics.shipped_loads), 1);
             assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
             assert_eq!(Metrics::get(&metrics.builds), 0);
             assert_eq!(Metrics::get(&metrics.disk_hits), 0);
             assert_eq!(Metrics::get(&metrics.disk_save_pending), 0);
-            assert_eq!(disk.used_bytes().unwrap(), 0, "a shipped runtime is never saved");
+            assert_eq!(
+                disk.used_bytes().unwrap(),
+                0,
+                "a shipped runtime is never saved"
+            );
             let loaded = handle.get();
             assert_eq!(loaded.public_params, local.public_params);
             assert_eq!(loaded.public_params_sha256, local.public_params_sha256);
@@ -1203,7 +1205,11 @@ mod shipped_tests {
                     .decode(&secret, &loaded.public_params, &answer[16..])
                     .unwrap();
                 let at = selected * profile.row_bytes;
-                assert_eq!(row, &s.rows[at..at + profile.row_bytes], "{table:?} {selected}");
+                assert_eq!(
+                    row,
+                    &s.rows[at..at + profile.row_bytes],
+                    "{table:?} {selected}"
+                );
             }
         }
     }
