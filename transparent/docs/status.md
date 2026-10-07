@@ -106,6 +106,29 @@ The tiered txid display proof of concept has served beside history since
   does Roman's keep, stop or retire decision
   ([gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05)).
 
+## Txid display backfill sizing, 2026-10-07
+
+Planning only; nothing was changed. At 16:05 UTC the public maps had these
+values:
+
+- **Display map.** It covered 3,407,001–3,509,639 with 567,880 records:
+  13 sealed archives of 40,001–40,013 records and a recent shard of 47,820.
+  Every archive has one directory and one page segment, and uses at most 776 of
+  2,048 page rows.
+- **History map.** Its txids over the same heights match the display records
+  within 0.4%. That makes history txids a usable proxy below 3,407,001, where no
+  display data exists.
+- **Map transfer.** The display map is served uncompressed, at 632 B per shard.
+
+The live root's window of 24 archives starts dropping archives around
+mid-December 2026 at the current seal rate. The recommended backfill is a fresh
+lineage from 3,000,000, held to 12 GiB on archive-03
+([plan](deployment.md#txid-display-backfill-below-3407001-proposed),
+[evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md),
+[gates](remaining-work.md#txid-display-backfill-below-3407001-proposed-2026-10-07)).
+No production host was logged into: archive-03's current memory and disk were
+not measured.
+
 ## Tiered txid display proof of concept, 2026-10-05
 
 Source for a separately published, time-tiered and hash-bucketed txid display

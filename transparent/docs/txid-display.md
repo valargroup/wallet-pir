@@ -164,6 +164,8 @@ synthetic chains only. It has run in production beside history since
 2026-10-06 ([status](status.md#tiered-txid-display-in-production-2026-10-07)),
 unaccepted. Open gates are in
 [remaining work](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
+Extending coverage below 3,407,001 requires a fresh lineage: the
+[backfill plan](deployment.md#txid-display-backfill-below-3407001-proposed).
 
 ### Wallet client
 

@@ -331,6 +331,33 @@ N=1 buckets; no paid infrastructure; commit to `main`.
   - growth: seals and drops with no operator action across several boundaries.
 - [ ] Roman decides whether to leave it running, `stop` or `retire`.
 
+## Txid display backfill below 3,407,001 (proposed 2026-10-07)
+
+Plan and change sheet:
+[deployment](deployment.md#txid-display-backfill-below-3407001-proposed).
+Sizing:
+[evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md).
+Without a backfill, the live 24-archive window starts dropping archives around
+mid-December 2026, and the display floor then rises above 3,407,001.
+
+- [x] Count display-eligible transactions per height range from the published
+  maps and size each candidate start (Sapling, NU5, 2.0M, 2.5M, 3.0M) on
+  archive-03.
+- [ ] G1, Roman: choose the floor and budget. Recommended: 3,000,000 with a
+  12 GiB display cache, `MemoryMax` 14G and a 75-archive window.
+- [ ] Ops: raise the request caps on `max_archive_shards` and `archives`, check
+  the cache against the window, and add `workers --replace-active` with its
+  rollback; ops tests, full CI and a release (G2).
+- [ ] P0, read-only: measure archive-03 MemAvailable, display RSS per runtime and
+  free disk, and coordinator free disk and inodes.
+- [ ] G3, Roman: approve the production change sheet. Then run P1–P4: stage,
+  ingest from 2,999,999, bootstrap and verify, and a cutover with a 10–15 minute
+  display outage.
+- [ ] Live acceptance: the existing criteria, plus exact lookups below
+  3,407,001, the first drop at the 76th seal with no operator action, and
+  archive-03 at or above 20% available memory.
+- [ ] G5, Roman: delete the old display journal and root after acceptance.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's
