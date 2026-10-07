@@ -1,0 +1,11 @@
+{"checkout": "valargroup/wallet-pir PR #129 head 452f50d450338bb8a9e48486391f42dedf06c2d5",
+ "command": "nice -n 19 ionice -c 3 txid-sizing-export --journal-census /srv/txid-display-genesis/journal 3508673 --anchor-from-journal /srv/txid-display-genesis/scratch",
+ "compiler": "rustc 1.91.0 (f8297e351 2025-10-28)",
+ "binary_sha256": "f1ce77495b7b5c3cb7d070cd7b8cf2976b0896bf679af166655e5a8ac4ab1552",
+ "start_utc": "2026-10-07T22:57:23Z", "end_utc": "2026-10-07T23:36:46Z",
+ "json_sha256": "ce0f3fff30d963b99cd6431634a66f50e781c63c4675e4c8c0dc7fef9b29c86b",
+ "ingest_executable": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/transparent-event-ingest",
+ "ingest_executable_sha256": "cb92f92b21fe06cd0a476dc3ac03be42f4f752b90cde463c79590c8986e8127a",
+ "ingest_source_release": "d191f86b2873e4250cee3ae6952f830c0d1e7a55",
+ "ingest_command": "transparent-event-ingest --state-dir /root/.cache/zakura --workers 6 --txid-display --start-height 0 --data-dir /srv/txid-display-genesis/journal under eatmydata (stop = tip at first start, 3508673; resumed at ~414k on the dedicated volume)",
+ "ingest_unit_result": "success"}
