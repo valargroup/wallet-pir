@@ -41,6 +41,25 @@ entries below do not record that cutover.
   - `v11/state` held 12,436 per-publication files after three days. The recipe
     caps a captured candidate namespace at 512 entries.
 
+## Txid display block-to-serving change, 2026-10-07
+
+At 14:47 UTC the recent display worker on recent-01 was restarted with `07f90675`
+(batched hint for `txid-2k`) and two build threads on up to two CPUs, through
+a systemd drop-in rather than `txid-display-deploy`. Display still loses CPU to
+history: weight 50 against 100, and nice 10.
+
+- **Block to serving.** p50 16.1 s and p95 18.9 s over the previous 24 hours
+  (30 of 1,152 blocks over 20 s, worst 97 s). Over the first 40 cycles after:
+  p50 8.5 s, p95 12.4 s, worst 12.9 s, none over 20 s.
+- **History on recent-01.** Prewarm p50 10.06 to 10.33 s and p95 11.67 to
+  12.28 s over 40 rebuilds; not yet distinguishable from noise.
+- **Drift.** The reviewed deploy request still records the old limits (100%
+  quota, weight 20, one build thread) and release `d191f86b`; the drop-in
+  overrides both.
+
+[Evidence](../evidence/txid-display-freshness-2026-10-07/README.md); per-block
+incremental update is [valargroup/wallet-pir#128](https://github.com/valargroup/wallet-pir/issues/128).
+
 ## Tiered txid display in production, 2026-10-07
 
 The tiered txid display proof of concept has served beside history since
