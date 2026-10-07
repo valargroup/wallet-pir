@@ -574,6 +574,9 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         // Use the existing checksum/extent/duplicate/canonical-codec reader.
         // Do not load events.bin; event replay adds no display sizing facts.
         let records = display_journal::read(dir, block.block_hash)?;
+        if records.iter().filter(|r| r.coinbase).count() != 1 {
+            return Err("display block must contain exactly one eligible coinbase".into());
+        }
         let mut sidecar = File::open(&path)?;
         sidecar.seek(SeekFrom::End(-32))?;
         let mut sum = [0u8; 32];
@@ -585,6 +588,12 @@ pub fn collect(args: &[String]) -> Result<Value, AnyError> {
         {
             let mut insert = txn.prepare_cached("INSERT INTO ids VALUES (?1)")?;
             for record in &records {
+                if !record.coinbase
+                    && record.metadata.transparent_input_count == 0
+                    && record.outputs.is_empty()
+                {
+                    return Err("ineligible transaction in display sidecar".into());
+                }
                 insert
                     .execute(params![record.txid.0.as_slice()])
                     .map_err(|_| "duplicate txid or identity scratch failure")?;
@@ -749,8 +758,12 @@ mod tests {
         .unwrap();
         let mut store =
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
+        let mut coinbase = record(1);
+        coinbase.coinbase = true;
+        coinbase.metadata.transparent_input_count = 0;
+        coinbase.metadata.fee = FeeState::NotApplicable;
         store
-            .append_block_with_display(0, hash, &[], &[record(1), record(2)])
+            .append_block_with_display(0, hash, &[], &[coinbase.clone(), record(2)])
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -762,7 +775,8 @@ mod tests {
         let output = collect(&args).unwrap();
         assert_eq!(output["measurement"]["distinct_display_records"], 2);
         assert!(output["measurement"]["shielded_only_exclusions"].is_null());
-        assert_eq!(output["domains"]["all"]["fees"]["unknown"], 2);
+        assert_eq!(output["domains"]["all"]["fees"]["unknown"], 1);
+        assert_eq!(output["domains"]["coinbase"]["records"], 1);
         assert_eq!(
             output["domains"]["all"]["thresholds"]["128"]["stored"]["inline"],
             2
@@ -775,7 +789,7 @@ mod tests {
             EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0).unwrap();
         let hash2 = transparent_filter::BlockHash::from_internal_bytes([3; 32]);
         store
-            .append_block_with_display(1, hash2, &[], &[record(1)])
+            .append_block_with_display(1, hash2, &[], &[coinbase])
             .unwrap();
         store.commit().unwrap();
         drop(store);
@@ -788,6 +802,47 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("duplicate txid"));
+    }
+    #[test]
+    fn incomplete_and_ineligible_sidecar_records_are_refused() {
+        let hash = transparent_filter::BlockHash::from_display_hex(
+            transparent_filter::MAINNET_GENESIS_DISPLAY,
+        )
+        .unwrap();
+        for missing_coinbase in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let mut store =
+                EventStore::open(dir.path(), transparent_filter::MAINNET_GENESIS_DISPLAY, 0)
+                    .unwrap();
+            let mut excluded = record(2);
+            excluded.metadata.transparent_input_count = 0;
+            excluded.metadata.has_shielded_components = true;
+            excluded.outputs.clear();
+            let mut records = vec![excluded];
+            if !missing_coinbase {
+                let mut cb = record(1);
+                cb.coinbase = true;
+                cb.metadata.transparent_input_count = 0;
+                cb.metadata.fee = FeeState::NotApplicable;
+                records.push(cb);
+            }
+            store
+                .append_block_with_display(0, hash, &[], &records)
+                .unwrap();
+            store.commit().unwrap();
+            drop(store);
+            let args = vec![
+                dir.path().to_str().unwrap().to_string(),
+                "0".into(),
+                "--anchor-from-journal".into(),
+            ];
+            let err = collect(&args).unwrap_err().to_string();
+            assert!(err.contains(if missing_coinbase {
+                "exactly one eligible coinbase"
+            } else {
+                "ineligible transaction"
+            }));
+        }
     }
     #[test]
     fn current_codec_packing_matches_independent_existing_builder() {

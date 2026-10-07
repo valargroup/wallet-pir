@@ -29,7 +29,8 @@ existing committed block index and prints it in the JSON; it does not obtain an
 independent chain attestation. If an independently retained ingest anchor hash is
 available, replace that argument with its display hex; a mismatch is refused.
 An optional fourth census argument selects an existing scratch directory outside
-the journal. Missing committed heights or sidecars are errors, not exclusions.
+the journal. Missing committed heights or sidecars, a block without exactly one
+coinbase record, and ineligible sidecar records are errors, not exclusions.
 
 Only stdout contains the result JSON. Progress goes to stderr every 10,000 blocks.
 Publish the JSON atomically after exit zero; redirected partial output on failure

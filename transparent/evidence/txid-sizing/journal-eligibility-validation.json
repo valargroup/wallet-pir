@@ -1,0 +1,13 @@
+{
+  "canonical_population_result_received": false,
+  "clippy_all_targets": "passed with -D warnings",
+  "guards": [
+    "Exactly one coinbase display record per committed block",
+    "No noncoinbase record with zero transparent inputs and outputs"
+  ],
+  "prior_census_checkpoint": "80cc379ce476791c4a4d6c1f45af6a6626ccb183",
+  "retention": "The earlier tooling receipt and profile remain byte-for-byte unchanged at their measured source pin",
+  "rust_release_fast": "42 passed; one explicitly bounded synthetic profiler ignored",
+  "schema": "txid-sizing-journal-eligibility-validation-v1",
+  "source_sha256": "5b5beead3cc9038099674c8aa56d11e049d7f180ac527b15e065b932178de6f1"
+}
