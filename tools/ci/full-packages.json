@@ -16,7 +16,6 @@
     "transparent-events",
     "transparent-filter",
     "transparent-shard",
-    "transparent-txid-client",
     "transparent-wallet",
     "transparent-wallet-store",
     "transparent-txid-client",
