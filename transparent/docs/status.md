@@ -178,7 +178,7 @@ opt-in `route_imports` key, and added that key to its `fleet.json`.
   out once, and history p99 spiked to 845 ms once. Over about 40 hours
   without txid load, history p99 exceeded 300 ms in 213 minutes, max 2.77 s
   (the operating session's count; its samples are not retained).
-- **Disk headroom incident: cause fixed, latch pending.** At 19:53:04 UTC on
+- **Disk headroom incident: resolved.** At 19:53:04 UTC on
   2026-10-07, history's 5 QPS load latched on "transparent-coordinator: disk
   headroom below 20%". A separate session's full-chain genesis display ingest
   into `/srv/zakura/txid-display-genesis` (25 GB at 12%) caused it.
@@ -188,10 +188,11 @@ opt-in `route_imports` key, and added that key to its `fleet.json`.
     `/srv/zakura/txid-display-genesis` was deleted.
   - **Headroom restored.** At 20:12 UTC `/srv/zakura` was 78% used, with
     233 GB free.
-  - **Latch pending.** At 20:12 UTC `latched.json` from 19:53:04 was still
-    present: mode latched, permit deny. Clearing it means removing
-    `latched.json` and restarting `transparent-5qps-continuous`. That waits
-    on Roman's decision.
+  - **Latch cleared.** With Roman's approval, `latched.json` was moved to
+    `latched.json.cleared-20261007T2020Z` and `transparent-5qps-continuous`
+    restarted at 20:19:36 UTC (the process also holds the latch in memory).
+    At 20:21:59 the load was running: 299 exact, 0 errors, 0 missed slots,
+    p99 34 ms over the trailing minute.
 - **Open.** Not measured live: the anonymity census and audit, `verify` of
   sealed digests, and growth across live seals. Roman's keep, stop or retire
   decision is open
