@@ -41,6 +41,7 @@ impl Feed {
         }
     }
 
+    /// The explorer parameter that selects this direction's ZEC swaps.
     fn chain_filter(self) -> &'static str {
         match self {
             Self::Payouts => "toChainId",
@@ -221,8 +222,14 @@ mod tests {
             .unwrap()
             .as_secs() as i64
             - 3600;
-        let payouts = explorer.sync(&mut store, Feed::Payouts, since).await.unwrap();
-        let refunds = explorer.sync(&mut store, Feed::Refunds, since).await.unwrap();
+        let payouts = explorer
+            .sync(&mut store, Feed::Payouts, since)
+            .await
+            .unwrap();
+        let refunds = explorer
+            .sync(&mut store, Feed::Refunds, since)
+            .await
+            .unwrap();
         let (recent, seen) = store.sets(since).unwrap();
         eprintln!(
             "payouts={payouts} refunds={refunds} recent={} seen={}",
@@ -232,7 +239,10 @@ mod tests {
         assert!(payouts > 0 && refunds > 0);
         assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() >= since);
         // A second read starts from the cursor and finds nothing new to lose.
-        explorer.sync(&mut store, Feed::Payouts, since).await.unwrap();
+        explorer
+            .sync(&mut store, Feed::Payouts, since)
+            .await
+            .unwrap();
         assert!(store.sets(since).unwrap().0.len() >= recent.len());
     }
 }

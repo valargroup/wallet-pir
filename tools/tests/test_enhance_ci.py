@@ -37,7 +37,7 @@ class ClassificationTests(unittest.TestCase):
         self.assertEqual(enhance.cargo_args(registry, 'fast'),
                          prefix + ['--test', 'alpha', '--test', 'zebra'])
         self.assertEqual(enhance.cargo_args(registry, 'full'),
-                         prefix + ['--lib', '--bins', '--test', 'alpha', '--test', 'crypto', '--test', 'zebra'])
+                         prefix + ['--lib', '--bins', '--features', 'receiver', '--test', 'alpha', '--test', 'crypto', '--test', 'zebra'])
 
     def test_repository_registry_matches_source_targets(self):
         registry = json.loads((ROOT / 'tools/ci/enhance-tests.json').read_text())

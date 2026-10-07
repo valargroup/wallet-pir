@@ -11,8 +11,9 @@ witnesses and, with the `store` feature, the indexer's SQLite store.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
 publications over HTTP. The indexer binary, `receiver-directory`, lives in
-`enhance-pir-server` to reuse its block parser and RPC client. It enables no
-Enhance route and never modifies an Enhance journal.
+`enhance-pir-server` behind its `receiver` feature, to reuse its block parser and
+RPC client. Enhance builds without the feature compile no receiver code, and the
+indexer enables no Enhance route and never modifies an Enhance journal.
 
 ## Records and publications
 
@@ -94,7 +95,7 @@ cleartext fallback.
 ## Running the indexer and server
 
 ```sh
-cargo build --locked --profile release-fast -p enhance-pir-server --bin receiver-directory
+cargo build --locked --profile release-fast -p enhance-pir-server --features receiver --bin receiver-directory
 receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
   --cookie /path/to/.cookie --serve --witnesses --min-rows 8192
 ```

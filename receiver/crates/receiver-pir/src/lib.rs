@@ -95,6 +95,7 @@ pub fn validate_rows(rows: u32) -> Result<(), Error> {
     Ok(())
 }
 
+/// The PIR parameters for a directory of `rows` rows, built once per size.
 fn profile(rows: u32) -> Result<&'static ProductionSimplePirParams, Error> {
     validate_rows(rows)?;
     const COUNT: usize = (MAX_ROWS / MIN_ROWS).ilog2() as usize + 1;
@@ -116,6 +117,7 @@ fn profile(rows: u32) -> Result<&'static ProductionSimplePirParams, Error> {
     Ok(p)
 }
 
+/// The public setup seed, bound to the manifest's revision.
 fn setup_seed(m: &snapshot::Manifest) -> Result<Hash, Error> {
     let mut h = Sha256::new();
     h.update(b"ironwood-receiver-pir/v1/q48/setup\0");

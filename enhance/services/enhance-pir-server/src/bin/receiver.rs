@@ -165,6 +165,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Resolves on Ctrl-C, or on SIGTERM on Unix.
 async fn shutdown() {
     #[cfg(unix)]
     {
@@ -195,6 +196,8 @@ async fn check_serving(publications: &Publications, rpc: &ZakuraClient) -> Resul
     Ok(())
 }
 
+/// Brings the index to the requested end on the canonical chain, rewinding past a
+/// reorg, then publishes a directory with fresh NEAR filters.
 async fn refresh(
     args: &Args,
     rpc: &ZakuraClient,

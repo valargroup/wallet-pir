@@ -43,6 +43,8 @@ impl WitnessSnapshot {
         self.root
     }
 
+    /// A snapshot of `nodes` under `root` at `manifest`'s end, refusing one larger
+    /// than [`MAX_WITNESS_BYTES`].
     fn from_nodes(
         manifest: &Manifest,
         root: Hash,

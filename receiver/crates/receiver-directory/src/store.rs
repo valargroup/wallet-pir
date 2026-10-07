@@ -92,6 +92,8 @@ impl Store {
         cache.build(manifest, &commitments, &positions)
     }
 
+    /// The commitments below `manifest`'s end and the indexed payment positions, read
+    /// from one database view.
     fn witness_inputs(
         &self,
         manifest: &Manifest,
@@ -412,6 +414,7 @@ fn salt(anchor: &Hash, attempt: u32) -> Hash {
     h.finalize().into()
 }
 
+/// The checkpoint just below the configured start height.
 fn boundary(c: &Config) -> Checkpoint {
     Checkpoint {
         height: c.start_height - 1,
@@ -419,6 +422,7 @@ fn boundary(c: &Config) -> Checkpoint {
         position: c.start_position,
     }
 }
+/// A checkpoint from a `(height, hash, position)` row, or `None` for a malformed hash.
 fn checkpoint_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Checkpoint>> {
     let hash: Vec<u8> = r.get(1)?;
     let height = r.get(0)?;
@@ -429,6 +433,7 @@ fn checkpoint_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Option<Checkpoint>>
         position,
     }))
 }
+/// See [`Store::tip`].
 fn tip(db: &Connection, c: &Config) -> Result<Checkpoint, Error> {
     match db
         .query_row(

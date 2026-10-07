@@ -13,7 +13,8 @@ wallet data. No Enhance service runs on this Droplet.
    and creates `/opt/receiver-pir/releases` and `/srv/receiver-pir`.
 2. Create a `receiver-pir` system user that owns `/srv/receiver-pir`.
 3. Build `receiver-directory` from a pinned wallet-pir revision with `--locked`,
-   profile `release-fast` and `RUSTFLAGS='-C target-cpu=x86-64-v3'`, which
+   `-p enhance-pir-server --features receiver`, profile `release-fast` and
+   `RUSTFLAGS='-C target-cpu=x86-64-v3'`, which
    overrides the repository's `target-cpu=native`. From an arm64 host,
    cross-compile with `--target x86_64-unknown-linux-gnu` in
    `rust:1.98.0-bookworm`, linking with `x86_64-linux-gnu-gcc`.

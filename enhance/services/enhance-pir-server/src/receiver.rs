@@ -114,6 +114,7 @@ impl ZakuraClient {
             .collect()
     }
 
+    /// The block at `height`, decoded from the node's raw `getblock` bytes.
     async fn receiver_raw_block(&self, height: u32) -> Result<Block, ZakuraError> {
         let raw: String = self
             .call("getblock", json!([height.to_string(), 0]))
@@ -200,6 +201,7 @@ pub fn extract_block(
     Ok(indexed)
 }
 
+/// The number of Ironwood actions in `block`.
 fn action_count(block: &Block) -> u64 {
     block
         .transactions

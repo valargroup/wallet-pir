@@ -170,6 +170,7 @@ impl Snapshot {
     }
 }
 
+/// Rejects a record whose payment lies outside the manifest's blocks or positions.
 fn validate_location(m: &Manifest, r: &Record) -> Result<(), Error> {
     let p = &r.payment;
     if p.height < m.start_height

@@ -83,6 +83,7 @@ enum Material {
     Filters,
 }
 
+/// Serves one file of the publication whose hex id is `id`.
 fn material(s: &Service, id: &str, material: Material) -> Response {
     let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -102,6 +103,7 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     }
 }
 
+/// An uncached `application/octet-stream` response.
 fn binary(body: impl IntoResponse) -> Response {
     (
         [
@@ -113,6 +115,8 @@ fn binary(body: impl IntoResponse) -> Response {
         .into_response()
 }
 
+/// Answers one PIR query against the publication its header names, refusing it
+/// while every query slot is busy.
 async fn query(State(s): State<Service>, request: Request) -> Response {
     let Ok(permit) = s.slots.clone().try_acquire_owned() else {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();

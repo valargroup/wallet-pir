@@ -74,6 +74,7 @@ impl Publication {
     }
 }
 
+/// Reads `path`, refusing a file larger than `limit` bytes.
 fn bounded(path: &Path, limit: usize) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     let mut bytes = Vec::new();
     File::open(path)?
@@ -186,6 +187,8 @@ impl Publications {
         }
     }
 
+    /// The publication `id` names, or the current one for `None`, with the current
+    /// epoch. A revoked id is `GONE` and an unknown or expired one is `CONFLICT`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
         let state = self.0.read().unwrap();
         if let Some(id) = id {

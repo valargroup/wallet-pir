@@ -10,9 +10,10 @@
   mode chosen by remaining work, both bound to one accepted publication and run
   over a host-supplied transport. A PIR lookup reads a history longer than 16 pages
   from the row file, so many payments to one receiver cannot fail a lookup.
-- Add the `receiver-directory` indexer and HTTP service: resumable mainnet
-  backfill with batch anchor checks and reorg rollback, and continuous canonical
-  serving that rotates publications and revokes orphaned sessions.
+- Add the `receiver-directory` indexer, built with `enhance-pir-server`'s
+  `receiver` feature, and HTTP service: resumable mainnet backfill with batch
+  anchor checks and reorg rollback, and continuous canonical serving that rotates
+  publications and revokes orphaned sessions.
 - Add `IWFLT1` publication filters (directory profile
   `ironwood-zero-ovk-receiver-v2`): paid receivers, and the receivers a swap
   provider was given recently or ever as a payout address, served at

@@ -39,7 +39,7 @@ def cargo_args(registry, tier):
     names = registry['fast'] if tier == 'fast' else registry['fast'] + registry['full']
     args = ['--locked', '--profile', 'release-fast', '-p', PACKAGE]
     if tier == 'full':
-        args += ['--lib', '--bins']
+        args += ['--lib', '--bins', '--features', 'receiver']
     return args + [arg for name in sorted(names) for arg in ('--test', name)]
 
 

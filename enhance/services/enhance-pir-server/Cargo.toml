@@ -18,19 +18,28 @@ path = "src/bin/status.rs"
 [[bin]]
 name = "receiver-directory"
 path = "src/bin/receiver.rs"
+required-features = ["receiver"]
+
+[[test]]
+name = "receiver"
+path = "tests/receiver.rs"
+required-features = ["receiver"]
 
 [features]
 default = []
+# The receiver directory indexer and its NEAR Intents feed (receiver/README.md). Enhance
+# builds without it compile no receiver code.
+receiver = ["dep:receiver-directory", "dep:receiver-pir", "dep:receiver-pir-server", "dep:tempfile", "dep:zcash_address", "dep:zcash_protocol"]
 native-reinspiring = ["enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring", "zakura-pir-enhance/native-reinspiring"]
 cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 
 [dependencies]
 pir-control = { path = "../../../shared/pir-control" }
 rayon="1"
-receiver-directory = { path = "../../../receiver/crates/receiver-directory", features = ["store"] }
-receiver-pir = { path = "../../../receiver/crates/receiver-pir" }
-receiver-pir-server = { path = "../../../receiver/services/receiver-pir-server" }
-tempfile = "3"
+receiver-directory = { path = "../../../receiver/crates/receiver-directory", features = ["store"], optional = true }
+receiver-pir = { path = "../../../receiver/crates/receiver-pir", optional = true }
+receiver-pir-server = { path = "../../../receiver/services/receiver-pir-server", optional = true }
+tempfile = { version = "3", optional = true }
 reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.6", optional=true}
 pir-native = { path = "../../../shared/pir-native", optional = true }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", optional = true, features = ["cuda"] }
@@ -57,14 +66,15 @@ tokio-stream = "0.1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
-zcash_address = "0.13"
-zcash_protocol = "0.10"
+zcash_address = { version = "0.13", optional = true }
+zcash_protocol = { version = "0.10", optional = true }
 
 [dev-dependencies]
 zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72" }
 # Independent wallet Enhance client; the native feature follows the server feature.
 zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72", default-features = false, features = ["https-client"] }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
+tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 orchard = { package = "zakura-orchard", version = "=1.0.1", default-features = false }
 zcash_note_encryption = "=0.4.2"

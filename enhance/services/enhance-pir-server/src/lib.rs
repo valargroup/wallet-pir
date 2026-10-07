@@ -9,8 +9,10 @@ pub mod exercise;
 pub mod ingest;
 pub mod internal_auth;
 pub mod ipir;
+#[cfg(feature = "receiver")]
 pub mod near;
 /// Public receiver extraction for the standalone directory indexer.
+#[cfg(feature = "receiver")]
 pub mod receiver;
 pub mod runtime;
 /// Isolated synthetic status-PIR backend; no production route is enabled implicitly.

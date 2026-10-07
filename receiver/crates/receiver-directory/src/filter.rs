@@ -160,12 +160,14 @@ fn place(key: &Hash, receiver: &Receiver, range: u64) -> u64 {
 }
 
 #[derive(Default)]
+/// Writes bits most significant first, as [`BitReader`] reads them.
 struct BitWriter {
     bytes: Vec<u8>,
     used: u32,
 }
 
 impl BitWriter {
+    /// Appends one bit.
     fn bit(&mut self, bit: bool) {
         if self.used.is_multiple_of(8) {
             self.bytes.push(0);
@@ -176,30 +178,36 @@ impl BitWriter {
         self.used += 1;
     }
 
+    /// Appends `n` in unary: `n` one bits, then a zero.
     fn unary(&mut self, n: u64) {
         (0..n).for_each(|_| self.bit(true));
         self.bit(false);
     }
 
+    /// Appends the low `bits` bits of `value`.
     fn write(&mut self, value: u64, bits: u32) {
         (0..bits).rev().for_each(|i| self.bit(value >> i & 1 == 1));
     }
 
+    /// The written bytes, the last one padded with zero bits.
     fn finish(self) -> Vec<u8> {
         self.bytes
     }
 }
 
+/// Reads bits written by [`BitWriter`].
 struct BitReader<'a> {
     bytes: &'a [u8],
     at: usize,
 }
 
 impl<'a> BitReader<'a> {
+    /// A reader at the start of `bytes`.
     fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, at: 0 }
     }
 
+    /// The next bit, or `None` past the end.
     fn bit(&mut self) -> Option<bool> {
         let byte = *self.bytes.get(self.at / 8)?;
         let bit = byte & (0x80 >> (self.at % 8)) != 0;
@@ -207,6 +215,7 @@ impl<'a> BitReader<'a> {
         Some(bit)
     }
 
+    /// A value written by [`BitWriter::unary`].
     fn unary(&mut self) -> Option<u64> {
         let mut n = 0;
         while self.bit()? {
@@ -215,6 +224,7 @@ impl<'a> BitReader<'a> {
         Some(n)
     }
 
+    /// A `bits`-bit value written by [`BitWriter::write`].
     fn read(&mut self, bits: u32) -> Option<u64> {
         (0..bits).try_fold(0, |v, _| Some(v << 1 | u64::from(self.bit()?)))
     }
