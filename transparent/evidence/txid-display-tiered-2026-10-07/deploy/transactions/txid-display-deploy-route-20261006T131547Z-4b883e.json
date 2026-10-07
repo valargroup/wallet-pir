@@ -1,0 +1,43 @@
+{
+  "action": "deploy-route",
+  "changes": [
+    {
+      "applied": true,
+      "host": "router",
+      "mode": 420,
+      "new_sha256": "8a340ea149f222dc18e39dde145dbc337e5e2aaeffd5afacc50ca3145a143c9f",
+      "path": "/etc/caddy/txid-display/routes.caddy",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    }
+  ],
+  "created_unix": 1791292547.010551,
+  "events": [
+    {
+      "message": "wrote /etc/caddy/txid-display/routes.caddy on router",
+      "sha256": "8a340ea149f222dc18e39dde145dbc337e5e2aaeffd5afacc50ca3145a143c9f",
+      "unix": 1791292658.364
+    },
+    {
+      "message": "router serves /v1/txid/ and history metadata",
+      "unix": 1791292695.649
+    },
+    {
+      "message": "status committed",
+      "unix": 1791292695.65
+    }
+  ],
+  "id": "txid-display-deploy-route-20261006T131547Z-4b883e",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": [
+    {
+      "host": "router",
+      "op": "reload-caddy",
+      "when": "post"
+    }
+  ]
+}

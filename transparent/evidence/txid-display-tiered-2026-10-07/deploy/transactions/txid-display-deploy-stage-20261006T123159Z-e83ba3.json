@@ -1,0 +1,41 @@
+{
+  "action": "deploy-stage",
+  "changes": [],
+  "created_unix": 1791289919.364289,
+  "events": [
+    {
+      "message": "staging release on coordinator",
+      "unix": 1791289987.358
+    },
+    {
+      "message": "coordinator: release staged and every executable runs",
+      "unix": 1791290063.521
+    },
+    {
+      "message": "staging release on archive",
+      "unix": 1791290089.939
+    },
+    {
+      "message": "archive: release staged and every executable runs",
+      "unix": 1791290135.527
+    },
+    {
+      "message": "staging release on recent",
+      "unix": 1791290161.213
+    },
+    {
+      "message": "recent: release staged and every executable runs",
+      "unix": 1791290206.481
+    },
+    {
+      "message": "status committed",
+      "unix": 1791290206.484
+    }
+  ],
+  "id": "txid-display-deploy-stage-20261006T123159Z-e83ba3",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": []
+}

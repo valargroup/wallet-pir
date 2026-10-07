@@ -1,0 +1,228 @@
+{
+ "source": "live/timeline.jsonl.gz",
+ "timeline": {
+  "records": 21840,
+  "first_utc": "2026-10-06T12:59:35.194Z",
+  "last_utc": "2026-10-07T20:04:28.735Z",
+  "cycles": 1524,
+  "blocks": 20207
+ },
+ "definition": {
+  "live": "cycle tip > 3508457",
+  "window_end_utc": "2026-10-07T13:40:00+00:00",
+  "per_cycle": "max(freshness_ms)",
+  "percentile": "sorted[round(p*(n-1))]"
+ },
+ "live_window": {
+  "first_cycle": 169,
+  "last_cycle": 1222,
+  "first_activated_utc": "2026-10-06T15:27:48.877Z",
+  "last_activated_utc": "2026-10-07T13:38:19.419Z",
+  "per_cycle": {
+   "n": 1054,
+   "p50_ms": 16024,
+   "p95_ms": 18756,
+   "max_ms": 97168,
+   "over_20000_ms": 22
+  },
+  "per_block": {
+   "n": 1076,
+   "p50_ms": 16028,
+   "p95_ms": 18833,
+   "max_ms": 97168,
+   "over_20000_ms": 25
+  },
+  "worst_cycle": {
+   "cycle": 387,
+   "activated_utc": "2026-10-06T20:00:39.803Z",
+   "tip": 3508682,
+   "freshness_ms": [
+    97168,
+    97168,
+    36395,
+    36395
+   ],
+   "prepare_ms": 18224
+  }
+ },
+ "live_cycles_to_capture_end": 1356,
+ "seals": {
+  "total": 13,
+  "bootstrap": 9,
+  "live": 0,
+  "records": [
+   {
+    "utc": "2026-10-06T12:59:35.194Z",
+    "shard_id": 0,
+    "start": 3407001,
+    "end": 3417416,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:36.171Z",
+    "shard_id": 1,
+    "start": 3417417,
+    "end": 3429676,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:36.942Z",
+    "shard_id": 2,
+    "start": 3429677,
+    "end": 3441854,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:37.559Z",
+    "shard_id": 3,
+    "start": 3441855,
+    "end": 3453796,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:38.123Z",
+    "shard_id": 4,
+    "start": 3453797,
+    "end": 3460480,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:38.679Z",
+    "shard_id": 5,
+    "start": 3460481,
+    "end": 3468985,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:39.161Z",
+    "shard_id": 6,
+    "start": 3468986,
+    "end": 3473436,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:39.654Z",
+    "shard_id": 7,
+    "start": 3473437,
+    "end": 3478348,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T12:59:40.220Z",
+    "shard_id": 8,
+    "start": 3478349,
+    "end": 3485621,
+    "bootstrap": true,
+    "decided_tip": 3489633
+   },
+   {
+    "utc": "2026-10-06T13:26:37.309Z",
+    "shard_id": 9,
+    "start": 3485622,
+    "end": 3488846,
+    "decided_tip": 3489683
+   },
+   {
+    "utc": "2026-10-06T13:31:35.560Z",
+    "shard_id": 10,
+    "start": 3488847,
+    "end": 3492178,
+    "decided_tip": 3493408
+   },
+   {
+    "utc": "2026-10-06T13:34:50.202Z",
+    "shard_id": 11,
+    "start": 3492179,
+    "end": 3494253,
+    "decided_tip": 3495858
+   },
+   {
+    "utc": "2026-10-06T13:43:27.270Z",
+    "shard_id": 12,
+    "start": 3494254,
+    "end": 3500528,
+    "decided_tip": 3502308
+   }
+  ]
+ },
+ "reorgs": {
+  "total": 7,
+  "live": 6,
+  "live_window": 5,
+  "records": [
+   {
+    "utc": "2026-10-06T13:58:15.230Z",
+    "depth": 1,
+    "ancestor": 3508391,
+    "old_tip": 3508392
+   },
+   {
+    "utc": "2026-10-06T18:51:44.614Z",
+    "depth": 1,
+    "ancestor": 3508620,
+    "old_tip": 3508621
+   },
+   {
+    "utc": "2026-10-06T19:03:26.116Z",
+    "depth": 1,
+    "ancestor": 3508627,
+    "old_tip": 3508628
+   },
+   {
+    "utc": "2026-10-07T01:28:27.912Z",
+    "depth": 1,
+    "ancestor": 3508943,
+    "old_tip": 3508944
+   },
+   {
+    "utc": "2026-10-07T04:09:41.558Z",
+    "depth": 1,
+    "ancestor": 3509073,
+    "old_tip": 3509074
+   },
+   {
+    "utc": "2026-10-07T11:04:43.345Z",
+    "depth": 1,
+    "ancestor": 3509400,
+    "old_tip": 3509401
+   },
+   {
+    "utc": "2026-10-07T18:04:41.837Z",
+    "depth": 1,
+    "ancestor": 3509732,
+    "old_tip": 3509733
+   }
+  ]
+ },
+ "errors": {
+  "total": 1,
+  "live_window": 1,
+  "records": [
+   {
+    "utc": "2026-10-06T20:00:03.407Z",
+    "stage": "cycle",
+    "error": "recent-replica recent: adapter failed: exit status: 1"
+   }
+  ]
+ },
+ "lag": {
+  "total": 87,
+  "live": 0
+ },
+ "dropped_archives": 0,
+ "last_cycle": {
+  "cycle": 1524,
+  "activated_utc": "2026-10-07T20:04:28.702Z",
+  "tip": 3509833,
+  "archives": 13,
+  "recent_records": 48761
+ }
+}

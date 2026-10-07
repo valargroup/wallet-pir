@@ -7,6 +7,7 @@ The following records establish only their stated revision, workload and coverag
 
 | Evidence | Scope and limit |
 |---|---|
+| [Tiered txid display on production](txid-display-tiered-2026-10-07/README.md) | Deploy journals beside history on 2026-10-06, the live controller timeline and a 20 QPS load and bandwidth run on 2026-10-07: live block to serving p50 16.0 s, max 97.2 s, 22 of 1,054 cycles over 20 s; 20 lookups/s 12,004/12,004 exact, p99 187 ms; pages-4 and up over 300 KB cold; anonymity, `verify` and growth not measured; not an acceptance result |
 | [Txid display block-to-serving on production](txid-display-freshness-2026-10-07/README.md) | recent-01 before and after the batched `txid-2k` hint and two build threads: block to serving p50 16.1 to 8.5 s, p95 18.9 to 12.4 s over 40 cycles; history prewarm +3% p50; short window, not an acceptance result |
 | [Txid display backfill sizing](txid-display-backfill-sizing-2026-10-07/README.md) | Display-eligible txids per height range, bracketed from four published history maps and calibrated against the live display map (ratio 0.996); archives, memory, disk, ingest and map bytes per candidate start; planning arithmetic only, no production measurement |
 | [Tiered txid display proof of concept](txid-display-tiered-2026-10-05/README.md) | Local release-fast runs on synthetic journals: seals and window drops reproduced, all lookups exact, metered bytes equal computed, recent-01-shaped rebuild bench and bucket ablation; includes a failed first run and a harness gap; not deployed, not real-chain packing |

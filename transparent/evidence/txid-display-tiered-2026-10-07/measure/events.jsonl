@@ -1,0 +1,23 @@
+{"unix":1791381205,"event":"supervisor_start"}
+{"unix":1791381232,"event":"supervisor_restart","note":"recent cpu parse fix"}
+{"unix":1791381852,"event":"window_start","name":"V0-validate-5lps"}
+{"unix":1791381915,"event":"window_end","name":"V0-validate-5lps"}
+{"unix":1791382318.802334,"event":"TRIPPED","reasons":["history exact 225 < 290"]}
+{"unix":1791382414,"event":"trip_cleared","note":"trip at 14:11:55 occurred with no txid load (last load ended 14:05:10); history load self-paused 14:11:32-14:12:02, reason publication more than two blocks behind node; recorded as baseline incident"}
+{"unix":1791382730.105807,"event":"TRIPPED","reasons":["status unreadable twice: Expecting value: line 1 column 1 (char 0)"]}
+{"unix":1791382854,"event":"trip_cleared","note":"trip at 14:18:39: two 12 s SSH timeouts from this Mac (RTT ~270 ms, new sessions 6-26 s); coordinator healthy; no txid load running. Supervisor restarted with SSH ControlMaster reuse and 25 s probe timeout. Window A rescheduled to 14:32:30."}
+{"unix":1791382854,"event":"window_cancelled","name":"A-20qps-query","note":"not started"}
+{"unix":1791382860,"event":"supervisor_restart","note":"ssh reuse, 25 s timeout"}
+{"unix":1791383550,"event":"window_start","name":"A-20qps-query","args":"query 20 4 600 --cold-every 0"}
+{"unix":1791384093,"event":"window_end","name":"A-20qps-query"}
+{"unix":1791384093.5577989,"event":"TRIPPED","reasons":["history errors 1"]}
+{"unix":1791384215,"event":"session_end","note":"hard stop: history errors=1 during window A at 14:41:30 (router Caddy reload 14:41:18 reset a history connection); load killed 14:41:33; window B and bandwidth not run"}
+{"unix":1791384635,"event":"rerun_start","note":"coordinator relayed Roman's approval: window B then bandwidth; amended stop rule (only unrecovered history errors stop); production change 14:48:40 activation_grace_seconds 0.5->3.0"}
+{"unix":1791384635,"event":"supervisor_restart","note":"amended unrecovered-error rule"}
+{"unix":1791384801.724434,"event":"TRIPPED","reasons":["history p99 0.84515046 > 0.5"]}
+{"unix":1791384862,"event":"trip_cleared","note":"trip at 14:53:21: history p99 0.845 s with no txid load (next window 15:01:30). History queries to shards 71-88 took 0.3-1.45 s HTTP at 14:53:03-06; no Caddy reload, no worker_membership, no journal entries on archive-03 or recent-01. Recorded as baseline incident."}
+{"unix":1791385291,"event":"window_start","name":"B-20lps-lookup","args":"lookup 20 4 600 --cold-every 25"}
+{"unix":1791385895,"event":"window_end","name":"B-20lps-lookup"}
+{"unix":1791386604,"event":"window_start","name":"BW-bandwidth"}
+{"unix":1791386779,"event":"window_end","name":"BW-bandwidth"}
+{"unix":1791386796.908808,"event":"TRIPPED","reasons":["status unreadable twice: Expecting value: line 1 column 1 (char 0)"]}

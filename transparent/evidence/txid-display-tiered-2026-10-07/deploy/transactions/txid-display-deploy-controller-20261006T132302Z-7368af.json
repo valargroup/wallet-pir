@@ -1,0 +1,67 @@
+{
+  "action": "deploy-controller",
+  "changes": [
+    {
+      "applied": true,
+      "host": "coordinator",
+      "mode": 384,
+      "new_sha256": "22af8035ba3318990812684a1b67cbb7fec0efda74d7482a8fcb1e301920de34",
+      "path": "/opt/transparent-txid-display/workers.json",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    },
+    {
+      "applied": true,
+      "host": "coordinator",
+      "mode": 420,
+      "new_sha256": "adacc921eedaf025b4db8fdb68c0f266adc9a47ec459d1c564cb454bfcb697b8",
+      "path": "/etc/systemd/system/transparent-txid-display-controller.service",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    }
+  ],
+  "created_unix": 1791292982.600508,
+  "events": [
+    {
+      "message": "wrote /opt/transparent-txid-display/workers.json on coordinator",
+      "sha256": "22af8035ba3318990812684a1b67cbb7fec0efda74d7482a8fcb1e301920de34",
+      "unix": 1791293107.822
+    },
+    {
+      "message": "wrote /etc/systemd/system/transparent-txid-display-controller.service on coordinator",
+      "sha256": "adacc921eedaf025b4db8fdb68c0f266adc9a47ec459d1c564cb454bfcb697b8",
+      "unix": 1791293137.07
+    },
+    {
+      "message": "controller running",
+      "unix": 1791293178.39
+    },
+    {
+      "message": "status committed",
+      "unix": 1791293178.391
+    }
+  ],
+  "id": "txid-display-deploy-controller-20261006T132302Z-7368af",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": [
+    {
+      "host": "coordinator",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-controller.service",
+      "when": "pre"
+    },
+    {
+      "args": [
+        "daemon-reload"
+      ],
+      "host": "coordinator",
+      "op": "systemctl",
+      "when": "post"
+    }
+  ]
+}

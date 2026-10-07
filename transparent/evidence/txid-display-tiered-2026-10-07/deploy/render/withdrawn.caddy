@@ -1,0 +1,5 @@
+# Written by `wallet-pir-deploy.py txid-display-stop`: display withdrawn.
+	handle /v1/txid/* {
+		header Retry-After 1
+		respond "transparent txid display withdrawn" 503
+	}

@@ -1,0 +1,86 @@
+{
+  "action": "measure-start",
+  "changes": [],
+  "created_unix": 1791292797.4195259,
+  "events": [
+    {
+      "argv": [
+        "systemd-run",
+        "--unit=transparent-txid-display-observer.service",
+        "--quiet",
+        "--property=MemorySwapMax=0",
+        "--property=RemainAfterExit=yes",
+        "--property=MemoryMax=256M",
+        "--property=CPUQuota=25%",
+        "--property=CPUWeight=20",
+        "--property=IOWeight=20",
+        "--property=Nice=10",
+        "/usr/bin/python3",
+        "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-observe.py",
+        "observer",
+        "--rpc-url",
+        "http://127.0.0.1:8232",
+        "--cookie",
+        "/root/.cache/zakura/.cookie",
+        "--interval-ms",
+        "250",
+        "--out",
+        "/srv/zakura/txid-display-poc/measure/20261006T132024Z/observer.jsonl"
+      ],
+      "message": "started transparent-txid-display-observer.service",
+      "unix": 1791292864.079
+    },
+    {
+      "argv": [
+        "systemd-run",
+        "--unit=transparent-txid-display-mapwatch.service",
+        "--quiet",
+        "--property=MemorySwapMax=0",
+        "--property=RemainAfterExit=yes",
+        "--property=MemoryMax=256M",
+        "--property=CPUQuota=25%",
+        "--property=CPUWeight=20",
+        "--property=IOWeight=20",
+        "--property=Nice=10",
+        "/usr/bin/python3",
+        "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-observe.py",
+        "mapwatch",
+        "--url",
+        "https://transparent-pir.valargroup.dev/v1/txid/shards",
+        "--interval-ms",
+        "1000",
+        "--out-dir",
+        "/srv/zakura/txid-display-poc/measure/20261006T132024Z/mapwatch"
+      ],
+      "message": "started transparent-txid-display-mapwatch.service",
+      "unix": 1791292885.11
+    },
+    {
+      "message": "status committed",
+      "unix": 1791292885.111
+    }
+  ],
+  "id": "txid-display-measure-start-20261006T131957Z-0db9ce",
+  "kind": "txid-display-poc-transaction-v1",
+  "measure": {
+    "directory": "/srv/zakura/txid-display-poc/measure/20261006T132024Z",
+    "run": "20261006T132024Z"
+  },
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": [
+    {
+      "host": "coordinator",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-observer.service",
+      "when": "pre"
+    },
+    {
+      "host": "coordinator",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-mapwatch.service",
+      "when": "pre"
+    }
+  ]
+}

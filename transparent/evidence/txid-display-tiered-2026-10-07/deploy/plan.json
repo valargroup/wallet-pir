@@ -1,0 +1,328 @@
+{
+  "files": {
+    "fleet.json": {
+      "host": "coordinator",
+      "mode": "0600",
+      "path": "/opt/transparent-txid-display/fleet.json",
+      "sha256": "60f65ada61345870017a9894bcd689223f54da80b08e867e3d8521b91ebdfea1"
+    },
+    "routes.caddy": {
+      "host": "router",
+      "mode": "0644",
+      "path": "/etc/caddy/txid-display/routes.caddy",
+      "sha256": "8a340ea149f222dc18e39dde145dbc337e5e2aaeffd5afacc50ca3145a143c9f"
+    },
+    "tfvars": {
+      "host": "coordinator",
+      "mode": "0600",
+      "path": "/opt/enhance-pir/infra/production/txid-display.auto.tfvars",
+      "sha256": "521a63631264d4686519a33743a54d612996e907851e1925f79cefa1e9e14e82"
+    },
+    "unit:archive": {
+      "host": "archive",
+      "mode": "0644",
+      "path": "/etc/systemd/system/transparent-txid-display-worker.service",
+      "sha256": "e82a9d63b6381ca4243d3959214939a2ed3ec095ea3d0171b0612262047cb235"
+    },
+    "unit:controller": {
+      "host": "coordinator",
+      "mode": "0644",
+      "path": "/etc/systemd/system/transparent-txid-display-controller.service",
+      "sha256": "adacc921eedaf025b4db8fdb68c0f266adc9a47ec459d1c564cb454bfcb697b8"
+    },
+    "unit:recent": {
+      "host": "recent",
+      "mode": "0644",
+      "path": "/etc/systemd/system/transparent-txid-display-worker.service",
+      "sha256": "ee69af36c57ce76ac92ac2e1ed8aed98983ba8cd7f720674772c9184793dbb10"
+    },
+    "withdrawn.caddy": {
+      "host": "router",
+      "mode": "0644",
+      "path": "/etc/caddy/txid-display/routes.caddy",
+      "sha256": "7960b802c12101348586b8f74c84e4a6da5b9a15e9c72f480f7f9952313f1f7a"
+    },
+    "workers.json": {
+      "host": "coordinator",
+      "mode": "0600",
+      "path": "/opt/transparent-txid-display/workers.json",
+      "sha256": "22af8035ba3318990812684a1b67cbb7fec0efda74d7482a8fcb1e301920de34"
+    }
+  },
+  "hosts": {
+    "archive": "archive-03",
+    "coordinator": "coordinator",
+    "recent": "recent-01",
+    "router": "router-01"
+  },
+  "phases": [
+    "stage",
+    "firewall",
+    "router-hook",
+    "workers",
+    "route",
+    "controller"
+  ],
+  "release": {
+    "archive": [
+      "transparent-txid-server",
+      "txid-control"
+    ],
+    "coordinator": [
+      "txid-display-controller",
+      "transparent-event-ingest",
+      "txid-inventory",
+      "txid-control",
+      "txid-display-fleet.py",
+      "txid-display-observe.py"
+    ],
+    "recent": [
+      "transparent-txid-server",
+      "txid-control"
+    ]
+  },
+  "release_dir": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "router_hook": {
+    "fleet_config": "/opt/transparent-publisher/v11/fleet.json",
+    "host": "coordinator",
+    "new_sha256": "35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a",
+    "previous_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083",
+    "restart": [
+      "transparent-replica-reconciler.service",
+      "transparent-control-sessions.service"
+    ],
+    "route_imports": [
+      "/etc/caddy/txid-display/*.caddy"
+    ],
+    "router_dir": "/etc/caddy/txid-display",
+    "script": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py"
+  },
+  "schema": "txid-display-poc-plan-v1",
+  "source_sha": "d191f86b2873e4250cee3ae6952f830c0d1e7a55",
+  "templates": {
+    "transparent-txid-display-controller.service.in": "bceb3cf47aa3177e1a671208a89e31ca4d58c74528a61f8566ee1ceebe66f604",
+    "transparent-txid-display-worker.service.in": "015d4c409d12a4ea29243706a21cd3697a65be009ed29dacabc5d6c17b8d5bde",
+    "txid-display-fleet.py": "4871c83494166730752c451eeb5ae147cf8f16eced05b7d31a6ab91b00a71e6a",
+    "txid-display-observe.py": "f474d75b3b620ec3158bd69b4b0ad1573e51c37e92a47eda71e1795739b022e4",
+    "txid-display-routes.caddy.in": "1a22b15402c372718e5ecfb50cabc8ad885449095e048655691de53cd9172576"
+  },
+  "terraform": {
+    "expected": {
+      "added": [
+        {
+          "port_range": "8095",
+          "protocol": "tcp",
+          "source_addresses": 0,
+          "source_tags": [
+            "transparent-pir-router",
+            "wallet-pir-coordinator"
+          ]
+        }
+      ],
+      "changes": [
+        {
+          "actions": [
+            "update"
+          ],
+          "address": "digitalocean_firewall.transparent_worker"
+        }
+      ],
+      "removed": []
+    },
+    "root": "/opt/enhance-pir/infra/production",
+    "sources": {
+      "transparent.tf": "087aabe00f32609685106de2fa23d98000e13c5a61d3a27a8e23e36e17eb6421",
+      "variables.tf": "1386d83cf2ad9c2042355d4fd288e640ca02527e696d83f76cfd98c6efa50853"
+    },
+    "tfvars": "/opt/enhance-pir/infra/production/txid-display.auto.tfvars",
+    "wrapper": "/opt/enhance-pir/ops/wallet-pir-terraform.sh"
+  },
+  "transient": {
+    "bootstrap": [
+      "systemd-run",
+      "--unit=transparent-txid-display-bootstrap.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--property=RemainAfterExit=yes",
+      "--property=MemoryMax=8G",
+      "--property=CPUQuota=400%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-controller",
+      "bootstrap",
+      "--root",
+      "/srv/zakura/txid-display-poc/root",
+      "--journal",
+      "/srv/zakura/txid-display-poc/journal",
+      "--start",
+      "{start}",
+      "--through",
+      "{through}",
+      "--geometry",
+      "txid-2k",
+      "--n-archive",
+      "1",
+      "--n-recent",
+      "1",
+      "--archive-target",
+      "40000",
+      "--recent-floor",
+      "10000",
+      "--reorg-margin",
+      "100",
+      "--max-archive-shards",
+      "24"
+    ],
+    "ingest": [
+      "systemd-run",
+      "--unit=transparent-txid-display-ingest.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--property=RemainAfterExit=yes",
+      "--property=MemoryMax=12G",
+      "--property=CPUQuota=400%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/transparent-event-ingest",
+      "--state-dir",
+      "/root/.cache/zakura",
+      "--workers",
+      "4",
+      "--txid-display",
+      "--start-height",
+      "3407000",
+      "--data-dir",
+      "/srv/zakura/txid-display-poc/journal"
+    ],
+    "ingest-smoke": [
+      "systemd-run",
+      "--unit=transparent-txid-display-ingest-smoke.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--property=MemoryMax=12G",
+      "--property=CPUQuota=400%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/transparent-event-ingest",
+      "--state-dir",
+      "/root/.cache/zakura",
+      "--workers",
+      "4",
+      "--txid-display",
+      "--start-height",
+      "3407000",
+      "--stop-height",
+      "3407009",
+      "--data-dir",
+      "/srv/zakura/txid-display-poc/journal.smoke"
+    ],
+    "mapwatch": [
+      "systemd-run",
+      "--unit=transparent-txid-display-mapwatch.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--property=RemainAfterExit=yes",
+      "--property=MemoryMax=256M",
+      "--property=CPUQuota=25%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/usr/bin/python3",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-observe.py",
+      "mapwatch",
+      "--url",
+      "https://transparent-pir.valargroup.dev/v1/txid/shards",
+      "--interval-ms",
+      "1000",
+      "--out-dir",
+      "/srv/zakura/txid-display-poc/measure/{run}/mapwatch"
+    ],
+    "observer": [
+      "systemd-run",
+      "--unit=transparent-txid-display-observer.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--property=RemainAfterExit=yes",
+      "--property=MemoryMax=256M",
+      "--property=CPUQuota=25%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/usr/bin/python3",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-observe.py",
+      "observer",
+      "--rpc-url",
+      "http://127.0.0.1:8232",
+      "--cookie",
+      "/root/.cache/zakura/.cookie",
+      "--interval-ms",
+      "250",
+      "--out",
+      "/srv/zakura/txid-display-poc/measure/{run}/observer.jsonl"
+    ],
+    "plan-start": [
+      "systemd-run",
+      "--unit=transparent-txid-display-plan-start.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--property=MemoryMax=8G",
+      "--property=CPUQuota=400%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-controller",
+      "plan-start",
+      "--journal",
+      "/srv/zakura/txid-display-poc/journal",
+      "--archives",
+      "9",
+      "--replay-seals",
+      "4",
+      "--geometry",
+      "txid-2k",
+      "--n-archive",
+      "1",
+      "--n-recent",
+      "1",
+      "--archive-target",
+      "40000",
+      "--recent-floor",
+      "10000",
+      "--reorg-margin",
+      "100",
+      "--max-archive-shards",
+      "24"
+    ],
+    "verify": [
+      "systemd-run",
+      "--unit=transparent-txid-display-verify.service",
+      "--quiet",
+      "--property=MemorySwapMax=0",
+      "--wait",
+      "--pipe",
+      "--collect",
+      "--property=MemoryMax=4G",
+      "--property=CPUQuota=200%",
+      "--property=CPUWeight=20",
+      "--property=IOWeight=20",
+      "--property=Nice=10",
+      "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-controller",
+      "verify",
+      "--root",
+      "/srv/zakura/txid-display-poc/root",
+      "--journal",
+      "/srv/zakura/txid-display-poc/journal"
+    ]
+  }
+}
+plan sha256: a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f

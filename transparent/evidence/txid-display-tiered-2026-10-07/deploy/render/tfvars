@@ -1,0 +1,2 @@
+# txid display proof of concept; removed by txid-display-retire.
+transparent_txid_display_port_enabled = true

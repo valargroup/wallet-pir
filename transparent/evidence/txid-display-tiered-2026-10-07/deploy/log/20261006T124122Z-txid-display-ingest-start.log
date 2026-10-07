@@ -1,0 +1,105 @@
+txid-display-ingest-start-20261006T124141Z-8e855c: started transparent-txid-display-ingest.service
+txid-display-ingest-start-20261006T124141Z-8e855c: status committed
+{
+  "files": {
+    "fleet.json": "absent",
+    "routes.caddy": "absent",
+    "tfvars": "absent",
+    "unit:archive": "absent",
+    "unit:controller": "absent",
+    "unit:recent": "absent",
+    "workers.json": "absent"
+  },
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "router_hook": {
+    "adapter_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083",
+    "route_imports": null
+  },
+  "transactions": [
+    {
+      "action": "deploy-stage",
+      "id": "txid-display-deploy-stage-20261006T123159Z-e83ba3",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-smoke",
+      "id": "txid-display-ingest-smoke-20261006T123826Z-56f367",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-start",
+      "id": "txid-display-ingest-start-20261006T124141Z-8e855c",
+      "status": "committed"
+    }
+  ],
+  "units": {
+    "transparent-txid-display-bootstrap.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-controller.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest-smoke.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-mapwatch.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-observer.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-worker.service@archive": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-worker.service@recent": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    }
+  },
+  "workers": {
+    "archive": {
+      "http": 0,
+      "ready": null
+    },
+    "recent": {
+      "http": 0,
+      "ready": null
+    }
+  }
+}
+rollback: /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/roman/projects/wallet-pir/.claude/worktrees/wallet-pir-pr-126-223649/ops/scripts/wallet-pir-deploy.py --inventory /Users/roman/.config/wallet-pir-deploy/inventory.json --state-dir /Users/roman/.config/wallet-pir-deploy/state txid-display-rollback --request /Users/roman/.config/wallet-pir-deploy/txid-display/request.json --request-sha256 5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef --transaction txid-display-ingest-start-20261006T124141Z-8e855c

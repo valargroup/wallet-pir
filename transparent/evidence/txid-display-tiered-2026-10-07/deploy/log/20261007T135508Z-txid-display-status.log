@@ -1,0 +1,163 @@
+{
+  "files": {
+    "fleet.json": "planned",
+    "routes.caddy": "planned",
+    "tfvars": "planned",
+    "unit:archive": "planned",
+    "unit:controller": "planned",
+    "unit:recent": "planned",
+    "workers.json": "planned"
+  },
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "router_hook": {
+    "adapter_sha256": "35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a",
+    "route_imports": [
+      "/etc/caddy/txid-display/*.caddy"
+    ]
+  },
+  "transactions": [
+    {
+      "action": "deploy-stage",
+      "id": "txid-display-deploy-stage-20261006T123159Z-e83ba3",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-smoke",
+      "id": "txid-display-ingest-smoke-20261006T123826Z-56f367",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-start",
+      "id": "txid-display-ingest-start-20261006T124141Z-8e855c",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-firewall",
+      "id": "txid-display-deploy-firewall-20261006T124458Z-935aa3",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-router-hook",
+      "id": "txid-display-deploy-router-hook-20261006T125118Z-0b6b9e",
+      "status": "committed"
+    },
+    {
+      "action": "bootstrap",
+      "id": "txid-display-bootstrap-20261006T125747Z-ca78f3",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-workers",
+      "id": "txid-display-deploy-workers-20261006T130139Z-2d2b0c",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-route",
+      "id": "txid-display-deploy-route-20261006T131547Z-4b883e",
+      "status": "committed"
+    },
+    {
+      "action": "measure-start",
+      "id": "txid-display-measure-start-20261006T131957Z-0db9ce",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-controller",
+      "id": "txid-display-deploy-controller-20261006T132302Z-7368af",
+      "status": "committed"
+    }
+  ],
+  "units": {
+    "transparent-txid-display-bootstrap.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-controller.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-ingest-smoke.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-mapwatch.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-observer.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-worker.service@archive": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-worker.service@recent": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    }
+  },
+  "workers": {
+    "archive": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+        "covered_through": 3502508,
+        "incarnation": "9dfff9d5c306d6d2d0ad870011dfe819",
+        "map_sha256": "c80c6a4805f178d819553e443f642c459f359a79b564b9a177bf7e8d1000f3df",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "archive-owner",
+        "target_runtimes": 26,
+        "warm": true,
+        "warm_runtimes": 26
+      }
+    },
+    "recent": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+        "covered_through": 3509538,
+        "incarnation": "c716ad8d5825392d1344a53e48e8c12f",
+        "map_sha256": "db46f10910b9b57def6647ea8975d9f20c9de1ba4368e4dc223971f7c63400a2",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "recent-replica",
+        "target_runtimes": 2,
+        "warm": true,
+        "warm_runtimes": 2
+      }
+    }
+  }
+}

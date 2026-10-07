@@ -1,0 +1,38 @@
+{
+  "transparent-txid-display-ingest-smoke.service": {
+    "active": "inactive",
+    "fragment": "",
+    "load": "not-found",
+    "log": [
+      "Started transparent-txid-display-ingest-smoke.service - /opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/transparent-event-ingest --state-dir /root/.cache/zakura --workers 4 --txid-display --start-height 3407000 --stop-height 3407009 --data-dir /srv/zakura/txid-display-poc/journal.smoke.",
+      "transparent-txid-display-ingest-smoke.service: Deactivated successfully.",
+      "transparent-txid-display-ingest-smoke.service: Consumed 2.729s CPU time, 2.8M memory peak, 0B memory swap peak."
+    ],
+    "restarts": 0,
+    "result": "success",
+    "sub": "dead"
+  },
+  "transparent-txid-display-ingest.service": {
+    "active": "active",
+    "fragment": "/run/systemd/transient/transparent-txid-display-ingest.service",
+    "load": "loaded",
+    "log": [
+      "m=\u001b[0m3496000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2031058 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.1\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"1.3\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1030346",
+      "\u001b[2m2026-10-06T12:53:48.287955Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3497000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2053510 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"142.8\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"1.2\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1041835",
+      "\u001b[2m2026-10-06T12:53:54.082614Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3498000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2076631 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.0\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"1.1\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1052358",
+      "\u001b[2m2026-10-06T12:54:02.356499Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3499000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2102155 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"142.8\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"1.0\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1065801",
+      "\u001b[2m2026-10-06T12:54:08.476984Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3500000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2128229 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.0\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.9\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1078194",
+      "\u001b[2m2026-10-06T12:54:14.892229Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3501000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2152398 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.1\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.7\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1090097",
+      "\u001b[2m2026-10-06T12:54:21.170526Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3502000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2174694 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.2\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.6\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1101412",
+      "\u001b[2m2026-10-06T12:54:28.979855Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3503000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2200637 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.1\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.5\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1114686",
+      "\u001b[2m2026-10-06T12:54:35.026510Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3504000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2231310 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.3\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.4\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1132702",
+      "\u001b[2m2026-10-06T12:54:40.710100Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3505000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2253779 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.5\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.3\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1143276",
+      "\u001b[2m2026-10-06T12:54:46.084598Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3506000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2272233 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"143.9\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.2\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1151212",
+      "\u001b[2m2026-10-06T12:54:51.204970Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3507000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3507335 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2290584 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"144.2\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.0\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1159221",
+      "\u001b[2m2026-10-06T12:54:53.034299Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m event backfill complete \u001b[3mcovered_through\u001b[0m\u001b[2m=\u001b[0mSome(3507335) \u001b[3mblocks\u001b[0m\u001b[2m=\u001b[0m100336 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m2299371 \u001b[3melapsed_seconds\u001b[0m\u001b[2m=\u001b[0m\"695\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m1164239"
+    ],
+    "restarts": 0,
+    "result": "success",
+    "sub": "exited"
+  }
+}

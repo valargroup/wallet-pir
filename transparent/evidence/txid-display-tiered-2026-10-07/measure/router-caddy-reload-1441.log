@@ -1,0 +1,72 @@
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloading caddy.service - Caddy...
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287856]: {"level":"info","ts":1791384078.2852094,"msg":"using config from file","file":"/etc/caddy/Caddyfile"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287856]: {"level":"warn","ts":1791384078.286177,"msg":"The nested 'metrics' option inside `servers` is deprecated and will be removed in the next major version. Use the global 'metrics' option instead."}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287856]: {"level":"warn","ts":1791384078.2894595,"logger":"caddyfile","msg":"Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287856]: {"level":"warn","ts":1791384078.2953982,"logger":"caddyfile","msg":"Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287856]: {"level":"info","ts":1791384078.300731,"msg":"adapted config to JSON","adapter":"caddyfile"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3038142,"logger":"admin.api","msg":"received request","method":"POST","host":"localhost:2019","uri":"/load","remote_ip":"127.0.0.1","remote_port":"51208","headers":{"User-Agent":["Go-http-client/1.1"],"Cache-Control":["must-revalidate"],"Caddy-Config-Source-Adapter":["caddyfile"],"Accept-Encoding":["gzip"],"Content-Length":["6278"],"Caddy-Config-Source-File":["/etc/caddy/Caddyfile"],"Content-Type":["application/json"],"Origin":["http://localhost:2019"]}}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3125985,"logger":"admin","msg":"admin endpoint started","address":"localhost:2019","enforce_origin":false,"origins":["//localhost:2019","//[::1]:2019","//127.0.0.1:2019"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.313175,"logger":"http.auto_https","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.313215,"logger":"http.auto_https","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.319329,"logger":"http","msg":"enabling HTTP/3 listener","addr":":443"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3195546,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.3196425,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.3196495,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3196542,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.319694,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.319699,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.319703,"logger":"http.log","msg":"server running","name":"remaining_auto_https_redirects","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3197086,"logger":"http","msg":"enabling automatic TLS certificate management","domains":["transparent-pir.valargroup.dev"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3197722,"logger":"http","msg":"servers shutting down with eternal grace period"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3216927,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/caddy/.config/caddy/autosave.json"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3222494,"logger":"admin.api","msg":"load complete"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.3234627,"logger":"admin","msg":"stopped previous server","address":"localhost:2019"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloaded caddy.service - Caddy.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloading caddy.service - Caddy...
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287876]: {"level":"info","ts":1791384078.663717,"msg":"using config from file","file":"/etc/caddy/Caddyfile"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287876]: {"level":"warn","ts":1791384078.665948,"msg":"The nested 'metrics' option inside `servers` is deprecated and will be removed in the next major version. Use the global 'metrics' option instead."}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287876]: {"level":"warn","ts":1791384078.6692116,"logger":"caddyfile","msg":"Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287876]: {"level":"warn","ts":1791384078.6709728,"logger":"caddyfile","msg":"Unnecessary header_up Host: the reverse proxy's default behavior is to pass the configured upstream address to the upstream when proxying to HTTPS"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[3287876]: {"level":"info","ts":1791384078.673034,"msg":"adapted config to JSON","adapter":"caddyfile"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6748435,"logger":"admin.api","msg":"received request","method":"POST","host":"localhost:2019","uri":"/load","remote_ip":"127.0.0.1","remote_port":"51212","headers":{"Caddy-Config-Source-Adapter":["caddyfile"],"User-Agent":["Go-http-client/1.1"],"Caddy-Config-Source-File":["/etc/caddy/Caddyfile"],"Content-Type":["application/json"],"Origin":["http://localhost:2019"],"Accept-Encoding":["gzip"],"Content-Length":["6334"],"Cache-Control":["must-revalidate"]}}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6786332,"logger":"admin","msg":"admin endpoint started","address":"localhost:2019","enforce_origin":false,"origins":["//127.0.0.1:2019","//localhost:2019","//[::1]:2019"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6793187,"logger":"http.auto_https","msg":"server is listening only on the HTTPS port but has no TLS connection policies; adding one to enable TLS","server_name":"srv0","https_port":443}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6793666,"logger":"http.auto_https","msg":"enabling automatic HTTP->HTTPS redirects","server_name":"srv0"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6862712,"logger":"http","msg":"enabling HTTP/3 listener","addr":":443"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6863377,"logger":"http.log","msg":"server running","name":"srv0","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.68643,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":8080"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.686438,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":8080"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.686443,"logger":"http.log","msg":"server running","name":"srv1","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.6864989,"logger":"http","msg":"HTTP/2 skipped because it requires TLS","network":"tcp","addr":":80"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"warn","ts":1791384078.6865063,"logger":"http","msg":"HTTP/3 skipped because it requires TLS","network":"tcp","addr":":80"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6865113,"logger":"http.log","msg":"server running","name":"remaining_auto_https_redirects","protocols":["h1","h2","h3"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6865182,"logger":"http","msg":"enabling automatic TLS certificate management","domains":["transparent-pir.valargroup.dev"]}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6865647,"logger":"http","msg":"servers shutting down with eternal grace period"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.6873806,"msg":"autosaved config (load with --resume flag)","file":"/var/lib/caddy/.config/caddy/autosave.json"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.687452,"logger":"admin.api","msg":"load complete"}
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloaded caddy.service - Caddy.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 caddy-2.11.4[267482]: {"level":"info","ts":1791384078.696141,"logger":"admin","msg":"stopped previous server","address":"localhost:2019"}
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 sshd[3287745]: Accepted publickey for root from 10.142.0.3 port 39838 ssh2: ED25519 SHA256:qFfWDD/nSNrYSP96Cl4VEEi9w/nHWq/kWlDvvq/CK2U
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 sshd[3287745]: pam_unix(sshd:session): session opened for user root(uid=0) by root(uid=0)
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 systemd-logind[878]: New session 127544 of user root.
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 systemd[1]: Started session-127544.scope - Session 127544 of User root.
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 sshd[3287745]: Received disconnect from 10.142.0.3 port 39838:11: disconnected by user
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 sshd[3287745]: Disconnected from user root 10.142.0.3 port 39838
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 sshd[3287745]: pam_unix(sshd:session): session closed for user root
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 systemd[1]: session-127544.scope: Deactivated successfully.
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 systemd-logind[878]: Session 127544 logged out. Waiting for processes to exit.
+2026-10-07T14:41:15+00:00 transparent-pir-router-01 systemd-logind[878]: Removed session 127544.
+2026-10-07T14:41:17+00:00 transparent-pir-router-01 sshd[3287796]: Accepted publickey for root from 10.142.0.3 port 39850 ssh2: ED25519 SHA256:qFfWDD/nSNrYSP96Cl4VEEi9w/nHWq/kWlDvvq/CK2U
+2026-10-07T14:41:17+00:00 transparent-pir-router-01 sshd[3287796]: pam_unix(sshd:session): session opened for user root(uid=0) by root(uid=0)
+2026-10-07T14:41:17+00:00 transparent-pir-router-01 systemd-logind[878]: New session 127545 of user root.
+2026-10-07T14:41:17+00:00 transparent-pir-router-01 systemd[1]: Started session-127545.scope - Session 127545 of User root.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloading caddy.service - Caddy...
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 sshd[3287796]: Received disconnect from 10.142.0.3 port 39850:11: disconnected by user
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 sshd[3287796]: Disconnected from user root 10.142.0.3 port 39850
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 sshd[3287796]: pam_unix(sshd:session): session closed for user root
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: session-127545.scope: Deactivated successfully.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd-logind[878]: Session 127545 logged out. Waiting for processes to exit.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd-logind[878]: Removed session 127545.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloaded caddy.service - Caddy.
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloading caddy.service - Caddy...
+2026-10-07T14:41:18+00:00 transparent-pir-router-01 systemd[1]: Reloaded caddy.service - Caddy.

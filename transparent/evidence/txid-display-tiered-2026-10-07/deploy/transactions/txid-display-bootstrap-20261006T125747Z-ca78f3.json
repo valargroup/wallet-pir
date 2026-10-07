@@ -1,0 +1,82 @@
+{
+  "action": "bootstrap",
+  "bootstrap": {
+    "start": 3407001,
+    "through": 3489633
+  },
+  "changes": [],
+  "created_unix": 1791291467.199629,
+  "events": [
+    {
+      "message": "plan-start chose the bootstrap range",
+      "plan_start": {
+        "archives_at_through": 9,
+        "expected_drops": 0,
+        "journal_end": 3507335,
+        "journal_start": 3407000,
+        "records": 556658,
+        "replay_seals": 4,
+        "start": 3407001,
+        "through": 3489633
+      },
+      "unix": 1791291549.325
+    },
+    {
+      "argv": [
+        "systemd-run",
+        "--unit=transparent-txid-display-bootstrap.service",
+        "--quiet",
+        "--property=MemorySwapMax=0",
+        "--property=RemainAfterExit=yes",
+        "--property=MemoryMax=8G",
+        "--property=CPUQuota=400%",
+        "--property=CPUWeight=20",
+        "--property=IOWeight=20",
+        "--property=Nice=10",
+        "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-controller",
+        "bootstrap",
+        "--root",
+        "/srv/zakura/txid-display-poc/root",
+        "--journal",
+        "/srv/zakura/txid-display-poc/journal",
+        "--start",
+        "3407001",
+        "--through",
+        "3489633",
+        "--geometry",
+        "txid-2k",
+        "--n-archive",
+        "1",
+        "--n-recent",
+        "1",
+        "--archive-target",
+        "40000",
+        "--recent-floor",
+        "10000",
+        "--reorg-margin",
+        "100",
+        "--max-archive-shards",
+        "24"
+      ],
+      "message": "started transparent-txid-display-bootstrap.service",
+      "unix": 1791291571.693
+    },
+    {
+      "message": "status committed",
+      "unix": 1791291571.708
+    }
+  ],
+  "id": "txid-display-bootstrap-20261006T125747Z-ca78f3",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": [
+    {
+      "host": "coordinator",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-bootstrap.service",
+      "when": "pre"
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "baseline": {
+    "archive": {
+      "mem_available_bytes": 32842305536
+    },
+    "coordinator": {
+      "mem_available_bytes": 58563440640
+    },
+    "recent": {
+      "mem_available_bytes": 6287261696
+    }
+  },
+  "controller": {
+    "archive_target": 40000,
+    "archives": 9,
+    "blocks_per_step": 25,
+    "geometry": "txid-2k",
+    "max_archive_shards": 24,
+    "mode": "replay-then-live",
+    "n_archive": 1,
+    "n_recent": 1,
+    "recent_floor": 10000,
+    "reorg_margin": 100,
+    "replay_seals": 4,
+    "rpc_cookie": "/root/.cache/zakura/.cookie",
+    "rpc_url": "http://127.0.0.1:8232",
+    "step_interval_ms": 2000
+  },
+  "history": {
+    "adapter": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py",
+    "fleet": "/opt/transparent-publisher/v11/fleet.json",
+    "load_status": "/srv/transparent-activity/canonical-load/v11/status.json",
+    "membership": "/opt/transparent-publisher/v11/state/membership.json"
+  },
+  "hosts": {
+    "archive": {
+      "inventory": "archive-03",
+      "vpc_ip": "10.142.0.7"
+    },
+    "coordinator": {
+      "inventory": "coordinator"
+    },
+    "recent": {
+      "inventory": "recent-01",
+      "vpc_ip": "10.142.0.10"
+    },
+    "router": {
+      "inventory": "router-01"
+    }
+  },
+  "journal": {
+    "data_dir": "/srv/zakura/txid-display-poc/journal",
+    "node_cache_dir": "/root/.cache/zakura",
+    "start_height": 3407000
+  },
+  "measure": {
+    "output": "/srv/zakura/txid-display-poc/measure",
+    "public_url": "https://transparent-pir.valargroup.dev"
+  },
+  "ports": {
+    "controller_status": 8099,
+    "worker": 8095
+  },
+  "publication": {
+    "root": "/srv/zakura/txid-display-poc/root"
+  },
+  "release": {
+    "archive_sha256": "44bba2edec7af0643c27d180417d05ff42837959a61cd84879d42ae6e001ee38",
+    "binaries": {
+      "transparent-event-ingest": "cb92f92b21fe06cd0a476dc3ac03be42f4f752b90cde463c79590c8986e8127a",
+      "transparent-txid-server": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+      "txid-control": "ec438913d80d136efc94fc6239b26abd4e545fdb487d40ec35b71ddc198c4c5d",
+      "txid-display-controller": "ee213a976ec6fac3893ac32f0f00ad59d3d0483120645b70d4fbd40431fb9acb",
+      "txid-inventory": "e05ade09fd6e125aa564bf9299b4d7f0a74773eee94d5f0073555d0378b0e071"
+    },
+    "ci_run": 37388223909,
+    "files": {
+      "transparent-txid-display-controller.service.in": "bceb3cf47aa3177e1a671208a89e31ca4d58c74528a61f8566ee1ceebe66f604",
+      "transparent-txid-display-worker.service.in": "015d4c409d12a4ea29243706a21cd3697a65be009ed29dacabc5d6c17b8d5bde",
+      "txid-display-fleet.py": "4871c83494166730752c451eeb5ae147cf8f16eced05b7d31a6ab91b00a71e6a",
+      "txid-display-observe.py": "f474d75b3b620ec3158bd69b4b0ad1573e51c37e92a47eda71e1795739b022e4",
+      "txid-display-routes.caddy.in": "1a22b15402c372718e5ecfb50cabc8ad885449095e048655691de53cd9172576"
+    }
+  },
+  "router": {
+    "import_glob": "/etc/caddy/txid-display/*.caddy",
+    "live_fleet_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083"
+  },
+  "schema": "txid-display-poc-request-v1",
+  "source_sha": "d191f86b2873e4250cee3ae6952f830c0d1e7a55",
+  "terraform": {
+    "root": "/opt/enhance-pir/infra/production",
+    "wrapper": "/opt/enhance-pir/ops/wallet-pir-terraform.sh"
+  },
+  "units": {
+    "archive": {
+      "build_slots": 1,
+      "build_threads": 2,
+      "cache_bytes": 4294967296,
+      "cpu_quota": "200%",
+      "cpu_weight": 20,
+      "disk_cache_bytes": 8589934592,
+      "memory_max": "6G",
+      "nice": 10,
+      "oom_score_adjust": 1000,
+      "query_slots": 2,
+      "ready_timeout_seconds": 1800,
+      "retain_revisions": 2
+    },
+    "bootstrap": {
+      "cpu_quota": "400%",
+      "cpu_weight": 20,
+      "memory_max": "8G",
+      "nice": 10
+    },
+    "controller": {
+      "cpu_quota": "200%",
+      "cpu_weight": 20,
+      "memory_max": "4G",
+      "nice": 10
+    },
+    "ingest": {
+      "cpu_quota": "400%",
+      "cpu_weight": 20,
+      "io_weight": 20,
+      "memory_max": "12G",
+      "nice": 10,
+      "workers": 4
+    },
+    "recent": {
+      "build_slots": 1,
+      "build_threads": 1,
+      "cache_bytes": 536870912,
+      "cpu_quota": "100%",
+      "cpu_weight": 20,
+      "disk_cache_bytes": null,
+      "memory_max": "1.5G",
+      "nice": 10,
+      "oom_score_adjust": 1000,
+      "query_slots": 2,
+      "ready_timeout_seconds": 600,
+      "retain_revisions": 1
+    }
+  }
+}

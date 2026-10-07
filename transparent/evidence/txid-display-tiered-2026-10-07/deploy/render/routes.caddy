@@ -1,0 +1,25 @@
+# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase route` (proof of
+# concept). The history router imports this file inside both sites through its
+# opt-in route_imports hook. Path handles sort by specificity, so archive data
+# requests reach the archive owner and every other /v1/txid/ request, metadata
+# included, reaches the recent replica. A seal changes neither handle.
+	handle /v1/txid/archive/* {
+		reverse_proxy 10.142.0.7:8095 {
+			lb_try_duration 2s
+			health_uri /v1/ready
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
+		}
+	}
+	handle /v1/txid/* {
+		reverse_proxy 10.142.0.10:8095 {
+			lb_try_duration 2s
+			health_uri /v1/ready
+			health_interval 1s
+			health_timeout 5s
+			fail_duration 10s
+			max_fails 3
+		}
+	}

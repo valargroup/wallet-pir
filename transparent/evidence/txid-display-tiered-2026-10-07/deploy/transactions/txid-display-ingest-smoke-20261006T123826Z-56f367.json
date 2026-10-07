@@ -1,0 +1,22 @@
+{
+  "action": "ingest-smoke",
+  "changes": [],
+  "created_unix": 1791290306.815597,
+  "events": [
+    {
+      "message": "smoke ingest exited 0",
+      "output": "service::finalized_state::disk_format::upgrade\u001b[0m\u001b[2m:\u001b[0m trying to open current database format \u001b[3mrunning_version\u001b[0m\u001b[2m=\u001b[0m29.1.0\n\u001b[2m2026-10-06T12:39:49.648237Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mzakura_state::service::finalized_state::disk_db\u001b[0m\u001b[2m:\u001b[0m created temporary secondary db directory \u001b[3mpath\u001b[0m\u001b[2m=\u001b[0m\"/tmp/zebra-secondary-state-zSbeL7\"\n\u001b[2m2026-10-06T12:40:04.491249Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mzakura_state::service::finalized_state::disk_db\u001b[0m\u001b[2m:\u001b[0m Opened Zakura state cache at /root/.cache/zakura/state/v29/mainnet\n\u001b[2m2026-10-06T12:40:04.508084Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mzakura_state::service::finalized_state::vct\u001b[0m\u001b[2m:\u001b[0m VCT: exact header auxiliary source enabled by default \u001b[3mhandoff_height\u001b[0m\u001b[2m=\u001b[0m3490665\n\u001b[2m2026-10-06T12:40:04.526149Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mzakura_state::service\u001b[0m\u001b[2m:\u001b[0m loaded historical frontier artifact \u001b[3msource_path\u001b[0m\u001b[2m=\u001b[0m\"embedded Mainnet historical frontier artifact\" \u001b[3mentries\u001b[0m\u001b[2m=\u001b[0m2293 \u001b[3mspacing\u001b[0m\u001b[2m=\u001b[0m0\n\u001b[2m2026-10-06T12:40:04.638275Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m starting event backfill from the node's state database \u001b[3mdata_dir\u001b[0m\u001b[2m=\u001b[0m/srv/zakura/txid-display-poc/journal.smoke \u001b[3mstate_dir\u001b[0m\u001b[2m=\u001b[0m/root/.cache/zakura \u001b[3mfrom\u001b[0m\u001b[2m=\u001b[0m3407000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3407009 \u001b[3mremaining\u001b[0m\u001b[2m=\u001b[0m10 \u001b[3mevents_stored\u001b[0m\u001b[2m=\u001b[0m0 \u001b[3mworkers\u001b[0m\u001b[2m=\u001b[0m4\n\u001b[2m2026-10-06T12:40:04.663421Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m backfill progress \u001b[3mheight\u001b[0m\u001b[2m=\u001b[0m3407000 \u001b[3mthrough\u001b[0m\u001b[2m=\u001b[0m3407009 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m21 \u001b[3mblocks_per_second\u001b[0m\u001b[2m=\u001b[0m\"39.8\" \u001b[3meta_minutes\u001b[0m\u001b[2m=\u001b[0m\"0.0\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m14\n\u001b[2m2026-10-06T12:40:04.723637Z\u001b[0m \u001b[32m INFO\u001b[0m \u001b[2mtransparent_event_ingest\u001b[0m\u001b[2m:\u001b[0m event backfill complete \u001b[3mcovered_through\u001b[0m\u001b[2m=\u001b[0mSome(3407009) \u001b[3mblocks\u001b[0m\u001b[2m=\u001b[0m10 \u001b[3mevents\u001b[0m\u001b[2m=\u001b[0m163 \u001b[3melapsed_seconds\u001b[0m\u001b[2m=\u001b[0m\"0\" \u001b[3mstate_lookups\u001b[0m\u001b[2m=\u001b[0m72\n",
+      "unix": 1791290404.956
+    },
+    {
+      "message": "status committed",
+      "unix": 1791290404.957
+    }
+  ],
+  "id": "txid-display-ingest-smoke-20261006T123826Z-56f367",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": []
+}

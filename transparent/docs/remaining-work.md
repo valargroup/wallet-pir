@@ -321,14 +321,21 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [x] Synchronous wallet client crate `transparent-txid-client` with
   in-process transcript, error and tamper tests
   ([wallet client](txid-display.md#wallet-client)).
-- [ ] Measure each criterion live and write the production results (a 20 QPS run
-  started 2026-10-07):
-  - anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
-  - recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max;
-  - archives: sealed digests unchanged across rebuilds and seals;
-  - latency: p99 at most 500 ms at the 20 QPS reference, with history p99 against W0;
-  - bandwidth: under 300 KB per lookup over HTTPS, inline and overflow;
-  - growth: seals and drops with no operator action across several boundaries.
+- [ ] Measure each criterion live and write the production results
+  ([evidence](../evidence/txid-display-tiered-2026-10-07/README.md),
+  [status](status.md#tiered-txid-display-in-production-2026-10-07)):
+  - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
+  - [x] recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max.
+    **Max failed:** p50 16.0 s, max 97.2 s, 22 of 1,054 live cycles over 20 s;
+    Roman accepted the miss for the proof of concept;
+  - [ ] archives: sealed digests unchanged across rebuilds and seals;
+  - [x] latency: p99 at most 500 ms at the 20 QPS reference, with history p99 against W0.
+    20 lookups/s: p99 187 ms, 12,004/12,004 exact; history p99 at most 75 ms (W0 33 ms);
+  - [x] bandwidth: under 300 KB per lookup over HTTPS, inline and overflow.
+    Holds for inline to 3 pages, cold and warm. 4 pages only warm; 5–7 pages
+    exceed it (to 496 KB), 94 of 567,323 txids have 4 or more pages;
+  - [ ] growth: seals and drops with no operator action across several boundaries
+    (no live seal yet).
 - [ ] Roman decides whether to leave it running, `stop` or `retire`.
 
 ## Txid display backfill below 3,407,001 (proposed 2026-10-07)
@@ -344,10 +351,11 @@ starts dropping archives around mid-December 2026.
   from genesis to 3,000,000.
 - [x] Measure runtime memory: `txid-2k` and `txid-4k` hold four-byte matrices,
   44% and 40% below the reservation (synthetic rows).
-- [ ] Genesis display ingest: running since 16:47 UTC on 2026-10-07
-  (`transparent-txid-display-genesis-ingest`; ETA about 21:15 UTC, reported
-  by the orchestrator). Verify block count equals sidecar count and run a spot
-  check.
+- [ ] Genesis display ingest: started 16:47 UTC on 2026-10-07
+  (`transparent-txid-display-genesis-ingest`), stopped at about 20:00 UTC
+  after it latched history's load on coordinator disk headroom
+  ([status](status.md#tiered-txid-display-in-production-2026-10-07)). Verify
+  block count equals sidecar count and run a spot check.
 - [ ] Layout experiments on real data, such as shared or smaller page tables,
   before the host is chosen.
 - [ ] G1, Roman: choose the display-archive host. `m-8vcpu-64gb` is

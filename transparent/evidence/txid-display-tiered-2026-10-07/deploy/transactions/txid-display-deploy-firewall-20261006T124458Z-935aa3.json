@@ -1,0 +1,69 @@
+{
+  "action": "deploy-firewall",
+  "applied_plan_sha256": "04706a3666adeef244e66b9fb64bc86732805f872be6996c9afc465cf5fdf516",
+  "changes": [
+    {
+      "applied": true,
+      "host": "coordinator",
+      "mode": 384,
+      "new_sha256": "521a63631264d4686519a33743a54d612996e907851e1925f79cefa1e9e14e82",
+      "path": "/opt/enhance-pir/infra/production/txid-display.auto.tfvars",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    }
+  ],
+  "created_unix": 1791290698.559078,
+  "events": [
+    {
+      "message": "wrote /opt/enhance-pir/infra/production/txid-display.auto.tfvars on coordinator",
+      "sha256": "521a63631264d4686519a33743a54d612996e907851e1925f79cefa1e9e14e82",
+      "unix": 1791290759.315
+    },
+    {
+      "message": "status planning",
+      "unix": 1791290777.903
+    },
+    {
+      "message": "status planned",
+      "unix": 1791290793.167
+    },
+    {
+      "message": "status committed",
+      "unix": 1791290966.628
+    }
+  ],
+  "id": "txid-display-deploy-firewall-20261006T124458Z-935aa3",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "terraform": {
+    "enabled": true,
+    "plan_file": "/opt/transparent-txid-display/terraform/txid-display-deploy-firewall-20261006T124458Z-935aa3.tfplan",
+    "plan_sha256": "04706a3666adeef244e66b9fb64bc86732805f872be6996c9afc465cf5fdf516",
+    "summary": {
+      "added": [
+        {
+          "port_range": "8095",
+          "protocol": "tcp",
+          "source_addresses": 0,
+          "source_tags": [
+            "transparent-pir-router",
+            "wallet-pir-coordinator"
+          ]
+        }
+      ],
+      "changes": [
+        {
+          "actions": [
+            "update"
+          ],
+          "address": "digitalocean_firewall.transparent_worker"
+        }
+      ],
+      "removed": []
+    }
+  },
+  "undo": []
+}

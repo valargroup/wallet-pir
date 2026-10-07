@@ -1,0 +1,114 @@
+{
+ "run_id": "txid-display-tiered-2026-10-07",
+ "kind": "production evidence: tiered txid display proof of concept deploy, live controller data, and 20 QPS load and bandwidth measurement",
+ "window_utc": {
+  "w0": "2026-10-05T23:05:46Z",
+  "deploy": ["2026-10-06T12:31:59Z", "2026-10-06T13:26:18Z"],
+  "timeline": ["2026-10-06T12:59:35Z", "2026-10-07T20:04:28Z"],
+  "live_freshness": ["2026-10-06T15:27:48Z", "2026-10-07T13:40:00Z"],
+  "load": {
+   "V0-validate-5lps": ["2026-10-07T14:04:15Z", "2026-10-07T14:05:15Z"],
+   "A-20qps-query": ["2026-10-07T14:32:33Z", "2026-10-07T14:41:33Z"],
+   "B-20lps-lookup": ["2026-10-07T15:01:34Z", "2026-10-07T15:11:34Z"],
+   "BW-bandwidth": ["2026-10-07T15:43:40Z", "2026-10-07T15:44:48Z"]
+  },
+  "capture": "2026-10-07T20:05Z to 20:08Z"
+ },
+ "deployment": "production, beside history. History changed only by the router-hook adapter replacement and route_imports key, and later by the fleet.json grace settings recorded in README.md",
+ "source": {
+  "release": "d191f86b2873e4250cee3ae6952f830c0d1e7a55",
+  "ci": "full run 37388223909",
+  "tool_fix": "e8178fc4 (deploy tool follows history's v11 adapter, fleet and membership paths)",
+  "release_artifact": "transparent-txid-display.tar.gz; sha256 in deploy/request.json release.archive_sha256",
+  "measurement_clients": "txid-rate and txid-bandwidth examples from d191f86b, cargo build --locked --release with target-cpu=native on roman-ipir-bench-8vcpu; measure/build/binaries.sha256"
+ },
+ "deploy": {
+  "request_sha256_canonical": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "order": ["stage", "ingest-smoke", "ingest-start", "firewall", "router-hook", "bootstrap", "workers", "route", "measure-start", "controller"],
+  "transactions": "deploy/transactions/*.json (txid-display-poc-transaction-v1, all committed)",
+  "terraform_plan_sha256": "04706a3666adeef244e66b9fb64bc86732805f872be6996c9afc465cf5fdf516",
+  "terraform_change": "one in-place update to digitalocean_firewall.transparent_worker: add TCP 8095 from tags transparent-pir-router and wallet-pir-coordinator",
+  "terraform_root_sync": "operator report: transparent.tf and variables.tf in /opt/enhance-pir/infra/production synced to main before the firewall step (missing only the default-off port 8095 variable); backups .backup-txid-display-20261006; no log retained",
+  "router_hook": {
+   "adapter_path": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py",
+   "previous_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083 (= git 4c85b6c2)",
+   "new_sha256": "35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a (= git d191f86b; +20/-2, opt-in route_imports)",
+   "fleet_json": "/opt/transparent-publisher/v11/fleet.json c5d1d1aa... -> 7ef37422... (route_imports added)"
+  },
+  "operator_incident": "a 280 s shell timeout killed the controller-phase command after its transaction committed; deploy/log/20261006T132244Z-txid-display-deploy.log is empty"
+ },
+ "data": {
+  "network": "Zcash mainnet",
+  "journal": "/srv/zakura/txid-display-poc/journal, transparent-event-ingest --txid-display from 3,407,000; backfill through 3,507,335, 100,336 blocks in 695 s",
+  "bootstrap": {
+   "range": [3407001, 3489633],
+   "records": 556658,
+   "archives": 9,
+   "replay_seals": 4,
+   "expected_drops": 0,
+   "map_sha256": "03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802",
+   "recent": {"shard_id": 9, "records": 50004, "dir_segments": 1}
+  },
+  "at_capture": {"tip": 3509833, "archives": 13, "recent_records": 48761, "drops": 0},
+  "fixture": "txid-inventory fixture on the coordinator, candidate at 3,509,536, map 14d85dc2...; natural 2,000 per tier + 200 absent (seed 20261007); per-class 5 per class + 6 absent; class counts of 567,323 published txids in fixtures/fixture-perclass.json available"
+ },
+ "publication": {
+  "schema": "transparent-txid-display tiered",
+  "geometry": "txid-2k (2,048 rows x 4,096 B, both tables)",
+  "seal": {"n_archive": 1, "n_recent": 1, "archive_target": 40000, "recent_floor": 10000, "reorg_margin": 100, "max_archive_shards": 24},
+  "note": "archive_target 40,000 is the 2026-10-05 local bench recommendation; the plan default is 20,000"
+ },
+ "hosts": {
+  "coordinator": "167.99.42.60: ingest, controller, observer, map watcher; history load and reconciler",
+  "archive-03": "10.142.0.7: display archive owner on port 8095, beside history's archive owner; SKU not re-read",
+  "recent-01": "10.142.0.10: display recent replica on port 8095, beside a history recent worker; DigitalOcean DO-Regular 2.0 GHz, 4 vCPU, 7.8 GiB (from txid-display-freshness-2026-10-07)",
+  "router-01": "10.142.0.11: Caddy, /v1/txid/ imported via /etc/caddy/txid-display/routes.caddy",
+  "client": "roman-ipir-bench-8vcpu, Amsterdam, 8 vCPU, over the public internet with HTTPS; supervisor on the operator's Mac (RTT about 270 ms to the coordinator)"
+ },
+ "workload": {
+  "V0": "txid-rate --unit lookup, 5/s total over 4 processes, 60 s, --cold-every 25, absent every 20, mix recent=0.8,archive=0.2",
+  "A": "txid-rate --unit query (one directory query), 20/s total over 4 processes, 600 s planned (540 s run), --cold-every 0",
+  "B": "txid-rate --unit lookup, 20/s total over 4 processes, 600 s, --cold-every 25, absent every 20",
+  "BW": "txid-bandwidth over the per-class fixture, up to 5 samples per (tier, class) and state cold, warm, recent-stale",
+  "history": "existing history 5 QPS canonical load, read from its status.json"
+ },
+ "commands": {
+  "window": "measure/build/run-window.sh NAME UNIT TOTAL_RATE PROCS SECONDS [txid-rate args]",
+  "summaries": "measure/tools/analyze.py OUT NAME 600 -> measure/runs/<name>/summary.json",
+  "reload_pairing": "python3 measure/tools/pairing.py measure/reloads/reconciler-worker_membership-pre.log measure/reloads/router-caddy-reloads-pre.log 2026-10-07T14:48:40+00:00",
+  "live_freshness": "python3 harness/live_freshness.py live/timeline.jsonl.gz > summary.json",
+  "bandwidth_driver": "measure/tools/drive-bw.sh calls run-bandwidth.sh on the bench host; that script was not captured"
+ },
+ "results": {
+  "live_freshness": "summary.json live_window: 1,054 cycles, worst block per cycle p50 16.0 s, p95 18.8 s, max 97.2 s, 22 cycles over 20 s; 25 of 1,076 blocks over 20 s",
+  "events": "13 seals (9 bootstrap, 4 replay, 0 live), 7 one-block reorgs (6 live), 1 controller error (2026-10-06T20:00:03Z), 0 drops",
+  "V0": "304/304 exact, 0 errors, p99 136 ms",
+  "A": "10,800/10,800 exact, 0 errors, p50 42 ms, p99 130 ms, max 1.14 s; hard stop on one recovered history error after a router Caddy reload",
+  "B": "12,004/12,004 exact, 0 errors, 0 missed, p50 55 ms, p99 187 ms, max 532 ms; history trailing p99 max 75 ms, 0 errors",
+  "bandwidth": "inline 92.8 KB warm, 132.4 KB cold; pages-1 to pages-3 under 300 KB cold; pages-4 under 300 KB warm only; pages-5 to pages-7 over (to 496.0 KB); measured minus computed 220 B to 25.1 KB; 0 stale retries",
+  "rebuild_during_A": "4 cycles, 20.4-24.0 s",
+  "router_reloads": "84 reloads for 42 activations (2 each), 00:00-14:41 UTC"
+ },
+ "outputs": {
+  "deploy/": "request.json, plan.json, w0-20261005T2305Z.json, render/, transactions/, log/ (copied from the operator's deploy state)",
+  "live/timeline.jsonl.gz": "controller timeline as copied (gzip -9n)",
+  "live/observer.jsonl.gz": "node tip observer as copied (gzip -9n)",
+  "live/mapwatch.jsonl.gz": "map watcher log as copied (gzip -9n)",
+  "live/mapwatch-objects.tar.gz": "map watcher maps/ and manifests/ (3,057 files), tar streamed read-only, gzip -9n",
+  "live/latched.json": "history load latch record, /srv/transparent-activity/canonical-load/v11/latched.json",
+  "measure/": "measurement agent's capture; .jsonl over 100 KB and fixture-natural*.json gzipped (gzip -9n); SHA256SUMS.capture is its original checksum file",
+  "summary.json": "harness/live_freshness.py output"
+ },
+ "measured_vs_derived": "Latency, exact counts, freshness, events, CPU and bytes are measured. The share of txids in pages-4 or more is derived from the fixture's class counts. The post-fix router reload counts, the 213-minute history p99 figure, the disk usage figures and the Terraform root sync are reported by the operating session and not retained here.",
+ "limitations": [
+  "anonymity census and audit, verify of sealed digests, and growth across live seals were not measured",
+  "no live seal: the recent shard had not reached about 50,000 records",
+  "window A ran 540 of 600 s; window B is the only full 600 s window",
+  "only 4 controller cycles fell inside window A",
+  "the retained bandwidth run has no supervisor samples and its bench-side script was not captured",
+  "the measurement agent's README predates windows B and BW",
+  "the operating session counted 1,055 live cycles where summary.json counts 1,054"
+ ],
+ "acceptance": "not an acceptance result; Roman accepted the 20 s rebuild miss for the proof of concept; anonymity, archive immutability and growth remain open"
+}

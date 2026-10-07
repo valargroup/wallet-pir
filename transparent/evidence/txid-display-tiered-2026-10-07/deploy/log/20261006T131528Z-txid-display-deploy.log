@@ -1,0 +1,157 @@
+txid-display-deploy-route-20261006T131547Z-4b883e: wrote /etc/caddy/txid-display/routes.caddy on router
+txid-display-deploy-route-20261006T131547Z-4b883e: router serves /v1/txid/ and history metadata
+txid-display-deploy-route-20261006T131547Z-4b883e: status committed
+{
+  "files": {
+    "fleet.json": "planned",
+    "routes.caddy": "planned",
+    "tfvars": "planned",
+    "unit:archive": "planned",
+    "unit:controller": "absent",
+    "unit:recent": "planned",
+    "workers.json": "absent"
+  },
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "router_hook": {
+    "adapter_sha256": "35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a",
+    "route_imports": [
+      "/etc/caddy/txid-display/*.caddy"
+    ]
+  },
+  "transactions": [
+    {
+      "action": "deploy-stage",
+      "id": "txid-display-deploy-stage-20261006T123159Z-e83ba3",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-smoke",
+      "id": "txid-display-ingest-smoke-20261006T123826Z-56f367",
+      "status": "committed"
+    },
+    {
+      "action": "ingest-start",
+      "id": "txid-display-ingest-start-20261006T124141Z-8e855c",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-firewall",
+      "id": "txid-display-deploy-firewall-20261006T124458Z-935aa3",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-router-hook",
+      "id": "txid-display-deploy-router-hook-20261006T125118Z-0b6b9e",
+      "status": "committed"
+    },
+    {
+      "action": "bootstrap",
+      "id": "txid-display-bootstrap-20261006T125747Z-ca78f3",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-workers",
+      "id": "txid-display-deploy-workers-20261006T130139Z-2d2b0c",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-route",
+      "id": "txid-display-deploy-route-20261006T131547Z-4b883e",
+      "status": "committed"
+    }
+  ],
+  "units": {
+    "transparent-txid-display-bootstrap.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-controller.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest-smoke.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-mapwatch.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-observer.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-worker.service@archive": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-worker.service@recent": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    }
+  },
+  "workers": {
+    "archive": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+        "covered_through": 3489633,
+        "incarnation": "9dfff9d5c306d6d2d0ad870011dfe819",
+        "map_sha256": "03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "archive-owner",
+        "target_runtimes": 18,
+        "warm": true,
+        "warm_runtimes": 18
+      }
+    },
+    "recent": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+        "covered_through": 3489633,
+        "incarnation": "c716ad8d5825392d1344a53e48e8c12f",
+        "map_sha256": "03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "recent-replica",
+        "target_runtimes": 2,
+        "warm": true,
+        "warm_runtimes": 2
+      }
+    }
+  }
+}
+rollback: /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/roman/projects/wallet-pir/.claude/worktrees/wallet-pir-pr-126-223649/ops/scripts/wallet-pir-deploy.py --inventory /Users/roman/.config/wallet-pir-deploy/inventory.json --state-dir /Users/roman/.config/wallet-pir-deploy/state txid-display-rollback --request /Users/roman/.config/wallet-pir-deploy/txid-display/request.json --request-sha256 5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef --transaction txid-display-deploy-route-20261006T131547Z-4b883e

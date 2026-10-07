@@ -123,13 +123,16 @@ incremental update is [valargroup/wallet-pir#128](https://github.com/valargroup/
 ## Tiered txid display in production, 2026-10-07
 
 The tiered txid display proof of concept has served beside history since
-2026-10-06. History was not changed. Deployed from release `d191f86b`
-(CI full run 37388223909, success), with `archive_target` 40,000 and N=1 buckets.
+2026-10-06. Deployed from release `d191f86b` (CI full run 37388223909,
+success), with `archive_target` 40,000 and N=1 buckets. History changed only
+where the router hook replaced its v11 adapter with main's, which adds the
+opt-in `route_imports` key, and added that key to its `fleet.json`.
 
-- **Deploy.** Ten `txid-display-*` transactions committed between 12:31 and
-  13:23 UTC on 2026-10-06, in order: stage, ingest smoke, ingest start,
-  firewall, router hook, bootstrap, workers, route, measure start, controller.
-  Each has a recorded rollback. The deploy state is kept outside the repository.
+- **Deploy.** Ten `txid-display-*` transactions started between 12:31 and
+  13:23 UTC on 2026-10-06 and committed by 13:26, in order: stage, ingest
+  smoke, ingest start, firewall, router hook, bootstrap, workers, route,
+  measure start, controller. Each has a recorded rollback. The journals are
+  retained in the [evidence](../evidence/txid-display-tiered-2026-10-07/README.md).
 - **Serving.** `/v1/txid/` on transparent-pir.valargroup.dev routes to port
   8095 on archive-03 (archive owner) and recent-01 (recent replica). The
   controller, observer and map watcher run on the coordinator.
@@ -138,10 +141,57 @@ The tiered txid display proof of concept has served beside history since
   height 3,502,508, recent-01 with 2 of 2 through 3,509,538, against a public
   height of 3,509,537. The controller reported 13 archives and 47,268 recent
   records, with 15.7 s from block to serving on its latest cycle.
-- **Open.** A 20 QPS measurement run started at 13:53 UTC on 2026-10-07; no
-  acceptance results are recorded yet. Every live criterion remains open, as
-  does Roman's keep, stop or retire decision
-  ([gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05)).
+- **Block to serving, live.** From the controller timeline, 2026-10-06 15:27 to
+  2026-10-07 13:40 UTC (tip above 3,508,457): p50 16.0 s, p95 18.8 s, max
+  97.2 s over 1,054 cycles; 22 cycles over 20 s. The 97.2 s cycle followed the
+  only controller error, a failed recent-replica adapter call at 2026-10-06
+  20:00 UTC. During 20 QPS window A, 4 cycles took 20.4–24.0 s. Roman accepted
+  the 20 s miss for the proof of concept. A later recent-01 change is recorded
+  [above](#txid-display-block-to-serving-change-2026-10-07).
+- **Load, 2026-10-07, from Amsterdam over HTTPS.** Window A, 20 queries/s:
+  10,800/10,800 exact, p99 130 ms, 540 of 600 s. It ended on a hard stop: a
+  routine router Caddy reload reset one history connection, which recovered on
+  retry. Window B, 20 lookups/s for 600 s: 12,004/12,004 exact, 0 errors, p99
+  187 ms; history p99 at most 75 ms (W0: 33 ms) with 0 errors.
+- **Bandwidth per lookup.** Inline 92.8 KB warm and 132.4 KB cold. One to three
+  pages stay under 300 KB cold. Four pages are under 300 KB only warm
+  (343.7 KB cold), and five to seven pages are over (to 496.0 KB). Measured
+  bytes are 0.2–25.1 KB above computed; 0 stale retries. 94 of 567,323
+  published txids have four or more pages.
+- **Seals and reorgs.** 13 archives: 9 at bootstrap and 4 during replay. No live
+  seal yet: the recent shard held 48,761 records at 20:04 UTC, and a seal
+  needs about 50,000. 6 one-block reorgs live, 0 drops.
+- **History router reloads.** Before the fix, router-01 reloaded Caddy 84 times
+  for 42 history activations on 2026-10-07 (00:00–14:41 UTC), always in pairs. recent-01 finished
+  prepare after the 3.5 s prepare grace, and its activation waited on the
+  reconciler's worker lock until the 0.5 s activation grace cancelled it.
+  Roman approved two settings in `/opt/transparent-publisher/v11/fleet.json`:
+  - `activation_grace_seconds` 3.0, set at 14:48:40 UTC;
+  - `prepare_grace_seconds` 3.5 → 7.0 at 15:45:35. That edit wrongly removed
+    `activation_grace_seconds`, on a diagnosis that blamed prepare alone. It
+    was restored at 16:53:10.
+
+  With both, the session that made the change counted 147 publishes,
+  0 cancelled activations, 0 rejoins and 0 router reloads through 19:57 UTC.
+- **History without txid load.** The measurement supervisor tripped three
+  times with no txid load: history self-paused once, SSH from the Mac timed
+  out once, and history p99 spiked to 845 ms once. Over about 40 hours
+  without txid load, history p99 exceeded 300 ms in 213 minutes, max 2.77 s
+  (the operating session's count; its samples are not retained).
+- **Open: history load latched.** At 19:53:04 UTC on 2026-10-07, history's
+  5 QPS load latched on "transparent-coordinator: disk headroom below 20%". A
+  separate session's full-chain genesis display ingest into
+  `/srv/zakura/txid-display-genesis` (25 GB at 12%) caused it, and was stopped
+  at about 20:00 UTC. Roman approved a dedicated 150 GB volume for that ingest
+  (`/srv/txid-display-genesis`, wallet-pir `983cbedb`); the journal moved there
+  and `/srv/zakura` was back to 233 GB free (78% used) at 20:12 UTC. Clearing
+  the latch (remove `latched.json`, restart `transparent-5qps-continuous`) was
+  still pending Roman's decision at 20:12 UTC.
+- **Open.** Not measured live: the anonymity census and audit, `verify` of
+  sealed digests, and growth across live seals. Roman's keep, stop or retire
+  decision is open
+  ([evidence](../evidence/txid-display-tiered-2026-10-07/README.md),
+  [gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05)).
 
 ## Txid display backfill sizing, 2026-10-07
 
@@ -153,6 +203,11 @@ display ingest has run on the coordinator since 16:47 UTC on 2026-10-07:
   ingest limits;
 - into `/srv/zakura/txid-display-genesis/journal`;
 - expected to finish around 21:15 UTC.
+
+It was stopped at about 20:00 UTC, after it pushed the coordinator's disk
+headroom below 20% and latched history's load. It now runs only on its own
+150 GB volume at `/srv/txid-display-genesis`
+([above](#tiered-txid-display-in-production-2026-10-07)).
 
 This task did not observe it: it had no deploy inventory or SSH. Nothing
 serves from that journal yet. Bootstrap, the cutover and the host remain

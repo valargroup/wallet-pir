@@ -1,0 +1,6 @@
+{"captured_utc": "2026-10-05T23:05:46Z",
+ "history_5qps_trailing_60s": {"exact": 300, "errors": 0, "completed_qps": 5.0, "http_p50_seconds": 0.012744, "http_p95_seconds": 0.024177, "http_p99_seconds": 0.033114},
+ "history_freshness_seconds": 12.51, "history_ready_replicas": 2,
+ "mem_available_kb": {"coordinator": 56663048, "archive-03": 32114952, "recent-01": 6397116, "router-01": 3445172},
+ "cpu": {"coordinator_load1": 0.79, "archive-03_idle_pct": 96.8, "recent-01_idle_pct": 50.9, "recent-01_nice_pct": 44.9, "router-01_idle_pct": 98.2},
+ "scaler": {"mode": "observe", "decision": "hold", "serving_recent": 2}}

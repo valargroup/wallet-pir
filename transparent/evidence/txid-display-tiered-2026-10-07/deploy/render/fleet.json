@@ -1,0 +1,24 @@
+{
+  "control_dir": "/opt/transparent-txid-display/state/ssh",
+  "known_hosts": "/opt/transparent-publisher/credentials/known_hosts",
+  "schema": "txid-display-fleet-v1",
+  "ssh_key": "/opt/transparent-publisher/credentials/deploy-ssh",
+  "workers": {
+    "archive": {
+      "control_binary": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-control",
+      "control_socket": "/run/transparent-txid-display/control.sock",
+      "publications": "/srv/transparent-txid-display/publications",
+      "ssh_host": "10.142.0.7",
+      "staged": "/srv/transparent-txid-display/staged",
+      "user": "root"
+    },
+    "recent": {
+      "control_binary": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-control",
+      "control_socket": "/run/transparent-txid-display/control.sock",
+      "publications": "/srv/transparent-txid-display/publications",
+      "ssh_host": "10.142.0.10",
+      "staged": "/srv/transparent-txid-display/staged",
+      "user": "root"
+    }
+  }
+}

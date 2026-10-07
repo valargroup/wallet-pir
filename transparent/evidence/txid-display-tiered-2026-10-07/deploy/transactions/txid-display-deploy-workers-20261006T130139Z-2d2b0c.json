@@ -1,0 +1,119 @@
+{
+  "action": "deploy-workers",
+  "changes": [
+    {
+      "applied": true,
+      "host": "coordinator",
+      "mode": 384,
+      "new_sha256": "60f65ada61345870017a9894bcd689223f54da80b08e867e3d8521b91ebdfea1",
+      "path": "/opt/transparent-txid-display/fleet.json",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    },
+    {
+      "applied": true,
+      "host": "archive",
+      "mode": 420,
+      "new_sha256": "e82a9d63b6381ca4243d3959214939a2ed3ec095ea3d0171b0612262047cb235",
+      "path": "/etc/systemd/system/transparent-txid-display-worker.service",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    },
+    {
+      "applied": true,
+      "host": "recent",
+      "mode": 420,
+      "new_sha256": "ee69af36c57ce76ac92ac2e1ed8aed98983ba8cd7f720674772c9184793dbb10",
+      "path": "/etc/systemd/system/transparent-txid-display-worker.service",
+      "previous": null,
+      "previous_mode": null,
+      "previous_sha256": null
+    }
+  ],
+  "created_unix": 1791291699.595351,
+  "events": [
+    {
+      "message": "wrote /opt/transparent-txid-display/fleet.json on coordinator",
+      "sha256": "60f65ada61345870017a9894bcd689223f54da80b08e867e3d8521b91ebdfea1",
+      "unix": 1791291825.843
+    },
+    {
+      "message": "archive: shipped candidate 03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802",
+      "seconds": 1.712447,
+      "unix": 1791291902.615
+    },
+    {
+      "message": "archive: --verify-only accepted the candidate",
+      "unix": 1791291925.313
+    },
+    {
+      "message": "wrote /etc/systemd/system/transparent-txid-display-worker.service on archive",
+      "sha256": "e82a9d63b6381ca4243d3959214939a2ed3ec095ea3d0171b0612262047cb235",
+      "unix": 1791291962.453
+    },
+    {
+      "message": "archive: serving 03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802 warm",
+      "unix": 1791292148.428
+    },
+    {
+      "message": "recent: shipped candidate 03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802",
+      "seconds": 2.728196,
+      "unix": 1791292227.546
+    },
+    {
+      "message": "recent: --verify-only accepted the candidate",
+      "unix": 1791292249.848
+    },
+    {
+      "message": "wrote /etc/systemd/system/transparent-txid-display-worker.service on recent",
+      "sha256": "ee69af36c57ce76ac92ac2e1ed8aed98983ba8cd7f720674772c9184793dbb10",
+      "unix": 1791292287.212
+    },
+    {
+      "message": "recent: serving 03cbd94c67717a60566408797d208cf923a3d9c01710b53e3f41f641aa67d802 warm",
+      "unix": 1791292443.782
+    },
+    {
+      "message": "status committed",
+      "unix": 1791292443.784
+    }
+  ],
+  "fleet_calls": 8,
+  "id": "txid-display-deploy-workers-20261006T130139Z-2d2b0c",
+  "kind": "txid-display-poc-transaction-v1",
+  "plan_sha256": "a4a17d766f007f31cd2557ff2d4ce5a92966b18cc091a0781e48fa647051362f",
+  "request_sha256": "5776cd986033fde21b29f0524d4e5acf9100da9a309cfe46cb6e411a98a302ef",
+  "status": "committed",
+  "undo": [
+    {
+      "host": "archive",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-worker.service",
+      "when": "pre"
+    },
+    {
+      "args": [
+        "daemon-reload"
+      ],
+      "host": "archive",
+      "op": "systemctl",
+      "when": "post"
+    },
+    {
+      "host": "recent",
+      "op": "stop-unit",
+      "unit": "transparent-txid-display-worker.service",
+      "when": "pre"
+    },
+    {
+      "args": [
+        "daemon-reload"
+      ],
+      "host": "recent",
+      "op": "systemctl",
+      "when": "post"
+    }
+  ]
+}

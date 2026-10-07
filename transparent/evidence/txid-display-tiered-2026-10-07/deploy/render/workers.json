@@ -1,0 +1,20 @@
+{
+  "workers": [
+    {
+      "name": "archive",
+      "role": "archive-owner",
+      "transport": {
+        "command": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-fleet.py",
+        "config": "/opt/transparent-txid-display/fleet.json"
+      }
+    },
+    {
+      "name": "recent",
+      "role": "recent-replica",
+      "transport": {
+        "command": "/opt/transparent-txid-display/releases/d191f86b2873e4250cee3ae6952f830c0d1e7a55/txid-display-fleet.py",
+        "config": "/opt/transparent-txid-display/fleet.json"
+      }
+    }
+  ]
+}
