@@ -1,0 +1,24 @@
+{
+ "run_id": "txid-display-shipped-runtimes-bench-2026-10-07",
+ "kind": "local pre-deploy bench: txid display recent runtimes built by the controller and shipped with each candidate, against local builds on the worker",
+ "window_utc": {"run1": ["2026-10-07T21:40:32Z", "2026-10-07T21:47:37Z"], "run2": ["2026-10-07T21:49:19Z", "2026-10-07T21:56:29Z"]},
+ "deployment": "none; no production host was contacted",
+ "source": {
+  "run2": "5525b839 (shipped files written without fsync; worker shipped/self_check_ms copied into the cycle record)",
+  "note": "built from pre-rebase commits 77bfa446 (run 2) and 72bc5311 (run 1); rebasing onto docs-only main changed no source file, so these main commits hold the same source",
+  "run1": "6b8c5c91 (shipped files fsynced; worker reply fields not copied into cycles[].workers)"
+ },
+ "build": "cargo build --locked --profile release-fast -p transparent-shard-server --bin transparent-txid-server -p transparent-filter-server --bin txid-display-controller; RUSTFLAGS=-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq; hashes in raw/run*/binaries.sha256",
+ "command": "harness/bench.sh BIN_DIR WORK_DIR raw/runN; python3 harness/analyze.py raw/runN > summary.json",
+ "host": "roman-dev-2: DO-Premium-Intel, 8 vCPU (AVX2, no AVX-512), 31 GiB, Linux 6.8.0-134-generic; shared with other agents' builds",
+ "cpu_limits": {"controller": "taskset -c 2,3, TRANSPARENT_BUILD_THREADS=2 (coordinator unit CPUQuota=200%)",
+                "worker": "taskset -c 6,7, TRANSPARENT_BUILD_THREADS=2, --build-slots 1 (recent-01 zz-latency.conf CPUQuota=200%, two build threads)"},
+ "worker_flags": "--role recent-replica --cache-bytes 536870912 --build-slots 1 --query-slots 2 --retain-revisions 1; no runtime disk cache; no queries",
+ "publication": {"geometry": "txid-2k", "n_archive": 1, "n_recent": 1, "archive_target": 40000, "recent_floor": 10000,
+                 "reorg_margin": 100, "max_archive_shards": 2, "recent_records": "43,243 to 43,566", "tables_per_block": 2},
+ "journal": {"kind": "synthetic (txid-display-controller synth-journal)", "start": 1000, "blocks": 12000, "mean_records": 8,
+             "seed": 7, "records": 96023, "genesis": "5e5e…5e (synthetic)", "bootstrap_through": 11400, "replay": "11401..11440, one block per 4 s"},
+ "rsync": "rsync -a --delete --numeric-ids --stats [--exclude=*.runtime] --link-dest=<previous> next/ dest/.tmp-next/; local disk; 5 repeats each; sync -f included",
+ "results": "summary.json (run 2) and raw/run1/summary.json",
+ "limits": ["rsync measured on local disk, not over SSH on the private network", "worker CPU on a faster idle CPU than recent-01", "synthetic chain", "two runs on a shared host"]
+}

@@ -10,6 +10,7 @@ is the worker's utime + stime over the steady cycles' span, divided by their
 count; the worker answers no queries, so all of it is preparation.
 """
 import json
+import re
 import statistics
 import sys
 from pathlib import Path
@@ -33,7 +34,10 @@ def dist(values):
 
 
 def lines(path):
-    return [json.loads(line) for line in Path(path).read_text().splitlines() if line.strip()]
+    # bench.sh before its leading-zero fix wrote `"seconds": .05` for times
+    # under a second; read that as 0.05.
+    text = re.sub(r': \.', ': 0.', Path(path).read_text())
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 def cpu_seconds(samples, start_ms, end_ms):

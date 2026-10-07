@@ -1,0 +1,8 @@
+2026-10-07T21:40:32Z synthetic journal 1000+12000 mean 8
+2026-10-07T21:41:57Z bootstrap through 11400
+2026-10-07T21:42:00Z baseline: replay 40 blocks, one per 4000 ms, controller flags: 
+2026-10-07T21:44:41Z baseline: done
+2026-10-07T21:44:42Z shipped: replay 40 blocks, one per 4000 ms, controller flags: --ship-runtimes
+2026-10-07T21:47:30Z shipped: done
+2026-10-07T21:47:30Z rsync delta candidate-11439-fb5aa9aa17e8f5ce5c482b8f89dbdaadca198c6119cc7e3007d525ec30fc9ddc-1791409637825649962 -> candidate-11440-5039a761ebdce87f827a14919b3389cbb052abe4f3d22d178c8b4937a5674cb7-1791409644221182986
+2026-10-07T21:47:37Z done

@@ -6,6 +6,26 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Shipped txid display runtimes, 2026-10-07
+
+`txid-display-controller run --ship-runtimes` ([design](txid-display.md#shipped-recent-runtimes))
+is on `main`, off by default and not deployed. With it the controller builds
+the recent revision's runtimes and ships them at the candidate root; the
+recent replica loads and self-checks them instead of building, and builds
+locally, counted, when a file is missing or refused.
+
+[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md)
+on roman-dev-2, synthetic chain, controller and worker each on two CPUs:
+- 40.05 MiB per file, 80.09 MiB per block (estimate 80–140 MiB).
+- Controller prebuild p50 4.36 s, p95 5.19 s; worker prepare p50 3.62 → 1.33 s
+  and CPU per block 5.80 → 1.15 CPU-s; 0 fallbacks in 48 loads.
+- Local rsync of one block's delta: 96 MiB in p50 0.33 s. The private-network
+  copy is not measured; production copied a 16 MiB delta in p95 2.37 s.
+- On equal CPUs the controller cycle got slower, p50 4.2 → 6.4 s: the prebuild
+  is on the critical path. Whether production gets faster depends on the
+  coordinator out-building recent-01 under history load, which only the
+  deploy can show.
+
 ## Split txid display map, 2026-10-07
 
 The split map ([design](txid-display.md#split-map)) is on `main`, not deployed.

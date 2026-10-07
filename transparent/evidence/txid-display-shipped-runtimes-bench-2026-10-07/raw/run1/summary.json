@@ -1,0 +1,218 @@
+{
+ "baseline": {
+  "candidate_ms": {
+   "max": 16,
+   "mean": 9.889,
+   "min": 8,
+   "n": 36,
+   "p50": 9,
+   "p95": 13
+  },
+  "controller_build_s_per_file": null,
+  "controller_write_s_per_file": null,
+  "cycle_ms": {
+   "max": 5618,
+   "mean": 4223.139,
+   "min": 3995,
+   "n": 36,
+   "p50": 4139,
+   "p95": 4515
+  },
+  "cycles": 36,
+  "first_cycle": {
+   "cycle_ms": 4580,
+   "prebuild_ms": null,
+   "prepare_ms": 3952
+  },
+  "prebuild_failures": 0,
+  "prebuild_ms": null,
+  "prepare_ms": {
+   "max": 5060,
+   "mean": 3620.083,
+   "min": 3409,
+   "n": 36,
+   "p50": 3536,
+   "p95": 3908
+  },
+  "recent_records": {
+   "max": 43566,
+   "mean": 43404.0,
+   "min": 43268,
+   "n": 36,
+   "p50": 43405,
+   "p95": 43546
+  },
+  "shipped_file_mib": {},
+  "shipped_files_per_cycle": null,
+  "shipped_mib_per_cycle": null,
+  "worker_built": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 36,
+   "p50": 2,
+   "p95": 2
+  },
+  "worker_cpu_seconds_per_cycle": 5.687,
+  "worker_cpu_seconds_total": 204.73,
+  "worker_prepare_s": {
+   "max": 5.06033359,
+   "mean": 3.62,
+   "min": 3.408903381,
+   "n": 36,
+   "p50": 3.53578884,
+   "p95": 3.907636891
+  },
+  "worker_self_check_ms": null,
+  "worker_shipped": null,
+  "worker_shipped_fallbacks_total": 0
+ },
+ "rsync_one_block_delta": {
+  "none": {
+   "seconds": {
+    "max": 0.412620735,
+    "mean": 0.358,
+    "min": 0.32652682,
+    "n": 5,
+    "p50": 0.350511423,
+    "p95": 0.412620735
+   },
+   "transferred_mib": [
+    96.095
+   ]
+  },
+  "runtimes": {
+   "seconds": {
+    "max": 0.127449742,
+    "mean": 0.123,
+    "min": 0.118501837,
+    "n": 5,
+    "p50": 0.123397618,
+    "p95": 0.127449742
+   },
+   "transferred_mib": [
+    16.004
+   ]
+  }
+ },
+ "shipped": {
+  "candidate_ms": {
+   "max": 18,
+   "mean": 9.609,
+   "min": 8,
+   "n": 23,
+   "p50": 9,
+   "p95": 11
+  },
+  "controller_build_s_per_file": {
+   "max": 2.06213078,
+   "mean": 1.412,
+   "min": 1.285332444,
+   "n": 46,
+   "p50": 1.370997992,
+   "p95": 1.681473343
+  },
+  "controller_write_s_per_file": {
+   "max": 0.820094806,
+   "mean": 0.595,
+   "min": 0.548192252,
+   "n": 46,
+   "p50": 0.579291494,
+   "p95": 0.737359385
+  },
+  "cycle_ms": {
+   "max": 8264,
+   "mean": 6815.565,
+   "min": 6370,
+   "n": 23,
+   "p50": 6608,
+   "p95": 7786
+  },
+  "cycles": 23,
+  "first_cycle": {
+   "cycle_ms": 6581,
+   "prebuild_ms": 4634,
+   "prepare_ms": 1332
+  },
+  "prebuild_failures": 0,
+  "prebuild_ms": {
+   "max": 6137,
+   "mean": 4796.0,
+   "min": 4475,
+   "n": 23,
+   "p50": 4692,
+   "p95": 5594
+  },
+  "prepare_ms": {
+   "max": 1708,
+   "mean": 1401.304,
+   "min": 1272,
+   "n": 23,
+   "p50": 1360,
+   "p95": 1583
+  },
+  "recent_records": {
+   "max": 43566,
+   "mean": 43410.087,
+   "min": 43268,
+   "n": 23,
+   "p50": 43405,
+   "p95": 43555
+  },
+  "shipped_file_mib": {
+   "directory-0": {
+    "max": 40.04552459716797,
+    "mean": 40.046,
+    "min": 40.04552459716797,
+    "n": 23,
+    "p50": 40.04552459716797,
+    "p95": 40.04552459716797
+   },
+   "pages": {
+    "max": 40.04552459716797,
+    "mean": 40.046,
+    "min": 40.04552459716797,
+    "n": 23,
+    "p50": 40.04552459716797,
+    "p95": 40.04552459716797
+   }
+  },
+  "shipped_files_per_cycle": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 23,
+   "p50": 2,
+   "p95": 2
+  },
+  "shipped_mib_per_cycle": {
+   "max": 80.09104919433594,
+   "mean": 80.091,
+   "min": 80.09104919433594,
+   "n": 23,
+   "p50": 80.09104919433594,
+   "p95": 80.09104919433594
+  },
+  "worker_built": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 23,
+   "p50": 2,
+   "p95": 2
+  },
+  "worker_cpu_seconds_per_cycle": 1.102,
+  "worker_cpu_seconds_total": 25.35,
+  "worker_prepare_s": {
+   "max": 1.708189144,
+   "mean": 1.4,
+   "min": 1.272074696,
+   "n": 23,
+   "p50": 1.356653706,
+   "p95": 1.579703162
+  },
+  "worker_self_check_ms": null,
+  "worker_shipped": null,
+  "worker_shipped_fallbacks_total": 0
+ }
+}

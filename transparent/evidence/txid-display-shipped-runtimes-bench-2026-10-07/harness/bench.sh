@@ -110,7 +110,7 @@ for exclude in none runtimes; do
       "$next/" "$dest/.tmp-next/" >"$OUT/rsync-$exclude-$i.stats"
     sync -f "$dest/.tmp-next"
     ended=$(date +%s.%N)
-    echo "{\"exclude\": \"$exclude\", \"repeat\": $i, \"seconds\": $(echo "$ended - $started" | bc)}" \
+    echo "{\"exclude\": \"$exclude\", \"repeat\": $i, \"seconds\": $(echo "$ended - $started" | bc | sed 's/^\./0./')}" \
       >>"$OUT/rsync.jsonl"
     rm -rf "$dest"
   done
