@@ -306,16 +306,23 @@ class FleetTests(unittest.IsolatedAsyncioTestCase):
 
     @unittest.skipUnless(hasattr(os,'fork'),'requires Unix descriptor inheritance')
     async def test_cancelled_channel_does_not_wait_for_a_descendant_output_pipe(self):
-        import sys
+        import signal,sys,time
         started=self.root/'descendant-started';release=self.root/'descendant-release'
+        # The orphaned descendant also stops once tearDown removes its directory or
+        # after a deadline, so a missed release can never leave it polling forever.
         code="""import os,time,sys
 from pathlib import Path
 if os.fork()==0:
- Path(sys.argv[1]).touch()
- while not Path(sys.argv[2]).exists():time.sleep(.01)
+ started,release=Path(sys.argv[1]),Path(sys.argv[2]);deadline=time.monotonic()+10
+ started.with_suffix('.tmp').write_text(str(os.getpid()));os.replace(started.with_suffix('.tmp'),started)
+ while not release.exists() and release.parent.is_dir() and time.monotonic()<deadline:time.sleep(.01)
  os._exit(0)
 time.sleep(10)
 """
+        def alive(pid):
+            try:os.kill(pid,0)
+            except (ProcessLookupError,PermissionError):return False
+            return True
         task=asyncio.create_task(module.run([sys.executable,'-c',code,str(started),str(release)],file_output=True))
         try:
             async def ready():
@@ -326,6 +333,11 @@ time.sleep(10)
         finally:
             release.touch()
             await asyncio.gather(task,return_exceptions=True)
+            # The descendant was reparented away from the test; wait for it, then kill it.
+            if started.exists():
+                pid=int(started.read_text());deadline=time.monotonic()+3
+                while alive(pid) and time.monotonic()<deadline:await asyncio.sleep(.01)
+                if alive(pid):os.kill(pid,signal.SIGKILL)
 
     async def test_enabled_control_requires_owned_session_but_prepare_stays_direct(self):
         from unittest.mock import AsyncMock

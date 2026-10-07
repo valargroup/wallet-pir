@@ -29,7 +29,12 @@ class TargetLeaseTests(unittest.TestCase):
                 let ready = std::env::var("LEASE_READY").unwrap();
                 let release = std::env::var("LEASE_RELEASE").unwrap();
                 std::fs::write(ready, "ready").unwrap();
-                while !std::path::Path::new(&release).exists() {
+                // Stop if the test's directory disappears or the deadline passes, so a
+                // failed test cannot leave this build script polling forever.
+                let release = std::path::Path::new(&release);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+                while !release.exists() && release.parent().unwrap().is_dir()
+                    && std::time::Instant::now() < deadline {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }''')
@@ -136,10 +141,13 @@ class TargetLeaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ready, release = root / 'ready', root / 'release'
+            # The orphaned grandchild also stops once the temporary directory is gone or
+            # after a deadline, so a failed test cannot leave it polling forever.
             child_code = (
                 'import pathlib,time; '
-                f'pathlib.Path({str(ready)!r}).touch(); '
-                f'\nwhile not pathlib.Path({str(release)!r}).exists(): time.sleep(.01)'
+                f'pathlib.Path({str(ready)!r}).touch(); release=pathlib.Path({str(release)!r}); '
+                'deadline=time.monotonic()+30'
+                '\nwhile not release.exists() and release.parent.is_dir() and time.monotonic()<deadline: time.sleep(.01)'
             )
             # stage.run -> shell -> Python -> grandchild; the intermediate Python
             # exits immediately. SIGKILL the wrapper while the last child is live.
