@@ -19,7 +19,12 @@
     }
   },
   "transparent-filter-server": {
-    "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end."
+    "controller::tests::rpc_follow_publishes_empty_blocks_and_recovers_a_sealed_reorg": "Runs RPC follow, real publication/fleet subprocesses and reorg cancellation end to end.",
+    "txid_display::controller::tests::incremental_stepping_reproduces_bootstrap": "Measured 7.7s locally: about 40 full 2,048-row display shard builds (16 MiB each) across three bootstraps and two stepped runs; full CI retains the equivalence check.",
+    "txid_display::controller::tests::verify_reproduces_a_running_root": "Measured 10.5s locally: five complete re-bootstraps of a display root (queued, running, after a reorg, and two tampered records); full CI retains the comparison.",
+    "txid_display::controller::tests::restart_resumes_without_touching_sealed_files": "Measured 5.5s locally: four controller recoveries that re-verify every sealed 16 MiB revision from disk; full CI retains the complete test.",
+    "txid_display::controller::tests::command_adapters_ship_then_relay_control": "Measured 3.8s locally: one adapter subprocess per ship and control call across several publications; full CI retains the transport test.",
+    "txid_display::controller::tests::the_window_drops_oldest_archives_and_keeps_the_rest": "Measured 4.6s locally: two bootstraps and a stepped run across several window drops; full CI retains the complete test."
   },
   "enhance-pir-server": {
     "runtime::tests::partial_preparation_failure_preserves_published_and_retries": "Real multi-unit cryptographic preparation and independent evaluation; full CI retains the complete test.",

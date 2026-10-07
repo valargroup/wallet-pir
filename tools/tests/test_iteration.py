@@ -59,6 +59,18 @@ class PlannerTests(unittest.TestCase):
         result = fast.plan(self.packages, ['transparent/ops/scripts/stage-transparent-parents.py'])
         self.assertEqual(set(result['helpers']), {'check-ops-contracts', 'check-ops-parents'})
 
+    def test_txid_display_ops_route_to_their_own_check(self):
+        for path in ['transparent/ops/lib/txid_display_poc.py', 'transparent/ops/scripts/txid-display-fleet.py',
+                     'transparent/ops/deploy/txid-display-routes.caddy.in',
+                     'transparent/ops/tests/test_txid_display_router.py']:
+            result = fast.plan(self.packages, [path])
+            self.assertEqual(set(result['helpers']), {'check-ops-txid-display', 'check-ops-contracts'}, path)
+            self.assertEqual(result['packages'], [])
+        # The history adapter's hook and the pinned firewall sources reach it too.
+        for path in ['transparent/ops/scripts/transparent-live-fleet.py',
+                     'ops/infra/digitalocean/production/transparent.tf']:
+            self.assertIn('check-ops-txid-display', fast.plan(self.packages, [path])['helpers'], path)
+
     def test_leaf_reverse_dependencies_and_embedded_fixture(self):
         result = fast.plan(self.packages, ['enhance/services/pir-apm/src/dashboard.rs'])
         self.assertEqual(set(result['packages']), {'pir-apm', 'pir-monitor'})
@@ -226,6 +238,21 @@ class IntegrityTests(unittest.TestCase):
             run.return_value.returncode = 0
             with self.assertRaisesRegex(SystemExit, 'stale'):
                 snapshot.main()
+
+    def test_release_build_produces_every_default_bundle_binary(self):
+        # `release.py assemble` without --kind bundles every kind not built on request.
+        workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
+        job = workflow.split('\n  release:\n', 1)[1].split('\n  release-cuda:\n', 1)[0]
+        build = job.split('Build optimized release binaries once', 1)[1].split('- name:', 1)[0]
+        built = {word.split()[0] for word in build.split('--bin ')[1:]}
+        release = load('release')
+        for kind, binaries in release.BINARIES.items():
+            if kind in release.ON_REQUEST:
+                continue
+            self.assertLessEqual(set(binaries), built, kind)
+            self.assertIn('name: %s-${{ github.sha }}' % kind, job)
+            self.assertIn('path: release-bundles/%s.tar.gz' % kind, job)
+        self.assertIn('cargo build --locked --release', build)
 
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()

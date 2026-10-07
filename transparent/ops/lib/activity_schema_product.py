@@ -10,6 +10,7 @@ import asyncio
 import base64
 import hashlib
 import importlib.util
+import json
 import time
 import urllib.error
 from pathlib import Path
@@ -31,6 +32,7 @@ T = module('product_templates', HERE/'activity_schema_templates.py')
 D = module('product_dispatch', HERE/'activity_schema_dispatch.py')
 O = module('product_operation', HERE/'activity_schema_operation.py')
 I = module('product_inputs', HERE/'activity_input_stage.py')
+INVENTORY = module('product_inventory', HERE.parent/'scripts/transparent-fleet-inventory.py')
 C = I.C
 H, R = T.H, T.R
 # Historical identity of the immutable publication, its initial assignment and
@@ -403,9 +405,16 @@ class Product:
         self.candidate_activation(captured=True)
         digest = H.transparent_map.served_sha256(self.mapping)
         assignment_path = state/(digest+'.assignment.json')
-        H.B.atomic(assignment_path, checked(self.spec['assignment']).read_bytes())
+        assignment = checked(self.spec['assignment']).read_bytes()
         roster = H.load(H.ROOT/'v11/roster.json')
         H.require({w['id'] for w in roster} == {w['id'] for w in self.rows}, 'installed roster omits planned fleet')
+        # The scaler and actuator read membership intent and worker upstreams
+        # only from the inventory; seeded here, it projects the installed roster.
+        inventory = INVENTORY.seed(roster, json.loads(assignment))
+        H.require(INVENTORY.roster_view({**inventory, 'revision': 1}) == roster,
+                  'inventory would not reproduce the installed roster')
+        INVENTORY.validate({**inventory, 'revision': 1})
+        H.B.atomic(assignment_path, assignment)
         H.B.atomic(state/(digest+'.roster.json'), H.encode(roster))
         prepared = {e['plan']['worker']['id']:{'expected':digest, 'publication':{k:e['plan']['worker'][k] for k in ('directory','assignment','map_sha256')}} for e in self.workers}
         req = {'directory':str(PUBLICATION), 'map_sha256':digest, 'recent_from':self.spec['recent_from'],
@@ -415,6 +424,8 @@ class Product:
                             ('active.json',{'map_sha256':digest,'workers':sorted(prepared),'assignment':str(assignment_path)}),
                             ('maintenance.json',{'enabled':True})):
             H.B.atomic(state/name, H.encode(value))
+        # No roster path: the installed roster's bytes stay those the host plan bound.
+        INVENTORY.Inventory(state).write(0, lambda _: inventory, 'activity-schema-seed', archive=True)
         H.B.atomic(PUBLICATION.parent/'active.json', H.encode(self.expected_activation()))
         scaler = H.ROOT/'v11/scaler'
         scaler.mkdir(mode=0o700)

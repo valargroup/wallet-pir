@@ -155,6 +155,13 @@ jobs:
     runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
     steps:
       - uses: actions/checkout@v4
+      - name: Read repository Rust toolchain
+        id: helper-toolchain
+        run: python3 -c 'import os,tomllib; t=tomllib.load(open("rust-toolchain.toml","rb"))["toolchain"]["channel"]; print("toolchain="+t, file=open(os.environ["GITHUB_OUTPUT"],"a"))'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ steps.helper-toolchain.outputs.toolchain }}
+          components: rustfmt, clippy
       # Parses and lints every ops script, compiles every jq program the deploy
       # scripts run, and evaluates the transparent ones against payloads
       # `operator_payloads.rs` serialized from the server's own types. This
@@ -382,7 +389,9 @@ jobs:
           --bin enhance-pir-server --bin enhance-pir-load-test
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
           --bin transparent-shard-server --bin shard-assign --bin shard-prune
-          --bin shard-control --bin transparent-publish-controller --features enhance-pir/cli
+          --bin shard-control --bin transparent-publish-controller
+          --bin transparent-txid-server --bin txid-control --bin txid-inventory
+          --bin txid-display-controller --bin transparent-event-ingest --features enhance-pir/cli
       - name: Assemble checksummed release bundles
         env:
           SHA: ${{ github.sha }}
@@ -456,6 +465,14 @@ jobs:
         with:
           name: transparent-publisher-${{ github.sha }}
           path: release-bundles/transparent-publisher.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: transparent-txid-display-${{ github.sha }}
+          path: release-bundles/transparent-txid-display.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error

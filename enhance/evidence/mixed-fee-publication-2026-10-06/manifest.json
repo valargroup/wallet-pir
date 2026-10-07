@@ -1,0 +1,28 @@
+{
+  "run_id": "mixed-fee-publication-2026-10-06",
+  "recorded_at_utc": "2026-10-06T17:05:16Z",
+  "kind": "local correctness checks; no deployment, no host access, no production data",
+  "source_revision": "ab1ddeb2a5a609645e105f0c352c7f10bcfa6376",
+  "base_revision": "031a23cb489bba174eef3e43201c35ff61b5a025",
+  "package": "enhance-pir-server",
+  "profile": "release-fast (Cargo.lock locked; .cargo/config.toml target-cpu=native)",
+  "features": {"default": "checks and tests", "native-reinspiring": "build only (--bins)"},
+  "zakura_chain": "6.0.0 at zakura-core/zakura 1faf150fc3648aae22c55a6b30f8f5a9b9ce934e",
+  "toolchain": {"rustc": "1.97.1 (8bab26f4f 2026-07-14)", "cargo": "1.97.1 (c980f4866 2026-06-30)"},
+  "host": {"role": "ephemeral development worker", "cpu": "Intel Xeon Platinum 8168 @ 2.70GHz, 8 visible, 3 allotted", "memory_gib": 31, "os": "Ubuntu 24.04.5 LTS"},
+  "chain_data": "synthetic: public fixture tx f337d967...8d13 (Ironwood actions) and public Sapling tx ca6abd8e...ed59 (bundle only), with hand-set values; mock JSON-RPC node; no wallet identifiers",
+  "commands": [
+    {"command": "make check-fast BASE=031a23cb", "log": "raw/check-fast.log.gz", "exit": 0},
+    {"command": "RUST_TEST_THREADS=1 cargo test --locked --profile release-fast -p enhance-pir-server --test rpc --test canonical_record", "log": "raw/rpc-tests.log.gz", "exit": 0},
+    {"command": "make check-package PACKAGE=enhance-pir-server TEST=fee", "log": "raw/check-package-fee.log.gz", "exit": 0},
+    {"command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --all-targets -- -D warnings", "log": "raw/clippy.log.gz", "exit": 0},
+    {"command": "cargo build --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --bins", "log": "raw/native-build.log.gz", "exit": 0}
+  ],
+  "results": {
+    "check_fast_lib_bin_tests": "169 passed, 9 skipped by the fast-tier selection",
+    "rpc_target": "10 passed (existing canonical CLI test, 8 mixed_fee, 1 rebuild/adoption)",
+    "canonical_record": "1 passed",
+    "failures": 0,
+    "not_run": ["native-reinspiring tests (8 lib tests already fail under that feature on the base revision)", "full CI tier", "real chain or production journal"]
+  }
+}

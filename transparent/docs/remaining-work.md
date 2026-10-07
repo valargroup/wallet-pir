@@ -299,6 +299,102 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Tiered txid display proof of concept (2026-10-05)
+
+Design and leakage: [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept).
+Roman's decisions: production side by side with history, which stays untouched;
+N=1 buckets; no paid infrastructure; commit to `main`.
+
+- [x] Format, seal rule, controller, display worker, reference client, load and
+  bandwidth tools, and the `txid-display-*` deploy commands, with package and ops tests.
+- [x] [Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md):
+  seals and window drops reproduced by `verify`, 0 audit violations, all lookups
+  exact, metered bytes equal computed, recent bench and bucket ablation.
+- [x] Main CI green at `d191f86b` (CI full run 37388223909);
+  `transparent-txid-display` release artifact.
+- [x] Production access for the deploying account through the coordinator to
+  archive-03, recent-01 and the router; a `wallet-pir-deploy` inventory with pinned `known_hosts`.
+- [x] Production change applied with `archive_target` 40,000 and N=1 buckets.
+- [x] Deployed in order on 2026-10-06: W0 baseline, `stage`, `ingest-start`, `firewall`,
+  `router-hook`, `bootstrap`, `workers`, `route`, `measure-start`, `controller`
+  ([status](status.md#tiered-txid-display-in-production-2026-10-07)).
+- [x] Synchronous wallet client crate `transparent-txid-client` with
+  in-process transcript, error and tamper tests
+  ([wallet client](txid-display.md#wallet-client)).
+- [ ] Measure each criterion live and write the production results (a 20 QPS run
+  started 2026-10-07):
+  - anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
+  - recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max;
+  - archives: sealed digests unchanged across rebuilds and seals;
+  - latency: p99 at most 500 ms at the 20 QPS reference, with history p99 against W0;
+  - bandwidth: under 300 KB per lookup over HTTPS, inline and overflow;
+  - growth: seals and drops with no operator action across several boundaries.
+- [ ] Roman decides whether to leave it running, `stop` or `retire`.
+
+## Txid display backfill below 3,407,001 (proposed 2026-10-07)
+
+Plan and change sheet:
+[deployment](deployment.md#txid-display-backfill-below-3407001-proposed).
+Sizing:
+[evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md).
+Roman chose a genesis floor. Without a cutover, the live 24-archive window
+starts dropping archives around mid-December 2026.
+
+- [x] Count display-eligible transactions per height range and size each start
+  from genesis to 3,000,000.
+- [x] Measure runtime memory: `txid-2k` and `txid-4k` hold four-byte matrices,
+  44% and 40% below the reservation (synthetic rows).
+- [ ] Genesis display ingest: running since 16:47 UTC on 2026-10-07
+  (`transparent-txid-display-genesis-ingest`; ETA about 21:15 UTC, reported
+  by the orchestrator). Verify block count equals sidecar count and run a spot
+  check.
+- [ ] Layout experiments on real data, such as shared or smaller page tables,
+  before the host is chosen.
+- [ ] G1, Roman: choose the display-archive host. `m-8vcpu-64gb` is
+  recommended at today's layout; the decision is deferred until the layout
+  experiments are done.
+- [x] Code: reservation true-up and `shard-residency` display geometries
+  (source only; no release carries them yet).
+- [x] Code: split display map, on `main` beside the unchanged full map (source
+  only; no release carries it yet); measured in
+  [status](status.md#split-txid-display-map-2026-10-07). After a 409 it costs
+  about 1.1 KB gzipped at 426 entries, not 0.5 KB.
+- [ ] Code: ops caps, `workers --replace-active` and the new archive host;
+  Terraform resource; full CI and a release (G2).
+- [ ] Retire `/v1/txid/shards` once deployed wallets use the split map; a
+  later approved deploy.
+- [ ] P0, read-only: real disk-cache entry lengths on archive-03; coordinator
+  free disk, inodes and node state.
+- [ ] G3, Roman: approve the change sheet. Then run P1–P5: provision, stage,
+  ingest from 0, bootstrap and verify, and the cutover.
+- [ ] Live acceptance: the existing criteria, plus exact lookups in every era,
+  split-map bytes, the host at or above 20% available memory, and history p99
+  within W0.
+- [ ] G5, Roman: retire the archive-03 display worker and delete the old
+  journal and root.
+
+## Txid display sizing and independent routing
+
+Findings and evidence: [sizing and anonymity](../../docs/transparent-txid-sizing-and-anonymity-findings.md).
+The boundary is strictly more than 80% of eligible confirmed records inline.
+The probability study supports a 128-byte sizing recommendation above 80%;
+full-population census and anonymity minima remain **UNQUALIFIED**.
+
+The completed one-working-day study supersedes the exhaustive UTXO/fee/native-capacity
+qualification in task `t-01dd8f7354154bb8`. Its 0–30,811 biased-prefix checkpoint,
+raw inputs and branches remain preserved; its historical 72-hour stop/resume
+procedure is not a prerequisite for this study. The live node executable source
+pin remains unavailable through the sanctioned read-only RPC interface.
+
+- [x] Discover documented node/export sources and retain sanitized access/selection outcomes; preserve PR #124's vectors and controls with exact provenance.
+- [x] Build a parent-free canonical export path with complete eligibility, shared shielded flags, raw outputs and current display bytes; bound unknown exact-fee encoded length using canonical monetary limits.
+- [x] Complete the fixed-anchor, era-stratified whole-range probability sample within the one-day budget; publish clustered uncertainty, all requested cutoffs, 85/90/95/99 frontiers and conservative fee-size membership.
+- [x] Select a useful cutoff strictly above 80% from that bounded study and assess independent coarse/hash lookup with global/broad overflow, joint routes, excess counts, thin revisions and timing. Sample estimates do not qualify population anonymity minima.
+- [ ] Remaining full-data gate: obtain sanctioned bulk/archive-local extraction and reconcile canonical genesis-to-anchor eligibility, exact identity and membership. Resolve exact fees only when their encoded-size uncertainty can change a decision. No full UTXO reconstruction is required for display sizing.
+- [ ] Before changing production geometry, replay all observable joint routes across retained revisions, segment/request counts, refresh boundaries and relevant timing/history conditioning. Require distinct-real-candidate policy decisions for K=1000/10000; padding, fragments and a global overflow route cannot widen a narrow lookup class.
+- [ ] Measure a small representative native workload only where it can change the geometry choice; report reservations and uploaded/returned bytes separately from measured RSS/latency. Exhaustive concurrency/hardware qualification and wallet recovery belong to separate release work.
+- [ ] Implement any selected threshold, independent sharding, compact codec/envelope or manifest change in a subsequent authorized production-code task. Keep one logical coordinator and independent display/history geometry; require explicit residual-correlation and policy decisions.
+
 ## Release boundary
 
 Use the existing native adapter and Flutter example in Roman's

@@ -1,0 +1,17 @@
+{
+ "run_id": "txid-display-backfill-sizing-2026-10-07/genesis",
+ "kind": "planning arithmetic for a genesis floor, plus measured runtime residency",
+ "deployment": "none; no network for genesis.py, no SSH, no production change",
+ "decision_input": "Roman chose a genesis coverage floor on 2026-10-07",
+ "source": {"sizing_commit": "8cccfa4413986c638e7a6a26abed1a8d7a33445a",
+            "residency_source": "8cccfa44 plus residency/shard-residency-display.patch (not on main)",
+            "build": "release-fast, -C target-cpu=native (repository config)",
+            "commands": ["python3 -B genesis.py",
+                         "cargo run --locked --profile release-fast -p transparent-shard-server --bin shard-residency -- --geometry {txid-2k,txid-4k} --table {txdirectory,txpages} --runtimes 6"]},
+ "host": {"name": "roman-dev-2", "sku": "DigitalOcean premium Intel, 8 vCPU, 31 GiB", "sharing": "shared development host"},
+ "inputs": ["inputs/ (captured 2026-10-07T16:05Z)", "the retained maps listed in manifest.json"],
+ "measured": ["resident increments per runtime, synthetic rows (residency/*.txt)"],
+ "derived": ["counts from genesis", "archives, memory, disk per geometry variant and host", "map bytes per design (synthetic hashes, live entry shape)", "ingest needs"],
+ "not_measured": ["real-table runtime size", "coordinator disk, inodes and node state", "sidecar fsync throughput", "DigitalOcean prices and disk sizes (list figures, verify)"],
+ "outputs": ["genesis.json", "residency/"]
+}

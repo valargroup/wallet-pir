@@ -1,0 +1,149 @@
+{
+ "base": "https://transparent-pir.valargroup.dev",
+ "files": [
+  {
+   "file": "history-shards.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/shards",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 49850,
+   "sha256": "9088902b3fbbbc60f0f91c469f82ac5e9a70e9ac3141618cf805b19ae75fdd33",
+   "fetched_utc": "2026-10-07T16:05:15+00:00"
+  },
+  {
+   "file": "txid-shards.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 8854,
+   "sha256": "39acc96fe99ab2fce53b0888ce6b74c8bb90e6120877b3d8592ce0d8573cd5a8",
+   "fetched_utc": "2026-10-07T16:05:16+00:00"
+  },
+  {
+   "file": "txid-manifest-00.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/0/revisions/309867e788121f314577fb7f4db53d93d51f7b135700356153d4f6dc89343a5f/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1141,
+   "sha256": "309867e788121f314577fb7f4db53d93d51f7b135700356153d4f6dc89343a5f",
+   "fetched_utc": "2026-10-07T16:05:16+00:00"
+  },
+  {
+   "file": "txid-manifest-01.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/1/revisions/eb37313c961c90af5d23cd4db39f04d9517dda13862161777b14d1b672f11364/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1204,
+   "sha256": "eb37313c961c90af5d23cd4db39f04d9517dda13862161777b14d1b672f11364",
+   "fetched_utc": "2026-10-07T16:05:17+00:00"
+  },
+  {
+   "file": "txid-manifest-02.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/2/revisions/f3f65be354f47e82509b84fb6e45e65a8f98e43563586e676232a2088115a134/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1205,
+   "sha256": "f3f65be354f47e82509b84fb6e45e65a8f98e43563586e676232a2088115a134",
+   "fetched_utc": "2026-10-07T16:05:17+00:00"
+  },
+  {
+   "file": "txid-manifest-03.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/3/revisions/1372d8d24b94fc97defee9a9f19c6abf129863e00dd7d65944a2d322d4fb2fe1/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1205,
+   "sha256": "1372d8d24b94fc97defee9a9f19c6abf129863e00dd7d65944a2d322d4fb2fe1",
+   "fetched_utc": "2026-10-07T16:05:18+00:00"
+  },
+  {
+   "file": "txid-manifest-04.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/4/revisions/2b8827b1da1cf0b0c1f4fe6ecfd771183f33e03567ce81a4d3bc4515416c305f/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1196,
+   "sha256": "2b8827b1da1cf0b0c1f4fe6ecfd771183f33e03567ce81a4d3bc4515416c305f",
+   "fetched_utc": "2026-10-07T16:05:18+00:00"
+  },
+  {
+   "file": "txid-manifest-05.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/5/revisions/fda44a15d096d39da4f2f3ab7b261bbc339ad5fd1a68472ccdbf7006ce61ef7a/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1196,
+   "sha256": "fda44a15d096d39da4f2f3ab7b261bbc339ad5fd1a68472ccdbf7006ce61ef7a",
+   "fetched_utc": "2026-10-07T16:05:18+00:00"
+  },
+  {
+   "file": "txid-manifest-06.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/6/revisions/f9be6b4210601034ad7ed91ace2cba4961a8f996658ed9021680440867f203f3/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1207,
+   "sha256": "f9be6b4210601034ad7ed91ace2cba4961a8f996658ed9021680440867f203f3",
+   "fetched_utc": "2026-10-07T16:05:19+00:00"
+  },
+  {
+   "file": "txid-manifest-07.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/7/revisions/e3ca06f84a772e10597bd9d797c2f93f8f59b2d81f0ea822fa2e748b0b1c2ae9/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1201,
+   "sha256": "e3ca06f84a772e10597bd9d797c2f93f8f59b2d81f0ea822fa2e748b0b1c2ae9",
+   "fetched_utc": "2026-10-07T16:05:19+00:00"
+  },
+  {
+   "file": "txid-manifest-08.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/8/revisions/b03b2c20e3c63dad93f04af8761ed0d457ab4edc3ab655202b73d53237ae2b21/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1202,
+   "sha256": "b03b2c20e3c63dad93f04af8761ed0d457ab4edc3ab655202b73d53237ae2b21",
+   "fetched_utc": "2026-10-07T16:05:20+00:00"
+  },
+  {
+   "file": "txid-manifest-09.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/9/revisions/8aa7fb385f887aee0fa92f04f6ea630f0b22f25972ecef615c2e46950d2720cc/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1195,
+   "sha256": "8aa7fb385f887aee0fa92f04f6ea630f0b22f25972ecef615c2e46950d2720cc",
+   "fetched_utc": "2026-10-07T16:05:20+00:00"
+  },
+  {
+   "file": "txid-manifest-10.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/10/revisions/dca3528d2e93ccfed8c42962d59249c72c37c07b9028a07c6aa8bafbacc16454/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1196,
+   "sha256": "dca3528d2e93ccfed8c42962d59249c72c37c07b9028a07c6aa8bafbacc16454",
+   "fetched_utc": "2026-10-07T16:05:21+00:00"
+  },
+  {
+   "file": "txid-manifest-11.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/11/revisions/f43977b8f3eae4148ab10d1be424e3240bbe67fc9b9ad3cee749f30e463af808/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1217,
+   "sha256": "f43977b8f3eae4148ab10d1be424e3240bbe67fc9b9ad3cee749f30e463af808",
+   "fetched_utc": "2026-10-07T16:05:21+00:00"
+  },
+  {
+   "file": "txid-manifest-12.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/12/revisions/1e63176d537d203de244a31b4b63e4683f1105a931912d41a524380b6a871771/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1203,
+   "sha256": "1e63176d537d203de244a31b4b63e4683f1105a931912d41a524380b6a871771",
+   "fetched_utc": "2026-10-07T16:05:22+00:00"
+  },
+  {
+   "file": "txid-manifest-13.json",
+   "url": "https://transparent-pir.valargroup.dev/v1/txid/shards/13/revisions/5fa049cbf8786e9bf97075124225dc15901e1fbc99f4cf11b8f364d99d0ff342/manifest",
+   "status": 200,
+   "content_encoding": null,
+   "bytes": 1277,
+   "sha256": "5fa049cbf8786e9bf97075124225dc15901e1fbc99f4cf11b8f364d99d0ff342",
+   "fetched_utc": "2026-10-07T16:05:22+00:00"
+  }
+ ]
+}

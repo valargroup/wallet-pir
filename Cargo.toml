@@ -14,6 +14,7 @@ members = [
     "transparent/crates/transparent-filter",
     "transparent/crates/transparent-native",
     "transparent/crates/transparent-shard",
+    "transparent/crates/transparent-txid-client",
     "transparent/crates/transparent-wallet",
     "transparent/crates/transparent-wallet-store",
     # Services and operational dashboard.

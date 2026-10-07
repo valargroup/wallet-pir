@@ -1,5 +1,13 @@
 //! Actual canonical-mode CLI ingestion against a local trusted-RPC test double.
-//! The public transaction is real; the block envelope is synthetic, not consensus-valid.
+//! The public transaction is real; the block envelope and the mixed
+//! transactions built from its actions are synthetic, not consensus-valid.
+mod support;
+// Producer fee derivation and the offline journal repair share the RPC double.
+#[path = "rpc/mixed_fee.rs"]
+mod mixed_fee;
+#[path = "rpc/rebuild.rs"]
+mod rebuild;
+
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
@@ -10,6 +18,7 @@ use enhance_pir::{client::EnhancePirClient, protocol::Manifest, ACTIVATION_HEIGH
 use enhance_pir_server::worker::Worker;
 use serde_json::{json, Value};
 use std::{
+    collections::HashMap,
     path::Path,
     process::{Child, Command, Stdio},
     sync::{
@@ -43,6 +52,7 @@ impl Drop for Process {
 #[derive(Clone)]
 struct Rpc {
     blocks: Arc<Vec<(String, String)>>,
+    transactions: Arc<HashMap<String, String>>,
     selected: Arc<AtomicUsize>,
     calls: Arc<AtomicUsize>,
     tree_size: Arc<AtomicUsize>,
@@ -57,6 +67,23 @@ async fn rpc(
         return Err(StatusCode::UNAUTHORIZED);
     }
     state.calls.fetch_add(1, Ordering::SeqCst);
+    Ok(Json(match request {
+        // Spent outputs are requested in JSON-RPC 2.0 batches, answered in
+        // reverse order so the client must place them by id.
+        Value::Array(requests) => Value::Array(
+            requests
+                .iter()
+                .rev()
+                .map(|request| {
+                    assert_eq!(request["jsonrpc"], "2.0");
+                    answer(&state, request)
+                })
+                .collect(),
+        ),
+        request => answer(&state, &request),
+    }))
+}
+fn answer(state: &Rpc, request: &Value) -> Value {
     let (raw, hash) = &state.blocks[state.selected.load(Ordering::SeqCst)];
     let result = match request["method"].as_str().unwrap() {
         "getblockcount" => json!(ACTIVATION_HEIGHT),
@@ -72,11 +99,49 @@ async fn rpc(
                 _ => panic!("unexpected verbosity"),
             }
         }
+        "getrawtransaction" => match state
+            .transactions
+            .get(request["params"][0].as_str().unwrap())
+        {
+            Some(raw) => json!(raw),
+            None => {
+                return json!({"result":null,"error":{"code":-5,"message":"No such transaction"},"id":request["id"]})
+            }
+        },
         _ => panic!("unexpected RPC method"),
     };
-    Ok(Json(
-        json!({"result":result,"error":null,"id":request["id"]}),
-    ))
+    json!({"result":result,"error":null,"id":request["id"]})
+}
+/// Positions 0..1: the frozen pure-Ironwood records. 2..3: 420,000 spent from
+/// a same-block output into 400,000 Ironwood. 4..5: 99,000 same-block plus
+/// 300,000 fetched from an earlier transaction, 100,000 transparent change
+/// and 279,000 into Ironwood. Expected fees are hand-computed: 20,000 each.
+async fn assert_answers(client: &mut EnhancePirClient, expected: &[Vec<u8>]) {
+    for (i, record) in expected.iter().enumerate() {
+        assert_eq!(
+            client
+                .query_position_with_timing(i as u64)
+                .await
+                .unwrap()
+                .0
+                .as_ref(),
+            record
+        );
+    }
+    for position in 2..6u64 {
+        let answer = client.query_position_with_timing(position).await.unwrap().0;
+        let record =
+            enhance_pir::EnhanceRecord::from_bytes(answer.as_ref().try_into().unwrap()).unwrap();
+        support::assert_fixture_action(&record, position as usize % 2);
+        assert_eq!(record.metadata().fee_zatoshis(), Some(20_000), "{position}");
+        let flags = record.as_bytes()[enhance_pir::types::RECORD_FLAGS_OFFSET];
+        assert_eq!(flags & enhance_pir::types::FLAG_HAS_TRANSPARENT_INPUTS, 1);
+        assert_eq!(
+            flags & enhance_pir::types::FLAG_HAS_TRANSPARENT_OUTPUTS != 0,
+            position >= 4,
+            "{position}"
+        );
+    }
 }
 async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
     let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -147,6 +212,24 @@ async fn published(process: &mut Process, root: &Path, origin: &str, hash: &str)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplication() {
     let tx = hex::decode(include_str!("fixtures/ironwood-fee-expiry.hex").trim()).unwrap();
+    let earlier = support::funding(1, &[300_000]);
+    let same_block = support::funding(2, &[420_000, 99_000]);
+    let mixed = [
+        support::Mixed::new(vec![support::spend(&same_block, 0)], &[], -400_000).build(),
+        support::Mixed::new(
+            vec![support::spend(&same_block, 1), support::spend(&earlier, 0)],
+            &[100_000],
+            -279_000,
+        )
+        .build(),
+    ];
+    let mut tail = Vec::new();
+    for transaction in [&same_block, &mixed[0], &mixed[1]] {
+        tail.extend(
+            zakura_chain::serialization::ZcashSerialize::zcash_serialize_to_vec(transaction)
+                .unwrap(),
+        );
+    }
     let mut blocks = Vec::new();
     for nonce in [0, 1, 2] {
         // Serialized Zcash header: version, roots, time/bits, nonce, Equihash
@@ -156,8 +239,9 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         raw[108] = nonce;
         raw.extend_from_slice(&[0xfd, 0x40, 0x05]);
         raw.extend_from_slice(&[0; 1344]);
-        raw.push(1); // one transaction
+        raw.push(4); // the public transaction, then the synthetic ones
         raw.extend_from_slice(&tx);
+        raw.extend_from_slice(&tail);
         let parsed = zakura_chain::block::Block::zcash_deserialize(raw.as_slice()).unwrap();
         blocks.push((hex::encode(raw), parsed.hash().to_string()));
     }
@@ -169,9 +253,14 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     .map(|s| hex::decode(s.trim()).unwrap()[84..].to_vec());
     let state = Rpc {
         blocks: Arc::new(blocks),
+        // Only the earlier transaction is outside the served block.
+        transactions: Arc::new(HashMap::from([(
+            earlier.hash().to_string(),
+            support::raw(&earlier),
+        )])),
         selected: Arc::new(AtomicUsize::new(0)),
         calls: Arc::new(AtomicUsize::new(0)),
-        tree_size: Arc::new(AtomicUsize::new(2)),
+        tree_size: Arc::new(AtomicUsize::new(6)),
     };
     let root = tempfile::tempdir().unwrap();
     let (rpc_url, rpc_task) = serve(
@@ -239,26 +328,16 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     let origin = format!("http://{address}");
     let mut process = start(root.path(), &address, &rpc_url);
     let first = published(&mut process, root.path(), &origin, &state.blocks[0].1).await;
-    assert_eq!(first.coverage.records, 2);
+    assert_eq!(first.coverage.records, 6);
     assert_eq!(
         std::fs::read_to_string(root.path().join("data/source-mode")).unwrap(),
         "canonical-archive"
     );
     let mut retained = EnhancePirClient::connect(&origin).await.unwrap();
-    for (i, record) in expected.iter().enumerate() {
-        assert_eq!(
-            retained
-                .query_position_with_timing(i as u64)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record
-        );
-    }
+    assert_answers(&mut retained, &expected).await;
     // A reorg response whose declared tree has a missing prefix cannot be
     // committed. Observe the actual ingestion failure, not just a short delay.
-    state.tree_size.store(3, Ordering::SeqCst);
+    state.tree_size.store(7, Ordering::SeqCst);
     state.selected.store(1, Ordering::SeqCst);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
@@ -289,7 +368,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         "journal rewind must not invalidate the retained serving snapshot"
     );
     hold_prepare.store(true, Ordering::SeqCst);
-    state.tree_size.store(2, Ordering::SeqCst);
+    state.tree_size.store(6, Ordering::SeqCst);
     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     while held_requests.load(Ordering::SeqCst) == 0 {
         assert!(process.0.try_wait().unwrap().is_none());
@@ -320,7 +399,7 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
     );
     assert!(second.generation > first.generation);
     assert_eq!(
-        second.coverage.records, 2,
+        second.coverage.records, 6,
         "reorg must rewind before replay, not append duplicates"
     );
     assert_eq!(
@@ -403,17 +482,8 @@ async fn canonical_cli_ingests_rpc_rewinds_reorg_and_restarts_without_duplicatio
         third
     );
     let mut current = EnhancePirClient::connect(&origin).await.unwrap();
-    for (i, record) in expected.iter().enumerate() {
-        assert_eq!(
-            current
-                .query_position_with_timing(i as u64)
-                .await
-                .unwrap()
-                .0
-                .as_ref(),
-            record
-        );
-    }
+    assert_answers(&mut current, &expected).await;
+    assert_answers(&mut retained, &expected).await;
     assert_eq!(
         retained
             .query_position_with_timing(1)

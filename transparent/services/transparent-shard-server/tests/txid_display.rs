@@ -164,3 +164,95 @@ async fn native_display_queries_bind_and_decode_every_segment() -> Result<(), tx
     server.abort();
     Ok(())
 }
+
+/// A hard-linked candidate must take over every table source of a reused
+/// revision. Display sources once kept pointing into the previous directory,
+/// so collecting it broke the next cold build of `txdirectory`.
+#[tokio::test]
+async fn relinked_revision_rebuilds_display_tables_after_old_directory_is_removed(
+) -> Result<(), txquery::Error> {
+    use tower::ServiceExt;
+    use transparent_shard_server::shardset::LoadOptions;
+    let temp = tempfile::tempdir()?;
+    let old = temp.path().join("old");
+    let new = temp.path().join("new");
+    let record = TransparentDisplayRecord {
+        txid: Txid([5; 32]),
+        coinbase: false,
+        metadata: TransactionMetadata {
+            fee: FeeState::Exact(10),
+            transparent_input_count: 1,
+            has_shielded_components: false,
+        },
+        outputs: vec![DisplayOutput {
+            value: 4,
+            script: vec![0x51; 25],
+        }],
+    };
+    let mut store = EventStore::open(
+        temp.path().join("journal"),
+        transparent_filter::MAINNET_GENESIS_DISPLAY,
+        1,
+    )?;
+    let events = vec![(
+        transparent_filter::ScriptBytes::new(record.outputs[0].script.clone()),
+        transparent_events::TransparentEvent::Receive(transparent_events::ReceiveEvent {
+            height: 1,
+            txid: record.txid,
+            transaction_index: 0,
+            output_index: 0,
+            value: 4,
+            coinbase: false,
+            metadata: Some(record.metadata),
+        }),
+    )];
+    store.append_block_with_display(
+        1,
+        BlockHash::from_internal_bytes([3; 32]),
+        &events,
+        std::slice::from_ref(&record),
+    )?;
+    store.commit()?;
+    let options = PublishOptions::parse_from([
+        "publish",
+        "--output",
+        old.to_str().unwrap(),
+        "--zakura-cookie",
+        "/unused",
+        "--recent-geometry",
+        "recent-4k",
+        "--txid-display",
+    ]);
+    let map = publish(&options, &store, BlockHash::from_internal_bytes([2; 32]))?;
+    let previous = ShardSet::open(&old, DEFAULT_RETAIN_REVISIONS)?;
+    let digest = map.shards[0].manifest_digest.clone();
+    std::fs::create_dir_all(new.join(&digest))?;
+    for entry in std::fs::read_dir(old.join(&digest))? {
+        let entry = entry?;
+        std::fs::hard_link(entry.path(), new.join(&digest).join(entry.file_name()))?;
+    }
+    std::fs::copy(old.join("shards.json"), new.join("shards.json"))?;
+    let set = ShardSet::open_reusing(
+        &new,
+        &LoadOptions::whole(DEFAULT_RETAIN_REVISIONS),
+        Some(&previous),
+    )?;
+    drop(previous);
+    std::fs::remove_dir_all(&old)?;
+    let state = ServiceState::build(set, ServiceConfig::default())?;
+    for table in ["txdirectory", "txpages", "directory", "pages"] {
+        let response = router(state.clone())
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/v1/shards/0/revisions/{digest}/setup/{table}/0"))
+                    .body(axum::body::Body::empty())?,
+            )
+            .await?;
+        assert_eq!(
+            response.status(),
+            200,
+            "{table} rebuilds from the new links"
+        );
+    }
+    Ok(())
+}

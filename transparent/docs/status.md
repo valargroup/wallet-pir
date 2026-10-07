@@ -6,6 +6,210 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Split txid display map, 2026-10-07
+
+The split map ([design](txid-display.md#split-map)) is on `main`, not deployed.
+Workers serve `/v1/txid/map` and `/v1/txid/map/{base}/{sha256}` beside the
+unchanged `/v1/txid/shards`; `transparent-txid-client` reads only the split.
+Live workers and already-built clients are unaffected until a release is
+deployed, and the ignored `txid_live_lookup` test fails against production
+until then, because production does not serve `/v1/txid/map`.
+
+Map body bytes per lookup, from `transparent-txid-client/tests/map_bytes.rs`
+on synthetic maps with the live entry shape. Gzip is level 6, as the sizing
+used; the route snippet gzips the two new routes when the client accepts it.
+
+| Entries | Full map, raw / gzip | Cold archive lookup | Cold recent lookup | Warm | After a 409 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 14 (13 archives, 1 chunk) | 8,854 / 1,941 | 7,074 / 2,171 | 912 / 547 | 0 | 912 / 547 |
+| 426 (425 archives, 14 chunks) | 259,264 / 46,258 | 17,300 / 4,817 | 2,227 / 1,134 | 0 | 2,227 / 1,134 |
+
+A cold archive lookup fetches the recent map and one chunk; a full 32-archive
+chunk is 15,073 B raw and 3,683 B gzipped. A 409 refetches the recent map
+alone; a chunk is refetched only after a seal or window drop changes its
+digest. The recent map holds one 64-hex digest per chunk, so after a 409 it
+costs about 1.1 KB gzipped at 426 entries, not the 0.5 KB the plan assumed.
+
+With the sizing's formula (104,700 B for a cold inline lookup without its
+map), a cold inline lookup at 426 entries costs 109.5 KB gzipped and 122.0 KB
+raw, against 364 KB with the full map; a cold 4-page lookup costs 315.2 KB
+gzipped. Warm lookups do not change.
+
+In the in-process tests (`release-fast`), 22 client tests pass and one live
+test is ignored. They include a new chunk-tampering test, and the transcript,
+409, cancellation and differential tests requalified for the chunk request.
+On the two-entry fixture a cold inline archive lookup moves 80,400 B up and
+35,902 B down, and a 409 refetch moves 880 B. Seven tiered display tests
+pass, including the split map served beside the unchanged full map across a
+seal, from a retired snapshot for a client on the old recent map.
+
+## Wallet txid client, 2026-10-07
+
+The synchronous wallet client `transparent-txid-client`
+([design](txid-display.md#wallet-client)) passed its unit tests and 20
+in-process tests in `transparent-shard-server/tests/txid_client.rs`. The
+in-process tests ran in `release-fast` against the two-worker display fixture.
+They cover the transcript, 409/503/421 handling, tampering, cancellation, route
+whitelisting and a differential check against the reference client on 95
+lookups. Body bytes per lookup, excluding HTTP headers (up / down):
+
+| Lookup | Up | Down |
+| --- | ---: | ---: |
+| Inline or absent, cold (init, map, manifest, setup) | 80,400 | 36,031 |
+| Inline or absent, warm | 80,400 | 11,296 |
+| 1 page, cold | 120,600 | 61,804 |
+| 2 pages, warm | 160,800 | 22,592 |
+| 5 pages, warm | 281,400 | 39,536 |
+
+The ignored `txid_live_lookup` test passed once against production at 16:38 UTC.
+It found mainnet txid `fd4667e1…effbf` at height 3,410,000 in archive shard 0,
+with a cold transfer of 80,400 B up and 43,379 B down. These are not acceptance
+measurements.
+
+## Scaler inputs after the v11 cutover, 2026-10-06
+
+History was cut over to schema v11 on 2026-10-03 at 17:35 UTC. The status
+entries below do not record that cutover.
+
+- **Scaler blind since the cutover.** The cutover seeded
+  `/opt/transparent-publisher/v11/state` without `inventory.json`. The scaler
+  reads worker upstreams only from the inventory, so it scraped nothing. All
+  3,951 decisions it logged from its start at 2026-10-03 17:56 UTC to
+  2026-10-06 12:31 UTC held on "inventory missing"; nearly all also held on
+  "metrics: not scraped". Routing was unaffected: v11
+  membership showed both recent replicas and archive-03 serving.
+- **Inventory seeded.** At 13:26 UTC, `transparent-fleet-inventory.py init`
+  wrote revision 1 from the v11 roster and active assignment: three static
+  members and archive range `a0` 0–81. It regenerated `v11/roster.json` with
+  identical content. The original bytes of that file and `credentials/known_hosts`
+  were then restored. From 13:28 the scaler, still in `observe`, reported
+  "steady: desired 2, serving 2, offered 4.0 qps" with p50 8 ms and p99 24 ms.
+  The cutover seed now writes the inventory itself.
+- **Actuator disabled.** `transparent-fleet-actuator` still used the pre-v11
+  `scaler/actuator.json` with the pre-v11 fleet configuration, and its
+  `scaler/policy.json` was `act`. A manual scale-out would have created a
+  droplet and then failed against the stale pre-v11 membership. At 13:26 UTC
+  `/opt/transparent-publisher/scaler/disabled` was created; each run now logs
+  `actuator_disabled`.
+- **APM re-pointed.** pir-apm's `scaling` family (shadow mode) had read the
+  pre-v11 `scaler/status.json`, last written 2026-10-03 17:35:37 UTC. At 13:27 UTC
+  its drop-in was changed to `v11/scaler/status.json` and pir-apm was restarted.
+  Backups are in `/root/v11-inventory-seed-20261006` on the coordinator.
+- **Open.**
+  - The actuator stays disabled and the scaler stays in `observe` until the
+    schema recipe covers the actuator unit.
+  - `v11/state` held 12,436 per-publication files after three days. The recipe
+    caps a captured candidate namespace at 512 entries.
+
+## Txid display block-to-serving change, 2026-10-07
+
+At 14:47 UTC the recent display worker on recent-01 was restarted with `07f90675`
+(batched hint for `txid-2k`) and two build threads on up to two CPUs, through
+a systemd drop-in rather than `txid-display-deploy`. Display still loses CPU to
+history: weight 50 against 100, and nice 10.
+
+- **Block to serving.** p50 16.1 s and p95 18.9 s over the previous 24 hours
+  (30 of 1,152 blocks over 20 s, worst 97 s). Over the first 40 cycles after:
+  p50 8.5 s, p95 12.4 s, worst 12.9 s, none over 20 s.
+- **History on recent-01.** Prewarm p50 10.06 to 10.33 s and p95 11.67 to
+  12.28 s over 40 rebuilds; not yet distinguishable from noise.
+- **Drift.** The reviewed deploy request still records the old limits (100%
+  quota, weight 20, one build thread) and release `d191f86b`; the drop-in
+  overrides both.
+
+[Evidence](../evidence/txid-display-freshness-2026-10-07/README.md); per-block
+incremental update is [valargroup/wallet-pir#128](https://github.com/valargroup/wallet-pir/issues/128).
+
+## Tiered txid display in production, 2026-10-07
+
+The tiered txid display proof of concept has served beside history since
+2026-10-06. History was not changed. Deployed from release `d191f86b`
+(CI full run 37388223909, success), with `archive_target` 40,000 and N=1 buckets.
+
+- **Deploy.** Ten `txid-display-*` transactions committed between 12:31 and
+  13:23 UTC on 2026-10-06, in order: stage, ingest smoke, ingest start,
+  firewall, router hook, bootstrap, workers, route, measure start, controller.
+  Each has a recorded rollback. The deploy state is kept outside the repository.
+- **Serving.** `/v1/txid/` on transparent-pir.valargroup.dev routes to port
+  8095 on archive-03 (archive owner) and recent-01 (recent replica). The
+  controller, observer and map watcher run on the coordinator.
+- **Health at 13:55 UTC on 2026-10-07.** All txid units active with 0 restarts.
+  Both workers were ready and warm: archive-03 with 26 of 26 runtimes through
+  height 3,502,508, recent-01 with 2 of 2 through 3,509,538, against a public
+  height of 3,509,537. The controller reported 13 archives and 47,268 recent
+  records, with 15.7 s from block to serving on its latest cycle.
+- **Open.** A 20 QPS measurement run started at 13:53 UTC on 2026-10-07; no
+  acceptance results are recorded yet. Every live criterion remains open, as
+  does Roman's keep, stop or retire decision
+  ([gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05)).
+
+## Txid display backfill sizing, 2026-10-07
+
+**Genesis display ingest running.** The orchestrator reports that a genesis
+display ingest has run on the coordinator since 16:47 UTC on 2026-10-07:
+
+- unit `transparent-txid-display-genesis-ingest`;
+- `event-ingest --txid-display --start-height 0`, under the proof of concept's
+  ingest limits;
+- into `/srv/zakura/txid-display-genesis/journal`;
+- expected to finish around 21:15 UTC.
+
+This task did not observe it: it had no deploy inventory or SSH. Nothing
+serves from that journal yet. Bootstrap, the cutover and the host remain
+proposals.
+
+**Host decision deferred.** The display-archive host is not chosen yet. It waits
+on layout experiments on real data. For example, shared or smaller page tables
+could shrink page-table memory and change the host class.
+
+Planning only; nothing was changed. At 16:05 UTC the public maps had these
+values:
+
+- **Display map.** It covered 3,407,001–3,509,639 with 567,880 records:
+  13 sealed archives of 40,001–40,013 records and a recent shard of 47,820.
+  Every archive has one directory and one page segment, and uses at most 776 of
+  2,048 page rows.
+- **History map.** Its txids over the same heights match the display records
+  within 0.4%. That makes history txids a usable proxy below 3,407,001, where no
+  display data exists.
+- **Map transfer.** The display map is served uncompressed, at 632 B per shard.
+
+The live root's window of 24 archives starts dropping archives around
+mid-December 2026 at the current seal rate. Roman then chose a genesis floor.
+That is about 425 archives, which do not fit archive-03. The plan is a fresh
+lineage on a dedicated 64 GB host, after a reservation true-up and a split
+display map. Six runtimes per table on roman-dev-2 measured `txid-2k` and
+`txid-4k` runtimes at the four-byte matrix size, 44% and 40% below the
+reservation
+([plan](deployment.md#txid-display-backfill-below-3407001-proposed),
+[evidence](../evidence/txid-display-backfill-sizing-2026-10-07/README.md),
+[gates](remaining-work.md#txid-display-backfill-below-3407001-proposed-2026-10-07)).
+No production host was logged into: archive-03's current memory and disk were
+not measured.
+
+## Tiered txid display proof of concept, 2026-10-05
+
+Source for a separately published, time-tiered and hash-bucketed txid display
+([design](txid-display.md#tiered-display-publication-proof-of-concept)) passed
+its package and ops tests at `1f89cac0`. Only local, synthetic evidence existed
+on this date; the production deployment is recorded above.
+
+- **End to end.** Two workers behind a local proxy and the controller replaying
+  12,000 synthetic blocks: 4 seals and 2 window drops reproduced by `verify`;
+  0 audit violations over 112 maps; 4,931 of 4,931 lookups exact.
+- **Rebuild.** Under recent-01's planned limits (1 CPU, 1 build thread), per-block
+  freshness stayed at 7–12 s up to 60k recent records. It reached 22 s at 70k,
+  where the directory needs a second segment.
+- **Bandwidth.** Metered bytes equal computed bytes. Warm transcripts are
+  92.6 KB inline and 277.8 KB at 4 pages. Cold transcripts reach 279.1 KB at
+  3 pages and 325.4 KB at 4 pages.
+- **Buckets.** No bandwidth change at this shard size. N=4 costs more memory per
+  txid and gives smaller classes than N=1.
+
+Page-count classes stay below 10k.
+[Evidence](../evidence/txid-display-tiered-2026-10-05/README.md);
+[gates](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
+
 ## Publication freshness profile, 2026-10-03
 
 A local benchmark profiled attempt 14's failed freshness, measured at serial
@@ -240,6 +444,32 @@ remain authoritative if capture closure also fails. The combined Linux source
 suite passed114tests, including existing artifact/certificate/lifecycle fixtures
 and oracle refusal/composition tests. It qualifies no candidate or production
 gate. Final source publication and actual execution remain pending.
+
+On 2026-10-05 root reported that an actual candidate-upload preflight refused in
+`bootstrap.verify` on the coordinator with 18 associated processes. Root's
+diagnostic names the reply that an earlier successful locked source survey
+retained at
+`input-staging/fleet-surveys/5b002a24…/f5a20957…/coordinator.json`. It produced
+recorded-process, session-or-group and cgroup associations. They covered the
+reconciler and SSH processes and also the verified prototype, the canonical load
+and its native child. These are listed in the reply's process summaries and
+ancillary units. Root holds the raw diagnostics outside Git. Upload status was
+`absent` before and after the preflight, and no upload owner or production bytes
+were created. Operations source now accepts exact retained bootstrap replies and
+attribution snapshots as forensic evidence only at their exact path with a
+matching binding. It keeps durable owner records, including their fleet proof
+and result, fully checked (see
+[deployment](deployment.md#immutable-operation-source-staging-over-ssh)).
+Linux fixture tests on the development hub cover:
+
+- a locked run followed by the next survey;
+- a reply shaped like the production one, with the prototype, load and load child;
+- refusals for live owners, misplaced, tampered or nested replies, malformed
+  files, links and foreign operational processes.
+
+No production host was accessed, the preflight has not been rerun, and the
+recognizer has not run against root's raw file. Candidate execution surveys do
+not use this recognizer.
 
 ## Activity metadata candidate, 2026-09-30
 

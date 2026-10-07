@@ -1,0 +1,268 @@
+{
+  "schema": "transparent-txid-display-shard-v1",
+  "network": "main",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "seal": {
+    "n_archive": 1,
+    "n_recent": 1,
+    "archive_target": 40000,
+    "recent_floor": 10000,
+    "reorg_margin": 100
+  },
+  "start_height": 3407001,
+  "first_shard_id": 0,
+  "shards": [
+    {
+      "shard_id": 0,
+      "start_height": 3407001,
+      "end_height": 3417416,
+      "parent_block_hash": "0000000000ba1bd64f486fb1d3c3186b2afda898b39514eb66bfc1a8b0f7f91c",
+      "terminal_block_hash": "00000000003fde871db5888b79d0e1ca6c7dbb2149d05dda51c34e5933ddd093",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40003,
+      "min_bucket_records": 40003,
+      "manifest_digest": "309867e788121f314577fb7f4db53d93d51f7b135700356153d4f6dc89343a5f",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 1,
+      "start_height": 3417417,
+      "end_height": 3429676,
+      "parent_block_hash": "00000000003fde871db5888b79d0e1ca6c7dbb2149d05dda51c34e5933ddd093",
+      "terminal_block_hash": "0000000000a5af4e35d8b80adafb10b87dff0cc15cd246097ee26f105e2dfb0c",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40006,
+      "min_bucket_records": 40006,
+      "manifest_digest": "eb37313c961c90af5d23cd4db39f04d9517dda13862161777b14d1b672f11364",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 2,
+      "start_height": 3429677,
+      "end_height": 3441854,
+      "parent_block_hash": "0000000000a5af4e35d8b80adafb10b87dff0cc15cd246097ee26f105e2dfb0c",
+      "terminal_block_hash": "00000000005c769989b2e61813838ac2ab2ab4a421b129edee1c849beda566fc",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40001,
+      "min_bucket_records": 40001,
+      "manifest_digest": "f3f65be354f47e82509b84fb6e45e65a8f98e43563586e676232a2088115a134",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 3,
+      "start_height": 3441855,
+      "end_height": 3453796,
+      "parent_block_hash": "00000000005c769989b2e61813838ac2ab2ab4a421b129edee1c849beda566fc",
+      "terminal_block_hash": "0000000000594f4020c65adc803851c6576f57b311979ccd9e3f54620a5dabbe",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40002,
+      "min_bucket_records": 40002,
+      "manifest_digest": "1372d8d24b94fc97defee9a9f19c6abf129863e00dd7d65944a2d322d4fb2fe1",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 4,
+      "start_height": 3453797,
+      "end_height": 3460480,
+      "parent_block_hash": "0000000000594f4020c65adc803851c6576f57b311979ccd9e3f54620a5dabbe",
+      "terminal_block_hash": "000000000097c4f7683689df1260d5b8df524b4a2dfbee0f61befb517eafc304",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40001,
+      "min_bucket_records": 40001,
+      "manifest_digest": "2b8827b1da1cf0b0c1f4fe6ecfd771183f33e03567ce81a4d3bc4515416c305f",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 5,
+      "start_height": 3460481,
+      "end_height": 3468985,
+      "parent_block_hash": "000000000097c4f7683689df1260d5b8df524b4a2dfbee0f61befb517eafc304",
+      "terminal_block_hash": "0000000000058f7a5f8c6c417f3ed7549012e5e0255e592c8f3153a09d87b839",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40004,
+      "min_bucket_records": 40004,
+      "manifest_digest": "fda44a15d096d39da4f2f3ab7b261bbc339ad5fd1a68472ccdbf7006ce61ef7a",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 6,
+      "start_height": 3468986,
+      "end_height": 3473436,
+      "parent_block_hash": "0000000000058f7a5f8c6c417f3ed7549012e5e0255e592c8f3153a09d87b839",
+      "terminal_block_hash": "000000000061e87a4b123fcac1fa5533d941b74da3b069ff3f53055b11676800",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40001,
+      "min_bucket_records": 40001,
+      "manifest_digest": "f9be6b4210601034ad7ed91ace2cba4961a8f996658ed9021680440867f203f3",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 7,
+      "start_height": 3473437,
+      "end_height": 3478348,
+      "parent_block_hash": "000000000061e87a4b123fcac1fa5533d941b74da3b069ff3f53055b11676800",
+      "terminal_block_hash": "00000000008f50f15245a8e38f0bbc4b2a9d4d47c7756c492713c5b5b4adf991",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40003,
+      "min_bucket_records": 40003,
+      "manifest_digest": "e3ca06f84a772e10597bd9d797c2f93f8f59b2d81f0ea822fa2e748b0b1c2ae9",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 8,
+      "start_height": 3478349,
+      "end_height": 3485621,
+      "parent_block_hash": "00000000008f50f15245a8e38f0bbc4b2a9d4d47c7756c492713c5b5b4adf991",
+      "terminal_block_hash": "000000000053973236d250f04d9fb6ddb35e1bc4fabfe4722587bcf27f9f6c62",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40006,
+      "min_bucket_records": 40006,
+      "manifest_digest": "b03b2c20e3c63dad93f04af8761ed0d457ab4edc3ab655202b73d53237ae2b21",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 9,
+      "start_height": 3485622,
+      "end_height": 3488846,
+      "parent_block_hash": "000000000053973236d250f04d9fb6ddb35e1bc4fabfe4722587bcf27f9f6c62",
+      "terminal_block_hash": "0000000000063a73591a2a63e61034a2dc1ee8e38f238ac5f37fd08dc7b5ccd5",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40007,
+      "min_bucket_records": 40007,
+      "manifest_digest": "8aa7fb385f887aee0fa92f04f6ea630f0b22f25972ecef615c2e46950d2720cc",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 10,
+      "start_height": 3488847,
+      "end_height": 3492178,
+      "parent_block_hash": "0000000000063a73591a2a63e61034a2dc1ee8e38f238ac5f37fd08dc7b5ccd5",
+      "terminal_block_hash": "000000000091ea5071c6e986353a9f5812b922e6a366c62ea9722c5424be611a",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40010,
+      "min_bucket_records": 40010,
+      "manifest_digest": "dca3528d2e93ccfed8c42962d59249c72c37c07b9028a07c6aa8bafbacc16454",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 11,
+      "start_height": 3492179,
+      "end_height": 3494253,
+      "parent_block_hash": "000000000091ea5071c6e986353a9f5812b922e6a366c62ea9722c5424be611a",
+      "terminal_block_hash": "0000000000058f071a7deb7040cd0c08b934ec576ddb251c74bf5cc04abd62f0",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40013,
+      "min_bucket_records": 40013,
+      "manifest_digest": "f43977b8f3eae4148ab10d1be424e3240bbe67fc9b9ad3cee749f30e463af808",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 12,
+      "start_height": 3494254,
+      "end_height": 3500528,
+      "parent_block_hash": "0000000000058f071a7deb7040cd0c08b934ec576ddb251c74bf5cc04abd62f0",
+      "terminal_block_hash": "00000000000e633d7f0dc525bbf57fe7f8561ef1e99511695cf72e92505cefb8",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 40003,
+      "min_bucket_records": 40003,
+      "manifest_digest": "1e63176d537d203de244a31b4b63e4683f1105a931912d41a524380b6a871771",
+      "revision": 0,
+      "sealed": true
+    },
+    {
+      "shard_id": 13,
+      "start_height": 3500529,
+      "end_height": 3509639,
+      "parent_block_hash": "00000000000e633d7f0dc525bbf57fe7f8561ef1e99511695cf72e92505cefb8",
+      "terminal_block_hash": "00000000003faa11c511cd3148d7cbbf459ee09986eafcbd24ca44fe95c93ee6",
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "directory_segments": [
+        1
+      ],
+      "page_segments": 1,
+      "records": 47820,
+      "min_bucket_records": 47820,
+      "manifest_digest": "5fa049cbf8786e9bf97075124225dc15901e1fbc99f4cf11b8f364d99d0ff342",
+      "revision": 1264,
+      "sealed": false
+    }
+  ]
+}

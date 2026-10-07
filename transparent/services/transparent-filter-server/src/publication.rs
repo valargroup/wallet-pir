@@ -159,7 +159,7 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), BoxError> {
     Ok(())
 }
 
-fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {
+pub(crate) fn write_immutable(dir: &Path, name: &str, bytes: &[u8]) -> Result<(), BoxError> {
     let path = dir.join(name);
     if path.exists() {
         // Published shards are immutable. If the bytes differ, either the

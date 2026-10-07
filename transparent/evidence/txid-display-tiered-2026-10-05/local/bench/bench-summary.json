@@ -1,0 +1,366 @@
+{
+ "recent-01-shaped": [
+  {
+   "size": 10000,
+   "cycles": 7,
+   "records": 10004,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6603,
+   "prepare_ms_max": 8085,
+   "cycle_ms_p50": 6975,
+   "cycle_ms_max": 8418,
+   "publish_s_p50": 0.31,
+   "memory_peak_mib": 402,
+   "freshness_ms_p50": 7094,
+   "freshness_ms_max": 8415,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 20000,
+   "cycles": 7,
+   "records": 20073,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6537,
+   "prepare_ms_max": 6756,
+   "cycle_ms_p50": 6934,
+   "cycle_ms_max": 7254,
+   "publish_s_p50": 0.386,
+   "memory_peak_mib": 413,
+   "freshness_ms_p50": 7139,
+   "freshness_ms_max": 8892,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 30000,
+   "cycles": 7,
+   "records": 30138,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6580,
+   "prepare_ms_max": 6974,
+   "cycle_ms_p50": 7093,
+   "cycle_ms_max": 7468,
+   "publish_s_p50": 0.462,
+   "memory_peak_mib": 404,
+   "freshness_ms_p50": 7207,
+   "freshness_ms_max": 9756,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 40000,
+   "cycles": 7,
+   "records": 40054,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6820,
+   "prepare_ms_max": 7417,
+   "cycle_ms_p50": 7374,
+   "cycle_ms_max": 8058,
+   "publish_s_p50": 0.527,
+   "memory_peak_mib": 404,
+   "freshness_ms_p50": 7455,
+   "freshness_ms_max": 10274,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 50000,
+   "cycles": 7,
+   "records": 50069,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6827,
+   "prepare_ms_max": 8002,
+   "cycle_ms_p50": 7497,
+   "cycle_ms_max": 8632,
+   "publish_s_p50": 0.601,
+   "memory_peak_mib": 413,
+   "freshness_ms_p50": 7494,
+   "freshness_ms_max": 11535,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 60000,
+   "cycles": 7,
+   "records": 60024,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6937,
+   "prepare_ms_max": 7727,
+   "cycle_ms_p50": 7638,
+   "cycle_ms_max": 8433,
+   "publish_s_p50": 0.668,
+   "memory_peak_mib": 406,
+   "freshness_ms_p50": 7637,
+   "freshness_ms_max": 10868,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 70000,
+   "cycles": 7,
+   "records": 69889,
+   "dir_segments": [
+    2
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 10345,
+   "prepare_ms_max": 10618,
+   "cycle_ms_p50": 11263,
+   "cycle_ms_max": 11510,
+   "publish_s_p50": 0.901,
+   "memory_peak_mib": 487,
+   "freshness_ms_p50": 19687,
+   "freshness_ms_max": 22063,
+   "blocks_per_cycle": 1
+  }
+ ],
+ "recent-01-fallback-cpu200": [
+  {
+   "size": 10000,
+   "cycles": 7,
+   "records": 10004,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 3905,
+   "prepare_ms_max": 5324,
+   "cycle_ms_p50": 4229,
+   "cycle_ms_max": 5785,
+   "publish_s_p50": 0.328,
+   "memory_peak_mib": 467,
+   "freshness_ms_p50": 4226,
+   "freshness_ms_max": 5782,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 20000,
+   "cycles": 7,
+   "records": 20073,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 3929,
+   "prepare_ms_max": 4308,
+   "cycle_ms_p50": 4405,
+   "cycle_ms_max": 4737,
+   "publish_s_p50": 0.414,
+   "memory_peak_mib": 466,
+   "freshness_ms_p50": 4402,
+   "freshness_ms_max": 4735,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 30000,
+   "cycles": 7,
+   "records": 30138,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 3998,
+   "prepare_ms_max": 4749,
+   "cycle_ms_p50": 4465,
+   "cycle_ms_max": 5212,
+   "publish_s_p50": 0.445,
+   "memory_peak_mib": 468,
+   "freshness_ms_p50": 4462,
+   "freshness_ms_max": 5209,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 40000,
+   "cycles": 7,
+   "records": 40054,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 4002,
+   "prepare_ms_max": 4330,
+   "cycle_ms_p50": 4635,
+   "cycle_ms_max": 4882,
+   "publish_s_p50": 0.533,
+   "memory_peak_mib": 480,
+   "freshness_ms_p50": 4630,
+   "freshness_ms_max": 4880,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 50000,
+   "cycles": 7,
+   "records": 50069,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 4105,
+   "prepare_ms_max": 5009,
+   "cycle_ms_p50": 4763,
+   "cycle_ms_max": 6030,
+   "publish_s_p50": 0.617,
+   "memory_peak_mib": 484,
+   "freshness_ms_p50": 4761,
+   "freshness_ms_max": 6029,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 60000,
+   "cycles": 7,
+   "records": 60024,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 4144,
+   "prepare_ms_max": 4965,
+   "cycle_ms_p50": 4859,
+   "cycle_ms_max": 5722,
+   "publish_s_p50": 0.67,
+   "memory_peak_mib": 466,
+   "freshness_ms_p50": 4858,
+   "freshness_ms_max": 5721,
+   "blocks_per_cycle": 1
+  },
+  {
+   "size": 70000,
+   "cycles": 7,
+   "records": 69889,
+   "dir_segments": [
+    2
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6155,
+   "prepare_ms_max": 6996,
+   "cycle_ms_p50": 7066,
+   "cycle_ms_max": 8057,
+   "publish_s_p50": 0.89,
+   "memory_peak_mib": 555,
+   "freshness_ms_p50": 7063,
+   "freshness_ms_max": 9839,
+   "blocks_per_cycle": 1
+  }
+ ],
+ "recent-01-shaped-batched": [
+  {
+   "size": 10000,
+   "cycles": 2,
+   "records": 10072,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6590,
+   "prepare_ms_max": 7164,
+   "cycle_ms_p50": 6951,
+   "cycle_ms_max": 7522,
+   "publish_s_p50": 0.329,
+   "memory_peak_mib": 402
+  },
+  {
+   "size": 20000,
+   "cycles": 2,
+   "records": 20090,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6660,
+   "prepare_ms_max": 7047,
+   "cycle_ms_p50": 7088,
+   "cycle_ms_max": 7451,
+   "publish_s_p50": 0.377,
+   "memory_peak_mib": 403
+  },
+  {
+   "size": 30000,
+   "cycles": 2,
+   "records": 30168,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 7135,
+   "prepare_ms_max": 7334,
+   "cycle_ms_p50": 7741,
+   "cycle_ms_max": 7912,
+   "publish_s_p50": 0.542,
+   "memory_peak_mib": 403
+  },
+  {
+   "size": 40000,
+   "cycles": 2,
+   "records": 40081,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6610,
+   "prepare_ms_max": 6808,
+   "cycle_ms_p50": 7165,
+   "cycle_ms_max": 7503,
+   "publish_s_p50": 0.516,
+   "memory_peak_mib": 404
+  },
+  {
+   "size": 50000,
+   "cycles": 2,
+   "records": 50094,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6778,
+   "prepare_ms_max": 7562,
+   "cycle_ms_p50": 7423,
+   "cycle_ms_max": 8211,
+   "publish_s_p50": 0.608,
+   "memory_peak_mib": 405
+  },
+  {
+   "size": 60000,
+   "cycles": 2,
+   "records": 60051,
+   "dir_segments": [
+    1
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 6916,
+   "prepare_ms_max": 7030,
+   "cycle_ms_p50": 7655,
+   "cycle_ms_max": 7793,
+   "publish_s_p50": 0.688,
+   "memory_peak_mib": 405
+  },
+  {
+   "size": 70000,
+   "cycles": 2,
+   "records": 69942,
+   "dir_segments": [
+    2
+   ],
+   "page_segments": 1,
+   "prepare_ms_p50": 9972,
+   "prepare_ms_max": 10101,
+   "cycle_ms_p50": 10857,
+   "cycle_ms_max": 11084,
+   "publish_s_p50": 0.843,
+   "memory_peak_mib": 487
+  }
+ ],
+ "note": "First cycle per size dropped (follows the cold activation sync). Freshness is replay visibility to activation on the worker, one block per 12 s step, so it equals one cycle plus poll wait; it excludes node propagation and router hops. Runtime 75.5 MB per segment is not measured here."
+}

@@ -84,8 +84,21 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       or all 180 native certificate segments and retain private raw evidence. Native exit zero
       is not a gate pass.
 
+  txid-display-{plan,preflight,status,ingest-status} --request F --request-sha256 H
+  txid-display-deploy --request F --request-sha256 H --expect-plan-sha256 H
+      --phase stage|firewall|router-hook|workers|route|controller
+  txid-display-{ingest-start,bootstrap,verify,measure-start,retire} ... --expect-plan-sha256 H
+  txid-display-{ingest-stop,measure-stop,stop} --request F --request-sha256 H
+  txid-display-rollback --request F --request-sha256 H [--transaction ID]
+      Side-by-side txid display proof of concept (transparent/ops/lib/txid_display_poc.py).
+      Every mutation holds the production lock, journals prior bytes and prints the
+      rollback command; Terraform phases need a second run with --terraform-plan-sha256.
+
 The inventory (hosts, SSH, lock) is --inventory or WALLET_PIR_DEPLOY_INVENTORY.
 """
+TXID_DISPLAY = ('plan', 'preflight', 'deploy', 'status', 'stop', 'rollback', 'retire', 'ingest-start',
+                'ingest-status', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop')
+TXID_DISPLAY_PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
 
 
 def load_release():
@@ -274,6 +287,27 @@ def parser():
         command.add_argument('--map-sha256', required=True, help='map digest, or original adoption plan digest for resume')
         if name in ('deploy','resume-deploy','resume-prepare-deploy'):
             command.add_argument('--expect-plan-sha256', required=True)
+    for name in TXID_DISPLAY:
+        command = commands.add_parser('txid-display-' + name, help='txid display proof of concept beside history')
+        command.add_argument('--request', required=True)
+        command.add_argument('--request-sha256', required=True)
+        if name in ('deploy', 'ingest-start', 'bootstrap', 'verify', 'measure-start', 'retire'):
+            command.add_argument('--expect-plan-sha256', required=True)
+        if name in ('deploy', 'rollback', 'retire'):
+            command.add_argument('--terraform-plan-sha256', help='apply this reviewed saved Terraform plan')
+        if name == 'deploy':
+            command.add_argument('--phase', choices=TXID_DISPLAY_PHASES, required=True)
+            command.add_argument('--archive', help='stage: the CI transparent-txid-display bundle')
+            command.add_argument('--publication-map-sha256', help='workers: the bootstrap candidate map')
+        elif name == 'plan':
+            command.add_argument('--render-dir', help='also write every rendered file here for review')
+        elif name == 'rollback':
+            command.add_argument('--transaction')
+        elif name == 'ingest-start':
+            command.add_argument('--smoke', action='store_true', help='ten blocks into a separate directory')
+        elif name == 'bootstrap':
+            command.add_argument('--start-height', type=int)
+            command.add_argument('--through-height', type=int)
     for name in ('plan', 'preflight', 'deploy'):
         command = commands.add_parser(name)
         command.add_argument('service')
@@ -408,6 +442,10 @@ def main(argv=None, executor=None, out=print, **options):
             return 0
         if not args.inventory:
             raise DeployError('pass --inventory or set WALLET_PIR_DEPLOY_INVENTORY')
+        if args.command.startswith('txid-display-'):
+            spec = importlib.util.spec_from_file_location('txid_display_poc', ROOT/'transparent/ops/lib/txid_display_poc.py')
+            module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+            return module.main(args, descriptors.load_inventory(args.inventory), out, executor=executor, **options)
         if args.command.startswith('schema-candidate-execute-'):
             spec = importlib.util.spec_from_file_location('activity_candidate_execution', ROOT/'transparent/ops/lib/activity_candidate_execution.py')
             module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)

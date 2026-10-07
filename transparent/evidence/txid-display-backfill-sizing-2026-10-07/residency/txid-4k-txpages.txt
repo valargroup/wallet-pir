@@ -1,0 +1,16 @@
+geometry txid-4k       table txpages   4096 rows x 4096 B = 16.00 MiB of plaintext
+scheme  {"profile":"reinspiring-two-mask-m29-v1","d":2048,"q_bits":54,"p_bits":16,"gadget_bits":19,"ell":2,"secret":"gaussian","mask_bits":29,"query_bits":49,"response_bits":22,"rows":4096,"row_bytes":4096,"cols":2048,"native_encoding":"7265696e73706972696e672d6e61746976652d6578706572696d656e74616c2d76310008000000000000000000000000400000000100000000001300000000000000020000000000000010000000000000000000000000000000","query_mask_seed":"302c2182c70e2d96f0b549779427226dc27a1ed64d9cb55e0700b122aac994cd","packing_setup_id":"99ef489539b29d8fb89a1cdc6fd7407243f9f180775b028090c0b9fef3e91c37","request_bytes":52736,"public_bytes":14848,"response_bytes":5632}
+cache reserves 80.05 MiB per runtime
+
+baseline 3.21 MiB, parameters and one plaintext copy 16.81 MiB
+  runtime  1: + 154.11 MiB   (RSS   174.12 MiB)   built in   3.56 s
+  runtime  2: + 125.83 MiB   (RSS   299.95 MiB)   built in   3.17 s
+  runtime  3: +  48.26 MiB   (RSS   348.21 MiB)   built in   3.00 s
+  runtime  4: +  48.24 MiB   (RSS   396.45 MiB)   built in   2.62 s
+  runtime  5: +  48.21 MiB   (RSS   444.66 MiB)   built in   3.01 s
+  runtime  6: +  48.29 MiB   (RSS   492.95 MiB)   built in   2.63 s
+
+marginal cost of one held runtime: 63.76 MiB
+per shard: 63.76 MiB measured txpages + 80.05 MiB reserved txdirectory = 143.81 MiB
+  full chain      not censused at txid-4k
+  pilot set           3 shards ->     0.42 GiB if all are held

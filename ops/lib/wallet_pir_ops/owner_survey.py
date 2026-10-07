@@ -23,6 +23,12 @@ A survey refuses (`reasons` non-empty) on any of:
 Association is a set of fixed rules, not proof that nothing survives: a
 detached process that matches no rule and no operational class is invisible.
 
+A retained survey report is evidence of what one observer saw, not a claim of
+ownership. A caller may pass `evidence` to recognize whole retained report
+files by namespace, path and exact content (`report`); a recognized file names
+only its lock holders as owners. Without `evidence`, and for every other file,
+every recorded PID counts.
+
 Arguments and environment values are inspected in memory only. A process
 summary, and every refusal reason, keeps the command line's SHA-256 and byte
 count, the executable path, identity, the matched operational class entries and
@@ -249,7 +255,7 @@ def recorded(record, name, mtime):
     return found
 
 
-def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None):
+def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None, evidence=None):
     """Every entry of the retained owner namespaces, bounded and complete.
 
     Every regular `.json` file is parsed, latest or not and of any kind, and
@@ -257,9 +263,17 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None):
     files, unreadable or oversized records and any bound overflow are reasons
     to refuse, never skipped silently. `select(label, name, record, sha256)`
     may return a summary of a namespace-root record for the caller.
+
+    `evidence(label, name, record)`, given the namespace label, the path
+    inside it and the parsed record, returns None for an ordinary record, or
+    the owner identities ({pid, start_ticks, boot_id}) of a whole file it
+    recognizes as retained survey evidence; only those identities are then
+    references of that file. Every file is still read, bounded, parsed,
+    hashed and listed, and the inventory counts recognized files under
+    `evidence`.
     """
     reasons, references, selected, listing = [], [], [], []
-    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0}
+    counts = {'entries': 0, 'json_files': 0, 'json_bytes': 0, **({'evidence': 0} if evidence is not None else {})}
     digests = {}
 
     def walk():
@@ -322,7 +336,15 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None):
                     sha = hashlib.sha256(raw).hexdigest()
                     digests[relative] = [len(raw), info.st_mtime_ns, sha]
                     listing.append([relative, 'json', len(raw), info.st_mtime_ns, sha])
-                    references.extend(recorded(record, relative, info.st_mtime_ns/1e9))
+                    mtime = info.st_mtime_ns/1e9
+                    claimed = evidence(label, os.path.relpath(entry.path, root), record) if evidence else None
+                    if claimed is None:
+                        references.extend(recorded(record, relative, mtime))
+                    else:
+                        counts['evidence'] += 1
+                        references.extend({'record': relative, 'key': 'survey-holder', 'pid': item['pid'],
+                                           'window': None, 'mtime': mtime, 'start_ticks': item['start_ticks'],
+                                           'boot_id': item['boot_id'], 'cgroup': None} for item in claimed)
                     if len(references) > bounds['references']:
                         reasons.append('owner records name more than %d processes' % bounds['references'])
                         return
@@ -336,6 +358,81 @@ def owner_inventory(roots, tick=lambda: None, bounds=BOUNDS, select=None):
     walk()
     inventory = dict(counts, references=len(references), sha256=hashlib.sha256(canonical(listing)).hexdigest())
     return inventory, references, selected, reasons, digests
+
+
+# Top-level keys of every `observe` result; `pending` adds its two keys.
+REPORT = frozenset(('version', 'kind', 'binding', 'bounds', 'classes', 'classes_sha256', 'baseline', 'boot_id',
+                    'booted_unix', 'euid', 'namespaces', 'inventory', 'selected', 'selected_count', 'selected_sha256',
+                    'scanned', 'lock', 'processes', 'associated', 'associated_count', 'associated_records',
+                    'baseline_bound', 'baseline_bound_count', 'unattributed', 'unattributed_count', 'blocked',
+                    'blocked_count'))
+INVENTORY = frozenset(('entries', 'json_files', 'json_bytes', 'references', 'evidence', 'sha256'))
+SHA256 = re.compile('[0-9a-f]{64}')
+
+
+def scalar(item):
+    return item is None or type(item) in (str, bool, int) or number(item)
+
+
+def listed_process(item):
+    """One `summary` entry: only its retained fields, scalars except the class list."""
+    return (isinstance(item, dict) and set(item) <= set(SUMMARY) | {'token_sha256'} and
+            type(item.get('pid')) is int and item['pid'] > 0 and type(item.get('start_ticks')) is int and
+            all(scalar(v) for k, v in item.items() if k != 'class') and
+            ('class' not in item or isinstance(item['class'], list) and all(isinstance(c, str) for c in item['class'])))
+
+
+def report(value, bounds=BOUNDS, extra=()):
+    """Owner identities claimed by an exact retained `observe` result, else None.
+
+    The processes a report lists (associated, baseline bound, unattributed,
+    pending, marked) are what its observer saw, not owners. Only its lock
+    holders, the processes that held the production lock while it ran, are
+    returned, bound to the report's boot. The top-level keys must be exactly
+    `REPORT` plus the caller's `extra`, which the caller validates; bounds
+    must equal `bounds`; every field must have its exact type; every listing
+    must be within the bound and agree with its count. Anything else is None,
+    and the caller must then treat the value as an ordinary owner record.
+    """
+    listed = bounds['listed']
+
+    def listing(items, count=None):
+        return (isinstance(items, list) and len(items) <= listed and all(listed_process(p) for p in items) and
+                (count is None or type(count) is int and count >= 0 and len(items) == min(count, listed)))
+    if not (isinstance(value, dict) and set(value) == REPORT | set(extra) and value['kind'] == KIND and
+            type(value['version']) is int and value['version'] == VERSION and value['bounds'] == bounds):
+        return None
+    classes, lock, inventory = value['classes'], value['lock'], value['inventory']
+    binding = value['binding']
+    ok = (isinstance(classes, dict) and set(classes) == {'names', 'roots'} and
+          all(isinstance(classes[k], list) and all(isinstance(x, str) for x in classes[k]) for k in classes) and
+          value['classes_sha256'] == hashlib.sha256(canonical(classes)).hexdigest() and
+          isinstance(value['baseline'], list) and all(isinstance(u, str) for u in value['baseline']) and
+          (scalar(binding) or isinstance(binding, dict) and all(scalar(v) for v in binding.values())) and
+          isinstance(value['boot_id'], str) and
+          all(type(value[k]) is int for k in ('booted_unix', 'euid', 'scanned')) and value['scanned'] >= 0 and
+          isinstance(value['namespaces'], list) and
+          all(isinstance(n, list) and len(n) == 2 and all(isinstance(x, str) for x in n) for n in value['namespaces']) and
+          isinstance(inventory, dict) and set(inventory) <= INVENTORY and isinstance(inventory.get('sha256'), str) and
+          SHA256.fullmatch(inventory['sha256']) is not None and
+          all(type(v) is int for k, v in inventory.items() if k != 'sha256') and
+          isinstance(value['selected'], list) and type(value['selected_count']) is int and
+          len(value['selected']) == min(max(value['selected_count'], 0), listed) and
+          all(isinstance(x, dict) and all(scalar(v) for v in x.values()) for x in value['selected']) and
+          isinstance(value['selected_sha256'], str) and SHA256.fullmatch(value['selected_sha256']) is not None and
+          isinstance(lock, dict) and set(lock) == {'path', 'holders'} and
+          (lock['path'] is None or isinstance(lock['path'], str)) and listing(lock['holders']) and
+          listing(value['processes']) and
+          all(listing(value[k], value[k+'_count']) for k in ('associated', 'baseline_bound', 'unattributed')) and
+          ('pending' not in value or listing(value['pending'], value.get('pending_count'))) and
+          isinstance(value['associated_records'], dict) and len(value['associated_records']) <= listed and
+          all(isinstance(d, list) and len(d) == 3 and type(d[0]) is int and type(d[1]) is int and
+              isinstance(d[2], str) and SHA256.fullmatch(d[2]) is not None for d in value['associated_records'].values()) and
+          isinstance(value['blocked'], list) and all(isinstance(r, str) for r in value['blocked']) and
+          type(value['blocked_count']) is int and len(value['blocked']) == min(max(value['blocked_count'], 0), listed))
+    if not ok:
+        return None
+    return [{'pid': h['pid'], 'start_ticks': h['start_ticks'], 'boot_id': value['boot_id']} for h in lock['holders']]
 
 
 def unit_of(text, baseline):
@@ -521,7 +618,7 @@ def operational(processes, excluded, classes, baseline, bounds=BOUNDS, ancillary
 
 def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=None, marker=None, receiver=None,
             excluded=None, observer_cgroup=None, tick=lambda: None, bounds=BOUNDS, select=None, refuse=None, ancillary=None,
-            pending=None):
+            pending=None, evidence=None):
     """One complete read-only survey of this host; the raw dict is the evidence.
 
     `namespaces` is [(label, path)], `classes` {'names': [...], 'roots': [...]},
@@ -538,9 +635,12 @@ def observe(namespaces, *, classes, baseline, binding, lock_path=None, holder=No
     counts for markers, the lock and association, and the caller must refuse
     unless every pending process is attributed. Without `pending` the result
     has no such keys.
+
+    `evidence` recognizes retained survey files (see `owner_inventory`);
+    without it every recorded PID of every record is an owner reference.
     """
     listed = bounds['listed']
-    inventory, references, selected, reasons, digests = owner_inventory(namespaces, tick, bounds, select)
+    inventory, references, selected, reasons, digests = owner_inventory(namespaces, tick, bounds, select, evidence)
     # Decisions use every selected record; only the display below is compacted.
     for item in selected if refuse is not None else ():
         reason = refuse(item)

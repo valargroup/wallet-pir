@@ -1,0 +1,83 @@
+{
+ "run_id": "txid-display-freshness-2026-10-07",
+ "kind": "production measurement: txid display recent-worker block-to-serving before and after a source and unit-limit change",
+ "window_utc": {
+  "before": [
+   "2026-10-06T14:45:40Z",
+   "2026-10-07T14:45:40Z"
+  ],
+  "deploy": [
+   "2026-10-07T14:45:40Z",
+   "2026-10-07T14:47:27Z"
+  ],
+  "after_from": "2026-10-07T14:47:27Z",
+  "after_cycles": 40
+ },
+ "deployment": "production recent-01 only: transparent-txid-display-worker.service drop-in zz-latency.conf; controller, archive worker, router and history unchanged",
+ "source": {
+  "before": "d191f86b2873e4250cee3ae6952f830c0d1e7a55 (release, CI full run 37388223909)",
+  "after": "07f906753cb0 (main); binary built from aede3e26 plus the same runtime.rs change, the only intervening main commit 8cccfa44 being docs-only"
+ },
+ "binary": {
+  "name": "transparent-txid-server",
+  "path": "/opt/transparent-txid-display/releases/07f906753cb0-latency/transparent-txid-server",
+  "sha256": "c8089d9d6cb0e19f7af4cf4794ff19c0c936b151102dbf5a100db943480489f6",
+  "before_sha256": "49958b17211413b012e02142896cd21868bd4446a4b712cd52ac305ae811c39b",
+  "build": "cargo build --locked --release -p transparent-shard-server --bin transparent-txid-server; RUSTFLAGS=-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq; on roman-dev-2; not the CI release artifact"
+ },
+ "unit_limits": {
+  "before": {
+   "cpu_quota": "100%",
+   "cpu_weight": 20,
+   "nice": 10,
+   "build_threads": 1,
+   "build_slots": 1,
+   "memory_max": "1.5G"
+  },
+  "after": {
+   "cpu_quota": "200%",
+   "cpu_weight": 50,
+   "nice": 10,
+   "build_threads": 2,
+   "build_slots": 1,
+   "memory_max": "1.5G"
+  }
+ },
+ "hosts": {
+  "recent-01": "DigitalOcean DO-Regular 2.0 GHz, 4 vCPU (AVX2), 7.8 GiB, Linux 6.8.0-124-generic; shares CPU with the history transparent-shard-server (weight 100, nice 0, no quota)",
+  "coordinator": "controller and timeline source /srv/zakura/txid-display-poc/root/timeline.jsonl",
+  "roman-dev-2": "DO-Premium-Intel 8 vCPU, shared development host; stage probe and builds only"
+ },
+ "publication": {
+  "geometry": "txid-2k",
+  "n_buckets": 1,
+  "archive_target": 40000,
+  "recent_floor": 10000,
+  "archives": 13,
+  "recent_records": "about 47,300 at the start of the window"
+ },
+ "inputs": {
+  "raw/cycles.jsonl.gz": "controller timeline 'cycle' events activated from 24 h before the deploy start, as recorded (gzip -9n)",
+  "raw/history-prewarm.txt": "history worker 'prewarm finished' seconds on recent-01 from journalctl, ISO time and seconds",
+  "raw/cpu-before.txt": "1 Hz cgroup usage_usec samples (unix time, display, history) on recent-01 before the deploy, about 6 min",
+  "raw/cpu-after.txt": "same, about 10 min after the deploy",
+  "raw/probe-stages.txt": "per-stage build timings of one txid-2k table on roman-dev-2 at 1 and 2 build threads",
+  "raw/zz-latency.conf": "the deployed systemd drop-in"
+ },
+ "harness": {
+  "analyze": "harness/analyze.py (writes summary.json)",
+  "deploy": "harness/deploy-recent.sh",
+  "probe": "harness/probe_display_build_stages.rs.txt, an ignored test appended to the runtime.rs test module; not committed as source"
+ },
+ "definitions": {
+  "freshness_ms": "per block: controller activation time minus the time the controller first saw that height on its node (controller.rs)",
+  "prepare_ms": "controller-observed duration of the recent worker's prepare call",
+  "ship_ms": "copy of the candidate to recent-01"
+ },
+ "limitations": [
+  "40 post-deploy cycles is not the 300-block live criterion",
+  "history prewarm comparison over 40 rebuilds; +3% p50 is within the range of noise but not shown to be noise",
+  "the 20 QPS measurement started 13:53 UTC may overlap both windows"
+ ],
+ "acceptance": "not an acceptance result; the live criteria remain open"
+}

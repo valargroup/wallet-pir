@@ -128,6 +128,130 @@ Accepted leakage remains range, table kind, page count, and timing. This does no
 hide size or authenticate metadata against consensus. It is a trusted-publisher
 service qualified against independent facts.
 
+## Tiered display publication (proof of concept)
+
+A proof of concept, not adopted, publishes display tables apart from history
+shards so that the anonymity set and query size no longer follow history
+geometry. History-attached archive tables cost about 469 KB of query bytes for
+an inline lookup; the tiered `txid-2k` tables cost about 93 KB.
+
+- **Time tiers.** Sealed archive shards are immutable and never rebuilt. One
+  recent shard covers `[S, tip]` and is rebuilt per block. The client picks the
+  shard from the transaction's height. A seal takes the smallest oldest range in
+  which every bucket holds `archive_target` real txids, provided the remainder
+  keeps `recent_floor` and the range ends at least `reorg_margin` blocks below
+  the tip. The rule is monotone, so bootstrap and incremental sealing produce
+  identical shards. A bounded window drops the oldest archive from the map.
+- **Buckets.** `H("transparent-txid-display/bucket/v1" ‖ txid) mod N` selects a
+  bucket, a separate directory table; both row choices stay inside it. N is a
+  manifest parameter. Overflow pages are shard-scoped and not bucketed.
+- **Publication.** A separate map (`txid-shards.json`), content-pure sealed
+  manifests with absolute shard ids, and a recent revision lineage. The
+  `txid-2k` geometry (2,048 rows × 4,096 B for both tables, 40,200 B per query
+  upload) lives in a display-only registry.
+- **Split map.** The map is also published split, so a client's map bytes
+  stay bounded as the archive window grows (below).
+- **Transcript.** Map, manifest and setup as needed, then exactly two directory
+  queries and exactly `pages` page queries, whatever the answer.
+- **Leakage** adds the bucket and the tier to range, table kind, page count and
+  timing. The tier follows from the shard id. Page-count classes are far below
+  the shard's set: a single overflow page is about 10% of recent records.
+
+Source: `transparent-shard/src/display/` (format and seal rule),
+`transparent-filter-server/src/txid_display/` (`txid-display-controller`),
+`transparent-shard-server/src/display/` (`transparent-txid-server`,
+`txid-control`, `txid-inventory`) and the `txid-display-*` deploy commands.
+[Local evidence](../evidence/txid-display-tiered-2026-10-05/README.md) covers
+synthetic chains only. It has run in production beside history since
+2026-10-06 ([status](status.md#tiered-txid-display-in-production-2026-10-07)),
+unaccepted. Open gates are in
+[remaining work](remaining-work.md#tiered-txid-display-proof-of-concept-2026-10-05).
+Extending coverage below 3,407,001 requires a fresh lineage: the
+[backfill plan](deployment.md#txid-display-backfill-below-3407001-proposed).
+
+### Split map
+
+The full map (`GET /v1/txid/shards`, 632 B per entry) costs about 259 KB at
+genesis coverage (426 entries), and a client refetches it after every 409,
+which the recent rebuild causes every block. The controller therefore also
+publishes the same entries as two kinds of document, derived from the full
+map (`transparent-shard/src/display/split.rs`):
+
+- **Recent map** (`GET /v1/txid/map`, `txid-map.json`): the seal parameters,
+  the start, the archive count, one reference (start height and SHA-256) per
+  index chunk, and the recent shard's entry. Compact canonical JSON, served
+  with `X-Txid-Map-Sha256` and `Cache-Control: no-cache`.
+- **Index chunks** (`GET /v1/txid/map/{base}/{sha256}`,
+  `txid-index-<sha256>.json`): the listed archives with absolute shard ids in
+  `[base, base + 32)`, `base` a multiple of 32. Served with
+  `Cache-Control: public, max-age=31536000, immutable`. A seal changes only
+  the newest chunk and a window drop only the oldest; every other chunk keeps
+  its digest. An unknown digest is a 409, like an unserved revision.
+
+The controller writes each chunk once into `index/<sha256>.json` under the
+display root and hard-links it into every candidate beside the recent map;
+collection removes chunks no retained candidate links. A worker derives the
+split from the full map itself, refuses a candidate whose split files differ
+from the derivation, and serves candidates written before the split from the
+derivation alone. The router gzips the two new routes when the client accepts
+it; `/v1/txid/shards` is served exactly as before, for clients built before the
+split, until a later approved deploy retires it.
+
+A chunk names a 32-archive range, coarser than the shard id that queries
+already name, so it adds no leakage.
+
+### Wallet client
+
+`transparent/crates/transparent-txid-client` is the wallet's client for this
+publication: synchronous, with no HTTP stack or async runtime. The tooling
+client in `transparent-shard-server/examples/support/txdisplay.rs` remains the
+reference it is tested against.
+
+- **API.** The wallet implements `TxidTransport::send(TxidRequest) ->
+  TxidReply`. A request has a method, an origin-relative `path()`, a loggable
+  route `template()` without ids or digests, and a body (`POST` bodies are
+  `application/octet-stream` with a declared length). A reply carries the raw
+  status, `Retry-After`, `X-Txid-Map-Sha256` and body; the client interprets
+  them. `TxidDisplayClient::lookup(transport, txid, mined_height, cancel)`
+  takes the txid in internal byte order and the height from the wallet's
+  accepted chain. It returns `Found { record, provenance }`, where provenance
+  is the recent map's SHA-256, shard id, revision, manifest digest and tier.
+  Otherwise it returns `Absent`, `PlacementUnknown(Below | Above)` or
+  `Unsupported`. The client caches native profiles, init, the recent map,
+  index chunks by digest, manifests and setups.
+  `refresh_map(transport, cancel)` fetches and validates only the recent map
+  and returns its SHA-256. A wallet calls it to re-check coverage when no
+  lookup is due. A valid map replaces the cached one, so `map_sha256()`
+  reports it.
+- **Transcript.** Requests are sent one at a time: init, the recent map, the
+  index chunk covering an archive height, manifest and setups when not
+  cached, then exactly two directory queries, even when the rows coincide. A
+  paged record then sends exactly `pages` page queries. `Absent` sends the
+  same two queries. Placement and support results send no query. A height
+  above a map older than 30 s refetches the recent map once before `Above`.
+  `cancel` is polled before every request.
+- **Errors.** A 409 refetches the recent map, but no cached index chunk, and
+  retries the whole lookup once, then
+  returns `Stale`. A 503 returns `Unavailable { retry_after }`, as do 429 and
+  other 5xx statuses; the client does not retry. A 400, 408, 411, 421 or other
+  4xx returns `Refused(status)` without a retry. Any validation failure returns
+  `Protocol(kind)` and never `Absent`. Validation covers the recent map's
+  header, canonical form and shape, each index chunk's digest, canonical form
+  and position in the recent map, the manifest against its map entry, init parameters against
+  the local derivation, setup identity, length and digest, and per-frame binding,
+  epoch, response length and decoding. Transport failures return `Transport`.
+- **Bandwidth.** Measured body bytes in the in-process tests are in the
+  [status](status.md#wallet-txid-client-2026-10-07).
+## Sizing and routing qualification
+
+The [sizing and anonymity findings](../../docs/transparent-txid-sizing-and-anonymity-findings.md)
+compare implemented bytes with compact proposals and independent lookup/overflow
+routing. The whole-range probability study supports a sizing recommendation with
+clustered uncertainty; it does not qualify a population anonymity minimum. In particular, global overflow does
+not erase the containing lookup range exposed by the current reference helper.
+Future measurement and implementation gates remain in
+[remaining work](remaining-work.md#txid-display-sizing-and-independent-routing).
+
 ## Reproduce the native demo
 
 Run from the repository root:

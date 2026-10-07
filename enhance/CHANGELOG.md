@@ -18,6 +18,12 @@
   routing-, session-, request- and anchor-bound responses. Wallets remain responsible for accepting the
   chain anchor and authenticating reconstructed notes.
 
+- Publish exact whole-transaction fees for every non-coinbase transaction with
+  Ironwood actions, including transparent, Sapling and Orchard parts. Spent
+  outputs are resolved from the block, a bounded cache and batched
+  `getrawtransaction`; an unresolvable output fails the block. Add
+  `rebuild-journal` and coordinator startup adoption of a verified staged journal
+  to repair historical fee-absent records. The record layout is unchanged.
 - Move to ipir-sp rc.6. The experimental `native-reinspiring` build uses
   two-mask output with 29-bit rounded public masks
   (`ironwood-enhance-pir-v9-native-two-mask-m29`, control version 4). This

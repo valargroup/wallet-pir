@@ -1,0 +1,43 @@
+
+    #[test]
+    #[ignore]
+    fn probe_display_build_stages() {
+        use transparent_shard::display::TXID_2K;
+        let t = |s: std::time::Instant| s.elapsed().as_secs_f64();
+        build_pool().install(|| {
+            for table in [Table::TxDirectory, Table::TxPages] {
+                let shared = SharedParams::build(&TXID_2K, table).unwrap();
+                let profile = &shared.profile;
+                eprintln!("{table:?} rows={} cols={} row_bytes={} blocks={} path={:?}", profile.rows, profile.cols, profile.row_bytes, profile.blocks(), native::batched_hint::path(&profile.masks));
+                let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+                for (i, byte) in rows.iter_mut().enumerate() {
+                    *byte = (i.wrapping_mul(2_654_435_761) >> 9) as u8;
+                }
+                for round in 0..3 {
+                    let s = std::time::Instant::now();
+                    let server = database_server(&shared, RowCoefficients { rows: &rows, row_bytes: profile.row_bytes, cols: profile.cols, position: 0, total: profile.rows * profile.cols }, false);
+                    let encode = t(s);
+                    let (padded, db) = (server.db_rows_padded(), server.db());
+                    let s = std::time::Instant::now();
+                    let reference = native::hint(&profile.masks, profile.rows, profile.cols, |c| &db[c * padded..c * padded + profile.rows]).unwrap();
+                    let href = t(s);
+                    let s = std::time::Instant::now();
+                    let batched = native::batched_hint::hint(&profile.masks, profile.rows, profile.cols, |c| &db[c * padded..c * padded + profile.rows]).unwrap();
+                    let hbat = t(s);
+                    assert!(batched == reference);
+                    let s = std::time::Instant::now();
+                    let pre = native::preprocess(&profile.setup, &reference).unwrap();
+                    let prep = t(s);
+                    drop(reference); drop(batched);
+                    let s = std::time::Instant::now();
+                    let _rt = TableRuntime::assemble(server, pre).unwrap();
+                    let asm = t(s);
+                    let s = std::time::Instant::now();
+                    let _full = TableRuntime::build(&shared, &rows).unwrap();
+                    let full = t(s);
+                    eprintln!("{table:?} round {round}: encode {encode:.3} hint_ref {href:.3} hint_batched {hbat:.3} preprocess {prep:.3} assemble {asm:.3} | build() {full:.3}");
+                }
+            }
+        });
+    }
+}

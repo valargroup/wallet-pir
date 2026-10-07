@@ -1,0 +1,35 @@
+[Unit]
+Description=Transparent txid display controller (proof of concept)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase controller` from
+# the reviewed request; transparent/ops/lib/txid_display_poc.py owns the values.
+# The controller is the display journal's only writer once the backfill unit has
+# exited. It reaches the workers through workers.json: the archive owner first,
+# then the recent replica that serves the map.
+ExecStart=@RELEASE@/txid-display-controller run --root @ROOT@ --journal @JOURNAL@ --workers /opt/transparent-txid-display/workers.json --mode @MODE@ --status-listen 127.0.0.1:@STATUS_PORT@ --rpc-url @RPC_URL@ --rpc-cookie @RPC_COOKIE@@EXTRA_ARGS@
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=10
+UMask=0077
+# Below the history controller (Nice=5, MemoryMax=8G) on every axis.
+MemoryMax=@MEMORY_MAX@
+MemorySwapMax=0
+CPUQuota=@CPU_QUOTA@
+CPUWeight=@CPU_WEIGHT@
+IOWeight=20
+Nice=@NICE@
+OOMScoreAdjust=500
+NoNewPrivileges=yes
+PrivateTmp=yes
+# No ProtectHome: the node's RPC cookie under /root must stay readable.
+ProtectSystem=strict
+ReadWritePaths=@ROOT@ @JOURNAL@ /opt/transparent-txid-display/state
+ReadOnlyPaths=/opt/transparent-publisher/credentials
+
+[Install]
+WantedBy=multi-user.target

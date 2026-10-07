@@ -90,7 +90,7 @@ impl WorkMemory {
         result
     }
 
-    fn reserve_at(
+    pub(crate) fn reserve_at(
         self: &Arc<Self>,
         bytes: u64,
         sample: Option<(u64, Option<u64>)>,

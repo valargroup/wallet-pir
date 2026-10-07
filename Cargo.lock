@@ -4367,9 +4367,25 @@ dependencies = [
  "transparent-filter-server",
  "transparent-native",
  "transparent-shard",
+ "transparent-txid-client",
  "transparent-wallet",
  "transparent-wallet-store",
  "zakura-chain 9.0.0",
+]
+
+[[package]]
+name = "transparent-txid-client"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "flate2",
+ "hex",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "transparent-events",
+ "transparent-native",
+ "transparent-shard",
 ]
 
 [[package]]

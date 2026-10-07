@@ -21,6 +21,7 @@
     "transparent-shard",
     "transparent-wallet",
     "transparent-wallet-store",
+    "transparent-txid-client",
     "transparent-blocks",
     "transparent-block-server",
     "transparent-filter-server",

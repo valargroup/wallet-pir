@@ -42,8 +42,8 @@ check-full: check-ops check-docs check-reports check-tools
 # through a green `check`: CI exercises the scripts only in `validate` mode,
 # which never parses a served document. Cheap, and it needs no build, so it runs
 # first and fails in seconds rather than after the release test suite.
-.PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
-check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler
+.PHONY: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
+check-ops: check-ops-enhance check-ops-shared check-ops-control-sessions check-ops-deploy check-ops-contracts check-ops-parents check-ops-fleet check-ops-publication check-ops-burst check-ops-regression-recut check-ops-regression-fixtures check-ops-observation check-ops-stage-timing check-ops-membership check-ops-elastic check-ops-scaler check-ops-txid-display
 
 check-ops-enhance:
 	python3 -m unittest discover -s enhance/ops/tests -p 'test_*.py'
@@ -105,6 +105,12 @@ check-ops-membership:
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_archive_standby.py'
 	python3 -m unittest discover -s transparent/ops/tests -p 'test_quality_rollout_load.py'
 	python3 -m unittest discover -s transparent/ops/scripts -p 'test_transparent_quality_load.py'
+
+# The txid display proof of concept's deploy family against an in-memory fleet,
+# its command-transport adapter and observers against shimmed ssh and rsync, and
+# the history router's opt-in import hook.
+check-ops-txid-display:
+	python3 -m unittest discover -s transparent/ops/tests -p 'test_txid_display_*.py'
 
 # Elastic recent replicas: the saved-plan validator and the Terraform root runner.
 check-ops-elastic:

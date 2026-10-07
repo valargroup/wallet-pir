@@ -1,0 +1,23 @@
+[package]
+name = "transparent-txid-client"
+version = "0.1.0"
+edition = "2021"
+description = "Synchronous, transport-agnostic wallet client for the tiered txid display PIR publication"
+
+[lib]
+name = "transparent_txid_client"
+path = "src/lib.rs"
+
+# No HTTP stack and no async runtime: the wallet supplies the transport.
+[dependencies]
+base64 = "0.22"
+hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+transparent-events = { path = "../transparent-events" }
+transparent-native = { path = "../transparent-native" }
+transparent-shard = { path = "../transparent-shard" }
+
+[dev-dependencies]
+flate2 = "1"

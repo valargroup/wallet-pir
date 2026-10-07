@@ -1,0 +1,22 @@
+{
+  "run_id": "mixed-fee-publication-2026-10-06/followup",
+  "recorded_at_utc": "2026-10-06T19:30:00Z",
+  "kind": "local checks after streaming adoption verification; no deployment, no host access",
+  "source_revision": "64fd17a1bd0bddb530ee50b08e1546f4db9e549f",
+  "profile": "release-fast, locked, target-cpu=native",
+  "host": "same ephemeral development worker as ../manifest.json",
+  "commands": [
+    {"command": "make check-fast BASE=031a23cb", "log": "check-fast-2.log.gz", "exit": 0},
+    {"command": "RUST_TEST_THREADS=1 cargo test --locked --profile release-fast -p enhance-pir-server --test rpc", "log": "rpc-tests-2.log.gz", "exit": 0, "note": "run on the tree one clippy-only edit before the source revision (is_multiple_of in store.rs)"},
+    {"command": "cargo clippy --locked --profile release-fast -p enhance-pir-server --all-targets -- -D warnings", "log": "clippy-2.log.gz", "exit": 0},
+    {"command": "cargo build --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --bins", "log": "native-build-2.log.gz", "exit": 0},
+    {"command": "cargo test --locked --profile release-fast -p enhance-pir-server --lib adoption_streams -- --ignored --nocapture (3 runs)", "log": "adoption-measure.log.gz", "exit": 0}
+  ],
+  "adoption_measurement": {
+    "workload": "synthetic journals: 700,000 records of 653 bytes (457,100,000 bytes each) in 50,000 blocks; half the staged records gain a fee",
+    "seconds": [2.147, 2.112, 2.105],
+    "peak_rss_growth_kib": [708, 708, 708],
+    "method": "/proc/self/clear_refs reset, VmHWM minus VmRSS before adopt_staged",
+    "page_cache": "warm; files written immediately before; cold-cache time not measured"
+  }
+}

@@ -30,6 +30,17 @@
 //! worse service than an unbounded cache gives, and it is the point: the
 //! alternative is not "better service", it is being killed.
 //!
+//! # Releasing what the build did not use
+//!
+//! The reservation is an upper bound: it charges the compiled packing matrix
+//! at eight-byte words, and a built runtime has so far held it at four (or
+//! fewer, packed). Once a build or restore has produced the runtime, its entry
+//! is charged what it actually holds, [`TableRuntime::held_bytes`], and the
+//! difference returns to the budget. The release happens only after the
+//! runtime exists, never before, so a build in flight is always charged its
+//! bound, and an entry's charge can only fall. A cache that kept the bound
+//! would hold barely more than half the runtimes its budget can carry.
+//!
 //! # Nothing is evicted while it is in use
 //!
 //! A caller holds a [`RuntimeHandle`] for as long as it needs the runtime, and
@@ -103,7 +114,8 @@ pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, S
 ///   and a `d x d*ell` compiled matrix at eight-byte words (64 MiB). The
 ///   compiled matrix is stored at four-byte words when every entry fits, so a
 ///   real runtime may hold half of that term; the reservation takes the bound
-///   because it is made before the build that decides it.
+///   because it is made before the build that decides it, and the cache
+///   releases the difference once the build is done.
 ///
 /// `shard-scaling --geometry-sweep` and the router price the same terms, so a
 /// sweep's projection and a running worker's budget cannot drift apart.
@@ -119,6 +131,44 @@ pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
         + blocks * native::BLOCK_PUBLIC_BYTES as u64
         + native::PREPARED_HEADER_BYTES
         + blocks * native::PREPARED_BLOCK_MAX_BYTES
+}
+
+/// Bytes a prepared runtime holds once built with its compiled matrix at
+/// four-byte words: [`reserved_bytes`] less half of the matrix term.
+///
+/// This is the size the cache charges a built runtime in practice, so it is
+/// what warm-fit and disk preflight checks plan with. It is a planning figure,
+/// not a bound: a runtime whose matrix needs eight-byte words is charged its
+/// full reservation, and a plan made with this figure then comes up short and
+/// says so through overloads rather than through memory. `shard-residency`
+/// measured `txid-2k` at 40.3-41.3 MiB and `txid-4k` at 48.2-48.3 MiB per
+/// runtime against the 40.05 and 48.05 MiB given here.
+pub fn held_bytes(rows: u64, row_bytes: u32) -> u64 {
+    let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
+    reserved_bytes(rows, row_bytes)
+        - blocks * (native::PREPARED_BLOCK_MAX_BYTES - native::PREPARED_BLOCK_MIN_BYTES)
+}
+
+/// Bytes a warm worker's cache needs to build or restore every runtime in
+/// `runtimes` and keep them all: each charged at its built size, plus the
+/// bound's excess for the `in_flight` largest, since that many may hold their
+/// reservation at once before they are released.
+///
+/// Never more than the sum of the reservations, which is what this check
+/// demanded before the cache released anything: every assignment that fitted
+/// then fits now.
+pub fn warm_bytes<'a>(
+    runtimes: impl IntoIterator<Item = &'a SharedParams>,
+    in_flight: usize,
+) -> u64 {
+    let mut held = 0u64;
+    let mut excess = Vec::new();
+    for shared in runtimes {
+        held += shared.held_bytes();
+        excess.push(shared.reserved_bytes() - shared.held_bytes());
+    }
+    excess.sort_unstable_by(|a, b| b.cmp(a));
+    held + excess.iter().take(in_flight).sum::<u64>()
 }
 
 /// The parameters every shard of one geometry and table shares.
@@ -186,6 +236,11 @@ impl SharedParams {
         reserved_bytes(self.profile.rows as u64, self.profile.row_bytes as u32)
     }
 
+    /// See [`held_bytes`].
+    pub fn held_bytes(&self) -> u64 {
+        held_bytes(self.profile.rows as u64, self.profile.row_bytes as u32)
+    }
+
     /// Checks the binding and length, then parses the key and selection once
     /// for every segment that will answer them.
     pub fn parse(&self, binding: [u8; 8], body: &[u8]) -> Result<ParsedQuery, String> {
@@ -226,13 +281,15 @@ impl Iterator for RowCoefficients<'_> {
 }
 
 /// Geometries whose runtime hint skips trailing zero blocks and is computed
-/// by [`native::batched_hint`]: the recent tails rebuilt at every publication.
-/// Every other geometry, the archives included, keeps the reference product
-/// over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 3] = [
+/// by [`native::batched_hint`]: the recent tails and the display tables, whose
+/// recent shard is rebuilt at every block. Every other geometry, the history
+/// archives included, keeps the reference product over every block.
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 5] = [
     &transparent_shard::layout::RECENT_8K,
     &transparent_shard::layout::RECENT_4K,
     &transparent_shard::layout::RECENT_4K_8K,
+    &transparent_shard::display::TXID_2K,
+    &transparent_shard::display::TXID_4K,
 ];
 
 fn uses_batched_hint(geometry: &Geometry) -> bool {
@@ -376,6 +433,26 @@ impl TableRuntime {
         Self::assemble(server, preprocessed)
     }
 
+    /// Bytes this runtime holds, priced by the same terms as
+    /// [`reserved_bytes`] but at the compiled matrix's actual word width.
+    ///
+    /// Each block's charge is its id and width word plus the library's
+    /// retained coefficient storage (both masks and the matrix), which is the
+    /// bound's block term with the real matrix in place of the eight-byte one.
+    /// A restored runtime's matrix is mapped from its cache file and is
+    /// charged the same.
+    pub fn held_bytes(&self) -> u64 {
+        const BLOCK_ID_AND_WIDTH_BYTES: u64 = 32 + 8;
+        self.server.db().len() as u64 * 2
+            + self.public_params.len() as u64
+            + native::PREPARED_HEADER_BYTES
+            + self
+                .preprocessed
+                .iter()
+                .map(|block| BLOCK_ID_AND_WIDTH_BYTES + block.coefficient_bytes() as u64)
+                .sum::<u64>()
+    }
+
     /// Publishes the masks of prepared blocks and derives their epoch.
     pub(crate) fn assemble(
         server: IPIRServer<u16>,
@@ -487,6 +564,7 @@ struct Slot {
 
 struct Entry {
     slot: Arc<Slot>,
+    /// The bound until the runtime is built, then what it holds.
     reserved: u64,
     last_used: u64,
 }
@@ -584,8 +662,14 @@ impl RuntimeCache {
                 let result = self
                     .load_or_build(key.clone(), shared, source, slot.clone())
                     .await;
-                if result.is_err() {
-                    Metrics::incr(&self.metrics.build_failures);
+                match &result {
+                    // The runtime exists and its size is fixed, so the
+                    // bound's excess can return to the budget. This runs
+                    // before any waiter is handed the runtime, and this
+                    // closure holds the slot, so the entry cannot have been
+                    // evicted meanwhile.
+                    Ok(runtime) => self.settle(&key, &slot, runtime.held_bytes()),
+                    Err(_) => Metrics::incr(&self.metrics.build_failures),
                 }
                 result
             })
@@ -600,6 +684,23 @@ impl RuntimeCache {
             return built.map(|_| unreachable!("failed initialization"));
         }
         Ok(handle)
+    }
+
+    /// The runtime for `key` only if it is already built: never builds,
+    /// restores or waits, so a caller can refuse work a cold build would cost.
+    pub fn cached(&self, key: &RuntimeKey) -> Option<RuntimeHandle> {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        inner.clock += 1;
+        let now = inner.clock;
+        let entry = inner.entries.get_mut(key)?;
+        if !entry.slot.runtime.initialized() {
+            return None;
+        }
+        entry.last_used = now;
+        Metrics::incr(&self.metrics.cache_hits);
+        Some(RuntimeHandle {
+            slot: entry.slot.clone(),
+        })
     }
 
     /// Restores use streaming buffers and their own concurrency bound. A miss
@@ -795,6 +896,28 @@ impl RuntimeCache {
             .map(|(key, _)| key.clone())
     }
 
+    /// Charges `slot`'s entry what its built runtime holds, releasing the rest
+    /// of its reservation.
+    ///
+    /// Only ever lowers a charge: a runtime that came out at or above its
+    /// bound keeps the bound, which is what admission already allowed for.
+    /// A slot no longer installed under `key` is left alone, so a stale
+    /// caller cannot rewrite a replacement's charge.
+    fn settle(&self, key: &RuntimeKey, slot: &Arc<Slot>, held: u64) {
+        let mut inner = self.inner.lock().expect("runtime cache");
+        let Some(entry) = inner
+            .entries
+            .get_mut(key)
+            .filter(|entry| Arc::ptr_eq(&entry.slot, slot))
+        else {
+            return;
+        };
+        let released = entry.reserved.saturating_sub(held);
+        entry.reserved -= released;
+        inner.resident -= released;
+        self.publish(&inner);
+    }
+
     fn forget(&self, key: &RuntimeKey, failed: &Arc<Slot>) {
         let mut inner = self.inner.lock().expect("runtime cache");
         // A waiter on a failed slot may resume after a retry installed a new
@@ -815,7 +938,9 @@ impl RuntimeCache {
         Metrics::set(&self.metrics.cache_entries, inner.entries.len() as u64);
     }
 
-    /// Bytes currently reserved, for health reporting and tests.
+    /// Bytes currently charged: built entries at what they hold, entries
+    /// still building or restoring at their reservation. For health
+    /// reporting and tests.
     pub fn resident_bytes(&self) -> u64 {
         self.inner.lock().expect("runtime cache").resident
     }
@@ -880,6 +1005,7 @@ mod tests {
     }
 
     use super::*;
+    use transparent_shard::display::TXID_2K;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
@@ -899,6 +1025,248 @@ mod tests {
             &cache.slot_for(key, 100).unwrap().0,
             &replacement
         ));
+    }
+
+    /// `shard-residency` on roman-dev-2 (2026-10-07), steady per-runtime
+    /// increments after the allocator warmed up, in MiB: the lowest and
+    /// highest of runtimes 4-6 of each table.
+    /// `transparent/evidence/txid-display-backfill-sizing-2026-10-07/residency`.
+    const MEASURED_TXID_2K_MIB: (f64, f64) = (40.29, 41.34);
+    const MEASURED_TXID_4K_MIB: (f64, f64) = (48.21, 48.30);
+
+    fn mib(bytes: u64) -> f64 {
+        bytes as f64 / f64::from(1 << 20)
+    }
+
+    /// The planned built size is the four-byte-word size the residency
+    /// measurement found, and the reservation is the eight-byte bound: 72.05
+    /// against 40.05 MiB at `txid-2k`, 80.05 against 48.05 MiB at `txid-4k`.
+    /// The planned size sits just under each measured range, which carries
+    /// allocator overhead the formula leaves out.
+    #[test]
+    fn the_planned_built_size_is_the_measured_display_runtime() {
+        use transparent_shard::display::TXID_4K;
+        for (geometry, reserved, held, measured) in [
+            (&TXID_2K, 75_545_144, 41_990_712, MEASURED_TXID_2K_MIB),
+            (&TXID_4K, 83_933_752, 50_379_320, MEASURED_TXID_4K_MIB),
+        ] {
+            for table in [Table::TxDirectory, Table::TxPages] {
+                let shared = SharedParams::build(geometry, table).unwrap();
+                assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
+                assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
+                assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
+                assert!(mib(held) <= measured.0, "{}", geometry.name);
+                assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
+            }
+        }
+    }
+
+    /// A built runtime, history or display, holds no more than the planned
+    /// four-byte size and no less than the 27-bit packed matrix a CPU with
+    /// AVX-512 VBMI may choose, so its charge never exceeds its reservation.
+    #[test]
+    fn a_built_runtime_holds_its_planned_size_or_less() {
+        let matrix_narrow = (native::D * native::D * native::ELL * 4) as u64;
+        let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
+        for (geometry, table) in [
+            (&RECENT_8K, Table::Directory),
+            (&TXID_2K, Table::TxDirectory),
+            (&transparent_shard::display::TXID_4K, Table::TxPages),
+        ] {
+            let shared = SharedParams::build(geometry, table).unwrap();
+            let profile = &shared.profile;
+            let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
+                .map(|i| (i.wrapping_mul(2_654_435_761) >> 9) as u8)
+                .collect();
+            let held = TableRuntime::build(&shared, &rows).unwrap().held_bytes();
+            eprintln!(
+                "{} {}: reserved {:.2} MiB, planned {:.2} MiB, built {:.2} MiB",
+                geometry.name,
+                table.as_str(),
+                mib(shared.reserved_bytes()),
+                mib(shared.held_bytes()),
+                mib(held)
+            );
+            assert!(held <= shared.held_bytes(), "{}", geometry.name);
+            assert!(
+                held >= shared.held_bytes() - (matrix_narrow - matrix_packed),
+                "{}",
+                geometry.name
+            );
+            assert!(held < shared.reserved_bytes());
+        }
+    }
+
+    /// Admission is unchanged: a new entry is admitted against its full
+    /// bound, and while it is building that bound stays charged, so builds in
+    /// flight together can never be admitted past the budget on the strength
+    /// of sizes they have not reached yet. Only once a runtime exists does its
+    /// charge fall, never rise, and eviction returns exactly what is charged.
+    #[test]
+    fn a_reservation_is_released_only_after_its_build_and_only_downward() {
+        let shared = SharedParams::build(&TXID_2K, Table::TxDirectory).unwrap();
+        let (bound, held) = (shared.reserved_bytes(), shared.held_bytes());
+        let metrics = Arc::new(Metrics::default());
+        let cache = RuntimeCache::new(bound + held, 2, metrics.clone());
+        let key = |segment| ("revision".to_string(), Table::TxDirectory, segment);
+        let (a, _) = cache.slot_for(key(0), bound).unwrap();
+        assert_eq!(cache.resident_bytes(), bound);
+        // A second build may not start while the first still holds its bound,
+        // although both would fit at their built size.
+        assert!(matches!(
+            cache.slot_for(key(1), bound),
+            Err(CacheError::Overloaded)
+        ));
+        cache.settle(&key(0), &a, held);
+        assert_eq!(cache.resident_bytes(), held);
+        assert_eq!(Metrics::get(&metrics.resident_bytes), held);
+        let (b, _) = cache.slot_for(key(1), bound).unwrap();
+        assert_eq!(cache.resident_bytes(), held + bound);
+        assert_eq!(cache.resident_bytes(), cache.budget());
+        // A runtime that came out larger than planned keeps its bound, and a
+        // second settle cannot raise a charge already lowered.
+        cache.settle(&key(1), &b, bound + 1);
+        cache.settle(&key(0), &a, bound);
+        assert_eq!(cache.resident_bytes(), held + bound);
+        // A stale slot cannot rewrite a replacement's charge.
+        let stale = Arc::new(Slot {
+            runtime: tokio::sync::OnceCell::new(),
+        });
+        cache.settle(&key(1), &stale, 0);
+        assert_eq!(cache.resident_bytes(), held + bound);
+        assert!(matches!(
+            cache.slot_for(key(2), bound),
+            Err(CacheError::Overloaded)
+        ));
+        drop((a, b));
+        cache.evict_unpinned();
+        assert_eq!(cache.resident_bytes(), 0);
+        assert_eq!(cache.entries(), 0);
+        assert_eq!(Metrics::get(&metrics.resident_bytes), 0);
+        assert_eq!(Metrics::get(&metrics.cache_entries), 0);
+        assert_eq!(Metrics::get(&metrics.evictions), 2);
+    }
+
+    /// The same through real builds: a build stalled on its source keeps its
+    /// whole bound charged, so a second build that would fit only at the
+    /// first's built size is refused until the first runtime exists. Then the
+    /// first is charged what it holds, and the second is admitted beside it
+    /// without evicting anything.
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
+        use std::io::Write;
+        let geometry = &transparent_shard::layout::RECENT_4K;
+        let dir = tempfile::tempdir().unwrap();
+        let shared = Arc::new(SharedParams::build(geometry, Table::Directory).unwrap());
+        let rows = vec![7u8; shared.profile.rows * shared.profile.row_bytes];
+        let source = SegmentSource {
+            path: dir.path().join("table.bin"),
+            rows: Table::Directory.rows(geometry),
+            row_bytes: Table::Directory.row_bytes(geometry),
+            sha256: hex::encode(Sha256::digest(&rows)),
+        };
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&source.path)
+            .status()
+            .unwrap()
+            .success());
+        let (opened_tx, opened_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let writer = {
+            let (path, rows) = (source.path.clone(), rows.clone());
+            std::thread::spawn(move || {
+                let mut file = std::fs::File::create(path).unwrap();
+                let _ = opened_tx.send(());
+                release_rx.recv().unwrap();
+                file.write_all(&rows).unwrap();
+            })
+        };
+        let (bound, planned) = (shared.reserved_bytes(), shared.held_bytes());
+        let metrics = Arc::new(Metrics::default());
+        let cache = Arc::new(RuntimeCache::new(bound + planned, 2, metrics.clone()));
+        let key = |segment| ("ab".repeat(32), Table::Directory, segment);
+        let first = {
+            let (cache, shared, source) = (cache.clone(), shared.clone(), source.clone());
+            tokio::spawn(async move { cache.get(key(0), shared, source).await })
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(30), opened_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(cache.resident_bytes(), bound);
+        assert!(matches!(
+            cache.get(key(1), shared.clone(), source.clone()).await,
+            Err(CacheError::Overloaded)
+        ));
+        assert_eq!(Metrics::get(&metrics.overloads), 1);
+        assert_eq!(cache.resident_bytes(), bound);
+        release_tx.send(()).unwrap();
+        writer.join().unwrap();
+        let first = first.await.unwrap().unwrap();
+        let held = first.get().held_bytes();
+        assert!(held <= planned);
+        assert_eq!(cache.resident_bytes(), held);
+        assert_eq!(Metrics::get(&metrics.resident_bytes), held);
+        std::fs::remove_file(&source.path).unwrap();
+        std::fs::write(&source.path, &rows).unwrap();
+        let second = cache.get(key(1), shared.clone(), source).await.unwrap();
+        assert_eq!(cache.resident_bytes(), held + second.get().held_bytes());
+        assert!(cache.resident_bytes() <= cache.budget());
+        assert_eq!(Metrics::get(&metrics.builds), 2);
+        assert_eq!(Metrics::get(&metrics.evictions), 0);
+        assert_eq!(Metrics::get(&metrics.cache_entries), 2);
+    }
+
+    /// The warm-fit check is never stricter than the sum of reservations it
+    /// replaces, for every history and display geometry: equal while every
+    /// runtime can be in flight at once, smaller beyond that by the bound's
+    /// excess of each runtime that cannot.
+    #[test]
+    fn the_warm_fit_never_exceeds_the_reservations_it_replaces() {
+        use transparent_shard::display::DISPLAY_PROFILES;
+        let mut every = Vec::new();
+        for geometry in transparent_shard::layout::PROFILES {
+            for table in [Table::Directory, Table::Pages] {
+                every.push(SharedParams::build(geometry, table).unwrap());
+            }
+        }
+        for geometry in DISPLAY_PROFILES {
+            for table in [Table::TxDirectory, Table::TxPages] {
+                every.push(SharedParams::build(geometry, table).unwrap());
+            }
+        }
+        for shared in &every {
+            let excess = shared.reserved_bytes() - shared.held_bytes();
+            for count in 0..8u64 {
+                for in_flight in 0..6u64 {
+                    let set = std::iter::repeat_n(shared, count as usize);
+                    let needed = warm_bytes(set, in_flight as usize);
+                    let charged = count * shared.reserved_bytes();
+                    assert!(needed <= charged);
+                    assert_eq!(charged - needed, count.saturating_sub(in_flight) * excess);
+                }
+            }
+        }
+        let all = warm_bytes(&every, 4);
+        assert!(all < every.iter().map(SharedParams::reserved_bytes).sum::<u64>());
+        assert_eq!(
+            warm_bytes(&every, every.len()),
+            every.iter().map(SharedParams::reserved_bytes).sum::<u64>()
+        );
+    }
+
+    /// The txid display genesis plan: 850 `txid-2k` runtimes hold 33.2 GiB at
+    /// their built size (33.4 GiB with four in flight at their bound), against
+    /// 59.8 GiB charged at the bound.
+    #[test]
+    fn genesis_display_runtimes_fit_at_their_built_size() {
+        let shared = SharedParams::build(&TXID_2K, Table::TxDirectory).unwrap();
+        let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
+        let runtimes = std::iter::repeat_n(&shared, 850);
+        let needed = warm_bytes(runtimes, 4);
+        assert!((gib(needed) - 33.4).abs() < 0.1, "{}", gib(needed));
+        assert!((gib(850 * shared.reserved_bytes()) - 59.8).abs() < 0.1);
     }
 
     /// The native reservation at the pinned geometry: a 32 MiB database, one
@@ -1002,14 +1370,19 @@ mod tests {
     }
 
     /// The batched hint changes nothing a client or the disk cache sees. At
-    /// the deployed geometry, for a full directory and a partly filled page
-    /// table, the runtime publishes the masks of one prepared from the
-    /// reference hint over every block, answers byte for byte as it does, and
-    /// decodes to the selected row.
+    /// the deployed history and display geometries, for a full directory and
+    /// a partly filled page table, the runtime publishes the masks of one
+    /// prepared from the reference hint over every block, answers byte for
+    /// byte as it does, and decodes to the selected row.
     #[test]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
-        for (table, filled) in [(Table::Directory, 8_192), (Table::Pages, 5_000)] {
-            let shared = SharedParams::build(&RECENT_8K, table).unwrap();
+        for (geometry, table, filled) in [
+            (&RECENT_8K, Table::Directory, 8_192),
+            (&RECENT_8K, Table::Pages, 5_000),
+            (&TXID_2K, Table::TxDirectory, 2_048),
+            (&TXID_2K, Table::TxPages, 700),
+        ] {
+            let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
             let mut rows = vec![0u8; profile.rows * profile.row_bytes];
             for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
@@ -1051,18 +1424,21 @@ mod tests {
                 assert_eq!(
                     row,
                     &rows[at..at + profile.row_bytes],
-                    "{table:?} row {selected}"
+                    "{} {table:?} row {selected}",
+                    geometry.name
                 );
             }
         }
     }
 
-    /// Only the recent geometries take the batched hint, and their deployed
-    /// masks are within its capacity, so it never silently falls back there.
-    /// Both archive geometries, and any geometry added later, keep the
-    /// reference product over every block.
+    /// Only the recent history geometries and the display geometries take the
+    /// batched hint, and their deployed masks are within its capacity, so it
+    /// never silently falls back there. Both history archive geometries, and
+    /// any history geometry added later, keep the reference product over every
+    /// block.
     #[test]
     fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
+        use transparent_shard::display::DISPLAY_PROFILES;
         use transparent_shard::layout::{ARCHIVE_32K, PROFILES};
         for geometry in PROFILES {
             assert_eq!(
@@ -1075,8 +1451,14 @@ mod tests {
         assert!(!uses_batched_hint(&ARCHIVE_32K));
         assert!(!uses_batched_hint(&ARCHIVE_WIDE));
         assert!(uses_batched_hint(&RECENT_8K));
+        assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
         for geometry in BATCHED_HINT_GEOMETRIES {
-            for table in [Table::Directory, Table::Pages] {
+            let tables = if DISPLAY_PROFILES.contains(geometry) {
+                [Table::TxDirectory, Table::TxPages]
+            } else {
+                [Table::Directory, Table::Pages]
+            };
+            for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();
                 assert_eq!(
                     native::batched_hint::path(&shared.profile.masks).unwrap(),

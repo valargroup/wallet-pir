@@ -161,6 +161,19 @@ resource "digitalocean_firewall" "transparent_worker" {
     )
   }
 
+  # The txid display proof of concept's worker port: the router proxies
+  # /v1/txid/ and the display controller verifies workers. Off unless the
+  # deploy's `firewall` phase sets the variable, so the plan is otherwise
+  # unchanged.
+  dynamic "inbound_rule" {
+    for_each = var.transparent_txid_display_port_enabled ? [8095] : []
+    content {
+      protocol    = "tcp"
+      port_range  = tostring(inbound_rule.value)
+      source_tags = [digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name]
+    }
+  }
+
   outbound_rule {
     protocol              = "tcp"
     port_range            = "1-65535"

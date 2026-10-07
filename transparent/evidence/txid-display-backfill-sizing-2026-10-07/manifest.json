@@ -1,0 +1,31 @@
+{
+ "run_id": "txid-display-backfill-sizing-2026-10-07",
+ "kind": "planning arithmetic: txid display backfill sizing below 3,407,001 from published maps",
+ "window_utc": ["2026-10-07T16:05:15Z", "2026-10-07T16:05:20Z"],
+ "deployment": "none; public HTTPS GETs only, no SSH, no production change",
+ "source": {"commit": "8cccfa4413986c638e7a6a26abed1a8d7a33445a", "tools": ["capture.py", "sizing.py"],
+            "runtime": "Python 3.12.3 standard library"},
+ "host": {"name": "roman-dev-2", "sku": "DigitalOcean premium Intel, 8 vCPU, 31 GiB",
+          "sharing": "shared development host"},
+ "network": {"chain": "main", "genesis": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+             "tip": 3509639},
+ "inputs": {
+  "captured": "inputs/capture.json (URL, status, bytes, sha256, UTC per file)",
+  "retained": ["../v9-cutover-2026-09-28/served-map.json", "../v10-cutover-2026-09-28/load/before-map.json",
+               "../activity-metadata-2026-09-30/full-publication-terminal.json", "../census-2026-09-08/census.txt",
+               "../activity-metadata-2026-09-30/ingest-handoff-cache-a1c4b809.json",
+               "../activity-metadata-2026-09-30/full-ingestion-publication-start.json",
+               "../txid-display-tiered-2026-10-05/README.md (bench timings)"]
+ },
+ "display_publication": {"schema": "transparent-txid-display-shard-v1", "geometry": "txid-2k (2,048 x 4,096 B both tables)",
+                         "seal": {"n_archive": 1, "n_recent": 1, "archive_target": 40000, "recent_floor": 10000,
+                                  "reorg_margin": 100}, "start_height": 3407001},
+ "measured": ["display records per shard (exact, live map)", "manifest payload bytes, page rows, segments",
+              "history txids per shard (four maps)", "map bytes and Content-Encoding"],
+ "derived": ["history-txid estimates per range (event-density interpolation, bracketed)",
+             "archives, runtimes, reserved memory, disk, journal bytes, ingest/prepare time, map and cold-lookup bytes",
+             "window per display cache budget and the floor it implies"],
+ "not_measured": ["archive-03 MemAvailable, display RSS per runtime, free disk", "coordinator disk and inodes",
+                  "ingest throughput with display sidecars", "old-era display page usage"],
+ "outputs": ["sizing.json"]
+}

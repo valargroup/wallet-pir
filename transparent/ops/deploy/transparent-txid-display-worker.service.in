@@ -1,0 +1,42 @@
+[Unit]
+Description=Transparent txid display worker, @ROLE@ (proof of concept)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# Rendered by `wallet-pir-deploy.py txid-display-deploy --phase workers` from the
+# reviewed request; transparent/ops/lib/txid_display_poc.py owns the values.
+# The worker starts with no publication. The deploy and then the controller
+# stage, prepare and activate publications through the control socket only.
+# Every path is outside /srv/transparent-pir and /opt/transparent-publisher, so
+# history collectors, pruning and survey roots never see display data.
+# The controller ships a candidate every cycle; its `collect` deletes unused
+# candidates from the publications root and sealed revisions that left the
+# window from the staged root. The server keeps a staged revision whose shard
+# is not yet published, so a background stage still owns it from ship to stage.
+ExecStart=@RELEASE@/transparent-txid-server --listen @LISTEN@ --role @ROLE@ --cache-bytes @CACHE_BYTES@ --build-slots @BUILD_SLOTS@ --query-slots @QUERY_SLOTS@ --retain-revisions @RETAIN_REVISIONS@ --control-socket /run/transparent-txid-display/control.sock --active-record /opt/transparent-txid-display/worker/active.json --collect-root @COLLECT_ROOT@ --collect-root @STAGED_ROOT@@EXTRA_ARGS@
+Environment=RUST_LOG=info
+Environment=TRANSPARENT_BUILD_THREADS=@BUILD_THREADS@
+Restart=on-failure
+RestartSec=10
+RuntimeDirectory=transparent-txid-display
+RuntimeDirectoryMode=0700
+LimitNOFILE=1048576
+# Display always loses to the history worker on the same host: a lower CPU and
+# IO weight, a hard CPU quota, no swap, and the OOM killer's first choice.
+MemoryMax=@MEMORY_MAX@
+MemorySwapMax=0
+CPUQuota=@CPU_QUOTA@
+CPUWeight=@CPU_WEIGHT@
+IOWeight=20
+Nice=@NICE@
+OOMScoreAdjust=@OOM_SCORE_ADJUST@
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/srv/transparent-txid-display /opt/transparent-txid-display/worker
+
+[Install]
+WantedBy=multi-user.target

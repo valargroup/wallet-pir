@@ -1,0 +1,453 @@
+{
+ "tip": 3509639,
+ "display": {
+  "start_height": 3407001,
+  "sealed_archives": 13,
+  "records": 567880,
+  "recent_records": 47820,
+  "mean_archive_records": 40004.6,
+  "payload_bytes_per_record": 61.6,
+  "max_page_rows_used": 776,
+  "page_rows_per_segment": 2048,
+  "directory_segments": [
+   1
+  ],
+  "page_segments": [
+   1
+  ],
+  "map_bytes": 8854,
+  "map_entry_bytes": 632,
+  "days_per_archive_at_75s_blocks": 6.25
+ },
+ "calibration": {
+  "range": [
+   3407001,
+   3509639
+  ],
+  "display_records_exact": 567880,
+  "history_txids": {
+   "history_txids_lower": 460492,
+   "history_txids_estimate": 570034,
+   "history_txids_upper": 595359
+  },
+  "display_over_history_estimate": 0.9962
+ },
+ "bands": [
+  {
+   "from": 419200,
+   "through": 1687103,
+   "blocks": 1267904,
+   "history_txids_lower": 6137307,
+   "history_txids_upper": 6406246,
+   "history_txids_estimate": 6275405,
+   "per_block": 4.95,
+   "per_map": {
+    "live-v11-2026-10-07": {
+     "lower": 5739430,
+     "upper": 6406246,
+     "estimate": 6275405,
+     "covers": true
+    },
+    "v9-served-2026-09-28": {
+     "lower": 5960519,
+     "upper": 6429781,
+     "estimate": 6248872,
+     "covers": true
+    },
+    "v10-before-2026-09-28": {
+     "lower": 6137307,
+     "upper": 6775516,
+     "estimate": 6214944,
+     "covers": true
+    },
+    "v3-full-publication-2026-09-30": {
+     "lower": 5739430,
+     "upper": 6406246,
+     "estimate": 6275405,
+     "covers": true
+    }
+   }
+  },
+  {
+   "from": 1687104,
+   "through": 1999999,
+   "blocks": 312896,
+   "history_txids_lower": 710476,
+   "history_txids_upper": 1274667,
+   "history_txids_estimate": 1118739,
+   "per_block": 3.58,
+   "per_map": {
+    "live-v11-2026-10-07": {
+     "lower": 591890,
+     "upper": 1522713,
+     "estimate": 1101680,
+     "covers": true
+    },
+    "v9-served-2026-09-28": {
+     "lower": 710476,
+     "upper": 1361485,
+     "estimate": 1118739,
+     "covers": true
+    },
+    "v10-before-2026-09-28": {
+     "lower": 347935,
+     "upper": 1274667,
+     "estimate": 1163138,
+     "covers": true
+    },
+    "v3-full-publication-2026-09-30": {
+     "lower": 591890,
+     "upper": 1522713,
+     "estimate": 1101680,
+     "covers": true
+    }
+   }
+  },
+  {
+   "from": 2000000,
+   "through": 2499999,
+   "blocks": 500000,
+   "history_txids_lower": 1624725,
+   "history_txids_upper": 2164213,
+   "history_txids_estimate": 1637906,
+   "per_block": 3.28,
+   "per_map": {
+    "live-v11-2026-10-07": {
+     "lower": 1413133,
+     "upper": 2299184,
+     "estimate": 1634556,
+     "covers": true
+    },
+    "v9-served-2026-09-28": {
+     "lower": 1624725,
+     "upper": 2164213,
+     "estimate": 1668568,
+     "covers": true
+    },
+    "v10-before-2026-09-28": {
+     "lower": 1525176,
+     "upper": 2383055,
+     "estimate": 1637906,
+     "covers": true
+    },
+    "v3-full-publication-2026-09-30": {
+     "lower": 1413133,
+     "upper": 2299184,
+     "estimate": 1634556,
+     "covers": true
+    }
+   }
+  },
+  {
+   "from": 2500000,
+   "through": 2999999,
+   "blocks": 500000,
+   "history_txids_lower": 756843,
+   "history_txids_upper": 1243646,
+   "history_txids_estimate": 1243646,
+   "per_block": 2.49,
+   "per_map": {
+    "live-v11-2026-10-07": {
+     "lower": 473234,
+     "upper": 1759431,
+     "estimate": 1273389,
+     "covers": true
+    },
+    "v9-served-2026-09-28": {
+     "lower": 447605,
+     "upper": 1243646,
+     "estimate": 1231327,
+     "covers": true
+    },
+    "v10-before-2026-09-28": {
+     "lower": 756843,
+     "upper": 2091962,
+     "estimate": 1237451,
+     "covers": true
+    },
+    "v3-full-publication-2026-09-30": {
+     "lower": 473234,
+     "upper": 1759431,
+     "estimate": 1273389,
+     "covers": true
+    }
+   }
+  },
+  {
+   "from": 3000000,
+   "through": 3407000,
+   "blocks": 407001,
+   "history_txids_lower": 2159813,
+   "history_txids_upper": 2426453,
+   "history_txids_estimate": 2197139,
+   "per_block": 5.4,
+   "per_map": {
+    "live-v11-2026-10-07": {
+     "lower": 1841489,
+     "upper": 2861713,
+     "estimate": 2178390,
+     "covers": true
+    },
+    "v9-served-2026-09-28": {
+     "lower": 2159813,
+     "upper": 2841965,
+     "estimate": 2197139,
+     "covers": true
+    },
+    "v10-before-2026-09-28": {
+     "lower": 1282462,
+     "upper": 2426453,
+     "estimate": 2208437,
+     "covers": true
+    },
+    "v3-full-publication-2026-09-30": {
+     "lower": 1841489,
+     "upper": 2861713,
+     "estimate": 2178390,
+     "covers": true
+    }
+   }
+  },
+  {
+   "from": 3407001,
+   "through": 3509639,
+   "blocks": 102639,
+   "display_records_exact": 567880,
+   "history_txids_estimate": 570034,
+   "per_block": 5.53
+  }
+ ],
+ "budgets": [
+  {
+   "cache_gib": 4,
+   "max_archive_shards": 24,
+   "memory_max_gib": 6,
+   "floor_today": 3322430,
+   "coverage_days": 150
+  },
+  {
+   "cache_gib": 8,
+   "max_archive_shards": 50,
+   "memory_max_gib": 10,
+   "floor_today": 3137368,
+   "coverage_days": 312
+  },
+  {
+   "cache_gib": 12,
+   "max_archive_shards": 75,
+   "memory_max_gib": 14,
+   "floor_today": 2818889,
+   "coverage_days": 468
+  },
+  {
+   "cache_gib": 16,
+   "max_archive_shards": 101,
+   "memory_max_gib": 19,
+   "floor_today": 2465864,
+   "coverage_days": 631
+  },
+  {
+   "cache_gib": 20,
+   "max_archive_shards": 126,
+   "memory_max_gib": 23,
+   "floor_today": 2132693,
+   "coverage_days": 787
+  }
+ ],
+ "journal": {
+  "v3_events_through_3500738": 353831243,
+  "v3_event_bytes": 42684252745,
+  "bytes_per_event": 120.6
+ },
+ "options": [
+  {
+   "name": "sapling",
+   "start_height": 419200,
+   "journal_start_height": 419199,
+   "backfill_blocks": 2987801,
+   "backfill_history_txids": {
+    "lower": 12350188,
+    "estimate": 12463419,
+    "upper": 12594040
+   },
+   "total_display_records_estimate": 13031299,
+   "sealed_archives_at_cutover": 325,
+   "sealed_archives_range": [
+    321,
+    329
+   ],
+   "archive_runtimes": 650,
+   "reserved_bytes": 49104343600,
+   "reserved_gib": 45.73,
+   "min_resident_bytes": 27293962800,
+   "archive_disk_bytes": 54556938800,
+   "publication_root_bytes": 5452595200,
+   "journal_event_bytes": 20616322053,
+   "journal_blocks": 3090441,
+   "sidecar_payload_bytes": 803144007,
+   "sidecar_min_allocation_bytes": 12658446336,
+   "ingest_hours_at_history_rate": 5.13,
+   "bootstrap_publish_minutes": 4.9,
+   "worker_prepare_minutes": [
+    21.1,
+    35.8
+   ],
+   "map_bytes_raw": 206172,
+   "cold_inline_lookup_bytes": 310872
+  },
+  {
+   "name": "nu5",
+   "start_height": 1687104,
+   "journal_start_height": 1687103,
+   "backfill_blocks": 1719897,
+   "backfill_history_txids": {
+    "lower": 6091154,
+    "estimate": 6215773,
+    "upper": 6324622
+   },
+   "total_display_records_estimate": 6783653,
+   "sealed_archives_at_cutover": 169,
+   "sealed_archives_range": [
+    165,
+    173
+   ],
+   "archive_runtimes": 338,
+   "reserved_bytes": 25534258672,
+   "reserved_gib": 23.78,
+   "min_resident_bytes": 14192860656,
+   "archive_disk_bytes": 28369608176,
+   "publication_root_bytes": 2835349504,
+   "journal_event_bytes": 8176177683,
+   "journal_blocks": 1822537,
+   "sidecar_payload_bytes": 418089574,
+   "sidecar_min_allocation_bytes": 7465111552,
+   "ingest_hours_at_history_rate": 3.02,
+   "bootstrap_publish_minutes": 2.5,
+   "worker_prepare_minutes": [
+    11.0,
+    18.6
+   ],
+   "map_bytes_raw": 107513,
+   "cold_inline_lookup_bytes": 212213
+  },
+  {
+   "name": "2.0M",
+   "start_height": 2000000,
+   "journal_start_height": 1999999,
+   "backfill_blocks": 1407001,
+   "backfill_history_txids": {
+    "lower": 5028184,
+    "estimate": 5086335,
+    "upper": 5453783
+   },
+   "total_display_records_estimate": 5654215,
+   "sealed_archives_at_cutover": 141,
+   "sealed_archives_range": [
+    138,
+    148
+   ],
+   "archive_runtimes": 282,
+   "reserved_bytes": 21303730608,
+   "reserved_gib": 19.84,
+   "min_resident_bytes": 11841380784,
+   "archive_disk_bytes": 23669318064,
+   "publication_root_bytes": 2365587456,
+   "journal_event_bytes": 5719068826,
+   "journal_blocks": 1509641,
+   "sidecar_payload_bytes": 348480139,
+   "sidecar_min_allocation_bytes": 6183489536,
+   "ingest_hours_at_history_rate": 2.5,
+   "bootstrap_publish_minutes": 2.1,
+   "worker_prepare_minutes": [
+    9.2,
+    15.5
+   ],
+   "map_bytes_raw": 89805,
+   "cold_inline_lookup_bytes": 194505
+  },
+  {
+   "name": "2.5M",
+   "start_height": 2500000,
+   "journal_start_height": 2499999,
+   "backfill_blocks": 907001,
+   "backfill_history_txids": {
+    "lower": 3200080,
+    "estimate": 3451779,
+    "upper": 3503519
+   },
+   "total_display_records_estimate": 4019659,
+   "sealed_archives_at_cutover": 100,
+   "sealed_archives_range": [
+    92,
+    102
+   ],
+   "archive_runtimes": 200,
+   "reserved_bytes": 15109028800,
+   "reserved_gib": 14.07,
+   "min_resident_bytes": 8398142400,
+   "archive_disk_bytes": 16786750400,
+   "publication_root_bytes": 1677721600,
+   "journal_event_bytes": 3220417759,
+   "journal_blocks": 1009641,
+   "sidecar_payload_bytes": 247739311,
+   "sidecar_min_allocation_bytes": 4135489536,
+   "ingest_hours_at_history_rate": 1.67,
+   "bootstrap_publish_minutes": 1.5,
+   "worker_prepare_minutes": [
+    6.5,
+    11.0
+   ],
+   "map_bytes_raw": 63875,
+   "cold_inline_lookup_bytes": 168575
+  },
+  {
+   "name": "3.0M",
+   "start_height": 3000000,
+   "journal_start_height": 2999999,
+   "backfill_blocks": 407001,
+   "backfill_history_txids": {
+    "lower": 2159813,
+    "estimate": 2197139,
+    "upper": 2426453
+   },
+   "total_display_records_estimate": 2765019,
+   "sealed_archives_at_cutover": 68,
+   "sealed_archives_range": [
+    66,
+    72
+   ],
+   "archive_runtimes": 136,
+   "reserved_bytes": 10274139584,
+   "reserved_gib": 9.57,
+   "min_resident_bytes": 5710736832,
+   "archive_disk_bytes": 11414990272,
+   "publication_root_bytes": 1140850688,
+   "journal_event_bytes": 1451828439,
+   "journal_blocks": 509641,
+   "sidecar_payload_bytes": 170413436,
+   "sidecar_min_allocation_bytes": 2087489536,
+   "ingest_hours_at_history_rate": 0.85,
+   "bootstrap_publish_minutes": 1.0,
+   "worker_prepare_minutes": [
+    4.4,
+    7.5
+   ],
+   "map_bytes_raw": 43638,
+   "cold_inline_lookup_bytes": 148338
+  }
+ ],
+ "constants": {
+  "runtime_reserved_bytes": 75545144,
+  "runtime_min_bytes": 41990712,
+  "table_segment_bytes": 8388608,
+  "ingest_blocks_per_s": 167.5,
+  "bench_prepare_s": [
+   3.9,
+   6.6
+  ],
+  "bench_publish_s": 0.9,
+  "cold_inline_formula_bytes": 119700,
+  "formula_map_bytes": 15000,
+  "warm_inline_bytes": 92600
+ }
+}

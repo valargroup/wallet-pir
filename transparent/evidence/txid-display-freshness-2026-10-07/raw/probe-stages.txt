@@ -1,0 +1,20 @@
+# roman-dev-2 (DO-Premium-Intel, 8 vCPU, shared), release-fast, target-cpu=native (AVX2, no AVX-512)
+# source aede3e26 + harness/probe_display_build_stages.rs.txt; seconds per stage, one table, full synthetic rows
+== threads 1
+TxDirectory rows=2048 cols=2048 row_bytes=4096 blocks=1 path=Ok(Batched)
+TxDirectory round 0: encode 0.035 hint_ref 0.886 hint_batched 0.192 preprocess 2.310 assemble 0.000 | build() 3.006
+TxDirectory round 1: encode 0.024 hint_ref 0.839 hint_batched 0.157 preprocess 2.267 assemble 0.000 | build() 2.897
+TxDirectory round 2: encode 0.024 hint_ref 0.804 hint_batched 0.156 preprocess 2.152 assemble 0.000 | build() 2.904
+TxPages rows=2048 cols=2048 row_bytes=4096 blocks=1 path=Ok(Batched)
+TxPages round 0: encode 0.025 hint_ref 0.813 hint_batched 0.153 preprocess 2.160 assemble 0.000 | build() 2.948
+TxPages round 1: encode 0.024 hint_ref 0.792 hint_batched 0.150 preprocess 2.118 assemble 0.000 | build() 2.994
+TxPages round 2: encode 0.024 hint_ref 0.877 hint_batched 0.151 preprocess 2.146 assemble 0.000 | build() 2.882
+== threads 2
+TxDirectory rows=2048 cols=2048 row_bytes=4096 blocks=1 path=Ok(Batched)
+TxDirectory round 0: encode 0.028 hint_ref 0.426 hint_batched 0.092 preprocess 1.227 assemble 0.000 | build() 1.659
+TxDirectory round 1: encode 0.024 hint_ref 0.401 hint_batched 0.077 preprocess 1.154 assemble 0.000 | build() 1.784
+TxDirectory round 2: encode 0.025 hint_ref 0.426 hint_batched 0.080 preprocess 1.322 assemble 0.000 | build() 1.499
+TxPages rows=2048 cols=2048 row_bytes=4096 blocks=1 path=Ok(Batched)
+TxPages round 0: encode 0.024 hint_ref 0.406 hint_batched 0.076 preprocess 1.111 assemble 0.000 | build() 1.536
+TxPages round 1: encode 0.024 hint_ref 0.407 hint_batched 0.077 preprocess 1.110 assemble 0.000 | build() 1.565
+TxPages round 2: encode 0.025 hint_ref 0.409 hint_batched 0.078 preprocess 1.136 assemble 0.000 | build() 1.531

@@ -1,0 +1,465 @@
+{
+  "candidate": "/mnt/roman-dev-2-data/txid-display-local2/e2e/root/candidate-12999-91fedb1a66708a77b84ddc31c1b7cb9986fe1fc153162b3e4a709f80538771d5-1791232599734255167",
+  "floor": 10000,
+  "map_sha256": "d7637361fd9a6822c163ee62727d33dc332e4f2631690f013c9104e464d44937",
+  "payload": {
+    "histogram": [
+      {
+        "cumulative": 12347,
+        "le": 64,
+        "records": 12347
+      },
+      {
+        "cumulative": 50390,
+        "le": 128,
+        "records": 38043
+      },
+      {
+        "cumulative": 51185,
+        "le": 192,
+        "records": 795
+      },
+      {
+        "cumulative": 51986,
+        "le": 256,
+        "records": 801
+      },
+      {
+        "cumulative": 53528,
+        "le": 384,
+        "records": 1542
+      },
+      {
+        "cumulative": 55166,
+        "le": 512,
+        "records": 1638
+      },
+      {
+        "cumulative": 55385,
+        "le": 768,
+        "records": 219
+      },
+      {
+        "cumulative": 55433,
+        "le": 1024,
+        "records": 48
+      },
+      {
+        "cumulative": 55597,
+        "le": 2048,
+        "records": 164
+      },
+      {
+        "cumulative": 55947,
+        "le": 4050,
+        "records": 350
+      },
+      {
+        "cumulative": 55950,
+        "le": 8100,
+        "records": 3
+      },
+      {
+        "cumulative": 55955,
+        "le": 12150,
+        "records": 5
+      },
+      {
+        "cumulative": 55956,
+        "le": 16200,
+        "records": 1
+      },
+      {
+        "cumulative": 55963,
+        "le": 20250,
+        "records": 7
+      },
+      {
+        "cumulative": 55985,
+        "le": 40500,
+        "records": 22
+      },
+      {
+        "cumulative": 56013,
+        "le": null,
+        "records": 28
+      }
+    ],
+    "inline_if": [
+      {
+        "cutoff": 128,
+        "inline_records": 50390,
+        "share": 0.8996125899344795
+      },
+      {
+        "cutoff": 192,
+        "inline_records": 51185,
+        "share": 0.9138057236712906
+      },
+      {
+        "cutoff": 256,
+        "inline_records": 51986,
+        "share": 0.9281059753985682
+      },
+      {
+        "cutoff": 384,
+        "inline_records": 53528,
+        "share": 0.9556352989484584
+      },
+      {
+        "cutoff": 512,
+        "inline_records": 55166,
+        "share": 0.9848785103458125
+      },
+      {
+        "cutoff": 1024,
+        "inline_records": 55433,
+        "share": 0.9896452609215718
+      }
+    ]
+  },
+  "shards": [
+    {
+      "buckets": [
+        {
+          "bucket": 0,
+          "classes": {
+            "0": 18014,
+            "1": 1972,
+            "11": 1,
+            "13": 2,
+            "14": 1,
+            "15": 4,
+            "2": 1,
+            "3": 4,
+            "5": 1,
+            "6": 1,
+            "8": 1,
+            "9": 2
+          },
+          "txids": 20004
+        }
+      ],
+      "digest": "6c1415ea9d582713f83b1e92d6fce40bd58a2fa40d75cdf96493d03e13cbb690",
+      "directory_segments": [
+        1
+      ],
+      "end_height": 8516,
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "page_segments": 1,
+      "records": 20004,
+      "sealed": true,
+      "shard_id": 2,
+      "start_height": 6015,
+      "tier": "archive"
+    },
+    {
+      "buckets": [
+        {
+          "bucket": 0,
+          "classes": {
+            "0": 17959,
+            "1": 2017,
+            "10": 3,
+            "11": 3,
+            "12": 1,
+            "13": 2,
+            "14": 2,
+            "15": 3,
+            "2": 1,
+            "3": 1,
+            "4": 1,
+            "5": 2,
+            "6": 4,
+            "7": 2,
+            "8": 1,
+            "9": 4
+          },
+          "txids": 20006
+        }
+      ],
+      "digest": "1c8d4dfe8a48519b9889253b6c41f70ffe165c54eeae6a4541d7aeb9b9c4b28b",
+      "directory_segments": [
+        1
+      ],
+      "end_height": 11005,
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "page_segments": 1,
+      "records": 20006,
+      "sealed": true,
+      "shard_id": 3,
+      "start_height": 8517,
+      "tier": "archive"
+    },
+    {
+      "buckets": [
+        {
+          "bucket": 0,
+          "classes": {
+            "0": 14417,
+            "1": 1568,
+            "10": 2,
+            "11": 1,
+            "12": 3,
+            "14": 4,
+            "15": 1,
+            "2": 1,
+            "5": 4,
+            "6": 1,
+            "9": 1
+          },
+          "txids": 16003
+        }
+      ],
+      "digest": "338c872ce50b9b4952842456c144d3f16caa3f48c65e917e7c776799f6c2ecf1",
+      "directory_segments": [
+        1
+      ],
+      "end_height": 12999,
+      "geometry": "txid-2k",
+      "n_buckets": 1,
+      "page_segments": 1,
+      "records": 16003,
+      "sealed": false,
+      "shard_id": 4,
+      "start_height": 11006,
+      "tier": "recent"
+    }
+  ],
+  "summary": {
+    "classes_below_floor": [
+      {
+        "bucket": 0,
+        "pages": 1,
+        "shard_id": 2,
+        "txids": 1972
+      },
+      {
+        "bucket": 0,
+        "pages": 2,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 3,
+        "shard_id": 2,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 5,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 6,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 8,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 9,
+        "shard_id": 2,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 11,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 13,
+        "shard_id": 2,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 14,
+        "shard_id": 2,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 15,
+        "shard_id": 2,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 1,
+        "shard_id": 3,
+        "txids": 2017
+      },
+      {
+        "bucket": 0,
+        "pages": 2,
+        "shard_id": 3,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 3,
+        "shard_id": 3,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 4,
+        "shard_id": 3,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 5,
+        "shard_id": 3,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 6,
+        "shard_id": 3,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 7,
+        "shard_id": 3,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 8,
+        "shard_id": 3,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 9,
+        "shard_id": 3,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 10,
+        "shard_id": 3,
+        "txids": 3
+      },
+      {
+        "bucket": 0,
+        "pages": 11,
+        "shard_id": 3,
+        "txids": 3
+      },
+      {
+        "bucket": 0,
+        "pages": 12,
+        "shard_id": 3,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 13,
+        "shard_id": 3,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 14,
+        "shard_id": 3,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 15,
+        "shard_id": 3,
+        "txids": 3
+      },
+      {
+        "bucket": 0,
+        "pages": 1,
+        "shard_id": 4,
+        "txids": 1568
+      },
+      {
+        "bucket": 0,
+        "pages": 2,
+        "shard_id": 4,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 5,
+        "shard_id": 4,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 6,
+        "shard_id": 4,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 9,
+        "shard_id": 4,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 10,
+        "shard_id": 4,
+        "txids": 2
+      },
+      {
+        "bucket": 0,
+        "pages": 11,
+        "shard_id": 4,
+        "txids": 1
+      },
+      {
+        "bucket": 0,
+        "pages": 12,
+        "shard_id": 4,
+        "txids": 3
+      },
+      {
+        "bucket": 0,
+        "pages": 14,
+        "shard_id": 4,
+        "txids": 4
+      },
+      {
+        "bucket": 0,
+        "pages": 15,
+        "shard_id": 4,
+        "txids": 1
+      }
+    ],
+    "min_class": {
+      "bucket": 0,
+      "pages": 2,
+      "shard_id": 2,
+      "txids": 1
+    },
+    "min_shard_bucket": {
+      "bucket": 0,
+      "shard_id": 4,
+      "txids": 16003
+    },
+    "recent_min_bucket": 16003,
+    "total_txids": 56013,
+    "txids_in_small_classes": 5623
+  }
+}

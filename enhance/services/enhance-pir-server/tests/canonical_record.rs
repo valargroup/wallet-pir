@@ -1,8 +1,5 @@
 //! Frozen public transaction byte slices checked through parser and HTTP PIR.
-use enhance_pir::{
-    client::EnhancePirClient, EnhanceRecord, EnhanceRecordParts, EnhanceTransactionMetadata,
-    RECORD_BYTES,
-};
+use enhance_pir::{client::EnhancePirClient, RECORD_BYTES};
 use enhance_pir_server::{
     control::{Group, Ledger, Replica},
     coordinator::Coordinator,
@@ -39,27 +36,10 @@ async fn canonical_transaction_records_match_frozen_oracle_across_publication() 
             && tx.sapling_outputs().next().is_none()
             && tx.orchard_actions().next().is_none()
     );
-    let fee: i64 = tx.ironwood_value_balance().ironwood_amount().into();
-    let metadata = EnhanceTransactionMetadata::new(
-        tx.expiry_height().unwrap().0,
-        Some(fee.try_into().unwrap()),
-    )
-    .unwrap();
-    let records: Vec<_> = tx
-        .ironwood_actions()
-        .map(|a| {
-            EnhanceRecord::from_parts(EnhanceRecordParts {
-                enc_ciphertext_suffix: <[u8; 580]>::from(a.enc_ciphertext)[52..]
-                    .try_into()
-                    .unwrap(),
-                cv_net: a.cv.into(),
-                out_ciphertext: a.out_ciphertext.into(),
-                has_transparent_inputs: false,
-                has_transparent_outputs: false,
-                metadata,
-            })
-        })
-        .collect();
+    // The coordinator's producer, with no spent outputs to resolve.
+    let records =
+        enhance_pir_server::zakura::transaction_records(&tx, &std::collections::HashMap::new())
+            .unwrap();
     let expected: Vec<_> = [
         include_str!("fixtures/ironwood-canonical-record-0.hex"),
         include_str!("fixtures/ironwood-canonical-record-1.hex"),

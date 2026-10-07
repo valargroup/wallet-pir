@@ -186,6 +186,12 @@ variable "transparent_loadgen_size" {
   default     = "c-16"
 }
 
+variable "transparent_txid_display_port_enabled" {
+  description = "Open the txid display proof of concept's worker port 8095 to the coordinator and router tags. Set only through `wallet-pir-deploy.py txid-display-deploy --phase firewall`, which writes txid-display.auto.tfvars; retire removes it."
+  type        = bool
+  default     = false
+}
+
 variable "enhance_group_count" {
   description = "Desired Enhance range count; use the autoscale state wrapper for every plan/apply."
   type        = number

@@ -194,11 +194,16 @@ def observe(machine,*,tick=lambda:None,proc=Path('/proc')):
     return result
 
 
-def verify(proof,machine):
+def verify(proof,machine,now=None):
+    """Exact reviewed provenance; `now` (default the current time) bounds its age.
+
+    A retained proof is checked as of its own survey by passing that time.
+    """
+    now=time.time() if now is None else now
     require(isinstance(proof,dict) and proof.get('kind')==KIND and proof.get('pins_sha256')==PINS_SHA256 and
             proof.get('machine_id')==machine and
             ((isinstance(proof.get('boot_id'),str) and BOOT.fullmatch(proof['boot_id'])) if machine in (COORDINATOR,ROUTER) else proof.get('boot_id') is None) and
-            type(proof.get('observed_unix')) in (int,float) and 0<=time.time()-proof['observed_unix']<=300 and
+            type(proof.get('observed_unix')) in (int,float) and 0<=now-proof['observed_unix']<=300 and
             set(proof.get('units',{}))==(set(UNITS) if machine==COORDINATOR else set()),'ancillary proof partial, stale or foreign')
     require(proof.get('route') is None if machine not in (COORDINATOR,ROUTER) else
             isinstance(proof.get('route'),dict) and proof['route'].get('prototype_port_excluded') is True and
@@ -229,6 +234,24 @@ def verify(proof,machine):
                 child['pid']>1 and child['pid']!=parent['pid'] and type(child.get('start_ticks')) is int and
                 child['start_ticks']>0 and child.get('state')!='Z' and all(child.get(k)==v for k,v in pin.items()),
                 'load child provenance differs')
+    return proof
+
+
+SERVICE_KEYS = {'pid','start_ticks','state','status','unit','boot_id','cgroup','exe','exe_sha256','command_sha256',
+                'fragment_sha256'}
+CHILD_KEYS = {'pid','start_ticks','state','unit','boot_id','cgroup','exe','exe_sha256','command_sha256',
+              'parent_pid','parent_start_ticks','pgid','session'}
+
+
+def verify_retained(proof,machine):
+    """A retained proof as of its own observation, with exactly the keys `observe` writes."""
+    require(isinstance(proof,dict) and type(proof.get('observed_unix')) in (int,float),'retained ancillary proof invalid')
+    verify(proof,machine,now=proof['observed_unix'])
+    require(set(proof)-{'load_children'}=={'kind','pins_sha256','machine_id','boot_id','units','route','observed_unix'} and
+            (proof['route'] is None or set(proof['route'])=={'sha256','bytes','prototype_port_excluded'}) and
+            all(value=={'status':'absent'} or set(value)==SERVICE_KEYS|({'listeners'} if unit==PROTOTYPE else set())
+                for unit,value in proof['units'].items()) and
+            all(set(child)==CHILD_KEYS for child in proof.get('load_children',[])),'retained ancillary proof has other fields')
     return proof
 
 

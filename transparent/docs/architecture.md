@@ -71,6 +71,14 @@ stage adds history/display lanes to one coordinator, preserves local send facts,
 and keeps confirmation, fee availability, financial coverage and display
 completeness independent. A display failure cannot authorize public lookup.
 
+A separate [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept)
+exists as a proof of concept. Sealed archive shards and one per-block recent
+shard, with hash buckets inside each, are published by
+`txid-display-controller` from the display sidecars. They are served by
+`transparent-txid-server` in archive-owner and recent-replica roles, which share
+the native runtime, cache and admission code but not `ShardSet`. History
+manifests and serving are unchanged. It is source and local evidence only.
+
 ## Component ownership
 
 | Component | Source | Responsibility |
@@ -347,9 +355,23 @@ shared `pir_native::hint` exactly, and masks beyond its checked capacity are han
 reference. Archive geometries, and any geometry not listed, use `pir_native::hint` over
 every block.
 Database-dependent preprocessing is rebuilt for each changed table; client secrets and
-uploaded key bodies are never shared. The cache reserves the database, the published masks
-and the preprocessing at its eight-byte-word bound (64 MiB per block); built preprocessing
-has so far used four-byte words, so a runtime holds about 32 MiB less than it reserves.
+uploaded key bodies are never shared. The cache admits a new runtime against the database,
+the published masks and the preprocessing at its eight-byte-word bound (64 MiB per block),
+and charges it that bound until the build or restore has produced it. It then charges what
+the runtime holds (`TableRuntime::held_bytes`): the same terms with the compiled matrix at
+its real width, four-byte words so far, or 27/28-bit packed on CPUs with AVX-512 VBMI. The
+charge only falls, the release happens before any waiter receives the runtime, and eviction
+returns exactly the lowered charge, so builds in flight together cannot be admitted past
+the budget on sizes they have not reached. `txid-2k` reserves 72.05 MiB and is charged
+40.05 MiB built; `txid-4k` 80.05 and 48.05 MiB; `shard-residency` measured 40.3–41.3 and
+48.2–48.3 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
+one bound's excess per runtime the prewarm can have in flight, which never exceeds the sum
+of bounds they used to demand. The disk cache works the same way: a write reserves the
+largest valid entry under its directory lock, a written entry counts at its file length,
+and the preflight charges missing entries at their four-byte length plus one bound's excess.
+A runtime whose matrix needs eight-byte words keeps its full charge, so a plan made at the
+four-byte size comes up short through overloads, never through memory. The assignment
+planner (`router::plan`) still balances and checks owners at the bound.
 Runtime snapshots use format
 `transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2`: identity,
 checksum, column-major database, published masks, then `reinspiring::prepared_native`

@@ -1,0 +1,98 @@
+{
+ "run_id": "txid-display-tiered-2026-10-05",
+ "kind": "local proof-of-concept evidence: tiered, bucketed txid display publication on synthetic journals",
+ "window_utc": [
+  "2026-10-05T19:04:31Z",
+  "2026-10-05T21:37:56Z"
+ ],
+ "deployment": "none; no production host was read for data or changed",
+ "source": {
+  "commit": "1f89cac0a4096297ea9d1f36040e894b364068f2",
+  "base": "c0f4eee5",
+  "run1": "pre-rebase handoff source before 87181611; exact revision not recorded",
+  "profile": "release-fast, rustc 1.97.1, -C target-cpu=native",
+  "binaries_sha256": "local/binaries.sha256"
+ },
+ "host": {
+  "name": "roman-dev-2",
+  "sku": "DigitalOcean premium Intel, 8 vCPU, 31 GiB",
+  "os": "Ubuntu, Linux 6.8.0-134-generic",
+  "sharing": "shared development host; not production hardware"
+ },
+ "data": {
+  "journal": "synthetic v3 journals from `txid-display-controller synth-journal`, genesis 5e5e...5e (never a real chain)",
+  "e2e": {
+   "start": 1000,
+   "blocks": 12000,
+   "mean_records_per_block": 8,
+   "seed": 7,
+   "records": 96023,
+   "published_from_height": 1001
+  },
+  "ablation": {
+   "start": 1000,
+   "blocks": 30000,
+   "mean_records_per_block": 8,
+   "seed": 7,
+   "records": 240339,
+   "published_txids": 240335
+  },
+  "size_mix": "about 90% inline (50-110 B), about 10% one page (7/8 within 129-528 B), about 0.1% 2-15 pages"
+ },
+ "publication": {
+  "schema": "transparent-txid-display tiered, DISPLAY_SCHEMA",
+  "geometry": "txid-2k (2,048 rows x 4,096 B, both tables)",
+  "e2e_seal": {
+   "n_archive": 1,
+   "n_recent": 1,
+   "archive_target": 20000,
+   "recent_floor": 10000,
+   "reorg_margin": 100,
+   "max_archive_shards": 2
+  },
+  "ablation_configs": {
+   "n1-t20k": [
+    1,
+    20000,
+    10000
+   ],
+   "n1-t40k": [
+    1,
+    40000,
+    10000
+   ],
+   "n4-t10k": [
+    4,
+    10000,
+    2500
+   ]
+  }
+ },
+ "workload": {
+  "e2e": "controller replay 25 blocks / 2 s; txid-rate 10 lookups/s requested, 64 workers, mix recent=0.8 archive=0.2, cold every 25, absent every 20; run 3 re-samples the natural fixture (400 + 50 absent) every 60 s",
+  "bench": "one recent-replica worker under systemd-run CPUQuota=100% (and 200%), MemoryMax=1536M, MemorySwapMax=0, TRANSPARENT_BUILD_THREADS=1 (and 2), cache 512 MiB, retain 1; controller replay 1 block / 12 s, 8 cycles per size",
+  "bandwidth": "txid-bandwidth measure through the TCP byte meter over plain HTTP/1.1, 3 samples per (tier, class, cold|warm)"
+ },
+ "commands": {
+  "e2e": "harness/local-e2e.sh BIN EXAMPLES WORK OUT",
+  "bench_publisher": "txid-display-controller bench-recent --geometry txid-2k|txid-4k --seed 1",
+  "bench_worker": "harness/recent-bench.sh BIN WORK OUT (STEP_MS=12000 CYCLES=8; fallback CPU_QUOTA=200% BUILD_THREADS=2)",
+  "ablation": "harness/ablation.sh BIN EXAMPLES WORK OUT",
+  "summaries": "harness/analyze.py RUN_DIR --out RUN_DIR/summary.json"
+ },
+ "outputs": {
+  "local/e2e-run1": "failed attempt retained (142 x 503 waiting places); handoff copy",
+  "local/e2e-run2": "harness gap retained (single fixture; 1,961 missed slots)",
+  "local/e2e-run3": "accepted local run",
+  "local/bench": "bench-recent-*.jsonl, recent-01-shaped*/, recent-01-fallback-cpu200/, bench-summary.json",
+  "local/ablation": "per-configuration bootstrap, census and bandwidth; formula.json; ablation-summary.json"
+ },
+ "measured_vs_derived": "Latency, cycle and freshness times, census counts and metered bytes are measured. Runtime bytes per txid use the plan's 75.5 MB per segment and are derived. Formula rows are computed.",
+ "limitations": [
+  "synthetic chain and size mix; real mainnet packing may differ",
+  "loopback, plain HTTP: no TLS, router or WAN; not comparable to the 20 QPS production reference",
+  "freshness excludes node propagation and the router",
+  "seals under accelerated replay only"
+ ],
+ "acceptance": "local stage only; production criteria remain open"
+}
