@@ -175,6 +175,7 @@ jobs:
           ANCHOR: ${{ inputs.anchor_height }}
           RECENT_FROM: ${{ inputs.recent_from }}
           MONTHS: ${{ inputs.months }}
+          ARCHIVE: ${{ inputs.archive_geometry }}
         run: |
           set -euo pipefail
           mkdir -p publication
@@ -184,9 +185,11 @@ jobs:
             --state-dir /root/.cache/zakura --source-sha "$SHA" --out publication/journal.json
           if [[ -n "$RECENT_FROM" ]]; then
             # Re-derive the boundary and refuse a disagreement. The recorded
-            # height is the durable input; the derivation is its proof.
+            # height is the durable input; the derivation is its proof. The
+            # archive geometry's thresholds decide where its last shard seals.
             sudo ./target/release/shard-cutoff --data-dir "$DATA_DIR" --anchor-height "$ANCHOR" \
-              --months "$MONTHS" --expect-cutoff "$RECENT_FROM" --state-dir /root/.cache/zakura \
+              --months "$MONTHS" --archive-geometry "$ARCHIVE" --expect-cutoff "$RECENT_FROM" \
+              --state-dir /root/.cache/zakura \
               --source-sha "$SHA" --out publication/cutoff.json
           fi
           sudo chown -R "$(id -u)" publication

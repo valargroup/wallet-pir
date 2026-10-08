@@ -92,7 +92,7 @@ its exact completion receipt or complete coordinator quiescence.
 
 | Parameter | Recent | Archive |
 |---|---|---|
-| Initial range | Last six calendar months of pinned anchor time | Genesis through block before recent range |
+| Initial range | From the start of the archive shard open six calendar months before the pinned anchor time | Genesis through block before recent range, in sealed full shards |
 | Selected profile | `recent-4k-8k` | `archive-wide` |
 | Directory/page rows | 4096 / 8192 | 32768 / 65536 |
 | Row bytes; inline events | 4096; 2 | 4096; 2 |
@@ -420,7 +420,7 @@ meaning. Resume a genesis journal with `start_height=0` and `state_dir` set.
 
 Historical reports mention Terraform state drift, unintended transparent-spend provisioning, SSH firewall drift, volume lookup mismatch and stale SSH host keys. Re-verify these as preflight findings rather than blindly following archived repair commands. Inspect the saved plan and protect the shared node/volume and Enhance services.
 
-Freeze the initial cutoff for the pilot. `shard-cutoff` derives it: the cutoff time is the anchor block's header time minus six calendar months, day clamped to the target month's last day, time of day kept; the cutoff height is one more than the highest height whose header time is before the cutoff time, which is well defined under non-monotone block times and is proved final by eleven consecutive blocks at or after it. The inventory action of the backfill workflow records the height, hashes and times in `cutoff.json`; a publish passes the recorded height back and the tool refuses a disagreement. Do not use approximate block counts as calendar time.
+Freeze the initial cutoff for the pilot. `shard-cutoff` derives it: the cutoff time is the anchor block's header time minus six calendar months, day clamped to the target month's last day, time of day kept; the cutoff height is one more than the highest height whose header time is before the cutoff time, which is well defined under non-monotone block times and is proved final by eleven consecutive blocks at or after it. That is the calendar height. The recorded cutoff moves back from it to the first height of the archive shard still open there, found by replaying the journal through the archive geometry's sealer (`--archive-geometry`, default `archive-wide`), or stays at the calendar height when the last block before it sealed a shard. Every archive shard is therefore sealed by a threshold, none is cut short at the tier change, and the recent tier covers at least six calendar months. The live v11 publication predates this rule: its recorded cutoff 3289805 is the calendar height and left shard 81 part-filled, so re-deriving it with the current tool gives a different height. The inventory action of the backfill workflow records the height, hashes and times in `cutoff.json`; a publish passes the recorded height back and the tool refuses a disagreement. Do not use approximate block counts as calendar time.
 
 Old recent shards keep their geometry forever within the publication lineage. They can move to archive ownership after verified copying and routing handoff. Budget their actual growth; the previous 6.5 GiB/year figure is an extrapolation, not a retention guarantee. Re-cutting into wider shards is deferred until epoch identity and wallet replay semantics are specified and tested.
 

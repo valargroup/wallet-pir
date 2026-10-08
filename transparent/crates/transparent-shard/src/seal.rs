@@ -822,6 +822,16 @@ impl Sealer {
         self.next_shard_id
     }
 
+    /// The first height of the shard still accumulating, if any.
+    ///
+    /// `None` means the last block offered closed a shard by itself, so the
+    /// next height is a boundary the thresholds produced. A tier boundary
+    /// placed at this height, rather than at the height the sealer has
+    /// reached, leaves no shard to close at a geometry change.
+    pub fn open_start(&self) -> Option<u64> {
+        self.start_height
+    }
+
     /// Closes whatever is still accumulating.
     ///
     /// The result is the tail: a shard that reached no limit and is therefore
@@ -1166,6 +1176,44 @@ mod tests {
         }
         assert_eq!(sealed.first().unwrap().start_height, 100);
         assert_eq!(sealed.last().unwrap().end_height, 108);
+    }
+
+    /// A tier boundary moved back to the open shard's start closes nothing.
+    ///
+    /// The boundary `shard-cutoff` records: replayed up to that height, the
+    /// archive sealer has sealed every shard by a threshold, so the geometry
+    /// change has no part-filled shard to force.
+    #[test]
+    fn a_boundary_at_the_open_start_forces_no_seal() {
+        let blocks: Vec<_> = (0..8u64)
+            .map(|offset| block_of_new_scripts(100 + offset, offset as u32 * 4, 4))
+            .collect();
+        let replay = |through: u64| {
+            let mut sealer = Sealer::new(policy((10, 1_000), (1_000, 10_000)), 100);
+            let mut sealed = Vec::new();
+            for (offset, block) in blocks.iter().enumerate() {
+                let height = 100 + offset as u64;
+                if height >= through {
+                    break;
+                }
+                sealed.extend(sealer.push_block(height, block).unwrap());
+            }
+            (sealer, sealed)
+        };
+
+        let calendar = 107;
+        let (mut at_calendar, _) = replay(calendar);
+        let boundary = at_calendar.open_start().unwrap_or(calendar);
+        assert!(boundary < calendar, "the example must leave a shard open");
+        let forced = at_calendar.seal_at_geometry_change().expect("open shard");
+        assert_eq!(forced.reason, Some(SealReason::GeometryChanged));
+
+        let (mut at_boundary, sealed) = replay(boundary);
+        assert_eq!(at_boundary.seal_at_geometry_change(), None);
+        assert_eq!(sealed.last().unwrap().end_height, boundary - 1);
+        assert!(sealed
+            .iter()
+            .all(|shard| matches!(shard.reason, Some(SealReason::ReachedTarget(_)))));
     }
 
     #[test]
