@@ -308,7 +308,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     .unwrap();
     fixture["height"] = payment.height.into();
     fixture["position"] = payment.position.into();
-    let probe = |fixture: &Value, pin: Option<&str>| {
+    let probe_nodes = |fixture: &Value, pin: Option<&str>, nodes: &[&str]| {
         let path = dir.path().join("fixture.json");
         let bytes = serde_json::to_vec(fixture).unwrap();
         std::fs::write(&path, &bytes).unwrap();
@@ -323,14 +323,14 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                 path.to_str().unwrap(),
                 "--fixture-sha256",
                 pin.unwrap_or(&sha256),
-                "--rpc-url",
-                &url,
                 "--no-auth",
             ])
+            .args(nodes.iter().flat_map(|node| ["--rpc-url", node]))
             .output()
             .unwrap();
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
+    let probe = |fixture: &Value, pin: Option<&str>| probe_nodes(fixture, pin, &[&url]);
     let result = probe(&fixture, None);
     assert_eq!(result["phase"], "live_encrypted_probe", "{result}");
     assert_eq!(
@@ -348,6 +348,15 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     let result = probe(&moved, None);
     assert_eq!(result["category"], "answer_mismatch", "{result}");
     assert_eq!(result["correct"], 0);
+    // An unreachable node falls back to the next; a node behind the publication can
+    // check nothing, which is unavailability, never a pass.
+    let result = probe_nodes(&fixture, None, &["http://127.0.0.1:1", &url]);
+    assert_eq!(result["correct"], 1, "{result}");
+    count.store(1, Ordering::SeqCst);
+    let result = probe(&fixture, None);
+    assert_eq!(result["category"], "oracle_unavailable", "{result}");
+    assert_eq!(result["passed"], false);
+    count.store(2, Ordering::SeqCst);
     hold.store(true, Ordering::SeqCst);
     changed.store(false, Ordering::SeqCst);
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
@@ -527,6 +536,28 @@ fn cli_rejects_unservable_geometry_before_contacting_the_node() {
         assert!(String::from_utf8_lossy(&output.stderr).contains("Unsupported"));
         assert!(!dir.path().join("publications").exists());
     }
+}
+
+/// Witnesses need commitments from position zero, so they refuse a later start before
+/// contacting the node.
+#[test]
+fn cli_refuses_witnesses_after_activation_before_contacting_the_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        .args([
+            "--data-dir",
+            dir.path().to_str().unwrap(),
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--no-auth",
+            "--witnesses",
+            "--start-height",
+            &(activation() + 1).to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("witnesses need commitments"));
 }
 
 /// Serving binds loopback or a private address, never a public one.

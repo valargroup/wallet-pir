@@ -57,6 +57,11 @@ impl State {
             .map(|(_, until)| *until)
             .filter(|until| *until > Instant::now())
     }
+
+    /// Whether the previous revision's grace has ended, so it can be dropped.
+    fn previous_expired(&self) -> bool {
+        self.previous.is_some() && self.grace_until().is_none()
+    }
 }
 
 /// One current and one briefly retained canonical revision. Revocation also fences in-flight work.
@@ -64,6 +69,19 @@ impl State {
 pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
+    /// Drops the previous revision once its grace has ended, freeing its rows and PIR
+    /// state; queries still running on it keep their own reference. Every read path
+    /// calls it, including the owner's periodic [`Self::anchors`] check, so an idle
+    /// service frees it within a poll.
+    fn expire(&self) {
+        if self.0.read().unwrap().previous_expired() {
+            let mut state = self.0.write().unwrap();
+            if state.previous_expired() {
+                state.previous = None;
+            }
+        }
+    }
+
     /// The recovery epoch. Every revocation advances it.
     pub fn epoch(&self) -> u64 {
         self.0.read().unwrap().epoch
@@ -71,6 +89,7 @@ impl Publications {
 
     /// Anchors that still accept new requests. Validate independently of expensive preparation.
     pub fn anchors(&self) -> Vec<(u32, Hash)> {
+        self.expire();
         let state = self.0.read().unwrap();
         state
             .current
@@ -101,6 +120,7 @@ impl Publications {
     /// Activating only after it ends gives every displaced revision its full grace, so
     /// two quick rotations cannot strand a session.
     pub fn ready_at(&self) -> Option<Instant> {
+        self.expire();
         self.0.read().unwrap().grace_until()
     }
 
@@ -139,6 +159,7 @@ impl Publications {
     /// The publication `id` names, or the current one for `None`, with the current
     /// epoch. A revoked id is `GONE` and an unknown or expired one is `CONFLICT`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
+        self.expire();
         let state = self.0.read().unwrap();
         if let Some(id) = id {
             if state.revoked.contains(&id) {
@@ -162,5 +183,45 @@ impl Publications {
             .clone()
             .map(|p| (p, state.epoch))
             .ok_or(StatusCode::SERVICE_UNAVAILABLE)
+    }
+}
+
+#[cfg(test)]
+#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+mod common;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An empty prepared publication whose salt starts with `salt`.
+    fn publication(salt: u8) -> Publication {
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.salt[0] = salt;
+        let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
+        Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+    }
+
+    /// A displaced revision is dropped once its grace ends, not kept until the next
+    /// publication.
+    #[test]
+    fn an_expired_previous_publication_is_dropped() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        let first = Arc::downgrade(publications.0.read().unwrap().current.as_ref().unwrap());
+        let id = first.upgrade().unwrap().id;
+        assert!(publications.publish(publication(2), 0));
+        assert!(publications.select(Some(id)).is_ok());
+        assert!(first.upgrade().is_some());
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert_eq!(publications.anchors().len(), 1);
+        assert!(first.upgrade().is_none());
+        assert!(matches!(
+            publications.select(Some(id)),
+            Err(StatusCode::CONFLICT)
+        ));
     }
 }

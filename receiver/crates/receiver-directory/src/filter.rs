@@ -27,7 +27,7 @@ pub const P: u8 = 10;
 /// Range multiplier of every set, BIP 158's ratio to `2^P`; see the module docs for the
 /// false match rate.
 pub const M: u64 = 1_533;
-/// Largest encoded [`Filters`] a client downloads.
+/// Largest encoded [`Filters`] a client downloads, and a publisher builds.
 pub const MAX_FILTERS_BYTES: usize = 8 * 1024 * 1024;
 const MAGIC: &[u8; 8] = b"IWFLT1\0\0";
 /// Longest set label.
@@ -187,7 +187,8 @@ impl Filters {
 
     /// The publication's filter file: the magic, the set count, then for each set in
     /// label order its label length and bytes, its encoding's length and the encoding.
-    pub fn encode(&self) -> Vec<u8> {
+    /// Fails if it would exceed [`MAX_FILTERS_BYTES`].
+    pub fn encode(&self) -> Result<Vec<u8>, Error> {
         let mut out = MAGIC.to_vec();
         out.extend(
             u32::try_from(self.0.len())
@@ -204,12 +205,18 @@ impl Filters {
             );
             out.extend(&filter.bytes);
         }
-        out
+        if out.len() > MAX_FILTERS_BYTES {
+            return Err(Error::Malformed);
+        }
+        Ok(out)
     }
 
-    /// Strictly decodes a filter file: valid labels in increasing order, [`PAID`] among
-    /// them, and nothing after the last set.
+    /// Strictly decodes a filter file of at most [`MAX_FILTERS_BYTES`]: valid labels in
+    /// increasing order, [`PAID`] among them, and nothing after the last set.
     pub fn decode(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() > MAX_FILTERS_BYTES {
+            return Err(Error::Malformed);
+        }
         let rest = bytes.strip_prefix(MAGIC).ok_or(Error::Malformed)?;
         let (count, mut rest) = rest.split_first_chunk::<4>().ok_or(Error::Malformed)?;
         let mut sets: BTreeMap<String, Filter> = BTreeMap::new();
@@ -270,7 +277,7 @@ mod tests {
             ],
         )
         .unwrap();
-        let decoded = Filters::decode(&filters.encode()).unwrap();
+        let decoded = Filters::decode(&filters.encode().unwrap()).unwrap();
         assert_eq!(decoded, filters);
         let paid = decoded.get(PAID).unwrap();
         assert!(paid.matches(&key, &members).iter().all(|m| *m));
@@ -343,7 +350,7 @@ mod tests {
             [("near-intents/seen".to_owned(), Filter::build(&key, []))],
         )
         .unwrap();
-        let bytes = filters.encode();
+        let bytes = filters.encode().unwrap();
         assert!(Filters::decode(&bytes[..bytes.len() - 1]).is_err());
         let mut longer = bytes.clone();
         longer.push(0);
@@ -366,5 +373,44 @@ mod tests {
         let mut no_paid = MAGIC.to_vec();
         no_paid.extend(0u32.to_le_bytes());
         assert!(Filters::decode(&no_paid).is_err());
+    }
+
+    /// A set of `count` equal values, which strictly decodes.
+    fn zeros(count: u64) -> Filter {
+        use bitcoin::consensus::Encodable;
+        let mut bytes = Vec::new();
+        VarInt(count).consensus_encode(&mut bytes).unwrap();
+        // Each zero delta is a zero unary quotient and a zero `P`-bit remainder.
+        bytes.resize(
+            bytes.len() + (count * (u64::from(P) + 1)).div_ceil(8) as usize,
+            0,
+        );
+        Filter::decode(&bytes).unwrap()
+    }
+
+    /// A file over the bound is refused when encoding and before decoding, though its
+    /// set is well formed.
+    #[test]
+    fn files_over_the_size_bound_are_refused() {
+        // A file holding only the paid set of `count` zeros, by hand.
+        let file = |count| {
+            let filter = zeros(count);
+            let mut bytes = MAGIC.to_vec();
+            bytes.extend(1u32.to_le_bytes());
+            bytes.push(PAID.len() as u8);
+            bytes.extend(PAID.as_bytes());
+            bytes.extend((filter.bytes.len() as u32).to_le_bytes());
+            bytes.extend(&filter.bytes);
+            (Filters::new(filter, []).unwrap(), bytes)
+        };
+        let fits = (MAX_FILTERS_BYTES as u64 - 30) * 8 / (u64::from(P) + 1);
+        let (filters, bytes) = file(fits);
+        assert!(bytes.len() <= MAX_FILTERS_BYTES);
+        assert_eq!(filters.encode().unwrap(), bytes);
+        assert_eq!(Filters::decode(&bytes).unwrap(), filters);
+        let (filters, bytes) = file(fits + 64);
+        assert!(bytes.len() > MAX_FILTERS_BYTES);
+        assert!(filters.encode().is_err());
+        assert!(Filters::decode(&bytes).is_err());
     }
 }

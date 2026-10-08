@@ -1,7 +1,7 @@
 use incrementalmerkletree::frontier::CommitmentTree;
 use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
 use receiver_directory::{
-    snapshot::{Manifest, PROFILE},
+    snapshot::{Manifest, MIN_ROWS, PROFILE},
     witness::{WitnessCache, WitnessSnapshot},
     Hash,
 };
@@ -17,7 +17,7 @@ fn manifest(len: usize) -> Manifest {
         end_height: 110,
         end_hash: [3; 32],
         end_position: len as u64,
-        rows: 8,
+        rows: MIN_ROWS,
         salt: [3; 32],
         records: 0,
         data_sha256: [0; 32],
