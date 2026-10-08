@@ -1,7 +1,7 @@
 mod common;
 use common::{action, manifest, receiver, record};
 use receiver_directory::{
-    snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES},
+    snapshot::{allow_small_tables, lookup_row, row_for, Snapshot, MIN_ROWS, ROW_BYTES},
     Error, Receiver, Record, RECORD_BYTES,
 };
 
@@ -42,6 +42,7 @@ fn wire_layout_and_strict_empty_slots() {
 /// binds every field, including each set's optional ones.
 #[test]
 fn manifests_refuse_unknown_fields_and_bind_every_field() {
+    allow_small_tables();
     use receiver_directory::snapshot::Manifest;
     let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
     let json = serde_json::to_value(&s.manifest).unwrap();
@@ -60,6 +61,7 @@ fn manifests_refuse_unknown_fields_and_bind_every_field() {
 
 #[test]
 fn pages_share_one_revision_and_build_order_is_stable() {
+    allow_small_tables();
     let records = [record(0, 2), record(1, 2)];
     let s = Snapshot::build(manifest(8), &records, &[]).unwrap();
     let reversed =
@@ -114,6 +116,7 @@ fn other_receiver() -> Receiver {
 
 #[test]
 fn publications_commit_to_their_filters() {
+    allow_small_tables();
     use receiver_directory::{
         filter::{Filters, PAID},
         snapshot::ProviderSet,
@@ -207,9 +210,15 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
         .record("near-refunds", &[(refund, false, 200)], 200, 300)
         .unwrap();
     store.record("near-payouts", &[], 90, 250).unwrap();
+    // A read behind the cursor advances neither the cursor nor the read time, even
+    // one that began later.
+    store.record("near-payouts", &[], 90, 400).unwrap();
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
-    // A feed's last read is its latest one, as with its cursor.
     assert_eq!(store.read("near-payouts").unwrap(), Some(300));
+    // One that reaches the cursor advances the read time, never back.
+    store.record("near-payouts", &[], 100, 350).unwrap();
+    store.record("near-payouts", &[], 100, 320).unwrap();
+    assert_eq!(store.read("near-payouts").unwrap(), Some(350));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // A feed's start is its first one.
@@ -229,8 +238,20 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.completed(0, 600).unwrap().len(), 2);
 }
 
+/// Without the test fixtures' allowance, a table below [`MIN_ROWS`] is refused.
+#[test]
+fn publications_below_the_minimum_rows_are_refused() {
+    let small = manifest(MIN_ROWS / 2);
+    assert!(small.validate().is_err());
+    assert!(small.accept([1; 32], 100, 101, [3; 32]).is_err());
+    assert!(Snapshot::build(small, &[record(0, 1)], &[]).is_err());
+    let s = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)], &[]).unwrap();
+    s.manifest.accept([1; 32], 100, 101, [3; 32]).unwrap();
+}
+
 #[test]
 fn coverage_anchor_and_position_are_required() {
+    allow_small_tables();
     let m = manifest(8);
     m.accept([1; 32], 100, 101, [3; 32]).unwrap();
     for (network, start, height, hash) in [
@@ -251,6 +272,7 @@ fn coverage_anchor_and_position_are_required() {
 
 #[test]
 fn overflow_and_bad_padding_fail_closed() {
+    allow_small_tables();
     let records: Vec<_> = (0..50).map(|p| record(p, 50)).collect();
     let mut m = manifest(4);
     let overflow = (0..100).any(|i| {
@@ -271,6 +293,7 @@ fn overflow_and_bad_padding_fail_closed() {
 #[cfg(feature = "store")]
 #[test]
 fn durable_coverage_atomic_failure_and_reorg() {
+    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -353,9 +376,45 @@ fn durable_coverage_atomic_failure_and_reorg() {
     assert!(store.snapshot(8, &[]).is_err());
 }
 
+/// A payment in the coinbase's leading positions or in transaction zero is refused.
+#[cfg(feature = "store")]
+#[test]
+fn coinbase_payments_are_refused() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let block = |position, tx_index| {
+        let mut payment = record(0, 1).payment;
+        payment.height = 100;
+        payment.position = position;
+        payment.tx_index = tx_index;
+        IndexedBlock {
+            height: 100,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 200,
+            end_position: 203,
+            coinbase_actions: 2,
+            commitments: vec![payment.cmx; 3],
+            payments: vec![(receiver(), payment)],
+        }
+    };
+    assert!(store.append(&block(201, 1)).is_err());
+    assert!(store.append(&block(202, 0)).is_err());
+    store.append(&block(202, 1)).unwrap();
+    assert_eq!(store.counts().unwrap(), (1, 2));
+}
+
 #[cfg(feature = "store")]
 #[test]
 fn crowded_buckets_retry_the_salt_before_growing() {
+    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -417,6 +476,7 @@ fn crowded_buckets_retry_the_salt_before_growing() {
 
 #[test]
 fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
+    allow_small_tables();
     use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
     use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
     use receiver_directory::witness::WitnessSnapshot;
@@ -474,6 +534,7 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
 #[cfg(feature = "store")]
 #[test]
 fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
+    allow_small_tables();
     use receiver_directory::{
         store::{Config, IndexedBlock, Store},
         witness::WitnessCache,

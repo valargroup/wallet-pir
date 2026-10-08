@@ -12,8 +12,31 @@ pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
 pub const ROW_BYTES: usize = 4096;
 /// Records per row.
 pub const SLOTS: usize = ROW_BYTES / RECORD_BYTES;
+/// Smallest row count a wallet accepts. Publications start here and double.
+pub const MIN_ROWS: u32 = 8192;
 /// Largest supported row count.
 pub const MAX_ROWS: u32 = 65536;
+
+#[cfg(feature = "small-tables")]
+thread_local! {
+    static SMALL_TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// For test fixtures only: lets manifests validated on this thread have fewer than
+/// [`MIN_ROWS`] rows, so bucket placement and overflow can be tested on tiny tables.
+#[cfg(feature = "small-tables")]
+pub fn allow_small_tables() {
+    SMALL_TABLES.set(true);
+}
+
+/// The smallest row count [`Manifest::validate`] accepts on this thread.
+fn min_rows() -> u32 {
+    #[cfg(feature = "small-tables")]
+    if SMALL_TABLES.get() {
+        return 1;
+    }
+    MIN_ROWS
+}
 
 /// Coverage includes empty blocks and excludes coinbase recipients, not their note positions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,7 +93,8 @@ pub struct ProviderSet {
 }
 
 impl Manifest {
-    /// Check the profile, coverage order and geometry bounds.
+    /// Check the profile, coverage order and geometry bounds, [`MIN_ROWS`] to
+    /// [`MAX_ROWS`] rows.
     pub fn validate(&self) -> Result<(), Error> {
         let labels_ordered = self
             .filters
@@ -95,6 +119,7 @@ impl Manifest {
             || self.start_height > self.end_height
             || self.start_position > self.end_position
             || !self.rows.is_power_of_two()
+            || self.rows < min_rows()
             || self.rows > MAX_ROWS
             || self.records > u64::from(self.rows) * SLOTS as u64
         {
@@ -207,9 +232,10 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Bucket overflow fails the whole candidate. It never drops records or coverage.
-    /// The paid filter holds the records' receivers; `provider` sets come from the
-    /// publisher's swap provider feeds (see [`crate::filter`]).
+    /// Bucket overflow fails the whole candidate with [`Error::Capacity`]. It never
+    /// drops records or coverage. A filter file over [`filter::MAX_FILTERS_BYTES`] is
+    /// [`Error::Malformed`]. The paid filter holds the records' receivers; `provider`
+    /// sets come from the publisher's swap provider feeds (see [`crate::filter`]).
     pub fn build(
         mut manifest: Manifest,
         records: &[Record],
@@ -282,7 +308,7 @@ impl Snapshot {
             return Err(Error::Malformed);
         }
         manifest.data_sha256 = Sha256::digest(&data).into();
-        let filters = filters.encode();
+        let filters = filters.encode()?;
         manifest.filters_sha256 = Sha256::digest(&filters).into();
         Ok(Self {
             manifest,
