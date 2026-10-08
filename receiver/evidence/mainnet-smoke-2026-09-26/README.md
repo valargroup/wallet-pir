@@ -27,11 +27,15 @@ cargo run -p enhance-pir-server --bin receiver-directory -- \
 The known refund transaction
 `2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653`
 appears at height 3,496,114, transaction index 16, Action index 0, global note
-position 610503. Its block hash, transaction identity, Action input nullifier,
-commitment, ephemeral key, and 52-byte ciphertext prefix were compared against an
-independent verbose RPC block response. All matched. The publication's row digest
-was also independently recomputed. Rerunning the command yielded identical counts
-and the same revision without duplicate records.
+position 610503. The original note reported that its block hash, transaction
+identity, Action input nullifier, commitment, ephemeral key and 52-byte ciphertext
+prefix matched an independent verbose RPC block response, that the row digest was
+recomputed independently, and that a rerun gave identical counts and the same
+revision. Neither the RPC responses nor the publication files were retained, so
+this record cannot re-verify those checks. The raw transaction is retained as the
+indexer's test fixture
+([`receiver-refund.hex`](../../services/receiver-indexer/tests/fixtures/receiver-refund.hex)),
+whose tests recover the same Action from it.
 
 The shared crate passed six tests with `--features store`. The server's
 `--test receiver` passed three tests, including a command-line restart and reorg

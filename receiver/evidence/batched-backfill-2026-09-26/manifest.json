@@ -2,8 +2,9 @@
   "run_id": "receiver-batched-backfill-2026-09-26",
   "observed": "2026-09-26T17:53:50Z",
   "source": {
-    "baseline": "46f99bf",
-    "optimized": "batching change committed with this record"
+    "baseline": "46f99bff229e115f662a29c0b9c2bb620c882dad",
+    "optimized": "aa0fb4fcdfc15c105ed8a173100a00136ee0ae12",
+    "note": "Historical references from before the receiver history was rewritten into this stack: reachable only from the adam/near-swap-complete-20260929 integration branch, not from main or this stack, so they may stop resolving. The batching measured is now receiver_batch in receiver/services/receiver-indexer/src/blocks.rs, from this stack's 'Add the receiver directory indexer' (ed48e82f). The binaries' hashes are in results.json."
   },
   "command": "receiver-directory --data-dir <fresh-directory> --rpc-url http://159.65.183.89:8232 --no-auth --start-height 3496100 --end-height 3496200",
   "settings": {
