@@ -26,6 +26,27 @@ on roman-dev-2, synthetic chain, controller and worker each on two CPUs:
   coordinator out-building recent-01 under history load, which only the
   deploy can show.
 
+## Txid display genesis census and layout, 2026-10-08
+
+The genesis display journal completed on the coordinator at 22:56:45 UTC on
+2026-10-07: 3,508,674 blocks and 17,024,724 display records. A read-only
+journal census ran over it
+([evidence](../evidence/txid-display-genesis-census-2026-10-07/README.md)),
+and the layout analysis was derived offline from that census.
+
+- **Inline.** 92.5% of records are at most 128 bytes. No fee is unknown.
+- **Pages.** Old archives need far more page rows than live ones. A 40,000-record
+  archive needs a median of 8,034 rows in Sprout and 116–197 from NU6.1 on, and
+  up to 17,375. At `txid-2k` that is 899 page segments, so genesis needs
+  **1,325 runtimes and 51.8 GiB** built, not 850 and 33.2 GiB.
+- **Host.** The analysis recommends `m-16vcpu-128gb` with today's layout:
+  a 71G `MemoryMax` with a year of growth. On the 64 GB host, only 80,000-record
+  archives before NU6 fit.
+- **Anonymity.** Sharing pages changes no anonymity class under per-archive
+  lookup.
+
+Nothing was built or deployed. Runtime sizes above 4,096 rows are unmeasured.
+
 ## Split txid display map, 2026-10-07
 
 The split map ([design](txid-display.md#split-map)) is on `main`, not deployed.
@@ -239,9 +260,9 @@ This task did not observe it: it had no deploy inventory or SSH. Nothing
 serves from that journal yet. Bootstrap, the cutover and the host remain
 proposals.
 
-**Host decision deferred.** The display-archive host is not chosen yet. It waits
-on layout experiments on real data. For example, shared or smaller page tables
-could shrink page-table memory and change the host class.
+**Host decision deferred** (as of 2026-10-07). The display-archive host was
+not chosen yet; it waited on layout experiments on real data. Those are now
+done ([above](#txid-display-genesis-census-and-layout-2026-10-08)).
 
 Planning only; nothing was changed. At 16:05 UTC the public maps had these
 values:
