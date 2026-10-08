@@ -257,7 +257,7 @@ impl LiveSource {
         if parent != expected {
             return Err(transient("node reorganized while fetching block; retry"));
         }
-        let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched)
+        let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched, true)
             .await
             .map_err(transient)?;
         if self.rpc.block_hash(height).await.map_err(transient)?

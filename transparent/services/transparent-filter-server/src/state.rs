@@ -36,7 +36,7 @@
 //! irrelevant. Near the tip it means a height can be briefly absent, which
 //! surfaces as [`StateError::MissingBlock`] rather than as a wrong answer.
 
-use crate::extract::{extract_block, outpoint_label, PreviousOutputs};
+use crate::extract::{extract, outpoint_label, PreviousOutputs};
 use crate::ingest::BuiltEvents;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -152,7 +152,11 @@ impl StateReader {
     /// work depends on, which is what lets a caller run several heights at once
     /// and append them in order. The RPC path could not do that, because every
     /// block wrote the output cache the next one read.
-    pub fn block_events(&self, height: u64) -> Result<BuiltEvents, crate::ingest::BoxError> {
+    pub fn block_events(
+        &self,
+        height: u64,
+        display: bool,
+    ) -> Result<BuiltEvents, crate::ingest::BoxError> {
         let block_height = to_height(height)?;
         let block = self
             .db
@@ -168,7 +172,7 @@ impl StateReader {
             cache_hits: 0,
             cache: BlockOutputCache::new(32_768, 8 * 1024 * 1024, 1_024),
         };
-        let extracted = extract_block(&block.transactions, &mut previous, event_height)?;
+        let extracted = extract(&block.transactions, &mut previous, event_height, display)?;
         Ok(BuiltEvents {
             block_hash,
             events: extracted.events,

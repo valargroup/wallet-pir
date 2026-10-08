@@ -92,6 +92,19 @@ pub fn extract_block(
     previous: &mut impl PreviousOutputs,
     height: u32,
 ) -> Result<ExtractedBlock, ExtractError> {
+    extract(transactions, previous, height, true)
+}
+
+/// [`extract_block`], building display source records only when `display`
+/// is set. History and filter ingest never need them, so a record the display
+/// codec refuses (a v2x record is bounded; the block's events are not) can
+/// only stop the display ingest, never the history.
+pub fn extract(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+    height: u32,
+    display: bool,
+) -> Result<ExtractedBlock, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
     let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
@@ -108,7 +121,7 @@ pub fn extract_block(
     }
 
     let mut events: Vec<IndexedEvent> = Vec::new();
-    let mut display = Vec::new();
+    let mut records = Vec::new();
 
     for (transaction_index, transaction) in transactions.iter().enumerate() {
         let txid = Txid(transaction.hash().0);
@@ -173,7 +186,7 @@ pub fn extract_block(
             .validate(coinbase)
             .map_err(|e| ExtractError::Metadata(e.to_string()))?;
 
-        if !transaction.inputs().is_empty() || !transaction.outputs().is_empty() {
+        if display && (!transaction.inputs().is_empty() || !transaction.outputs().is_empty()) {
             let output = |o: &Output| DisplayOutput {
                 value: u64::from(o.value),
                 script: o.lock_script.as_raw_bytes().to_vec(),
@@ -220,7 +233,7 @@ pub fn extract_block(
             record
                 .display_record()
                 .map_err(|e| ExtractError::Metadata(e.to_string()))?;
-            display.push(record);
+            records.push(record);
         }
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
         for (output_index, output) in transaction.outputs().iter().enumerate() {
@@ -278,13 +291,16 @@ pub fn extract_block(
         }
     }
 
-    Ok(ExtractedBlock { events, display })
+    Ok(ExtractedBlock {
+        events,
+        display: records,
+    })
 }
 
 pub struct ExtractedBlock {
     pub events: Vec<IndexedEvent>,
     /// The display source record of every transaction with a transparent
-    /// input or output, in block order.
+    /// input or output, in block order; empty unless display was requested.
     pub display: Vec<TransparentDisplayRecordV2x>,
 }
 
@@ -293,7 +309,7 @@ pub fn extract_events(
     previous: &mut impl PreviousOutputs,
     height: u32,
 ) -> Result<Vec<IndexedEvent>, ExtractError> {
-    Ok(extract_block(transactions, previous, height)?.events)
+    Ok(extract(transactions, previous, height, false)?.events)
 }
 
 /// The element set for one block.
@@ -863,6 +879,12 @@ mod tests {
         let listed = extract_block(&transactions, &mut previous, 7).unwrap();
         assert_eq!(previous.lookups, 1, "only the outside prevout is looked up");
         assert_eq!(listed.display.len(), 2);
+        // History needs no display source, so builds none, and its events
+        // are the same.
+        let mut again = previous.clone();
+        let history = extract(&transactions, &mut again, 7, false).unwrap();
+        assert!(history.display.is_empty());
+        assert_eq!(history.events, listed.events);
         assert!(
             listed.display[0].inputs.is_empty(),
             "coinbase lists no inputs"

@@ -583,7 +583,7 @@ async fn ingest_once(
         if parent != expected {
             return Err("node reorganized while fetching block; retry reconciliation".into());
         }
-        let built = build_fetched_block_events(rpc, cache, next, fetched).await?;
+        let built = build_fetched_block_events(rpc, cache, next, fetched, false).await?;
         if rpc.block_hash(next).await? != built.block_hash.to_display_hex() {
             return Err("block became noncanonical during extraction".into());
         }

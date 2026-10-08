@@ -229,6 +229,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     reconcile_state(&reader, &mut store, stop)?;
 
     let reader = std::sync::Arc::new(reader);
+    let display = cli.txid_display;
     let started = Instant::now();
     let first = store.next_height();
     let workers = cli.workers.max(1);
@@ -257,7 +258,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
             let reader = reader.clone();
             let at = to_spawn;
             inflight.push_back(tokio::task::spawn_blocking(move || {
-                reader.block_events(at).map(|events| (at, events))
+                reader.block_events(at, display).map(|events| (at, events))
             }));
             to_spawn += 1;
         }
@@ -386,7 +387,9 @@ async fn main() -> Result<(), BoxError> {
             }));
         }
 
-        let built = build_fetched_block_events(&zakura, &mut cache, height, fetched).await?;
+        let built =
+            build_fetched_block_events(&zakura, &mut cache, height, fetched, cli.txid_display)
+                .await?;
         rpc_lookups += built.rpc_lookups;
         cache_hits += built.cache_hits;
         append(&mut store, &cli, height, built)?;
