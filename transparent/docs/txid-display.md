@@ -130,7 +130,8 @@ one immutable sidecar per block under `display-v2x/<block hash>.bin`:
 - each spend event must match its listed input, and every indexable input
   must have one;
 - extraction also derives each entry, so a source no entry can be made from
-  stops the ingest.
+  stops the display ingest. History and filter ingest build no source records,
+  so these ceilings never stop them.
 
 Reading a block's entries rechecks its source records against the recovered
 event projection.

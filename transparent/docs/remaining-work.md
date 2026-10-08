@@ -321,8 +321,20 @@ Design: [txid display](txid-display.md). Roman's decisions:
 - [x] Independent oracle: `verify_fixture.py` derives every expected entry
   from raw blocks and parents; `make transparent-txid-demo` checks extraction
   and lookups against it.
-- [ ] wallet-libraries and Vizor draft PRs: facts, validation, view, and a
-  user-initiated public enhancement.
+- [x] wallet-libraries and Vizor draft PRs: facts, validation, view, and a
+  user-initiated public enhancement
+  ([zakura-core/wallet-libraries#127](https://github.com/zakura-core/wallet-libraries/pull/127),
+  [chainapsis/vizor-wallet#885](https://github.com/chainapsis/vizor-wallet/pull/885),
+  stacked on #879). Adversarial review of all three diffs found no blockers;
+  its fixes are in both PRs and in `b88bf8a7` (history ingest no longer builds
+  display sources).
+- [ ] Oracle coverage: the frozen fixture has no entry with mixed funding
+  (bit 16) and one with several source scripts. Add a transaction with
+  transparent inputs and a positive shielded value balance, so Rust and the
+  Python oracle agree on it by bytes, not only by reading.
+- [ ] Worker `verify_rows` accepts trailing all-empty segments that the
+  builder never emits. Refuse them, since each adds a reply frame to every
+  query of that bucket.
 - [ ] **Do not redeploy txid display from `main` until the v2 cutover.** The
   running v1 proof of concept keeps its deployed binaries; `main` can neither
   read v1 sidecars nor serve v1 tables.
