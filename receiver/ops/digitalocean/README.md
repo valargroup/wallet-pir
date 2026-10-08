@@ -50,6 +50,9 @@ the Droplet to the project. Do not apply a plan that destroys anything.
 
 ## Release and install
 
+The receiver is not yet an `ops/scripts/wallet-pir-deploy.py` target; until it is,
+installs follow this runbook by hand.
+
 1. CI full on `main` builds `receiver-directory` and `receiver-probe` for
    `x86-64-v3` and publishes them, with this directory's unit, `Caddyfile`,
    `cloud-init.yaml` and `probe-fixture.json`, as the `receiver-pir-<sha>` artifact
@@ -85,7 +88,12 @@ journal through `tracing`; `RUST_LOG` in the unit sets the level.
 The PIR monitor runs `receiver-probe` (from the same release) every minute as the
 `receiver` service probe, from its host on the same private network, with the
 release's `probe-fixture.json` installed beside it as
-`receiver-probe-fixture.json`:
+`receiver-probe-fixture.json`. `pir-monitor` accepts the `receiver` service only
+from this commit on and is not in a release bundle: build it with
+`enhance/ops/scripts/build-observability.sh`, as for its other probes. The chain
+checks use the monitor host's own node and cookie, as the Status probe and the
+Transparent canary do, not the fleet nodes the service reads, so they are an
+independent oracle:
 
 ```json
 {"service": "receiver", "command": ["/opt/pir-monitor/receiver-probe", "--origin",
@@ -93,8 +101,8 @@ release's `probe-fixture.json` installed beside it as
   "http://10.70.0.11:18380/v1/receiver/health", "--fixture",
   "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
   "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
-  "--rpc-url", "http://10.70.0.19:8232", "--rpc-url", "http://10.70.0.6:8232",
-  "--no-auth"], "timeout_seconds": 30}
+  "--rpc-url", "http://127.0.0.1:18232", "--cookie",
+  "/run/credentials/pir-monitor.service/chain-rpc-cookie"], "timeout_seconds": 30}
 ```
 
 The fixture pins the public NEAR refund
