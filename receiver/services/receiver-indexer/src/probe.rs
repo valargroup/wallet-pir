@@ -6,11 +6,15 @@
 //! `detail`, and the lookup as `phase: "live_encrypted_probe"` with `queries` and
 //! `correct`. `answer_mismatch` marks served data that is wrong, which the monitor treats
 //! as a correctness incident; `oracle_invalid` a fixture that fails its pin; anything
-//! else is an availability failure.
+//! else, such as `oracle_unavailable` when no node has reached the publication, is an
+//! availability failure. Every response body is bounded before it is buffered.
 use clap::Parser;
 use receiver_directory::{extract::Action, Hash, Payment};
 use receiver_indexer::zakura::ZakuraClient;
-use receiver_pir::{transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest};
+use receiver_pir::{
+    public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
+    MAX_MANIFEST_BYTES,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -21,6 +25,8 @@ use std::path::PathBuf;
 const MAX_LAG_BLOCKS: u64 = 12;
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
+/// Bound on the health report, a few hundred bytes.
+const MAX_HEALTH_BYTES: usize = 64 * 1024;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -40,7 +46,8 @@ struct Args {
     /// The fixture file's SHA-256, hex.
     #[arg(long)]
     fixture_sha256: String,
-    /// A node's RPC endpoint. Repeat it for fallbacks, tried in order.
+    /// An independent node's RPC endpoint. Repeat it for fallbacks, tried in order;
+    /// the first that has reached the publication checks it.
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -129,39 +136,32 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let Ok(Some(receiver)) = action.recover_receiver() else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "not zero-OVK"}))));
     };
-    let rpc = match &args.cookie {
-        Some(path) => ZakuraClient::from_cookie_file(args.rpc_url.clone(), path)?,
-        None => ZakuraClient::unauthenticated(args.rpc_url.clone())?,
-    };
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
     let origin = args.origin.trim_end_matches('/');
-    let get = |url: String| {
-        let request = http.get(url);
-        async move {
-            let response = request.send().await?.error_for_status()?;
-            Ok::<_, reqwest::Error>(response.bytes().await?.to_vec())
-        }
-    };
-    let manifest: Manifest =
-        serde_json::from_slice(&get(format!("{origin}/v1/receiver/init")).await?)?;
-    manifest.validate()?;
+    let manifest = fetch_manifest(&http, origin).await?;
     let directory = &manifest.directory;
     let height = u64::from(directory.end_height);
-    let tip = rpc.tip_height().await?;
-    if height <= tip {
-        let node: zakura_chain::block::Hash = rpc.block_hash(height).await?.parse()?;
-        let genesis: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
-        if node.0 != directory.end_hash || genesis.0 != directory.genesis {
+    let (rpc, tip) = match oracle(&args, height).await? {
+        Ok(found) => found,
+        Err(tips) => {
             return Ok(Some((
-                "answer_mismatch",
-                json!({"anchor_off_chain": height}),
-            )));
+                "oracle_unavailable",
+                json!({"end_height": height, "nodes": tips}),
+            )))
         }
+    };
+    let node: zakura_chain::block::Hash = rpc.block_hash(height).await?.parse()?;
+    let genesis: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
+    if node.0 != directory.end_hash || genesis.0 != directory.genesis {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"anchor_off_chain": height}),
+        )));
     }
-    if tip.saturating_sub(height) > MAX_LAG_BLOCKS {
+    if tip - height > MAX_LAG_BLOCKS {
         return Ok(Some((
             "stale_publication",
             json!({"end_height": height, "node_tip": tip}),
@@ -176,7 +176,13 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     // The pinned receiver's pages over live encrypted PIR, in position order, until the
     // fixture's payment or a later one.
     let id = hex::encode(manifest.id()?);
-    let public = get(format!("{origin}/v1/receiver/public/{id}")).await?;
+    let rows = directory.rows;
+    let public = get(
+        &http,
+        &format!("{origin}/v1/receiver/public/{id}"),
+        public_bytes(rows)?,
+    )
+    .await?;
     let accepted = AcceptedCoverage {
         genesis: directory.genesis,
         required_start: directory.start_height,
@@ -191,10 +197,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             .post(format!("{origin}/v1/receiver/query"))
             .body(query.body().to_vec())
             .send()
-            .await?
-            .error_for_status()?
-            .bytes()
             .await?;
+        let response = read_limited(response, response_bytes(rows)?).await?;
         queries += 1;
         let record = match client.decode(query, &response) {
             Ok(Some(record)) => record,
@@ -250,7 +254,29 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     if recent.is_none_or(|until| until < now - MAX_RECENT_AGE_SECS) {
         return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
     }
-    let health: Value = serde_json::from_slice(&get(args.health_url).await?)?;
+    indexer_report(&http, origin, &args.health_url, &id).await
+}
+
+/// The indexer's payout check from health, which must report serving the probed
+/// publication `id`, or the one the origin serves now if it rotated since: otherwise
+/// the private health URL and the public origin are not the same service.
+async fn indexer_report(
+    http: &reqwest::Client,
+    origin: &str,
+    health_url: &str,
+    id: &str,
+) -> Result<Option<Failure>> {
+    let health: Value = serde_json::from_slice(&get(http, health_url, MAX_HEALTH_BYTES).await?)?;
+    let serving = health["serving"].as_str();
+    if serving != Some(id) {
+        let current = hex::encode(fetch_manifest(http, origin).await?.id()?);
+        if serving != Some(current.as_str()) {
+            return Ok(Some((
+                "report_unavailable",
+                json!({"probed": id, "health_serving": serving}),
+            )));
+        }
+    }
     match health["indexer"]["payouts_missing"].as_u64() {
         None => Ok(Some(("report_unavailable", Value::Null))),
         Some(0) => Ok(None),
@@ -258,5 +284,137 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             "answer_mismatch",
             json!({"payouts_missing": missing}),
         ))),
+    }
+}
+
+/// The first node, in `--rpc-url` order, whose tip has reached `height`, with that tip.
+/// A node behind the publication can check neither its anchor nor its lag, so without
+/// one the error lists each node's tip or failure.
+async fn oracle(
+    args: &Args,
+    height: u64,
+) -> Result<std::result::Result<(ZakuraClient, u64), Vec<Value>>> {
+    let mut tips = Vec::new();
+    for url in &args.rpc_url {
+        let node = match &args.cookie {
+            Some(path) => ZakuraClient::from_cookie_file(vec![url.clone()], path)?,
+            None => ZakuraClient::unauthenticated(vec![url.clone()])?,
+        };
+        match node.tip_height().await {
+            Ok(tip) if tip >= height => return Ok(Ok((node, tip))),
+            Ok(tip) => tips.push(tip.into()),
+            Err(error) => tips.push(error.to_string().into()),
+        }
+    }
+    Ok(Err(tips))
+}
+
+/// The validated session manifest the origin serves now.
+async fn fetch_manifest(http: &reqwest::Client, origin: &str) -> Result<Manifest> {
+    let bytes = get(
+        http,
+        &format!("{origin}/v1/receiver/init"),
+        MAX_MANIFEST_BYTES,
+    )
+    .await?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+/// GETs `url`, reading at most `limit` bytes of its body.
+async fn get(http: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
+    read_limited(http.get(url).send().await?, limit).await
+}
+
+/// A successful response's body, refused as soon as it exceeds `limit` bytes.
+async fn read_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
+    let mut response = response.error_for_status()?;
+    if response
+        .content_length()
+        .is_some_and(|length| length > limit as u64)
+    {
+        return Err("response exceeds its bound".into());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        if body.len() + chunk.len() > limit {
+            return Err("response exceeds its bound".into());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
+#[cfg(test)]
+#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+mod common;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{routing, Json, Router};
+
+    /// A session manifest whose directory salt starts with `salt`.
+    fn manifest(salt: u8) -> Manifest {
+        let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
+        directory.salt[0] = salt;
+        Manifest {
+            protocol: receiver_pir::PROTOCOL.into(),
+            directory,
+            public_digest: [0; 32],
+        }
+    }
+
+    /// A service whose origin serves `current` and whose health reports `serving`, and
+    /// a route with a body over the health bound. Returns its origin.
+    async fn serve(current: Manifest, serving: String) -> String {
+        let app = Router::new()
+            .route(
+                "/v1/receiver/init",
+                routing::get(move || async move { Json(current) }),
+            )
+            .route(
+                "/health",
+                routing::get(move || async move {
+                    Json(json!({"serving": serving, "indexer": {"payouts_missing": 0}}))
+                }),
+            )
+            .route(
+                "/large",
+                routing::get(|| async { vec![b' '; MAX_HEALTH_BYTES + 1] }),
+            );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        origin
+    }
+
+    /// Health's report counts only for the probed publication, or the one the origin
+    /// serves after a rotation, and bodies are bounded.
+    #[tokio::test]
+    async fn the_report_is_bound_to_the_probed_publication() {
+        let (probed, rotated) = (manifest(1), manifest(2));
+        let id = |m: &Manifest| hex::encode(m.id().unwrap());
+        let http = reqwest::Client::new();
+        let report = |origin: String| {
+            let (http, id) = (http.clone(), id(&probed));
+            async move {
+                indexer_report(&http, &origin, &format!("{origin}/health"), &id)
+                    .await
+                    .unwrap()
+            }
+        };
+        let origin = serve(probed.clone(), id(&probed)).await;
+        assert!(report(origin.clone()).await.is_none());
+        assert!(get(&http, &format!("{origin}/large"), MAX_HEALTH_BYTES)
+            .await
+            .is_err());
+        // The service rotated after the lookup.
+        let origin = serve(rotated.clone(), id(&rotated)).await;
+        assert!(report(origin).await.is_none());
+        // Health answers for a publication the origin does not serve.
+        let origin = serve(probed.clone(), id(&rotated)).await;
+        assert_eq!(report(origin).await.unwrap().0, "report_unavailable");
     }
 }

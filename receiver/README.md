@@ -177,6 +177,8 @@ transaction is not checked.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
+Its chain checks use the first `--rpc-url` node that has reached the publication;
+with none, it fails as `oracle_unavailable` rather than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
@@ -188,7 +190,10 @@ fails as `answer_mismatch` when the served anchor is off the node's chain, the
 lookup misses or misreports the payment or a completed payout is missing from the
 index, and otherwise when the publication trails the node by more than 12 blocks
 or the recent set is older than wallets trust (15 minutes). It reads the payout
-check from health, which only the private network reaches. The key is never logged. Without a key, publications carry no provider sets.
+check from health, which only the private network reaches, and accepts it only
+when health reports serving the probed publication or the one the origin serves
+after a rotation. Every response body is bounded by the protocol's sizes before it
+is read. The key is never logged. Without a key, publications carry no provider sets.
 
 ## Wallet use
 
