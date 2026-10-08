@@ -13,6 +13,7 @@
   ],
   "receiver": [
     "receiver-directory",
+    "receiver-indexer",
     "receiver-pir",
     "receiver-pir-server"
   ],

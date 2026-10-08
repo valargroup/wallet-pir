@@ -3044,6 +3044,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "receiver-indexer"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "clap",
+ "hex",
+ "receiver-directory",
+ "receiver-pir",
+ "receiver-pir-server",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zakura-chain 6.0.0",
+ "zakura-orchard 2.1.0",
+ "zcash_address",
+ "zcash_protocol",
+]
+
+[[package]]
 name = "receiver-pir"
 version = "0.0.1"
 dependencies = [

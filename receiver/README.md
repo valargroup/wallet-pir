@@ -11,7 +11,11 @@ outputs.
 witnesses and, with the `store` feature, the indexer's SQLite store.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
-publications over HTTP.
+publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
+binary is `receiver-directory`. The service shares process identity and
+admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
+(`pir-native`) with the other services, and carries its own small node client
+until a shared one exists.
 
 ## Records and publications
 
@@ -120,6 +124,66 @@ zero means no indexed payment in that publication, not an unused address. Missin
 or inconsistent pages and transport failures are errors, never absence or a
 cleartext fallback.
 
+## Running the indexer and server
+
+```sh
+cargo build --locked --profile release-fast -p receiver-indexer --bin receiver-directory
+receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
+  --cookie /path/to/.cookie --serve --witnesses --min-rows 8192
+```
+
+`--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
+authentication. Repeat `--rpc-url` for fallback nodes, tried in order. The indexer
+requires mainnet and covers Ironwood activation through `--depth` (default 2)
+blocks below the node's tip, or a test range from `--start-height` to
+`--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch
+is checked against the saved parent, heights, each header's merkle root, Action
+positions, terminal hash and tree size before it is stored. A restart rewinds to
+the last saved canonical block, and a node behind the index is waited for rather
+than followed back. A reorg below the start height needs a rebuild in a new
+directory.
+
+Without `--serve`, one run writes `<revision>.rows`, `<revision>.filters`,
+`<revision>.json` and, with `--witnesses`, `<revision>.witness` under
+`publications/` and prints a summary. Witnesses need commitments from position
+zero, so the index must start at Ironwood activation. With `--serve`, the process
+polls every `--poll-seconds` (default 10), prepares each new canonical tip in
+memory, writing no publication files, and serves on `--bind` (default
+`127.0.0.1:18380`), a loopback or private address behind a TLS proxy. A separate
+guard rechecks served anchors and revokes every session once a node shows one is
+off its chain; a failed check keeps serving. A recovery epoch fences work that
+began before a revocation. The previous revision stays available for 60 seconds,
+and the next one waits for that to end. Logs go to standard error through
+`tracing`, filtered by `RUST_LOG` (default `info`).
+
+The swap provider sets come from the NEAR Intents explorer. While serving with a
+partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
+of ZEC every `--near-poll-seconds` (default 60), whichever app created it, into
+`provider.sqlite`. Its first read starts a day back, or at `--near-since`, and a
+feed counts as started only once that read completes. Each publication declares
+when the feeds' last complete read began, and its recent set holds the day before
+that, so a stalled feed shows as a stale set rather than an incomplete one. A
+record missing an address is skipped, dates are capped at the read's start, and a
+read that stops making progress fails. Health's `indexer` report gives each feed's
+last read and how many payouts NEAR reported complete more than an hour earlier have
+no indexed payment, the signal that the index missed one or NEAR stopped paying with
+the zero OVK.
+
+`receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
+--fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
+As Transparent's canary checks one query against a pinned row hash, it looks up a
+pinned historical payment over live encrypted PIR: the fixture holds a public
+zero-OVK Action with its txid, height, Action index and note position, the probe
+recovers its receiver, and the answer must hold that payment at that position and
+height with the fixture's fields and the node's block hash. A fixture that fails
+its pin is `oracle_invalid`. The lookup is reported as `phase:
+"live_encrypted_probe"` with `queries` and `correct`; a run moves about 100 KB. It
+fails as `answer_mismatch` when the served anchor is off the node's chain, the
+lookup misses or misreports the payment or a completed payout is missing from the
+index, and otherwise when the publication trails the node by more than 12 blocks
+or the recent set is older than wallets trust (15 minutes). It reads the payout
+check from health, which only the private network reaches. The key is never logged. Without a key, publications carry no provider sets.
+
 ## Wallet use
 
 `receiver_pir::transport::DirectoryClient` runs over a host `Transport` that
@@ -143,6 +207,8 @@ payments, but never which receivers were looked up.
 `cargo test -p receiver-directory --features store` covers recovery of a public
 mainnet refund, records, publications, store restart and rollback, and witnesses
 against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
-round trips at every geometry and the HTTP service. Recovery follows
+round trips at every geometry and the HTTP service. `cargo test -p
+receiver-indexer` covers indexing with synthetic blocks, serving from memory and
+the probe's encrypted lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).

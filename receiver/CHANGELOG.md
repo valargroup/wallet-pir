@@ -22,3 +22,12 @@
   each client may have two in flight, and a query waits up to 2 seconds for one of
   two evaluation slots after its upload completes; refusals are 429 with
   `Retry-After: 1`. Session IDs hash the session manifest at fixed width.
+- Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
+  mainnet with batch anchor checks and reorg rollback, keeps publishing and
+  serving each canonical tip from memory while revoking orphaned sessions, and
+  feeds the `near-intents` filter sets from the NEAR Intents explorer when given a
+  partner key. It checks each block against its header's merkle root, fails over
+  between nodes, publishes a few blocks below the tip, revokes only on a proven
+  fork, reports completed NEAR payouts missing from the index and logs with
+  `tracing`. Its `receiver-probe` binary is a `pir-monitor` service probe that
+  runs one live encrypted lookup checked against the session's row file.
