@@ -66,6 +66,9 @@ GEOMETRIES = ('txid-2k', 'txid-4k')
 # DisplaySealParams plus the map window, as txid-display-controller's seal flags.
 SEAL_KEYS = ('n_archive', 'n_recent', 'archive_target', 'recent_floor', 'reorg_margin', 'max_archive_shards')
 MAX_BUCKETS = 64
+# Sealed archives a map lists: genesis coverage is about 426 v2 archives at
+# 40,000 entries, growing about 64 a year.
+MAX_ARCHIVE_SHARDS = 1024
 
 OPT = '/opt/transparent-txid-display'
 RELEASES = OPT + '/releases'
@@ -263,7 +266,8 @@ def validate(request, inventory):
 
     journal = exact(request['journal'], ('data_dir', 'start_height', 'node_cache_dir'), 'journal')
     plain_path(journal['data_dir'], 'journal.data_dir')
-    integer(journal['start_height'], 1, 1 << 40, 'journal.start_height')
+    # A genesis journal starts at 0; the display then starts at 1.
+    integer(journal['start_height'], 0, 1 << 40, 'journal.start_height')
     plain_path(journal['node_cache_dir'], 'journal.node_cache_dir')
     publication = exact(request['publication'], ('root',), 'publication')
     plain_path(publication['root'], 'publication.root')
@@ -281,9 +285,9 @@ def validate(request, inventory):
     integer(controller['recent_floor'], 10000, 1 << 32, 'controller.recent_floor')
     # Sealed shards never change, so they must stay below any reorg the node accepts.
     integer(controller['reorg_margin'], 100, 10000, 'controller.reorg_margin')
-    integer(controller['max_archive_shards'], 1, 64, 'controller.max_archive_shards')
+    integer(controller['max_archive_shards'], 1, MAX_ARCHIVE_SHARDS, 'controller.max_archive_shards')
     # plan-start's targets: archives bootstrap makes, and seals replay adds after them.
-    integer(controller['archives'], 1, 64, 'controller.archives')
+    integer(controller['archives'], 1, MAX_ARCHIVE_SHARDS, 'controller.archives')
     integer(controller['replay_seals'], 0, 64, 'controller.replay_seals')
     require(isinstance(controller['rpc_url'], str) and RPC_URL.fullmatch(controller['rpc_url']),
             'controller.rpc_url must be the loopback node RPC')
