@@ -1,0 +1,30 @@
+{
+  "run_id": "receiver-deployment-2026-10-08",
+  "observed": "2026-10-08T23:18:07Z",
+  "source": {
+    "deployed_release": "c7f6d296",
+    "note": "the receiver deployment commit before its review fixes, from the release directory name in host.txt"
+  },
+  "network": "mainnet",
+  "droplet": {
+    "id": 604069093,
+    "name": "receiver-pir-poc-01",
+    "region": "nyc3",
+    "size_slug": "s-4vcpu-8gb-amd"
+  },
+  "origin": "https://receiver-pir.valargroup.dev",
+  "raw": [
+    "captured_at.txt",
+    "cloud-firewalls.json",
+    "dns-a.txt",
+    "droplet.json",
+    "host.txt",
+    "public-health-status.txt",
+    "public-init.json",
+    "SHA256SUMS.original"
+  ],
+  "limits": [
+    "a point-in-time inventory, not a qualification run",
+    "capture commands not retained"
+  ]
+}

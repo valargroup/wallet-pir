@@ -17,7 +17,7 @@ the `wallet-pir` DigitalOcean project:
 Enhance resources are grouped in `enhance.tf`, Transparent resources in
 `transparent.tf`, and the coordinator, network, volume, project membership and
 state-address moves in `shared.tf`. `receiver.tf` holds the opt-in receiver
-directory Droplet, firewall and DNS record; import the existing ones as the
+directory Droplet, firewall and DNS record; import the existing Droplet and record as the
 [receiver deployment](../../../../receiver/ops/digitalocean/README.md#infrastructure)
 describes before enabling it. Use the [transparent deployment target](../../../../transparent/docs/deployment.md)
 and [verified-status record](../../../../transparent/docs/status.md) before changing them.

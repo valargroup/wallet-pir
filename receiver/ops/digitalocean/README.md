@@ -14,21 +14,22 @@ holds no wallet data. No Enhance service runs on this Droplet.
 ## Infrastructure
 
 `ops/infra/digitalocean/production/receiver.tf` manages the Droplet (`nyc3`,
-`s-4vcpu-8gb`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
+`s-4vcpu-8gb-amd`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
 membership, its firewall and the unproxied A record `receiver-pir.valargroup.dev`
 (TTL 300), behind `receiver_pir_enabled`. The Droplet has `prevent_destroy` and
 ignores `user_data` changes. The firewall allows SSH from `allowed_ssh_cidrs`, HTTP
 and HTTPS from anywhere, and port 18380 only from the PIR monitor Droplet; the
 host's `ufw` also limits 18380 to `10.70.0.0/16`.
 
-The Droplet (ID 604069093), its firewall and its DNS record already exist. Import
-them before the first plan that enables the root's receiver resources, on the
-coordinator and under its lock like every production operation. Set
-`receiver_pir_enabled = true` in `/etc/enhance-pir/production.tfvars`, find the
-firewall and record IDs, then import:
+The Droplet (ID 604069093) and its DNS record already exist, as the
+[2026-10-08 deployment record](../../evidence/deployment-2026-10-08/README.md)
+shows. No DigitalOcean firewall is attached to it yet; only the host's `ufw`
+limits port 18380. Import the Droplet and the record before the first plan that
+enables the root's receiver resources, on the coordinator and under its lock like
+every production operation. Set `receiver_pir_enabled = true` in
+`/etc/enhance-pir/production.tfvars`, find the record ID, then import:
 
 ```bash
-doctl compute firewall list --format ID,Name,DropletIDs | grep 604069093
 curl -sS -H "Authorization: Bearer $CF_API_TOKEN" \
   'https://api.cloudflare.com/client/v4/zones/d3ac9657be6101818fed439c62fdcadf/dns_records?type=A&name=receiver-pir.valargroup.dev' \
   | jq -r '.result[0].id'
@@ -38,13 +39,13 @@ import() {
     -var="enhance_group_count=<current group count>" "$@"
 }
 import 'digitalocean_droplet.receiver_pir[0]' 604069093
-import 'digitalocean_firewall.receiver_pir[0]' <firewall-id>
 import 'cloudflare_dns_record.receiver_pir[0]' 'd3ac9657be6101818fed439c62fdcadf/<record-id>'
 ```
 
-The saved plan that follows must show no Droplet replacement or resize; if the
-Droplet's size slug differs from `s-4vcpu-8gb`, set it to the actual slug first. It
-may update the firewall in place (its name and the monitor's 18380 rule) and add
+The saved plan that follows must show no Droplet replacement or resize; the
+recorded size slug is `s-4vcpu-8gb-amd`, and if the live one differs, set it first.
+The plan creates the firewall, which then closes every port it does not list, so
+confirm SSH from `allowed_ssh_cidrs` and the monitor's 18380 rule in it, and may add
 the Droplet to the project. Do not apply a plan that destroys anything.
 
 ## Release and install

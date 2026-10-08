@@ -1,6 +1,7 @@
 # The receiver directory's single indexing and serving Droplet
-# (receiver/ops/digitalocean). Opt in to manage it; the existing Droplet, firewall
-# and DNS record are imported as the production README describes, never recreated.
+# (receiver/ops/digitalocean). Opt in to manage it; the existing Droplet and DNS
+# record are imported as its README describes, never recreated, and the firewall,
+# which does not exist yet, is created.
 variable "receiver_pir_enabled" {
   type    = bool
   default = false
@@ -10,7 +11,7 @@ resource "digitalocean_droplet" "receiver_pir" {
   count      = var.receiver_pir_enabled ? 1 : 0
   name       = "receiver-pir-poc-01"
   region     = "nyc3"
-  size       = "s-4vcpu-8gb"
+  size       = "s-4vcpu-8gb-amd"
   image      = "ubuntu-24-04-x64"
   ssh_keys   = var.ssh_key_ids
   monitoring = true
