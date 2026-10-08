@@ -1,8 +1,8 @@
 # Development tools
 
-Production code and product tools live under `enhance/` and `transparent/`.
-The root tools directory contains repository-wide checks. Product tools keep
-their existing Cargo package names and CLI flags.
+Production code and product tools live under `enhance/`, `transparent/` and
+`receiver/`. The root tools directory contains repository-wide checks. Product
+tools keep their existing Cargo package names and CLI flags.
 
 | Location | Purpose | Entry point |
 |---|---|---|
