@@ -136,7 +136,8 @@ impl Store {
         tip(&self.db, &self.config)
     }
 
-    /// Reject gaps, changed parents and malformed records before advancing coverage.
+    /// Reject gaps, changed parents, coinbase payments and malformed records before
+    /// advancing coverage.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -176,9 +177,12 @@ impl Store {
         }
         let mut previous_position = None;
         for (receiver, p) in &block.payments {
+            // Coinbase recipients are excluded: the coinbase is transaction zero, and its
+            // Actions take the block's first positions.
             if p.height != block.height
                 || p.block_hash != block.hash
-                || p.position < block.start_position
+                || p.tx_index == 0
+                || p.position < block.start_position + block.coinbase_actions
                 || p.position >= block.end_position
                 || block
                     .commitments
@@ -357,7 +361,9 @@ impl ProviderStore {
     /// Records a complete read of `feed` that began at `read_at`: receivers from swaps
     /// it created up to `cursor`, its new position, where `true` marks a payout address
     /// and `false` a refund address, each with its swap's creation time. A receiver
-    /// keeps its latest time.
+    /// keeps its latest time. The cursor and read time advance together: a read whose
+    /// cursor is behind the stored one changes neither, so a stale read cannot make the
+    /// feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -373,16 +379,25 @@ impl ProviderStore {
                 params![receiver.as_bytes(), payout, seen_at],
             )?;
         }
-        tx.execute(
-            "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
-             DO UPDATE SET created_at=MAX(created_at,excluded.created_at)",
-            params![feed, cursor],
-        )?;
-        tx.execute(
-            "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-             DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
-            params![feed, read_at],
-        )?;
+        let stored: Option<i64> = tx
+            .query_row(
+                "SELECT created_at FROM cursors WHERE feed=?1",
+                [feed],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if stored.is_none_or(|stored| cursor >= stored) {
+            tx.execute(
+                "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET created_at=excluded.created_at",
+                params![feed, cursor],
+            )?;
+            tx.execute(
+                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
+                params![feed, read_at],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }

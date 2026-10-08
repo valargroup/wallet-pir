@@ -26,7 +26,7 @@ repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
-start at 8192 rows. A crowded bucket retries up to 16 salts derived from the
+start at 8192 rows, and a manifest with fewer is refused. A crowded bucket retries up to 16 salts derived from the
 terminal hash, the first being the hash itself, and only then doubles the table,
 up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
 records. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
@@ -63,9 +63,10 @@ and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a
 receiver outside a set matches it about once in 1,533 tests. The file holds the set
 count, then for each set in label order its label, byte length (little endian) and
 BIP 158 encoding (a CompactSize count and the coded deltas), about 1.6 bytes per
-receiver. A reader decodes every value and checks the padding before matching.
-Every wallet downloads the same file, so testing it reveals nothing. The publisher
-is trusted for the sets' completeness, as for the rows.
+receiver, and is at most 8 MiB. A reader decodes every value and checks the
+padding before matching. Every wallet downloads the same file, so testing it
+reveals nothing. The publisher is trusted for the sets' completeness, as for the
+rows.
 
 ## Witnesses
 

@@ -2,6 +2,7 @@
 
 - [Enhance PIR](../enhance/docs/README.md): Ironwood integration, architecture, deployment and measured performance.
 - [Transparent PIR](../transparent/docs/README.md): recovery contract, filters, wallet adapter, deployment and acceptance.
+- [Receiver directory](../receiver/README.md): zero-OVK receiver records, publications, filters and witnesses.
 - [Transparent activity metadata plan](transparent-pir-activity-metadata-plan.md): proposed compact fee/shape metadata, accepted activity limitations, and separate future txid PIR.
 - [Transparent txid sizing and anonymity findings](transparent-txid-sizing-and-anonymity-findings.md): whole-range probability sizing estimates, independent routing and remaining full-population gates.
 - [Transparent txid display](../transparent/docs/txid-display.md): server protocol, native demo, tiered proof of concept and next wallet integration stage.

@@ -67,7 +67,7 @@ pub fn record(page: u32, total: u32) -> Record {
             height: 101,
             block_hash: [3; 32],
             txid: [page as u8; 32],
-            tx_index: page,
+            tx_index: page + 1,
             action_index: 0,
             position: 200 + u64::from(page),
             action_nullifier: [5; 32],
