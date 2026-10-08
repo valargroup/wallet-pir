@@ -10,3 +10,15 @@
   directory profile `ironwood-zero-ovk-receiver-v1`, whose revision hashes every
   field at fixed width and refuses unknown ones), and common `IWPROOF1` witness
   files.
+- Add encrypted receiver lookups (`ironwood-receiver-pir-v1-two-mask-m29`, the
+  shared `pir-native` profile) and a row-file mode chosen by remaining work, both
+  bound to one accepted publication and run over a host-supplied transport. A PIR
+  lookup reads a history longer than 16 pages from the row file, so many payments
+  to one receiver cannot fail a lookup. An HTTP service serves each publication's
+  sessions, rows, witnesses and filters, with process identity and the indexer's
+  latest report at `/v1/receiver/health` and the shared HTTP metrics. A replaced
+  publication keeps serving its sessions for 60 seconds, and the next replacement
+  waits for that to end. Queries are admitted with Enhance's shared primitives:
+  each client may have two in flight, and a query waits up to 2 seconds for one of
+  two evaluation slots after its upload completes; refusals are 429 with
+  `Retry-After: 1`. Session IDs hash the session manifest at fixed width.

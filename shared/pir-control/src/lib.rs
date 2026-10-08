@@ -7,7 +7,13 @@
 //! authority that Enhance's packing router and query ingress and Status's
 //! roles each enforced with their own copy of the constant.
 //!
+//! With the `admission` feature, [`admission`] holds the HTTP admission
+//! primitives the Enhance roles, Status and Receiver share.
+//!
 //! The contract these implement is `docs/serving-contract.md`.
+
+#[cfg(feature = "admission")]
+pub mod admission;
 
 use serde::Serialize;
 use std::sync::OnceLock;

@@ -9,6 +9,9 @@ outputs.
 
 `receiver-directory` holds zero-OVK extraction, records, publications, common
 witnesses and, with the `store` feature, the indexer's SQLite store.
+`receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
+the evaluator with the `server` feature. `receiver-pir-server` serves
+publications over HTTP.
 
 ## Records and publications
 
@@ -70,10 +73,76 @@ The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
 terminal height and hash, tree size and root. Sorted 37-byte nodes (level, index,
 hash) follow, with every sibling of each payment position. It is capped at 64 MiB.
 
+## Protocol
+
+The protocol `ironwood-receiver-pir-v1-two-mask-m29` is the shared `pir-native`
+profile that Enhance and Transparent also use: a 4096-byte row is one
+2,048-coefficient packing block, as in Transparent. The query masks and packing
+setup derive from the protocol and the row count. At 8192 rows a query is 77,876
+bytes, a response 5,684 and the public setup 14,848. A session manifest holds the
+directory manifest, the protocol and the SHA-256 of the public setup, and refuses
+unknown fields. A domain-separated hash of the protocol, the directory revision
+and that digest is the session ID.
+
+| Route | Content |
+|---|---|
+| `GET /v1/receiver/init` | Current session manifest |
+| `GET /v1/receiver/public/:session` | Public PIR setup |
+| `POST /v1/receiver/query` | One encrypted row query |
+| `GET /v1/receiver/rows/:session` | Complete row file |
+| `GET /v1/receiver/witness/:session` | Common witness file |
+| `GET /v1/receiver/filters/:session` | Filter file |
+| `GET /v1/receiver/health` | Process identity, the served session and the indexer's report (operators only) |
+
+A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
+the encrypted row selection. The response echoes that 52-byte header. The
+receiver and page never appear in a route or header. An unknown session returns
+409, a revoked one 410, an oversized query 413 and a malformed one 400. Queries
+are admitted with the primitives Enhance uses (`pir_control::admission`): two in
+flight per client, then a wait of up to 2 seconds for one of two evaluation
+slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
+
+`/v1/receiver/health` reports the process identity that
+[the serving contract](../docs/serving-contract.md) defines for every PIR server,
+and `/metrics` the shared HTTP observations by route category. Both are for
+operators: a deployment's edge proxies only the wallet routes.
+
+## Trust model
+
+PIR hides which receivers a wallet looks up. It does not authenticate the chain.
+A wallet accepts a publication only at a block of its own chain, as
+`AcceptedCoverage` (genesis, required history start, terminal height and hash),
+and revalidates that anchor if its chain changes during a lookup. It trial
+decrypts each payment with its own key and checks witness paths against its own
+tree root, never only the file's root. A directory match proves neither
+ownership nor spendability. An indexer can still omit payments, so an empty page
+zero means no indexed payment in that publication, not an unused address. Missing
+or inconsistent pages and transport failures are errors, never absence or a
+cleartext fallback.
+
+## Wallet use
+
+`receiver_pir::transport::DirectoryClient` runs over a host `Transport` that
+applies the wallet's route policy, cancellation and timeouts. A transport
+enforces response limits while streaming, rejects redirects and maps 409 and 410
+to `Error::Revision`. A wallet calls `fetch_manifest`, accepts the manifest's
+end block against its own chain and calls `fetch_filters`, which checks the
+filter file against the manifest. It tests its receivers with `Filter::matches`
+and calls `connect_manifest` with the remaining lookup count only if any need a
+lookup. Small jobs use PIR. Larger ones (about 400 lookups at 8192 rows)
+download the row file once and check its digest. `use_file_for_work` switches
+when new work arrives. `witnesses` fetches the common witness file, and `lookup`
+returns a receiver's complete history or an error. Over PIR it reads up to
+`MAX_PIR_PAGES` (16) pages, and loads the row file for a longer history. Reuse
+the client across batches and reconnect for a new revision. The server sees the
+mode and the number of queries, so it learns how many lookups found several
+payments, but never which receivers were looked up.
+
 ## Tests
 
 `cargo test -p receiver-directory --features store` covers recovery of a public
 mainnet refund, records, publications, store restart and rollback, and witnesses
-against an independent tree. Recovery follows
+against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
+round trips at every geometry and the HTTP service. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).

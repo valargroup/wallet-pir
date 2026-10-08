@@ -89,6 +89,8 @@ pub fn endpoint(path: &str) -> Option<&'static str> {
         Some("manifest")
     } else if path.starts_with("/v1/shards/") && path.contains("/setup/") {
         Some("setup")
+    } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
+        receiver_endpoint(route)
     } else if path.starts_with("/v1/shards/") && path.contains("/query/") {
         if path.ends_with("/directory") {
             Some("query_directory")
@@ -100,6 +102,20 @@ pub fn endpoint(path: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+/// The receiver directory's route categories; session IDs never become labels.
+fn receiver_endpoint(route: &str) -> Option<&'static str> {
+    Some(match route.split('/').next()? {
+        "init" => "receiver_init",
+        "public" => "receiver_public",
+        "query" => "receiver_query",
+        "rows" => "receiver_rows",
+        "witness" => "receiver_witness",
+        "filters" => "receiver_filters",
+        "health" => "receiver_health",
+        _ => return None,
+    })
 }
 
 impl HttpMetrics {

@@ -2560,10 +2560,13 @@ dependencies = [
 name = "pir-control"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "hex",
  "rand 0.8.5",
  "serde",
  "sha2 0.10.9",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
@@ -3038,6 +3041,37 @@ dependencies = [
  "thiserror 2.0.18",
  "zakura-orchard 2.1.0",
  "zcash_note_encryption",
+]
+
+[[package]]
+name = "receiver-pir"
+version = "0.0.1"
+dependencies = [
+ "hex",
+ "ipir-sp",
+ "pir-native",
+ "rand 0.8.5",
+ "receiver-directory",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "receiver-pir-server"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "hex",
+ "pir-control",
+ "pir-observability",
+ "receiver-directory",
+ "receiver-pir",
+ "reqwest",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
 ]
 
 [[package]]
