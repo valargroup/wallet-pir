@@ -19,8 +19,9 @@ use zcash_address::{
 use zcash_protocol::consensus::NetworkType;
 
 const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
-const STATUSES: &str =
-    "FAILED,INCOMPLETE_DEPOSIT,KNOWN_DEPOSIT_TX,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
+/// Every status the explorer's `statuses` filter accepts (its OpenAPI spec). The 1Click
+/// status API's `KNOWN_DEPOSIT_TX` is not one: the explorer rejects the request.
+const STATUSES: &str = "FAILED,INCOMPLETE_DEPOSIT,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
 const PAGE: usize = 1000;
 /// The explorer's per-partner rate limit, with margin.
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
