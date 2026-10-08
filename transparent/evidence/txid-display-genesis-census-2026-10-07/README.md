@@ -30,6 +30,10 @@ and a new 8,192-row page geometry: 30.5 GiB held, a 45G `MemoryMax`, and about
 pre-NU6 archives (117.6 KB against 92.5 KB warm, inline), needs a client release
 for the new geometry, and doubles the anonymity sets there.
 
+*Outcome, 2026-10-08:* Roman did not reply by the deadline, so the recommended
+128 GB host with today's layout went ahead by default
+([deployment](../../docs/deployment.md#recommendation)).
+
 The true-up is required either way. Without it, no option fits 64 GB, and
 today's layout needs 127G, more than any host listed. A 128 GB host fits only
 the options that change the layout.

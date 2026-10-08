@@ -364,11 +364,11 @@ starts dropping archives around mid-December 2026.
   Today's `txid-2k` needs 1,325 runtimes and 51.8 GiB, not 850 and 33.2 GiB.
   Shared and smaller page tables do not reach 64 GB; only 80,000-record
   archives before NU6 do.
-- [ ] G1, Roman: choose the display-archive host. Recommended:
-  `m-16vcpu-128gb` (about $672 a month) with today's layout. The alternative is
-  `m-8vcpu-64gb` (about $336), which needs about two weeks of layout work
-  (variant C in [deployment](deployment.md#host-and-memory-options-for-genesis))
-  and a client release.
+- [x] G1: display-archive host chosen on 2026-10-08. `m-16vcpu-128gb` (about
+  $672 a month) with today's layout, the recommended option, taken by default
+  when Roman did not reply by the deadline. Variant C on `m-8vcpu-64gb`
+  ([deployment](deployment.md#host-and-memory-options-for-genesis)) was not
+  taken. The spend is still applied only at P1, under the change sheet (G3).
 - [ ] Ops: raise the 64 GiB `cache_bytes` cap, and count page segments per
   archive in the window check (1,325 runtimes at cutover).
 - [x] Code: reservation true-up and `shard-residency` display geometries

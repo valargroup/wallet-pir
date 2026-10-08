@@ -3237,9 +3237,11 @@ What this gives:
   window lasts about 9 years at 63.7 seals a year, so nothing is dropped in
   practice.
 
-**The one decision (G1)** is whether to pay that host's extra ~$336 a month, or
-fund about two weeks of layout work to stay on the `m-8vcpu-64gb` host
-(variant C below). Variant C:
+**G1 chosen, 2026-10-08:** the `m-16vcpu-128gb` host with today's layout.
+Roman did not reply by the deadline, so the recommended option went ahead
+by default. The spend itself is still approved at P1. The alternative not taken was
+to fund about two weeks of layout work to stay on the `m-8vcpu-64gb` host
+(variant C below). It remains the lever if growth outgrows the host. Variant C:
 
 - uses 80,000-record archives below NU6 (2,726,400), each with a 4,096-row
   directory and a new 8,192-row page geometry;
@@ -3493,7 +3495,7 @@ Acceptance adds four checks to the existing
 
 | Gate | Decision |
 |---|---|
-| G1 | **Spend:** approve the dedicated `m-16vcpu-128gb` display-archive host (about $672 a month) for genesis coverage with today's layout, or fund variant C (about two weeks) to use `m-8vcpu-64gb` (about $336) |
+| G1 | **Chosen 2026-10-08** (recommended option, taken by default when the deadline passed): the dedicated `m-16vcpu-128gb` display-archive host (about $672 a month) with today's layout. Variant C on `m-8vcpu-64gb` was not taken. The Terraform apply is still approved at P1. |
 | G2 | Merge code items 1–4 after full CI and cut a release |
 | G3 | Approve this change sheet for P0–P6, including the outage and the route change |
 | G4 | Live acceptance, then keep, stop or retire (the proof of concept's existing gate) |
