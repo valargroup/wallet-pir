@@ -1,10 +1,13 @@
 # Batched backfill measurement
 
-September 26, 2026, on the Studio against the same public mainnet RPC. Baseline
-source is `46f99bf`. The optimized source is the batching change committed with this
-record. Binary hashes, timestamps, row digests, and elapsed times are retained in
-[the measurement record](results.json), and the run metadata in
-[`manifest.json`](manifest.json).
+September 26, 2026, on the Studio against the same public mainnet RPC. The
+baseline source was `46f99bff` and the optimized source `aa0fb4fc`, the batching
+change first committed with this record. Both predate the rewrite of the receiver
+history into its current commits: they are reachable only from an integration
+branch, not from `main`, so they are historical references rather than a
+reproduction recipe (see [`manifest.json`](manifest.json)). Binary hashes,
+timestamps, row digests, and elapsed times are retained in
+[the measurement record](results.json).
 
 This record is historical: publications then started at 4 rows, so the revision
 below is not what the same range publishes today at 8192 rows or more. The

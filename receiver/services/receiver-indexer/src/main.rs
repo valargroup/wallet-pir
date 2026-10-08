@@ -85,6 +85,11 @@ async fn main() -> Result<()> {
     if args.start_height < receiver_indexer::blocks::ironwood_activation() {
         return Err("start must be at or after Ironwood activation".into());
     }
+    if args.witnesses && args.start_height != receiver_indexer::blocks::ironwood_activation() {
+        return Err(
+            "witnesses need commitments from Ironwood activation; drop --start-height".into(),
+        );
+    }
     let private = match args.bind.ip() {
         IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
         IpAddr::V6(ip) => ip.is_loopback(),
@@ -242,14 +247,7 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let provider = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
-    if let Some(serving) = serving {
-        serving.set_report(receiver_indexer::near::report(
-            &provider,
-            &store,
-            unix_now(),
-        )?);
-    }
+    let provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
     let node_tip = u32::try_from(rpc.tip_height().await?)?;
     let end = args
         .end_height
@@ -328,7 +326,7 @@ async fn refresh(
     log_stage("ingestion", started);
     let started = std::time::Instant::now();
     let records = store.counts()?.0;
-    let provider = receiver_indexer::near::provider_sets(&provider)?;
+    let provider = receiver_indexer::near::provider_sets(&provider_store)?;
     // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
@@ -396,6 +394,12 @@ async fn refresh(
         serving.revoke();
         return Err("chain changed during PIR preparation; retrying".into());
     }
+    // The report describes the reconciled index this publication was built from.
+    serving.set_report(receiver_indexer::near::report(
+        &provider_store,
+        &store,
+        unix_now(),
+    )?);
     if !serving.publish(publication, epoch.unwrap()) {
         return Err("publication invalidated during preparation; retrying".into());
     }

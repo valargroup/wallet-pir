@@ -699,10 +699,8 @@ fn reject_corrupt_rows_before_preprocessing() {
     let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &[]).unwrap();
     snapshot.data[0] ^= 1;
     assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
-    assert!(matches!(
-        Server::new(Snapshot::build(manifest(4096), &[], &[]).unwrap()),
-        Err(Error::Unsupported)
-    ));
+    // The directory refuses a smaller table before the PIR profile sees it.
+    assert!(Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).is_err());
 }
 
 #[test]

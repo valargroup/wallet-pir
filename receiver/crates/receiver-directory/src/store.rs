@@ -136,7 +136,8 @@ impl Store {
         tip(&self.db, &self.config)
     }
 
-    /// Reject gaps, changed parents and malformed records before advancing coverage.
+    /// Reject gaps, changed parents, coinbase payments and malformed records before
+    /// advancing coverage.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -176,9 +177,12 @@ impl Store {
         }
         let mut previous_position = None;
         for (receiver, p) in &block.payments {
+            // Coinbase recipients are excluded: the coinbase is transaction zero, and its
+            // Actions take the block's first positions.
             if p.height != block.height
                 || p.block_hash != block.hash
-                || p.position < block.start_position
+                || p.tx_index == 0
+                || p.position < block.start_position + block.coinbase_actions
                 || p.position >= block.end_position
                 || block
                     .commitments
@@ -320,11 +324,11 @@ impl Store {
         ))
     }
 
-    /// Whether the index holds a payment to `receiver`.
-    pub fn paid(&self, receiver: &Receiver) -> Result<bool, Error> {
+    /// Whether the index holds a payment to `receiver` in transaction `txid`.
+    pub fn paid_in(&self, receiver: &Receiver, txid: &Hash) -> Result<bool, Error> {
         Ok(self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1)",
-            [receiver.as_bytes()],
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
+            params![receiver.as_bytes(), txid.as_slice()],
             |r| r.get(0),
         )?)
     }
@@ -348,8 +352,9 @@ impl ProviderStore {
             CREATE TABLE IF NOT EXISTS cursors (feed TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS starts (feed TEXT PRIMARY KEY, started_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS reads (feed TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS completions (receiver BLOB PRIMARY KEY CHECK(length(receiver)=43),
-                seen_at INTEGER NOT NULL) WITHOUT ROWID;",
+            CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+                txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
+                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
         )?;
         Ok(Self { db })
     }
@@ -357,7 +362,9 @@ impl ProviderStore {
     /// Records a complete read of `feed` that began at `read_at`: receivers from swaps
     /// it created up to `cursor`, its new position, where `true` marks a payout address
     /// and `false` a refund address, each with its swap's creation time. A receiver
-    /// keeps its latest time.
+    /// keeps its latest time. The cursor and read time advance together: a read whose
+    /// cursor is behind the stored one changes neither, so a stale read cannot make the
+    /// feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -373,47 +380,66 @@ impl ProviderStore {
                 params![receiver.as_bytes(), payout, seen_at],
             )?;
         }
-        tx.execute(
-            "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
-             DO UPDATE SET created_at=MAX(created_at,excluded.created_at)",
-            params![feed, cursor],
-        )?;
-        tx.execute(
-            "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-             DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
-            params![feed, read_at],
-        )?;
-        tx.commit()?;
-        Ok(())
-    }
-
-    /// Records payout receivers whose swaps the provider reports complete, each with
-    /// when a read first saw it complete, so their payments can be checked against
-    /// the index.
-    pub fn record_completions(
-        &mut self,
-        receivers: &[Receiver],
-        seen_at: i64,
-    ) -> Result<(), Error> {
-        let tx = self.db.transaction()?;
-        for receiver in receivers {
+        let stored: Option<i64> = tx
+            .query_row(
+                "SELECT created_at FROM cursors WHERE feed=?1",
+                [feed],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if stored.is_none_or(|stored| cursor >= stored) {
             tx.execute(
-                "INSERT OR IGNORE INTO completions VALUES (?1,?2)",
-                params![receiver.as_bytes(), seen_at],
+                "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET created_at=excluded.created_at",
+                params![feed, cursor],
+            )?;
+            tx.execute(
+                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
+                params![feed, read_at],
             )?;
         }
         tx.commit()?;
         Ok(())
     }
 
-    /// Payout receivers first seen complete from `from` through `until`.
-    pub fn completed(&self, from: i64, until: i64) -> Result<Vec<Receiver>, Error> {
+    /// Records completed payouts the provider reports, each a payout receiver and the
+    /// transaction (protocol byte order) that paid it, with when a read first saw it
+    /// complete, so each payment can be checked against the index. A receiver reused
+    /// across swaps has one payout per transaction.
+    pub fn record_completions(
+        &mut self,
+        payouts: &[(Receiver, Hash)],
+        seen_at: i64,
+    ) -> Result<(), Error> {
+        let tx = self.db.transaction()?;
+        for (receiver, txid) in payouts {
+            tx.execute(
+                "INSERT OR IGNORE INTO payouts VALUES (?1,?2,?3)",
+                params![receiver.as_bytes(), txid.as_slice(), seen_at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Payouts first seen complete from `from` through `until`; see
+    /// [`Self::record_completions`].
+    pub fn completed(&self, from: i64, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
         let mut query = self
             .db
-            .prepare("SELECT receiver FROM completions WHERE seen_at BETWEEN ?1 AND ?2")?;
-        let rows = query.query_map([from, until], |r| r.get::<_, Vec<u8>>(0))?;
-        rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
-            .collect()
+            .prepare("SELECT receiver,txid FROM payouts WHERE seen_at BETWEEN ?1 AND ?2")?;
+        let rows = query.query_map([from, until], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.map(|row| {
+            let (receiver, txid) = row?;
+            Ok((
+                Receiver::from_bytes(receiver.try_into().map_err(|_| Error::Malformed)?)?,
+                txid.try_into().map_err(|_| Error::Malformed)?,
+            ))
+        })
+        .collect()
     }
 
     /// Records that `feed` reads swaps created from `since` on, unless it already started.

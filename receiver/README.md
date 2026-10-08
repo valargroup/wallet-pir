@@ -30,7 +30,7 @@ repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
-start at 8192 rows. A crowded bucket retries up to 16 salts derived from the
+start at 8192 rows, and a manifest with fewer is refused. A crowded bucket retries up to 16 salts derived from the
 terminal hash, the first being the hash itself, and only then doubles the table,
 up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
 records. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
@@ -67,9 +67,10 @@ and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a
 receiver outside a set matches it about once in 1,533 tests. The file holds the set
 count, then for each set in label order its label, byte length (little endian) and
 BIP 158 encoding (a CompactSize count and the coded deltas), about 1.6 bytes per
-receiver. A reader decodes every value and checks the padding before matching.
-Every wallet downloads the same file, so testing it reveals nothing. The publisher
-is trusted for the sets' completeness, as for the rows.
+receiver, and is at most 8 MiB. A reader decodes every value and checks the
+padding before matching. Every wallet downloads the same file, so testing it
+reveals nothing. The publisher is trusted for the sets' completeness, as for the
+rows.
 
 ## Witnesses
 
@@ -161,17 +162,24 @@ The swap provider sets come from the NEAR Intents explorer. While serving with a
 partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
 of ZEC every `--near-poll-seconds` (default 60), whichever app created it, into
 `provider.sqlite`. Its first read starts a day back, or at `--near-since`, and a
-feed counts as started only once that read completes. Each publication declares
+feed counts as started only once that read completes. Later reads go back from
+the newest swap seen: an hour for refunds, a day for payouts, so a payout that
+completes within a day of its swap is seen complete (about six pages, 33 seconds
+at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
 record missing an address is skipped, dates are capped at the read's start, and a
-read that stops making progress fails. Health's `indexer` report gives each feed's
-last read and how many payouts NEAR reported complete more than an hour earlier have
-no indexed payment, the signal that the index missed one or NEAR stopped paying with
-the zero OVK.
+read that stops making progress fails. Health's `indexer` report, computed from the
+index each publication is built from, gives each feed's last read and how many
+payouts NEAR reported complete more than an hour earlier have no indexed payment to
+their receiver in the transaction NEAR reported, the signal that the index missed
+one or NEAR stopped paying with the zero OVK. A payout without a reported
+transaction is not checked.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
+Its chain checks use the first `--rpc-url` node that has reached the publication;
+with none, it fails as `oracle_unavailable` rather than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
@@ -183,7 +191,10 @@ fails as `answer_mismatch` when the served anchor is off the node's chain, the
 lookup misses or misreports the payment or a completed payout is missing from the
 index, and otherwise when the publication trails the node by more than 12 blocks
 or the recent set is older than wallets trust (15 minutes). It reads the payout
-check from health, which only the private network reaches. The key is never logged. Without a key, publications carry no provider sets.
+check from health, which only the private network reaches, and accepts it only
+when health reports serving the probed publication or the one the origin serves
+after a rotation. Every response body is bounded by the protocol's sizes before it
+is read. The key is never logged. Without a key, publications carry no provider sets.
 
 ## Wallet use
 
@@ -208,7 +219,9 @@ payments, but never which receivers were looked up.
 `cargo test -p receiver-directory --features store` covers recovery of a public
 mainnet refund, records, publications, store restart and rollback, and witnesses
 against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
-round trips at every geometry and the HTTP service. `cargo test -p
+round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
+--features server --test golden` pins the protocol's seeds, framing and row
+placement against digests from a request built outside `Client`. `cargo test -p
 receiver-indexer` covers indexing with synthetic blocks, serving from memory and
 the probe's encrypted lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section

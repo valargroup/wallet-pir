@@ -7,8 +7,8 @@ and protocol they record, which later changes replaced, so each note says what i
 historical.
 
 - [Mainnet smoke test](mainnet-smoke-2026-09-26/README.md): a bounded mainnet
-  range indexed twice to the same revision, with the known NEAR refund checked
-  against an independent RPC block.
+  range holding the known NEAR refund; its reported RPC cross-check and rerun were
+  not retained.
 - [Batched backfill](batched-backfill-2026-09-26/README.md): concurrent batched
   block reads 13.8 times faster than sequential ones, with byte-identical
   publications.

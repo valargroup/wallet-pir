@@ -15,9 +15,7 @@ use std::sync::OnceLock;
 /// The session protocol: the shared `pir-native` two-mask profile, one row per
 /// 2,048-coefficient packing block.
 pub const PROTOCOL: &str = "ironwood-receiver-pir-v1-two-mask-m29";
-/// Smallest served directory. Publications grow by powers of two up to `MAX_ROWS`.
-pub const MIN_ROWS: u32 = 8192;
-pub use receiver_directory::snapshot::MAX_ROWS;
+pub use receiver_directory::snapshot::{MAX_ROWS, MIN_ROWS};
 /// Request header length: [`MAGIC`], the session ID and a fresh nonce.
 pub const HEADER_BYTES: usize = 52;
 /// Leading bytes of every request header, which responses echo.

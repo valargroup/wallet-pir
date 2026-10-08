@@ -17,7 +17,8 @@
     "excluded_coinbase_actions": 14,
     "records": 20,
     "rows": 4,
-    "row_bytes": 16384,
+    "row_bytes": 4096,
+    "publication_bytes": 16384,
     "revision": "346932851fd94db77e31ac522460586f262f7782601e2eb03209a18e0b2ff925"
   },
   "host": "Mac Studio (local)",
