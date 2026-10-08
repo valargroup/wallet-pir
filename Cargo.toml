@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "receiver/crates/receiver-directory",
     "shared/pir-observability",
     "shared/pir-native",
     "shared/pir-control",

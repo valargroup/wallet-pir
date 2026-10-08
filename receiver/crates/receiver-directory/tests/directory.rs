@@ -1,0 +1,563 @@
+mod common;
+use common::{action, manifest, receiver, record};
+use receiver_directory::{
+    snapshot::{lookup_row, row_for, Snapshot, ROW_BYTES},
+    Error, Receiver, Record, RECORD_BYTES,
+};
+
+fn row<'a>(s: &'a Snapshot, r: &Receiver, page: u32) -> &'a [u8] {
+    let n = row_for(&s.manifest, r, page).unwrap();
+    &s.data[n * ROW_BYTES..(n + 1) * ROW_BYTES]
+}
+
+#[test]
+fn public_refund_requires_authenticated_recovery() {
+    assert!(action().recover_receiver().unwrap().is_some());
+    let mut a = action();
+    a.out_ciphertext[0] ^= 1;
+    assert!(a.recover_receiver().unwrap().is_none());
+    let mut a = action();
+    a.enc_ciphertext[579] ^= 1;
+    assert!(a.recover_receiver().unwrap().is_none());
+    let mut a = action();
+    a.cmx = [255; 32];
+    assert!(a.recover_receiver().is_err());
+}
+
+#[test]
+fn wire_layout_and_strict_empty_slots() {
+    let r = record(0, 1);
+    let b = r.encode().unwrap();
+    assert_eq!(b.len(), 285);
+    assert_eq!(&b[129..137], &200u64.to_le_bytes());
+    assert_eq!(Record::decode(&b).unwrap(), Some(r));
+    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
+    let mut corrupt = [0; RECORD_BYTES];
+    corrupt[284] = 1;
+    assert!(Record::decode(&corrupt).is_err());
+    assert!(Record::decode(&b[..284]).is_err());
+}
+
+/// A manifest with a field this version does not know is refused, and the revision
+/// binds every field, including each set's optional ones.
+#[test]
+fn manifests_refuse_unknown_fields_and_bind_every_field() {
+    use receiver_directory::snapshot::Manifest;
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    let json = serde_json::to_value(&s.manifest).unwrap();
+    let read: Manifest = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(read.revision().unwrap(), s.manifest.revision().unwrap());
+    let mut added = json.clone();
+    added["added"] = 1.into();
+    assert!(serde_json::from_value::<Manifest>(added).is_err());
+    let mut nested = json;
+    nested["filters"][0]["note"] = "later".into();
+    assert!(serde_json::from_value::<Manifest>(nested).is_err());
+    let mut other = s.manifest.clone();
+    other.records += 1;
+    assert_ne!(other.revision().unwrap(), s.manifest.revision().unwrap());
+}
+
+#[test]
+fn pages_share_one_revision_and_build_order_is_stable() {
+    let records = [record(0, 2), record(1, 2)];
+    let s = Snapshot::build(manifest(8), &records, &[]).unwrap();
+    let reversed =
+        Snapshot::build(manifest(8), &[records[1].clone(), records[0].clone()], &[]).unwrap();
+    assert_eq!(
+        s.manifest.revision().unwrap(),
+        reversed.manifest.revision().unwrap()
+    );
+    for r in &records {
+        assert_eq!(
+            lookup_row(
+                &s.manifest,
+                &r.receiver,
+                r.page,
+                row(&s, &r.receiver, r.page)
+            )
+            .unwrap(),
+            Some(r.clone())
+        );
+    }
+    let empty = Snapshot::build(manifest(8), &[], &[]).unwrap();
+    assert!(lookup_row(
+        &empty.manifest,
+        &records[0].receiver,
+        0,
+        row(&empty, &records[0].receiver, 0)
+    )
+    .unwrap()
+    .is_none());
+    assert!(matches!(
+        lookup_row(
+            &empty.manifest,
+            &records[0].receiver,
+            1,
+            row(&empty, &records[0].receiver, 1)
+        ),
+        Err(Error::MissingPage)
+    ));
+    assert!(Snapshot::build(manifest(8), &records[..1], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &records[1..], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(1, 2)], &[]).is_err());
+    assert!(Snapshot::build(manifest(8), &[record(0, 1), record(0, 1)], &[]).is_err());
+}
+
+/// A valid receiver other than [`receiver`].
+fn other_receiver() -> Receiver {
+    let sk = orchard::keys::SpendingKey::from_bytes([3; 32]).unwrap();
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    let address = fvk.address_at(0u32, orchard::keys::Scope::External);
+    Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+}
+
+#[test]
+fn publications_commit_to_their_filters() {
+    use receiver_directory::{
+        filter::{Filters, PAID},
+        snapshot::ProviderSet,
+    };
+    use sha2::{Digest, Sha256};
+    let (paid, provider) = (receiver(), other_receiver());
+    let sets = [
+        ProviderSet {
+            label: "near-intents/recent".into(),
+            window_secs: Some(86_400),
+            since_unix: 1_000,
+            until_unix: 90_000,
+            receivers: vec![provider],
+        },
+        ProviderSet {
+            label: "near-intents/seen".into(),
+            window_secs: None,
+            since_unix: 1_000,
+            until_unix: 90_000,
+            receivers: vec![provider],
+        },
+    ];
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &sets).unwrap();
+    assert_eq!(
+        <[u8; 32]>::from(Sha256::digest(&s.filters)),
+        s.manifest.filters_sha256
+    );
+    let filters = Filters::decode(&s.filters).unwrap();
+    s.manifest.check_filters(&filters).unwrap();
+    let labels: Vec<_> = s
+        .manifest
+        .filters
+        .iter()
+        .map(|f| f.label.as_str())
+        .collect();
+    assert_eq!(labels, ["near-intents/recent", "near-intents/seen", PAID]);
+    assert_eq!(s.manifest.filters[0].window_secs, Some(86_400));
+    assert_eq!(s.manifest.filters[0].until_unix, Some(90_000));
+    assert_eq!(s.manifest.filters[2].since_unix, None);
+    assert_eq!(s.manifest.filters[2].until_unix, None);
+    let key = s.manifest.salt;
+    let set = |label| filters.get(label).unwrap().matches(&key, &[paid, provider]);
+    assert_eq!(set(PAID), [true, false]);
+    assert_eq!(set("near-intents/recent"), [false, true]);
+    assert_eq!(set("near-intents/seen"), [false, true]);
+    // The provider's data is part of the revision.
+    let without = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    assert_ne!(
+        without.manifest.revision().unwrap(),
+        s.manifest.revision().unwrap()
+    );
+    // A filter file is checked against the sets its manifest declares.
+    let only_paid = Filters::decode(&without.filters).unwrap();
+    assert!(s.manifest.check_filters(&only_paid).is_err());
+    // A recent set must declare its window, labels must be known kinds, and a feed
+    // cannot end before it started.
+    for (label, window_secs, until_unix) in [
+        ("near-intents/recent", None, 90_000),
+        ("near-intents/other", None, 90_000),
+        ("near-intents/seen", None, 999),
+    ] {
+        let bad = [ProviderSet {
+            label: label.into(),
+            window_secs,
+            since_unix: 1_000,
+            until_unix,
+            receivers: vec![provider],
+        }];
+        assert!(Snapshot::build(manifest(8), &[record(0, 1)], &bad).is_err());
+    }
+}
+
+#[cfg(feature = "store")]
+#[test]
+fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
+    use receiver_directory::store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    let (payout, refund) = (receiver(), other_receiver());
+    assert_eq!(store.cursor("near-payouts").unwrap(), None);
+    assert_eq!(store.read("near-payouts").unwrap(), None);
+    store
+        .record(
+            "near-payouts",
+            &[(payout, true, 100), (payout, true, 50)],
+            100,
+            300,
+        )
+        .unwrap();
+    store
+        .record("near-refunds", &[(refund, false, 200)], 200, 300)
+        .unwrap();
+    store.record("near-payouts", &[], 90, 250).unwrap();
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
+    // A feed's last read is its latest one, as with its cursor.
+    assert_eq!(store.read("near-payouts").unwrap(), Some(300));
+    let (recent, seen) = store.sets(150).unwrap();
+    assert_eq!((recent, seen), (vec![refund], vec![payout]));
+    // A feed's start is its first one.
+    assert_eq!(store.started("near-payouts").unwrap(), None);
+    store.start("near-payouts", 40).unwrap();
+    store.start("near-payouts", 60).unwrap();
+    assert_eq!(store.started("near-payouts").unwrap(), Some(40));
+    // A completion keeps when it was first seen.
+    store.record_completions(&[payout], 400).unwrap();
+    store.record_completions(&[payout, refund], 500).unwrap();
+    assert_eq!(store.completed(0, 450).unwrap(), [payout]);
+    assert_eq!(store.completed(450, 600).unwrap(), [refund]);
+    // Reopening keeps everything.
+    drop(store);
+    let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    assert_eq!(store.sets(100).unwrap().0.len(), 2);
+    assert_eq!(store.completed(0, 600).unwrap().len(), 2);
+}
+
+#[test]
+fn coverage_anchor_and_position_are_required() {
+    let m = manifest(8);
+    m.accept([1; 32], 100, 101, [3; 32]).unwrap();
+    for (network, start, height, hash) in [
+        ([9; 32], 100, 101, [3; 32]),
+        ([1; 32], 99, 101, [3; 32]),
+        ([1; 32], 100, 102, [3; 32]),
+        ([1; 32], 100, 101, [9; 32]),
+    ] {
+        assert!(m.accept(network, start, height, hash).is_err());
+    }
+    let mut r = record(0, 1);
+    r.payment.position = 300;
+    assert!(Snapshot::build(m.clone(), &[r], &[]).is_err());
+    let mut r = record(0, 1);
+    r.payment.block_hash = [9; 32];
+    assert!(Snapshot::build(m, &[r], &[]).is_err());
+}
+
+#[test]
+fn overflow_and_bad_padding_fail_closed() {
+    let records: Vec<_> = (0..50).map(|p| record(p, 50)).collect();
+    let mut m = manifest(4);
+    let overflow = (0..100).any(|i| {
+        m.salt[0] = i;
+        matches!(
+            Snapshot::build(m.clone(), &records, &[]),
+            Err(Error::Capacity)
+        )
+    });
+    assert!(overflow);
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    let r = receiver();
+    let mut b = row(&s, &r, 0).to_vec();
+    b[ROW_BYTES - 1] = 1;
+    assert!(lookup_row(&s.manifest, &r, 0, &b).is_err());
+}
+
+#[cfg(feature = "store")]
+#[test]
+fn durable_coverage_atomic_failure_and_reorg() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("directory.sqlite");
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    assert!(store.snapshot(8, &[]).is_err());
+    let empty = IndexedBlock {
+        height: 100,
+        hash: [10; 32],
+        parent: [2; 32],
+        start_position: 200,
+        end_position: 200,
+        coinbase_actions: 0,
+        payments: vec![],
+        commitments: vec![],
+    };
+    store.append(&empty).unwrap();
+    assert_eq!(store.snapshot(8, &[]).unwrap().manifest.end_height, 100);
+    let mut r = record(0, 1);
+    r.payment.position = 202;
+    let mut block = IndexedBlock {
+        height: 101,
+        hash: [3; 32],
+        parent: [10; 32],
+        start_position: 200,
+        end_position: 204,
+        coinbase_actions: 2,
+        payments: vec![(r.receiver, r.payment.clone())],
+        commitments: vec![[0; 32], [0; 32], r.payment.cmx, [0; 32]],
+    };
+    // The first two positions belong to excluded coinbase outputs.
+    store.append(&block).unwrap();
+    drop(store);
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    assert_eq!(store.tip().unwrap().position, 204);
+    assert_eq!(store.counts().unwrap(), (1, 2));
+    let old = store.snapshot(8, &[]).unwrap();
+    assert_eq!(
+        lookup_row(&old.manifest, &r.receiver, 0, row(&old, &r.receiver, 0))
+            .unwrap()
+            .unwrap()
+            .payment
+            .position,
+        202
+    );
+    block.height = 102;
+    block.parent = [3; 32];
+    block.hash = [4; 32];
+    block.start_position = 204;
+    block.end_position = 208;
+    // Failure after inserting the block must roll back both the block and its records.
+    assert!(store.append(&block).is_err());
+    assert_eq!(store.tip().unwrap().height, 101);
+    assert!(store.rewind(100, [99; 32]).is_err());
+    store.rewind(100, [10; 32]).unwrap();
+    assert_eq!(store.counts().unwrap(), (0, 0));
+    block.height = 101;
+    block.parent = [10; 32];
+    block.start_position = 200;
+    block.end_position = 203;
+    block.commitments.truncate(3);
+    block.coinbase_actions = 0;
+    block.payments[0].1.block_hash = block.hash;
+    store.append(&block).unwrap();
+    let new = store.snapshot(8, &[]).unwrap();
+    assert_ne!(
+        old.manifest.revision().unwrap(),
+        new.manifest.revision().unwrap()
+    );
+    assert!(old.manifest.accept([1; 32], 100, 101, block.hash).is_err());
+    let mut wrong = config.clone();
+    wrong.genesis = [99; 32];
+    assert!(Store::open(&path, wrong).is_err());
+    store.rewind(99, config.start_parent).unwrap();
+    assert!(store.snapshot(8, &[]).is_err());
+}
+
+#[cfg(feature = "store")]
+#[test]
+fn crowded_buckets_retry_the_salt_before_growing() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    // Twenty pages in two rows overflow when fifteen share a row. The block hash is
+    // the first salt, so choose one that crowds a row.
+    let crowded = |hash: [u8; 32]| {
+        let mut m = manifest(2);
+        m.salt = hash;
+        let first = (0..20)
+            .filter(|&page| row_for(&m, &receiver(), page).unwrap() == 0)
+            .count();
+        !(6..=14).contains(&first)
+    };
+    let hash = (0..=255).map(|k| [k; 32]).find(|h| crowded(*h)).unwrap();
+    let payments = (0..20)
+        .map(|page| {
+            let mut r = record(page, 20);
+            r.payment.height = 100;
+            r.payment.block_hash = hash;
+            (r.receiver, r.payment)
+        })
+        .collect();
+    store
+        .append(&IndexedBlock {
+            height: 100,
+            hash,
+            parent: [2; 32],
+            start_position: 200,
+            end_position: 220,
+            coinbase_actions: 0,
+            payments,
+            commitments: vec![[6; 32]; 20],
+        })
+        .unwrap();
+    let first = store.snapshot(2, &[]).unwrap();
+    assert_ne!(first.manifest.salt, hash);
+    assert_eq!(first.manifest.records, 20);
+    for page in 0..20 {
+        let found = lookup_row(
+            &first.manifest,
+            &receiver(),
+            page,
+            row(&first, &receiver(), page),
+        );
+        assert_eq!(found.unwrap().unwrap().page, page);
+    }
+    // A rebuild of the same coverage picks the same salt.
+    assert_eq!(
+        store.snapshot(2, &[]).unwrap().manifest.revision().unwrap(),
+        first.manifest.revision().unwrap()
+    );
+}
+
+#[test]
+fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
+    use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
+    use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
+    use receiver_directory::witness::WitnessSnapshot;
+    let commitments: Vec<[u8; 32]> = (1..=20u8).map(|i| [i; 32]).collect();
+    let mut manifest = manifest(8);
+    manifest.start_position = 0;
+    manifest.end_position = 20;
+    let positions = [0, 5, 6, 18, 19].into_iter().collect();
+    let snapshot = WitnessSnapshot::build(&manifest, &commitments, &positions).unwrap();
+    let encoded = snapshot.encode();
+    let restored = WitnessSnapshot::decode(&encoded, &manifest).unwrap();
+    for position in positions {
+        let mut tree = CommitmentTree::<MerkleHashOrchard, 32>::empty();
+        let mut witness = None;
+        for (index, cmx) in commitments.iter().enumerate() {
+            let hash =
+                MerkleHashOrchard::from_cmx(&ExtractedNoteCommitment::from_bytes(cmx).unwrap());
+            tree.append(hash).unwrap();
+            if index == position as usize {
+                witness = IncrementalWitness::from_tree(tree.clone());
+            } else if let Some(w) = &mut witness {
+                w.append(hash).unwrap();
+            }
+        }
+        let expected = witness.unwrap().path().unwrap();
+        assert_eq!(
+            restored
+                .path(position, commitments[position as usize])
+                .unwrap()
+                .as_slice(),
+            expected
+                .path_elems()
+                .iter()
+                .map(|h| h.to_bytes())
+                .collect::<Vec<_>>()
+        );
+        assert!(restored.path(position, [31; 32]).is_err());
+    }
+    let mut stale = manifest.clone();
+    stale.end_hash[0] ^= 1;
+    assert!(WitnessSnapshot::decode(&encoded, &stale).is_err());
+    assert!(WitnessSnapshot::decode(&encoded[..encoded.len() - 1], &manifest).is_err());
+    let mut corrupt = encoded.clone();
+    corrupt[152] = 32;
+    assert!(WitnessSnapshot::decode(&corrupt, &manifest).is_err());
+    let mut corrupt = encoded.clone();
+    corrupt[116] ^= 1;
+    assert!(WitnessSnapshot::decode(&corrupt, &manifest)
+        .unwrap()
+        .path(0, commitments[0])
+        .is_err());
+    assert_eq!(encoded, restored.encode());
+}
+
+#[cfg(feature = "store")]
+#[test]
+fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
+    use receiver_directory::{
+        store::{Config, IndexedBlock, Store},
+        witness::WitnessCache,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("directory.sqlite");
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut store = Store::open(&path, config.clone()).unwrap();
+    let mut payment = record(0, 1).payment;
+    payment.height = 100;
+    payment.block_hash = [3; 32];
+    payment.position = 2;
+    let mut block = IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 0,
+        end_position: 3,
+        coinbase_actions: 1,
+        payments: vec![(receiver(), payment.clone())],
+        commitments: vec![[1; 32], [2; 32], payment.cmx],
+    };
+    store.append(&block).unwrap();
+    let first = store.snapshot(8, &[]).unwrap();
+    let mut cache = WitnessCache::default();
+    // A fresh cache builds from scratch; the reused one must match it byte for byte.
+    let full = |store: &Store, m| {
+        store
+            .witnesses(m, &mut WitnessCache::default())
+            .unwrap()
+            .encode()
+    };
+    let expected = full(&store, &first.manifest);
+    assert_eq!(
+        store
+            .witnesses(&first.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        expected
+    );
+    block.height = 101;
+    block.hash = [4; 32];
+    block.parent = [3; 32];
+    block.start_position = 3;
+    block.end_position = 5;
+    block.commitments = vec![[3; 32], [4; 32]];
+    block.payments.clear();
+    store.append(&block).unwrap();
+    let second = store.snapshot(8, &[]).unwrap();
+    assert_eq!(
+        store
+            .witnesses(&second.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        full(&store, &second.manifest)
+    );
+    store.rewind(100, [3; 32]).unwrap();
+    assert!(store.witnesses(&second.manifest, &mut cache).is_err());
+    assert_eq!(
+        store
+            .witnesses(&first.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        expected
+    );
+    drop(store);
+    let mut store = Store::open(&path, config).unwrap();
+    block.hash = [5; 32];
+    block.commitments[0] = [9; 32];
+    store.append(&block).unwrap();
+    let replacement = store.snapshot(8, &[]).unwrap();
+    assert_eq!(
+        store
+            .witnesses(&replacement.manifest, &mut cache)
+            .unwrap()
+            .encode(),
+        full(&store, &replacement.manifest)
+    );
+    let mut wrong = replacement.manifest;
+    wrong.end_position -= 1;
+    assert!(store.witnesses(&wrong, &mut cache).is_err());
+}

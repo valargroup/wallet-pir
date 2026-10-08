@@ -34,6 +34,7 @@ jobs:
       enhance: ${{ steps.affected.outputs.enhance }}
       transparent: ${{ steps.affected.outputs.transparent }}
       shared: ${{ steps.affected.outputs.shared }}
+      receiver: ${{ steps.affected.outputs.receiver }}
       ops: ${{ steps.affected.outputs.ops }}
       helpers: ${{ steps.affected.outputs.helpers }}
       enhance_infra: ${{ steps.affected.outputs.enhance_infra }}
@@ -338,10 +339,29 @@ jobs:
         continue-on-error: true
         run: python3 tools/ci/cargo_cache.py report
 
+  receiver-test:
+    name: Receiver lint and tests
+    needs: select
+    if: needs.select.outputs.receiver == 'true'
+    runs-on: ${{ fromJSON(github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.WALLET_PIR_BUILD_RUNNER || '"ubuntu-24.04"') }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/rust-setup
+        with:
+          lane: full-test
+          scope: receiver
+      - run: python3 tools/ci/full_packages.py --group receiver --lint
+      - run: python3 tools/ci/full_packages.py --group receiver
+      - name: Report Cargo cache reuse
+        if: always()
+        continue-on-error: true
+        run: python3 tools/ci/cargo_cache.py report
+
   complete:
     name: Full checks complete
     if: always()
-    needs: [select, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
+    needs: [select, transparent-lint, transparent-test, enhance-lint, enhance-test, shared-test, receiver-test, validate-ops, validate-enhance-infra, validate-transparent-elastic-infra]
     runs-on: ubuntu-24.04
     steps:
       - name: Verify selected checks completed
@@ -355,6 +375,7 @@ jobs:
               raise SystemExit('selection failed')
           groups = {'transparent-lint': 'transparent', 'transparent-test': 'transparent',
                     'enhance-lint': 'enhance', 'enhance-test': 'enhance', 'shared-test': 'shared',
+                    'receiver-test': 'receiver',
                     'validate-ops': 'ops', 'validate-enhance-infra': 'enhance_infra',
                     'validate-transparent-elastic-infra': 'transparent_infra'}
           for job, group in groups.items():
