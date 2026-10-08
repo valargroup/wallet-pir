@@ -161,14 +161,18 @@ The swap provider sets come from the NEAR Intents explorer. While serving with a
 partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
 of ZEC every `--near-poll-seconds` (default 60), whichever app created it, into
 `provider.sqlite`. Its first read starts a day back, or at `--near-since`, and a
-feed counts as started only once that read completes. Each publication declares
+feed counts as started only once that read completes. Later reads go back from
+the newest swap seen: an hour for refunds, a day for payouts, so a payout that
+completes within a day of its swap is seen complete (about six pages, 33 seconds
+at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
 record missing an address is skipped, dates are capped at the read's start, and a
 read that stops making progress fails. Health's `indexer` report gives each feed's
 last read and how many payouts NEAR reported complete more than an hour earlier have
-no indexed payment, the signal that the index missed one or NEAR stopped paying with
-the zero OVK.
+no indexed payment to their receiver in the transaction NEAR reported, the signal
+that the index missed one or NEAR stopped paying with the zero OVK. A payout without
+a reported transaction is not checked.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.

@@ -324,11 +324,11 @@ impl Store {
         ))
     }
 
-    /// Whether the index holds a payment to `receiver`.
-    pub fn paid(&self, receiver: &Receiver) -> Result<bool, Error> {
+    /// Whether the index holds a payment to `receiver` in transaction `txid`.
+    pub fn paid_in(&self, receiver: &Receiver, txid: &Hash) -> Result<bool, Error> {
         Ok(self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1)",
-            [receiver.as_bytes()],
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
+            params![receiver.as_bytes(), txid.as_slice()],
             |r| r.get(0),
         )?)
     }
@@ -352,8 +352,9 @@ impl ProviderStore {
             CREATE TABLE IF NOT EXISTS cursors (feed TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS starts (feed TEXT PRIMARY KEY, started_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS reads (feed TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS completions (receiver BLOB PRIMARY KEY CHECK(length(receiver)=43),
-                seen_at INTEGER NOT NULL) WITHOUT ROWID;",
+            CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+                txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
+                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
         )?;
         Ok(Self { db })
     }
@@ -402,33 +403,43 @@ impl ProviderStore {
         Ok(())
     }
 
-    /// Records payout receivers whose swaps the provider reports complete, each with
-    /// when a read first saw it complete, so their payments can be checked against
-    /// the index.
+    /// Records completed payouts the provider reports, each a payout receiver and the
+    /// transaction (protocol byte order) that paid it, with when a read first saw it
+    /// complete, so each payment can be checked against the index. A receiver reused
+    /// across swaps has one payout per transaction.
     pub fn record_completions(
         &mut self,
-        receivers: &[Receiver],
+        payouts: &[(Receiver, Hash)],
         seen_at: i64,
     ) -> Result<(), Error> {
         let tx = self.db.transaction()?;
-        for receiver in receivers {
+        for (receiver, txid) in payouts {
             tx.execute(
-                "INSERT OR IGNORE INTO completions VALUES (?1,?2)",
-                params![receiver.as_bytes(), seen_at],
+                "INSERT OR IGNORE INTO payouts VALUES (?1,?2,?3)",
+                params![receiver.as_bytes(), txid.as_slice(), seen_at],
             )?;
         }
         tx.commit()?;
         Ok(())
     }
 
-    /// Payout receivers first seen complete from `from` through `until`.
-    pub fn completed(&self, from: i64, until: i64) -> Result<Vec<Receiver>, Error> {
+    /// Payouts first seen complete from `from` through `until`; see
+    /// [`Self::record_completions`].
+    pub fn completed(&self, from: i64, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
         let mut query = self
             .db
-            .prepare("SELECT receiver FROM completions WHERE seen_at BETWEEN ?1 AND ?2")?;
-        let rows = query.query_map([from, until], |r| r.get::<_, Vec<u8>>(0))?;
-        rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
-            .collect()
+            .prepare("SELECT receiver,txid FROM payouts WHERE seen_at BETWEEN ?1 AND ?2")?;
+        let rows = query.query_map([from, until], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.map(|row| {
+            let (receiver, txid) = row?;
+            Ok((
+                Receiver::from_bytes(receiver.try_into().map_err(|_| Error::Malformed)?)?,
+                txid.try_into().map_err(|_| Error::Malformed)?,
+            ))
+        })
+        .collect()
     }
 
     /// Records that `feed` reads swaps created from `since` on, unless it already started.

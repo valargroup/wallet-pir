@@ -19,11 +19,16 @@ use zcash_address::{
 use zcash_protocol::consensus::NetworkType;
 
 const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
-const STATUSES: &str = "FAILED,INCOMPLETE_DEPOSIT,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
+const STATUSES: &str =
+    "FAILED,INCOMPLETE_DEPOSIT,KNOWN_DEPOSIT_TX,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
 const PAGE: usize = 1000;
 /// The explorer's per-partner rate limit, with margin.
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
-/// How far back each read starts before the cursor, for swaps the explorer lists late.
+/// How far back a refund read starts before the cursor, for swaps the explorer lists
+/// late. A payout read reaches back [`RECENT_SECS`] instead, so it sees a payout
+/// complete up to a day after its swap was created, the window [`report`] checks. At
+/// about 5,500 swaps a day into ZEC (October 2026) that is six pages, 33 seconds at
+/// the explorer's rate limit, on each poll.
 const OVERLAP_SECS: i64 = 3600;
 /// Bound on a read from the cursor, about a month of swaps, so an explorer that
 /// ignores paging cannot loop forever. A first read, from `since`, is bounded only by
@@ -77,13 +82,14 @@ pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
 
 /// The feed's health for monitoring: when each feed's last complete read began, and how
 /// many payouts first seen complete between a day and an hour before `now` have no
-/// payment in `index`. A missing payout means the indexer missed it, or NEAR paid it
-/// without the zero OVK, which a seed restore cannot find.
+/// payment to their receiver in the transaction NEAR reported in `index`. A missing
+/// payout means the indexer missed it, or NEAR paid it without the zero OVK, which a
+/// seed restore cannot find.
 pub fn report(provider: &ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
     let completed = provider.completed(now - RECENT_SECS, now - COMPLETION_GRACE_SECS)?;
     let mut missing = 0;
-    for receiver in &completed {
-        if !index.paid(receiver)? {
+    for (receiver, txid) in &completed {
+        if !index.paid_in(receiver, txid)? {
             missing += 1;
         }
     }
@@ -118,6 +124,14 @@ impl Feed {
         }
     }
 
+    /// How far before the cursor a read starts; see [`OVERLAP_SECS`].
+    fn overlap(self) -> i64 {
+        match self {
+            Self::Payouts => RECENT_SECS,
+            Self::Refunds => OVERLAP_SECS,
+        }
+    }
+
     /// The explorer parameter that selects this direction's ZEC swaps.
     fn chain_filter(self) -> &'static str {
         match self {
@@ -139,6 +153,8 @@ struct Swap {
     recipient: Option<String>,
     refund_to: Option<String>,
     status: Option<String>,
+    /// The payout transactions, displayed (reversed) hex as on ZEC explorers.
+    destination_chain_tx_hashes: Option<Vec<String>>,
 }
 
 /// Explorer access with a partner key.
@@ -174,7 +190,8 @@ impl Explorer {
 
     /// Reads `feed` back to its cursor, or to `since` on the first read, and records
     /// each swap's Orchard receiver in `store`, with when the read began, and each
-    /// completed payout (see [`ProviderStore::record_completions`]). Times are capped at
+    /// completed payout with its reported transactions (see
+    /// [`ProviderStore::record_completions`]). Times are capped at
     /// the read's start, so a record dated in the future cannot hide later swaps. Returns
     /// how many receivers it recorded.
     pub async fn sync(
@@ -187,7 +204,7 @@ impl Explorer {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
         let cursor = store.cursor(feed.name())?;
-        let floor = cursor.map_or(since, |c| c - OVERLAP_SECS);
+        let floor = cursor.map_or(since, |c| c - feed.overlap());
         let mut newest = cursor.unwrap_or(since).min(read_at);
         let mut found = Vec::new();
         let mut completed = Vec::new();
@@ -210,7 +227,15 @@ impl Explorer {
                 if let Some(receiver) = address.as_deref().and_then(orchard_receiver) {
                     found.push((receiver, feed == Feed::Payouts, created));
                     if feed == Feed::Payouts && swap.status.as_deref() == Some("SUCCESS") {
-                        completed.push(receiver);
+                        // A payout without a parsable transaction cannot be checked.
+                        let txids = swap.destination_chain_tx_hashes.iter().flatten();
+                        completed.extend(
+                            txids
+                                .filter_map(|hash| {
+                                    hash.parse::<zakura_chain::transaction::Hash>().ok()
+                                })
+                                .map(|txid| (receiver, txid.0)),
+                        );
                     }
                 }
             }
@@ -298,6 +323,9 @@ fn orchard_receiver(address: &str) -> Option<Receiver> {
 mod tests {
     use super::*;
 
+    /// A mainnet payout transaction from 2026-10-07, displayed hex.
+    const PAYOUT_TXID: &str = "7f79a9262c301e3da38907fdbfca663c1fcb04b6a890ea737c281fc2ff707e7f";
+
     #[test]
     fn only_mainnet_unified_orchard_receivers_count() {
         // A Vizor swap address from 2026-10-07.
@@ -378,7 +406,8 @@ mod tests {
         let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
         let page = serde_json::json!([
             {"recipient": swap, "refundTo": null, "createdAtTimestamp": 9_999_999_999i64,
-             "depositAddress": "a", "depositMemo": null, "status": "SUCCESS"},
+             "depositAddress": "a", "depositMemo": null, "status": "SUCCESS",
+             "destinationChainTxHashes": [PAYOUT_TXID, "not hex"]},
             {"recipient": null, "createdAtTimestamp": 2_000, "depositAddress": "b"},
         ])
         .to_string();
@@ -404,17 +433,26 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() <= now);
-        assert_eq!(store.completed(0, now + 60).unwrap().len(), 1);
+        let completed = store.completed(0, now + 60).unwrap();
+        assert_eq!(completed.len(), 1);
+        // The explorer's displayed hex is reversed into protocol byte order.
+        assert_eq!(completed[0].1[0], 0x7f);
+        assert_eq!(completed[0].1[31], 0x7f);
+        assert_eq!(completed[0].1[1], 0x7e);
     }
 
-    /// A payout first seen complete more than an hour ago with no indexed payment is
-    /// reported missing; a newer one is not checked yet.
+    /// A payout first seen complete more than an hour ago with no indexed payment in its
+    /// transaction is reported missing, even to a receiver paid before; a newer one is
+    /// not checked yet.
     #[test]
     fn report_counts_completed_payouts_missing_from_the_index() {
-        use receiver_directory::store::Config;
+        use receiver_directory::{
+            store::{Config, IndexedBlock},
+            Payment,
+        };
         let dir = tempfile::tempdir().unwrap();
         let mut provider = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
-        let index = Store::open(
+        let mut index = Store::open(
             dir.path().join("directory.sqlite"),
             Config {
                 genesis: [1; 32],
@@ -430,16 +468,44 @@ mod tests {
             let address = fvk.address_at(0u32, orchard::keys::Scope::External);
             Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
         };
+        let payment = Payment {
+            height: 100,
+            block_hash: [3; 32],
+            txid: [7; 32],
+            tx_index: 1,
+            action_index: 0,
+            position: 0,
+            action_nullifier: [0; 32],
+            cmx: [5; 32],
+            ephemeral_key: [0; 32],
+            ciphertext_prefix: [0; 52],
+        };
+        index
+            .append(&IndexedBlock {
+                height: 100,
+                hash: [3; 32],
+                parent: [2; 32],
+                start_position: 0,
+                end_position: 1,
+                coinbase_actions: 0,
+                payments: vec![(receiver(1), payment)],
+                commitments: vec![[5; 32]],
+            })
+            .unwrap();
         let now = 1_000_000;
+        // The indexed payout, then a later one to the same receiver that is not indexed.
         provider
-            .record_completions(&[receiver(1)], now - 2 * 60 * 60)
+            .record_completions(
+                &[(receiver(1), [7; 32]), (receiver(1), [8; 32])],
+                now - 2 * 60 * 60,
+            )
             .unwrap();
         provider
-            .record_completions(&[receiver(2)], now - 60)
+            .record_completions(&[(receiver(2), [9; 32])], now - 60)
             .unwrap();
         provider.record("near-payouts", &[], now, now - 30).unwrap();
         let report = report(&provider, &index, now).unwrap();
-        assert_eq!(report["payouts_checked"], 1);
+        assert_eq!(report["payouts_checked"], 2);
         assert_eq!(report["payouts_missing"], 1);
         assert_eq!(report["feeds"]["near-payouts"], now - 30);
         assert!(report["feeds"]["near-refunds"].is_null());

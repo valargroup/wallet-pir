@@ -226,11 +226,14 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     store.start("near-payouts", 40).unwrap();
     store.start("near-payouts", 60).unwrap();
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A completion keeps when it was first seen.
-    store.record_completions(&[payout], 400).unwrap();
-    store.record_completions(&[payout, refund], 500).unwrap();
-    assert_eq!(store.completed(0, 450).unwrap(), [payout]);
-    assert_eq!(store.completed(450, 600).unwrap(), [refund]);
+    // A payout keeps when it was first seen, and a reused receiver has one per
+    // transaction.
+    store.record_completions(&[(payout, [1; 32])], 400).unwrap();
+    store
+        .record_completions(&[(payout, [1; 32]), (payout, [2; 32])], 500)
+        .unwrap();
+    assert_eq!(store.completed(0, 450).unwrap(), [(payout, [1; 32])]);
+    assert_eq!(store.completed(450, 600).unwrap(), [(payout, [2; 32])]);
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
