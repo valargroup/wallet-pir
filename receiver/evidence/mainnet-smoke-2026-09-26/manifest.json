@@ -1,0 +1,29 @@
+{
+  "run_id": "receiver-mainnet-smoke-2026-09-26",
+  "observed": "2026-09-26",
+  "source": {
+    "note": "receiver indexer as of 2026-09-26, then in enhance-pir-server; exact commit not recorded"
+  },
+  "command": "cargo run -p enhance-pir-server --bin receiver-directory -- --data-dir /tmp/receiver-smoke --rpc-url http://159.65.183.89:8232 --no-auth --start-height 3496100 --end-height 3496200",
+  "network": "mainnet",
+  "rpc": "http://159.65.183.89:8232",
+  "range": [
+    3496100,
+    3496200
+  ],
+  "terminal_hash": "00000000005090cbf22c88e5f9db4b710323573cae7c4ebbc70021be25430120",
+  "results": {
+    "actions": 630,
+    "excluded_coinbase_actions": 14,
+    "records": 20,
+    "rows": 4,
+    "row_bytes": 16384,
+    "revision": "346932851fd94db77e31ac522460586f262f7782601e2eb03209a18e0b2ff925"
+  },
+  "host": "Mac Studio (local)",
+  "limits": [
+    "bounded indexing test",
+    "no PIR transport or wallet insertion"
+  ],
+  "historical": true
+}

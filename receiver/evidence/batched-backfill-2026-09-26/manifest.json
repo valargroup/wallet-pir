@@ -1,0 +1,33 @@
+{
+  "run_id": "receiver-batched-backfill-2026-09-26",
+  "observed": "2026-09-26T17:53:50Z",
+  "source": {
+    "baseline": "46f99bf",
+    "optimized": "batching change committed with this record"
+  },
+  "command": "receiver-directory --data-dir <fresh-directory> --rpc-url http://159.65.183.89:8232 --no-auth --start-height 3496100 --end-height 3496200",
+  "settings": {
+    "batch_size": 64,
+    "concurrency": 8
+  },
+  "network": "mainnet",
+  "range": [
+    3496100,
+    3496200
+  ],
+  "host": "Mac Studio (local)",
+  "raw": [
+    "results.json"
+  ],
+  "results": {
+    "baseline_seconds": 28.855,
+    "batched_seconds": 2.091,
+    "speedup": 13.8,
+    "byte_identical": true
+  },
+  "limits": [
+    "small network measurement",
+    "not an isolated node benchmark"
+  ],
+  "historical": true
+}

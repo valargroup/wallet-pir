@@ -1,0 +1,26 @@
+{
+  "run_id": "receiver-pir-2026-09-26",
+  "observed": "2026-09-26T22:39:36Z",
+  "source": {
+    "client": "f12f779",
+    "service": "5921064",
+    "ipir_sp": "1f2aec65"
+  },
+  "protocol": "ironwood-receiver-pir-v1-q48",
+  "network": "mainnet",
+  "range": [
+    3428143,
+    3497109
+  ],
+  "rows": 8192,
+  "row_bytes": 4096,
+  "host": "Mac Studio (local, loopback) and the isolated Enhance integration service over SSH",
+  "raw": [
+    "results.json"
+  ],
+  "limits": [
+    "no wallet state",
+    "one integration query, not a benchmark"
+  ],
+  "historical": true
+}

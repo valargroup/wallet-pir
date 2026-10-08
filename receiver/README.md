@@ -212,3 +212,7 @@ receiver-indexer` covers indexing with synthetic blocks, serving from memory and
 the probe's encrypted lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).
+
+## Evidence
+
+Pre-deployment mainnet runs are indexed in [the evidence README](evidence/README.md).

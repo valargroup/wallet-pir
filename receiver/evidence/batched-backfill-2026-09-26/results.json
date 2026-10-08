@@ -1,0 +1,35 @@
+{
+  "range": [
+    3496100,
+    3496200
+  ],
+  "baseline_commit": "46f99bf",
+  "settings": {
+    "batch_size": 64,
+    "concurrency": 8
+  },
+  "rpc": "http://159.65.183.89:8232",
+  "runs": [
+    {
+      "variant": "before-final",
+      "elapsed_seconds": 28.854592458,
+      "exit_code": 0,
+      "observed_at": "2026-09-26T17:53:50.974859+00:00",
+      "binary_sha256": "5951f503afd3e669ef44af0ef90772a17c3ccf44f1e45499195a381e863eb7e8",
+      "revision": "346932851fd94db77e31ac522460586f262f7782601e2eb03209a18e0b2ff925",
+      "records": 20,
+      "rows_sha256": "cacad9dd45d0dc3093237475c3e3d0e7596d07511f0d0ca061eefef654aa0dc4"
+    },
+    {
+      "variant": "after-final",
+      "elapsed_seconds": 2.090861832999998,
+      "exit_code": 0,
+      "observed_at": "2026-09-26T17:53:53.079921+00:00",
+      "binary_sha256": "211685af37affbabff654b791fa93d35408b4a4ea678cf88296a1f710e508bb4",
+      "revision": "346932851fd94db77e31ac522460586f262f7782601e2eb03209a18e0b2ff925",
+      "records": 20,
+      "rows_sha256": "cacad9dd45d0dc3093237475c3e3d0e7596d07511f0d0ca061eefef654aa0dc4"
+    }
+  ],
+  "speedup": 13.8003343896708
+}
