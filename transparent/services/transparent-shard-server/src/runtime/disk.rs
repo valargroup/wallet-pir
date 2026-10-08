@@ -1149,6 +1149,9 @@ mod shipped_tests {
         ShippedRuntimes::new(path)
     }
 
+    /// Lays a refused-file case out in a candidate directory.
+    type Prepare<'a> = Box<dyn Fn(&ShippedRuntimes) + 'a>;
+
     /// A runtime loaded from a shipped file is the runtime this worker would
     /// have built: the same published masks, digest and epoch, byte-identical
     /// answers and correctly decoded rows, for a full directory and a partly
@@ -1229,7 +1232,7 @@ mod shipped_tests {
         other_revision.0 = "cd".repeat(32);
         let mut other_kind = s.key.clone();
         other_kind.1 = Table::TxDirectory;
-        let cases: Vec<(&str, Box<dyn Fn(&ShippedRuntimes)>)> = vec![
+        let cases: Vec<(&str, Prepare<'_>)> = vec![
             ("missing", Box::new(|_| {})),
             (
                 "truncated",

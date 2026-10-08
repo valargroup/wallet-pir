@@ -986,7 +986,6 @@ impl RuntimeCache {
         let metrics = self.metrics.clone();
         tokio::task::spawn_blocking(move || {
             let _memory = memory;
-            let _permit = permit;
             let _pin = pin;
             let started = std::time::Instant::now();
             let runtime = match shipped.load(&key, &shared, &source.sha256) {
@@ -1000,6 +999,10 @@ impl RuntimeCache {
                 Err(error) => return Ok(Err(error.to_string())),
             };
             let loaded = started.elapsed();
+            // The restore slot bounds concurrent reads of runtime files; the
+            // self-check below is build-pool work under the memory reservation,
+            // so release the slot here and let the next shipped file load.
+            drop(permit);
             // Verifies the segment as a restore does, and keeps its rows for
             // the self-check.
             let rows = source

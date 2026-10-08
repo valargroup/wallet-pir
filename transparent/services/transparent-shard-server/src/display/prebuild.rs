@@ -18,6 +18,7 @@ use super::set::DisplayRevision;
 use crate::runtime::disk::ShippedRuntimes;
 use crate::runtime::{build_pool, SharedParams, TableRuntime};
 use serde::Serialize;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -48,10 +49,10 @@ pub fn build_shipped(revision_dir: &Path, out_dir: &Path) -> Result<Vec<Shipped>
     let mut written = Vec::new();
     for (table, segment) in revision.targets() {
         let kind = kind(table);
-        if !params.contains_key(&kind) {
-            params.insert(kind, SharedParams::build(revision.geometry, kind)?);
-        }
-        let shared = &params[&kind];
+        let shared: &SharedParams = match params.entry(kind) {
+            Entry::Occupied(entry) => entry.into_mut(),
+            Entry::Vacant(entry) => entry.insert(SharedParams::build(revision.geometry, kind)?),
+        };
         let source = revision
             .segment(table, segment)
             .ok_or("a verified revision holds every target")?;
