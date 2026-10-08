@@ -1,121 +1,82 @@
 //! The tiered, bucketed txid display publication over real HTTP: an
 //! archive-owner and a recent-replica worker behind an edge that routes
 //! `/v1/txid/archive/` to the owner, as the deployment's static route does,
-//! and the reference client.
+//! and the wallet client (`transparent-txid-client`).
 #[path = "../examples/support/bytemeter.rs"]
 mod bytemeter;
-#[path = "../examples/support/txdisplay.rs"]
-mod txdisplay;
 
 use axum::body::Body;
-use axum::extract::{Request, State};
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use axum::Router;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K};
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::display::{self, DisplayTable};
+use transparent_shard::txid::{DisplayRecord, Tag};
 use transparent_shard_server::assignment::WorkerRole;
-use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
+use transparent_shard_server::display::live::DisplayCommand;
 use transparent_shard_server::display::service::{router, DisplayRuntime, DisplayState};
 use transparent_shard_server::display::set::DisplaySet;
-use transparent_shard_server::display::synth::{self, Published, ShardSpec};
+use transparent_shard_server::display::synth::{self, Published};
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
-use txdisplay::{DisplayClient, LookupResult};
+use transparent_txid_client::{Placement, Route, Tier, TxidError, TxidLookup, TxidReply};
 
 #[path = "support/display_world.rs"]
 mod display_world;
 use display_world::*;
 
-/// Every lookup sends exactly two directory queries, then exactly one query
-/// per page of the record, each a fixed 40,200-byte upload.
-fn assert_transcript(report: &txdisplay::LookupReport, pages: usize) {
-    let directory: Vec<_> = report
-        .queries
-        .iter()
-        .filter(|q| q.table.starts_with("directory-"))
-        .collect();
-    let page_queries = report.queries.iter().filter(|q| q.table == "pages").count();
-    assert_eq!(directory.len(), 2, "{report:?}");
-    assert_eq!(page_queries, pages, "{report:?}");
-    assert!(report.queries[..2]
-        .iter()
-        .all(|q| q.table.starts_with("directory-")));
-    for query in &report.queries {
-        assert_eq!(query.up_body, QUERY_BYTES);
-        assert_eq!(query.status, 200);
-    }
-}
-
-async fn found(
-    client: &DisplayClient,
-    record: &TransparentDisplayRecord,
-    height: u64,
-) -> txdisplay::LookupReport {
-    let report = client.lookup(record.txid, Some(height)).await.unwrap();
-    match &report.result {
-        LookupResult::Found(actual) => assert_eq!(actual, record),
-        other => panic!("{other:?} for a published record"),
-    }
-    report
-}
+const ABSENT: Txid = Txid([0xee; 32]);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
     let world = World::start().await;
-    let client = world.client();
-    for (records, height, sealed) in [
-        (&world.a0_records, 150, true),
-        (&world.r0_records, 230, false),
+    let mut wallet = world.wallet();
+    for (records, height, tier) in [
+        (&world.a0_records, 150, Tier::Archive),
+        (&world.r0_records, 230, Tier::Recent),
     ] {
-        for (record, pages) in records[40..44].iter().zip([0usize, 1, 2, 5]) {
-            let report = found(&client, record, height).await;
-            assert_eq!(report.sealed, Some(sealed));
-            assert_eq!(report.bucket, Some(0));
-            assert_eq!(
-                report.class,
-                if pages == 0 {
-                    "inline".to_string()
-                } else {
-                    format!("pages-{pages}")
-                }
-            );
-            assert_transcript(&report, pages);
+        // Once the shard's metadata is cached, every lookup is the same two
+        // directory queries: each case the format distinguishes, and absence.
+        assert_eq!(wallet.lookup(ABSENT, height).unwrap(), TxidLookup::Absent);
+        wallet.http.take_log();
+        for record in &records[CLASSES..CLASSES + 6] {
+            let (provenance, log) = wallet.found(record, height);
+            assert_eq!(provenance.tier, tier);
+            assert_eq!(routes(&log), [Route::Query, Route::Query]);
+            assert_queries(&log, 0);
         }
-        let absent = client.lookup(Txid([0xee; 32]), Some(height)).await.unwrap();
-        assert_eq!(absent.result, LookupResult::Absent);
-        assert_transcript(&absent, 0);
+        assert_eq!(wallet.lookup(ABSENT, height).unwrap(), TxidLookup::Absent);
+        assert_queries(&wallet.http.take_log(), 0);
     }
 
     // Coinciding candidate rows still cost two queries, and the duplicate
     // decoded row is dropped before the entry is found.
     let coincident = world.r0_records.last().unwrap();
-    let [a, b] = display::candidate_rows(&coincident.txid, 1, 0, 2_048);
+    let [a, b] = display::candidate_rows(&Tag::of(&coincident.txid), 1, 0, 2_048);
     assert_eq!(a, b);
-    let report = found(&client, coincident, 255).await;
-    assert_transcript(&report, 0);
-    assert!(report.queries.iter().all(|q| q.row == a));
+    let (_, log) = wallet.found(coincident, 255);
+    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    assert_queries(&log, 0);
 
     // Placement comes from the caller; nothing is asked to discover it.
-    for height in [None, Some(99), Some(261)] {
-        let report = client.lookup(coincident.txid, height).await.unwrap();
-        assert_eq!(report.result, LookupResult::PlacementUnknown);
-        assert!(report.queries.is_empty());
+    for (height, placement) in [(99, Placement::Below), (261, Placement::Above)] {
+        assert_eq!(
+            wallet.lookup(coincident.txid, height).unwrap(),
+            TxidLookup::PlacementUnknown(placement)
+        );
+        assert_eq!(posts(&wallet.http.take_log()), 0);
     }
 
     // A server publishing a codec this client does not know is unsupported.
     world.faults.foreign_codec.store(true, Ordering::Release);
-    let report = world
-        .client()
-        .lookup(coincident.txid, Some(255))
-        .await
-        .unwrap();
-    assert_eq!(report.result, LookupResult::Unsupported);
+    let mut foreign = world.wallet();
+    assert_eq!(
+        foreign.lookup(coincident.txid, 255).unwrap(),
+        TxidLookup::Unsupported
+    );
+    assert_eq!(posts(&foreign.http.take_log()), 0);
     world.faults.foreign_codec.store(false, Ordering::Release);
 
     // Errors are errors, never absence: a closed port, and a 503.
@@ -123,50 +84,70 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.local_addr().unwrap()
     };
-    let unreachable = DisplayClient::new(&format!("http://{closed}"), None, None).unwrap();
+    let mut unreachable = Wallet::at(&format!("http://{closed}"));
     assert!(matches!(
-        unreachable.lookup(coincident.txid, Some(255)).await,
-        Err(txdisplay::LookupError::Transport(_))
+        unreachable.lookup(coincident.txid, 255),
+        Err(TxidError::Transport(_))
     ));
     world.faults.queries.store(1, Ordering::Release);
-    let error = client
-        .lookup(Txid([0xee; 32]), Some(150))
-        .await
-        .unwrap_err();
-    assert_eq!(error.status(), Some(503));
+    assert_eq!(
+        wallet.lookup(ABSENT, 150),
+        Err(TxidError::Unavailable { retry_after: None })
+    );
+    wallet.http.take_log();
 
-    // An interrupted overflow fails the lookup; the retry finds the record.
-    let paged = &world.a0_records[43];
-    world.faults.pages.store(1, Ordering::Release);
-    let error = client.lookup(paged.txid, Some(150)).await.unwrap_err();
-    assert_eq!(error.status(), Some(503));
-    found(&client, paged, 150).await;
+    // A lookup whose second query is shed fails rather than deciding from
+    // one row; the retry finds the entry.
+    let record = &world.a0_records[CLASSES + 2];
+    let mut queries = 0;
+    wallet.http.intercept = Some(Box::new(move |request| {
+        queries += usize::from(request.route == Route::Query);
+        (request.route == Route::Query && queries == 2).then(|| TxidReply {
+            status: 503,
+            ..TxidReply::default()
+        })
+    }));
+    assert_eq!(
+        wallet.lookup(record.txid, 150),
+        Err(TxidError::Unavailable { retry_after: None })
+    );
+    assert_eq!(posts(&wallet.http.take_log()), 2);
+    wallet.http.intercept = None;
+    wallet.found(record, 150);
 
-    // The computed bytes are the bytes on the wire, cold and warm.
+    // On the wire, a warm found lookup and a warm absent one are the same
+    // bytes each way, whatever the entry holds: two requests of one size,
+    // two responses of one size.
     let upstream: std::net::SocketAddr = world.url.trim_start_matches("http://").parse().unwrap();
     let meter = bytemeter::ByteMeter::start(upstream).await.unwrap();
-    let metered = DisplayClient::new(
-        &format!("http://{}", meter.addr),
-        None,
-        Some(client.profiles()),
-    )
-    .unwrap();
-    for (record, height) in [
-        (&world.a0_records[40], 150),
-        (&world.a0_records[40], 150),
-        (&world.a0_records[43], 150),
-        (&world.r0_records[41], 230),
+    let mut metered = Wallet::at(&format!("http://{}", meter.addr));
+    metered.found(&world.a0_records[CLASSES], 150);
+    let mut wire = Vec::new();
+    for txid in [
+        world.a0_records[CLASSES].txid,
+        ABSENT,
+        world.a0_records[CLASSES + 1].txid,
+        world.a0_records[CLASSES + 2].txid,
+        world.a0_records[3].txid,
+        Txid([0xdd; 32]),
     ] {
         let before = meter.snapshot();
-        let report = found(&metered, record, height).await;
+        let lookup = metered.lookup(txid, 150).unwrap();
         let after = meter.snapshot();
-        assert_eq!(after.0 - before.0, report.bytes.up(), "{report:?}");
-        assert_eq!(after.1 - before.1, report.bytes.down(), "{report:?}");
+        assert!(matches!(
+            lookup,
+            TxidLookup::Found { .. } | TxidLookup::Absent
+        ));
+        let log = metered.http.take_log();
+        assert_eq!(routes(&log), [Route::Query, Route::Query]);
+        let (up, down) = body_bytes(&log);
+        assert_eq!((up as u64, down as u64), (2 * QUERY_BYTES, 2 * REPLY_BYTES));
+        let measured = (after.0 - before.0, after.1 - before.1);
+        assert!(measured.0 > up as u64 && measured.1 > down as u64);
+        wire.push(measured);
     }
-    // A warm inline lookup moves only its two directory queries.
-    let warm = found(&metered, &world.a0_records[40], 150).await;
-    assert_eq!(warm.bytes.query_up + warm.bytes.query_down, 91_696);
-    assert_eq!(warm.bytes.setup + warm.bytes.manifest + warm.bytes.map, 0);
+    assert!(wire.windows(2).all(|w| w[0] == w[1]), "{wire:?}");
+    eprintln!("wire bytes of a warm lookup, up and down: {:?}", wire[0]);
 }
 
 /// The recent shard's oldest range seals as shard 1 and a new recent shard 2
@@ -176,7 +157,7 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
 struct Seal {
     a1: Published,
     r1: Published,
-    r1_records: Vec<TransparentDisplayRecord>,
+    r1_records: Vec<DisplayRecord>,
     p1: (PathBuf, String),
     p2: (PathBuf, String),
 }
@@ -184,15 +165,13 @@ struct Seal {
 impl Seal {
     fn write(world: &World) -> Self {
         let root = world.root.path();
-        let a1 = synth::write_shard(
+        let a1 = write_shard(
             root,
             &spec(1, 200, 240, true, &world.a0.digest),
             &world.r0_records,
-        )
-        .unwrap();
+        );
         let r1_records = records(30, &[]);
-        let r1 =
-            synth::write_shard(root, &spec(2, 241, 300, false, &a1.digest), &r1_records).unwrap();
+        let r1 = write_shard(root, &spec(2, 241, 300, false, &a1.digest), &r1_records);
         let p1 = synth::write_candidate(
             root,
             &params(1),
@@ -215,13 +194,18 @@ async fn collect(worker: &Worker) -> serde_json::Value {
     worker.command(DisplayCommand::Collect).await.unwrap()["removed"].clone()
 }
 
+/// How many times a transcript was sent back to refresh its map.
+fn stale_retries(log: &[Sent]) -> usize {
+    log.iter().filter(|s| s.status == 409).count()
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let world = World::start().await;
-    // A stale client holds the first map, manifests and recent setup.
-    let stale = world.client();
-    let moved = &world.r0_records[40];
-    found(&stale, moved, 210).await;
+    // A stale wallet holds the first map, manifests and recent setup.
+    let mut stale = world.wallet();
+    let moved = &world.r0_records[CLASSES];
+    stale.found(moved, 210);
 
     let Seal {
         a1,
@@ -244,7 +228,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
         })
         .await
         .unwrap();
-    assert_eq!(staged["built"], 2);
+    assert_eq!(staged["built"], 1);
     assert_eq!(staged["digest"], a1.digest);
     // A replica holds no sealed shard and refuses to stage one.
     assert!(world
@@ -259,7 +243,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let before = world.archive.builds();
     let prepared = world.archive.publish(&p1.0, &p1.1).await;
     assert_eq!(prepared["built"], 0, "{prepared}");
-    assert_eq!(prepared["reused"], 4);
+    assert_eq!(prepared["reused"], 2);
     assert_eq!(world.archive.builds(), before);
     let status = world.archive.command(DisplayCommand::Status).await.unwrap();
     assert_eq!(status["staged"], serde_json::json!([]));
@@ -269,20 +253,21 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
         collect(&world.archive).await,
         serde_json::json!([a1.dir.display().to_string()])
     );
-    // The replica builds only the new recent shard's two tables.
+    // The replica builds only the new recent shard's one table.
     let prepared = world.recent.publish(&p1.0, &p1.1).await;
-    assert_eq!(prepared["built"], 2, "{prepared}");
+    assert_eq!(prepared["built"], 1, "{prepared}");
 
-    // The stale client is still answered from the retained recent revision.
-    let report = found(&stale, moved, 210).await;
-    assert_eq!(report.digest.as_deref(), Some(world.r0.digest.as_str()));
-    assert_eq!(report.stale_retries, 0);
-    // A fresh client reaches the same record in the new archive.
-    let fresh = world.client();
-    let report = found(&fresh, moved, 210).await;
-    assert_eq!(report.digest.as_deref(), Some(a1.digest.as_str()));
-    assert_eq!(report.sealed, Some(true));
-    found(&fresh, &r1_records[42], 290).await;
+    // The stale wallet is still answered from the retained recent revision.
+    let (provenance, log) = stale.found(moved, 210);
+    assert_eq!(provenance.manifest_digest, world.r0.digest);
+    assert_eq!(stale_retries(&log), 0);
+    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    // A fresh wallet reaches the same entry in the new archive.
+    let mut fresh = world.wallet();
+    let (provenance, _) = fresh.found(moved, 210);
+    assert_eq!(provenance.manifest_digest, a1.digest);
+    assert_eq!(provenance.tier, Tier::Archive);
+    fresh.found(&r1_records[CLASSES + 2], 290);
     // The archive that was already sealed did not change.
     let (_, map) = world.get("/v1/txid/shards").await;
     assert_eq!(map["shards"][0]["manifest_digest"], world.a0.digest);
@@ -294,21 +279,23 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let (_, map) = world.get("/v1/txid/shards").await;
     assert_eq!(map["first_shard_id"], 1);
     assert_eq!(map["shards"][0]["manifest_digest"], a1.digest);
-    let fresh = world.client();
-    let old = &world.a0_records[40];
+    let old = &world.a0_records[CLASSES];
     assert_eq!(
-        fresh.lookup(old.txid, Some(150)).await.unwrap().result,
-        LookupResult::PlacementUnknown
+        world.wallet().lookup(old.txid, 150).unwrap(),
+        TxidLookup::PlacementUnknown(Placement::Below)
     );
-    // A client that still holds the old map is answered from the retired
+    // A wallet that still holds the old map is answered from the retired
     // snapshot that holds the dropped archive, while it is resident.
-    found(&stale, old, 150).await;
-    // p2's prepare evicted the retired recent revision. A stale client is
+    let (provenance, log) = stale.found(old, 150);
+    assert_eq!(provenance.manifest_digest, world.a0.digest);
+    assert_eq!(stale_retries(&log), 0);
+    // p2's prepare evicted the retired recent revision. A stale wallet is
     // sent to refresh its map rather than costing the replica a cold build.
     let builds = world.recent.builds();
-    let report = found(&stale, moved, 210).await;
-    assert_eq!(report.stale_retries, 1);
-    assert_eq!(report.digest.as_deref(), Some(a1.digest.as_str()));
+    let (provenance, log) = stale.found(moved, 210);
+    assert_eq!(stale_retries(&log), 1);
+    assert_eq!(routes(&log).iter().filter(|r| **r == Route::Map).count(), 1);
+    assert_eq!(provenance.manifest_digest, a1.digest);
     assert_eq!(world.recent.builds(), builds);
     for worker in [&world.archive, &world.recent] {
         assert_eq!(collect(worker).await, serde_json::json!([]));
@@ -377,12 +364,12 @@ async fn relinked_revisions_rebuild_after_their_first_directories_are_removed() 
         }
         assert!(worker.builds() > builds, "{tier} setup was built cold");
     }
-    let client = world.client();
-    for record in &world.r0_records[40..44] {
-        found(&client, record, 210).await;
+    let mut wallet = world.wallet();
+    for record in &world.r0_records[CLASSES..CLASSES + 6] {
+        wallet.found(record, 210);
     }
-    for record in &r1_records[40..44] {
-        found(&client, record, 290).await;
+    for record in &r1_records[CLASSES..CLASSES + 6] {
+        wallet.found(record, 290);
     }
 }
 
@@ -406,8 +393,8 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
         "a refused invalidation changes nothing"
     );
 
-    let client = world.client();
-    found(&client, &world.r0_records[40], 230).await;
+    let mut wallet = world.wallet();
+    wallet.found(&world.r0_records[CLASSES], 230);
     world
         .recent
         .command(DisplayCommand::Invalidate {
@@ -416,23 +403,23 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
         })
         .await
         .unwrap();
-    // The map and readiness keep serving; the recent revision does not.
+    // The map and readiness keep serving; the recent revision does not, so
+    // the wallet refreshes its map once, is refused again, and says stale.
     assert_eq!(world.get("/v1/ready").await.0, 200);
     assert_eq!(world.get("/v1/txid/shards").await.0, 200);
-    let error = client
-        .lookup(world.r0_records[40].txid, Some(230))
-        .await
-        .unwrap_err();
-    assert_eq!(error.status(), Some(409));
-    found(&client, &world.a0_records[41], 150).await;
+    assert_eq!(
+        wallet.lookup(world.r0_records[CLASSES].txid, 230),
+        Err(TxidError::Stale)
+    );
+    assert_eq!(stale_retries(&wallet.http.take_log()), 2);
+    wallet.found(&world.a0_records[CLASSES + 1], 150);
 
     // The next publication replaces the orphaned recent shard.
-    let r0b = synth::write_shard(
+    let r0b = write_shard(
         world.root.path(),
         &spec(1, 200, 249, false, &world.a0.digest),
-        &world.r0_records[..44],
-    )
-    .unwrap();
+        &world.r0_records[..CLASSES + 6],
+    );
     let p1 = synth::write_candidate(
         world.root.path(),
         &params(1),
@@ -441,7 +428,7 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
     )
     .unwrap();
     world.recent.publish(&p1.0, &p1.1).await;
-    found(&world.client(), &world.r0_records[40], 230).await;
+    world.wallet().found(&world.r0_records[CLASSES], 230);
 }
 
 /// Status, headers and body of one GET through the edge.
@@ -604,7 +591,7 @@ async fn misaddressed_requests_are_refused() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     // Buckets at or past the shard's count, and malformed labels.
-    for label in ["directory-2", "directory-01", "txdirectory"] {
+    for label in ["directory-2", "directory-01", "txdirectory", "pages"] {
         let (status, _) = send(&owner, &archive(a, &format!("setup/{label}/0")), None).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{label}");
         let (status, _) = send(
@@ -617,20 +604,22 @@ async fn misaddressed_requests_are_refused() {
     }
     // The tier is the revision's own, and the role must hold it.
     let recent_path =
-        |digest: &str| format!("/v1/txid/recent/shards/0/revisions/{digest}/setup/pages/0");
+        |digest: &str| format!("/v1/txid/recent/shards/0/revisions/{digest}/setup/directory-0/0");
     assert_eq!(
         send(&owner, &recent_path(a), None).await.0,
         StatusCode::MISDIRECTED_REQUEST
     );
     assert_eq!(
-        send(&replica, &archive(a, "setup/pages/0"), None).await.0,
+        send(&replica, &archive(a, "setup/directory-0/0"), None)
+            .await
+            .0,
         StatusCode::MISDIRECTED_REQUEST
     );
     let r_digest = &r0.digest;
     assert_eq!(
         send(
             &owner,
-            &format!("/v1/txid/recent/shards/1/revisions/{r_digest}/setup/pages/0"),
+            &format!("/v1/txid/recent/shards/1/revisions/{r_digest}/setup/directory-0/0"),
             None
         )
         .await
@@ -640,7 +629,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(
         send(
             &replica,
-            &format!("/v1/txid/archive/shards/1/revisions/{r_digest}/setup/pages/0"),
+            &format!("/v1/txid/archive/shards/1/revisions/{r_digest}/setup/directory-0/0"),
             None
         )
         .await
@@ -651,7 +640,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(
         send(
             &owner,
-            &format!("/v1/txid/archive/shards/3/revisions/{a}/setup/pages/0"),
+            &format!("/v1/txid/archive/shards/3/revisions/{a}/setup/directory-0/0"),
             None
         )
         .await
@@ -707,14 +696,12 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     use std::io::Write;
     use std::process::{Command, Stdio};
     let root = tempfile::tempdir().unwrap();
-    let a0 =
-        synth::write_shard(root.path(), &spec(0, 100, 199, true, ""), &records(10, &[])).unwrap();
-    let r0 = synth::write_shard(
+    let a0 = write_shard(root.path(), &spec(0, 100, 199, true, ""), &records(10, &[]));
+    let r0 = write_shard(
         root.path(),
         &spec(1, 200, 260, false, &a0.digest),
         &records(20, &[]),
-    )
-    .unwrap();
+    );
     let (dir, map_sha256) =
         synth::write_candidate(root.path(), &params(1), &[a0, r0], "p0").unwrap();
     let socket = root.path().join("control.sock");
@@ -782,7 +769,7 @@ fn the_worker_binary_takes_and_restores_a_publication_by_control() {
     }));
     assert!(ok, "{prepared}");
     assert_eq!(prepared["warm"], true);
-    assert_eq!(prepared["built"], 2);
+    assert_eq!(prepared["built"], 1);
     let (ok, activated) = control(serde_json::json!({
         "operation": "activate", "expected": "", "map_sha256": map_sha256,
     }));

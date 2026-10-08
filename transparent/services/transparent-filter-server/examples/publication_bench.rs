@@ -237,7 +237,6 @@ fn options(output: &Path, previous: Option<&Path>, choice: DirectoryChoice) -> P
         record: None,
         source_sha: None,
         directory_choice: choice,
-        txid_display: false,
         range_profile: transparent_filter::RANGE_PROFILE_V2.name.to_string(),
     }
 }

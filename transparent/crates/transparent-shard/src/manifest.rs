@@ -204,8 +204,6 @@ pub struct ShardManifest {
     /// not decode is a malformed publication, not an absent one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub directory_choice: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub txid_display: Option<crate::txid::DisplayTables>,
 }
 
 /// Why a published choice table cannot be used.
@@ -392,7 +390,6 @@ mod tests {
                 txids: 10_355,
                 excluded_scripts: 0,
             },
-            txid_display: None,
             directory_choice: None,
         }
     }

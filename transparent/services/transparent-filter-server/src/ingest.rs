@@ -5,7 +5,7 @@
 //! back one block at a time until the stored hash agrees with the node, which
 //! is what makes a reorg a rollback rather than a silently divergent history.
 
-use crate::extract::{extract_block_with_inputs, IndexedEvent};
+use crate::extract::{extract_block, IndexedEvent};
 use crate::prevout::{prefetch_previous_outputs, OutputCache, ZakuraPreviousOutputs};
 use crate::service::{Phase, ServiceState};
 use crate::store::FilterStore;
@@ -61,9 +61,9 @@ pub struct BuiltFilter {
 pub struct BuiltEvents {
     pub block_hash: BlockHash,
     pub events: Vec<IndexedEvent>,
-    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
-    /// Aligned with `display` only when inputs were requested; otherwise empty.
-    pub display_inputs: Vec<Vec<transparent_shard::txid_v2x::DisplayInput>>,
+    /// Display source records, one per transaction with a transparent input
+    /// or output.
+    pub display: Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x>,
     pub rpc_lookups: u64,
     pub cache_hits: u64,
 }
@@ -100,18 +100,6 @@ pub async fn build_fetched_block_events(
     height: u64,
     fetched: (String, zakura_chain::block::Block),
 ) -> Result<BuiltEvents, BoxError> {
-    build_fetched_block_events_with_inputs(zakura, cache, height, fetched, false).await
-}
-
-/// [`build_fetched_block_events`], optionally listing each display record's
-/// resolved inputs for the experimental v2x sidecar. Uses the same resolution.
-pub async fn build_fetched_block_events_with_inputs(
-    zakura: &ZakuraClient,
-    cache: &mut OutputCache,
-    height: u64,
-    fetched: (String, zakura_chain::block::Block),
-    with_inputs: bool,
-) -> Result<BuiltEvents, BoxError> {
     let (hash_display, block) = fetched;
     let block_hash = BlockHash::from_display_hex(&hash_display)?;
     let event_height = u32::try_from(height)
@@ -135,8 +123,7 @@ pub async fn build_fetched_block_events_with_inputs(
         let mut cache_owned = std::mem::replace(cache, OutputCache::new(1));
         move || {
             let mut previous = ZakuraPreviousOutputs::new(&client, runtime, &mut cache_owned);
-            let result =
-                extract_block_with_inputs(&transactions, &mut previous, event_height, with_inputs);
+            let result = extract_block(&transactions, &mut previous, event_height);
             let counts = (previous.rpc_lookups, previous.cache_hits);
             (result, counts.0, counts.1, cache_owned)
         }
@@ -149,7 +136,6 @@ pub async fn build_fetched_block_events_with_inputs(
         block_hash,
         events: extracted.events,
         display: extracted.display,
-        display_inputs: extracted.display_inputs,
         // The pre-pass did the fetching; any straggler resolved during
         // extraction is counted with it.
         rpc_lookups: rpc_lookups + batched,

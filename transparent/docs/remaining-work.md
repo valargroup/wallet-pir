@@ -299,6 +299,47 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Txid display v2: senders in fixed-size entries (2026-10-08)
+
+Design: [txid display](txid-display.md). Roman's decisions:
+- cover regular cases only, with exotic ones flagged as omissions and an
+  explicit public enhancement;
+- the first address-shaped source;
+- up to two outputs;
+- one table per bucket;
+- build the code across wallet-pir, wallet-libraries and Vizor before ingest;
+- commit to `main`.
+
+- [x] Code on `main`:
+  - the entry codec and derivation;
+  - extraction from resolved spent outputs;
+  - v2x source sidecars that entries derive from, so an entry change is a
+    republish;
+  - one table per bucket with cuckoo placement;
+  - the worker, controller and wallet client;
+  - the history-attached path removed.
+- [x] Independent oracle: `verify_fixture.py` derives every expected entry
+  from raw blocks and parents; `make transparent-txid-demo` checks extraction
+  and lookups against it.
+- [ ] wallet-libraries and Vizor draft PRs: facts, validation, view, and a
+  user-initiated public enhancement.
+- [ ] **Do not redeploy txid display from `main` until the v2 cutover.** The
+  running v1 proof of concept keeps its deployed binaries; `main` can neither
+  read v1 sidecars nor serve v1 tables.
+- [ ] Ingest phase (after the code is accepted), measured on a development host
+  first:
+  - a v2x genesis journal ingested by another session on 2026-10-08 is
+    publishable as v2 without a new node ingest. Confirm its sidecar count,
+    spot-check it, and derive entries from it with this code;
+  - the share of entries with each omission, against Roman's six-month usage
+    figures (gate: at least 90% complete);
+  - cuckoo load and segments at the chosen `archive_target`, either 40,000
+    or about 60,000 now that one table per bucket halves memory;
+  - source-sidecar bytes from genesis against the 150 GB volume, with 20%
+    headroom.
+- [ ] G, Roman: a v2 lineage from a v2x journal, beside the v1 proof of
+  concept; cutover; then retire v1.
+
 ## Tiered txid display proof of concept (2026-10-05)
 
 Design and leakage: [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept).
@@ -324,7 +365,8 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [ ] Measure each criterion live and write the production results
   ([evidence](../evidence/txid-display-tiered-2026-10-07/README.md),
   [status](status.md#tiered-txid-display-in-production-2026-10-07)):
-  - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
+  - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes
+    (v1 only; v2 entries have none);
   - [x] recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max.
     **Max failed:** p50 16.0 s, max 97.2 s, 22 of 1,054 live cycles over 20 s;
     Roman accepted the miss for the proof of concept;

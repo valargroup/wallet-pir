@@ -332,7 +332,7 @@ impl DiskCache {
         let mut largest = 0u64;
         let mut total = 0u64;
         for shard in set.current() {
-            for table in super::Table::ALL {
+            for table in super::Table::HISTORY {
                 if shard.segments(table) == 0 {
                     continue;
                 }
@@ -733,7 +733,7 @@ mod tests {
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
         for geometry in [&RECENT_8K, &ARCHIVE_WIDE] {
-            for table in Table::ALL {
+            for table in [Table::Directory, Table::Pages, Table::TxDirectory] {
                 let dir = tempfile::tempdir().unwrap();
                 let shared = SharedParams::build(geometry, table).unwrap();
                 let rows: Vec<_> = (0..table.rows(geometry) as usize
@@ -1155,7 +1155,7 @@ mod shipped_tests {
     /// filled page table. It is never written to the worker's disk cache.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_shipped_runtime_is_the_locally_built_runtime() {
-        for (table, filled) in [(Table::TxDirectory, 2_048), (Table::TxPages, 700)] {
+        for (table, filled) in [(Table::TxDirectory, 2_048), (Table::TxDirectory, 700)] {
             let dir = tempfile::tempdir().unwrap();
             let s = segment(dir.path(), table, filled, 1);
             let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
@@ -1221,15 +1221,14 @@ mod shipped_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
         let dir = tempfile::tempdir().unwrap();
-        let s = segment(dir.path(), Table::TxPages, 700, 2);
+        let s = segment(dir.path(), Table::TxDirectory, 700, 2);
         let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
-        let directory = SharedParams::build(&TXID_2K, Table::TxDirectory).unwrap();
-        let other_table = TableRuntime::build(&directory, &s.rows).unwrap();
         let mut other_revision = s.key.clone();
         other_revision.0 = "cd".repeat(32);
-        let mut other_kind = s.key.clone();
-        other_kind.1 = Table::TxDirectory;
-        let cases: Vec<(&str, Box<dyn Fn(&ShippedRuntimes)>)> = vec![
+        let mut other_bucket = s.key.clone();
+        other_bucket.0 = format!("{}/directory-1", "ab".repeat(32));
+        type Prepare<'a> = Box<dyn Fn(&ShippedRuntimes) + 'a>;
+        let cases: Vec<(&str, Prepare)> = vec![
             ("missing", Box::new(|_| {})),
             (
                 "truncated",
@@ -1272,10 +1271,10 @@ mod shipped_tests {
                 "another table",
                 Box::new(|shipped| {
                     shipped
-                        .write(&other_kind, &directory, &s.source.sha256, &other_table)
+                        .write(&other_bucket, &s.shared, &s.source.sha256, &local)
                         .unwrap();
                     fs::rename(
-                        shipped.path(&other_kind, &directory, &s.source.sha256),
+                        shipped.path(&other_bucket, &s.shared, &s.source.sha256),
                         shipped.path(&s.key, &s.shared, &s.source.sha256),
                     )
                     .unwrap();

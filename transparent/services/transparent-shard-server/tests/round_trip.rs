@@ -151,7 +151,6 @@ fn publish(dir: &Path) -> ShardMap {
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
-            txid_display: None,
             directory_choice: None,
         };
 
@@ -180,7 +179,6 @@ fn publish(dir: &Path) -> ShardMap {
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: None,
             manifest_digest: digest.clone(),
             revision: 0,
             sealed: manifest.sealed,
@@ -283,7 +281,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
     let scheme_key = match table {
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
-        Table::TxDirectory | Table::TxPages => unreachable!("history-only fixture"),
+        Table::TxDirectory => unreachable!("history-only fixture"),
     };
     let scheme: transparent_native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();

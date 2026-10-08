@@ -3,8 +3,8 @@
 //! The query and setup paths are copies of the history worker's
 //! (`crate::service`), kept separate so the history path does not change for
 //! a proof of concept. What differs is the address: a revision is resolved
-//! with its tier and this worker's role, a table is a bucket directory or the
-//! shard's pages, and the binding names the bucket. Everything that bounds
+//! with its tier and this worker's role, a table is one bucket's entries, and
+//! the binding names the bucket. Everything that bounds
 //! work is the history worker's own: the runtime cache, admission, work-memory
 //! reservations and their status codes.
 
@@ -198,7 +198,6 @@ pub struct TableInit {
 pub struct GeometryInit {
     pub name: String,
     pub txdirectory: TableInit,
-    pub txpages: TableInit,
 }
 
 /// What `GET /v1/txid/init` returns.
@@ -229,7 +228,7 @@ pub struct SetupResponse {
     pub manifest_digest: String,
     pub geometry: String,
     pub table: String,
-    pub bucket: Option<u32>,
+    pub bucket: u32,
     pub segment: u32,
     pub segments: u32,
     pub public_params: String,
@@ -246,11 +245,9 @@ impl DisplayState {
         let mut params = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                let shared = runtime.params(geometry, table)?;
-                max_query_bytes = max_query_bytes.max(shared.query_bytes());
-                params.insert((geometry.name, table), shared);
-            }
+            let shared = runtime.params(geometry, Table::TxDirectory)?;
+            max_query_bytes = max_query_bytes.max(shared.query_bytes());
+            params.insert((geometry.name, Table::TxDirectory), shared);
         }
         if params.is_empty() {
             return Err("the display set names no geometry to serve".into());
@@ -662,7 +659,7 @@ impl RequestError {
 pub fn body_limit() -> usize {
     display::DISPLAY_PROFILES
         .iter()
-        .flat_map(|geometry| [geometry.directory_rows, geometry.page_rows])
+        .map(|geometry| geometry.directory_rows)
         .map(|rows| 8 + transparent_native::request_len(rows as usize))
         .max()
         .unwrap_or(0)
@@ -793,7 +790,6 @@ async fn init(State(state): State<DisplayState>) -> Response {
             .map(|geometry| GeometryInit {
                 name: geometry.name.into(),
                 txdirectory: table(geometry, Table::TxDirectory),
-                txpages: table(geometry, Table::TxPages),
             })
             .collect(),
     };
@@ -997,10 +993,7 @@ async fn setup(
         manifest_digest: digest,
         geometry: geometry.into(),
         table: table.label(),
-        bucket: match table {
-            DisplayTable::Directory(bucket) => Some(bucket),
-            DisplayTable::Pages => None,
-        },
+        bucket: table.bucket(),
         segment,
         segments,
         public_params: BASE64_STANDARD.encode(&built.public_params),
@@ -1251,12 +1244,6 @@ mod tests {
             .unwrap()
             .reserved_bytes();
         assert_eq!(reserved, 75_545_144, "a 2,048-row display table");
-        assert_eq!(
-            reserved,
-            SharedParams::build(&TXID_2K, Table::TxPages)
-                .unwrap()
-                .reserved_bytes()
-        );
         let limit = 1536 << 20;
         // Charged memory with a build in flight: the process, the active and
         // retired recent runtimes and the build's own allocation so far.

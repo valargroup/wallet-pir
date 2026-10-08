@@ -48,10 +48,13 @@ pub fn build_shipped(revision_dir: &Path, out_dir: &Path) -> Result<Vec<Shipped>
     let mut written = Vec::new();
     for (table, segment) in revision.targets() {
         let kind = kind(table);
-        if !params.contains_key(&kind) {
-            params.insert(kind, SharedParams::build(revision.geometry, kind)?);
-        }
-        let shared = &params[&kind];
+        let shared = match params.entry(kind) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(SharedParams::build(revision.geometry, kind)?)
+            }
+        };
+        let shared = &*shared;
         let source = revision
             .segment(table, segment)
             .ok_or("a verified revision holds every target")?;

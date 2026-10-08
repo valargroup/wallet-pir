@@ -12,7 +12,7 @@
 //! lets an archive be rebuilt later, from the journal, to the same digest.
 
 use super::bucket;
-use crate::txid::TransparentDisplayRecord;
+use crate::txid::DisplayEntry;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
@@ -50,15 +50,15 @@ pub struct HeightCounts {
 
 pub fn height_counts(
     params: &DisplaySealParams,
-    records: &[TransparentDisplayRecord],
+    entries: &[impl AsRef<DisplayEntry>],
 ) -> HeightCounts {
     let mut counts = HeightCounts {
         archive: vec![0; params.n_archive as usize],
         recent: vec![0; params.n_recent as usize],
     };
-    for record in records {
-        counts.archive[bucket(&record.txid, params.n_archive) as usize] += 1;
-        counts.recent[bucket(&record.txid, params.n_recent) as usize] += 1;
+    for entry in entries.iter().map(AsRef::as_ref) {
+        counts.archive[bucket(&entry.tag, params.n_archive) as usize] += 1;
+        counts.recent[bucket(&entry.tag, params.n_recent) as usize] += 1;
     }
     counts
 }
@@ -228,7 +228,7 @@ mod tests {
             ..params()
         };
         assert!(plan_seals(&p, 0, &[]).is_empty());
-        let counts = height_counts(&p, &[]);
+        let counts = height_counts(&p, &[] as &[DisplayEntry]);
         assert_eq!(counts.archive, vec![0; 4]);
         assert_eq!(counts.recent, vec![0]);
     }

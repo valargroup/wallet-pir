@@ -180,8 +180,6 @@ pub struct GeometryInit {
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub txid_tables: Vec<serde_json::Value>,
 }
 
 /// What `GET /v1/shards/init` returns.
@@ -253,20 +251,7 @@ impl ServiceState {
         let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
-            for table in Table::ALL {
-                if matches!(table, Table::TxDirectory | Table::TxPages)
-                    && !set
-                        .map
-                        .shards
-                        .iter()
-                        .any(|s| s.geometry == geometry.name && s.txid_segments.is_some())
-                    && !set
-                        .revisions()
-                        .iter()
-                        .any(|s| s.geometry.name == geometry.name && s.segments(table) > 0)
-                {
-                    continue;
-                }
+            for table in Table::HISTORY {
                 let shared =
                     match previous.and_then(|s| s.inner.params.get(&(geometry.name, table))) {
                         Some(shared) => shared.clone(),
@@ -282,7 +267,7 @@ impl ServiceState {
         let target = set
             .current()
             .map(|s| {
-                Table::ALL
+                Table::HISTORY
                     .iter()
                     .map(|t| s.segments(*t) as usize)
                     .sum::<usize>()
@@ -301,7 +286,7 @@ impl ServiceState {
         // is refused here rather than discovered under load.
         let mut assigned = Vec::new();
         for shard in set.current() {
-            for table in Table::ALL {
+            for table in Table::HISTORY {
                 for _ in 0..shard.segments(table) {
                     assigned.push(params[&(shard.geometry.name, table)].as_ref());
                 }
@@ -1019,12 +1004,6 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 page_row_bytes: geometry.page_row_bytes as u32,
                 pages_scheme: pages.scheme().clone(),
                 pages_setup_seed: pages.setup_seed,
-                txid_tables: if inner.set.map.shards.iter().any(|s| s.geometry == geometry.name && s.txid_segments.is_some()) {
-                    [Table::TxDirectory, Table::TxPages].into_iter().map(|table| {
-                        let shared = &inner.params[&(geometry.name, table)];
-                        serde_json::json!({"table": table.as_str(), "rows": table.rows(geometry), "row_bytes": table.row_bytes(geometry), "scheme": shared.scheme(), "setup_seed": shared.setup_seed, "codec": transparent_shard::txid::CODEC})
-                    }).collect()
-                } else { Vec::new() },
             }
         })
         .collect();

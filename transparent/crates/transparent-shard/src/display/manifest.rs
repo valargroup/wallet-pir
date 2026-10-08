@@ -11,46 +11,44 @@ use super::tables::BuiltDisplay;
 use super::{display_by_name, DisplayTable, BUCKET_DOMAIN, DISPLAY_SCHEMA, MAX_BUCKETS};
 use crate::layout::Geometry;
 use crate::manifest::TableGeometry;
-use crate::txid::{CODEC, FRAGMENT_BYTES, INLINE_BYTES, ROW_BYTES};
+use crate::txid::{CODEC, ENTRY_BYTES, ROW_BYTES, SLOTS_PER_ROW, TAG_DOMAIN};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 
 /// The fixed encoding parameters, restated so a consumer refuses a build that
 /// changed one instead of misreading rows.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DisplayLayout {
     pub codec: String,
-    pub inline_bytes: u32,
+    pub entry_bytes: u32,
     pub row_bytes: u32,
-    pub fragment_bytes: u32,
+    pub slots_per_row: u32,
     pub directory_choices: u32,
     pub bucket_domain: String,
+    pub tag_domain: String,
 }
 
 impl DisplayLayout {
     pub fn current() -> Self {
         Self {
             codec: CODEC.to_string(),
-            inline_bytes: INLINE_BYTES as u32,
+            entry_bytes: ENTRY_BYTES as u32,
             row_bytes: ROW_BYTES as u32,
-            fragment_bytes: FRAGMENT_BYTES as u32,
+            slots_per_row: SLOTS_PER_ROW as u32,
             directory_choices: 2,
             bucket_domain: String::from_utf8(BUCKET_DOMAIN.to_vec()).unwrap(),
+            tag_domain: String::from_utf8(TAG_DOMAIN.to_vec()).unwrap(),
         }
     }
 }
 
-/// One bucket's directory table and what it holds.
+/// One bucket's table and how many entries it holds: the anonymity set of a
+/// lookup in this bucket.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct DisplayBucket {
     pub bucket: u32,
     pub records: u64,
-    pub inline_records: u64,
     pub directory_segments: Vec<TableGeometry>,
-    /// Records by page count, 0 for inline: the size of each page-count
-    /// class a lookup in this bucket can fall into.
-    pub page_histogram: BTreeMap<u32, u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -78,10 +76,7 @@ pub struct DisplayManifest {
     pub layout: DisplayLayout,
     pub blocks: u64,
     pub records: u64,
-    pub payload_bytes: u64,
-    pub page_rows_used: u64,
     pub buckets: Vec<DisplayBucket>,
-    pub page_segments: Vec<TableGeometry>,
 }
 
 /// Identity and placement inputs of a manifest; the tables supply the rest.
@@ -133,8 +128,6 @@ impl DisplayManifest {
             layout: DisplayLayout::current(),
             blocks: header.end_height - header.start_height + 1,
             records: built.records,
-            payload_bytes: built.payload_bytes,
-            page_rows_used: built.page_rows_used,
             buckets: built
                 .buckets
                 .iter()
@@ -142,12 +135,9 @@ impl DisplayManifest {
                 .map(|(b, bucket)| DisplayBucket {
                     bucket: b as u32,
                     records: bucket.records,
-                    inline_records: bucket.inline_records,
                     directory_segments: digest_tables(&bucket.directory, geometry.directory_rows),
-                    page_histogram: bucket.page_histogram.clone(),
                 })
                 .collect(),
-            page_segments: digest_tables(&built.pages, geometry.page_rows),
         }
     }
 
@@ -166,21 +156,14 @@ impl DisplayManifest {
 
     /// Segment geometries of `table`, if the shard has it.
     pub fn segments(&self, table: DisplayTable) -> Option<&[TableGeometry]> {
-        match table {
-            DisplayTable::Directory(b) => self
-                .buckets
-                .get(b as usize)
-                .map(|b| b.directory_segments.as_slice()),
-            DisplayTable::Pages => Some(&self.page_segments),
-        }
+        self.buckets
+            .get(table.bucket() as usize)
+            .map(|b| b.directory_segments.as_slice())
     }
 
-    /// Every table, directories first.
+    /// Every table, in bucket order.
     pub fn tables(&self) -> Vec<DisplayTable> {
-        (0..self.n_buckets)
-            .map(DisplayTable::Directory)
-            .chain([DisplayTable::Pages])
-            .collect()
+        (0..self.n_buckets).map(DisplayTable::Directory).collect()
     }
 
     pub fn display_geometry(&self) -> Option<&'static Geometry> {
@@ -230,18 +213,11 @@ impl DisplayManifest {
                 return Err(format!("bucket {index} is labelled {}", bucket.bucket));
             }
             check_segments(&bucket.directory_segments, geometry.directory_rows)?;
-            let classes: u64 = bucket.page_histogram.values().sum();
-            if classes != bucket.records
-                || bucket.page_histogram.get(&0).copied().unwrap_or(0) != bucket.inline_records
-            {
-                return Err(format!("bucket {index} histogram"));
-            }
             total += bucket.records;
         }
         if total != self.records {
             return Err("record total".into());
         }
-        check_segments(&self.page_segments, geometry.page_rows)?;
         Ok(geometry)
     }
 }
@@ -269,9 +245,8 @@ pub struct DisplayMapEntry {
     pub terminal_block_hash: String,
     pub geometry: String,
     pub n_buckets: u32,
-    /// Segments per bucket directory, in bucket order.
+    /// Segments per bucket table, in bucket order.
     pub directory_segments: Vec<u32>,
-    pub page_segments: u32,
     pub records: u64,
     pub min_bucket_records: u64,
     pub manifest_digest: String,
@@ -294,7 +269,6 @@ impl DisplayMapEntry {
                 .iter()
                 .map(|b| b.directory_segments.len() as u32)
                 .collect(),
-            page_segments: manifest.page_segments.len() as u32,
             records: manifest.records,
             min_bucket_records: manifest.min_bucket_records(),
             manifest_digest: digest.to_string(),
@@ -410,7 +384,6 @@ pub(crate) fn check_entry(seal: &DisplaySealParams, shard: &DisplayMapEntry) -> 
     if shard.n_buckets != expected_buckets
         || shard.directory_segments.len() != shard.n_buckets as usize
         || shard.directory_segments.contains(&0)
-        || shard.page_segments == 0
     {
         return Err(format!("display shard {} tables", shard.shard_id));
     }
@@ -463,26 +436,31 @@ pub(crate) fn find_by_height(shards: &[DisplayMapEntry], height: u64) -> Option<
 mod tests {
     use super::*;
     use crate::display::{build_shard, TXID_2K};
-    use crate::txid::{DisplayOutput, TransparentDisplayRecord};
-    use transparent_events::{FeeState, TransactionMetadata, Txid};
+    use crate::txid::{DisplayFacts, DisplayOutput};
+    use transparent_events::Txid;
 
     fn built() -> BuiltDisplay {
-        let records: Vec<_> = (0u8..20)
-            .map(|i| TransparentDisplayRecord {
-                txid: Txid([i; 32]),
-                coinbase: false,
-                metadata: TransactionMetadata {
-                    fee: FeeState::Exact(1),
-                    transparent_input_count: 1,
+        let entries: Vec<_> = (0u8..20)
+            .map(|i| {
+                DisplayFacts {
+                    txid: Txid([i; 32]),
+                    coinbase: false,
+                    fee: 1,
                     has_shielded_components: false,
-                },
-                outputs: vec![DisplayOutput {
-                    value: 1,
-                    script: vec![0; if i == 3 { 300 } else { 25 }],
-                }],
+                    spent: vec![DisplayOutput {
+                        value: 2,
+                        script: vec![0; 25],
+                    }],
+                    outputs: vec![DisplayOutput {
+                        value: 1,
+                        script: vec![0; 25],
+                    }],
+                }
+                .entry()
+                .unwrap()
             })
             .collect();
-        build_shard(5, &TXID_2K, 2, &records).unwrap()
+        build_shard(5, &TXID_2K, 2, &entries).unwrap()
     }
 
     fn header(sealed: bool) -> ManifestHeader {
@@ -528,19 +506,15 @@ mod tests {
             Box::new(|m| m.geometry = "txid-4k".into()),
             Box::new(|m| m.n_buckets += 1),
             Box::new(|m| m.archive_target += 1),
-            Box::new(|m| m.layout.inline_bytes += 1),
+            Box::new(|m| m.layout.entry_bytes += 1),
             Box::new(|m| m.blocks += 1),
             Box::new(|m| m.records += 1),
-            Box::new(|m| m.payload_bytes += 1),
-            Box::new(|m| m.page_rows_used += 1),
             Box::new(|m| m.buckets[0].records += 1),
             Box::new(|m| m.buckets[1].directory_segments[0].sha256 = "99".repeat(32)),
             Box::new(|m| {
                 let extra = m.buckets[0].directory_segments[0].clone();
                 m.buckets[0].directory_segments.push(extra);
             }),
-            Box::new(|m| *m.buckets[0].page_histogram.entry(9).or_default() += 1),
-            Box::new(|m| m.page_segments[0].sha256 = "99".repeat(32)),
         ];
         for mutate in mutations {
             let mut changed = base.clone();

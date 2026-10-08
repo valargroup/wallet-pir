@@ -1,5 +1,5 @@
 use super::*;
-use crate::txid_display::fixture::{self, block_hash, chain_records};
+use crate::txid_display::fixture::{self, block_hash, chain_records, chain_sources};
 use crate::txid_display::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
 use crate::txid_display::serving::{Transport, WorkerRole, WorkersFile};
 use crate::txid_display::source::{open_writer, Script, ScriptStep};
@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use transparent_filter::BlockHash;
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
+use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
 fn settings() -> Settings {
     Settings {
@@ -195,9 +196,9 @@ async fn incremental_stepping_reproduces_bootstrap() {
     }
 }
 
-fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecord>)> {
+fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)> {
     (from..=through)
-        .map(|h| (block_hash(tag, h), chain_records(tag, h)))
+        .map(|h| (block_hash(tag, h), chain_sources(tag, h)))
         .collect()
 }
 
@@ -809,9 +810,10 @@ async fn a_restart_after_a_rollback_still_invalidates() {
     {
         let mut store = open_writer(&journal).unwrap();
         store.rollback_to(Some(120)).unwrap();
-        for (h, (hash, records)) in (121..).zip(fork(2, 121, 122)) {
+        for (h, (hash, sources)) in (121..).zip(fork(2, 121, 122)) {
+            let events = crate::display_journal::implied_events(h, &sources).unwrap();
             store
-                .append_block_with_display(h, hash, &[], &records)
+                .append_block_with_display(h, hash, &events, &sources)
                 .unwrap();
         }
         store.commit().unwrap();
@@ -866,7 +868,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
         .unwrap();
     let before = decided(&counts, tip);
     counts.truncate((tip - 101) as usize);
-    counts.push(height_counts(&params, &[]));
+    counts.push(height_counts(&params, &[] as &[DisplayRecord]));
     let after = decided(&counts, tip);
     assert_eq!(after, before - 1);
     let (log, states) = spawn_fakes(
@@ -1202,21 +1204,37 @@ fn verify_reproduces_a_running_root() {
 }
 
 #[test]
-fn bench_records_follow_the_requested_size_mix() {
-    // Large enough that the 0.1% multi-page tail is countable.
+fn bench_records_follow_the_requested_case_mix() {
+    // Large enough that the 1% of outputs without an address is countable.
     let records = synthetic_records(20_000, 7);
-    let sizes: Vec<usize> = records.iter().map(|r| r.encode().unwrap().len()).collect();
-    let inline = sizes.iter().filter(|s| (50..=110).contains(*s)).count();
-    let one_page = sizes.iter().filter(|s| (129..=4_050).contains(*s)).count();
-    let near_cutoff = sizes.iter().filter(|s| (129..=528).contains(*s)).count();
-    let multi_page = sizes.iter().filter(|s| **s > 4_050).count();
-    assert!((17_600..=18_400).contains(&inline), "{inline} inline");
-    assert!((1_750..=2_250).contains(&one_page), "{one_page} one page");
+    let count = |f: &dyn Fn(&DisplayEntry) -> bool| records.iter().filter(|r| f(&r.entry)).count();
+    let complete = count(&|e| e.is_complete());
+    let unshield = count(&|e| e.input_count == 0);
+    let multiple = count(&|e| e.multiple_source_scripts);
+    let more = count(&|e| e.more_than_two_outputs());
+    let no_address = count(&|e| e.outputs[0].is_some_and(|o| !o.address.is_address()));
+    assert!((17_800..=18_600).contains(&complete), "{complete} complete");
     assert!(
-        near_cutoff * 4 >= one_page * 3,
-        "{near_cutoff} of {one_page} near the cutoff"
+        (1_000..=1_400).contains(&unshield),
+        "{unshield} unshielding"
     );
-    assert!((5..=50).contains(&multi_page), "{multi_page} multi-page");
+    assert!(
+        (850..=1_150).contains(&multiple),
+        "{multiple} multiple sources"
+    );
+    assert!((650..=950).contains(&more), "{more} more than two outputs");
+    assert!(
+        (130..=270).contains(&no_address),
+        "{no_address} without an address"
+    );
+    // Shielded change is a fact, never mixed funding, and every record is
+    // its txid's entry at the fixed width.
+    assert_eq!(count(&|e| e.shielded_and_transparent_funding), 0);
+    assert!(count(&|e| e.shielded_components) > 10_000);
+    for record in &records {
+        assert_eq!(record.entry.encode().unwrap().len(), ENTRY_BYTES);
+        DisplayRecord::new(record.txid, record.entry).unwrap();
+    }
     let temp = tempfile::tempdir().unwrap();
     let lines = bench_recent(&[500], "txid-2k", temp.path(), 7).unwrap();
     assert_eq!(lines[0]["records"], 500);

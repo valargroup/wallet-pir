@@ -159,28 +159,23 @@ fn read(path: &Path) -> Result<Vec<u8>, LoadError> {
     })
 }
 
-/// Which of a shard's two private tables a query addresses.
+/// Which private table a query addresses: a history shard's directory or
+/// pages, or a txid display bucket's table of fixed-size entries.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Table {
     Directory,
     Pages,
     TxDirectory,
-    TxPages,
 }
 
 impl Table {
-    pub const ALL: [Self; 4] = [
-        Self::Directory,
-        Self::Pages,
-        Self::TxDirectory,
-        Self::TxPages,
-    ];
+    /// The tables a history shard has.
+    pub const HISTORY: [Self; 2] = [Self::Directory, Self::Pages];
     pub fn as_str(self) -> &'static str {
         match self {
             Table::Directory => "directory",
             Table::TxDirectory => "txdirectory",
-            Table::TxPages => "txpages",
             Table::Pages => "pages",
         }
     }
@@ -190,7 +185,6 @@ impl Table {
             "directory" => Some(Table::Directory),
             "pages" => Some(Table::Pages),
             "txdirectory" => Some(Table::TxDirectory),
-            "txpages" => Some(Table::TxPages),
             _ => None,
         }
     }
@@ -199,7 +193,7 @@ impl Table {
     pub fn rows(self, geometry: &Geometry) -> u64 {
         match self {
             Table::Directory | Table::TxDirectory => geometry.directory_rows,
-            Table::Pages | Table::TxPages => geometry.page_rows,
+            Table::Pages => geometry.page_rows,
         }
     }
 
@@ -208,7 +202,7 @@ impl Table {
         match self {
             Table::Directory => geometry.directory_row_bytes as u32,
             Table::Pages => geometry.page_row_bytes as u32,
-            Table::TxDirectory | Table::TxPages => transparent_shard::txid::ROW_BYTES as u32,
+            Table::TxDirectory => transparent_shard::txid::ROW_BYTES as u32,
         }
     }
 }
@@ -340,8 +334,6 @@ pub struct LoadedShard {
     /// One entry per segment, in segment order.
     pub directory: Vec<SegmentSource>,
     pub pages: Vec<SegmentSource>,
-    pub txdirectory: Vec<SegmentSource>,
-    pub txpages: Vec<SegmentSource>,
 }
 
 impl LoadedShard {
@@ -359,8 +351,7 @@ impl LoadedShard {
         match table {
             Table::Directory => &self.directory,
             Table::Pages => &self.pages,
-            Table::TxDirectory => &self.txdirectory,
-            Table::TxPages => &self.txpages,
+            Table::TxDirectory => &[],
         }
     }
 
@@ -459,12 +450,7 @@ impl LoadedShard {
         let pages = meta.manifest.page_segments.len() as u64
             * geometry.page_rows
             * geometry.page_row_bytes as u64;
-        directory
-            + pages
-            + meta.manifest.txid_display.as_ref().map_or(0, |d| {
-                d.directory_segments.len() as u64 * geometry.directory_rows * 4096
-                    + d.page_segments.len() as u64 * geometry.page_rows * 4096
-            })
+        directory + pages
     }
 
     /// Verifies every table segment of a revision and produces the loaded shard.
@@ -480,19 +466,10 @@ impl LoadedShard {
         // segment with its own widths would silently need its own parameters,
         // and sharing one set per geometry is the whole point of naming it.
         let mut tables: Vec<Vec<SegmentSource>> = Vec::new();
-        let mut declared = vec![
+        let declared = [
             (Table::Directory, &manifest.directory_segments),
             (Table::Pages, &manifest.page_segments),
         ];
-        if let Some(display) = &manifest.txid_display {
-            display
-                .validate()
-                .map_err(|e| LoadError::Invalid(e.to_string()))?;
-            declared.extend([
-                (Table::TxDirectory, &display.directory_segments),
-                (Table::TxPages, &display.page_segments),
-            ]);
-        }
         for (table, segments) in declared {
             if segments.is_empty() {
                 return Err(LoadError::Invalid(format!(
@@ -532,42 +509,6 @@ impl LoadedShard {
         let directory = tables.next().expect("directory segments");
         let pages = tables.next().expect("page segments");
         verify_choice_routes(&manifest, geometry, &directory)?;
-        let txdirectory: Vec<SegmentSource> = tables.next().unwrap_or_default();
-        let txpages: Vec<SegmentSource> = tables.next().unwrap_or_default();
-        if let Some(display) = &manifest.txid_display {
-            use std::io::{Seek, SeekFrom};
-            let open = |sources: &[SegmentSource]| {
-                sources
-                    .iter()
-                    .map(|s| {
-                        std::fs::File::open(&s.path).map_err(|source| LoadError::Io {
-                            path: s.path.clone(),
-                            source,
-                        })
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            };
-            let mut files = [open(&txdirectory)?, open(&txpages)?];
-            transparent_shard::txid::verify_rows(
-                manifest.shard_id,
-                geometry,
-                txdirectory.len(),
-                txpages.len(),
-                display.records,
-                |pages, segment, row| {
-                    let file = &mut files[usize::from(pages)][segment];
-                    file.seek(SeekFrom::Start(
-                        (row * transparent_shard::txid::ROW_BYTES) as u64,
-                    ))
-                    .map_err(|e| transparent_shard::txid::Error(e.to_string()))?;
-                    let mut bytes = vec![0; transparent_shard::txid::ROW_BYTES];
-                    file.read_exact(&mut bytes)
-                        .map_err(|e| transparent_shard::txid::Error(e.to_string()))?;
-                    Ok(bytes)
-                },
-            )
-            .map_err(|e| LoadError::Invalid(e.to_string()))?;
-        }
 
         Ok(Self {
             manifest,
@@ -577,8 +518,6 @@ impl LoadedShard {
             filter,
             directory,
             pages,
-            txdirectory,
-            txpages,
         })
     }
 }
@@ -792,7 +731,6 @@ impl ShardSet {
                 // it never read.
                 || manifest.directory_segments.len() as u32 != entry.directory_segments
                 || manifest.page_segments.len() as u32 != entry.page_segments
-                || manifest.txid_display.as_ref().map(|d| [d.directory_segments.len() as u32, d.page_segments.len() as u32]) != entry.txid_segments
             {
                 return Err(LoadError::Invalid(format!(
                     "shard {} disagrees with its map entry",
@@ -1064,7 +1002,7 @@ impl ShardSet {
         });
         let mut targets = Vec::new();
         for shard in current.into_iter().chain(superseded) {
-            for table in Table::ALL {
+            for table in Table::HISTORY {
                 for segment in 0..shard.segments(table) {
                     targets.push((shard.digest.clone(), table, segment));
                 }
@@ -1110,13 +1048,7 @@ fn reuse_linked(old: &LoadedShard, dir: &Path) -> Option<LoadedShard> {
     let mut shard = old.clone();
     // Every table, display included: a source left pointing into the old
     // directory fails its next cold build once that directory is collected.
-    for source in shard
-        .directory
-        .iter_mut()
-        .chain(shard.pages.iter_mut())
-        .chain(shard.txdirectory.iter_mut())
-        .chain(shard.txpages.iter_mut())
-    {
+    for source in shard.directory.iter_mut().chain(shard.pages.iter_mut()) {
         let next = dir.join(source.path.file_name()?);
         let a = std::fs::metadata(&source.path).ok()?;
         let b = std::fs::metadata(&next).ok()?;

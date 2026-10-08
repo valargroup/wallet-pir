@@ -93,7 +93,7 @@ Compact script/manifest/envelope proposals retain their separate sampled finding
 `--journal-census --v2x JOURNAL ANCHOR_HEIGHT ANCHOR [SCRATCH_DIR]` reads a journal
 written by `event-ingest --txid-display-inputs` (`display-v2x/` sidecars, the
 unpublished `transparent-txid-display-v2x` codec in
-[the display contract](../../docs/txid-display.md#experimental-input-listing-record-v2x-unpublished)).
+[the display contract](../../docs/txid-display.md#source-records-and-durability)).
 The same anchor, lock, eligibility and duplicate-txid checks apply; a v1 journal is
 refused in this mode and a v2x journal without the flag.
 

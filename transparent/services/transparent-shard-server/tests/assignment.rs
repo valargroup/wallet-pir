@@ -155,7 +155,6 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
-        txid_display: None,
         directory_choice: None,
     };
     let digest = manifest.digest();
@@ -182,7 +181,6 @@ fn write_shard(
         txids: 0,
         directory_segments: built.directory_segments(),
         page_segments: built.page_segments(),
-        txid_segments: None,
         manifest_digest: digest,
         revision: manifest.revision,
         sealed,
@@ -635,7 +633,6 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
             txids: 0,
             directory_segments: 1,
             page_segments: 1,
-            txid_segments: None,
             manifest_digest: digest,
             revision,
             sealed: false,
@@ -753,7 +750,6 @@ fn manifest_for(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
-        txid_display: None,
         directory_choice: None,
     }
 }

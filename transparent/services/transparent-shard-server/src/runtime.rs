@@ -1238,14 +1238,12 @@ mod tests {
             (&TXID_2K, 75_545_144, 41_990_712, MEASURED_TXID_2K_MIB),
             (&TXID_4K, 83_933_752, 50_379_320, MEASURED_TXID_4K_MIB),
         ] {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                let shared = SharedParams::build(geometry, table).unwrap();
-                assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
-                assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
-                assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
-                assert!(mib(held) <= measured.0, "{}", geometry.name);
-                assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
-            }
+            let shared = SharedParams::build(geometry, Table::TxDirectory).unwrap();
+            assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
+            assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
+            assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
+            assert!(mib(held) <= measured.0, "{}", geometry.name);
+            assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
         }
     }
 
@@ -1259,7 +1257,7 @@ mod tests {
         for (geometry, table) in [
             (&RECENT_8K, Table::Directory),
             (&TXID_2K, Table::TxDirectory),
-            (&transparent_shard::display::TXID_4K, Table::TxPages),
+            (&transparent_shard::display::TXID_4K, Table::TxDirectory),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
@@ -1420,9 +1418,7 @@ mod tests {
             }
         }
         for geometry in DISPLAY_PROFILES {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                every.push(SharedParams::build(geometry, table).unwrap());
-            }
+            every.push(SharedParams::build(geometry, Table::TxDirectory).unwrap());
         }
         for shared in &every {
             let excess = shared.reserved_bytes() - shared.held_bytes();
@@ -1568,7 +1564,7 @@ mod tests {
             (&RECENT_8K, Table::Directory, 8_192),
             (&RECENT_8K, Table::Pages, 5_000),
             (&TXID_2K, Table::TxDirectory, 2_048),
-            (&TXID_2K, Table::TxPages, 700),
+            (&TXID_2K, Table::TxDirectory, 700),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
@@ -1642,9 +1638,9 @@ mod tests {
         assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
         for geometry in BATCHED_HINT_GEOMETRIES {
             let tables = if DISPLAY_PROFILES.contains(geometry) {
-                [Table::TxDirectory, Table::TxPages]
+                vec![Table::TxDirectory]
             } else {
-                [Table::Directory, Table::Pages]
+                vec![Table::Directory, Table::Pages]
             };
             for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();

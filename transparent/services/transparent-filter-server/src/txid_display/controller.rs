@@ -1750,18 +1750,11 @@ pub fn bench_recent(
         };
         let shard = super::publisher::publish_shard(temp.path(), &layout, &spec, &records)?;
         let segments = shard.entry.directory_segments.iter().sum::<u32>() as u64;
-        let capacity = segments * g.directory_rows * transparent_shard::txid::ROW_BYTES as u64;
-        let histogram = &shard.manifest.buckets[0].page_histogram;
+        let slots = segments * g.directory_rows * transparent_shard::txid::SLOTS_PER_ROW as u64;
         out.push(json!({
             "geometry": geometry, "records": size,
             "directory_segments": shard.entry.directory_segments,
-            "page_segments": shard.entry.page_segments,
-            "used_bytes": shard.used_bytes, "fill": shard.used_bytes as f64 / capacity as f64,
-            "payload_bytes": shard.manifest.payload_bytes,
-            "page_rows_used": shard.manifest.page_rows_used,
-            "inline_records": shard.manifest.buckets[0].inline_records,
-            "paged_records": size - shard.manifest.buckets[0].inline_records,
-            "max_pages": histogram.keys().max(),
+            "used_bytes": shard.used_bytes, "fill": size as f64 / slots as f64,
             "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
             "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
         }));
@@ -1774,7 +1767,8 @@ pub const SYNTHETIC_GENESIS: &str =
     "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
 
 /// Writes a v3 journal of synthetic blocks `[start, start + blocks)` with
-/// display sidecars and no history events, for local replay and benches.
+/// display sidecars and the events their sources imply, for local replay and
+/// benches.
 ///
 /// Each block holds between half and one and a half times `mean_records`
 /// records of [`synthetic_records`]' size mix. Deterministic in `seed`.
@@ -1798,11 +1792,12 @@ pub fn synth_journal(
                 .unwrap(),
         );
         let count = mean_records / 2 + block_seed % (mean_records + 1);
-        let records = synthetic_records(count, block_seed);
+        let sources = synthetic_sources(count, block_seed);
         let hash = transparent_filter::BlockHash::from_internal_bytes(
             Sha256::digest([b"synthetic".as_slice(), &block_seed.to_le_bytes()].concat()).into(),
         );
-        store.append_block_with_display(height, hash, &[], &records)?;
+        let events = crate::display_journal::implied_events(height, &sources)?;
+        store.append_block_with_display(height, hash, &events, &sources)?;
         total += count;
         if (height - start + 1).is_multiple_of(1_000) {
             store.commit()?;
@@ -1812,17 +1807,19 @@ pub fn synth_journal(
     Ok(total)
 }
 
-/// Records with a recent-era size mix, after the sampled priors: about 90%
-/// inline payloads of 50-110 bytes, about 10% one page that mostly sits just
-/// above the inline cutoff, and about 0.1% two to fifteen pages.
-pub fn synthetic_records(
+/// Source records with a mainnet-like case mix: mostly one recipient with
+/// shielded change or zcashd-style two outputs, then unshielding, several
+/// source scripts, more than two outputs and outputs without an address.
+/// Every input spends a distinct, synthetic outpoint.
+pub fn synthetic_sources(
     count: u64,
     seed: u64,
-) -> Vec<transparent_shard::txid::TransparentDisplayRecord> {
+) -> Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x> {
     use sha2::{Digest, Sha256};
     use transparent_events::{FeeState, TransactionMetadata, Txid};
-    use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
-    const FRAGMENT: u64 = 4_050;
+    use transparent_shard::txid::DisplayOutput;
+    use transparent_shard::txid_v1::TransparentDisplayRecord;
+    use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
     let mut x = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
         x ^= x << 13;
@@ -1830,45 +1827,80 @@ pub fn synthetic_records(
         x ^= x << 17;
         x
     };
+    let p2pkh = |tag: u64| {
+        let mut script = vec![0x76, 0xa9, 0x14];
+        script.extend_from_slice(&Sha256::digest(tag.to_le_bytes())[..20]);
+        script.extend_from_slice(&[0x88, 0xac]);
+        script
+    };
     (0..count)
         .map(|i| {
+            let txid = Txid(Sha256::digest([seed.to_le_bytes(), i.to_le_bytes()].concat()).into());
             let class = next() % 1_000;
-            let payload = if class < 900 {
-                50 + next() % 61
-            } else if class < 999 {
-                // Overflow records average about 350 bytes: most just miss
-                // the cutoff, a few fill the page.
-                let small = next() % 8 != 0;
-                if small {
-                    129 + next() % 400
-                } else {
-                    129 + next() % (FRAGMENT - 128)
-                }
-            } else {
-                let pages = 2 + next() % 14;
-                FRAGMENT * (pages - 1) + 1 + next() % FRAGMENT
+            let (inputs, outputs, distinct, shielded) = match class {
+                0..=599 => (1 + next() % 3, 1, false, true),
+                600..=849 => (1 + next() % 3, 2, false, false),
+                850..=909 => (0, 1, false, true),
+                910..=959 => (2 + next() % 4, 1, true, false),
+                _ => (1, 3 + next() % 5, false, false),
             };
-            let mut record = TransparentDisplayRecord {
-                txid: Txid(Sha256::digest([seed.to_le_bytes(), i.to_le_bytes()].concat()).into()),
-                coinbase: false,
-                metadata: TransactionMetadata {
-                    fee: FeeState::Exact(10_000),
-                    transparent_input_count: 1,
-                    has_shielded_components: false,
+            let outputs: Vec<_> = (0..outputs)
+                .map(|o| DisplayOutput {
+                    value: 1_000 + next() % 1_000_000,
+                    script: if class >= 990 && o == 0 {
+                        vec![0x6a; 1 + (next() % 40) as usize]
+                    } else {
+                        p2pkh(next())
+                    },
+                })
+                .collect();
+            // Extra inputs of one zatoshi each raise the fee by as much;
+            // shielded change takes what the first input leaves over.
+            let fee = 10_000 + inputs.saturating_sub(1);
+            let paid = outputs.iter().map(|o| o.value).sum::<u64>() + 10_000;
+            let inputs: Vec<_> = (0..inputs)
+                .map(|n| DisplayInput {
+                    prevout_txid: Txid(
+                        Sha256::digest([txid.0.as_slice(), &n.to_le_bytes()].concat()).into(),
+                    ),
+                    prevout_index: n as u32,
+                    value: if n == 0 {
+                        paid + 50_000 * u64::from(shielded)
+                    } else {
+                        1
+                    },
+                    script: p2pkh(if distinct {
+                        seed ^ i << 8 ^ n
+                    } else {
+                        seed ^ i << 8
+                    }),
+                })
+                .collect();
+            TransparentDisplayRecordV2x {
+                record: TransparentDisplayRecord {
+                    txid,
+                    coinbase: false,
+                    metadata: TransactionMetadata {
+                        fee: FeeState::Exact(if inputs.is_empty() { 10_000 } else { fee }),
+                        transparent_input_count: inputs.len() as u32,
+                        has_shielded_components: shielded,
+                    },
+                    outputs,
                 },
-                outputs: vec![DisplayOutput {
-                    value: 1_000,
-                    script: Vec::new(),
-                }],
-            };
-            // The script length's varint grows with it; settle in two passes.
-            for _ in 0..2 {
-                let len = record.encode().map(|b| b.len() as u64).unwrap_or(0);
-                let script = record.outputs[0].script.len() as u64;
-                let wanted = (script + payload).saturating_sub(len);
-                record.outputs[0].script = vec![0x51; wanted as usize];
+                inputs,
             }
-            record
+        })
+        .collect()
+}
+
+/// The published entries of [`synthetic_sources`].
+pub fn synthetic_records(count: u64, seed: u64) -> Vec<transparent_shard::txid::DisplayRecord> {
+    synthetic_sources(count, seed)
+        .iter()
+        .map(|source| {
+            source
+                .display_record()
+                .expect("a synthetic source is valid")
         })
         .collect()
 }

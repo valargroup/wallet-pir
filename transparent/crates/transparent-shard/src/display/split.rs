@@ -381,7 +381,6 @@ mod tests {
             geometry: "txid-2k".into(),
             n_buckets: 1,
             directory_segments: vec![1],
-            page_segments: 1,
             records: 50,
             min_bucket_records: 50,
             manifest_digest: format!("{:064x}", 1_000_000 + shard_id),

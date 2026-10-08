@@ -30,6 +30,7 @@ pub mod records;
 pub mod seal;
 pub mod tag;
 pub mod txid;
+pub mod txid_v1;
 pub mod txid_v2x;
 
 pub use build::{

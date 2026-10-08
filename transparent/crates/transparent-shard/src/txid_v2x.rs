@@ -1,7 +1,8 @@
-//! EXPERIMENTAL, UNPUBLISHED display record that also lists every transparent
-//! input. It exists only to measure the size and page-layout cost of richer
-//! records over a full-chain ingest. No server, controller, client or table
-//! builder reads it, and it carries no compatibility promise.
+//! The display source record: the v1 record body (whole-transaction
+//! metadata and every output) plus every transparent input with the value and
+//! locking script of the output it spends. Display journals keep it, and
+//! published v2 entries ([`crate::txid::DisplayEntry`]) are derived from it, so
+//! a change to what an entry holds is a republish rather than a new ingest.
 //!
 //! Encoding: one version byte [`VERSION`], then the v1 record body unchanged
 //! (flags, metadata, LEB128 output count, outputs), then exactly
@@ -11,7 +12,8 @@
 //! carries it, and one count leaves no room for disagreement. Replacing the
 //! version byte with 1 and dropping the input list yields the v1 encoding of
 //! [`TransparentDisplayRecordV2x::v1`], byte for byte.
-use crate::txid::{Error, TransparentDisplayRecord};
+use crate::txid::{DisplayFacts, DisplayOutput, DisplayRecord, Error};
+use crate::txid_v1::TransparentDisplayRecord;
 use transparent_events::{decode_varint, encode_varint, varint_len, FeeState, Txid, MAX_MONEY};
 
 pub const CODEC: &str = "transparent-txid-display-v2x";
@@ -65,9 +67,40 @@ fn read_var(bytes: &[u8], at: &mut usize, max: u64) -> Result<u64, Error> {
 }
 
 impl TransparentDisplayRecordV2x {
-    /// The record with its inputs stripped: exactly what v1 publishes.
+    /// The record with its inputs stripped: exactly what v1 published.
     pub fn v1(&self) -> &TransparentDisplayRecord {
         &self.record
+    }
+
+    /// The facts a published entry is derived from: the body's metadata and
+    /// outputs, and each input's spent output in input order. A published
+    /// entry needs the exact fee, which every ingest resolves.
+    pub fn facts(&self) -> Result<DisplayFacts, Error> {
+        let fee = match self.record.metadata.fee {
+            FeeState::Exact(fee) => fee,
+            FeeState::NotApplicable => 0,
+            FeeState::Unknown => return Err(bad("a display entry needs the exact fee")),
+        };
+        Ok(DisplayFacts {
+            txid: self.record.txid,
+            coinbase: self.record.coinbase,
+            fee,
+            has_shielded_components: self.record.metadata.has_shielded_components,
+            spent: self
+                .inputs
+                .iter()
+                .map(|input| DisplayOutput {
+                    value: input.value,
+                    script: input.script.clone(),
+                })
+                .collect(),
+            outputs: self.record.outputs.clone(),
+        })
+    }
+
+    /// The published entry of this transaction, with its txid.
+    pub fn display_record(&self) -> Result<DisplayRecord, Error> {
+        self.facts()?.record()
     }
 
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
@@ -133,7 +166,7 @@ impl TransparentDisplayRecordV2x {
         if flags & 8 != 0 {
             read_var(bytes, &mut at, MAX_MONEY)?;
         }
-        let outputs = read_var(bytes, &mut at, crate::txid::MAX_OUTPUTS as u64)? as usize;
+        let outputs = read_var(bytes, &mut at, crate::txid_v1::MAX_OUTPUTS as u64)? as usize;
         if outputs > bytes.len().saturating_sub(at) / 2 {
             return Err(bad("truncated output list"));
         }
@@ -195,7 +228,6 @@ impl TransparentDisplayRecordV2x {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::txid::DisplayOutput;
     use transparent_events::TransactionMetadata;
 
     fn input(tag: u8, value: u64, script: usize) -> DisplayInput {
@@ -364,5 +396,33 @@ mod tests {
         let mut version = b;
         version[0] = 1;
         assert!(TransparentDisplayRecordV2x::decode(r.record.txid, &version).is_err());
+    }
+
+    #[test]
+    fn the_published_entry_is_derived_from_the_source_record() {
+        use crate::txid::{Address, AddressKind};
+        let p2pkh = |b: u8| [&[0x76, 0xa9, 0x14][..], &[b; 20], &[0x88, 0xac]].concat();
+        let mut first = input(1, 600, 0);
+        first.script = vec![0x51];
+        let mut second = input(2, 400, 0);
+        second.script = p2pkh(4);
+        let mut r = spend(
+            vec![first, second],
+            vec![DisplayOutput {
+                value: 900,
+                script: p2pkh(5),
+            }],
+        );
+        let entry = r.display_record().unwrap().entry;
+        assert_eq!(entry.source, Address::from_script(&p2pkh(4)));
+        assert_eq!(entry.source.kind, AddressKind::P2pkh);
+        assert!(entry.multiple_source_scripts);
+        assert_eq!(
+            (entry.fee, entry.input_count, entry.output_count),
+            (100, 2, 1)
+        );
+        assert_eq!(entry.outputs[0].unwrap().value, 900);
+        r.record.metadata.fee = FeeState::Unknown;
+        assert!(r.display_record().is_err());
     }
 }

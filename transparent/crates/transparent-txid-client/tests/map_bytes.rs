@@ -43,7 +43,6 @@ fn entry(shard_id: u64, sealed: bool) -> DisplayMapEntry {
         geometry: "txid-2k".into(),
         n_buckets: 1,
         directory_segments: vec![1],
-        page_segments: 1,
         records: 40_000 + shard_id % 7_919,
         min_bucket_records: 40_000 + shard_id % 7_919,
         manifest_digest: hex_of("manifest", shard_id),
@@ -241,10 +240,10 @@ fn split_map_bytes_at_the_live_window_and_at_genesis() {
         assert!(m.cold_archive.1 <= m.after_409.1 + 6_000);
         if archives == 425 {
             // Under 7.5 KB cold and about 1 KB after a 409, against about
-            // 260 KB raw and 46 KB gzipped for the full map.
+            // 248 KB raw and 46 KB gzipped for the full map.
             assert!(m.cold_archive.1 <= 7_500, "{}", m.cold_archive.1);
             assert!(m.after_409.1 <= 1_200, "{}", m.after_409.1);
-            assert!(m.full.0 >= 250_000 && m.full.1 >= 40_000);
+            assert!(m.full.0 >= 240_000 && m.full.1 >= 40_000);
         }
     }
 }

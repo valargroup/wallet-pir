@@ -195,19 +195,26 @@ impl Journal for Snapshot {
     fn display_at(
         &self,
         height: u64,
-    ) -> Result<Vec<transparent_shard::txid::TransparentDisplayRecord>, EventStoreError> {
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
         let block = self
             .blocks
             .get(&height)
             .ok_or_else(|| EventStoreError::Invariant("snapshot display block missing".into()))?;
-        let records = crate::display_journal::read(&self.display_dir, block.block_hash)?;
+        let sources = crate::display_journal::read_sources(&self.display_dir, block.block_hash)?;
         crate::display_journal::validate_events(
-            &records,
+            &sources,
             &self.events_at(height)?.ok_or_else(|| {
                 EventStoreError::Invariant("snapshot display events missing".into())
             })?,
         )?;
-        Ok(records)
+        sources
+            .iter()
+            .map(|source| {
+                source
+                    .display_record()
+                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
+            })
+            .collect()
     }
     fn genesis_hash(&self) -> &str {
         &self.genesis
@@ -581,27 +588,10 @@ async fn ingest_once(
             return Err("block became noncanonical during extraction".into());
         }
         {
+            // History publications carry no display tables; the txid display
+            // controller keeps its own journal with display sidecars.
             let mut journal = store.lock().await;
-            let display = authority
-                .0
-                .active
-                .read()
-                .unwrap()
-                .filters
-                .map()
-                .shards
-                .iter()
-                .any(|s| s.txid_segments.is_some());
-            if display {
-                journal.append_block_with_display(
-                    next,
-                    built.block_hash,
-                    &built.events,
-                    &built.display,
-                )?;
-            } else {
-                journal.append_block(next, built.block_hash, &built.events)?;
-            }
+            journal.append_block(next, built.block_hash, &built.events)?;
             journal.commit()?;
         }
         authority.0.status.write().unwrap()["journal_height"] = next.into();
@@ -692,12 +682,6 @@ async fn publish_once(
             record: Some(directory.join("publication.json")),
             source_sha: Some(config.source_sha.clone()),
             directory_choice: config.directory_choice,
-            txid_display: old
-                .filters
-                .map()
-                .shards
-                .iter()
-                .any(|s| s.txid_segments.is_some()),
             range_profile: config.range_profile.clone(),
         };
         tokio::task::spawn_blocking(move || {
@@ -1204,7 +1188,6 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: publication::DirectoryChoice::Off,
-            txid_display: false,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         };
         publication::publish(&options, &journal, BlockHash::from_internal_bytes([0; 32])).unwrap();

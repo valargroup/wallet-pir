@@ -1,149 +1,33 @@
 //! The wallet txid client (`transparent-txid-client`) against the in-process
 //! tiered display deployment, over real HTTP through a blocking test
 //! transport that logs, and on request rewrites, every exchange.
-#[path = "../examples/support/txdisplay.rs"]
-mod txdisplay;
+//!
+//! Entries are fixed-size, so every lookup that reaches a shard sends the
+//! same transcript: found or absent, a complete entry or one with omissions.
 
-use axum::body::Body;
-use axum::extract::{Request, State};
-use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
-use axum::Router;
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::path::Path;
+use std::sync::OnceLock;
 use std::time::Duration;
-use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{
-    self, DisplayRecentMap, DisplaySealParams, DisplayTable, TXID_2K,
-};
-use transparent_shard::txid::TransparentDisplayRecord;
-use transparent_shard_server::assignment::WorkerRole;
-use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
-use transparent_shard_server::display::service::DisplayRuntime;
-use transparent_shard_server::display::synth::{self, Published, ShardSpec};
-use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
+use transparent_shard::display::{self, DisplayRecentMap, DisplayTable, TXID_2K};
+use transparent_shard::txid::{self, flags, AddressKind, DisplayEntry, DisplayRecord, Tag};
+use transparent_shard_server::display::synth::{self, Published};
 use transparent_txid_client::{
-    Method, Placement, ProfileCache, ProtocolKind, Route, Tier, TransportError, TxidDisplayClient,
-    TxidError, TxidLookup, TxidReply, TxidRequest, TxidTransport,
+    Method, Placement, ProtocolKind, Route, Tier, TxidDisplayClient, TxidError, TxidLookup,
+    TxidReply,
 };
-use txdisplay::{DisplayClient, LookupResult};
 
 #[path = "support/display_world.rs"]
 mod display_world;
 use display_world::*;
-
-/// One exchange as the transport saw it, after any rewrite.
-#[derive(Clone, Debug)]
-struct Sent {
-    method: Method,
-    route: Route,
-    path: String,
-    template: &'static str,
-    body: Vec<u8>,
-    status: u16,
-    reply_bytes: usize,
-}
-
-type Intercept = Box<dyn FnMut(&TxidRequest) -> Option<TxidReply>>;
-type Tamper = Box<dyn FnMut(&TxidRequest, &mut TxidReply)>;
-type Reroute = Box<dyn FnMut(&str) -> String>;
-
-/// A blocking reqwest transport with fault hooks.
-struct Http {
-    client: reqwest::blocking::Client,
-    base: String,
-    log: Vec<Sent>,
-    /// Answers a request without sending it.
-    intercept: Option<Intercept>,
-    /// Rewrites a reply before the client sees it.
-    tamper: Option<Tamper>,
-    /// Rewrites the path that is actually sent.
-    reroute: Option<Reroute>,
-}
-
-impl Http {
-    fn new(base: &str) -> Self {
-        Self {
-            client: reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(120))
-                .build()
-                .unwrap(),
-            base: base.to_string(),
-            log: Vec::new(),
-            intercept: None,
-            tamper: None,
-            reroute: None,
-        }
-    }
-
-    fn take_log(&mut self) -> Vec<Sent> {
-        std::mem::take(&mut self.log)
-    }
-}
-
-impl TxidTransport for Http {
-    fn send(&mut self, request: TxidRequest) -> Result<TxidReply, TransportError> {
-        let mut reply = match self.intercept.as_mut().and_then(|f| f(&request)) {
-            Some(reply) => reply,
-            None => {
-                let path = match self.reroute.as_mut() {
-                    Some(f) => f(request.path()),
-                    None => request.path().to_string(),
-                };
-                let url = format!("{}{path}", self.base);
-                let builder = match request.method {
-                    Method::Get => self.client.get(url),
-                    Method::Post => self
-                        .client
-                        .post(url)
-                        .header("content-type", request.content_type().unwrap())
-                        .body(request.body.clone()),
-                };
-                let response = builder.send().map_err(|e| TransportError(e.to_string()))?;
-                let header = |name: &str| {
-                    response
-                        .headers()
-                        .get(name)
-                        .and_then(|v| v.to_str().ok())
-                        .map(str::to_string)
-                };
-                TxidReply {
-                    status: response.status().as_u16(),
-                    retry_after: header("retry-after"),
-                    map_sha256: header("x-txid-map-sha256"),
-                    body: response
-                        .bytes()
-                        .map_err(|e| TransportError(e.to_string()))?
-                        .to_vec(),
-                }
-            }
-        };
-        if let Some(tamper) = self.tamper.as_mut() {
-            tamper(&request, &mut reply);
-        }
-        self.log.push(Sent {
-            method: request.method,
-            route: request.route,
-            path: request.path().to_string(),
-            template: request.template(),
-            body: request.body.clone(),
-            status: reply.status,
-            reply_bytes: reply.body.len(),
-        });
-        Ok(reply)
-    }
-}
 
 /// One deployment and runtime for the whole binary: every test brings its own
 /// client and transport, so faults never cross tests.
 struct Env {
     rt: tokio::runtime::Runtime,
     world: World,
-    profiles: ProfileCache,
 }
 
 /// Tests share one server; run them one at a time so admission never sheds
@@ -171,17 +55,13 @@ fn env() -> &'static Env {
             .build()
             .unwrap();
         let world = rt.block_on(World::start());
-        Env {
-            rt,
-            world,
-            profiles: ProfileCache::default(),
-        }
+        Env { rt, world }
     })
 }
 
 impl Env {
     fn client(&self) -> TxidDisplayClient {
-        TxidDisplayClient::with_profiles(self.profiles.clone())
+        TxidDisplayClient::with_profiles(profiles())
     }
 
     fn http(&self) -> Http {
@@ -206,61 +86,69 @@ fn recent_sha256_of(publication: &Path) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
-fn routes(log: &[Sent]) -> Vec<Route> {
-    log.iter().map(|s| s.route).collect()
+/// The class records of a fixture shard, in [`classes`] order.
+fn classes_of(records: &[DisplayRecord]) -> &[DisplayRecord] {
+    &records[CLASSES..CLASSES + 6]
 }
 
-fn queries<'a>(log: &'a [Sent], table: &str) -> Vec<&'a Sent> {
-    log.iter()
-        .filter(|s| s.route == Route::Query && s.path.ends_with(&format!("/query/{table}")))
-        .collect()
-}
-
-fn posts(log: &[Sent]) -> usize {
-    log.iter().filter(|s| s.method == Method::Post).count()
-}
-
-/// Request and response body bytes of a transcript.
-fn body_bytes(log: &[Sent]) -> (usize, usize) {
-    (
-        log.iter().map(|s| s.body.len()).sum(),
-        log.iter().map(|s| s.reply_bytes).sum(),
-    )
-}
-
-fn found(
-    lookup: TxidLookup,
-    record: &TransparentDisplayRecord,
-) -> transparent_txid_client::Provenance {
-    match lookup {
-        TxidLookup::Found {
-            record: actual,
-            provenance,
-        } => {
-            assert_eq!(&actual, record);
-            provenance
+/// The facts each class must carry, beyond equality with the publisher's
+/// entry: the omission flags and address kinds a wallet displays from.
+fn check_class(class: usize, entry: &DisplayEntry) {
+    let kind = |slot: usize| entry.outputs[slot].map(|o| o.address.kind);
+    match class {
+        // Regular: two inputs of one script to one address.
+        0 => {
+            assert!(entry.is_complete(), "{entry:?}");
+            assert_eq!((entry.input_count, entry.output_count), (2, 1));
+            assert_eq!(entry.source.kind, AddressKind::P2pkh);
+            assert_eq!((kind(0), kind(1)), (Some(AddressKind::P2pkh), None));
+            assert_eq!(entry.flags(), 0);
         }
-        other => panic!("{other:?} for a published record"),
-    }
-}
-
-/// The two directory queries of a lookup, then its `pages` page queries, all
-/// 200 with the fixed upload.
-fn assert_queries(log: &[Sent], pages: usize) {
-    let posts: Vec<&Sent> = log.iter().filter(|s| s.method == Method::Post).collect();
-    assert_eq!(posts.len(), 2 + pages, "{:?}", routes(log));
-    assert!(posts[..2]
-        .iter()
-        .all(|s| s.path.contains("/query/directory-")));
-    assert!(posts[2..].iter().all(|s| s.path.ends_with("/query/pages")));
-    for post in posts {
-        assert_eq!(post.body.len() as u64, QUERY_BYTES);
-        assert_eq!(post.status, 200);
+        // Unshield: no transparent source, and none is omitted.
+        1 => {
+            assert!(entry.is_complete(), "{entry:?}");
+            assert_eq!(entry.input_count, 0);
+            assert_eq!(entry.source.kind, AddressKind::Absent);
+            assert_eq!(entry.flags(), flags::SHIELDED_COMPONENTS);
+        }
+        // More than two outputs: the first two and the count.
+        2 => {
+            assert!(!entry.is_complete());
+            assert!(entry.more_than_two_outputs());
+            assert_eq!(entry.output_count, 5);
+            assert_eq!(
+                (kind(0), kind(1)),
+                (Some(AddressKind::P2pkh), Some(AddressKind::P2pkh))
+            );
+            assert_eq!(entry.flags(), flags::MORE_THAN_TWO_OUTPUTS);
+        }
+        // Two source scripts, and an output with no address to show.
+        3 => {
+            assert!(!entry.is_complete());
+            assert!(entry.multiple_source_scripts);
+            assert_eq!(kind(0), Some(AddressKind::Other));
+            assert_eq!(entry.flags(), flags::MULTIPLE_SOURCE_SCRIPTS);
+        }
+        // Both pools funded it.
+        4 => {
+            assert!(!entry.is_complete());
+            assert_eq!(
+                entry.flags(),
+                flags::SHIELDED_COMPONENTS | flags::SHIELDED_AND_TRANSPARENT_FUNDING
+            );
+        }
+        // Coinbase: no input, no fee.
+        5 => {
+            assert!(entry.is_complete(), "{entry:?}");
+            assert_eq!((entry.fee, entry.input_count), (0, 0));
+            assert_eq!(entry.flags(), flags::COINBASE);
+        }
+        _ => unreachable!(),
     }
 }
 
 #[test]
-fn inline_found_exact_transcript() {
+fn found_exact_transcript() {
     let _serial = serial();
     let env = env();
     for (records, height, digest, shard_id, tier) in [
@@ -287,7 +175,7 @@ fn inline_found_exact_transcript() {
         };
         let mut client = env.client();
         let mut http = env.http();
-        let record = &records[40];
+        let record = &records[CLASSES];
         let provenance = found(
             client
                 .lookup(&mut http, record.txid.0, height, &never)
@@ -313,7 +201,7 @@ fn inline_found_exact_transcript() {
         assert_eq!(Some(provenance.map_sha256.as_str()), client.map_sha256());
         assert_eq!(provenance.map_sha256, recent_sha256(&env.world));
         let (up, down) = body_bytes(&log);
-        eprintln!("bandwidth inline cold {tier:?}: up {up} B, down {down} B");
+        eprintln!("bandwidth cold {tier:?}: up {up} B, down {down} B");
         // Warm: the same two queries only.
         found(
             client
@@ -323,46 +211,59 @@ fn inline_found_exact_transcript() {
         );
         let log = http.take_log();
         assert_eq!(routes(&log), [Route::Query, Route::Query]);
+        assert_queries(&log, 0);
         let (up, down) = body_bytes(&log);
-        eprintln!("bandwidth inline warm {tier:?}: up {up} B, down {down} B");
+        assert_eq!((up as u64, down as u64), (2 * QUERY_BYTES, 2 * REPLY_BYTES));
+        eprintln!("bandwidth warm {tier:?}: up {up} B, down {down} B");
     }
 }
 
+/// Every case the format distinguishes comes back as exactly the entry the
+/// publisher derived, flags included, through the same transcript as an
+/// absent txid, cold and warm, in both tiers.
 #[test]
-fn paged_found_pages_queries() {
+fn every_case_is_the_published_entry_through_the_absent_transcript() {
     let _serial = serial();
     let env = env();
-    let mut client = env.client();
-    let mut http = env.http();
-    for (index, pages) in [(41usize, 1usize), (42, 2), (43, 5)] {
-        let record = &env.world.a0_records[index];
-        found(
-            client
-                .lookup(&mut http, record.txid.0, 150, &never)
-                .unwrap(),
-            record,
+    for (records, height) in [(&env.world.a0_records, 150), (&env.world.r0_records, 230)] {
+        let mut warm = env.client();
+        let mut warm_http = env.http();
+        assert_eq!(
+            warm.lookup(&mut warm_http, ABSENT, height, &never).unwrap(),
+            TxidLookup::Absent
         );
-        let log = http.take_log();
-        assert_queries(&log, pages);
-        assert_eq!(queries(&log, "pages").len(), pages);
-        // The pages setup is fetched once, after the directory queries.
-        let setups: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Setup).collect();
-        if index == 41 {
-            let first_page = log
-                .iter()
-                .position(|s| s.path.ends_with("/query/pages"))
+        let cold_absent = shape(&warm_http.take_log());
+        assert_eq!(
+            warm.lookup(&mut warm_http, ABSENT, height, &never).unwrap(),
+            TxidLookup::Absent
+        );
+        let warm_absent = warm_http.take_log();
+        assert_queries(&warm_absent, 0);
+        let warm_absent = shape(&warm_absent);
+        assert_eq!(warm_absent.len(), 2);
+        for (class, record) in classes_of(records).iter().enumerate() {
+            let mut http = env.http();
+            let lookup = env
+                .client()
+                .lookup(&mut http, record.txid.0, height, &never)
                 .unwrap();
-            assert_eq!(log[first_page - 1].route, Route::Setup);
-            assert!(log[first_page - 1].path.contains("/setup/pages/0"));
-            assert_eq!(setups.len(), 2);
-        } else {
-            assert!(setups.is_empty());
+            let TxidLookup::Found { entry, .. } = &lookup else {
+                panic!("{lookup:?} for class {class}");
+            };
+            check_class(class, entry);
+            found(lookup, record);
+            assert_eq!(shape(&http.take_log()), cold_absent, "class {class} cold");
+            found(
+                warm.lookup(&mut warm_http, record.txid.0, height, &never)
+                    .unwrap(),
+                record,
+            );
+            assert_eq!(
+                shape(&warm_http.take_log()),
+                warm_absent,
+                "class {class} warm"
+            );
         }
-        let (up, down) = body_bytes(&log);
-        eprintln!(
-            "bandwidth pages-{pages} {}: up {up} B, down {down} B",
-            if index == 41 { "cold" } else { "warm" }
-        );
     }
 }
 
@@ -372,7 +273,7 @@ fn absent_sends_same_transcript_shape() {
     let env = env();
     let mut client = env.client();
     let mut http = env.http();
-    let record = &env.world.a0_records[40];
+    let record = &env.world.a0_records[CLASSES];
     found(
         client
             .lookup(&mut http, record.txid.0, 150, &never)
@@ -388,19 +289,26 @@ fn absent_sends_same_transcript_shape() {
     let absent = http.take_log();
     assert_eq!(routes(&absent), routes(&present));
     assert_queries(&absent, 0);
-    for (a, p) in absent.iter().zip(&present) {
-        assert_eq!(a.template, p.template);
-        assert_eq!(a.body.len(), p.body.len());
-        assert_eq!(a.reply_bytes, p.reply_bytes);
-    }
+    // Same requests, same body sizes each way, same statuses.
+    assert_eq!(shape(&absent), shape(&present));
     let (up, down) = body_bytes(&absent);
     eprintln!("bandwidth absent cold: up {up} B, down {down} B");
     // Warm absent: two queries only, as warm found.
+    found(
+        client
+            .lookup(&mut http, record.txid.0, 150, &never)
+            .unwrap(),
+        record,
+    );
+    let present = http.take_log();
     assert_eq!(
         client.lookup(&mut http, ABSENT, 150, &never).unwrap(),
         TxidLookup::Absent
     );
-    assert_eq!(routes(&http.take_log()), [Route::Query, Route::Query]);
+    let absent = http.take_log();
+    assert_eq!(routes(&absent), [Route::Query, Route::Query]);
+    assert_eq!(shape(&absent), shape(&present));
+    assert_eq!(body_bytes(&absent), body_bytes(&present));
 }
 
 #[test]
@@ -409,7 +317,7 @@ fn placement_below_or_above_no_post() {
     let env = env();
     let mut client = env.client();
     let mut http = env.http();
-    let txid = env.world.a0_records[40].txid.0;
+    let txid = env.world.a0_records[CLASSES].txid.0;
     for (height, placement) in [
         (0, Placement::Below),
         (99, Placement::Below),
@@ -438,28 +346,31 @@ fn placement_below_or_above_no_post() {
 fn unsupported_schema_codec() {
     let _serial = serial();
     let env = env();
-    let txid = env.world.a0_records[40].txid.0;
-    // A codec this client does not know.
-    let mut http = env.http();
-    http.tamper = Some(Box::new(|request, reply| {
-        if request.route == Route::Init {
-            let mut init: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
-            init["codec"] = "transparent-txid-display-v9".into();
-            reply.body = init.to_string().into_bytes();
-        }
-    }));
-    assert_eq!(
-        env.client().lookup(&mut http, txid, 150, &never).unwrap(),
-        TxidLookup::Unsupported
-    );
-    assert_eq!(routes(&http.take_log()), [Route::Init]);
+    let txid = env.world.a0_records[CLASSES].txid.0;
+    // A codec this client does not know, the earlier variable-length one
+    // included.
+    for codec in ["transparent-txid-display-v1", "transparent-txid-display-v9"] {
+        let mut http = env.http();
+        http.tamper = Some(Box::new(move |request, reply| {
+            if request.route == Route::Init {
+                let mut init: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+                init["codec"] = codec.into();
+                reply.body = init.to_string().into_bytes();
+            }
+        }));
+        assert_eq!(
+            env.client().lookup(&mut http, txid, 150, &never).unwrap(),
+            TxidLookup::Unsupported
+        );
+        assert_eq!(routes(&http.take_log()), [Route::Init]);
+    }
     // A recent map schema this client does not know, canonical and correctly
     // announced.
     let mut http = env.http();
     http.tamper = Some(Box::new(|request, reply| {
         if request.route == Route::Map {
             let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
-            map.schema = "transparent-txid-display-shard-v2".into();
+            map.schema = "transparent-txid-display-shard-v3".into();
             reply.body = map.to_bytes();
             reply.map_sha256 = Some(map.sha256());
         }
@@ -483,7 +394,7 @@ fn stale() -> TxidReply {
 fn stale_409_refresh_retry_once_then_stale() {
     let _serial = serial();
     let env = env();
-    let record = &env.world.a0_records[40];
+    let record = &env.world.a0_records[CLASSES];
     // One 409: the recent map is fetched again and the whole lookup
     // retried. The index chunk is cached by digest and not fetched again.
     let mut http = env.http();
@@ -562,11 +473,15 @@ fn stale_409_refresh_retry_once_then_stale() {
 fn overloaded_503_retry_after_no_internal_retry() {
     let _serial = serial();
     let env = env();
-    let record = &env.world.a0_records[41];
+    let record = &env.world.a0_records[CLASSES + 2];
     let mut client = env.client();
     let mut http = env.http();
-    http.intercept = Some(Box::new(|request| {
-        request.path().ends_with("/query/pages").then(|| TxidReply {
+    // The second directory query is shed: the lookup fails rather than
+    // deciding from one row.
+    let mut queries = 0;
+    http.intercept = Some(Box::new(move |request| {
+        queries += usize::from(request.route == Route::Query);
+        (request.route == Route::Query && queries == 2).then(|| TxidReply {
             status: 503,
             retry_after: Some("7".into()),
             body: br#"{"error":"busy"}"#.to_vec(),
@@ -580,7 +495,7 @@ fn overloaded_503_retry_after_no_internal_retry() {
         })
     );
     let log = http.take_log();
-    assert_eq!(queries(&log, "pages").len(), 1);
+    assert_eq!(posts(&log), 2);
     assert_eq!(log.last().unwrap().status, 503);
     // Without a usable hint, still no retry.
     http.intercept = Some(Box::new(|request| {
@@ -603,15 +518,15 @@ fn overloaded_503_retry_after_no_internal_retry() {
             .unwrap(),
         record,
     );
-    assert_eq!(posts(&http.log), 3);
-    assert_eq!(http.take_log().len(), 3);
+    assert_eq!(posts(&http.log), 2);
+    assert_eq!(http.take_log().len(), 2);
 }
 
 #[test]
 fn misdirected_421_refused() {
     let _serial = serial();
     let env = env();
-    let record = &env.world.r0_records[40];
+    let record = &env.world.r0_records[CLASSES];
     let mut http = env.http();
     // The edge sends archive-tier paths to the archive owner, which refuses
     // the recent revision with 421.
@@ -677,7 +592,7 @@ fn json_field(route: Route, field: &'static str, value: serde_json::Value) -> Ta
 fn tampered_manifest_protocol_never_absent() {
     let _serial = serial();
     let env = env();
-    let found = env.world.a0_records[40].txid.0;
+    let found = env.world.a0_records[CLASSES].txid.0;
     // A field changed: no longer the map entry's manifest.
     assert_tampered(
         found,
@@ -701,6 +616,7 @@ fn tampered_setup_protocol_never_absent() {
         ("public_params_sha256", serde_json::json!("00".repeat(32))),
         ("segment", 1.into()),
         ("bucket", 1.into()),
+        ("table", "directory-1".into()),
         ("table", "pages".into()),
         ("geometry", "txid-4k".into()),
         ("manifest_digest", "aa".repeat(32).into()),
@@ -843,10 +759,9 @@ fn tampered_map_header_protocol_never_absent() {
 fn cancel_stops_before_next_request() {
     let _serial = serial();
     let env = env();
-    let record = &env.world.a0_records[41];
-    // Cold paged lookup: init, map, chunk, manifest, setup, 2 queries, setup,
-    // 1 page.
-    for allowed in 0..9 {
+    let record = &env.world.a0_records[CLASSES + 2];
+    // Cold archive lookup: init, map, chunk, manifest, setup, 2 queries.
+    for allowed in 0..7 {
         let mut http = env.http();
         let sent = Cell::new(0usize);
         let cancel = || {
@@ -870,7 +785,7 @@ fn routes_match_whitelist_and_no_txid_in_path_or_body() {
     let mut http = env.http();
     let mut txids = Vec::new();
     for (records, height) in [(&env.world.a0_records, 150), (&env.world.r0_records, 230)] {
-        for record in &records[40..44] {
+        for record in classes_of(records) {
             found(
                 client
                     .lookup(&mut http, record.txid.0, height, &never)
@@ -903,6 +818,10 @@ fn routes_match_whitelist_and_no_txid_in_path_or_body() {
                 assert!(!sent.path.contains(&hex::encode(needle)));
                 assert!(!sent.body.windows(32).any(|w| w == needle));
             }
+            // Nor the tag the tables are keyed by.
+            let tag = Tag::of(txid).0;
+            assert!(!sent.path.contains(&hex::encode(tag)));
+            assert!(!sent.body.windows(tag.len()).any(|w| w == tag));
         }
         assert_eq!(sent.body.is_empty(), sent.method == Method::Get);
     }
@@ -936,19 +855,19 @@ fn caches_reused_second_lookup_only_posts() {
     let records = &env.world.a0_records;
     found(
         client
-            .lookup(&mut http, records[43].txid.0, 150, &never)
+            .lookup(&mut http, records[CLASSES + 2].txid.0, 150, &never)
             .unwrap(),
-        &records[43],
+        &records[CLASSES + 2],
     );
     let cold = http.take_log();
-    assert_eq!(posts(&cold), 7);
+    assert_eq!(posts(&cold), 2);
     assert!(cold.iter().any(|s| s.route == Route::Init));
-    for (index, pages) in [(40usize, 0usize), (41, 1), (42, 2), (43, 5)] {
+    for record in classes_of(records) {
         found(
             client
-                .lookup(&mut http, records[index].txid.0, 150, &never)
+                .lookup(&mut http, record.txid.0, 150, &never)
                 .unwrap(),
-            &records[index],
+            record,
         );
         let log = http.take_log();
         assert!(
@@ -956,10 +875,10 @@ fn caches_reused_second_lookup_only_posts() {
             "{:?}",
             routes(&log)
         );
-        assert_queries(&log, pages);
+        assert_queries(&log, 0);
     }
     // The other shard needs its own manifest and setups, not init or map.
-    let record = &env.world.r0_records[40];
+    let record = &env.world.r0_records[CLASSES];
     found(
         client
             .lookup(&mut http, record.txid.0, 230, &never)
@@ -972,73 +891,86 @@ fn caches_reused_second_lookup_only_posts() {
     );
 }
 
+/// The entry for `txid` in `shard` as its published table files hold it,
+/// read directly: both candidate rows of the txid's bucket in every segment.
+fn published_entry(shard: &Published, txid: &Txid) -> Option<DisplayEntry> {
+    let manifest = &shard.manifest;
+    let geometry = manifest.display_geometry().unwrap();
+    let tag = Tag::of(txid);
+    let table = DisplayTable::Directory(display::bucket(&tag, manifest.n_buckets));
+    let segments = manifest.segments(table).unwrap().len();
+    let mut rows = Vec::new();
+    for row in display::candidate_rows(
+        &tag,
+        manifest.shard_id,
+        table.bucket(),
+        geometry.directory_rows,
+    ) {
+        for segment in 0..segments {
+            let bytes = std::fs::read(shard.dir.join(table.file_name(segment))).unwrap();
+            let at = row as usize * txid::ROW_BYTES;
+            rows.push(bytes[at..at + txid::ROW_BYTES].to_vec());
+        }
+    }
+    txid::find_entry(&rows, txid).unwrap()
+}
+
+/// Every lookup agrees with the published files read directly, and with the
+/// publisher's records: what PIR returns is what the tables hold.
 #[test]
-fn differential_vs_reference_txdisplay() {
+fn differential_vs_published_tables() {
     let _serial = serial();
     let env = env();
-    let reference = env.world.client();
+    let world = &env.world;
     let mut client = env.client();
     let mut http = env.http();
-    let mut compared = 0;
-    let coincident = env.world.r0_records.last().unwrap().txid;
-    let mut cases: Vec<(Txid, u64)> = Vec::new();
-    for record in &env.world.a0_records {
-        cases.push((record.txid, 150));
+    let coincident = world.r0_records.last().unwrap();
+    let mut cases: Vec<(Txid, u64, Option<DisplayEntry>)> = Vec::new();
+    for record in &world.a0_records {
+        cases.push((record.txid, 150, Some(record.entry)));
     }
-    for record in &env.world.r0_records {
-        cases.push((record.txid, 230));
+    for record in &world.r0_records {
+        cases.push((record.txid, 230, Some(record.entry)));
     }
     cases.extend([
-        (Txid(ABSENT), 150),
-        (Txid(ABSENT), 230),
-        (coincident, 255),
-        (coincident, 99),
-        (coincident, 261),
+        (Txid(ABSENT), 150, None),
+        (Txid(ABSENT), 230, None),
+        (coincident.txid, 255, Some(coincident.entry)),
+        (coincident.txid, 99, None),
+        (coincident.txid, 261, None),
         // Published, but in the other shard than its height names.
-        (env.world.a0_records[40].txid, 230),
+        (world.a0_records[CLASSES].txid, 230, None),
     ]);
-    for (txid, height) in cases {
-        let expected = env
-            .rt
-            .block_on(reference.lookup(txid, Some(height)))
-            .unwrap();
+    let mut compared = 0;
+    for (txid, height, published) in cases {
+        let shard = match height {
+            100..=199 => Some(&world.a0),
+            200..=260 => Some(&world.r0),
+            _ => None,
+        };
         let actual = client.lookup(&mut http, txid.0, height, &never).unwrap();
         let log = http.take_log();
-        match (&expected.result, &actual) {
-            (LookupResult::Found(a), TxidLookup::Found { record, provenance }) => {
-                assert_eq!(a, record);
-                assert_eq!(expected.shard_id, Some(provenance.shard_id));
-                assert_eq!(
-                    expected.digest.as_deref(),
-                    Some(provenance.manifest_digest.as_str())
-                );
-                // The reference reads the full map, the client the recent map.
-                assert_eq!(
-                    expected.map_sha256.as_deref(),
-                    Some(env.world.p0.1.as_str())
-                );
-                assert_eq!(provenance.map_sha256, recent_sha256(&env.world));
+        let queries = log.iter().filter(|s| s.route == Route::Query).count();
+        match (shard, &actual) {
+            (Some(shard), TxidLookup::Found { entry, provenance }) => {
+                assert_eq!(published_entry(shard, &txid), Some(*entry));
+                assert_eq!(published, Some(*entry));
+                assert_eq!(provenance.shard_id, shard.manifest.shard_id);
+                assert_eq!(provenance.manifest_digest, shard.digest);
+                assert_eq!(provenance.map_sha256, recent_sha256(world));
+                assert_eq!(queries, 2);
             }
-            (LookupResult::Absent, TxidLookup::Absent)
-            | (LookupResult::PlacementUnknown, TxidLookup::PlacementUnknown(_))
-            | (LookupResult::Unsupported, TxidLookup::Unsupported) => {}
-            (e, a) => panic!("reference {e:?}, client {a:?}"),
+            (Some(shard), TxidLookup::Absent) => {
+                assert_eq!(published_entry(shard, &txid), None);
+                assert_eq!(published, None);
+                assert_eq!(queries, 2);
+            }
+            (None, TxidLookup::PlacementUnknown(_)) => assert_eq!(queries, 0),
+            (shard, actual) => panic!("{:?}: {actual:?}", shard.map(|s| &s.digest)),
         }
-        // The same private queries, row for row and table for table.
-        let rows: Vec<String> = expected.queries.iter().map(|q| q.table.clone()).collect();
-        let sent: Vec<String> = log
-            .iter()
-            .filter(|s| s.route == Route::Query)
-            .map(|s| s.path.rsplit('/').next().unwrap().to_string())
-            .collect();
-        let mut rows_sorted = rows.clone();
-        rows_sorted.sort();
-        let mut sent_sorted = sent.clone();
-        sent_sorted.sort();
-        assert_eq!(rows_sorted, sent_sorted);
         compared += 1;
     }
-    assert_eq!(compared, 44 + 45 + 6);
+    assert_eq!(compared, 46 + 47 + 6);
 }
 
 #[test]
@@ -1052,9 +984,7 @@ fn setup_seed_golden_matches_server() {
             DisplayTable::Directory(0),
             0x57a7_3ced_5e98_120a_u64,
         ),
-        ("txid-2k", DisplayTable::Pages, 0x6231_4f48_472b_6e15),
         ("txid-4k", DisplayTable::Directory(3), 0x28bc_e699_56cc_2d7e),
-        ("txid-4k", DisplayTable::Pages, 0x95df_53a3_e525_1353),
     ];
     for (name, table, seed) in golden {
         let geometry = display::display_by_name(name).unwrap();
@@ -1067,9 +997,10 @@ fn setup_seed_golden_matches_server() {
             table.kind().row_bytes(geometry)
         );
     }
-    // And what the running server publishes.
+    // And what the running server publishes: one table kind, no pages.
     let env = env();
     let init: serde_json::Value = env.rt.block_on(env.world.get("/v1/txid/init")).1;
+    assert_eq!(init["codec"], txid::CODEC);
     let geometry = init["geometries"]
         .as_array()
         .unwrap()
@@ -1080,7 +1011,15 @@ fn setup_seed_golden_matches_server() {
         geometry["txdirectory"]["setup_seed"],
         0x57a7_3ced_5e98_120a_u64
     );
-    assert_eq!(geometry["txpages"]["setup_seed"], 0x6231_4f48_472b_6e15_u64);
+    assert_eq!(geometry["txdirectory"]["row_bytes"], txid::ROW_BYTES);
+    assert!(geometry.get("txpages").is_none(), "{geometry}");
+}
+
+/// A txid in internal byte order from its display hex.
+fn parse_txid(display_hex: &str) -> Txid {
+    let mut bytes: [u8; 32] = hex::decode(display_hex).unwrap().try_into().unwrap();
+    bytes.reverse();
+    Txid(bytes)
 }
 
 /// A mainnet transaction at height 3,410,000 with one transparent input and
@@ -1093,32 +1032,38 @@ fn txid_live_lookup() {
         .unwrap_or_else(|_| "https://transparent-pir.valargroup.dev".to_string());
     let mut http = Http::new(&base);
     let mut client = TxidDisplayClient::new();
-    let txid =
-        txdisplay::parse_txid("fd4667e1a9b427715992cd12b3cdabeb2cfe7623e0e61c8d489f9b0b9a8effbf")
-            .unwrap();
+    let txid = parse_txid("fd4667e1a9b427715992cd12b3cdabeb2cfe7623e0e61c8d489f9b0b9a8effbf");
     let lookup = client.lookup(&mut http, txid.0, 3_410_000, &never).unwrap();
-    let TxidLookup::Found { record, provenance } = lookup else {
+    let TxidLookup::Found { entry, provenance } = lookup else {
         panic!("{lookup:?}");
     };
-    assert_eq!(record.txid, txid);
-    assert!(!record.coinbase);
-    let values: Vec<u64> = record.outputs.iter().map(|o| o.value).collect();
+    assert_eq!(entry.tag, Tag::of(&txid));
+    assert!(!entry.coinbase);
+    assert_eq!((entry.input_count, entry.output_count), (1, 2));
+    let values: Vec<u64> = entry.outputs.iter().flatten().map(|o| o.value).collect();
     assert_eq!(values, [1_816_444, 93_460_672_472]);
-    assert!(record
+    assert!(entry
         .outputs
         .iter()
-        .all(|o| o.script.len() == 25 && o.script[..3] == [0x76, 0xa9, 0x14]));
+        .flatten()
+        .all(|o| o.address.kind == AddressKind::P2pkh));
     assert_eq!(provenance.tier, Tier::Archive);
     let log = http.take_log();
-    assert_queries(&log, 0);
     let (up, down) = body_bytes(&log);
     eprintln!("live cold lookup: {provenance:?}, up {up} B, down {down} B");
+    found(
+        client.lookup(&mut http, txid.0, 3_410_000, &never).unwrap(),
+        &DisplayRecord::new(txid, entry).unwrap(),
+    );
+    let warm = shape(&http.take_log());
     // Absent at the same height: the same two queries.
     assert_eq!(
         client.lookup(&mut http, ABSENT, 3_410_000, &never).unwrap(),
         TxidLookup::Absent
     );
-    assert_eq!(routes(&http.take_log()), [Route::Query, Route::Query]);
+    let absent = http.take_log();
+    assert_eq!(routes(&absent), [Route::Query, Route::Query]);
+    assert_eq!(shape(&absent), warm);
 }
 
 #[test]
@@ -1136,7 +1081,7 @@ fn refresh_map_observes_a_new_publication() {
     assert_eq!(hex32(first), p0);
     assert_eq!(client.map_sha256(), Some(p0.as_str()));
     assert_eq!(routes(&http.take_log()), [Route::Map]);
-    let added = synth::record(30, 1, 25, 0);
+    let added = pair(30, 1, synth::record(30, 1, 25, 0));
     assert_eq!(
         client.lookup(&mut http, added.txid.0, 265, &never).unwrap(),
         TxidLookup::PlacementUnknown(Placement::Above)
@@ -1146,13 +1091,12 @@ fn refresh_map_observes_a_new_publication() {
 
     // The recent shard grows to 270 with one more record.
     let mut records = world.r0_records.clone();
-    records.push(added.clone());
-    let grown = synth::write_shard(
+    records.push(added);
+    let grown = write_shard(
         world.root.path(),
         &spec(1, 200, 270, false, &world.a0.digest),
         &records,
-    )
-    .unwrap();
+    );
     let p1 = synth::write_candidate(
         world.root.path(),
         &params(1),

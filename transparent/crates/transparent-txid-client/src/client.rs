@@ -18,7 +18,7 @@ use transparent_shard::display::{
     DisplayRecentMap, DisplayTable,
 };
 use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{self, TransparentDisplayRecord};
+use transparent_shard::txid::{self, Tag};
 
 /// Native profiles are a pure function of geometry and table kind and costly
 /// to derive, so clients may share them; nothing network-facing is shared.
@@ -40,7 +40,6 @@ struct InitTable {
 struct InitGeometry {
     name: String,
     txdirectory: InitTable,
-    txpages: InitTable,
 }
 
 #[derive(Deserialize)]
@@ -75,7 +74,6 @@ struct Located {
     map_sha256: String,
     geometry: &'static Geometry,
     bucket: u32,
-    manifest: Arc<DisplayManifest>,
 }
 
 /// One table of one revision, ready to be queried.
@@ -252,9 +250,9 @@ impl TxidDisplayClient {
             tier: tier(&located.entry),
         };
 
-        // Directory phase: exactly two queries, whether or not they coincide.
+        // Exactly two queries, whether or not they coincide, found or not.
         let rows = display::candidate_rows(
-            &txid,
+            &Tag::of(&txid),
             located.entry.shard_id,
             located.bucket,
             geometry.directory_rows,
@@ -264,46 +262,10 @@ impl TxidDisplayClient {
         let target = self.target(transport, cancel, &located, table, segments)?;
         let decoded = self.queries(transport, cancel, &located, &target, &rows)?;
         let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-        let Some(found) =
-            txid::find_directory(&rows, txid).map_err(protocol(ProtocolKind::Decode))?
-        else {
-            return Ok(Attempt::Done(TxidLookup::Absent));
-        };
-        if found.pages == 0 {
-            let record = txid::assemble(&found, &[]).map_err(protocol(ProtocolKind::Decode))?;
-            return Ok(Attempt::Done(TxidLookup::Found { record, provenance }));
+        match txid::find_entry(&rows, &txid).map_err(protocol(ProtocolKind::Decode))? {
+            Some(entry) => Ok(Attempt::Done(TxidLookup::Found { entry, provenance })),
+            None => Ok(Attempt::Done(TxidLookup::Absent)),
         }
-
-        // Page phase: exactly `pages` queries, one per page of the extent.
-        let page_rows = geometry.page_rows;
-        let segments = located.manifest.page_segments.len() as u32;
-        let first = u64::from(found.first_page)
-            .checked_sub(1)
-            .ok_or(TxidError::Protocol(ProtocolKind::Pages))?;
-        let end = first + u64::from(found.pages);
-        if end > u64::from(segments) * page_rows {
-            return Err(TxidError::Protocol(ProtocolKind::Pages));
-        }
-        let target = self.target(transport, cancel, &located, DisplayTable::Pages, segments)?;
-        let pages: Vec<u64> = (first..end).collect();
-        let selected: Vec<u64> = pages.iter().map(|page| page % page_rows).collect();
-        let decoded = self.queries(transport, cancel, &located, &target, &selected)?;
-        let mut rows = Vec::with_capacity(pages.len());
-        for page in pages {
-            let key = ((page / page_rows) as usize, page % page_rows);
-            rows.push(
-                decoded
-                    .get(&key)
-                    .cloned()
-                    .ok_or(TxidError::Protocol(ProtocolKind::Pages))?,
-            );
-        }
-        let record: TransparentDisplayRecord =
-            txid::assemble(&found, &rows).map_err(protocol(ProtocolKind::Decode))?;
-        if record.txid != txid {
-            return Err(TxidError::Protocol(ProtocolKind::Decode));
-        }
-        Ok(Attempt::Done(TxidLookup::Found { record, provenance }))
     }
 
     /// Init, recent map, index chunk, placement and manifest: everything
@@ -363,15 +325,16 @@ impl TxidDisplayClient {
         if !init.geometries.contains_key(geometry.name) {
             return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
         }
-        let bucket = display::bucket(&txid, entry.n_buckets);
-        let manifest = self.manifest(transport, cancel, &entry)?;
+        let bucket = display::bucket(&Tag::of(&txid), entry.n_buckets);
+        // Fetched and checked against the map entry before any query, even
+        // though the entry already carries what a lookup needs.
+        self.manifest(transport, cancel, &entry)?;
         Ok(Ok(Located {
             init,
             entry,
             map_sha256: cached.sha256.clone(),
             geometry,
             bucket,
-            manifest,
         }))
     }
 
@@ -562,7 +525,6 @@ impl TxidDisplayClient {
             .geometries
             .get(geometry.name)
             .map(|g| match kind {
-                DisplayKind::TxPages => &g.txpages,
                 DisplayKind::TxDirectory => &g.txdirectory,
             })
             .ok_or(TxidError::Protocol(ProtocolKind::Profile))?;
@@ -605,10 +567,7 @@ impl TxidDisplayClient {
         )?;
         let bad = TxidError::Protocol(ProtocolKind::Setup);
         let s: serde_json::Value = serde_json::from_slice(&reply.body).map_err(|_| bad.clone())?;
-        let bucket = match table {
-            DisplayTable::Directory(b) => serde_json::json!(b),
-            DisplayTable::Pages => serde_json::Value::Null,
-        };
+        let bucket = serde_json::json!(table.bucket());
         if s["manifest_digest"] != *digest
             || s["shard_id"] != entry.shard_id
             || s["table"] != table.label()

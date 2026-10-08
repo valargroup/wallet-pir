@@ -55,29 +55,33 @@ target; the publisher's own origins serve the public map, filters and setup toda
 
 ## Private transparent display capability
 
-The opt-in [txid display contract and native demo](txid-display.md) extend the
-same coordinator with `txdirectory` and `txpages`. This is separate from script
-history discovery. Full txids select packed 4 KiB rows privately; inline records
-up to 128 bytes and overflow fragments carry shared transaction metadata and
-complete ordered transparent outputs, including scripts outside the history
-profile. Canonical extraction and block-hash-addressed display sidecars use the
-existing event checkpoint; missing sidecars prevent complete display publication.
+[Txid display](txid-display.md) answers one question privately: what a wallet
+should show for one transparent transaction. Each transaction with a
+transparent input or output has one fixed 113-byte entry (`transparent-txid-display-v2`):
+- the fee, input and output counts, and a shielded-components bit;
+- the first address-shaped source;
+- outputs 0 and 1;
+- flags naming what the entry leaves out (more source scripts, more outputs,
+  shielded plus transparent funding).
 
-The capability has its own codec identity, manifest digests and table bindings.
-Workers verify its tables and include them in readiness, assignment and bounded
-cache accounting. No production activation or data migration follows from this
-source change. The reference query helper is demo/test code. The next wallet
-stage adds history/display lanes to one coordinator, preserves local send facts,
-and keeps confirmation, fee availability, financial coverage and display
-completeness independent. A display failure cannot authorize public lookup.
+Senders come from the spent outputs the extractor already resolves for fees.
+This is separate from script history discovery.
 
-A separate [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept)
-exists as a proof of concept. Sealed archive shards and one per-block recent
-shard, with hash buckets inside each, are published by
-`txid-display-controller` from the display sidecars. They are served by
-`transparent-txid-server` in archive-owner and recent-replica roles, which share
-the native runtime, cache and admission code but not `ShardSet`. History
-manifests and serving are unchanged. It is source and local evidence only.
+The extractor writes the entries into block-hash-addressed sidecars under the
+existing event checkpoint. The tiered `txid-display-controller` publishes them
+as sealed archive shards and one per-block recent shard. Inside a shard, each
+hash bucket is one table of 36-entry rows. A lookup is always two row queries,
+so the server learns the range, tier, bucket and timing, but never the size of
+the transaction.
+
+`transparent-txid-server` serves the tables in archive-owner and
+recent-replica roles. It shares the native runtime, cache and admission code
+with history serving, but not `ShardSet`. History manifests and serving carry
+no display tables.
+
+A display failure cannot authorize a public lookup; a wallet asks publicly
+only when the user explicitly requests it for one transaction. It is source
+and local evidence only.
 
 ## Component ownership
 

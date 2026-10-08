@@ -103,8 +103,8 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     let files = build_shipped(&dir.join(&recent.digest), &dir).unwrap();
     let set = DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).unwrap();
     let targets = set.held(&recent.digest).unwrap().targets();
-    // Two bucket directories and the pages, each one segment.
-    assert_eq!(targets.len(), 3);
+    // The two buckets' tables, each one segment.
+    assert_eq!(targets.len(), 2);
     assert_eq!(files.len(), targets.len());
     assert_eq!(runtime_files(&dir).len(), targets.len());
     assert!(set.shipped.is_some());
@@ -150,7 +150,8 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     .await
     .unwrap();
 
-    // A candidate missing one file: that table is built here and counted.
+    // A candidate missing one file: that bucket's table is built here and
+    // counted.
     let (partial, partial_sha) = {
         let mut next = spec(1, 20, 30, false, 2);
         next.parent_manifest_digest = shards[0].digest.clone();
@@ -170,7 +171,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
         (dir, sha)
     };
     let reply = prepare(&live, &partial, &partial_sha).await;
-    assert_eq!(reply["shipped"], 2, "{reply:?}");
+    assert_eq!(reply["shipped"], 1, "{reply:?}");
     assert_eq!(reply["shipped_fallbacks"], 1, "{reply:?}");
     live.command(DisplayCommand::Activate {
         expected: sha.clone(),
@@ -209,5 +210,5 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
         partial.join(MAP_FILE).is_file(),
         "the active candidate stays"
     );
-    assert_eq!(runtime_files(&partial).len(), 2);
+    assert_eq!(runtime_files(&partial).len(), 1);
 }

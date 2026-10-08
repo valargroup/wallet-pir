@@ -237,7 +237,6 @@ fn publish_profiled(
         );
 
         let manifest = ShardManifest {
-            txid_display: None,
             schema: SCHEMA.to_string(),
             profile: profile.to_string(),
             geometry: geometry.name.to_string(),
@@ -331,7 +330,6 @@ fn publish_profiled(
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: None,
             manifest_digest: digest.clone(),
             revision: manifest.revision,
             sealed: manifest.sealed,

@@ -1,17 +1,20 @@
 //! Inventory of a txid display publication, from the publisher's own files.
 //!
 //! - `census`: re-verifies every segment, decodes every bucket row and counts
-//!   distinct txids per (shard, bucket) and per (shard, bucket, page count),
-//!   the anonymity classes a lookup falls into.
+//!   distinct entries (by tag) per (shard, bucket), the anonymity class a
+//!   lookup falls into, and how many entries are complete and what the rest
+//!   leave out.
 //! - `fixture`: samples txids per (tier, class) with their heights and the
-//!   SHA-256 of each record's canonical encoding, plus absent controls, for
-//!   `txid-rate` and `txid-bandwidth`.
+//!   SHA-256 of each entry's canonical encoding, plus absent controls, for
+//!   `txid-rate` and `txid-bandwidth`. Tables hold tags, not txids, so the
+//!   txids come from the controller's heights index.
 //! - `audit`: checks a series of saved maps for sealed-shard immutability.
 //! - `synth`: writes a synthetic multi-shard publication for local runs.
 //!
 //! Runs on the coordinator; it never contacts a worker.
 
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io::{Read, Seek, SeekFrom};
@@ -20,7 +23,7 @@ use transparent_events::Txid;
 use transparent_shard::display::{
     self, display_by_name, DisplayMap, DisplaySealParams, DisplayTable,
 };
-use transparent_shard::txid::{self, DirectoryEntry, ROW_BYTES};
+use transparent_shard::txid::{self, AddressKind, DisplayEntry, Tag, ROW_BYTES};
 use transparent_shard_server::display::set::{DisplayRevision, MAP_FILE};
 use transparent_shard_server::display::synth::{self, ShardSpec};
 use transparent_shard_server::display::tier;
@@ -39,18 +42,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Distinct txids per (shard, bucket) and per (shard, bucket, pages).
+    /// Distinct entries per (shard, bucket), and their omissions.
     Census {
         /// A candidate directory, or a root whose newest candidate is used.
         #[arg(long)]
         publication: PathBuf,
-        /// Classes below this many txids are listed.
+        /// (shard, bucket) classes below this many entries are listed.
         #[arg(long, default_value_t = 10_000)]
         floor: u64,
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Lookup samples per (tier, class) with exactness digests.
+    /// Lookup samples per (tier, class) with exactness digests. The class is
+    /// `complete` or `omission`.
     Fixture {
         #[arg(long)]
         publication: PathBuf,
@@ -245,12 +249,12 @@ impl Rows {
         Ok(bytes)
     }
 
-    /// Every directory entry of bucket `bucket`, checked for membership.
+    /// Every entry of bucket `bucket`, checked for membership.
     fn entries(
         &mut self,
         revision: &DisplayRevision,
         bucket: u32,
-    ) -> Result<Vec<DirectoryEntry>, Error> {
+    ) -> Result<Vec<DisplayEntry>, Error> {
         let table = DisplayTable::Directory(bucket);
         let mut out = Vec::new();
         for segment in 0..revision.segments(table).unwrap_or(0) as usize {
@@ -258,9 +262,9 @@ impl Rows {
                 for entry in
                     display::row_entries(&self.row(table, segment, row)?).map_err(|e| e.0)?
                 {
-                    if display::bucket(&entry.txid, revision.manifest.n_buckets) != bucket {
+                    if display::bucket(&entry.tag, revision.manifest.n_buckets) != bucket {
                         return Err(format!(
-                            "shard {} bucket {bucket} holds a txid of another bucket",
+                            "shard {} bucket {bucket} holds an entry of another bucket",
                             revision.manifest.shard_id
                         )
                         .into());
@@ -272,24 +276,28 @@ impl Rows {
         Ok(out)
     }
 
-    fn assemble(
+    /// What a client's two queries find for `txid` in this revision: both
+    /// candidate rows of its bucket, in every segment of that bucket's table.
+    fn lookup(
         &mut self,
         revision: &DisplayRevision,
-        entry: &DirectoryEntry,
-    ) -> Result<txid::TransparentDisplayRecord, Error> {
-        let page_rows = revision.geometry.page_rows;
+        txid: &Txid,
+    ) -> Result<Option<DisplayEntry>, Error> {
+        let tag = Tag::of(txid);
+        let bucket = display::bucket(&tag, revision.manifest.n_buckets);
+        let table = DisplayTable::Directory(bucket);
         let mut rows = Vec::new();
-        if entry.pages > 0 {
-            let first = u64::from(entry.first_page) - 1;
-            for page in first..first + u64::from(entry.pages) {
-                rows.push(self.row(
-                    DisplayTable::Pages,
-                    (page / page_rows) as usize,
-                    page % page_rows,
-                )?);
+        for row in display::candidate_rows(
+            &tag,
+            revision.manifest.shard_id,
+            bucket,
+            revision.geometry.directory_rows,
+        ) {
+            for segment in 0..revision.segments(table).unwrap_or(0) as usize {
+                rows.push(self.row(table, segment, row)?);
             }
         }
-        Ok(txid::assemble(entry, &rows).map_err(|e| e.0)?)
+        Ok(txid::find_entry(&rows, txid).map_err(|e| e.0)?)
     }
 }
 
@@ -309,66 +317,139 @@ fn revisions(dir: &Path, map: &DisplayMap) -> Result<Vec<DisplayRevision>, Error
         .collect()
 }
 
-/// Payload sizes are binned so inline-cutoff what-ifs can be read off.
-const PAYLOAD_EDGES: [u64; 15] = [
-    64, 128, 192, 256, 384, 512, 768, 1_024, 2_048, 4_050, 8_100, 12_150, 16_200, 20_250, 40_500,
-];
-const INLINE_CUTOFFS: [u64; 6] = [128, 192, 256, 384, 512, 1_024];
+/// The omissions `entry` names, in a fixed order: empty exactly when the
+/// entry is complete.
+fn omissions(entry: &DisplayEntry) -> Vec<&'static str> {
+    [
+        (entry.multiple_source_scripts, "multiple_source_scripts"),
+        (entry.more_than_two_outputs(), "more_than_two_outputs"),
+        (
+            entry.shielded_and_transparent_funding,
+            "shielded_and_transparent_funding",
+        ),
+        (entry.source.kind == AddressKind::Other, "source_other"),
+        (
+            entry
+                .outputs
+                .iter()
+                .flatten()
+                .any(|output| output.address.kind == AddressKind::Other),
+            "output_other",
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(named, omission)| named.then_some(omission))
+    .collect()
+}
+
+/// How many entries hold every fact a wallet displays, and what the others
+/// leave out. An entry may name several omissions, so the omission counts
+/// can add up to more than `omitted`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+struct EntryCounts {
+    entries: u64,
+    complete: u64,
+    /// Entries naming at least one omission.
+    omitted: u64,
+    /// The inputs spend two or more distinct scripts.
+    multiple_source_scripts: u64,
+    more_than_two_outputs: u64,
+    /// Transparent inputs, and the shielded pools also paid in.
+    shielded_and_transparent_funding: u64,
+    /// Inputs exist but none spends an address-shaped script.
+    source_other: u64,
+    /// At least one held output has no address.
+    output_other: u64,
+    /// Neither a transparent input nor coinbase: paid from the shielded
+    /// pools. Complete facts, not an omission.
+    unshield: u64,
+    coinbase: u64,
+}
+
+impl EntryCounts {
+    fn add(&mut self, entry: &DisplayEntry) -> Result<(), Error> {
+        let named = omissions(entry);
+        // The codec decides completeness; every omission it knows must be
+        // one this census counts.
+        if named.is_empty() != entry.is_complete() {
+            return Err("an entry's completeness disagrees with the omissions counted".into());
+        }
+        self.entries += 1;
+        if named.is_empty() {
+            self.complete += 1;
+        } else {
+            self.omitted += 1;
+        }
+        for omission in named {
+            *match omission {
+                "multiple_source_scripts" => &mut self.multiple_source_scripts,
+                "more_than_two_outputs" => &mut self.more_than_two_outputs,
+                "shielded_and_transparent_funding" => &mut self.shielded_and_transparent_funding,
+                "source_other" => &mut self.source_other,
+                "output_other" => &mut self.output_other,
+                other => unreachable!("omission {other} has no counter"),
+            } += 1;
+        }
+        self.unshield += u64::from(entry.input_count == 0 && !entry.coinbase);
+        self.coinbase += u64::from(entry.coinbase);
+        Ok(())
+    }
+
+    fn merge(&mut self, other: &Self) {
+        self.entries += other.entries;
+        self.complete += other.complete;
+        self.omitted += other.omitted;
+        self.multiple_source_scripts += other.multiple_source_scripts;
+        self.more_than_two_outputs += other.more_than_two_outputs;
+        self.shielded_and_transparent_funding += other.shielded_and_transparent_funding;
+        self.source_other += other.source_other;
+        self.output_other += other.output_other;
+        self.unshield += other.unshield;
+        self.coinbase += other.coinbase;
+    }
+}
 
 fn census(dir: &Path, floor: u64) -> Result<serde_json::Value, Error> {
     let map = load_map(dir)?;
     let revisions = revisions(dir, &map)?;
     let mut shards = Vec::new();
-    let mut classes: Vec<(u64, u32, u32, u64)> = Vec::new();
+    // (shard, bucket, entries): a lookup's anonymity class.
     let mut buckets_seen: Vec<(u64, u32, u64)> = Vec::new();
-    let mut payloads = vec![0u64; PAYLOAD_EDGES.len() + 1];
-    let mut inline_if = [0u64; INLINE_CUTOFFS.len()];
+    let mut overall = EntryCounts::default();
     let mut total = 0u64;
     for revision in &revisions {
         let manifest = &revision.manifest;
         let mut rows = Rows::open(revision)?;
         let mut buckets = Vec::new();
+        let mut counts = EntryCounts::default();
         for bucket in 0..manifest.n_buckets {
-            let mut txids = BTreeSet::new();
-            let mut by_pages: BTreeMap<u32, BTreeSet<[u8; 32]>> = BTreeMap::new();
+            let mut tags = BTreeSet::new();
             for entry in rows.entries(revision, bucket)? {
-                txids.insert(entry.txid.0);
-                by_pages
-                    .entry(entry.pages)
-                    .or_default()
-                    .insert(entry.txid.0);
-                let size = u64::from(entry.total);
-                payloads[PAYLOAD_EDGES
-                    .iter()
-                    .take_while(|edge| size > **edge)
-                    .count()] += 1;
-                for (count, cutoff) in inline_if.iter_mut().zip(INLINE_CUTOFFS) {
-                    *count += u64::from(size <= cutoff);
-                }
+                tags.insert(entry.tag);
+                counts.add(&entry)?;
             }
-            let declared = &manifest.buckets[bucket as usize];
-            let counted: BTreeMap<u32, u64> = by_pages
-                .iter()
-                .map(|(pages, ids)| (*pages, ids.len() as u64))
-                .collect();
-            if txids.len() as u64 != declared.records || counted != declared.page_histogram {
+            if tags.len() as u64 != manifest.buckets[bucket as usize].records {
                 return Err(format!(
                     "shard {} bucket {bucket} disagrees with its manifest",
                     manifest.shard_id
                 )
                 .into());
             }
-            total += txids.len() as u64;
-            buckets_seen.push((manifest.shard_id, bucket, txids.len() as u64));
-            for (pages, count) in &counted {
-                classes.push((manifest.shard_id, bucket, *pages, *count));
-            }
+            total += tags.len() as u64;
+            buckets_seen.push((manifest.shard_id, bucket, tags.len() as u64));
             buckets.push(serde_json::json!({
                 "bucket": bucket,
-                "txids": txids.len(),
-                "classes": counted.iter().map(|(p, c)| (p.to_string(), *c)).collect::<BTreeMap<_, _>>(),
+                "txids": tags.len(),
             }));
         }
+        if counts.entries != manifest.records {
+            return Err(format!(
+                "shard {} holds {} entries but its manifest declares {}",
+                manifest.shard_id, counts.entries, manifest.records
+            )
+            .into());
+        }
+        overall.merge(&counts);
         shards.push(serde_json::json!({
             "shard_id": manifest.shard_id,
             "digest": revision.digest,
@@ -380,27 +461,13 @@ fn census(dir: &Path, floor: u64) -> Result<serde_json::Value, Error> {
             "records": manifest.records,
             "n_buckets": manifest.n_buckets,
             "directory_segments": manifest.buckets.iter().map(|b| b.directory_segments.len()).collect::<Vec<_>>(),
-            "page_segments": manifest.page_segments.len(),
             "buckets": buckets,
+            "entries": counts,
         }));
     }
-    let class_json = |(shard_id, bucket, pages, txids): &(u64, u32, u32, u64)| serde_json::json!({"shard_id": shard_id, "bucket": bucket, "pages": pages, "txids": txids});
+    let bucket_json = |(shard_id, bucket, txids): &(u64, u32, u64)| serde_json::json!({"shard_id": shard_id, "bucket": bucket, "txids": txids});
     let min_bucket = buckets_seen.iter().min_by_key(|(_, _, n)| *n);
-    let min_class = classes.iter().min_by_key(|c| c.3);
-    let small: Vec<_> = classes.iter().filter(|c| c.3 < floor).collect();
-    let mut cumulative = 0u64;
-    let histogram: Vec<_> = payloads
-        .iter()
-        .enumerate()
-        .map(|(index, count)| {
-            cumulative += count;
-            serde_json::json!({
-                "le": PAYLOAD_EDGES.get(index).copied(),
-                "records": count,
-                "cumulative": cumulative,
-            })
-        })
-        .collect();
+    let small: Vec<_> = buckets_seen.iter().filter(|b| b.2 < floor).collect();
     Ok(serde_json::json!({
         "map_sha256": map.sha256(),
         "candidate": dir,
@@ -408,69 +475,96 @@ fn census(dir: &Path, floor: u64) -> Result<serde_json::Value, Error> {
         "shards": shards,
         "summary": {
             "total_txids": total,
-            "min_shard_bucket": min_bucket.map(|(s, b, n)| serde_json::json!({"shard_id": s, "bucket": b, "txids": n})),
-            "min_class": min_class.map(class_json),
-            "classes_below_floor": small.iter().map(|c| class_json(c)).collect::<Vec<_>>(),
-            "txids_in_small_classes": small.iter().map(|c| c.3).sum::<u64>(),
+            "min_shard_bucket": min_bucket.map(bucket_json),
+            "buckets_below_floor": small.iter().map(|b| bucket_json(b)).collect::<Vec<_>>(),
+            "txids_in_small_buckets": small.iter().map(|b| b.2).sum::<u64>(),
             "recent_min_bucket": buckets_seen
                 .iter()
                 .filter(|(s, _, _)| map.shards.last().is_some_and(|r| r.shard_id == *s))
                 .map(|(_, _, n)| *n)
                 .min(),
-        },
-        "payload": {
-            "histogram": histogram,
-            "inline_if": INLINE_CUTOFFS
-                .iter()
-                .zip(inline_if)
-                .map(|(cutoff, records)| serde_json::json!({
-                    "cutoff": cutoff,
-                    "inline_records": records,
-                    "share": records as f64 / total.max(1) as f64,
-                }))
-                .collect::<Vec<_>>(),
+            "entries": overall,
         },
     }))
+}
+
+/// One line of entry counts, from their JSON.
+fn counts_text(counts: &serde_json::Value) -> String {
+    let percent = 100.0 * counts["complete"].as_f64().unwrap_or(0.0)
+        / counts["entries"].as_f64().unwrap_or(0.0).max(1.0);
+    format!(
+        "{} of {} complete ({percent:.2}%); omitted {}: multiple_source_scripts {}, more_than_two_outputs {}, shielded_and_transparent_funding {}, source_other {}, output_other {}; unshield {}, coinbase {}",
+        counts["complete"],
+        counts["entries"],
+        counts["omitted"],
+        counts["multiple_source_scripts"],
+        counts["more_than_two_outputs"],
+        counts["shielded_and_transparent_funding"],
+        counts["source_other"],
+        counts["output_other"],
+        counts["unshield"],
+        counts["coinbase"],
+    )
 }
 
 fn census_text(report: &serde_json::Value) -> String {
     let summary = &report["summary"];
     let mut text = format!(
-        "census {}: {} txids in {} shards\n  smallest (shard, bucket): {}\n  smallest (shard, bucket, pages) class: {}\n  classes below {}: {} holding {} txids\n",
+        "census {}: {} txids in {} shards\n  smallest (shard, bucket): {}\n  (shard, bucket) classes below {}: {} holding {} txids\n  entries: {}\n",
         report["map_sha256"].as_str().unwrap_or_default(),
         summary["total_txids"],
         report["shards"].as_array().map_or(0, Vec::len),
         summary["min_shard_bucket"],
-        summary["min_class"],
         report["floor"],
-        summary["classes_below_floor"].as_array().map_or(0, Vec::len),
-        summary["txids_in_small_classes"],
+        summary["buckets_below_floor"].as_array().map_or(0, Vec::len),
+        summary["txids_in_small_buckets"],
+        counts_text(&summary["entries"]),
     );
     for shard in report["shards"].as_array().into_iter().flatten() {
+        let tier = shard["tier"].as_str().unwrap_or_default();
+        text.push_str(&format!(
+            "  shard {} ({tier}) entries: {}\n",
+            shard["shard_id"],
+            counts_text(&shard["entries"])
+        ));
         for bucket in shard["buckets"].as_array().into_iter().flatten() {
             text.push_str(&format!(
-                "  shard {} ({}) bucket {}: {} txids, classes {}\n",
-                shard["shard_id"],
-                shard["tier"].as_str().unwrap_or_default(),
-                bucket["bucket"],
-                bucket["txids"],
-                bucket["classes"]
+                "  shard {} ({tier}) bucket {}: {} txids\n",
+                shard["shard_id"], bucket["bucket"], bucket["txids"]
             ));
         }
     }
     text
 }
 
-fn class_label(pages: u32) -> String {
-    if pages == 0 {
-        "inline".into()
+/// A sample's class: whether its entry holds every displayed fact.
+fn class_label(entry: &DisplayEntry) -> &'static str {
+    if entry.is_complete() {
+        "complete"
     } else {
-        format!("pages-{pages}")
+        "omission"
     }
 }
 
-/// A fixture candidate: its sort key, revision index, bucket and entry.
-type Candidate = ([u8; 32], usize, u32, DirectoryEntry);
+/// SHA-256 of an entry's canonical encoding: the exactness oracle a fixture
+/// carries.
+fn entry_sha256(entry: &DisplayEntry) -> Result<String, Error> {
+    Ok(hex::encode(Sha256::digest(
+        entry.encode().map_err(|e| e.0)?,
+    )))
+}
+
+/// A fixture candidate.
+struct Candidate {
+    /// Seed-determined sort key.
+    order: [u8; 32],
+    /// Index into the map's revisions.
+    revision: usize,
+    bucket: u32,
+    txid: Txid,
+    height: u64,
+    entry: DisplayEntry,
+}
 
 fn fixture(
     dir: &Path,
@@ -482,10 +576,20 @@ fn fixture(
 ) -> Result<serde_json::Value, Error> {
     let map = load_map(dir)?;
     let revisions = revisions(dir, &map)?;
-    let heights: HashMap<[u8; 32], u64> = synth::read_heights(heights)?
-        .into_iter()
-        .map(|(txid, height)| (txid.0, height))
-        .collect();
+    // Tables hold tags; the index names the txid and height behind each.
+    let mut by_tag: HashMap<Tag, (Txid, u64)> = HashMap::new();
+    for (txid, height) in synth::read_heights(heights)? {
+        if let Some((other, _)) = by_tag.insert(Tag::of(&txid), (txid, height)) {
+            if other != txid {
+                return Err(format!(
+                    "txids {} and {} share a tag",
+                    other.to_display_hex(),
+                    txid.to_display_hex()
+                )
+                .into());
+            }
+        }
+    }
     let order = |txid: &[u8; 32]| -> [u8; 32] {
         Sha256::new()
             .chain_update(seed.to_le_bytes())
@@ -501,16 +605,17 @@ fn fixture(
         let mut rows = Rows::open(revision)?;
         for bucket in 0..revision.manifest.n_buckets {
             for entry in rows.entries(revision, bucket)? {
-                every.insert(entry.txid.0);
-                let Some(height) = heights.get(&entry.txid.0) else {
+                every.insert(entry.tag);
+                let Some(&(txid, height)) = by_tag.get(&entry.tag) else {
                     unplaced += 1;
                     continue;
                 };
-                if !(revision.manifest.start_height..=revision.manifest.end_height).contains(height)
+                if !(revision.manifest.start_height..=revision.manifest.end_height)
+                    .contains(&height)
                 {
                     return Err(format!(
                         "txid {} is in shard {} but indexed at height {height}",
-                        entry.txid.to_display_hex(),
+                        txid.to_display_hex(),
                         revision.manifest.shard_id
                     )
                     .into());
@@ -518,13 +623,25 @@ fn fixture(
                 pools
                     .entry((
                         tier(revision.manifest.sealed).to_string(),
-                        class_label(entry.pages),
+                        class_label(&entry).to_string(),
                     ))
                     .or_default()
-                    .push((order(&entry.txid.0), index, bucket, entry));
+                    .push(Candidate {
+                        order: order(&txid.0),
+                        revision: index,
+                        bucket,
+                        txid,
+                        height,
+                        entry,
+                    });
             }
         }
     }
+    // Every revision's files are open only while it is read, so a mainnet
+    // publication stays within the open-file limit.
+    let lookup = |revision: &DisplayRevision, txid: &Txid| -> Result<Option<DisplayEntry>, Error> {
+        Rows::open(revision)?.lookup(revision, txid)
+    };
     let mut samples = Vec::new();
     let mut available = BTreeMap::new();
     if let Some(natural) = natural {
@@ -539,38 +656,39 @@ fn fixture(
                 .extend(pool);
         }
         for pool in tiers.values_mut() {
-            pool.sort_by_key(|candidate| candidate.0);
+            pool.sort_by_key(|candidate| candidate.order);
             pool.truncate(natural);
         }
         pools = tiers;
     }
-    for ((tier, _), pool) in &mut pools {
+    for ((tier, class), pool) in &mut pools {
         if natural.is_none() {
-            available.insert(
-                format!("{tier}/{}", class_label(pool[0].3.pages)),
-                pool.len(),
-            );
+            available.insert(format!("{tier}/{class}"), pool.len());
         }
-        pool.sort_by_key(|candidate| candidate.0);
+        pool.sort_by_key(|candidate| candidate.order);
         let take = natural.unwrap_or(per_class);
-        for (_, index, bucket, entry) in pool.iter().take(take) {
-            let class = class_label(entry.pages);
-            let revision = &revisions[*index];
-            let mut rows = Rows::open(revision)?;
-            let record = rows.assemble(revision, entry)?;
-            if record.txid != entry.txid {
-                return Err("assembled another transaction".into());
+        for candidate in pool.iter().take(take) {
+            let revision = &revisions[candidate.revision];
+            let entry = &candidate.entry;
+            // What the client's two queries return must be this entry.
+            if lookup(revision, &candidate.txid)? != Some(*entry) {
+                return Err(format!(
+                    "txid {} is not found at its candidate rows in shard {}",
+                    candidate.txid.to_display_hex(),
+                    revision.manifest.shard_id
+                )
+                .into());
             }
             samples.push(serde_json::json!({
-                "txid": entry.txid.to_display_hex(),
-                "height": heights[&entry.txid.0],
+                "txid": candidate.txid.to_display_hex(),
+                "height": candidate.height,
                 "shard_id": revision.manifest.shard_id,
                 "tier": tier,
                 "digest": revision.digest,
-                "bucket": bucket,
-                "class": class,
-                "pages": entry.pages,
-                "record_sha256": hex::encode(Sha256::digest(record.encode().map_err(|e| e.0)?)),
+                "bucket": candidate.bucket,
+                "class": class_label(entry),
+                "omissions": omissions(entry),
+                "entry_sha256": entry_sha256(entry)?,
                 "expect": "found",
             }));
         }
@@ -606,7 +724,7 @@ fn fixture(
                 other.start_height + height % (other.end_height - other.start_height + 1),
             )
         } else {
-            if every.contains(&draw) {
+            if every.contains(&Tag::of(&Txid(draw))) {
                 continue;
             }
             (Txid(draw).to_display_hex(), "random", height)
@@ -614,6 +732,16 @@ fn fixture(
         let shard = map
             .shard_for_height(height)
             .ok_or("height outside the map")?;
+        // A control is kept only if the client's two queries in that shard
+        // find nothing, so `expect` is what the tables say.
+        let revision = revisions
+            .iter()
+            .find(|r| r.manifest.shard_id == shard.shard_id)
+            .ok_or("a mapped shard has no revision")?;
+        let parsed = parse_txid(&txid).ok_or("unparseable control txid")?;
+        if lookup(revision, &parsed)?.is_some() {
+            continue;
+        }
         controls.push(serde_json::json!({
             "txid": txid,
             "height": height,
@@ -625,7 +753,7 @@ fn fixture(
         }));
     }
     Ok(serde_json::json!({
-        "schema": "transparent-txid-display-fixture-v1",
+        "schema": FIXTURE_SCHEMA,
         "map_sha256": map.sha256(),
         "candidate": dir,
         "seed": seed,
@@ -635,6 +763,17 @@ fn fixture(
         "samples": samples,
         "absent": controls,
     }))
+}
+
+/// Fixture documents carry `entry_sha256`; the v1 ones carried
+/// `record_sha256` of the variable-length record and are refused.
+const FIXTURE_SCHEMA: &str = "transparent-txid-display-fixture-v2";
+
+/// Parses a txid in display (reversed) hex.
+fn parse_txid(display_hex: &str) -> Option<Txid> {
+    let mut bytes: [u8; 32] = hex::decode(display_hex).ok()?.try_into().ok()?;
+    bytes.reverse();
+    Some(Txid(bytes))
 }
 
 /// Saved maps in the order they were served. File names are map digests, so
@@ -773,6 +912,7 @@ fn synthesize(
     if shards == 0 || records < shards as usize || blocks_per_shard == 0 {
         return Err("need at least one record per shard and one block per shard".into());
     }
+    // Entry `index` is the one of `synth::txid(seed, index)`.
     let all = synth::records(records, seed);
     let per_shard = records / shards as usize;
     let mut parts = Vec::new();
@@ -784,10 +924,10 @@ fn synthesize(
         };
         parts.push(&all[index * per_shard..end]);
     }
-    let bucket_min = |part: &[txid::TransparentDisplayRecord]| {
+    let bucket_min = |part: &[DisplayEntry]| {
         let mut counts = vec![0u64; n_buckets as usize];
-        for record in part {
-            counts[display::bucket(&record.txid, n_buckets) as usize] += 1;
+        for entry in part {
+            counts[display::bucket(&entry.tag, n_buckets) as usize] += 1;
         }
         counts.into_iter().min().unwrap_or(0)
     };
@@ -829,9 +969,13 @@ fn synthesize(
             geometry,
         };
         published.push(synth::write_shard(out, &spec, part)?);
-        for (j, record) in part.iter().enumerate() {
+        for (j, entry) in part.iter().enumerate() {
+            let txid = synth::txid(seed, (i * per_shard + j) as u64);
+            if Tag::of(&txid) != entry.tag {
+                return Err("a synthetic entry is not its txid's".into());
+            }
             index.push((
-                record.txid,
+                txid,
                 start + (j as u64 * blocks_per_shard) / part.len() as u64,
             ));
         }
@@ -878,10 +1022,29 @@ mod tests {
         assert_eq!(census["summary"]["total_txids"], 600);
         assert_eq!(census["shards"].as_array().unwrap().len(), 3);
         assert_eq!(census["shards"][0]["shard_id"], 4);
-        assert!(!census["summary"]["classes_below_floor"]
+        assert!(!census["summary"]["buckets_below_floor"]
             .as_array()
             .unwrap()
             .is_empty());
+        // Entry counts agree with the generator's own entries.
+        let mut expected = EntryCounts::default();
+        for entry in synth::records(600, 5) {
+            expected.add(&entry).unwrap();
+        }
+        assert_eq!(
+            census["summary"]["entries"],
+            serde_json::to_value(expected).unwrap()
+        );
+        assert_eq!(expected.complete + expected.omitted, 600);
+        assert!(expected.omitted > 0 && expected.unshield > 0);
+        assert!(expected.more_than_two_outputs > 0 && expected.multiple_source_scripts > 0);
+        let per_shard: u64 = census["shards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["entries"]["entries"].as_u64().unwrap())
+            .sum();
+        assert_eq!(per_shard, 600);
 
         let natural = fixture(
             &candidate,
@@ -898,14 +1061,28 @@ mod tests {
             assert!(drawn.iter().filter(|s| s["tier"] == tier).count() <= 5);
         }
         let fixture = fixture(&candidate, &out.join("tooling/heights.bin"), 2, None, 6, 0).unwrap();
+        assert_eq!(fixture["schema"], FIXTURE_SCHEMA);
         let samples = fixture["samples"].as_array().unwrap();
-        assert!(samples
-            .iter()
-            .any(|s| s["tier"] == "archive" && s["class"] == "inline"));
+        for class in ["complete", "omission"] {
+            assert!(samples
+                .iter()
+                .any(|s| s["tier"] == "archive" && s["class"] == class));
+        }
         assert!(samples.iter().any(|s| s["tier"] == "recent"));
-        assert!(samples
-            .iter()
-            .all(|s| s["record_sha256"].as_str().unwrap().len() == 64));
+        // Each digest is the generator's entry for that txid, encoded.
+        let generated: HashMap<String, DisplayEntry> = synth::records(600, 5)
+            .into_iter()
+            .enumerate()
+            .map(|(i, e)| (synth::txid(5, i as u64).to_display_hex(), e))
+            .collect();
+        for sample in samples {
+            let entry = &generated[sample["txid"].as_str().unwrap()];
+            assert_eq!(sample["entry_sha256"], entry_sha256(entry).unwrap());
+            assert_eq!(
+                sample["omissions"].as_array().unwrap().is_empty(),
+                sample["class"] == "complete"
+            );
+        }
         let absent = fixture["absent"].as_array().unwrap();
         assert!(absent.iter().any(|a| a["kind"] == "wrong-shard"));
         assert!(absent.iter().all(|a| a["expect"] == "absent"));

@@ -38,7 +38,7 @@ use transparent_shard::display::{
 };
 use transparent_shard::layout::Geometry;
 use transparent_shard::manifest::{PublishedRevision, RevisionError};
-use transparent_shard::txid::{TransparentDisplayRecord, ROW_BYTES};
+use transparent_shard::txid::{DisplayRecord, ROW_BYTES};
 
 pub const MAP_FILE: &str = "txid-shards.json";
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -245,7 +245,6 @@ impl PublishedShard {
             "end": self.manifest.end_height,
             "records": self.manifest.records,
             "dir_segments": self.entry.directory_segments,
-            "page_segments": self.entry.page_segments,
             "used_bytes": self.used_bytes,
             "digest": self.digest,
             "revision": self.manifest.revision,
@@ -283,7 +282,7 @@ pub fn publish_shard(
     root: &Path,
     layout: &DisplayRoot,
     spec: &ShardSpec,
-    records: &[TransparentDisplayRecord],
+    records: &[DisplayRecord],
 ) -> Result<PublishedShard, PublishError> {
     let geometry = layout.geometry()?;
     let n_buckets = if spec.sealed {
@@ -365,7 +364,7 @@ pub fn publish_shard(
 
     Ok(PublishedShard {
         entry: DisplayMapEntry::from_manifest(&manifest, &digest),
-        used_bytes: built.buckets.iter().map(|b| b.used_bytes).sum(),
+        used_bytes: built.records * transparent_shard::txid::ENTRY_BYTES as u64,
         manifest,
         digest,
         directory,
@@ -592,11 +591,10 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
         .map(|b| b.directory_segments.len())
         .collect();
     let records: Vec<u64> = manifest.buckets.iter().map(|b| b.records).collect();
-    let verified = verify_rows(
+    verify_rows(
         manifest.shard_id,
         geometry,
         &segments,
-        manifest.page_segments.len(),
         &records,
         |table: DisplayTable, segment, row| {
             let file = files
@@ -608,18 +606,6 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
             Ok(bytes)
         },
     )?;
-    let histograms: Vec<_> = manifest
-        .buckets
-        .iter()
-        .map(|b| b.page_histogram.clone())
-        .collect();
-    if verified.page_histograms != histograms {
-        return Err(format!(
-            "{} page histogram differs from its rows",
-            directory.display()
-        )
-        .into());
-    }
     Ok(manifest)
 }
 
@@ -636,7 +622,7 @@ fn read_range(
     store: &impl Journal,
     from: u64,
     through: u64,
-) -> Result<Vec<TransparentDisplayRecord>, BoxError> {
+) -> Result<Vec<DisplayRecord>, BoxError> {
     let mut records = Vec::new();
     for height in from..=through {
         records.extend(store.display_at(height)?);
@@ -813,7 +799,7 @@ pub fn publish_parts(
     root: &Path,
     layout: &DisplayRoot,
     spec: &ShardSpec,
-    parts: &[std::sync::Arc<[TransparentDisplayRecord]>],
+    parts: &[std::sync::Arc<[DisplayRecord]>],
 ) -> Result<PublishedShard, PublishError> {
     publish_shard(root, layout, spec, &flatten(parts))
 }
@@ -895,8 +881,8 @@ mod tests {
             start_height: 10,
             base_parent: "11".repeat(32),
         };
-        let mut records: Vec<_> = (0..50).map(|i| record(i, 20)).collect();
-        records.push(record(99, 9_000));
+        let mut records: Vec<_> = (0..50).map(|i| record(i, 1)).collect();
+        records.push(record(99, 5));
         let spec = ShardSpec {
             shard_id: 3,
             start: 10,
@@ -926,12 +912,15 @@ mod tests {
         std::fs::write(&stray, b"x").unwrap();
         assert!(verify_dir(&shard.directory, &shard.digest).is_err());
         std::fs::remove_file(&stray).unwrap();
-        // So is a changed page row, and a rebuild over it is an immutable error.
-        let pages = shard.directory.join(DisplayTable::Pages.file_name(0));
-        let mut bytes = std::fs::read(&pages).unwrap();
+        // So is a changed directory row, and a rebuild over it is an
+        // immutable error.
+        let table = shard
+            .directory
+            .join(DisplayTable::Directory(0).file_name(0));
+        let mut bytes = std::fs::read(&table).unwrap();
         bytes[ROW_BYTES + 100] ^= 1;
-        std::fs::remove_file(&pages).unwrap();
-        std::fs::write(&pages, &bytes).unwrap();
+        std::fs::remove_file(&table).unwrap();
+        std::fs::write(&table, &bytes).unwrap();
         assert!(verify_dir(&shard.directory, &shard.digest).is_err());
         assert!(matches!(
             publish_shard(temp.path(), &layout, &spec, &records),
@@ -950,7 +939,7 @@ mod tests {
         fixture::write_journal(&store_dir, 1, 3, 0);
         let store = EventStore::open_existing(&store_dir).unwrap();
         let layout = fixture::layout(&store, 2, 4);
-        let records: Vec<_> = (0..10).map(|i| record(i, 20)).collect();
+        let records: Vec<_> = (0..10).map(|i| record(i, 1)).collect();
         let mut spec = ShardSpec {
             shard_id: 0,
             start: 2,
@@ -1032,7 +1021,7 @@ mod tests {
                 sealed: false,
                 previous: Some(previous.clone()),
             };
-            let records: Vec<_> = (0..end as u32).map(|i| record(i, 20)).collect();
+            let records: Vec<_> = (0..end as u32).map(|i| record(i, 1)).collect();
             let shard = publish_shard(&root, &layout, &spec, &records).unwrap();
             previous = shard.revision();
             recents.push(shard.digest.clone());

@@ -6,6 +6,26 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display v2 on `main`, 2026-10-08
+
+`main` now carries [txid display v2](txid-display.md): fixed 113-byte entries
+with the first address-shaped source, outputs 0–1 and named omissions, in one
+table per bucket. History-attached display is removed.
+
+- **Deploy gate.** Do not redeploy txid display from `main` until the v2
+  cutover. The v1 proof of concept keeps running its deployed binaries.
+  `main` derives entries only from v2x source sidecars and serves only v2
+  tables. It reads v1 sidecars only for the oversized history events they
+  hold. The last v1 source is `a368f19b`.
+- **Local evidence.** `make transparent-txid-demo` passed on the frozen
+  mainnet and genesis vectors. All 14 eligible entries matched the independent
+  Python derivation, both after extraction and through PIR lookups. Every
+  lookup, found or absent, sent two queries of 40,200 B and received two
+  replies of 5,648 B. `--corrupt-oracle` failed as required.
+- **Not done.** No v2 journal, publication or deployment exists. The
+  ingest-phase measurements and the cutover are in
+  [remaining work](remaining-work.md).
+
 ## Shipped txid display runtimes, 2026-10-07
 
 `txid-display-controller run --ship-runtimes` ([design](txid-display.md#shipped-recent-runtimes))

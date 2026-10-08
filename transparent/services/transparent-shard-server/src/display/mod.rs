@@ -51,24 +51,20 @@ use transparent_shard::display::{DisplayKind, DisplayTable};
 pub fn kind(table: DisplayTable) -> Table {
     match table.kind() {
         DisplayKind::TxDirectory => Table::TxDirectory,
-        DisplayKind::TxPages => Table::TxPages,
     }
 }
 
 /// The cache address of one segment of one display table.
 ///
-/// Pages are keyed by the bare digest, directories by digest and bucket, so a
-/// revision's buckets and its pages never collide. Disk-cache pruning keeps
-/// entries by these strings, so every keep set must be built from here.
+/// Keyed by digest and bucket, so a revision's buckets never collide.
+/// Disk-cache pruning keeps entries by these strings, so every keep set must
+/// be built from here.
 pub fn runtime_key(digest: &str, table: DisplayTable, segment: u32) -> RuntimeKey {
-    match table {
-        DisplayTable::Directory(bucket) => (
-            format!("{digest}/directory-{bucket}"),
-            Table::TxDirectory,
-            segment,
-        ),
-        DisplayTable::Pages => (digest.to_string(), Table::TxPages, segment),
-    }
+    (
+        format!("{digest}/{}", table.label()),
+        Table::TxDirectory,
+        segment,
+    )
 }
 
 /// Parses a role by the names history assignments use.
@@ -107,7 +103,6 @@ mod tests {
         let keys = [
             runtime_key(&a, DisplayTable::Directory(0), 0),
             runtime_key(&a, DisplayTable::Directory(1), 0),
-            runtime_key(&a, DisplayTable::Pages, 0),
             runtime_key(&a, DisplayTable::Directory(0), 1),
             runtime_key(&b, DisplayTable::Directory(0), 0),
         ];
@@ -116,8 +111,7 @@ mod tests {
                 assert_ne!(x, y);
             }
         }
-        assert_eq!(keys[0].0, format!("{a}/directory-0"));
-        assert_eq!(keys[2], (a.clone(), Table::TxPages, 0));
+        assert_eq!(keys[0], (format!("{a}/directory-0"), Table::TxDirectory, 0));
         // Disk pruning keeps entries by the hash of the key string, so the
         // strings, not just the tuples, must differ per bucket.
         assert_ne!(keys[0].0, keys[1].0);

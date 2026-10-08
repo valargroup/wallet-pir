@@ -21,7 +21,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing_subscriber::EnvFilter;
 use transparent_filter_server::events::EventStore;
-use transparent_filter_server::ingest::{build_fetched_block_events_with_inputs, BoxError};
+use transparent_filter_server::ingest::{build_fetched_block_events, BoxError};
 use transparent_filter_server::prevout::OutputCache;
 use transparent_filter_server::state::StateReader;
 use transparent_filter_server::zakura::ZakuraClient;
@@ -86,16 +86,13 @@ struct Cli {
     /// Blocks between progress lines.
     #[arg(long, default_value_t = 1_000)]
     log_every: u64,
-    /// Write complete txid display sidecars before each block checkpoint.
-    #[arg(long)]
+    /// Write each block's txid display source sidecar (`display-v2x/`)
+    /// before its checkpoint: every transparent output, and every transparent
+    /// input with the value and script of the output it spends, from the
+    /// previous outputs the fee already resolves. Published entries are
+    /// derived from it. `--txid-display-inputs` is the same flag.
+    #[arg(long, alias = "txid-display-inputs")]
     txid_display: bool,
-    /// EXPERIMENTAL measurement mode; implies display mode. Writes
-    /// `display-v2x/` sidecars that also list every transparent input, with
-    /// its resolved previous value and locking script, INSTEAD of
-    /// `display-v1/`. Uses the previous outputs already resolved for spend
-    /// events. Nothing serves the result: such a journal is census-only.
-    #[arg(long)]
-    txid_display_inputs: bool,
 }
 
 /// The display sidecar each appended block carries.
@@ -105,28 +102,7 @@ fn append(
     height: u64,
     built: transparent_filter_server::ingest::BuiltEvents,
 ) -> Result<(), BoxError> {
-    if cli.txid_display_inputs {
-        if built.display_inputs.len() != built.display.len() {
-            return Err("display inputs were not extracted".into());
-        }
-        let records: Vec<_> = built
-            .display
-            .into_iter()
-            .zip(built.display_inputs)
-            .map(
-                |(record, inputs)| transparent_shard::txid_v2x::TransparentDisplayRecordV2x {
-                    record,
-                    inputs,
-                },
-            )
-            .collect();
-        store.append_block_with_display_inputs(
-            height,
-            built.block_hash,
-            &built.events,
-            &records,
-        )?;
-    } else if cli.txid_display {
+    if cli.txid_display {
         store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
     } else {
         store.append_block(height, built.block_hash, &built.events)?;
@@ -280,11 +256,8 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
         while inflight.len() < workers && to_spawn <= stop {
             let reader = reader.clone();
             let at = to_spawn;
-            let inputs = cli.txid_display_inputs;
             inflight.push_back(tokio::task::spawn_blocking(move || {
-                reader
-                    .block_events_with_inputs(at, inputs)
-                    .map(|events| (at, events))
+                reader.block_events(at).map(|events| (at, events))
             }));
             to_spawn += 1;
         }
@@ -413,14 +386,7 @@ async fn main() -> Result<(), BoxError> {
             }));
         }
 
-        let built = build_fetched_block_events_with_inputs(
-            &zakura,
-            &mut cache,
-            height,
-            fetched,
-            cli.txid_display_inputs,
-        )
-        .await?;
+        let built = build_fetched_block_events(&zakura, &mut cache, height, fetched).await?;
         rpc_lookups += built.rpc_lookups;
         cache_hits += built.cache_hits;
         append(&mut store, &cli, height, built)?;

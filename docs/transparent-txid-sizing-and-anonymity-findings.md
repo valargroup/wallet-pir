@@ -1,5 +1,11 @@
 # Transparent txid display sizing and independent routing findings
 
+These findings size the variable-length display-v1 record, which display v2
+(fixed 113-byte entries, one table per bucket, no pages) replaced on `main`.
+Inline cutoffs, overflow pages and page-count classes no longer apply. The
+eligible-transaction census still sizes shard counts. The tools and codec they
+describe build at revision `a368f19b52330186dbf56f49066b2b03b4da368a`.
+
 ## Decision
 
 **Recommend 128 encoded payload bytes for the current display-v1 codec.** The

@@ -48,8 +48,8 @@ struct Cli {
     #[arg(long, default_value_t = 6)]
     runtimes: usize,
 
-    /// Which of the geometry's two tables to measure: `directory` or
-    /// `pages`, or `txdirectory` or `txpages` for a display geometry.
+    /// Which table to measure: `directory` or `pages` of a history geometry,
+    /// or `txdirectory`, a display geometry's only table.
     #[arg(long, default_value = "directory")]
     table: String,
 
@@ -83,7 +83,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "directory" => Table::Directory,
         "pages" => Table::Pages,
         "txdirectory" => Table::TxDirectory,
-        "txpages" => Table::TxPages,
         other => return Err(format!("unknown table {other:?}").into()),
     };
     if cli.runtimes < 2 {
@@ -175,21 +174,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // measured, since measuring it means a second run. That is what the cache
     // charges it once built; the reservation, which charges the compiled
     // matrix at eight-byte words, is held only while a build is in flight.
+    // A display shard bucket has one table, so nothing else is charged.
     let other = match table {
-        Table::Directory => Table::Pages,
-        Table::Pages => Table::Directory,
-        Table::TxDirectory => Table::TxPages,
-        Table::TxPages => Table::TxDirectory,
+        Table::Directory => Some(Table::Pages),
+        Table::Pages => Some(Table::Directory),
+        Table::TxDirectory => None,
     };
-    let other_shared = SharedParams::build(geometry, other)?;
-    let other_planned = other_shared.held_bytes();
+    let other_planned = match other {
+        Some(other) => SharedParams::build(geometry, other)?.held_bytes(),
+        None => 0,
+    };
     let per_shard = mib(marginal as u64) + mib(other_planned);
     println!(
         "per shard: {:.2} MiB measured {} + {:.2} MiB planned {} = {per_shard:.2} MiB",
         mib(marginal as u64),
         table.as_str(),
         mib(other_planned),
-        other.as_str(),
+        other.map_or("(none)", Table::as_str),
     );
     // Shard counts measured over the complete genesis-to-tip journal, per
     // geometry, in `transparent/evidence/baselines/shard-utilisation/`. The

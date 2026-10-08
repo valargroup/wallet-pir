@@ -199,7 +199,6 @@ fn write_shard(
             txids: 0,
             excluded_scripts: built.excluded_scripts,
         },
-        txid_display: None,
         directory_choice: None,
     };
 
@@ -228,7 +227,6 @@ fn write_shard(
         txids: 0,
         directory_segments: built.directory_segments(),
         page_segments: built.page_segments(),
-        txid_segments: None,
         manifest_digest: digest,
         revision: manifest.revision,
         sealed,

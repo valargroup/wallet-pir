@@ -11,13 +11,13 @@ use std::ops::RangeInclusive;
 use std::sync::Arc;
 use transparent_filter::BlockHash;
 use transparent_shard::display::{height_counts, DisplaySealParams, HeightCounts};
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::txid::DisplayRecord;
 
 /// One block of the cache.
 #[derive(Clone, Debug)]
 pub struct CachedBlock {
     pub hash: BlockHash,
-    pub records: Arc<[TransparentDisplayRecord]>,
+    pub records: Arc<[DisplayRecord]>,
     pub observed_ms: u64,
 }
 
@@ -89,7 +89,7 @@ impl DisplayCache {
         &mut self,
         height: u64,
         hash: BlockHash,
-        records: Vec<TransparentDisplayRecord>,
+        records: Vec<DisplayRecord>,
         observed_ms: u64,
     ) -> Result<(), BoxError> {
         if height != self.next_height() {
@@ -138,7 +138,7 @@ impl DisplayCache {
     }
 
     /// Cheap handles on the records of `range`, for a build off this thread.
-    pub fn records(&self, range: RangeInclusive<u64>) -> Vec<Arc<[TransparentDisplayRecord]>> {
+    pub fn records(&self, range: RangeInclusive<u64>) -> Vec<Arc<[DisplayRecord]>> {
         range
             .filter_map(|height| self.block(height).map(|b| b.records.clone()))
             .collect()
@@ -162,7 +162,7 @@ impl DisplayCache {
 }
 
 /// Every record of `parts`, in order, as one slice for the table builder.
-pub fn flatten(parts: &[Arc<[TransparentDisplayRecord]>]) -> Vec<TransparentDisplayRecord> {
+pub fn flatten(parts: &[Arc<[DisplayRecord]>]) -> Vec<DisplayRecord> {
     parts.iter().flat_map(|p| p.iter().cloned()).collect()
 }
 
@@ -178,7 +178,7 @@ mod tests {
         assert!(cache.tip().is_none());
         for h in 10..15 {
             let hash = BlockHash::from_internal_bytes([h as u8; 32]);
-            cache.push(h, hash, vec![record(h as u32, 20)], h).unwrap();
+            cache.push(h, hash, vec![record(h as u32, 1)], h).unwrap();
         }
         assert!(cache
             .push(20, BlockHash::from_internal_bytes([0; 32]), vec![], 0)

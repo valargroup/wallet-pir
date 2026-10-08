@@ -11,9 +11,9 @@
 //! archive index chunk covering the height (archive heights only), the
 //! shard's manifest and the bucket's directory setups when they are not
 //! cached, then exactly two directory queries (even when both candidate rows
-//! coincide). A paged record then fetches the pages setups when not cached
-//! and sends exactly `pages` page queries. An absent txid sends the same two
-//! directory queries. Placement comes from the caller's mined height; nothing
+//! coincide). Entries are fixed-size, so a found txid and an absent one send
+//! the same requests with the same body sizes. Placement comes from the
+//! caller's mined height; nothing
 //! is asked to discover it, so placement and support results send no query.
 //!
 //! The map is split (see `transparent_shard::display::split`): a small
@@ -26,7 +26,9 @@
 mod client;
 
 pub use client::{ProfileCache, TxidDisplayClient};
-pub use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
+pub use transparent_shard::txid::{
+    flags, Address, AddressKind, DisplayEntry, EntryOutput, Tag, OUTPUT_SLOTS,
+};
 
 use std::time::Duration;
 
@@ -220,7 +222,7 @@ pub enum Placement {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TxidLookup {
     Found {
-        record: TransparentDisplayRecord,
+        entry: DisplayEntry,
         provenance: Provenance,
     },
     /// The shard covering the height was queried and does not hold the txid.
@@ -256,10 +258,8 @@ pub enum ProtocolKind {
     Epoch,
     /// A response body has the wrong length.
     Length,
-    /// A row, entry or record does not decode, or decodes to another txid.
+    /// A row or entry does not decode, or the same entry is in two rows.
     Decode,
-    /// A directory entry names pages outside the shard.
-    Pages,
     /// An unexpected status code (not 200 nor one with defined semantics).
     Status(u16),
 }
