@@ -853,3 +853,30 @@ shards 0–76; the single-copy availability risk is accepted in
   (same apply; `user_data` changes are ignored, so no droplet changed).
 - [ ] Rehearse archive-owner loss and rebuild on the single owner (restart from
   the disk runtime cache and a cold rebuild), with the public effect recorded.
+
+## Txid display shipped runtimes
+
+From the [2026-10-08 deploy](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md)
+and the review of `6b8c5c91..d993bc75`. The change is on `main` (`229b9eb9`) and off
+by default; v2 does not enable it.
+
+- [ ] Carry the 80 MiB copy within the latency targets before enabling it again:
+  measure the runtime files' rsync in isolation on the private network; try
+  `--whole-file` for `.runtime` files (no basis to delta against), shipping each
+  file as its build finishes instead of after both, or compressing nothing (the
+  files are incompressible). Gate: ship p95 under 2 s over 300 cycles.
+- [ ] Take the prebuild off the critical path where possible: cache
+  `SharedParams` per table kind across controller cycles and reuse
+  `publish_parts`' verification instead of `verify_tables` again (about 0.8 s of
+  the 2.8 s prebuild).
+- [ ] Lower the replica's load-time interference (lookup p99 1.4× the quiet tail
+  while loading or receiving): cap the self-check's build-pool threads or run it
+  at lower priority, and keep rsync's receiver work off the query threads.
+- [ ] Pin the self-check's any-row claim with a test where rows B differ from
+  rows A in one row only; use `rand::rng` for the sampled row and say why it must
+  be unpredictable to the publisher.
+- [ ] Count a refused shipped file once per slot on an `Overloaded` retry.
+- [ ] Document in `txid-display.md` that the prebuild runs before
+  `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
+  archive owners receive the recent runtimes at seal boundaries; correct the bench
+  README's 48 loads to run 2's 50.

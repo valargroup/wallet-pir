@@ -26,6 +26,22 @@ table per bucket. History-attached display is removed.
   ingest-phase measurements and the cutover are in
   [remaining work](remaining-work.md).
 
+## Shipped txid display runtimes deployed, 2026-10-08
+
+`--ship-runtimes` ran on the tiered proof of concept from 10:49 to 13:21 UTC, when
+the proof of concept was stopped for the txid display v2 cutover
+([evidence](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md)). Over
+121 cycles: controller prebuild p50 2.8 s, worker prepare p50 1.4 s (was 7.0 s),
+worker CPU 1.5 CPU-s per block (was 11.5–15), 242 shipped loads and 0 fallbacks,
+recent lookup p99 during loads 1.37× the quiet tail (was 2.5×). Block to serving
+p50 6.7 s (was 8.5 s) but p95 29.9 s (was 12.4 s): the 96 MiB candidate copy to
+recent-01 took p50 1.8 s and p95 10.2 s, with 53 of 121 copies over 2 s, so the
+copy tail now owns the block-to-serving tail. History on recent-01 stayed within
+its hourly prewarm range except during another session's bootstrap on the
+coordinator; its multi-second query stalls did not cluster in display copy or
+load intervals. v2 runs without `--ship-runtimes`; the follow-ups are in
+[remaining work](remaining-work.md#txid-display-shipped-runtimes).
+
 ## Shipped txid display runtimes, 2026-10-07
 
 `txid-display-controller run --ship-runtimes` ([design](txid-display.md#shipped-recent-runtimes))

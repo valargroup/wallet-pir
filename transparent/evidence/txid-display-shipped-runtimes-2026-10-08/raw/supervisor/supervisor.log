@@ -1,0 +1,594 @@
+10:53:02 p99=0.030594838 exact=300 err=0 fresh=16.643638039 cyc_fresh=[6323] prep=1348 
+10:53:08 p99=0.030594838 exact=300 err=0 fresh=16.643638039 cyc_fresh=[6323] prep=1348 
+10:53:24 p99=0.038440319 exact=299 err=0 fresh=16.643638039 cyc_fresh=[5665] prep=1154 
+10:53:38 p99=0.038440319 exact=300 err=0 fresh=15.951422442 cyc_fresh=[5360] prep=1192 
+10:53:54 p99=0.043002504 exact=300 err=0 fresh=15.482978411 cyc_fresh=[5360] prep=1192 
+10:54:08 p99=0.047450478 exact=300 err=0 fresh=14.889862703 cyc_fresh=[5313] prep=1224 
+10:54:24 p99=0.047450478 exact=300 err=0 fresh=14.889862703 cyc_fresh=[5313] prep=1224 
+10:54:38 p99=0.256411098 exact=299 err=0 fresh=14.889862703 cyc_fresh=[5526] prep=1304 
+10:54:54 p99=0.256411098 exact=300 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:55:08 p99=0.256411098 exact=299 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:55:24 p99=0.256411098 exact=300 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:55:38 p99=0.039837552 exact=300 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:55:55 p99=0.034285318 exact=299 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:56:08 p99=0.034285318 exact=300 err=0 fresh=14.831040042 cyc_fresh=[5526] prep=1304 
+10:56:24 p99=0.034841657 exact=300 err=0 fresh=14.831040042 cyc_fresh=[5466] prep=1318 
+10:56:38 p99=0.047748817 exact=299 err=0 fresh=16.309472348 cyc_fresh=[5468] prep=1579 
+10:56:54 p99=0.053440876 exact=300 err=0 fresh=16.975694097 cyc_fresh=[5468] prep=1579 
+10:57:08 p99=0.053440876 exact=300 err=0 fresh=26.190488717 cyc_fresh=[5468] prep=1579 
+10:57:24 p99=0.053440876 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:57:38 p99=0.04613735 exact=299 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:57:54 p99=0.039765476 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:58:08 p99=0.039765476 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:58:24 p99=0.039765476 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:58:38 p99=0.031831807 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:58:54 p99=0.031831807 exact=300 err=0 fresh=14.461699662000001 cyc_fresh=[6159] prep=1476 
+10:59:08 p99=0.040338332 exact=299 err=0 fresh=14.461699662000001 cyc_fresh=[8384] prep=1822 
+10:59:24 p99=0.040338332 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+10:59:38 p99=0.040338332 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+10:59:54 p99=0.040338332 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:00:08 p99=0.051404549 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:00:24 p99=0.051905025 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:00:38 p99=0.061611357 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:00:54 p99=0.061611357 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:01:08 p99=0.061611357 exact=298 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:01:24 p99=0.054376027 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:01:38 p99=0.044745235 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:01:54 p99=0.042999049 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:02:08 p99=0.051097481 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:02:24 p99=0.042806349 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:02:39 p99=0.044339466 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:02:54 p99=0.044339466 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:03:08 p99=0.047159547 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:03:24 p99=0.054792558 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:03:38 p99=0.058445816 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:03:54 p99=0.058445816 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:04:08 p99=0.058445816 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:04:24 p99=0.046552933 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:04:39 p99=0.04262009 exact=299 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:04:54 p99=0.042202879 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:05:08 p99=0.041099346 exact=300 err=0 fresh=17.384255906 cyc_fresh=[8384] prep=1822 
+11:05:25 p99=0.045217502 exact=300 err=0 fresh=16.97293278 cyc_fresh=[7750] prep=2139 
+11:05:38 p99=0.05308865 exact=299 err=0 fresh=16.97293278 cyc_fresh=[7750] prep=2139 
+11:05:54 p99=0.053570486 exact=300 err=0 fresh=16.97293278 cyc_fresh=[7750] prep=2139 
+11:06:08 p99=0.055056187 exact=300 err=0 fresh=16.97293278 cyc_fresh=[7750] prep=2139 
+TRIPPED ['history p99 0.843517409 > 0.5']
+11:06:26 p99=0.843517409 exact=299 err=0 fresh=16.97293278 cyc_fresh=[7750] prep=2139 TRIPPED
+11:06:38 p99=0.843517409 exact=300 err=0 fresh=16.97293278 cyc_fresh=[5516] prep=1270 TRIPPED
+11:06:53 p99=0.843517409 exact=300 err=0 fresh=15.333408362 cyc_fresh=[5516] prep=1270 TRIPPED
+11:07:08 p99=0.843517409 exact=300 err=0 fresh=15.333408362 cyc_fresh=[5516] prep=1270 TRIPPED
+11:07:23 p99=0.843517409 exact=299 err=0 fresh=15.333408362 cyc_fresh=[5516] prep=1270 TRIPPED
+11:07:38 p99=0.03194581 exact=300 err=0 fresh=15.333408362 cyc_fresh=[5516] prep=1270 TRIPPED
+11:07:53 p99=0.035504321 exact=299 err=0 fresh=15.333408362 cyc_fresh=[5516] prep=1270 TRIPPED
+11:08:08 p99=0.040484325 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:08:23 p99=0.040484325 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:08:38 p99=0.038884204 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:08:53 p99=0.037804867 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:09:08 p99=0.034217595 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:09:24 p99=0.037804867 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:09:38 p99=0.039946957 exact=300 err=0 fresh=16.063202134 cyc_fresh=[9054] prep=1554 TRIPPED
+11:09:54 p99=0.040435751 exact=299 err=0 fresh=16.063202134 cyc_fresh=[5087] prep=1265 TRIPPED
+11:10:08 p99=0.040435751 exact=300 err=0 fresh=16.02306196 cyc_fresh=[5087] prep=1265 
+11:10:24 p99=0.074348524 exact=299 err=0 fresh=29.865262037 cyc_fresh=[5087] prep=1265 
+11:10:38 p99=0.074348524 exact=300 err=0 fresh=29.865262037 cyc_fresh=[5087] prep=1265 
+11:10:54 p99=0.074348524 exact=301 err=0 fresh=29.865262037 cyc_fresh=[5087] prep=1265 
+11:11:09 p99=0.074187228 exact=300 err=0 fresh=29.865262037 cyc_fresh=[6843] prep=1307 
+11:11:25 p99=0.046229877 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:11:38 p99=0.04220284 exact=299 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:11:54 p99=0.0410077 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:12:08 p99=0.0410077 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:12:24 p99=0.036747332 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:12:38 p99=0.039889136 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:12:55 p99=0.039889136 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:13:09 p99=0.039205054 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:13:24 p99=0.039205054 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:13:38 p99=0.036780301 exact=300 err=0 fresh=16.126364288 cyc_fresh=[6843] prep=1307 
+11:13:54 p99=0.036780301 exact=300 err=0 fresh=16.126364288 cyc_fresh=[5708] prep=1221 
+11:14:08 p99=0.032650797 exact=299 err=0 fresh=15.246785725 cyc_fresh=[5708] prep=1221 
+11:14:25 p99=0.036780301 exact=299 err=0 fresh=14.824956286 cyc_fresh=[6365] prep=1252 
+11:14:39 p99=0.040199815 exact=299 err=0 fresh=14.824956286 cyc_fresh=[6365] prep=1252 
+11:14:54 p99=0.038047565 exact=300 err=0 fresh=14.824956286 cyc_fresh=[6365] prep=1252 
+11:15:08 p99=0.043721275 exact=299 err=0 fresh=14.824956286 cyc_fresh=[8351] prep=1647 
+11:15:24 p99=0.054844715 exact=300 err=0 fresh=15.613448088 cyc_fresh=[8351] prep=1647 
+11:15:38 p99=0.054844715 exact=300 err=0 fresh=15.613448088 cyc_fresh=[8351] prep=1647 
+11:15:54 p99=0.054844715 exact=300 err=0 fresh=15.613448088 cyc_fresh=[8351] prep=1647 
+11:16:09 p99=0.054844715 exact=299 err=0 fresh=15.066603601 cyc_fresh=[5699] prep=1224 
+11:16:25 p99=0.045319877 exact=300 err=0 fresh=15.066603601 cyc_fresh=[5699] prep=1224 
+11:16:39 p99=0.045319877 exact=300 err=0 fresh=15.066603601 cyc_fresh=[5374] prep=1048 
+11:16:54 p99=0.048307142 exact=300 err=0 fresh=14.776345622000001 cyc_fresh=[5374] prep=1048 
+11:17:09 p99=0.04973841 exact=300 err=0 fresh=14.776345622000001 cyc_fresh=[5374] prep=1048 
+11:17:24 p99=0.0457723 exact=300 err=0 fresh=14.776345622000001 cyc_fresh=[5374] prep=1048 
+11:17:39 p99=0.0457723 exact=300 err=0 fresh=14.776345622000001 cyc_fresh=[5374] prep=1048 
+11:17:55 p99=0.044649288 exact=300 err=0 fresh=15.796402737 cyc_fresh=[5326] prep=1149 
+11:18:09 p99=0.040768206 exact=300 err=0 fresh=15.796402737 cyc_fresh=[5326] prep=1149 
+11:18:24 p99=0.038007417 exact=300 err=0 fresh=15.796402737 cyc_fresh=[5801] prep=1106 
+11:18:39 p99=0.04730264 exact=300 err=0 fresh=14.432208382 cyc_fresh=[5801] prep=1106 
+11:18:54 p99=0.04730264 exact=300 err=0 fresh=14.432208382 cyc_fresh=[5801] prep=1106 
+11:19:09 p99=0.040843803 exact=300 err=0 fresh=14.432208382 cyc_fresh=[5801] prep=1106 
+11:19:25 p99=0.033419191 exact=300 err=0 fresh=14.432208382 cyc_fresh=[5801] prep=1106 
+11:19:39 p99=0.036798804 exact=300 err=0 fresh=14.432208382 cyc_fresh=[7330] prep=1215 
+11:19:54 p99=0.036798804 exact=300 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:20:09 p99=0.042421033 exact=300 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:20:24 p99=0.048858879 exact=299 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:20:39 p99=0.046301354 exact=300 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:20:54 p99=0.049456472 exact=300 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:21:09 p99=0.049456472 exact=300 err=0 fresh=15.746534955 cyc_fresh=[7330] prep=1215 
+11:21:25 p99=0.044751847 exact=300 err=0 fresh=15.746534955 cyc_fresh=[5382] prep=1153 
+11:21:39 p99=0.038853318 exact=300 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 
+11:21:54 p99=0.038853318 exact=300 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 
+TRIPPED ['history p99 4.357113808 > 0.5']
+11:22:09 p99=4.357113808 exact=283 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:22:24 p99=4.357113808 exact=284 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:22:38 p99=4.357113808 exact=208 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:22:54 p99=4.552525039 exact=141 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:23:08 p99=0.047683407 exact=84 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:23:24 p99=0.025128761 exact=12 err=0 fresh=15.993215711 cyc_fresh=[5382] prep=1153 TRIPPED
+11:23:38 p99=0.023625569 exact=63 err=0 fresh=15.993215711 cyc_fresh=[5730] prep=1339 TRIPPED
+11:23:54 p99=0.037804668 exact=130 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:24:08 p99=0.038209996 exact=203 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:24:24 p99=0.038209996 exact=275 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:24:38 p99=0.038209996 exact=300 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:24:54 p99=0.033062929 exact=300 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:25:08 p99=0.027902401 exact=300 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:25:24 p99=0.030241055 exact=299 err=0 fresh=15.910161247 cyc_fresh=[5730] prep=1339 TRIPPED
+11:25:38 p99=0.030241055 exact=299 err=0 fresh=15.910161247 cyc_fresh=[5859] prep=1206 TRIPPED
+11:25:54 p99=0.046722263 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:26:08 p99=0.045051591 exact=299 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:26:24 p99=0.045051591 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:26:38 p99=0.04434769 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:26:54 p99=0.031293703 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:27:08 p99=0.039296748 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:27:24 p99=0.037988276 exact=299 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:27:38 p99=0.03774624 exact=300 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:27:54 p99=0.043169704 exact=299 err=0 fresh=16.898230668 cyc_fresh=[5859] prep=1206 TRIPPED
+11:28:08 p99=0.048041335 exact=300 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:28:24 p99=0.058114461 exact=299 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:28:38 p99=0.066448245 exact=300 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:28:54 p99=2.768174193 exact=291 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:29:09 p99=2.768174193 exact=291 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:29:24 p99=2.768174193 exact=224 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:29:38 p99=2.973283033 exact=152 err=0 fresh=16.690684983 cyc_fresh=[14367] prep=1123 TRIPPED
+11:29:54 p99=0.036640396 exact=87 err=0 fresh=18.879089468 cyc_fresh=[14367] prep=1123 TRIPPED
+11:30:08 p99=0.036640396 exact=15 err=0 fresh=18.879089468 cyc_fresh=[14367] prep=1123 TRIPPED
+11:30:24 p99=None exact=0 err=0 fresh=18.879089468 cyc_fresh=[14367] prep=1123 TRIPPED
+11:30:38 p99=0.05150293 exact=90 err=0 fresh=23.319039217 cyc_fresh=[14367] prep=1123 TRIPPED
+11:30:54 p99=0.055418133 exact=123 err=0 fresh=29.25930646 cyc_fresh=[14367] prep=1123 TRIPPED
+11:31:09 p99=0.055418133 exact=123 err=0 fresh=29.25930646 cyc_fresh=[14367] prep=1123 TRIPPED
+11:31:24 p99=0.055418133 exact=123 err=0 fresh=36.785060571 cyc_fresh=[14367] prep=1123 TRIPPED
+11:31:38 p99=0.059763524 exact=83 err=0 fresh=41.602849974 cyc_fresh=[14367] prep=1123 TRIPPED
+11:31:54 p99=0.036823469 exact=62 err=0 fresh=41.602849974 cyc_fresh=[14367] prep=1123 TRIPPED
+11:32:08 p99=0.048477969 exact=134 err=0 fresh=34.628554295 cyc_fresh=[161323, 97401, 97401, 29863, 29863, 29863, 29863] prep=2854 TRIPPED
+11:32:24 p99=0.047045751 exact=210 err=0 fresh=30.561221046 cyc_fresh=[7595] prep=1485 TRIPPED
+11:32:38 p99=0.056284756 exact=277 err=0 fresh=30.561221046 cyc_fresh=[11387] prep=1184 TRIPPED
+11:32:54 p99=0.056284756 exact=300 err=0 fresh=15.639305509 cyc_fresh=[11387] prep=1184 TRIPPED
+11:33:08 p99=0.056284756 exact=299 err=0 fresh=14.929644058000001 cyc_fresh=[9746] prep=1667 TRIPPED
+11:33:24 p99=0.061113414 exact=300 err=0 fresh=0.0 cyc_fresh=[8222] prep=1193 TRIPPED
+11:33:38 p99=0.064422273 exact=300 err=0 fresh=30.929496037 cyc_fresh=[8222] prep=1193 TRIPPED
+11:33:54 p99=0.06372111 exact=300 err=0 fresh=30.929496037 cyc_fresh=[8222] prep=1193 TRIPPED
+11:34:09 p99=0.06372111 exact=299 err=0 fresh=30.929496037 cyc_fresh=[8222] prep=1193 TRIPPED
+11:34:25 p99=0.05927512 exact=300 err=0 fresh=30.929496037 cyc_fresh=[8222] prep=1193 TRIPPED
+11:34:38 p99=0.048935089 exact=299 err=0 fresh=30.929496037 cyc_fresh=[7258] prep=1527 TRIPPED
+11:34:54 p99=0.054318103 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:35:08 p99=0.056332395 exact=299 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:35:24 p99=0.056332395 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:35:38 p99=0.056332395 exact=299 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:35:54 p99=0.04945335 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:36:09 p99=0.047795163 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:36:24 p99=0.04945335 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:36:38 p99=0.05736111 exact=300 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:36:54 p99=4.923551809 exact=280 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:37:08 p99=4.923551809 exact=280 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:37:25 p99=4.923551809 exact=214 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:37:39 p99=5.249617176 exact=141 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:37:54 p99=0.241403454 exact=88 err=0 fresh=19.040731102 cyc_fresh=[7258] prep=1527 TRIPPED
+11:38:08 p99=0.019316547 exact=15 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:38:24 p99=0.067604961 exact=56 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:38:39 p99=0.059993906 exact=129 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:38:54 p99=0.048959344 exact=202 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:39:09 p99=0.042461701 exact=299 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:39:25 p99=0.041576892 exact=299 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:39:39 p99=0.046509979 exact=300 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:39:54 p99=0.046509979 exact=299 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:40:09 p99=0.051057373 exact=300 err=0 fresh=16.903998369 cyc_fresh=[7992] prep=1573 TRIPPED
+11:40:24 p99=0.051985843 exact=300 err=0 fresh=16.903998369 cyc_fresh=[6573] prep=1750 TRIPPED
+11:40:39 p99=0.050202744 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:40:54 p99=0.055235616 exact=299 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:41:09 p99=0.066205785 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:41:24 p99=0.04836064 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:41:39 p99=0.054832738 exact=299 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:41:54 p99=0.037567011 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:42:09 p99=0.033115122 exact=299 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:42:25 p99=0.039570012 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:42:39 p99=0.038216693 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:42:55 p99=0.040180867 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:43:09 p99=0.039570012 exact=300 err=0 fresh=16.589869008 cyc_fresh=[6573] prep=1750 TRIPPED
+11:43:24 p99=0.040180867 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:43:39 p99=0.040180867 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:43:54 p99=0.039514851 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:44:09 p99=0.036745936 exact=299 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:44:25 p99=0.040974682 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:44:39 p99=0.038639613 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:44:54 p99=0.038639613 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:45:09 p99=0.041180175 exact=300 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:45:25 p99=0.045021523 exact=299 err=0 fresh=17.465847044 cyc_fresh=[14270] prep=1490 TRIPPED
+11:45:39 p99=0.045021523 exact=299 err=0 fresh=17.465847044 cyc_fresh=[6777] prep=1635 TRIPPED
+11:45:55 p99=0.05457619 exact=300 err=0 fresh=17.641255338 cyc_fresh=[6274] prep=1620 TRIPPED
+11:46:09 p99=0.05457619 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:46:25 p99=0.055105255 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:46:39 p99=0.05457619 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:46:55 p99=0.042446 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:47:09 p99=0.037044395 exact=299 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:47:25 p99=0.033636474 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:47:39 p99=0.032947176 exact=300 err=0 fresh=27.446345307 cyc_fresh=[6274] prep=1620 TRIPPED
+11:47:55 p99=0.034878479 exact=300 err=0 fresh=27.446345307 cyc_fresh=[7075] prep=1360 TRIPPED
+11:48:09 p99=0.039969029 exact=300 err=0 fresh=16.016878552 cyc_fresh=[7075] prep=1360 TRIPPED
+11:48:25 p99=0.039969029 exact=300 err=0 fresh=16.016878552 cyc_fresh=[7075] prep=1360 TRIPPED
+11:48:39 p99=0.041709743 exact=300 err=0 fresh=16.016878552 cyc_fresh=[7075] prep=1360 TRIPPED
+11:48:55 p99=0.041709743 exact=300 err=0 fresh=16.016878552 cyc_fresh=[7075] prep=1360 TRIPPED
+11:49:09 p99=0.036116534 exact=300 err=0 fresh=16.016878552 cyc_fresh=[7075] prep=1360 TRIPPED
+11:49:25 p99=0.040227726 exact=300 err=0 fresh=16.016878552 cyc_fresh=[5670] prep=1281 TRIPPED
+11:49:39 p99=0.040227726 exact=300 err=0 fresh=16.205163184 cyc_fresh=[6369] prep=1713 TRIPPED
+11:49:55 p99=0.039444456 exact=300 err=0 fresh=24.325723719 cyc_fresh=[6369] prep=1713 TRIPPED
+11:50:09 p99=0.039444456 exact=300 err=0 fresh=24.325723719 cyc_fresh=[6369] prep=1713 TRIPPED
+11:50:25 p99=0.050406629 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:50:39 p99=0.058592047 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:50:55 p99=0.058592047 exact=299 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:51:09 p99=0.058592047 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:51:25 p99=0.039957552 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:51:39 p99=0.033818303 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:51:55 p99=0.035821607 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:52:09 p99=0.034213274 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:52:25 p99=0.034213274 exact=299 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:52:39 p99=0.036997109 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:52:55 p99=0.036997109 exact=299 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:53:09 p99=0.039606338 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:53:25 p99=0.039606338 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:53:39 p99=0.040987658 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:53:55 p99=0.043796056 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:54:09 p99=0.036660466 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:54:25 p99=0.038084167 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:54:39 p99=0.033706603 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:54:55 p99=0.031071617 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:55:10 p99=0.031071617 exact=300 err=0 fresh=16.813122969 cyc_fresh=[8969] prep=1699 TRIPPED
+11:55:26 p99=0.039707863 exact=300 err=0 fresh=16.813122969 cyc_fresh=[6779] prep=1809 TRIPPED
+11:55:39 p99=0.043108293 exact=299 err=0 fresh=16.101647785 cyc_fresh=[6779] prep=1809 TRIPPED
+11:55:55 p99=0.04663082 exact=300 err=0 fresh=16.101647785 cyc_fresh=[6779] prep=1809 TRIPPED
+11:56:09 p99=0.04663082 exact=300 err=0 fresh=16.101647785 cyc_fresh=[6779] prep=1809 TRIPPED
+11:56:25 p99=0.04663082 exact=300 err=0 fresh=16.101647785 cyc_fresh=[7149] prep=1485 TRIPPED
+11:56:39 p99=0.093235057 exact=299 err=0 fresh=15.631948484 cyc_fresh=[7149] prep=1485 TRIPPED
+11:56:55 p99=0.093235057 exact=300 err=0 fresh=15.631948484 cyc_fresh=[7149] prep=1485 TRIPPED
+11:57:09 p99=0.093235057 exact=300 err=0 fresh=15.631948484 cyc_fresh=[7149] prep=1485 TRIPPED
+11:57:25 p99=0.073387224 exact=299 err=0 fresh=15.631948484 cyc_fresh=[6648] prep=1498 TRIPPED
+11:57:39 p99=0.043264049 exact=300 err=0 fresh=16.672379579 cyc_fresh=[6153] prep=1238 TRIPPED
+11:57:55 p99=0.043264049 exact=299 err=0 fresh=14.646630225 cyc_fresh=[6153] prep=1238 TRIPPED
+11:58:09 p99=0.04842857 exact=299 err=0 fresh=14.891259936 cyc_fresh=[10055] prep=1699 TRIPPED
+11:58:25 p99=0.051003042 exact=299 err=0 fresh=14.891259936 cyc_fresh=[10055] prep=1699 TRIPPED
+11:58:39 p99=0.051003042 exact=300 err=0 fresh=14.891259936 cyc_fresh=[10055] prep=1699 TRIPPED
+11:58:55 p99=0.051003042 exact=299 err=0 fresh=14.891259936 cyc_fresh=[10055] prep=1699 TRIPPED
+11:59:09 p99=0.032899951 exact=300 err=0 fresh=14.891259936 cyc_fresh=[7289] prep=1355 TRIPPED
+11:59:25 p99=0.048819005 exact=299 err=0 fresh=18.54067381 cyc_fresh=[6180] prep=1321 TRIPPED
+11:59:39 p99=0.048819005 exact=300 err=0 fresh=24.185474432 cyc_fresh=[6180] prep=1321 TRIPPED
+11:59:55 p99=0.048819005 exact=300 err=0 fresh=24.185474432 cyc_fresh=[6180] prep=1321 TRIPPED
+12:00:09 p99=0.090128463 exact=299 err=0 fresh=19.182030387 cyc_fresh=[16798] prep=2845 TRIPPED
+12:00:25 p99=0.120673926 exact=299 err=0 fresh=19.182030387 cyc_fresh=[6344] prep=1604 TRIPPED
+12:00:39 p99=0.40891481 exact=300 err=0 fresh=22.984705174 cyc_fresh=[6344] prep=1604 TRIPPED
+12:00:55 p99=1.15744279 exact=299 err=0 fresh=22.984705174 cyc_fresh=[6469] prep=1589 TRIPPED
+12:01:09 p99=1.15744279 exact=300 err=0 fresh=16.417127065 cyc_fresh=[6469] prep=1589 TRIPPED
+12:01:25 p99=1.15744279 exact=300 err=0 fresh=16.417127065 cyc_fresh=[6469] prep=1589 TRIPPED
+12:01:39 p99=1.15744279 exact=299 err=0 fresh=15.363178897 cyc_fresh=[6189] prep=1358 TRIPPED
+12:01:55 p99=0.081269222 exact=300 err=0 fresh=15.363178897 cyc_fresh=[6189] prep=1358 TRIPPED
+12:02:09 p99=0.061633728 exact=299 err=0 fresh=14.69467182 cyc_fresh=[11938] prep=1774 TRIPPED
+12:02:25 p99=0.061633728 exact=299 err=0 fresh=14.69467182 cyc_fresh=[11938] prep=1774 TRIPPED
+12:02:39 p99=0.052668687 exact=300 err=0 fresh=14.69467182 cyc_fresh=[7133] prep=1340 TRIPPED
+12:02:55 p99=0.051298144 exact=299 err=0 fresh=14.911312245 cyc_fresh=[5647] prep=1298 TRIPPED
+12:03:09 p99=0.051298144 exact=300 err=0 fresh=14.886280422 cyc_fresh=[5647] prep=1298 TRIPPED
+12:03:25 p99=0.051298144 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:03:39 p99=0.049986511 exact=299 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:03:55 p99=0.045162758 exact=299 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:04:09 p99=0.038442521 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:04:25 p99=0.034860298 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:04:39 p99=0.033583698 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:04:55 p99=0.031672802 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:05:09 p99=0.038296335 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:05:25 p99=0.042906385 exact=299 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:05:39 p99=0.042906385 exact=299 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:05:55 p99=0.044973808 exact=300 err=0 fresh=15.153293364 cyc_fresh=[6740] prep=1508 TRIPPED
+12:06:09 p99=0.053378761 exact=300 err=0 fresh=15.153293364 cyc_fresh=[7237] prep=1927 TRIPPED
+12:06:26 p99=0.053378761 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:06:40 p99=0.05253153 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:06:55 p99=0.049214917 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:07:09 p99=0.047469956 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:07:25 p99=0.041021259 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:07:39 p99=0.041021259 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:07:55 p99=0.037352886 exact=299 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:08:10 p99=0.035833355 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:08:25 p99=0.033832771 exact=300 err=0 fresh=16.934678761 cyc_fresh=[7237] prep=1927 TRIPPED
+12:08:39 p99=0.042879973 exact=300 err=0 fresh=19.932058649 cyc_fresh=[11093] prep=1701 TRIPPED
+12:08:55 p99=0.044916855 exact=300 err=0 fresh=19.932058649 cyc_fresh=[11093] prep=1701 TRIPPED
+12:09:09 p99=1.070683155 exact=299 err=0 fresh=19.932058649 cyc_fresh=[11093] prep=1701 TRIPPED
+12:09:25 p99=1.070683155 exact=300 err=0 fresh=19.932058649 cyc_fresh=[11093] prep=1701 TRIPPED
+12:09:40 p99=1.070683155 exact=299 err=0 fresh=19.932058649 cyc_fresh=[6991] prep=1494 TRIPPED
+12:09:55 p99=0.033958358 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:10:10 p99=0.042036593 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:10:25 p99=0.045821057 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:10:39 p99=0.046037479 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:10:55 p99=0.046547357 exact=299 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:11:09 p99=0.046037479 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:11:25 p99=0.043048084 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6991] prep=1494 TRIPPED
+12:11:40 p99=0.040088533 exact=300 err=0 fresh=16.253947135 cyc_fresh=[6403] prep=1420 TRIPPED
+12:11:55 p99=0.047717287 exact=299 err=0 fresh=17.408494 cyc_fresh=[6403] prep=1420 TRIPPED
+12:12:10 p99=0.047717287 exact=300 err=0 fresh=17.408494 cyc_fresh=[6403] prep=1420 TRIPPED
+12:12:25 p99=0.051771982 exact=300 err=0 fresh=16.727458732 cyc_fresh=[15298] prep=1654 TRIPPED
+12:12:40 p99=0.058916346 exact=300 err=0 fresh=25.728668489 cyc_fresh=[6937] prep=1587 TRIPPED
+12:12:55 p99=0.058916346 exact=299 err=0 fresh=24.962417188 cyc_fresh=[6937] prep=1587 TRIPPED
+12:13:10 p99=0.065358577 exact=300 err=0 fresh=24.962417188 cyc_fresh=[7624] prep=1740 TRIPPED
+12:13:26 p99=0.055469295 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:13:40 p99=0.055447942 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:13:55 p99=0.055447942 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:14:10 p99=0.0542636 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:14:25 p99=0.033469963 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:14:40 p99=0.033245359 exact=300 err=0 fresh=16.077191521 cyc_fresh=[7624] prep=1740 TRIPPED
+12:14:56 p99=0.038037855 exact=300 err=0 fresh=16.077191521 cyc_fresh=[5526] prep=1220 TRIPPED
+12:15:10 p99=0.077904843 exact=300 err=0 fresh=16.149443276 cyc_fresh=[5526] prep=1220 TRIPPED
+12:15:25 p99=0.150870716 exact=299 err=0 fresh=17.174081485 cyc_fresh=[7528] prep=1939 TRIPPED
+12:15:40 p99=0.150870716 exact=300 err=0 fresh=17.174081485 cyc_fresh=[7528] prep=1939 TRIPPED
+12:15:55 p99=0.077904843 exact=299 err=0 fresh=17.174081485 cyc_fresh=[7528] prep=1939 TRIPPED
+12:16:10 p99=0.068112326 exact=299 err=0 fresh=16.154375599 cyc_fresh=[6050] prep=1623 TRIPPED
+12:16:25 p99=0.068112326 exact=300 err=0 fresh=16.154375599 cyc_fresh=[6323] prep=1428 TRIPPED
+12:16:40 p99=0.068112326 exact=299 err=0 fresh=15.290927118 cyc_fresh=[6323] prep=1428 TRIPPED
+12:16:56 p99=0.068112326 exact=300 err=0 fresh=15.290927118 cyc_fresh=[6485] prep=1319 TRIPPED
+12:17:10 p99=0.057412289 exact=300 err=0 fresh=14.856826451 cyc_fresh=[7427] prep=1777 TRIPPED
+12:17:26 p99=0.049561262 exact=300 err=0 fresh=16.021067843 cyc_fresh=[6974] prep=1346 TRIPPED
+12:17:40 p99=0.049561262 exact=300 err=0 fresh=23.661688362 cyc_fresh=[6974] prep=1346 TRIPPED
+12:17:55 p99=0.049561262 exact=300 err=0 fresh=23.661688362 cyc_fresh=[6974] prep=1346 TRIPPED
+12:18:10 p99=0.051830687 exact=299 err=0 fresh=23.661688362 cyc_fresh=[6222] prep=1674 TRIPPED
+12:18:26 p99=0.054777621 exact=300 err=0 fresh=15.600697905 cyc_fresh=[6222] prep=1674 TRIPPED
+12:18:40 p99=0.051893065 exact=300 err=0 fresh=15.600697905 cyc_fresh=[6222] prep=1674 TRIPPED
+12:18:55 p99=0.051893065 exact=300 err=0 fresh=16.178756596 cyc_fresh=[9020] prep=1380 TRIPPED
+12:19:10 p99=0.051830687 exact=300 err=0 fresh=16.178756596 cyc_fresh=[7726] prep=2211 TRIPPED
+12:19:26 p99=0.044786574 exact=299 err=0 fresh=16.36322214 cyc_fresh=[7726] prep=2211 TRIPPED
+12:19:40 p99=0.044786574 exact=299 err=0 fresh=16.36322214 cyc_fresh=[7726] prep=2211 TRIPPED
+12:19:56 p99=0.041321781 exact=300 err=0 fresh=16.36322214 cyc_fresh=[7726] prep=2211 TRIPPED
+12:20:10 p99=0.041321781 exact=300 err=0 fresh=16.36322214 cyc_fresh=[7726] prep=2211 TRIPPED
+12:20:26 p99=0.040416371 exact=300 err=0 fresh=16.36322214 cyc_fresh=[7305] prep=1709 TRIPPED
+12:20:40 p99=0.048037995 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:20:56 p99=0.050055885 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:21:10 p99=0.051488829 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:21:26 p99=0.052158753 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:21:40 p99=0.052158753 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:21:56 p99=0.049813435 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:22:10 p99=0.040612225 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:22:26 p99=0.050709734 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:22:40 p99=0.053344389 exact=299 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:22:56 p99=0.050709734 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:23:10 p99=0.05262166 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:23:26 p99=0.038038914 exact=300 err=0 fresh=17.599273405 cyc_fresh=[7305] prep=1709 TRIPPED
+12:23:40 p99=0.051568993 exact=299 err=0 fresh=17.599273405 cyc_fresh=[6701] prep=1671 TRIPPED
+12:23:56 p99=0.051568993 exact=299 err=0 fresh=16.289748897 cyc_fresh=[6701] prep=1671 TRIPPED
+12:24:10 p99=0.051568993 exact=299 err=0 fresh=16.289748897 cyc_fresh=[6701] prep=1671 TRIPPED
+12:24:26 p99=0.051568993 exact=299 err=0 fresh=16.289748897 cyc_fresh=[6701] prep=1671 TRIPPED
+12:24:40 p99=0.043652216 exact=300 err=0 fresh=16.289748897 cyc_fresh=[6701] prep=1671 TRIPPED
+12:24:56 p99=0.041535417 exact=300 err=0 fresh=16.289748897 cyc_fresh=[6701] prep=1671 TRIPPED
+12:25:10 p99=0.062634017 exact=300 err=0 fresh=16.289748897 cyc_fresh=[6213] prep=1327 TRIPPED
+12:25:26 p99=0.07512235 exact=300 err=0 fresh=17.780548841 cyc_fresh=[6213] prep=1327 TRIPPED
+12:25:40 p99=0.07512235 exact=300 err=0 fresh=17.780548841 cyc_fresh=[6213] prep=1327 TRIPPED
+12:25:56 p99=0.07512235 exact=299 err=0 fresh=17.780548841 cyc_fresh=[6213] prep=1327 TRIPPED
+12:26:10 p99=1.5585336779999999 exact=297 err=0 fresh=17.780548841 cyc_fresh=[6213] prep=1327 TRIPPED
+12:26:26 p99=1.5585336779999999 exact=296 err=0 fresh=16.599505003 cyc_fresh=[8614] prep=1295 TRIPPED
+12:26:40 p99=1.5585336779999999 exact=225 err=0 fresh=16.599505003 cyc_fresh=[8614] prep=1295 TRIPPED
+12:26:56 p99=1.78272774 exact=150 err=0 fresh=16.599505003 cyc_fresh=[8614] prep=1295 TRIPPED
+12:27:10 p99=1.9687076079999999 exact=93 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:27:26 p99=0.036100548 exact=10 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:27:40 p99=0.023075849 exact=57 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:27:56 p99=0.025188709 exact=201 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:28:10 p99=0.029753214 exact=273 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:28:26 p99=0.035383046 exact=299 err=0 fresh=15.261641102 cyc_fresh=[6119] prep=1344 TRIPPED
+12:28:40 p99=0.045455992 exact=300 err=0 fresh=15.873449352 cyc_fresh=[5753] prep=1358 TRIPPED
+12:28:56 p99=0.045455992 exact=300 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:29:10 p99=0.04430939 exact=299 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:29:26 p99=0.040733638 exact=300 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:29:40 p99=0.038388383 exact=300 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:29:56 p99=0.032307787 exact=299 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:30:10 p99=0.035884349 exact=299 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:30:26 p99=0.039947373 exact=300 err=0 fresh=22.008560906 cyc_fresh=[5753] prep=1358 TRIPPED
+12:33:33 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+12:34:08 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+12:34:33 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+12:35:06 p99=0.042717404 exact=300 err=0 fresh=17.336069997 cyc_fresh=[5760] prep=1347 TRIPPED
+12:35:14 p99=0.036348377 exact=300 err=0 fresh=17.336069997 cyc_fresh=[5760] prep=1347 TRIPPED
+12:35:31 p99=0.036348377 exact=300 err=0 fresh=17.336069997 cyc_fresh=[5760] prep=1347 TRIPPED
+12:36:04 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+12:46:40 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+12:46:54 p99=0.049676819 exact=299 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:47:05 p99=0.049676819 exact=299 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:47:11 p99=0.054807632 exact=300 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:49:27 p99=1.658490992 exact=297 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:49:33 p99=0.03974891 exact=207 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:49:43 p99=0.043987301 exact=275 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:49:58 p99=0.046195832 exact=299 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:50:13 p99=0.049007027 exact=300 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:50:27 p99=0.046195832 exact=300 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:50:43 p99=0.046195832 exact=300 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:50:57 p99=0.039902479 exact=300 err=0 fresh=17.32176227 cyc_fresh=[10869] prep=1517 TRIPPED
+12:51:13 p99=0.068817917 exact=300 err=0 fresh=19.098504385 cyc_fresh=[20001] prep=2923 TRIPPED
+12:51:28 p99=0.068817917 exact=299 err=0 fresh=19.098504385 cyc_fresh=[20001] prep=2923 TRIPPED
+12:51:44 p99=0.068817917 exact=300 err=0 fresh=19.098504385 cyc_fresh=[5951] prep=1375 TRIPPED
+12:52:01 p99=0.070091364 exact=299 err=0 fresh=15.499640797 cyc_fresh=[5951] prep=1375 
+12:52:14 p99=0.052650011 exact=299 err=0 fresh=15.499640797 cyc_fresh=[7219] prep=1969 
+12:52:28 p99=0.052942407 exact=300 err=0 fresh=16.080165376 cyc_fresh=[7219] prep=1969 
+12:52:44 p99=0.052942407 exact=299 err=0 fresh=16.080165376 cyc_fresh=[7219] prep=1969 
+12:52:58 p99=0.045151143 exact=299 err=0 fresh=16.080165376 cyc_fresh=[7219] prep=1969 
+12:53:14 p99=0.047467878 exact=300 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:53:28 p99=0.045618658 exact=300 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:53:44 p99=0.044295342 exact=300 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:53:58 p99=0.044295342 exact=299 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:54:14 p99=0.038211198 exact=300 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:54:28 p99=0.290751371 exact=299 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:54:44 p99=0.290751371 exact=300 err=0 fresh=20.403854436 cyc_fresh=[22861] prep=1800 
+12:54:59 p99=0.290751371 exact=300 err=0 fresh=15.676764698 cyc_fresh=[6051] prep=1292 
+12:55:14 p99=0.290751371 exact=300 err=0 fresh=15.676764698 cyc_fresh=[6051] prep=1292 
+12:55:28 p99=0.290751371 exact=300 err=0 fresh=15.676764698 cyc_fresh=[6051] prep=1292 
+12:55:44 p99=0.04879387 exact=299 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:55:58 p99=0.048804088 exact=299 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:56:14 p99=0.042284326 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:56:29 p99=0.040758272 exact=299 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:56:44 p99=0.039255142 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:56:58 p99=0.039224922 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:57:14 p99=0.043490188 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+12:57:28 p99=0.043490188 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 
+TRIPPED ['history p99 0.650840756 > 0.5']
+12:57:44 p99=0.650840756 exact=299 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 TRIPPED
+12:57:58 p99=0.650840756 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 TRIPPED
+12:58:14 p99=0.650840756 exact=299 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 TRIPPED
+12:58:27 p99=0.650840756 exact=300 err=0 fresh=15.350204293 cyc_fresh=[6728] prep=1464 TRIPPED
+12:58:43 p99=0.650840756 exact=299 err=0 fresh=17.954173404 cyc_fresh=[18924] prep=1072 TRIPPED
+12:58:57 p99=0.072157142 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+12:59:13 p99=0.037527684 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+12:59:28 p99=0.037988521 exact=296 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+12:59:43 p99=0.143267919 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+12:59:58 p99=0.143267919 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:00:13 p99=0.143267919 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:00:28 p99=0.143267919 exact=301 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:00:43 p99=0.045655549 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:00:58 p99=0.045655549 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:01:14 p99=0.045087607 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:01:28 p99=0.042602065 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:01:43 p99=0.036241668 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:01:58 p99=0.035841427 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:02:13 p99=0.039370963 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:02:28 p99=0.035465923 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:02:44 p99=0.039370963 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:02:58 p99=0.039370963 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:03:13 p99=0.036915615 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:03:28 p99=0.039383063 exact=299 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:03:43 p99=0.039383063 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:03:58 p99=0.036915615 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:04:14 p99=0.039383063 exact=300 err=0 fresh=25.022544477 cyc_fresh=[14293] prep=1532 TRIPPED
+13:04:28 p99=0.055551339 exact=300 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:04:43 p99=0.056139295 exact=300 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:04:58 p99=0.056139295 exact=299 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:05:13 p99=0.069461828 exact=299 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:05:28 p99=0.202022003 exact=299 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:05:45 p99=0.374251543 exact=300 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:05:58 p99=0.202022003 exact=300 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:06:13 p99=0.060206495 exact=300 err=0 fresh=16.69705616 cyc_fresh=[7264] prep=2015 TRIPPED
+13:06:28 p99=0.045717158 exact=300 err=0 fresh=16.69705616 cyc_fresh=[6677] prep=1390 TRIPPED
+13:06:43 p99=0.045717158 exact=300 err=0 fresh=17.158091521 cyc_fresh=[6677] prep=1390 TRIPPED
+13:06:58 p99=0.045717158 exact=300 err=0 fresh=17.158091521 cyc_fresh=[6677] prep=1390 TRIPPED
+13:07:13 p99=0.043337475 exact=300 err=0 fresh=17.158091521 cyc_fresh=[6556] prep=1768 TRIPPED
+13:07:28 p99=0.045717158 exact=299 err=0 fresh=16.34514653 cyc_fresh=[6556] prep=1768 TRIPPED
+13:07:43 p99=0.043367691 exact=299 err=0 fresh=16.34514653 cyc_fresh=[6556] prep=1768 TRIPPED
+13:07:58 p99=0.043367691 exact=300 err=0 fresh=16.34514653 cyc_fresh=[6556] prep=1768 TRIPPED
+13:08:13 p99=0.052652538 exact=299 err=0 fresh=15.570532025 cyc_fresh=[13831] prep=1780 TRIPPED
+13:08:28 p99=0.068036708 exact=300 err=0 fresh=15.570532025 cyc_fresh=[13831] prep=1780 TRIPPED
+13:08:44 p99=0.068036708 exact=299 err=0 fresh=15.093790098 cyc_fresh=[5659] prep=1387 TRIPPED
+13:08:58 p99=0.068036708 exact=299 err=0 fresh=15.093790098 cyc_fresh=[5659] prep=1387 TRIPPED
+13:09:13 p99=0.064900208 exact=299 err=0 fresh=15.093790098 cyc_fresh=[5659] prep=1387 TRIPPED
+13:09:28 p99=0.047364426 exact=300 err=0 fresh=15.093790098 cyc_fresh=[5659] prep=1387 TRIPPED
+13:09:43 p99=0.047364426 exact=299 err=0 fresh=14.336654488 cyc_fresh=[5750] prep=1534 TRIPPED
+13:09:58 p99=0.041145807 exact=300 err=0 fresh=17.818839802 cyc_fresh=[5750] prep=1534 TRIPPED
+13:10:14 p99=0.063891729 exact=300 err=0 fresh=19.181237858 cyc_fresh=[6384] prep=1351 TRIPPED
+13:10:28 p99=0.075050561 exact=300 err=0 fresh=19.181237858 cyc_fresh=[6384] prep=1351 TRIPPED
+13:10:44 p99=0.075050561 exact=300 err=0 fresh=19.181237858 cyc_fresh=[6384] prep=1351 TRIPPED
+13:10:58 p99=0.075050561 exact=300 err=0 fresh=19.181237858 cyc_fresh=[6320] prep=1426 TRIPPED
+13:11:13 p99=0.075050561 exact=300 err=0 fresh=17.595536998 cyc_fresh=[8523] prep=2005 TRIPPED
+13:11:28 p99=0.053732275 exact=300 err=0 fresh=27.935723624 cyc_fresh=[8523] prep=2005 TRIPPED
+13:11:44 p99=0.053732275 exact=299 err=0 fresh=27.935723624 cyc_fresh=[8523] prep=2005 TRIPPED
+13:11:58 p99=0.053732275 exact=300 err=0 fresh=27.935723624 cyc_fresh=[8523] prep=2005 TRIPPED
+13:12:14 p99=0.049391809 exact=300 err=0 fresh=17.76428269 cyc_fresh=[19938] prep=1940 TRIPPED
+13:12:28 p99=0.044814905 exact=299 err=0 fresh=17.76428269 cyc_fresh=[19938] prep=1940 TRIPPED
+13:12:43 p99=1.304248929 exact=298 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:12:58 p99=1.304248929 exact=299 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:13:13 p99=1.304248929 exact=298 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:13:28 p99=1.304248929 exact=299 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:13:44 p99=0.051786322 exact=299 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:13:58 p99=0.77131605 exact=300 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:14:13 p99=0.77131605 exact=300 err=0 fresh=15.710410549 cyc_fresh=[6246] prep=1491 TRIPPED
+13:14:28 p99=0.77131605 exact=299 err=0 fresh=15.710410549 cyc_fresh=[6447] prep=1407 TRIPPED
+13:14:44 p99=0.77131605 exact=300 err=0 fresh=16.784917823 cyc_fresh=[6447] prep=1407 TRIPPED
+13:14:58 p99=0.055707634 exact=299 err=0 fresh=16.784917823 cyc_fresh=[6447] prep=1407 TRIPPED
+13:15:14 p99=0.055707634 exact=300 err=0 fresh=16.784917823 cyc_fresh=[6447] prep=1407 TRIPPED
+13:15:28 p99=0.055707634 exact=299 err=0 fresh=16.784917823 cyc_fresh=[6447] prep=1407 TRIPPED
+13:15:44 p99=0.049791185 exact=300 err=0 fresh=16.534411102 cyc_fresh=[7517] prep=1424 TRIPPED
+13:15:58 p99=0.048552831 exact=299 err=0 fresh=16.534411102 cyc_fresh=[7517] prep=1424 TRIPPED
+13:16:14 p99=0.137458151 exact=299 err=0 fresh=16.534411102 cyc_fresh=[7517] prep=1424 TRIPPED
+13:16:28 p99=0.137458151 exact=300 err=0 fresh=16.534411102 cyc_fresh=[7517] prep=1424 TRIPPED
+13:16:44 p99=0.137458151 exact=299 err=0 fresh=16.534411102 cyc_fresh=[5882] prep=1309 TRIPPED
+13:16:58 p99=0.137458151 exact=299 err=0 fresh=17.968606404 cyc_fresh=[5882] prep=1309 TRIPPED
+13:17:14 p99=0.044615189 exact=300 err=0 fresh=17.968606404 cyc_fresh=[5882] prep=1309 TRIPPED
+13:17:28 p99=0.044441826 exact=300 err=0 fresh=17.968606404 cyc_fresh=[5882] prep=1309 TRIPPED
+13:17:44 p99=0.043995769 exact=300 err=0 fresh=17.968606404 cyc_fresh=[5882] prep=1309 TRIPPED
+13:17:58 p99=0.039177694 exact=300 err=0 fresh=17.968606404 cyc_fresh=[5882] prep=1309 TRIPPED
+13:18:14 p99=0.040518206 exact=300 err=0 fresh=17.968606404 cyc_fresh=[14769] prep=1666 TRIPPED
+13:18:28 p99=0.056527878 exact=300 err=0 fresh=16.712818727 cyc_fresh=[14769] prep=1666 TRIPPED
+13:18:44 p99=0.063142563 exact=300 err=0 fresh=29.267853758 cyc_fresh=[6945] prep=1567 TRIPPED
+13:18:58 p99=0.063142563 exact=299 err=0 fresh=34.040249994 cyc_fresh=[6945] prep=1567 TRIPPED
+13:19:14 p99=0.058269039 exact=300 err=0 fresh=34.040249994 cyc_fresh=[6945] prep=1567 TRIPPED
+13:19:28 p99=0.054235376 exact=299 err=0 fresh=34.040249994 cyc_fresh=[6945] prep=1567 TRIPPED
+13:19:44 p99=0.041590977 exact=300 err=0 fresh=34.040249994 cyc_fresh=[6945] prep=1567 TRIPPED
+13:19:58 p99=0.033850112 exact=300 err=0 fresh=34.040249994 cyc_fresh=[7778] prep=1367 TRIPPED
+13:20:14 p99=0.081618019 exact=300 err=0 fresh=17.712239617 cyc_fresh=[7778] prep=1367 TRIPPED
+13:20:28 p99=2.919736298 exact=286 err=0 fresh=17.712239617 cyc_fresh=[6540] prep=1667 TRIPPED
+13:20:44 p99=2.919736298 exact=286 err=0 fresh=18.441257536 cyc_fresh=[6540] prep=1667 TRIPPED
+13:20:58 p99=2.919736298 exact=214 err=0 fresh=18.441257536 cyc_fresh=[6540] prep=1667 TRIPPED
+13:21:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:21:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:21:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:21:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:22:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:22:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:22:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:22:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:23:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:23:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:23:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:23:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:24:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:24:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:24:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:24:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:25:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:25:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:25:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:25:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:26:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:26:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:26:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:26:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:27:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:27:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:27:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:27:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:28:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:28:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:28:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:28:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:29:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:29:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:29:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:29:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:30:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:30:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:30:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:30:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:31:14 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:31:28 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+TRIPPED ['status unreadable twice: Expecting value: line 2 column 1 (char 1)']
+13:31:44 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:31:45 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:31:54 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:31:58 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:32:10 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:32:24 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:32:40 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:32:55 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:33:11 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:33:24 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:33:40 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:33:54 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:34:10 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:34:25 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:34:40 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:34:55 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:35:10 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED
+13:35:24 p99=None exact=None err=None fresh=None cyc_fresh=None prep=None TRIPPED

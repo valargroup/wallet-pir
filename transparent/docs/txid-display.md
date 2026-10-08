@@ -256,7 +256,10 @@ does that work once instead and ships the result with the candidate.
   answers for that database. Wallets see the same published masks, digests,
   epochs and answers as from a local build, and the wire format is unchanged.
 
-[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md).
+[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md);
+[production deploy and measurement, 2026-10-08](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md):
+the worker's build CPU and query interference went away as designed, and the
+80 MiB copy per block became the block-to-serving tail on the private network.
 
 ### Split map
 

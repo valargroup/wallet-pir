@@ -1,0 +1,7 @@
+period                                          ship_s                                 block_to_serving_s                       cycle_s p50
+10:50-11:28 quiet, incl. window B1              n= 28 p50=  1.39 p95=  4.43 max=  8.91   n= 28 p50=  5.73 p95=  9.05 max= 14.37   5.71
+11:28-11:35 fleet ssh timeouts                  n=  7 p50=  5.00 p95= 18.67 max= 18.67   n= 13 p50= 29.86 p95=161.32 max=161.32   9.77
+11:35-11:56 before the bootstrap                n= 10 p50=  2.11 p95=  9.43 max=  9.43   n= 10 p50=  6.78 p95= 14.27 max= 14.27   6.75
+11:56-13:21 coordinator bootstrap (io some ~24%) n= 76 p50=  1.82 p95= 13.30 max= 17.13   n= 77 p50=  6.74 p95= 18.92 max= 22.86   6.72
+all except the ssh-timeout minutes              n=114 p50=  1.78 p95= 10.22 max= 17.13   n=115 p50=  6.57 p95= 16.46 max= 22.86
+ship over 2 s by period: [('10:50-11:28', 7, 28), ('11:28-11:35', 7, 7), ('11:35-11:56', 5, 10), ('11:56-13:21', 34, 76)]
