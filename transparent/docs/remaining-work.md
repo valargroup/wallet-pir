@@ -335,9 +335,9 @@ Design: [txid display](txid-display.md). Roman's decisions:
 - [ ] Worker `verify_rows` accepts trailing all-empty segments that the
   builder never emits. Refuse them, since each adds a reply frame to every
   query of that bucket.
-- [ ] **Do not redeploy txid display from `main` until the v2 cutover.** The
-  running v1 proof of concept keeps its deployed binaries; `main` can neither
-  read v1 sidecars nor serve v1 tables.
+- [x] v2 cutover, 2026-10-08: production serves v2 from height 1 on a dedicated
+  archive host; v1 is retired and its data deleted
+  ([status](status.md#txid-display-v2-in-production-from-genesis-2026-10-08)).
 - [ ] Ingest phase (after the code is accepted), measured on a development host
   first:
   - a v2x genesis journal ingested by another session on 2026-10-08 is
@@ -349,8 +349,10 @@ Design: [txid display](txid-display.md). Roman's decisions:
     or about 60,000 now that one table per bucket halves memory;
   - source-sidecar bytes from genesis against the 150 GB volume, with 20%
     headroom.
-- [ ] G, Roman: a v2 lineage from a v2x journal, beside the v1 proof of
-  concept; cutover; then retire v1.
+- [x] G, Roman: approved a direct v2 deploy (no clients), the 64 GB host and
+  v1's retirement on 2026-10-08.
+- [ ] Re-enable shipped runtimes for v2 once the ship copy no longer worsens
+  block-to-serving p95 under the coordinator's I/O load.
 
 ## Tiered txid display proof of concept (2026-10-05)
 

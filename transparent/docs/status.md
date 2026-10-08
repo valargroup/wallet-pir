@@ -6,6 +6,63 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display v2 in production from genesis, 2026-10-08
+
+Production `/v1/txid/` serves [txid display v2](txid-display.md) from height 1.
+v1 is retired. Roman approved the host, the deploy and v1's retirement. There
+were no clients, so v2 replaced v1 directly, with no side-by-side lineage.
+
+- **Root.** Bootstrapped offline on the coordinator from the v2x genesis
+  journal (`/srv/txid-display-genesis/journal-v2x`, 3,508,674 blocks) into
+  `/srv/txid-display-genesis/v2/root`, map `d5ab07a7…`:
+  - `txid-2k`, 40,000-entry archives, `max_archive_shards` 1,000;
+  - 425 sealed archives plus recent, 17,024,723 entries;
+  - every archive is one table, at most 54.5% full.
+
+  Census:
+  - all history: 62.3% of entries complete;
+  - the last six months (29 archives): 86.0% complete, 7.6% with more than two
+    outputs, 6.4% with several source scripts (not an omission for a wallet's
+    own multi-address send).
+- **Hosts.**
+  - Archive owner: the new `transparent-pir-txid-display-01`
+    (`m-8vcpu-64gb`, 10.142.0.6; `transparent-txid-display.tf`). Unit: 24 GiB
+    cache, 40G `MemoryMax`, 4 build threads.
+  - Recent replica: recent-01, 2 build threads, `CPUQuota` 200%, no drop-ins.
+  - Controller: the coordinator, `replay-then-live`.
+  - Release: CI full `d730ed6b`.
+
+  Expected memory is about 426 tables × 40.05 MiB = 16.7 GiB, plus about
+  2.5 GiB a year.
+- **Deploy.** `txid-display-*` phases `stage`, `workers`, `route` and
+  `controller` with a v2 request (local deploy state). The v1 firewall rule and
+  router hook stayed in place. Three faults surfaced, all fixed:
+  - the coordinator's publisher known_hosts lacked the new host;
+  - recent-01 kept v1 worker state, which the v2 worker refuses;
+  - the route check read the full map through a 64 KiB helper (`33a63988`).
+- **Verified.** Vizor's `txid_live` passed against production:
+  - a found lookup in 4.0 s with two queries;
+  - an absent txid sends the identical transcript;
+  - a height below the window sends no query;
+  - the txid is in no request.
+
+  `covered_through` followed the tip after the controller started.
+- **Retired.** archive-03's display worker is removed, which returns up to 6G
+  to history.
+
+  Deleted:
+  - the v1 journal and root on the coordinator;
+  - the v1 genesis journal and build directories on the dedicated volume;
+  - v1 worker data on archive-03 and recent-01;
+  - superseded releases.
+
+  Kept: `/srv/zakura/txid-display-poc/measure`.
+- **Not done.**
+  - Shipped runtimes are not enabled for v2.
+  - Wallet clients ship with zakura-core/wallet-libraries#127 and
+    chainapsis/vizor-wallet#885.
+  - Wallet databases created by #879 builds keep the pre-v2 display table; use a fresh wallet database.
+
 ## Txid display v2 on `main`, 2026-10-08
 
 `main` now carries [txid display v2](txid-display.md): fixed 113-byte entries
@@ -22,9 +79,7 @@ table per bucket. History-attached display is removed.
   Python derivation, both after extraction and through PIR lookups. Every
   lookup, found or absent, sent two queries of 40,200 B and received two
   replies of 5,648 B. `--corrupt-oracle` failed as required.
-- **Not done.** No v2 journal, publication or deployment exists. The
-  ingest-phase measurements and the cutover are in
-  [remaining work](remaining-work.md).
+- **Superseded** by the production deployment above.
 
 ## Shipped txid display runtimes deployed, 2026-10-08
 
