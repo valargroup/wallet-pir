@@ -3197,45 +3197,66 @@ one transaction left out, and it is unspendable.
 
 ### Recommendation
 
-The host choice is **deferred** until layout experiments on real data are done.
-Shared or smaller page tables, for example, could change the host class. The
-sizing below assumes today's `txid-2k` layout.
+The [genesis journal census](../evidence/txid-display-genesis-census-2026-10-07/README.md)
+measured page demand on real data and settled the layout question. Old
+archives hold many more large transactions than the live ones, so their page
+tables need up to 9 segments of 2,048 rows rather than one. The earlier
+estimate of 850 runtimes and 33.2 GiB was therefore too low.
 
-Publish a fresh lineage from height 1 on a **dedicated display archive host**
-(DigitalOcean `m-8vcpu-64gb`, about $336 a month at list price; check the price
-before approval). Three changes come first:
+**Recommended:** publish a fresh lineage from height 1 with today's layout on a
+**dedicated `m-16vcpu-128gb` display archive host**, about $672 a month at list
+price; check the price before approval. Three changes come first:
 
 1. **Reservation true-up.** Charge each runtime its built size rather than the
-   8-byte-word bound. Done in source; not yet released or deployed.
+   8-byte-word bound. Done in source; not yet released or deployed. Required:
+   without it, today's layout needs a 127G `MemoryMax`, more than any host here.
 2. **Split display map.** A small recent map plus immutable archive index
-   chunks.
-3. **Ops support.** A larger window, the new host, and a way to move workers to
-   a new lineage.
+   chunks. Done in source.
+3. **Ops support.** A larger window and cache cap, the new host, and a way to
+   move workers to a new lineage.
 
-Keep `txid-2k`, N=1, `archive_target` 40,000, `recent_floor` 10,000 and
-`reorg_margin` 100 everywhere. Set `max_archive_shards` to 1,000. Recent-01
-keeps the recent role, and archive-03 goes back to history alone.
+Keep `txid-2k`, N=1, `archive_target` 40,000, `recent_floor` 10,000,
+`reorg_margin` 100 and the 128-byte inline cutoff everywhere. Do not share page
+tables. Set `max_archive_shards` to 1,000. Recent-01 keeps the recent role, and
+archive-03 goes back to history alone.
 
 What this gives:
 
-- **Size at cutover.** About 425 sealed archives and 850 runtimes: 17.03M
-  records, of which 16.46M lie below 3,407,001 (bracket 16.33–16.49M).
-- **Memory.** 33.2 GiB held at the measured runtime size. The display unit
-  starts at a 48G `MemoryMax`, inside the host's 20% floor. Growth is about
-  4.6 GiB a year at the live seal rate, so the host lasts about 1.5 years
-  before a resize or the denser geometry below.
-- **Disk on the host.** About 43 GB for tables and the disk runtime cache, on a
-  200 GB disk.
-- **Lookups.** Per-lookup query bytes are unchanged: 92.5 KB inline and 277.5 KB
-  at 4 pages, warm. With the split map, a cold inline lookup costs about
-  110 KB and a refetch after a 409 about 0.5 KB.
+- **Size at cutover.** About 425 sealed archives with 17.02M records. Their
+  pages need 899 segments, so there are 1,325 runtimes.
+- **Memory.** 51.8 GiB held at built size. With a year of growth (63.7 archives,
+  5.0 GiB) the display unit needs a 71G `MemoryMax` against 100.9G usable on the
+  host. That leaves about 5.9 years before a resize.
+- **Disk on the host.** About 67 GB for tables and the disk runtime cache, on a
+  400 GB disk.
+- **Lookups.** Warm lookups cost 92.5 KB inline everywhere. A lookup of 4 pages
+  costs 277.5 KB in single-segment archives, and up to 458 KB in the largest
+  Sprout archive, which has 9 segments. Cold lookups with the split map cost
+  about 120.5 KB inline.
 - **Coverage.** Every transparent transaction since height 1. A 1,000-archive
-  window lasts about 10 years at the current seal rate, so nothing is dropped
-  in practice.
+  window lasts about 9 years at 63.7 seals a year, so nothing is dropped in
+  practice.
+
+**The one decision (G1)** is whether to pay that host's extra ~$336 a month, or
+fund about two weeks of layout work to stay on the `m-8vcpu-64gb` host
+(variant C below). Variant C:
+
+- uses 80,000-record archives below NU6 (2,726,400), each with a 4,096-row
+  directory and a new 8,192-row page geometry;
+- holds 30.5 GiB and needs a 45G `MemoryMax`, so the 64 GB host needs a resize
+  after about 1.9 years;
+- costs 25 KB more on every pre-NU6 lookup;
+- needs a client release that knows the new geometry;
+- doubles the pre-NU6 anonymity sets.
+
+Shared page tables do not help: under per-archive lookup they change no
+anonymity class but add a response per segment of the group to every page
+query, and they fit 64 GB only with 0.1G spare. Page tables smaller than 2,048
+rows cannot be built.
 
 Genesis does not fit archive-03 under any variant. Display can take at most
 14G there (see [the archive-03 budget](#archive-03-budget)), and the smallest
-genesis configuration needs a 26G `MemoryMax` at cutover.
+genesis configuration needs a 44G `MemoryMax` at cutover plus a year.
 
 ### Measured runtime memory
 
@@ -3260,32 +3281,40 @@ holds, so the worker's charge per runtime is:
 | `txid-2k` | 72.05 MiB | 40.05 MiB | 40.3–41.3 MiB |
 | `txid-4k` | 80.05 MiB | 48.05 MiB | 48.2–48.3 MiB |
 
-The warm-fit check plans 850 `txid-2k` runtimes at 33.4 GiB: 33.2 GiB built,
-plus one bound's excess for each of four runtimes in flight. The
+At genesis the warm-fit check plans 1,325 `txid-2k` runtimes, one per
+directory and page segment, at about 51.9 GiB. That is 51.8 GiB built, plus
+one bound's excess for each of four runtimes in flight. The
 rows were synthetic: the tool's premise is that the size depends only on the
 geometry. P0 confirms this on real tables by reading the length of the display
 disk-cache entries on archive-03.
 
 ### Host and memory options for genesis
 
-All figures are at cutover, plus one year of growth at the live seal rate.
-"Usable" means the host's memory minus the 20% floor and 1.5 GiB for the system.
+From the [census layout analysis](../evidence/txid-display-genesis-census-2026-10-07/README.md#per-era-options):
+426 archives at cutover, plus one year of growth at 63.7 seals a year. "Usable"
+means the host's memory minus the 20% floor and 1.5 GiB for the system: 49.7G
+at 64 GB and 100.9G at 128 GB.
 
-| Option | Archives | Held | `MemoryMax` with a year of growth | Fits | Disk | Old-archive lookup, inline / 4 pages |
-|---|---:|---:|---:|---|---:|---|
-| `txid-2k`, reservation as today | 425 | 59.8 GiB | 85G | 128 GB host only | 71 GB | 92.5 / 277.5 KB |
-| **`txid-2k` + true-up (recommended)** | 425 | 33.2 GiB | 48G | 64 GB host (49.7 GiB usable) | 43 GB | 92.5 / 277.5 KB |
-| `txid-4k` at 80,000 below 3,407,001 + true-up | 206 + 14 | 20.4 GiB | 32G | 64 GB host; not 32 GB (24.1 GiB usable) | 29 GB | 117.6 / 352.8 KB |
-| `txid-4k` at 80,000 below Blossom (653,600) + true-up | 70 + 285 | 28.9 GiB | 42G | 64 GB host | 38 GB | 117.6 / 352.8 KB |
-| archive-03, any variant | — | — | needs ≥26G | no: 14G available | — | — |
+| Option | Runtimes | Held | `MemoryMax` with a year of growth | Fits | Reserved, no true-up | Disk | Pre-NU6 warm lookup, inline / 4 pages in the median archive |
+|---|---:|---:|---:|---|---:|---:|---|
+| **A. `txid-2k` (recommended)** | 1,325 | 51.8 GiB | 71G | 128 GB | 93.2 GiB, fits none | 67 GB | 92.5 / 277.5–345.3 KB |
+| `txid-4k` everywhere | 1,014 | 47.6 GiB | 67G | 128 GB | 79.3 GiB, fits none | 68 GB | 117.6 / 352.8–375.3 KB |
+| 2k directory, page geometry chosen per archive | 895 | 39.4 GiB | 56G | 128 GB | 67.4 GiB | 55 GB | 92.5 / 277.5–428.0 KB |
+| B. 80k below NU6 as `txid-4k` | 756 | 34.2 GiB | 49G | 64 GB, 0.8G spare | 57.9 GiB | 48 GB | 117.6 / 352.8–443.1 KB |
+| C. 80k below NU6, 4k directory, 8k pages | 590 | 30.5 GiB | 45G | 64 GB, 5.3G spare | 48.9 GiB | 46 GB | 117.6 / 453.1–498.3 KB |
+| archive-03, any variant | — | — | needs ≥44G | no: 14G available | — | — | — |
 
-**Larger old archives** need a seal rule, root and controller that take a
-geometry and target per height range. Today all three take one per root. The
-client already reads each shard's geometry from the map, so it needs no format
-change. Larger archives lower memory per txid by about 40% but do not drop a
-host size class. They also add 25 KB to every old lookup and take 4-page old
-lookups over 300 KB. Keep this as the lever for when growth outgrows the 64 GB
-host.
+The 4-page range runs from single-segment archives to the median Sprout
+archive. In option A, every NU6-and-later lookup costs what it does today
+(92.5 / 277.5 KB).
+
+**Code for B and C.** Both need a seal rule, root and controller that take a
+geometry and `archive_target` per height range; today all three take one per
+root. C also needs a new display geometry and a client release, since today's
+client returns `Unsupported` for a geometry it does not know. The worker already
+serves several geometries in one set. B uses `txid-4k` and needs no client
+change, but its 0.8G spare is too thin to plan on. Keep C as the lever for when
+growth outgrows a host.
 
 ### The map
 
@@ -3341,7 +3370,7 @@ serving `/v1/txid/shards` unchanged beside it.
   - About 42.7 GB of events (120.6 B per event).
   - 3,509,640 sidecar files: at least 14.4 GB allocated at 4 KiB each, holding
     about 1.05 GB of payload.
-  - About 7.1 GB for the publication root.
+  - About 11.1 GB for the publication root (1,325 segments of 8 MiB).
   - Recent revisions.
 
   Plan for at least 70 GB free with 20% headroom, beside the current display
@@ -3354,9 +3383,9 @@ serving `/v1/txid/shards` unchanged beside it.
   existing ingest unit limits beside the live display, which keeps serving.
 - **Bootstrap.** A count pass over 3.51M sidecars, then about 6.4 min to publish
   425 shards, then `verify`, which repeats both. Worker prepare on the new host
-  takes about 28–47 min cold: 425 runtime pairs at the 2026-10-05 bench rates.
-  That is within `ready_timeout_seconds` (at most 7,200 s). Restarts warm from
-  the disk runtime cache.
+  takes about 43–73 min cold, done serially: 1,325 runtimes at the 2026-10-05
+  bench rates of 2.0–3.3 s each. That is within `ready_timeout_seconds` (at most
+  7,200 s). Restarts warm from the disk runtime cache.
 
 ### Why a fresh lineage
 
@@ -3404,15 +3433,19 @@ its cached map's `start_height`. At cutover:
 2. **Split display map**, as described in [The map](#the-map).
 3. **Ops** (`transparent/ops/lib/txid_display_poc.py`):
    - raise the `max_archive_shards` and `archives` caps from 64 to 1,024;
+   - raise the per-unit `cache_bytes` cap from 64 GiB. The archive cache needs
+     about 63.2 GiB with a year of growth; use 96 GiB with `MemoryMax` 71G or more;
    - refuse a request whose archive cache cannot hold its window at the
-     true-up size with a 10% margin;
+     true-up size with a 10% margin. Count each archive's directory and page
+     segments from its manifest, not two runtimes per archive;
    - add `workers --replace-active <old map sha256>`. It backs up and removes a
      worker's active record, restarts it on new limits, prepares and activates
      the new candidate, and rolls back by restoring the record;
    - point the request's archive host and the route's archive upstream at the
      new host.
-4. **Infrastructure** (`ops/infra/digitalocean/production`): a display-archive
-   droplet resource and its firewall rule for port 8095 from the router.
+4. **Infrastructure** (`ops/infra/digitalocean/production`): an
+   `m-16vcpu-128gb` display-archive droplet resource and its firewall rule for
+   port 8095 from the router.
 5. **`shard-residency`** reads display geometries. Done with code item 1: the
    measurement's
    [patch](../evidence/txid-display-backfill-sizing-2026-10-07/residency/shard-residency-display.patch)
@@ -3429,9 +3462,9 @@ the Terraform wrapper, holding the production lock and recording its rollback.
 | P0 Preflight, read-only | Read archive-03's display disk-cache entry lengths to confirm four-byte runtimes on real tables. Read the coordinator's free disk, `df -i` and node state, and record the history W0 baseline. | minutes | none |
 | P1 Provision (spend) | Terraform plan and apply for the display-archive host and its firewall rule. | about 30 min | Terraform destroy of the new resources |
 | P2 `deploy --phase stage` | Install the release carrying code items 1–3 on the coordinator, the new host and recent-01. | minutes | `rollback` of the transaction |
-| P3 Ingest from 0 | **Already running** since 16:47 UTC on 2026-10-07 as `transparent-txid-display-genesis-ingest` into `/srv/zakura/txid-display-genesis/journal` ([status](status.md#txid-display-backfill-sizing-2026-10-07)). Remaining: verify block count equals sidecar count, run a spot check, and stop the unit before bootstrap. | reported ETA about 21:15 UTC | stop the unit; the journal is inert |
+| P3 Ingest from 0 | **Done** at 22:56:45 UTC on 2026-10-07 into `/srv/txid-display-genesis/journal`: 3,508,674 blocks and 17,024,724 display records ([census](../evidence/txid-display-genesis-census-2026-10-07/README.md)). The census found a sidecar for every committed block, with exactly one coinbase each. Remaining: a spot check against independently decoded transactions. | done | none; the journal is inert |
 | P4 `bootstrap --start-height 1 --through-height <journal end>`, then `verify` | Publish about 425 archives into a new root on the coordinator and reproduce every sealed digest. | about 15–40 min | none needed; the new root is unused |
-| P5 Cutover, in one maintenance window | `stop` withdraws `/v1/txid/` and stops the old controller. `workers --replace-active` runs on the new host, then recent-01. `route` names the new archive upstream. The `controller` phase starts on the new root and catches up. | about 30–50 min of display 503, dominated by the cold prepare; history untouched | restore the old route, worker records and controller; `stop` withdraws in under 60 s |
+| P5 Cutover, in one maintenance window | `stop` withdraws `/v1/txid/` and stops the old controller. `workers --replace-active` runs on the new host, then recent-01. `route` names the new archive upstream. The `controller` phase starts on the new root and catches up. | about 45–75 min of display 503, dominated by the cold prepare of 1,325 runtimes, unless the new host prepares before `stop`; history untouched | restore the old route, worker records and controller; `stop` withdraws in under 60 s |
 | P6 `measure-start` | 20 QPS with samples spread from height 1 to the tip. | the existing criteria's duration | `measure-stop` |
 | P7 Retire the display worker on archive-03, then delete the old journal and root | After acceptance only. | minutes | deletion is irreversible; separate approval |
 
@@ -3446,19 +3479,21 @@ Acceptance adds four checks to the existing
 
 ### Cost
 
-- **Host:** about $336 a month for the display-archive host (list price, to be
-  checked). Without the true-up, about $672 a month.
+- **Host:** about $672 a month for the `m-16vcpu-128gb` display-archive host
+  (list price, to be checked). Variant C would keep it to the $336
+  `m-8vcpu-64gb` for about two more weeks of engineering. Without the true-up,
+  no listed host fits today's layout.
 - **Coordinator:** 6–12 h of niced ingest CPU, and about 70 GB of disk while the
   old journal and root are kept.
 - **Archive-03:** loses its display unit, freeing up to 6G for history.
-- **Downtime:** one display outage of about 30–50 minutes.
+- **Downtime:** one display outage of about 45–75 minutes.
 - **Engineering:** code items 1–4, with CI and a release.
 
 ### Gates that need Roman
 
 | Gate | Decision |
 |---|---|
-| G1 | **Spend:** approve the dedicated `m-8vcpu-64gb` display-archive host for genesis coverage |
+| G1 | **Spend:** approve the dedicated `m-16vcpu-128gb` display-archive host (about $672 a month) for genesis coverage with today's layout, or fund variant C (about two weeks) to use `m-8vcpu-64gb` (about $336) |
 | G2 | Merge code items 1–4 after full CI and cut a release |
 | G3 | Approve this change sheet for P0–P6, including the outage and the route change |
 | G4 | Live acceptance, then keep, stop or retire (the proof of concept's existing gate) |

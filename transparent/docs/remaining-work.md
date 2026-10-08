@@ -409,13 +409,22 @@ starts dropping archives around mid-December 2026.
   (`transparent-txid-display-genesis-ingest`), stopped at about 20:00 UTC
   after it latched history's load on coordinator disk headroom. The partial
   journal moved to a dedicated 150 GB volume at `/srv/txid-display-genesis`
-  ([status](status.md#tiered-txid-display-in-production-2026-10-07)). Verify
-  block count equals sidecar count and run a spot check.
-- [ ] Layout experiments on real data, such as shared or smaller page tables,
-  before the host is chosen.
-- [ ] G1, Roman: choose the display-archive host. `m-8vcpu-64gb` is
-  recommended at today's layout; the decision is deferred until the layout
-  experiments are done.
+  ([status](status.md#tiered-txid-display-in-production-2026-10-07)) and
+  completed at 22:56:45 UTC: 3,508,674 blocks. The
+  [census](../evidence/txid-display-genesis-census-2026-10-07/README.md) found a
+  sidecar for every committed block. Remaining: a spot check.
+- [x] Layout analysis on real data
+  ([census](../evidence/txid-display-genesis-census-2026-10-07/README.md)).
+  Today's `txid-2k` needs 1,325 runtimes and 51.8 GiB, not 850 and 33.2 GiB.
+  Shared and smaller page tables do not reach 64 GB; only 80,000-record
+  archives before NU6 do.
+- [ ] G1, Roman: choose the display-archive host. Recommended:
+  `m-16vcpu-128gb` (about $672 a month) with today's layout. The alternative is
+  `m-8vcpu-64gb` (about $336), which needs about two weeks of layout work
+  (variant C in [deployment](deployment.md#host-and-memory-options-for-genesis))
+  and a client release.
+- [ ] Ops: raise the 64 GiB `cache_bytes` cap, and count page segments per
+  archive in the window check (1,325 runtimes at cutover).
 - [x] Code: reservation true-up and `shard-residency` display geometries
   (source only; no release carries them yet).
 - [x] Code: split display map, on `main` beside the unchanged full map (source
