@@ -406,6 +406,8 @@ A pass establishes server protocol and retrieval evidence. It does not
 establish production capacity, cryptographic release readiness, wallet recovery
 or Vizor correctness. Production deployment requires separate approval.
 
+The v2 run at `9557d843`: [native demo evidence](../evidence/txid-display-v2-2026-10-08/README.md).
+
 ## Wallet stage
 
 This stage lives in wallet-libraries and Vizor:
