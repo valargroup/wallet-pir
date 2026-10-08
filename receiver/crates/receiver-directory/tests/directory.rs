@@ -207,9 +207,15 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
         .record("near-refunds", &[(refund, false, 200)], 200, 300)
         .unwrap();
     store.record("near-payouts", &[], 90, 250).unwrap();
+    // A read behind the cursor advances neither the cursor nor the read time, even
+    // one that began later.
+    store.record("near-payouts", &[], 90, 400).unwrap();
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
-    // A feed's last read is its latest one, as with its cursor.
     assert_eq!(store.read("near-payouts").unwrap(), Some(300));
+    // One that reaches the cursor advances the read time, never back.
+    store.record("near-payouts", &[], 100, 350).unwrap();
+    store.record("near-payouts", &[], 100, 320).unwrap();
+    assert_eq!(store.read("near-payouts").unwrap(), Some(350));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // A feed's start is its first one.
@@ -351,6 +357,41 @@ fn durable_coverage_atomic_failure_and_reorg() {
     assert!(Store::open(&path, wrong).is_err());
     store.rewind(99, config.start_parent).unwrap();
     assert!(store.snapshot(8, &[]).is_err());
+}
+
+/// A payment in the coinbase's leading positions or in transaction zero is refused.
+#[cfg(feature = "store")]
+#[test]
+fn coinbase_payments_are_refused() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let block = |position, tx_index| {
+        let mut payment = record(0, 1).payment;
+        payment.height = 100;
+        payment.position = position;
+        payment.tx_index = tx_index;
+        IndexedBlock {
+            height: 100,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 200,
+            end_position: 203,
+            coinbase_actions: 2,
+            commitments: vec![payment.cmx; 3],
+            payments: vec![(receiver(), payment)],
+        }
+    };
+    assert!(store.append(&block(201, 1)).is_err());
+    assert!(store.append(&block(202, 0)).is_err());
+    store.append(&block(202, 1)).unwrap();
+    assert_eq!(store.counts().unwrap(), (1, 2));
 }
 
 #[cfg(feature = "store")]
