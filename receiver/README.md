@@ -144,6 +144,8 @@ payments, but never which receivers were looked up.
 `cargo test -p receiver-directory --features store` covers recovery of a public
 mainnet refund, records, publications, store restart and rollback, and witnesses
 against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
-round trips at every geometry and the HTTP service. Recovery follows
+round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
+--features server --test golden` pins the protocol's seeds, framing and row
+placement against digests from a request built outside `Client`. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).

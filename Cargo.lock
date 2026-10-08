@@ -3052,6 +3052,7 @@ dependencies = [
  "ipir-sp",
  "pir-native",
  "rand 0.8.5",
+ "rand_chacha 0.3.1",
  "receiver-directory",
  "serde",
  "serde_json",
