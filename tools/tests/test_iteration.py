@@ -259,6 +259,14 @@ class IntegrityTests(unittest.TestCase):
             self.assertIn('path: release-bundles/%s.tar.gz' % kind, job)
         self.assertIn('cargo build --locked --release', build)
 
+    def test_receiver_probe_fixture_matches_its_pin(self):
+        import hashlib, re
+        fixture = (ROOT / 'receiver/ops/digitalocean/probe-fixture.json').read_bytes()
+        readme = (ROOT / 'receiver/ops/digitalocean/README.md').read_text()
+        pin = re.search(r'"--fixture-sha256",\s*"([0-9a-f]{64})"', readme).group(1)
+        self.assertEqual(hashlib.sha256(fixture).hexdigest(), pin)
+        self.assertIn('receiver/ops/digitalocean/probe-fixture.json', load('release').FILES['receiver-pir'])
+
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
         self.assertIn('lane: release-native', workflow)

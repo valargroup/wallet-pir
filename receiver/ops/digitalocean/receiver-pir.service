@@ -1,0 +1,28 @@
+[Unit]
+Description=Receiver PIR canonical ingestion and serving
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=receiver-pir
+Group=receiver-pir
+# NEAR_INTENTS_EXPLORER=<partner key>; optional, root-owned, mode 0600.
+EnvironmentFile=-/etc/receiver-pir/near.env
+# Fleet nodes on the Droplet's private network, tried in order. The listener is
+# the Droplet's private address: Caddy proxies the wallet routes to it, and the PIR
+# monitor reads health from it; nothing listens on the public interface.
+ExecStart=/opt/receiver-pir/current/receiver-directory --serve --bind 10.70.0.11:18380 --data-dir /srv/receiver-pir/index --rpc-url http://10.70.0.19:8232 --rpc-url http://10.70.0.6:8232 --no-auth --witnesses --min-rows 8192 --concurrency 12 --poll-seconds 10 --near-since 1790640000
+Environment=RUST_LOG=info
+Restart=on-failure
+RestartSec=15
+KillMode=mixed
+TimeoutStopSec=60
+MemoryHigh=6G
+MemoryMax=7G
+MemorySwapMax=0
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/srv/receiver-pir
+[Install]
+WantedBy=multi-user.target

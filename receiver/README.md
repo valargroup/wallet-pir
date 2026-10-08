@@ -154,7 +154,8 @@ guard rechecks served anchors and revokes every session once a node shows one is
 off its chain; a failed check keeps serving. A recovery epoch fences work that
 began before a revocation. The previous revision stays available for 60 seconds,
 and the next one waits for that to end. Logs go to standard error through
-`tracing`, filtered by `RUST_LOG` (default `info`).
+`tracing`, filtered by `RUST_LOG` (default `info`). See [the DigitalOcean
+deployment](ops/digitalocean/README.md).
 
 The swap provider sets come from the NEAR Intents explorer. While serving with a
 partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
