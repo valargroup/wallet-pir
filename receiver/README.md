@@ -168,11 +168,12 @@ at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
 record missing an address is skipped, dates are capped at the read's start, and a
-read that stops making progress fails. Health's `indexer` report gives each feed's
-last read and how many payouts NEAR reported complete more than an hour earlier have
-no indexed payment to their receiver in the transaction NEAR reported, the signal
-that the index missed one or NEAR stopped paying with the zero OVK. A payout without
-a reported transaction is not checked.
+read that stops making progress fails. Health's `indexer` report, computed from the
+index each publication is built from, gives each feed's last read and how many
+payouts NEAR reported complete more than an hour earlier have no indexed payment to
+their receiver in the transaction NEAR reported, the signal that the index missed
+one or NEAR stopped paying with the zero OVK. A payout without a reported
+transaction is not checked.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.

@@ -529,6 +529,28 @@ fn cli_rejects_unservable_geometry_before_contacting_the_node() {
     }
 }
 
+/// Witnesses need commitments from position zero, so they refuse a later start before
+/// contacting the node.
+#[test]
+fn cli_refuses_witnesses_after_activation_before_contacting_the_node() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        .args([
+            "--data-dir",
+            dir.path().to_str().unwrap(),
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--no-auth",
+            "--witnesses",
+            "--start-height",
+            &(activation() + 1).to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("witnesses need commitments"));
+}
+
 /// Serving binds loopback or a private address, never a public one.
 #[test]
 fn cli_refuses_a_public_bind_before_contacting_the_node() {
