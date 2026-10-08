@@ -276,9 +276,9 @@ class Fake(Executor):
                     return 503, '{}'
                 return 200, json.dumps({'ready': True, 'role': P.ROLES[key], 'map_sha256': self.active[key],
                                         'warm': True})
-        if url == 'https://pir.example/v1/txid/shards':
+        if url == 'https://pir.example/v1/txid/map':
             routed = self.text('router-01', '/etc/caddy/txid-display/routes.caddy')
-            return (200, json.dumps({'shards': []})) if routed and 'withdrawn' not in routed else (404, '')
+            return (200, json.dumps({'chunks': []})) if routed and 'withdrawn' not in routed else (404, '')
         if url == 'https://pir.example/v1/shards':
             return 200, json.dumps({'shards': []})
         return 0, 'connection refused'

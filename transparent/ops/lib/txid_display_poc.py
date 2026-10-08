@@ -1371,8 +1371,10 @@ class Poc:
         self.caddy_validate(transaction, {'Caddyfile': composed, 'routes.caddy': snippet})
         self.write_route(transaction, snippet)
         public = self.request['measure']['public_url']
-        status, body = self.ex.http_get(router, public + '/v1/txid/shards', 10)
-        require(status == 200 and isinstance(json.loads(body).get('shards'), list),
+        # The recent map: small at any coverage, where the full listing outgrows
+        # the helper's 64 KiB read at genesis coverage.
+        status, body = self.ex.http_get(router, public + '/v1/txid/map', 10)
+        require(status == 200 and isinstance(json.loads(body).get('chunks'), list),
                 'the display map is not served through the router (HTTP %s)' % status)
         status, _ = self.ex.http_get(router, public + '/v1/shards', 10)
         require(status == 200, 'history metadata is not served after the reload (HTTP %s)' % status)
