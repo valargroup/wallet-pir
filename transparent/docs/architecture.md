@@ -345,10 +345,12 @@ reference and cache pin through snapshot locking, writing and durability, includ
 request cancellation. Snapshot failure increments the cache error counter without
 invalidating the serving runtime. `transparent_shard_disk_save_pending` tracks outstanding
 writers. Linux workers advise the kernel that consumed source/cache files and synced
-snapshot files can leave page cache; this is advisory and never deducted from measured
-admission usage. Non-Linux workers omit the advice. A restored snapshot's two-mask
-preprocessing stays mapped from its immutable cache file rather than copied, so the advice
-cannot evict it.
+snapshot files can leave page cache. The advice lowers the cgroup's charge; admission does
+not depend on it. Admission measures the cgroup's memory in use: `memory.current` less the
+clean file pages no process maps, which the kernel drops before an OOM kill. Mapped,
+dirty and writeback file pages stay counted. Non-Linux workers omit the advice and the
+cgroup check. A restored snapshot's two-mask preprocessing stays mapped from its immutable
+cache file rather than copied, so the advice cannot evict it and admission counts it.
 
 Runtime construction encodes the segment, computes the public hint with exact lifted
 products against the table's query masks, and builds two-mask preprocessing per block.
