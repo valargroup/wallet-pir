@@ -165,13 +165,26 @@ impl Publications {
     /// Install only if no revocation occurred since the caller began preparing and validating,
     /// no earlier revision is still in its grace (see [`Self::ready_at`]), and the current
     /// revision ends no higher: within one epoch the chain only extends, so a lower end
-    /// comes from a preparation that a newer publish overtook.
+    /// comes from a preparation that a newer publish overtook. A publication with the
+    /// current session's ID replaces it in place, keeping the epoch and any predecessor's
+    /// grace.
     /// The caller must verify the new canonical anchor and revoke before replacing forked coverage.
     pub fn publish(&self, publication: Publication, expected_epoch: u64) -> bool {
         let mut state = self.0.write().unwrap();
+        if state.epoch != expected_epoch {
+            return false;
+        }
+        state.expire();
+        if state
+            .current
+            .as_ref()
+            .is_some_and(|p| p.id == publication.id)
+        {
+            state.current = Some(Arc::new(publication));
+            return true;
+        }
         let end = publication.manifest().end_height;
-        if state.epoch != expected_epoch
-            || state.grace_until().is_some()
+        if state.grace_until().is_some()
             || state
                 .current
                 .as_ref()
@@ -179,7 +192,6 @@ impl Publications {
         {
             return false;
         }
-        state.expire();
         state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
         true
@@ -305,7 +317,7 @@ mod tests {
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next
-    /// publication, and its id is then 410, unless the same id is still current.
+    /// publication, and its id is then 410.
     #[test]
     fn an_expired_previous_publication_is_dropped() {
         let publications = Publications::default();
@@ -325,11 +337,24 @@ mod tests {
             publications.select(Some(id)),
             Err(StatusCode::GONE)
         ));
-        // An identical republication displaces its own id, whose expiry leaves it served.
-        let current = publications.0.read().unwrap().current.as_ref().unwrap().id;
+    }
+
+    /// Republishing the current session replaces it without a new grace or epoch, keeps
+    /// a predecessor's deadline, and still honors the epoch fence.
+    #[test]
+    fn republishing_the_current_session_replaces_it_in_place() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        assert!(!publications.publish(publication(1), 1));
+        assert!(publications.publish(publication(1), 0));
+        assert_eq!(publications.epoch(), 0);
+        assert!(publications.ready_at().is_none());
+        // With no grace pending, a new session activates at once.
         assert!(publications.publish(publication(2), 0));
-        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
-        assert!(publications.select(Some(current)).is_ok());
+        let ready = publications.ready_at().unwrap();
+        assert!(publications.publish(publication(2), 0));
+        assert_eq!(publications.ready_at(), Some(ready));
+        assert_eq!(publications.anchors().len(), 2);
     }
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
