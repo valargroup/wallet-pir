@@ -1062,6 +1062,84 @@ fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
     s.data[offset..offset + RECORD_BYTES].copy_from_slice(&bytes);
 }
 
+/// Records of any receivers agree on each height's block hash and each transaction's
+/// txid, in a build and in a supplied publication, even when another receiver's
+/// record sorts between them.
+#[test]
+fn receivers_agree_on_blocks_and_transactions() {
+    allow_small_tables();
+    let mut m = manifest(8);
+    m.start_height = 98;
+    let mut rs = receivers(3);
+    rs.sort();
+    let at = |i: usize, height, block_hash, txid, action_index| {
+        let mut r = record(0, 1);
+        r.receiver = rs[i];
+        (r.payment.height, r.payment.block_hash, r.payment.txid) = (height, block_hash, txid);
+        (r.payment.action_index, r.payment.position) = (action_index, 200 + i as u64);
+        r
+    };
+    // The outer receivers share one transaction below the terminal height.
+    let first = at(0, 100, [10; 32], [1; 32], 0);
+    let last = at(2, 100, [10; 32], [1; 32], 1);
+    let records = [first, at(1, 101, [3; 32], [2; 32], 0), last.clone()];
+    let valid = Snapshot::build(m.clone(), &records, &[]).unwrap();
+    valid.validate().unwrap();
+    for conflict in [
+        at(2, 100, [11; 32], [1; 32], 1),
+        at(2, 100, [10; 32], [9; 32], 1),
+    ] {
+        let mut edited = records.clone();
+        edited[2] = conflict.clone();
+        assert!(matches!(
+            Snapshot::build(m.clone(), &edited, &[]),
+            Err(Error::Malformed)
+        ));
+        let mut s = valid.clone();
+        let offset = slot_of(&s, &last);
+        put(&mut s, offset, Some(&conflict));
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
+}
+
+/// A note commitment, Action nullifier or ephemeral key that is not a canonical
+/// encoding is refused by encoding, decoding, a build and a supplied publication.
+#[test]
+fn records_refuse_noncanonical_fields() {
+    allow_small_tables();
+    let a = action();
+    let mut real = record(0, 1);
+    (
+        real.payment.action_nullifier,
+        real.payment.cmx,
+        real.payment.ephemeral_key,
+    ) = (a.nullifier, a.cmx, a.ephemeral_key);
+    assert_eq!(Record::decode(&real.encode().unwrap()).unwrap(), Some(real));
+    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
+    let valid = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    // The Action nullifier, note commitment and ephemeral key, by byte offset.
+    for offset in [137, 169, 201] {
+        let mut r = record(0, 1);
+        let p = &mut r.payment;
+        *match offset {
+            137 => &mut p.action_nullifier,
+            169 => &mut p.cmx,
+            _ => &mut p.ephemeral_key,
+        } = [255; 32];
+        assert!(matches!(r.encode(), Err(Error::Malformed)));
+        assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
+        let mut bytes = record(0, 1).encode().unwrap();
+        bytes[offset..offset + 32].fill(255);
+        assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
+        let mut s = valid.clone();
+        let slot = slot_of(&s, &record(0, 1));
+        s.data[slot + offset..slot + offset + 32].fill(255);
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
+}
+
 /// A supplied publication is checked as a whole: digests, placement, count, pages,
 /// uniqueness, padding, coverage and the paid set, each edit rehashed so the digests
 /// alone cannot catch it.
@@ -1071,7 +1149,7 @@ fn supplied_publications_are_validated_record_by_record() {
     let (a0, a1) = (record(0, 2), record(1, 2));
     let mut b = record(0, 1);
     b.receiver = other_receiver();
-    (b.payment.txid, b.payment.position) = ([9; 32], 210);
+    (b.payment.txid, b.payment.tx_index, b.payment.position) = ([9; 32], 9, 210);
     let valid = Snapshot::build(manifest(8), &[a0.clone(), a1.clone(), b.clone()], &[]).unwrap();
     valid.validate().unwrap();
     Snapshot::build(manifest(8), &[], &[])
