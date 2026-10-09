@@ -275,15 +275,7 @@ mod tests {
             queue.acquire(|| ()).await.unwrap(),
             queue.acquire(|| ()).await.unwrap(),
         ];
-        let app = router(Service {
-            publications,
-            queue,
-            clients: ClientSlots::new(PER_CLIENT),
-            metrics: pir_observability::HttpMetrics::default(),
-        });
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
-        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let (url, server) = serve(publications, queue).await;
         let http = reqwest::Client::new();
         let post = |len: usize, client: &str| {
             let mut body = header.clone();
@@ -308,5 +300,89 @@ mod tests {
         );
         assert!(started.elapsed() >= WAIT);
         server.abort();
+    }
+
+    /// Serves `publications` with `queue`, returning the query URL and the server task.
+    async fn serve(
+        publications: Publications,
+        queue: Arc<Queue>,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let app = router(Service {
+            publications,
+            queue,
+            clients: ClientSlots::new(PER_CLIENT),
+            metrics: pir_observability::HttpMetrics::default(),
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        (url, server)
+    }
+
+    /// Posts `body` while every evaluation slot is held, runs `during` once the query
+    /// has been selected and waits for a slot, then frees the slots for its answer.
+    async fn held_query(
+        url: &str,
+        queue: &Queue,
+        body: Vec<u8>,
+        during: impl FnOnce(),
+    ) -> reqwest::Response {
+        let held = [
+            queue.acquire(|| ()).await.unwrap(),
+            queue.acquire(|| ()).await.unwrap(),
+        ];
+        let response = tokio::spawn(reqwest::Client::new().post(url).body(body).send());
+        while queue.waiting_available() == WAITING {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        during();
+        drop(held);
+        response.await.unwrap().unwrap()
+    }
+
+    /// A query selected before a revocation and evaluated after it is answered 410,
+    /// `no-store`; one selected before an ordinary rotation is still answered.
+    #[tokio::test]
+    async fn a_revocation_after_selection_is_gone() {
+        use receiver_directory::snapshot::Snapshot;
+        use receiver_pir::{server::Server, AcceptedCoverage, Client, MIN_ROWS};
+        let snapshot =
+            Snapshot::build(common::manifest(MIN_ROWS), &[common::record(0, 1)], &[]).unwrap();
+        let server = Server::new(snapshot).unwrap();
+        let accepted = AcceptedCoverage {
+            genesis: [1; 32],
+            required_start: 100,
+            height: 101,
+            hash: [3; 32],
+        };
+        let client = Client::new(server.manifest().clone(), server.public(), accepted).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(Publication::new(server, None).unwrap(), 0));
+        let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
+        let (url, task) = serve(publications.clone(), queue.clone()).await;
+
+        let query = client.prepare(common::receiver(), 0).unwrap();
+        let rotated = held_query(&url, &queue, query.body().to_vec(), || {
+            let mut next = common::manifest(MIN_ROWS);
+            (next.end_height, next.end_hash) = (102, [9; 32]);
+            let next = Server::new(Snapshot::build(next, &[], &[]).unwrap()).unwrap();
+            assert!(publications.publish(Publication::new(next, None).unwrap(), 0));
+        })
+        .await;
+        assert_eq!(rotated.status(), StatusCode::OK);
+        let answer = rotated.bytes().await.unwrap();
+        assert_eq!(
+            client.decode(query, &answer).unwrap(),
+            Some(common::record(0, 1))
+        );
+
+        let query = client.prepare(common::receiver(), 0).unwrap();
+        let revoked = held_query(&url, &queue, query.body().to_vec(), || {
+            publications.revoke()
+        })
+        .await;
+        assert_eq!(revoked.status(), StatusCode::GONE);
+        assert_eq!(revoked.headers()[header::CACHE_CONTROL], "no-store");
+        task.abort();
     }
 }

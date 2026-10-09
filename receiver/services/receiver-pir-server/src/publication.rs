@@ -100,6 +100,16 @@ impl State {
             .collect()
     }
 
+    /// Drops the previous revision once its grace has ended, freeing its rows and PIR
+    /// state, and retires its id; queries still running on it keep their own reference.
+    fn expire(&mut self) {
+        if self.live_previous().is_none() {
+            if let Some((p, _)) = self.previous.take() {
+                self.retire(p.id);
+            }
+        }
+    }
+
     /// Answers `id` with 410 from now on, keeping the last eight such ids.
     fn retire(&mut self, id: Hash) {
         self.revoked.push_back(id);
@@ -125,18 +135,14 @@ impl State {
 pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
-    /// Drops the previous revision once its grace has ended, freeing its rows and PIR
-    /// state, and retires its id; queries still running on it keep their own reference.
-    /// Every read path calls it, including the owner's periodic [`Self::anchors`]
-    /// check, so an idle service frees it within a poll.
+    /// Runs [`State::expire`]. Every read path calls it, including the owner's periodic
+    /// [`Self::anchors`] check, so an idle service frees it within a poll; [`Self::publish`]
+    /// expires under its own lock.
     fn expire(&self) {
-        let expired = |s: &State| s.previous.is_some() && s.live_previous().is_none();
-        if expired(&self.0.read().unwrap()) {
-            let mut state = self.0.write().unwrap();
-            if expired(&state) {
-                let (p, _) = state.previous.take().unwrap();
-                state.retire(p.id);
-            }
+        let state = self.0.read().unwrap();
+        if state.previous.is_some() && state.live_previous().is_none() {
+            drop(state);
+            self.0.write().unwrap().expire();
         }
     }
 
@@ -192,6 +198,7 @@ impl Publications {
         {
             return false;
         }
+        state.expire();
         state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
         true
@@ -346,6 +353,25 @@ mod tests {
         assert!(publications.publish(publication(2), 0));
         publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
         assert!(publications.select(Some(current)).is_ok());
+    }
+
+    /// A publish that displaces an expired previous revision no read has expired yet
+    /// still retires its id, so it is 410, not 409.
+    #[test]
+    fn a_publish_retires_an_expired_previous_publication() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        let id = publications.0.read().unwrap().current.as_ref().unwrap().id;
+        assert!(publications.publish(publication(2), 0));
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(publications.publish(publication(3), 0));
+        assert!(matches!(
+            publications.select(Some(id)),
+            Err(StatusCode::GONE)
+        ));
     }
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
