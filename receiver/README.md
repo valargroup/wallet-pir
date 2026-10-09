@@ -86,8 +86,10 @@ profile that Enhance and Transparent also use: a 4096-byte row is one
 setup derive from the protocol and the row count. At 8192 rows a query is 77,876
 bytes, a response 5,684 and the public setup 14,848. A session manifest holds the
 directory manifest, the protocol and the SHA-256 of the public setup, and refuses
-unknown fields. A domain-separated hash of the protocol, the directory revision
-and that digest is the session ID.
+unknown fields. Its compact JSON, as `/v1/receiver/init` serves it, is at most 16
+KiB: a server refuses to prepare a larger one, and a client reads no more. A
+domain-separated hash of the protocol, the directory revision and that digest is
+the session ID.
 
 | Route | Content |
 |---|---|
@@ -134,7 +136,9 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 ```
 
 `--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
-authentication. Repeat `--rpc-url` for more nodes: the highest tip among them sets
+authentication. A request a node rejects rereads the cookie and is retried once
+with it if it changed, so a node restart that rotates the cookie needs no indexer
+restart. Repeat `--rpc-url` for more nodes: the highest tip among them sets
 the target, and a block hash comes from the first node that has reached its
 height, so a lagging node cannot hide a reorg. Other calls fall back in order.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
@@ -148,18 +152,21 @@ directory.
 
 Without `--serve`, one run writes `<revision>.rows`, `<revision>.filters`,
 `<revision>.json` and, with `--witnesses`, `<revision>.witness` under
-`publications/` and prints a summary. Witnesses need commitments from position
-zero, so the index must start at Ironwood activation. With `--serve`, the process
-polls every `--poll-seconds` (default 10), prepares each new canonical tip in
-memory, writing no publication files, and serves on `--bind` (default
-`127.0.0.1:18380`), a loopback, private IPv4 or unique-local IPv6 address behind a
-TLS proxy. A separate
-guard rechecks served anchors and revokes every session once a node shows one is
-off its chain; a failed check keeps serving. A recovery epoch fences work that
-began before a revocation. The previous revision stays available for 60 seconds,
-and the next one waits for that to end. Logs go to standard error through
-`tracing`, filtered by `RUST_LOG` (default `info`). See [the DigitalOcean
-deployment](ops/digitalocean/README.md).
+`publications/` and prints a summary, writing nothing if the manifest would exceed
+16 KiB. Witnesses need commitments from position zero, so the index must start at
+Ironwood activation. With `--serve`, the process polls every `--poll-seconds`
+(default 10), prepares each new canonical tip in memory, writing no publication
+files, and serves on `--bind` (default `127.0.0.1:18380`), a loopback, private IPv4
+or unique-local IPv6 address behind a TLS proxy. While no block arrives, it
+republishes the same tip when the provider sets change, and when only health's
+report changes, such as a payout passing its grace, it replaces that report on the
+current publication, keeping its sessions. A separate guard rechecks served anchors
+and revokes every session once a node shows one is off its chain, unless a
+revocation or rotation stopped serving that anchor during the check; a failed
+check keeps serving. A recovery epoch fences work that began before a revocation.
+The previous revision stays available for 60 seconds, and the next one waits for
+that to end. Logs go to standard error through `tracing`, filtered by `RUST_LOG`
+(default `info`). See [the DigitalOcean deployment](ops/digitalocean/README.md).
 
 The swap provider sets come from the NEAR Intents explorer. While serving with a
 partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
@@ -171,14 +178,18 @@ completes within a day of its swap is seen complete (about six pages, 33 seconds
 at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
-record missing an address is skipped, dates are capped at the read's start, and a
-read that stops making progress fails, as does a page over 8 MiB. Health's `indexer`
+record missing an address is skipped and dates are capped at the read's start. A
+read that stops making progress, passes 500 pages, or gets a page over 8 MiB or
+longer than the 1,000 records it asked for fails and records nothing, so a first
+read from too far back fails rather than skip history. Each read commits in one
+transaction. Health's `indexer`
 report, computed from the index each publication is built from and activated with
 it, gives each feed's last read and how many
 payouts NEAR reported complete more than an hour earlier have no indexed payment to
 their receiver in the transaction NEAR reported, the signal that the index missed
 one or NEAR stopped paying with the zero OVK. A payout without a reported
-transaction is not checked.
+transaction is not checked. A matched payout is not checked again until a reorg
+rewinds the index, which first forgets every match.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
@@ -188,15 +199,24 @@ As Transparent's canary checks one query against a pinned row hash, it looks up 
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
 recovers its receiver, and the answer must hold that payment at that position and
-height with the fixture's fields and the node's block hash. A fixture that fails
-its pin is `oracle_invalid`. The lookup is reported as `phase:
+height with the fixture's fields, the node's block hash and the index of the
+fixture's transaction in the node's block, read by hash and checked against its
+merkle root. A fixture that fails its pin, or whose transaction is not in that
+block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
-A run moves about 140 KB, of which the filter file was about 37 KB in October 2026.
-It fails as `answer_mismatch` when the served anchor is off the node's chain, the
+A run moves about 140 KB from the service, of which the filter file was about 37 KB
+in October 2026, and the fixture's block from the node.
+It fails as `answer_mismatch` when the served anchor is off the node's chain or
+claims a tree size other than the node's after that block (read by its hash), the
 lookup misses or misreports the payment, the filter file is wrong or a completed
-payout is missing from the index, and otherwise when the publication trails the node by more than 12 blocks
-or the recent set is older than wallets trust (15 minutes). It reads the payout
+payout is missing from the index. A node that cannot give the tree size, or whose
+chain changes while it is read, is `oracle_unavailable`. The probe fails otherwise
+when the publication trails the node by more than `--max-lag` blocks (default 12)
+or the recent set is older than wallets trust (15 minutes). The lag bound must
+cover the indexer's `--depth` plus its publication delay (a poll and PIR
+preparation) and a rotation's 60-second grace, so about ten blocks more than the
+depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout
 check from health, which only the private network reaches, and accepts it only
 when health reports serving the probed publication or the one the origin serves
 after a rotation. Every response body is bounded by the protocol's sizes before it

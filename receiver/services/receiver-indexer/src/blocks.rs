@@ -104,13 +104,7 @@ impl ZakuraClient {
                     "receiver batch does not extend saved chain".into(),
                 ));
             }
-            // The header's merkle root binds every transaction ID, and a v5 ID covers
-            // every Action field read here, so a node cannot alter them under a real header.
-            if block.transactions.iter().collect::<merkle::Root>() != block.header.merkle_root {
-                return Err(ZakuraError::Block(
-                    "receiver block transactions do not match its header".into(),
-                ));
-            }
+            check_transactions(block)?;
             // Count every Action, including coinbase and outputs that cannot be recovered.
             position = position
                 .checked_add(action_count(block))
@@ -135,9 +129,27 @@ impl ZakuraClient {
 
     /// The block at `height`, decoded from the node's raw `getblock` bytes.
     async fn receiver_raw_block(&self, height: u32) -> Result<Block, ZakuraError> {
-        let raw: String = self
-            .call("getblock", json!([height.to_string(), 0]))
+        self.raw_block(height.to_string()).await
+    }
+
+    /// The block whose hash is `hash` (protocol byte order), with its transactions in
+    /// the order the chain commits to: the node's raw block must hash to `hash` and its
+    /// transactions must match its header's merkle root.
+    pub async fn receiver_block(&self, hash: [u8; 32]) -> Result<Block, ZakuraError> {
+        let block = self
+            .raw_block(zakura_chain::block::Hash(hash).to_string())
             .await?;
+        if block.hash().0 != hash {
+            return Err(ZakuraError::Block("block does not match its hash".into()));
+        }
+        check_transactions(&block)?;
+        Ok(block)
+    }
+
+    /// The block `id` names, a height or a displayed hash, decoded from the node's raw
+    /// `getblock` bytes.
+    async fn raw_block(&self, id: String) -> Result<Block, ZakuraError> {
+        let raw: String = self.call("getblock", json!([id, 0])).await?;
         let bytes = hex::decode(raw)?;
         let mut input = bytes.as_slice();
         let block =
@@ -147,6 +159,18 @@ impl ZakuraClient {
         }
         Ok(block)
     }
+}
+
+/// Checks `block`'s transactions against its header's merkle root, which binds every
+/// transaction ID and their order. A v5 ID covers every Action field the indexer reads,
+/// so a node cannot alter them under a real header.
+fn check_transactions(block: &Block) -> Result<(), ZakuraError> {
+    if block.transactions.iter().collect::<merkle::Root>() != block.header.merkle_root {
+        return Err(ZakuraError::Block(
+            "receiver block transactions do not match its header".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Exclude coinbase recipients while preserving their contribution to global positions.

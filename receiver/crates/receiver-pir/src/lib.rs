@@ -20,7 +20,9 @@ pub use receiver_directory::snapshot::{MAX_ROWS, MIN_ROWS};
 pub const HEADER_BYTES: usize = 52;
 /// Leading bytes of every request header, which responses echo.
 pub const MAGIC: &[u8; 4] = b"RPQ1";
-/// Bound on a serialized directory or session manifest, read before parsing.
+/// Bound on a serialized directory or session manifest, read before parsing. A
+/// session manifest over it, in the compact JSON that `/v1/receiver/init` serves, is
+/// invalid (see [`Manifest::validate`]), so no server can publish one.
 pub const MAX_MANIFEST_BYTES: usize = 16384;
 /// Plaintext coefficients per row: a row is exactly one packing block.
 const COLS: usize = snapshot::ROW_BYTES / 2;
@@ -55,13 +57,18 @@ pub struct Manifest {
 }
 
 impl Manifest {
-    /// Check the directory manifest, the protocol and the supported geometry.
+    /// Check the directory manifest, the protocol, the supported geometry and the
+    /// serialized size, at most [`MAX_MANIFEST_BYTES`].
     pub fn validate(&self) -> Result<(), Error> {
         self.directory.validate()?;
         if self.protocol != PROTOCOL {
             return Err(Error::Unsupported);
         }
-        validate_rows(self.directory.rows)
+        validate_rows(self.directory.rows)?;
+        if serde_json::to_vec(self)?.len() > MAX_MANIFEST_BYTES {
+            return Err(Error::Malformed);
+        }
+        Ok(())
     }
 
     /// The session ID that pins every route and request to this manifest: a
