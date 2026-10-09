@@ -1,27 +1,27 @@
-//! A `pir-monitor` service probe for the receiver directory. It checks the served
-//! publication against independent nodes, one at a time and freshest first (see
-//! [`oracle`]), looks up a pinned historical payment over live encrypted PIR, as
-//! Transparent's canary checks one query against a pinned row, checks the witness file
-//! (with `--witnesses`) and the filter file against the manifest, then checks the NEAR
-//! feed's freshness and the indexer's payout check, which health reports on the private
-//! network. It prints one JSON line: `passed`, on failure a `category` and `detail`,
-//! and the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
-//! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
-//! correctness incident; `oracle_invalid` a fixture that fails its pin, including an
-//! Action whose recovered receiver differs from the fixture's pinned one; anything else,
-//! such as `oracle_unavailable` when no node that reached the publication can complete
-//! the chain checks, is an availability failure. Every response body is bounded before
-//! it is buffered.
+//! A `pir-monitor` service probe for the receiver directory, run as `receiver-directory
+//! probe` or `receiver-probe`. It checks the served publication against independent
+//! nodes, one at a time and freshest first, looks up a pinned historical payment over
+//! live encrypted PIR, as Transparent's canary checks one query against a pinned row,
+//! checks the witness file (with `--witnesses`) and the filter file against the
+//! manifest, then checks the NEAR feed's freshness and the indexer's payout check,
+//! which health reports on the private network. It prints one JSON line: `passed`, on
+//! failure a `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"`
+//! with `queries` and `correct`. `answer_mismatch` marks served data that is wrong,
+//! which the monitor treats as a correctness incident; `oracle_invalid` a fixture that
+//! fails its pin, including an Action whose recovered receiver differs from the
+//! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
+//! reached the publication can complete the chain checks, is an availability failure.
+//! Every response body is bounded before it is buffered.
+use crate::{
+    read_limited,
+    zakura::{ZakuraClient, ZakuraError},
+};
 use clap::Parser;
 use receiver_directory::{
     extract::Action,
     filter::{Filters, MAX_FILTERS_BYTES},
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment, Receiver,
-};
-use receiver_indexer::{
-    read_limited,
-    zakura::{ZakuraClient, ZakuraError},
 };
 use receiver_pir::{
     public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
@@ -32,6 +32,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+/// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
+const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
+
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// Bound on the health report, a few hundred bytes.
@@ -39,8 +42,9 @@ const MAX_HEALTH_BYTES: usize = 64 * 1024;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// The probe's command line.
 #[derive(Parser)]
-struct Args {
+pub struct Args {
     /// The receiver directory's public origin, which serves the wallet routes.
     #[arg(long)]
     origin: String,
@@ -48,13 +52,9 @@ struct Args {
     /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
     #[arg(long)]
     health_url: String,
-    /// The pinned payment: a public zero-OVK Action with its transaction, height, note
-    /// position and independently decoded receiver (see [`Fixture`]).
+    /// A fixture file to look up instead of the embedded mainnet one, for tests.
     #[arg(long)]
-    fixture: PathBuf,
-    /// The fixture file's SHA-256, hex.
-    #[arg(long)]
-    fixture_sha256: String,
+    fixture: Option<PathBuf>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
     /// reached the publication check it one at a time, ranked as
     /// [`ZakuraClient::ranked`] does, until one completes the checks.
@@ -117,10 +117,10 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
     hex::decode(hex).ok()?.try_into().ok()
 }
 
-#[tokio::main]
-async fn main() {
+/// Runs the probe, prints its JSON line and returns whether every check passed.
+pub async fn run(args: Args) -> bool {
     let mut lookup = None;
-    let (passed, category, detail) = match probe(Args::parse(), &mut lookup).await {
+    let (passed, category, detail) = match probe(args, &mut lookup).await {
         Ok(None) => (true, None, Value::Null),
         Ok(Some((category, detail))) => (false, Some(category), detail),
         Err(error) => (false, Some("request_failed"), error.to_string().into()),
@@ -132,16 +132,16 @@ async fn main() {
         output["correct"] = (if correct { queries } else { 0 }).into();
     }
     println!("{output}");
-    std::process::exit(if passed { 0 } else { 1 });
+    passed
 }
 
 /// The failed check, or `None` when every check passes. `lookup` records the encrypted
 /// queries made and whether they found the fixture's payment.
 async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Failure>> {
-    let raw = std::fs::read(&args.fixture)?;
-    if hex::encode(Sha256::digest(&raw)) != args.fixture_sha256.to_ascii_lowercase() {
-        return Ok(Some(("oracle_invalid", json!({"fixture": "sha256"}))));
-    }
+    let raw = match &args.fixture {
+        Some(path) => std::fs::read(path)?,
+        None => MAINNET_FIXTURE.to_vec(),
+    };
     let Ok(fixture) = serde_json::from_slice::<Fixture>(&raw) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
@@ -572,7 +572,7 @@ mod tests {
     /// tree sizes.
     fn anchored() -> receiver_directory::snapshot::Manifest {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
-        directory.end_height = receiver_indexer::blocks::ironwood_activation();
+        directory.end_height = crate::blocks::ironwood_activation();
         directory
     }
 
@@ -614,10 +614,6 @@ mod tests {
                 "https://receiver",
                 "--health-url",
                 "http://10.0.0.1/health",
-                "--fixture",
-                "fixture.json",
-                "--fixture-sha256",
-                "00",
                 "--rpc-url",
                 "http://node",
                 "--no-auth",
@@ -1072,7 +1068,8 @@ mod tests {
 
     /// The fixture's pinned receiver is checked against recovery before any request:
     /// a missing, malformed or invalid pin, or another valid receiver, is
-    /// `oracle_invalid` and reaches no server, while the independent pin goes on.
+    /// `oracle_invalid` and reaches no server, while the embedded fixture's pin passes
+    /// and the probe goes on.
     #[tokio::test]
     async fn the_fixture_receiver_pin_is_checked_before_any_request() {
         use std::sync::{
@@ -1090,33 +1087,26 @@ mod tests {
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.json");
-        let run = |fixture: Value| {
-            let bytes = serde_json::to_vec(&fixture).unwrap();
-            std::fs::write(&path, &bytes).unwrap();
-            let args = Args::try_parse_from([
-                "receiver-probe",
-                "--origin",
-                &url,
-                "--health-url",
-                &format!("{url}/health"),
-                "--fixture",
-                path.to_str().unwrap(),
-                "--fixture-sha256",
-                &hex::encode(Sha256::digest(&bytes)),
-                "--rpc-url",
-                &url,
-                "--no-auth",
-            ])
-            .unwrap();
+        // Runs the probe on `fixture`, or on the embedded one for `None`.
+        let run = |fixture: Option<Value>| {
+            let mut args = vec![
+                "receiver-probe".to_owned(),
+                "--origin".into(),
+                url.clone(),
+                "--health-url".into(),
+                format!("{url}/health"),
+                "--rpc-url".into(),
+                url.clone(),
+                "--no-auth".into(),
+            ];
+            if let Some(fixture) = fixture {
+                std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+                args.extend(["--fixture".into(), path.to_str().unwrap().into()]);
+            }
+            let args = Args::try_parse_from(args).unwrap();
             async move { probe(args, &mut None).await }
         };
-        let mut fixture: Value = serde_json::from_str(include_str!(
-            "../../../crates/receiver-directory/tests/fixtures/zero-ovk-action.json"
-        ))
-        .unwrap();
-        fixture["position"] = 0.into();
-        fixture["block_hash"] = "00".repeat(32).into();
-        fixture["tx_index"] = 1.into();
+        let fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         assert_eq!(fixture["receiver"], super::common::RECEIVER_HEX);
         let other = {
             use orchard::keys::{FullViewingKey, Scope, SpendingKey};
@@ -1141,7 +1131,7 @@ mod tests {
                     altered.as_object_mut().unwrap().remove("receiver");
                 }
             }
-            let failure = run(altered).await.unwrap();
+            let failure = run(Some(altered)).await.unwrap();
             assert_eq!(
                 failure,
                 Some(("oracle_invalid", json!({"fixture": detail})))
@@ -1149,7 +1139,7 @@ mod tests {
             assert_eq!(requests.load(Ordering::SeqCst), 0, "{detail}");
         }
         // The independent pin passes, so the probe asks the origin for its manifest.
-        assert!(run(fixture).await.is_err());
+        assert!(run(None).await.is_err());
         assert!(requests.load(Ordering::SeqCst) > 0);
     }
 }

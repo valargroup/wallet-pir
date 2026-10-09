@@ -4,6 +4,7 @@
 //! `receiver/README.md`.
 pub mod blocks;
 pub mod near;
+pub mod probe;
 pub mod zakura;
 
 /// A response body over its bound, or a failed read.

@@ -220,9 +220,10 @@ one or NEAR stopped paying with the zero OVK. A payout without a reported
 transaction is not checked. A matched payout is not checked again until a reorg
 rewinds the index, which first forgets every match.
 
-`receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
---fixture-sha256 <hex> --rpc-url <node> --no-auth [--witnesses]` is a `pir-monitor`
-service probe.
+`receiver-directory probe --origin <url> --health-url <private health URL>
+--rpc-url <node> --no-auth [--witnesses]`, or `receiver-probe` with the same
+arguments on the monitor host, is a `pir-monitor` service probe. Its mainnet
+fixture is embedded in the binary; `--fixture` replaces it in tests.
 Its chain checks run on one `--rpc-url` node at a time among those that have
 reached the publication, highest tip first and in the given order among equal
 tips. A node that cannot complete them, from an RPC failure, an undecodable
@@ -238,8 +239,8 @@ recovery. Before any request the probe
 requires recovery to reproduce that receiver, which it then looks up, so a
 recovery regression shared with the indexer cannot pass. The answer must hold that
 payment with every fixture field, and the node's block at the fixture's height
-must have the pinned hash. A fixture that fails its SHA-256, receiver or block
-hash pin is `oracle_invalid`. The lookup is reported as `phase:
+must have the pinned hash. A fixture that fails its receiver or block hash
+pin is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
 With `--witnesses`, which a deployment must pass when its indexer runs with

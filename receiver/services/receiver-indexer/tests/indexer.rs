@@ -331,21 +331,19 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         .into();
     fixture["tx_index"] = payment.tx_index.into();
     fixture["position"] = payment.position.into();
-    let probe_nodes = |fixture: &Value, pin: Option<&str>, nodes: &[&str]| {
+    // The deploy gate's form of the probe: `receiver-directory probe`.
+    let probe_nodes = |fixture: &Value, nodes: &[&str]| {
         let path = dir.path().join("fixture.json");
-        let bytes = serde_json::to_vec(fixture).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
-        let sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
-        let output = Command::new(env!("CARGO_BIN_EXE_receiver-probe"))
+        std::fs::write(&path, serde_json::to_vec(fixture).unwrap()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
             .args([
+                "probe",
                 "--origin",
                 &format!("http://{addr}"),
                 "--health-url",
                 &format!("http://{addr}/v1/receiver/health"),
                 "--fixture",
                 path.to_str().unwrap(),
-                "--fixture-sha256",
-                pin.unwrap_or(&sha256),
                 "--no-auth",
                 "--witnesses",
             ])
@@ -354,8 +352,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             .unwrap();
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
-    let probe = |fixture: &Value, pin: Option<&str>| probe_nodes(fixture, pin, &[&url]);
-    let result = probe(&fixture, None);
+    let probe = |fixture: &Value| probe_nodes(fixture, &[&url]);
+    let result = probe(&fixture);
     assert_eq!(result["phase"], "live_encrypted_probe", "{result}");
     assert_eq!(
         (result["queries"].clone(), result["correct"].clone()),
@@ -363,10 +361,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     );
     assert_eq!(result["category"], "stale_feed");
     assert_eq!(result["passed"], false);
-    assert_eq!(
-        probe(&fixture, Some(&"0".repeat(64)))["category"],
-        "oracle_invalid"
-    );
     // The fixture carries its receiver's independent decoding; a pin that recovery
     // does not reproduce is refused before any lookup.
     let mut repinned = fixture.clone();
@@ -375,20 +369,20 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
         hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes()).into()
     };
-    let result = probe(&repinned, None);
+    let result = probe(&repinned);
     assert_eq!(result["category"], "oracle_invalid", "{result}");
     assert!(result["phase"].is_null(), "{result}");
     let mut moved = fixture.clone();
     moved["position"] = (payment.position + 1).into();
-    let result = probe(&moved, None);
+    let result = probe(&moved);
     assert_eq!(result["category"], "answer_mismatch", "{result}");
     assert_eq!(result["correct"], 0);
     // An unreachable node falls back to the next; a node behind the publication can
     // check nothing, which is unavailability, never a pass.
-    let result = probe_nodes(&fixture, None, &["http://127.0.0.1:1", &url]);
+    let result = probe_nodes(&fixture, &["http://127.0.0.1:1", &url]);
     assert_eq!(result["correct"], 1, "{result}");
     count.store(1, Ordering::SeqCst);
-    let result = probe(&fixture, None);
+    let result = probe(&fixture);
     assert_eq!(result["category"], "oracle_unavailable", "{result}");
     assert_eq!(result["passed"], false);
     count.store(2, Ordering::SeqCst);

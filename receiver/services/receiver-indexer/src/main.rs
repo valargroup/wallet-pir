@@ -1,4 +1,6 @@
 //! Resumable public-chain indexer and continuous canonical receiver PIR service.
+//! `receiver-directory probe ...` runs the monitor's probe instead (see
+//! `receiver_indexer::probe`), so a release needs no other file.
 use clap::Parser;
 use receiver_directory::{
     snapshot::{Snapshot, MAX_ROWS},
@@ -77,6 +79,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("probe") {
+        let args = receiver_indexer::probe::Args::parse_from(std::env::args().skip(1));
+        std::process::exit(if receiver_indexer::probe::run(args).await {
+            0
+        } else {
+            1
+        });
+    }
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
