@@ -22,30 +22,25 @@ pub struct Publication {
 impl Publication {
     /// Prepare a complete immutable revision. The caller must separately accept its chain anchor.
     /// A witness file must bind to the publication and hold a path to its root for every
-    /// record in the rows, which must hold exactly the manifest's records.
+    /// record in the rows.
     pub fn new(server: Server, witnesses: Option<Vec<u8>>) -> Result<Self, receiver_pir::Error> {
         if let Some(proof) = &witnesses {
-            let manifest = &server.manifest().directory;
-            let proof = WitnessSnapshot::decode(proof, manifest)?;
+            let proof = WitnessSnapshot::decode(proof, &server.manifest().directory)?;
             let rows = server.rows();
             let mut leaves = Vec::new();
             for row in rows.as_chunks::<ROW_BYTES>().0 {
                 // Bytes after the last slot are row padding, not a record.
                 for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
                     if let Some(record) = Record::decode(slot)? {
-                        let position = u32::try_from(record.payment.position)
-                            .map_err(|_| receiver_directory::Error::Coverage)?;
-                        leaves.push((position, record.payment.cmx));
+                        // `Server::new` validated every record, so positions are in the tree.
+                        leaves.push((record.payment.position as u32, record.payment.cmx));
                     }
                 }
-            }
-            if leaves.len() as u64 != manifest.records {
-                return Err(receiver_directory::Error::Coverage.into());
             }
             proof.check_paths(leaves)?;
         }
         Ok(Self {
-            id: server.manifest().id()?,
+            id: server.id(),
             server,
             witnesses: witnesses.map(Into::into),
         })

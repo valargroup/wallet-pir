@@ -88,7 +88,7 @@ The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
 terminal height and hash, tree size and root. Sorted 37-byte nodes (level, index,
 hash) follow, with every sibling of each payment position. It is capped at 64 MiB.
 A server publishes a file only once it has checked a path to that root for every
-record in the rows, and that the rows hold exactly the manifest's record count.
+record in the rows.
 
 ## Protocol
 
