@@ -148,7 +148,9 @@ impl Capture {
     /// The feed's health for monitoring: when each feed's last complete read began, and
     /// how many payouts first seen complete more than an hour before the terminal
     /// block's time, however long ago, still have no payment to their receiver in the
-    /// transaction NEAR reported in `index`. Also returns the payouts it matched, for
+    /// transaction NEAR reported in `index` (`payouts_missing`), out of the
+    /// `payouts_checked` this report looked up: those no earlier published report
+    /// matched, so not a running total. Also returns the payouts it matched, for
     /// [`ProviderStore::match_payouts`] once the report is published; they are not
     /// checked again until a rewind forgets them (see
     /// [`ProviderStore::forget_matches`]), and one that stays missing stays in the count.
