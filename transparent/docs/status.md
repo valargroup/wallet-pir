@@ -23,8 +23,13 @@ the 2026-10-03 v11 cutover left behind. Serving was not affected.
 - **Source fix.** The canary now binds queries to its fixture's schema. A new
   script derives its pins from the v11 load fixture, and another moves the APM and
   probe configs. See [observability alerting](../../enhance/docs/observability-alerting.md#seven-day-quality-history-and-transparent-page).
-- **Open.** Deploying the rebuilt canary and moved configs needs approval; the
-  service and quality alert families stay in shadow until the canary passes.
+- **Deployed 13:50 UTC.** The canary was rebuilt from `854f5677`, given the v11
+  load fixture with its anchor at block 3,488,499, and has passed every sample
+  since. Its two shadow incidents closed. APM now reads the v11 roster and load
+  status, which is fresh. Only `pir-monitor` and `pir-apm` were restarted
+  ([evidence](../evidence/quality-monitoring-v11-2026-10-09/README.md)).
+- **Open.** The service and quality alert families stay in shadow pending their
+  24-hour review.
 
 ## Sealed tier boundary rule, 2026-10-08
 

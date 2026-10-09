@@ -1,0 +1,1 @@
+{"schema": "transparent-shard-v11", "fixture_sha256": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6", "map_sha256": "9826ff199a7b06ac634926909100edec1daa72a53ab7ea5f9186ef5ec2afabec", "tables": 178, "anchor_height": 3488499, "anchor_hash": "00000000002a155a82f835b0cefd7a029e8a6971686ef5e713ec3986dab486e1", "anchor_checked": "node getblockhash"}

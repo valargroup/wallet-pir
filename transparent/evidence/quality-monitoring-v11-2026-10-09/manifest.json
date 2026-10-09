@@ -1,0 +1,56 @@
+{
+  "run_id": "quality-monitoring-v11-2026-10-09",
+  "kind": "monitoring configuration change (no serving change)",
+  "window_utc": ["2026-10-09T13:35:00Z", "2026-10-09T14:05:00Z"],
+  "source": {
+    "repository": "valargroup/wallet-pir",
+    "commit": "854f5677a0e2dfee48bd2cf617d81827da175259",
+    "ci": "main CI run 37937743601: success",
+    "archive_sha256": "e2c18ffd79bc3c909ddd6a1a0f8918fa9d2c0c39af094929c6d2a29dd0ced65a"
+  },
+  "build": {
+    "host": "roman-ipir-bench-8vcpu (Intel Xeon Platinum 8358, Ubuntu glibc 2.39)",
+    "command": "RUSTFLAGS='-C target-cpu=haswell' CFLAGS=-march=haswell CXXFLAGS=-march=haswell cargo build --locked --release -p transparent-shard-server --example quality-canary",
+    "toolchain": "1.97.1",
+    "profile": "release (lto=fat, codegen-units=1)",
+    "seconds": 430,
+    "artifact": "quality-canary",
+    "artifact_sha256": "0c8651f3ffb28e539d0b47700e8d0495b4918558dc659b3d666d670d55657024",
+    "max_glibc_symbol": "GLIBC_2.34"
+  },
+  "oracle": {
+    "fixture": "/srv/transparent-activity/canonical-load/v11/fixture.json (continuous v11 load fixture, copied unchanged)",
+    "fixture_sha256": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6",
+    "fixture_schema": "transparent-shard-v11",
+    "fixture_source": "/srv/transparent-activity/full-v11/publications/initial, exported 2026-10-01T07:46:04Z, provisional_frozen=false",
+    "tables": 178,
+    "shards": "0-88 (sealed)",
+    "live_map_height": 3511820,
+    "live_map_sha256": "9826ff199a7b06ac634926909100edec1daa72a53ab7ea5f9186ef5ec2afabec",
+    "anchor_height": 3488499,
+    "anchor_hash": "00000000002a155a82f835b0cefd7a029e8a6971686ef5e713ec3986dab486e1",
+    "anchor_checks": ["coordinator node getblockhash (transparent-canary-pins.py)", "monitor node getblockhash (canary, every sample)"],
+    "derivation": "enhance/ops/scripts/transparent-canary-pins.py at 854f5677"
+  },
+  "hosts": {
+    "coordinator": "enhance-pir-coordinator-01: /etc/pir-quality/transparent-production.json and /etc/pir-quality/hosts.json moved to v11 inputs; pir-apm restarted 13:50:47Z",
+    "monitor": "wallet-pir-monitor-01: /etc/pir-monitor/service-probes.json transparent entry moved to the new canary, fixture and pins; pir-monitor restarted 13:50:26Z"
+  },
+  "installed": {
+    "/opt/pir-monitor/transparent-quality-canary-854f5677": "0c8651f3ffb28e539d0b47700e8d0495b4918558dc659b3d666d670d55657024",
+    "/opt/pir-monitor/transparent-quality-fixture-v11.json": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6"
+  },
+  "alert_modes_unchanged": {
+    "PIR_APM_ALERT_MODE": "active",
+    "PIR_APM_QUALITY_ALERT_MODE": "shadow",
+    "PIR_APM_SCALING_ALERT_MODE": "shadow",
+    "PIR_MONITOR_ALERT_MODE": "active",
+    "PIR_MONITOR_SERVICE_ALERT_MODE": "shadow"
+  },
+  "lock": "/run/lock/wallet-pir-production.lock held on the coordinator 13:49:43Z through verification",
+  "rollback": {
+    "monitor": "/root/transparent-quality-v11-20261009/backup/etc__pir-monitor__service-probes.json -> /etc/pir-monitor/service-probes.json; systemctl restart pir-monitor",
+    "coordinator": "/root/transparent-quality-v11-20261009/backup/etc__pir-quality__{transparent-production,hosts}.json -> /etc/pir-quality/; systemctl restart pir-apm"
+  },
+  "not_changed": ["shard servers", "publisher", "router", "continuous load", "alert modes", "credentials", "incident databases", "/etc/pir-quality/qualified-workers.json", "previous canary binary and v10 fixture (retained)"]
+}

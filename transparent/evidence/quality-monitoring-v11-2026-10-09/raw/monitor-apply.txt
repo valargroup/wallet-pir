@@ -1,0 +1,121 @@
+{
+  "file": "/etc/pir-monitor/service-probes.json",
+  "before": [
+    {
+      "service": "status",
+      "timeout_seconds": 45,
+      "command": [
+        "/opt/pir-monitor/status-pir-quality",
+        "probe-live",
+        "--origin",
+        "https://enhance-pir.valargroup.dev",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie",
+        "--queries",
+        "1"
+      ]
+    },
+    {
+      "service": "transparent",
+      "timeout_seconds": 45,
+      "command": [
+        "/opt/pir-monitor/transparent-quality-canary",
+        "--url",
+        "https://transparent-pir.valargroup.dev",
+        "--fixture",
+        "/opt/pir-monitor/transparent-quality-fixture.json",
+        "--fixture-sha256",
+        "1316d72b0d72ad1aaf58b2d7ab2a4e8c6953c249767ff2fd8b824c68be6094bb",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie",
+        "--anchor-height",
+        "3494910",
+        "--anchor-hash",
+        "000000000035daf85bc59d19c96551e0ae3402dda6a60b19f61ff5f667bb50b0"
+      ]
+    },
+    {
+      "service": "receiver",
+      "timeout_seconds": 30,
+      "command": [
+        "/opt/pir-monitor/receiver-probe",
+        "--origin",
+        "https://receiver-pir.valargroup.dev",
+        "--health-url",
+        "http://10.70.0.11:18380/v1/receiver/health",
+        "--fixture",
+        "/opt/pir-monitor/receiver-probe-fixture.json",
+        "--fixture-sha256",
+        "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie"
+      ]
+    }
+  ],
+  "after": [
+    {
+      "service": "status",
+      "timeout_seconds": 45,
+      "command": [
+        "/opt/pir-monitor/status-pir-quality",
+        "probe-live",
+        "--origin",
+        "https://enhance-pir.valargroup.dev",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie",
+        "--queries",
+        "1"
+      ]
+    },
+    {
+      "service": "transparent",
+      "timeout_seconds": 45,
+      "command": [
+        "/opt/pir-monitor/transparent-quality-canary-854f5677",
+        "--url",
+        "https://transparent-pir.valargroup.dev",
+        "--fixture",
+        "/opt/pir-monitor/transparent-quality-fixture-v11.json",
+        "--fixture-sha256",
+        "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie",
+        "--anchor-height",
+        "3488499",
+        "--anchor-hash",
+        "00000000002a155a82f835b0cefd7a029e8a6971686ef5e713ec3986dab486e1"
+      ]
+    },
+    {
+      "service": "receiver",
+      "timeout_seconds": 30,
+      "command": [
+        "/opt/pir-monitor/receiver-probe",
+        "--origin",
+        "https://receiver-pir.valargroup.dev",
+        "--health-url",
+        "http://10.70.0.11:18380/v1/receiver/health",
+        "--fixture",
+        "/opt/pir-monitor/receiver-probe-fixture.json",
+        "--fixture-sha256",
+        "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
+        "--rpc-url",
+        "http://127.0.0.1:18232",
+        "--cookie",
+        "/run/credentials/pir-monitor.service/chain-rpc-cookie"
+      ]
+    }
+  ]
+}
+{"probe": {"category": "", "duration_seconds": 1.410174788, "passed": true}, "exit": 0}
+{"apply": true, "changed": ["/etc/pir-monitor/service-probes.json"], "restarted": "pir-monitor", "backup_dir": "/root/transparent-quality-v11-20261009/backup"}
