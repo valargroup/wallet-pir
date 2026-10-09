@@ -320,7 +320,7 @@ probe:
     "https://receiver-pir.valargroup.dev", "--health-url",
     "http://10.70.0.11:18380/v1/receiver/health", "--fixture",
     "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
-    "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
+    "ef0459fc10f60664ba3d41576a6108fe9f64bace3ecf724e17b04d86f593cbcf",
     "--rpc-url", "http://127.0.0.1:18232", "--cookie",
     "/run/credentials/pir-monitor.service/chain-rpc-cookie", "--witnesses"],
    "timeout_seconds": 30}
@@ -350,11 +350,14 @@ ssh <monitor> 'cd /etc/pir-monitor && chmod 0644 service-probes.json.new &&
 
 The fixture pins the public NEAR refund
 `2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653` (height
-3,496,114, Action 0, note position 610503), which every publication holds. Each
-run looks up its receiver with one live encrypted query over the public origin and
-checks the filter file, so it moves about 140 KB: the session manifest, the
-14,848-byte public setup, a 77,876-byte query, a 5,684-byte response and the
-filter file (about 37 KB in October 2026), plus health. It alerts when the
+3,496,114, Action 0, note position 610503), which every publication holds, and
+its receiver as decoded independently from NEAR's refund address (see
+`receiver/crates/receiver-directory/tests/fixtures/zero-ovk-action-oracle`); the
+probe refuses a recovery that does not reproduce it. Each run looks up that
+receiver with one live encrypted query over the public origin and checks the
+filter file, so it moves about 140 KB: the session manifest, the 14,848-byte public
+setup, a 77,876-byte query, a 5,684-byte response and the filter file (about 37 KB
+in October 2026), plus health and, with `--witnesses`, the witness file. It alerts when the
 served anchor leaves the chain, the lookup misses or misreports the pinned payment,
 the filter file is wrong or a completed NEAR payout is missing from the index
 (correctness), when the
