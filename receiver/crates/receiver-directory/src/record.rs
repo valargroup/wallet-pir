@@ -1,5 +1,10 @@
 //! Payment records and their fixed-width row encoding.
 use crate::{Error, Hash};
+use orchard::{
+    note::{ExtractedNoteCommitment, Nullifier},
+    note_encryption::IronwoodDomain,
+};
+use zcash_note_encryption::{Domain, EphemeralKeyBytes};
 
 /// Full canonical receiver. The same encoding is shared by refund and incoming keys.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd)]
@@ -18,7 +23,10 @@ impl Receiver {
     }
 }
 
-/// Compact context plus location. All hashes use protocol byte order.
+/// Compact context plus location. All hashes use protocol byte order. The note
+/// commitment and Action nullifier must be canonical field elements and the ephemeral
+/// key a valid Ironwood ephemeral public key; [`Record::encode`] and
+/// [`Record::decode`] refuse others.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Payment {
     pub height: u32,
@@ -47,11 +55,10 @@ pub struct Record {
 pub const RECORD_BYTES: usize = 285;
 
 impl Record {
-    /// Encode one row slot. A page outside its total is malformed.
+    /// Encode one row slot. A page outside its total, or a field [`Payment`] does not
+    /// allow, is malformed.
     pub fn encode(&self) -> Result<[u8; RECORD_BYTES], Error> {
-        if self.total == 0 || self.page >= self.total {
-            return Err(Error::Malformed);
-        }
+        self.check()?;
         let p = &self.payment;
         let mut out = [0; RECORD_BYTES];
         out[0] = 1;
@@ -100,9 +107,21 @@ impl Record {
                 ciphertext_prefix: b[233..285].try_into().unwrap(),
             },
         };
-        if r.total == 0 || r.page >= r.total {
+        r.check()?;
+        Ok(Some(r))
+    }
+
+    /// Checks the page against its total and the fields [`Payment`] requires.
+    fn check(&self) -> Result<(), Error> {
+        let p = &self.payment;
+        if self.total == 0
+            || self.page >= self.total
+            || ExtractedNoteCommitment::from_bytes(&p.cmx).is_none().into()
+            || Nullifier::from_bytes(&p.action_nullifier).is_none().into()
+            || IronwoodDomain::epk(&EphemeralKeyBytes(p.ephemeral_key)).is_none()
+        {
             return Err(Error::Malformed);
         }
-        Ok(Some(r))
+        Ok(())
     }
 }
