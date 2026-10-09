@@ -954,7 +954,7 @@ async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
     assert!(!shard.manifest.sealed);
     let rows = Table::Pages.rows(&GEOMETRY) as usize;
     let query_rows = shard.manifest.pages_query_rows() as usize;
-    assert!(query_rows < rows && query_rows % transparent_native::D == 0);
+    assert!(query_rows < rows && query_rows.is_multiple_of(transparent_native::D));
     assert!(shard.manifest.occupancy.page_rows as usize <= query_rows);
 
     let profile = transparent_native::TableProfile::new(
@@ -999,7 +999,7 @@ async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
     let published = shard.segment(Table::Pages, 0).unwrap().load().unwrap();
     assert_eq!(
         profile.decode(&secret, &public, &response[16..]).unwrap(),
-        raw_row(&published, GEOMETRY.page_row_bytes as usize, 3)
+        raw_row(&published, GEOMETRY.page_row_bytes, 3)
     );
 }
 
