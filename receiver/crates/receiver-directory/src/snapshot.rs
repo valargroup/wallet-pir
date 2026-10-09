@@ -23,7 +23,8 @@ pub const MAX_ROWS: u32 = 65536;
 pub const TREE_SIZE: u64 = 1 << 32;
 
 /// The record slots in a table of `rows` rows. A row count that is not a power of two
-/// up to [`MAX_ROWS`] is [`Error::Malformed`].
+/// up to [`MAX_ROWS`] is [`Error::Malformed`]. Smaller tables than [`MIN_ROWS`] are
+/// accepted here, for tests; publishers and clients enforce the floor.
 pub(crate) fn capacity(rows: u32) -> Result<u64, Error> {
     if !rows.is_power_of_two() || rows > MAX_ROWS {
         return Err(Error::Malformed);
@@ -402,7 +403,8 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
 /// total, each continuing the last as [`check_next`] requires, and no two records
-/// share an output or note position.
+/// share an output or note position. Different receivers' records are not checked
+/// against each other: a wallet reads only its own receiver's pages.
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
     let mut previous: Option<PageMeta> = None;
     let mut outputs = BTreeSet::new();
