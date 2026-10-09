@@ -12,7 +12,7 @@
 //! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
 //! reached the publication can complete the chain checks, or `payouts_uncheckable` when
 //! the indexer's report counts a recent completed payout that NEAR gave no usable
-//! transaction for, is an availability failure.
+//! recipient or transaction for, is an availability failure.
 //! Every response body is bounded before it is buffered.
 use crate::{
     read_limited,
