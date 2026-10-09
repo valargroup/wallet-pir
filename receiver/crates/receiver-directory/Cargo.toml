@@ -1,0 +1,27 @@
+[package]
+name = "receiver-directory"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Publicly recoverable Ironwood receiver directory and private lookup records"
+
+[features]
+store = ["dep:rusqlite"]
+
+[dependencies]
+# Pinned exactly, as in `transparent-filter`: the filter bytes are what every wallet
+# tests, so the encoder may not move without revalidation.
+bitcoin = { version = "=0.32.102", default-features = false, features = ["std"] }
+incrementalmerkletree = "0.8"
+orchard = { package = "zakura-orchard", version = "2", default-features = false }
+zcash_note_encryption = "=0.4.2"
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rusqlite = { version = "0.37", features = ["bundled"], optional = true }
+
+[dev-dependencies]
+incrementalmerkletree = { version = "0.8", features = ["legacy-api"] }
+hex = "0.4"
+tempfile = "3"

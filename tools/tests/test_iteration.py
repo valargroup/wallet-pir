@@ -80,9 +80,14 @@ class PlannerTests(unittest.TestCase):
         self.assertIn('enhance-pir-server', result['packages'])
         self.assertIn('check-docs', result['helpers'])
 
+    def test_receiver_packages_have_their_own_full_group(self):
+        result = fast.plan(self.packages, ['receiver/crates/receiver-directory/src/filter.rs'])
+        self.assertEqual(result['groups'], ['receiver'])
+        self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
+
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
         result = fast.plan(self.packages, ['shared/pir-control/src/lib.rs'])
-        self.assertTrue({'shared', 'enhance', 'transparent'} <= set(result['groups']))
+        self.assertTrue({'shared', 'enhance', 'transparent', 'receiver'} <= set(result['groups']))
         for path in ['unknown.file', 'Cargo.lock', '.cargo/config.toml', 'tools/ci/fast.py', '.github/workflows/ci-full.yml']:
             result = fast.plan(self.packages, [path])
             self.assertEqual(set(result['groups']), fast.FULL_GROUPS)

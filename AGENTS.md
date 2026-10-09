@@ -1,8 +1,8 @@
 # Wallet PIR development
 
-Keep product code, operations, docs and evidence under `enhance/` or
-`transparent/`; shared code lives under `shared/`. The legacy demo workspace is
-independent. Preserve existing Cargo package and binary names.
+Keep product code, operations, docs and evidence under `enhance/`,
+`transparent/` or `receiver/`; shared code lives under `shared/`. The legacy
+demo workspace is independent. Preserve existing Cargo package and binary names.
 
 ## Iteration and validation
 

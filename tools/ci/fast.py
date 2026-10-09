@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools/ci"))
 from stage import run, inherited_fds  # noqa: E402
 from target_lease import local_target  # noqa: E402
-FULL_GROUPS = {'enhance', 'transparent', 'shared', 'ops', 'enhance_infra', 'transparent_infra'}
+FULL_GROUPS = {'enhance', 'transparent', 'receiver', 'shared', 'ops', 'enhance_infra', 'transparent_infra'}
 OPS = {'check-ops-enhance', 'check-ops-shared', 'check-ops-control-sessions',
        'check-ops-deploy', 'check-ops-contracts', 'check-ops-parents', 'check-ops-fleet',
        'check-ops-publication', 'check-ops-burst', 'check-ops-regression-recut',
@@ -158,10 +158,10 @@ def plan(packages, paths, *, all_checks=False):
         family = next((group for group, names in coverage.items() if package in names), None)
         if family is None:
             groups.update(FULL_GROUPS)
-        elif family == 'transparent':
-            groups.add('transparent')
+        elif family in ('transparent', 'receiver'):
+            groups.add(family)
         elif family == 'shared':
-            groups.update({'shared', 'enhance', 'transparent'})
+            groups.update({'shared', 'enhance', 'transparent', 'receiver'})
         else:
             groups.add('enhance')
     return {'packages': sorted(selected), 'helpers': sorted(helpers), 'groups': sorted(groups), 'reasons': reasons}
@@ -193,6 +193,7 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         name = package['name']
         if name not in selected:
             continue
+        # Lib and bin tests unless a target is named; full CI runs integration tests with each group's features (full_packages.py).
         targets = [t for t in package['targets'] if t.get('test', True) and any(k in ('lib', 'bin') for k in t['kind'])]
         if test_target and not any(t['name'] == test_target and 'test' in t['kind'] for t in package['targets']):
             raise ValueError(f'{name}: unknown integration target: {test_target}')
