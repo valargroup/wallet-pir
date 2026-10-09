@@ -16,3 +16,6 @@ Cited commits live on development branches and may not resolve later.
   query authenticated its output (q48 protocol).
 - [Publication cache](publication-cache-2026-09-28/README.md): cached witness
   preparation and a tip-to-HTTP publication time of 12.4 seconds, locally.
+- [Deployment record](deployment-2026-10-08/README.md): a point-in-time inventory,
+  not a development run, of the live Droplet, DNS record, absent cloud firewall,
+  host service and public session on 2026-10-08.

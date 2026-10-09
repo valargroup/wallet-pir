@@ -2,7 +2,9 @@
 
 Each host has files, directories and systemd units. Units run what their
 *loaded* configuration names, so a test catches a forgotten daemon-reload;
-the running executable's digest is that binary file's digest at start time.
+the running executable's digest is that binary file's digest at start time,
+and `exec_start` the command line it was started with. As in systemd, a
+missing `EnvironmentFile` without the `-` prefix fails the start.
 Every mutating call is logged, and an optional observer sees it first.
 """
 import contextlib
@@ -47,8 +49,9 @@ class FakeFleet(Executor):
         self.unhealthy = set()        # (host, exe sha256) whose health is never ready
         self.failing_restart = set()  # (host, unit) that fail to start
         self.identity_override = {}   # (host, unit) -> binary_sha256 the health reports
+        self.health_shapes = {}       # (host, unit) -> f(ready, exe sha256) giving its own health body
         self.self_check_fails = set()
-        self.exact_result = (0, 'exact answers ok')
+        self.exact_result = (0, 'exact answers ok')  # or an exception the transport raises
         self.endpoints = {}
         self.held = set()
 
@@ -100,11 +103,14 @@ class FakeFleet(Executor):
     def _start(self, host, unit):
         h = self.host(host)
         state = h.units[unit]
-        binary = units.split_exec(units.exec_start(units.effective(t for _, t in state['loaded'])))[1]
-        if (host, unit) in self.failing_restart or binary not in h.files:
-            state.update(active='failed', pid=0, exe=None)
+        config = units.effective(t for _, t in state['loaded'])
+        command = units.exec_start(config)
+        binary = units.split_exec(command)[1]
+        required = [path for path in config['Service'].get('EnvironmentFile', []) if not path.startswith('-')]
+        if (host, unit) in self.failing_restart or binary not in h.files or any(p not in h.files for p in required):
+            state.update(active='failed', pid=0, exe=None, exec_start=None)
         else:
-            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]))
+            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]), exec_start=command)
 
     # ----------------------------------------------------------- executor
 
@@ -194,7 +200,8 @@ class FakeFleet(Executor):
         if state['active'] != 'active':
             return 0, 'connection refused'
         ready = (host, state['exe']) not in self.unhealthy
-        body = {'ready': ready, 'published': [7] if ready else []}
+        shape = self.health_shapes.get((host, unit))
+        body = shape(ready, state['exe']) if shape else {'ready': ready, 'published': [7] if ready else []}
         if (host, unit) in self.identity_override:
             body['binary_sha256'] = self.identity_override[(host, unit)]
         return 200, json.dumps(body)
@@ -202,8 +209,11 @@ class FakeFleet(Executor):
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
         data = self.host(host).files.get(argv[0])
-        if data is not None:
+        # A staged binary's self-check; any other command is an exact check.
+        if data is not None and argv[1:] == ['--help']:
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
+        if isinstance(self.exact_result, BaseException):
+            raise self.exact_result
         return self.exact_result
 
     @contextlib.contextmanager

@@ -1,0 +1,6 @@
+active
+/opt/receiver-pir/releases/c7f6d296-20261008
+6822ddbf12b4fa3b45110973a873968bc9aced9d9218ab715de69b0569def433  /opt/receiver-pir/current/receiver-directory
+18380/tcp                  ALLOW       10.70.0.0/16              
+LISTEN 0      128       10.70.0.11:18380      0.0.0.0:*          
+{"epoch":0,"identity":{"binary_sha256":"6822ddbf12b4fa3b45110973a873968bc9aced9d9218ab715de69b0569def433","incarnation":"c3660f5b0282e37692b067b1ae330f41","started_unix":1791495655},"indexer":{"feeds":{"near-payouts":1791501429,"near-refunds":1791501431},"payouts_checked":81,"payouts_missing":0},"serving":"24d9022543cefffd8627be6477c5a7ffdcd88d97cc3963af83ab8645039bb262"}

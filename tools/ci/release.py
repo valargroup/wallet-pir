@@ -30,6 +30,10 @@ BINARIES = {
     # Status roles and controller, from the native target like
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],
+    # The receiver directory's indexer and server, which
+    # ops/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
+    # exact check, and the standalone probe pir-monitor runs.
+    'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {
     'enhance-pir': ['enhance/ops/scripts/test-local.py', 'enhance/ops/scripts/bootstrap-worker.py',
@@ -46,6 +50,8 @@ FILES = {
                                  'transparent/ops/scripts/txid-display-observe.py'],
     'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
                    'enhance/ops/deploy/status-controller-qualification.service.in'],
+    'receiver-pir': ['receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/Caddyfile',
+                     'receiver/ops/digitalocean/cloud-init.yaml'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
 # Kinds built with their own features and target directory, so only assembled

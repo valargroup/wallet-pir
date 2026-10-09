@@ -123,6 +123,11 @@ The independent checker requires:
 - `PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite`
 - `PIR_MONITOR_ALERT_MODE=shadow` initially; `active` after qualification.
 
+Its incidents link to `PIR_MONITOR_ORIGIN`'s APM dashboard, except the service
+probes' (Status, Transparent and receiver), which link to
+`PIR_MONITOR_PUBLIC_STATUS_URL`, by default
+`https://monitor-pir.valargroup.dev/monitor-status`.
+
 Package the independently extracted **production** oracle with its canonical
 anchor; synthetic test fixtures cannot establish live correctness. Validate its
 anchor with Zakura before deployment. Never update expected bytes using answers
@@ -319,7 +324,9 @@ not an independently operated consensus oracle.
 
 `PIR_APM_SERVICE_MONITOR_URL` optionally reads the dedicated monitor's aggregate
 Status and Transparent results. `PIR_MONITOR_SERVICE_PROBES_CONFIG` contains an
-array of `{service, command, timeout_seconds}` records. Commands are absolute
+array of `{service, command, timeout_seconds}` records; the host drop-in
+[`pir-monitor-service-quality.conf`](../ops/deploy/pir-monitor-service-quality.conf)
+sets it and loads the probes' node cookie. Commands are absolute
 argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
 Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical

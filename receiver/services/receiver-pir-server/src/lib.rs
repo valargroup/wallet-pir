@@ -28,12 +28,16 @@ const PER_CLIENT: usize = 2;
 /// How long a query's upload may take.
 const UPLOAD: Duration = Duration::from_secs(15);
 
+/// Process-local fields an owner adds to `/v1/receiver/health`, read on each request.
+pub type HealthFields = Arc<dyn Fn() -> serde_json::Map<String, serde_json::Value> + Send + Sync>;
+
 #[derive(Clone)]
 struct Service {
     publications: Publications,
     queue: Arc<Queue>,
     clients: ClientSlots,
     metrics: pir_observability::HttpMetrics,
+    health_fields: HealthFields,
 }
 
 /// The receiver categories `pir_observability` reports.
@@ -52,11 +56,18 @@ const ENDPOINTS: [&str; 7] = [
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` and
 /// `/metrics` are for operators; a deployment's edge proxies only the wallet routes.
 pub fn router_with_publications(publications: Publications) -> Router {
+    router_with_health(publications, Arc::new(serde_json::Map::new))
+}
+
+/// [`router_with_publications`], with health also reporting `fields`. Health's own
+/// fields (`identity`, `serving`, `epoch`, `indexer`) take precedence over theirs.
+pub fn router_with_health(publications: Publications, fields: HealthFields) -> Router {
     router(Service {
         publications,
         queue: Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true)),
         clients: ClientSlots::new(PER_CLIENT),
         metrics: pir_observability::HttpMetrics::default(),
+        health_fields: fields,
     })
 }
 
@@ -144,14 +155,19 @@ async fn no_store_errors(mut response: Response) -> Response {
 async fn health(State(s): State<Service>) -> Response {
     let (current, epoch) = s.publications.health();
     let (serving, report) = current.unzip();
+    let mut body = (s.health_fields)();
+    body.extend([
+        (
+            "identity".into(),
+            serde_json::json!(pir_control::Identity::process()),
+        ),
+        ("serving".into(), serving.map(hex::encode).into()),
+        ("epoch".into(), epoch.into()),
+        ("indexer".into(), report.flatten().into()),
+    ]);
     (
         [(header::CACHE_CONTROL, "no-store")],
-        Json(serde_json::json!({
-            "identity": pir_control::Identity::process(),
-            "serving": serving.map(hex::encode),
-            "epoch": epoch,
-            "indexer": report.flatten(),
-        })),
+        Json(serde_json::Value::Object(body)),
     )
         .into_response()
 }
@@ -312,6 +328,7 @@ mod tests {
             queue,
             clients: ClientSlots::new(PER_CLIENT),
             metrics: pir_observability::HttpMetrics::default(),
+            health_fields: Arc::new(serde_json::Map::new),
         });
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());

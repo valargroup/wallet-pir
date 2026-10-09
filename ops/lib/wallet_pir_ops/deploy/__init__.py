@@ -1,4 +1,4 @@
-"""Transactional deploys of Enhance PIR and Status PIR.
+"""Transactional deploys of Enhance, Status and Receiver PIR.
 
 `ops/scripts/wallet-pir-deploy.py` is the entry point; see `cli.USAGE`.
 

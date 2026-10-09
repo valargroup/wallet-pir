@@ -406,13 +406,14 @@ jobs:
         run: >-
           python3 tools/ci/stage.py compile:release -- cargo build --locked --release
           -p enhance-pir-server -p enhance-pir -p enhance-pir-load-test -p pir-apm -p pir-monitor
-          -p transparent-filter-server -p transparent-shard-server
+          -p transparent-filter-server -p transparent-shard-server -p receiver-indexer
           --bin enhance-pir-server --bin enhance-pir-load-test
           --bin enhance-pir-cli --bin pir-apm --bin transparent-filter-server
           --bin transparent-shard-server --bin shard-assign --bin shard-prune
           --bin shard-control --bin transparent-publish-controller
           --bin transparent-txid-server --bin txid-control --bin txid-inventory
-          --bin txid-display-controller --bin transparent-event-ingest --features enhance-pir/cli
+          --bin txid-display-controller --bin transparent-event-ingest
+          --bin receiver-directory --bin receiver-probe --features enhance-pir/cli
       - name: Assemble checksummed release bundles
         env:
           SHA: ${{ github.sha }}
@@ -494,6 +495,14 @@ jobs:
         with:
           name: transparent-txid-display-${{ github.sha }}
           path: release-bundles/transparent-txid-display.tar.gz
+          overwrite: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: receiver-pir-${{ github.sha }}
+          path: release-bundles/receiver-pir.tar.gz
           overwrite: true
           compression-level: 0
           if-no-files-found: error

@@ -12,7 +12,8 @@
     "worker-01": {"address": "192.0.2.15"},
     "worker-02": {"address": "192.0.2.16"},
     "router-01": {"address": "192.0.2.14"},
-    "status-01": {"address": "192.0.2.17"}
+    "status-01": {"address": "192.0.2.17"},
+    "receiver-01": {"address": "192.0.2.18"}
   },
   "services": {
     "enhance": {
@@ -47,6 +48,20 @@
                  "--query-origin", "http://127.0.0.1:8492", "--cookie", "/root/.cache/zakura/.cookie",
                  "--seconds", "60", "--report-dir", "/root/wallet-pir-deploy-{transaction}-status-probe"],
         "timeout": 900
+      }
+    },
+    "receiver": {
+      "template_vars": {"NEAR_KEY": "<id of an installed key file>"},
+      "roles": {
+        "server": [{"host": "receiver-01", "vars": {"listen": "10.70.0.11:18380"}}]
+      },
+      "exact_check": {
+        "host": "receiver-01",
+        "argv": ["{release_dir}/receiver-directory", "probe", "--origin", "https://receiver-pir.valargroup.dev",
+                 "--health-url", "http://10.70.0.11:18380/v1/receiver/health",
+                 "--rpc-url", "http://10.70.0.19:8232", "--rpc-url", "http://10.70.0.6:8232", "--no-auth",
+                 "--witnesses", "--await-feed-reads", "300"],
+        "timeout": 480
       }
     }
   }

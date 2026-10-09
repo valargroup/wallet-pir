@@ -12,7 +12,14 @@ use receiver_directory::{
 };
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::time::Duration;
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicI64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use zcash_address::{
     unified::{self, Container},
     ConversionError, TryFromAddress, ZcashAddress,
@@ -232,6 +239,62 @@ impl Feed {
     }
 }
 
+/// This process's evidence that the explorer served its key: for each feed, when the
+/// last read this process completed began, in Unix seconds. Health reports it as
+/// `near.reads`, null for a feed this process has not read, so without a key both stay
+/// null. The report's `feeds` cannot serve as this evidence: they come from the
+/// published capture of `providers.sqlite`, so they lag publication and may hold an
+/// earlier process's reads.
+#[derive(Clone, Default)]
+pub struct Reads(Arc<[AtomicI64; 2]>);
+
+impl Reads {
+    /// Records that a read of `feed` that began at `began` completed.
+    fn record(&self, feed: Feed, began: i64) {
+        self.0[feed as usize].store(began, Ordering::SeqCst);
+    }
+
+    /// Health's `near` field: `{"reads": {"near-payouts": <began>|null, "near-refunds": ...}}`.
+    pub fn health(&self) -> serde_json::Map<String, serde_json::Value> {
+        let reads: serde_json::Map<_, _> = [Feed::Payouts, Feed::Refunds]
+            .into_iter()
+            .map(|feed| {
+                let began = self.0[feed as usize].load(Ordering::SeqCst);
+                (feed.name().into(), (began != 0).then_some(began).into())
+            })
+            .collect();
+        serde_json::Map::from_iter([("near".into(), serde_json::json!({ "reads": reads }))])
+    }
+}
+
+/// Reads both feeds once, in turn, into the provider store at `path` (see
+/// [`Explorer::sync`]), recording each completed read in `reads`. A failure is logged
+/// and leaves its feed's entry unchanged.
+pub async fn poll(explorer: &mut Explorer, path: &Path, since: i64, reads: &Reads) {
+    let mut store = match ProviderStore::open(path) {
+        Ok(store) => store,
+        Err(error) => return tracing::warn!(%error, "near provider store unavailable"),
+    };
+    for feed in [Feed::Payouts, Feed::Refunds] {
+        let began = unix_now();
+        match explorer.sync(&mut store, feed, since).await {
+            Ok(receivers) => {
+                reads.record(feed, began);
+                tracing::info!(feed = feed.name(), receivers, "near feed read")
+            }
+            Err(error) => tracing::warn!(feed = feed.name(), %error, "near feed deferred"),
+        }
+    }
+}
+
+/// Seconds since the Unix epoch.
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after 1970")
+        .as_secs() as i64
+}
+
 /// One explorer record, reduced to what the feed reads. Only the paging fields are
 /// required, so a record missing an address or status does not fail the read.
 #[derive(Deserialize)]
@@ -304,7 +367,7 @@ impl Explorer {
         feed: Feed,
         since: i64,
     ) -> Result<usize> {
-        let read_at = unix_now()?;
+        let read_at = unix_now();
         let cursor = store.cursor(feed.name())?;
         // Decided before fetching: a read that found a cursor reads back only to it.
         let initial_since = cursor.is_none().then_some(since);
@@ -348,7 +411,7 @@ impl Explorer {
             )
             .await?;
         }
-        let seen_at = unix_now()?;
+        let seen_at = unix_now();
         let completed: Vec<_> = completed
             .into_iter()
             .map(|(r, t)| (r, t, seen_at))
@@ -450,13 +513,6 @@ impl Explorer {
         }
         Ok(swaps)
     }
-}
-
-/// Seconds since the Unix epoch.
-fn unix_now() -> Result<i64> {
-    Ok(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)?
-        .as_secs() as i64)
 }
 
 /// The Orchard receiver of a mainnet unified address, the only kind a per-swap key has.
@@ -596,6 +652,77 @@ mod tests {
         let mut working = Explorer::at(format!("{origin}/ok"));
         working.sync(&mut store, feed, 2_000).await.unwrap();
         assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));
+    }
+
+    /// Health's `near.reads` shows only this process's completed reads: null at start
+    /// although `providers.sqlite` holds an earlier run's read times, still null after
+    /// reads the explorer refuses, and each feed's begin time once a read of it completes.
+    #[tokio::test]
+    async fn health_reports_only_this_processs_completed_reads() {
+        use axum::{extract::RawQuery, http::StatusCode, routing::get, Router};
+        use serde_json::{json, Value};
+        let app = Router::new()
+            .route("/denied", get(|| async { (StatusCode::UNAUTHORIZED, "") }))
+            // Accepts the payout feed (`toChainId`) only.
+            .route(
+                "/payouts",
+                get(|RawQuery(query): RawQuery| async move {
+                    match query.unwrap_or_default().contains("fromChainId") {
+                        true => (StatusCode::BAD_REQUEST, ""),
+                        false => (StatusCode::OK, "[]"),
+                    }
+                }),
+            )
+            .route("/ok", get(|| async { "[]" }));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let explorer = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("providers.sqlite");
+        let mut store = ProviderStore::open(&path).unwrap();
+        for feed in [Feed::Payouts, Feed::Refunds] {
+            store
+                .record(feed.name(), Some(1_000), &[], &[], 2_000, 2_000)
+                .unwrap();
+        }
+        drop(store);
+        let reads = Reads::default();
+        let app = receiver_pir_server::router_with_health(
+            receiver_pir_server::Publications::default(),
+            {
+                let reads = reads.clone();
+                Arc::new(move || reads.health())
+            },
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let health = format!("http://{}/v1/receiver/health", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let near_reads = || async {
+            let health: Value = reqwest::get(&health).await.unwrap().json().await.unwrap();
+            health["near"]["reads"].clone()
+        };
+        let unread = json!({"near-payouts": null, "near-refunds": null});
+        assert_eq!(near_reads().await, unread);
+        let mut denied = Explorer::at(format!("{explorer}/denied"));
+        poll(&mut denied, &path, 1_000, &reads).await;
+        assert_eq!(near_reads().await, unread);
+        let store = ProviderStore::open(&path).unwrap();
+        assert_eq!(store.read(Feed::Payouts.name()).unwrap(), Some(2_000));
+        let before = unix_now();
+        let mut payouts = Explorer::at(format!("{explorer}/payouts"));
+        poll(&mut payouts, &path, 1_000, &reads).await;
+        let read = near_reads().await;
+        assert!(read["near-payouts"].as_i64().unwrap() >= before);
+        assert!(read["near-refunds"].is_null());
+        poll(
+            &mut Explorer::at(format!("{explorer}/ok")),
+            &path,
+            1_000,
+            &reads,
+        )
+        .await;
+        let read = near_reads().await;
+        assert!(read["near-refunds"].as_i64().unwrap() >= before);
     }
 
     /// A restart with an earlier or later `since` follows the saved cursor, so the

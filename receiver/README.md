@@ -115,7 +115,7 @@ the session ID.
 | `GET /v1/receiver/rows/:session` | Complete row file |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
-| `GET /v1/receiver/health` | Process identity, the served session and the indexer's report (operators only) |
+| `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
@@ -174,7 +174,7 @@ canonical tip in memory and serves on `--bind`, a loopback or private address
 behind a TLS proxy. A paused tip is republished when its provider sets or report
 change. A guard revokes every session once a node shows a served anchor is off its
 chain. A replaced revision stays available for 60 seconds, and the next one waits
-for that. Logs go to standard error, filtered by `RUST_LOG`.
+for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](ops/digitalocean/README.md).
 
 With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
 explorer into `providers.sqlite` and publishes the `near-intents` recent and seen
@@ -186,6 +186,10 @@ to an Orchard receiver first seen in the last day that NEAR reported without a
 parsable transaction. Payouts to other recipients are not checked.
 `services/receiver-indexer/src/near.rs` documents the feed and the report.
 
+Health's `near.reads` gives, for each NEAR feed, when the last read this process
+completed began, or null until one completes, so unlike the report's `feeds` it
+shows that the running process's key works.
+
 `receiver-directory probe --origin <url> --health-url <private health URL>
 --rpc-url <node> --no-auth [--witnesses]`, or `receiver-probe` with the same
 arguments on the monitor host, is a `pir-monitor` service probe with an embedded
@@ -195,7 +199,9 @@ pinned historical payment over live encrypted PIR, checks the filter file and, w
 Ironwood root, then the feed's freshness and the payout report. `answer_mismatch`
 marks wrong served data, a correctness incident; `oracle_invalid` a fixture that
 fails its pin; anything else is an availability failure. `--max-lag` (default 12)
-must cover the indexer's `--depth` plus about ten blocks.
+must cover the indexer's `--depth` plus about ten blocks. With
+`--await-feed-reads <seconds>`, as a deploy runs it, the probe first waits for
+`near.reads` to show both feeds read, failing as `feeds_not_read` otherwise.
 `services/receiver-indexer/src/probe.rs` documents every check.
 
 ## Wallet use

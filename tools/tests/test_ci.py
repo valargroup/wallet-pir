@@ -52,7 +52,7 @@ class SelectionTests(unittest.TestCase):
 
     def test_docs_and_ops_do_not_compile_rust(self):
         self.assertEqual(fast.select(self.packages, ['README.md', 'docs/ci.md', 'ops/scripts/example.py',
-                                                     'receiver/evidence/run.json']), set())
+                                                     'receiver/evidence/run.json', 'receiver/ops/digitalocean/Caddyfile']), set())
 
     def test_deleted_or_renamed_source_selects_both_sides(self):
         self.assertEqual(fast.select(self.packages, ['crates/other/src/old.rs', 'crates/client/src/new.rs']), {'other', 'client', 'server'})
