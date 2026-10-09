@@ -160,7 +160,9 @@ which is enough for a no-op check or an already staged release.
 - In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
   may jump through the coordinator to private addresses.
 - A unit whose running executable and effective configuration already match is
-  skipped, so deploying the running binary is a no-op.
+  skipped, so deploying the running binary is a no-op. For a service with
+  companions (the receiver) it is instead a verification without restart: it
+  stages the release where missing, checks readiness and runs the exact-answer command.
 - Every host must accept the deploy identity before anything changes. Mutating
   commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
 - After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`

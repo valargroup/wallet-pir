@@ -33,7 +33,8 @@
 # `companions` are files of the service's release bundle staged with the binary
 # in each release directory, with their modes, so an exact check can run them
 # as `{release_dir}/<name>`. A service with companions deploys only from a
-# verified bundle (--archive).
+# verified bundle (--archive), and a deploy of it that restarts nothing still
+# stages them on every host and runs the exact check.
 
 [services.enhance]
 root = "/opt/enhance-pir"

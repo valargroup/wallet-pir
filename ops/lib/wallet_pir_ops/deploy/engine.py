@@ -369,13 +369,25 @@ class Deployer:
         return [(self.service.binary, 0o755, binary, sha)] + [
             (c.name, c.mode, companions[c.name].path, companions[c.name].sha256) for c in self.service.companions]
 
+    def verifies(self, verify_noop=False):
+        """Whether a deploy that restarts nothing still runs a verification transaction.
+
+        It does when `verify_noop` asks, and always for a service with
+        companions: a host can run its binary from a release directory that
+        lacks them (a hand-provisioned host does), so only a transaction that
+        stages them and runs the exact check qualifies the release there.
+        """
+        return verify_noop or bool(self.service.companions)
+
     def release_hosts(self, plans, verify_noop=False):
         """Hosts that need the release: each restarted target's, and the exact check's if it runs `{release_dir}`.
 
-        A no-op runs no check, so needs none unless `verify_noop` asks for the check anyway.
+        For a service with companions, every selected target's, so none keeps a
+        release without them. A deploy that restarts nothing needs the check's
+        only when it `verifies`.
         """
-        hosts = [plan.target.host for plan in plans if plan.action == 'restart']
-        if hosts or verify_noop:
+        hosts = [plan.target.host for plan in plans if plan.action == 'restart' or self.service.companions]
+        if hosts or self.verifies(verify_noop):
             hosts.append(self.release_check_host())
         return [host for host in dict.fromkeys(hosts) if host]
 
@@ -498,7 +510,7 @@ class Deployer:
 
     def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False,
                verify_noop=False, companions=None):
-        """Returns the committed journal, or None when every target already matches.
+        """Returns the committed journal, or None for a no-op: every target matches and `verifies` is false.
 
         `companions` maps each descriptor companion's name to its `Artifact`.
         """
@@ -535,13 +547,18 @@ class Deployer:
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
         restart = [plan for plan in plans if plan.action == 'restart']
-        if not restart and not verify_noop:
+        verify = self.verifies(verify_noop)
+        if not restart and not verify:
             self.out('no-op: every target already runs %s with the same effective unit' % sha)
             return None
         baseline = json.loads(self.baseline_path.read_text())
         journal = Journal.create(self.state_dir, self.service.name, sha, source,
                                  [self.record(plan) for plan in plans], baseline)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
+        if not restart:
+            journal.event('verification without restart')
+            self.out('verification without restart: every target already runs %s; staging any missing release '
+                     'files, then checking readiness and exact answers' % sha)
         try:
             self.stage(self.release_hosts(plans, verify_noop), sha, binary, journal, companions)
             journal.set_status('activating')
@@ -549,10 +566,12 @@ class Deployer:
                 if record['action'] == 'restart':
                     self.activate(journal, index, sha)
             # Later roles can disturb earlier ones (a restarted coordinator
-            # re-fences routers), so every changed target is checked again.
+            # re-fences routers), so every changed target is checked again. A
+            # verification checks the unchanged ones too, without a phase, so
+            # a failure leaves them untouched.
             journal.set_status('verifying')
             for record in journal.hosts:
-                if record['action'] == 'restart':
+                if record['action'] == 'restart' or verify:
                     self.wait_verified(record, sha)
             if check:
                 self.run_exact_check(check, journal, sha)
@@ -570,7 +589,7 @@ class Deployer:
                 journal.set_status('failed')
             raise
         self.refresh_baseline()
-        self.out('committed %s' % journal.id)
+        self.out('committed %s%s' % (journal.id, '' if restart else ', verified without restart'))
         return journal
 
     # -------------------------------------------------------------- rollback

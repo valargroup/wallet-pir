@@ -31,7 +31,8 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       disk space and, where the release is staged, its self-check.
   deploy SERVICE (...same...) [--allow-unit-drift] [--retire-historical]
       Holds the production lock; changes only targets that differ. A service
-      with companions in deploy.toml (receiver) needs --archive.
+      with companions in deploy.toml (receiver) needs --archive, and a deploy
+      of it that restarts nothing still stages and runs the exact check.
   rollback SERVICE [--transaction ID] [--force]
       Restores the touched targets of the latest (or named) transaction.
   status SERVICE
@@ -672,8 +673,10 @@ def main(argv=None, executor=None, out=print, **options):
                 out('problem: ' + problem)
             if problems and args.command == 'preflight':
                 return 1
-            out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
-                                                           sum(p.action == 'skip' for p in plans)))
+            restarts = sum(p.action == 'restart' for p in plans)
+            out('%d target(s) to restart, %d unchanged' % (restarts, sum(p.action == 'skip' for p in plans)))
+            if not restarts and deployer.verifies():
+                out('deploy verifies without restart: stages missing release files, checks readiness and exact answers')
     except subprocess.TimeoutExpired:
         out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
         return 75 if args.command.startswith('schema-') else 1

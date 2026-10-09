@@ -213,6 +213,20 @@ class Fleet(unittest.TestCase):
         self.fake.log.clear()
         return deployer
 
+    def provisioned_receiver(self):
+        """`(deployer, sha)` for a host provisioned by hand: the unit rendered for release `sha`, which holds only the binary."""
+        sha = sha256(RECEIVER_NEW)
+        self.fake.put('receiver-01', receiver_release(sha) + '/receiver-directory', RECEIVER_NEW)
+        live = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY})
+        return self.receiver_fleet(live), sha
+
+    def check_on_coordinator(self):
+        """Move the receiver's exact check to a separate host, `coordinator`."""
+        document = json.loads(self.inventory_path.read_text())
+        document['services']['receiver']['exact_check']['host'] = 'coordinator'
+        self.inventory_path.write_text(json.dumps(document))
+        self.inventory = descriptors.load_inventory(self.inventory_path)
+
     def restarts(self):
         return [(host, detail[1]) for host, op, detail in self.fake.log if op == 'systemctl' and detail[0] == 'restart']
 
@@ -240,6 +254,8 @@ class DeployTests(Fleet):
 
     def test_noop_deploy_with_the_running_binary_changes_nothing(self):
         deployer = self.enhance_fleet()
+        # A service without companions verifies only when asked.
+        self.assertFalse(deployer.verifies())
         self.assertIsNone(deployer.deploy(OLD_SHA))
         self.assertEqual(self.fake.log, [])
         self.assertEqual(self.fake.runs, [])
@@ -683,10 +699,13 @@ class ReceiverTests(Fleet):
         self.assertEqual(seen, [('receiver-01', self.staged())])
         self.assertIn('--fixture', probe_argv(sha))
         self.assertIn(receiver_release(sha) + '/probe-fixture.json', probe_argv(sha))
-        # A repeat with the same bundle is a no-op.
+        # A repeat with the same bundle changes nothing but runs the check again.
         self.fake.log.clear()
-        self.assertIsNone(deployer.deploy(sha, self.receiver_binary, companions=self.companions))
+        seen.clear()
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.fake.log, [])
+        self.assertEqual(seen, [('receiver-01', self.staged())])
 
     def test_missing_or_corrupt_companions_stage_nothing(self):
         deployer = self.receiver_fleet()
@@ -781,16 +800,93 @@ class ReceiverTests(Fleet):
             self.assertEqual(self.release(host, sha), self.staged(), host)
         # The check host only received the release; it runs no unit.
         self.assertEqual({op for _, op, _ in self.fake.mutations('coordinator')}, {'mkdir', 'upload', 'rename'})
-        # Its copy is checked too: a conflict there refuses even a plain no-op,
-        # which stages nothing and runs no check.
+        # Its copy is checked too: a conflict there refuses a deploy that
+        # would restart nothing before it stages or checks anything.
         self.fake.put('coordinator', receiver_release(sha) + '/receiver-probe', b'an older probe')
         self.fake.log.clear()
-        for verify_noop in (False, True):
-            with self.subTest(verify_noop=verify_noop):
-                with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
-                    deployer.deploy(sha, self.receiver_binary, companions=self.companions, verify_noop=verify_noop)
-                self.assertEqual(self.fake.log, [])
-                self.assertEqual(Journal.load(self.state, 'receiver').id, journal.id)
+        runs = len(self.fake.runs)
+        with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(self.fake.log, [])
+        self.assertEqual(len(self.fake.runs), runs)
+        self.assertEqual(Journal.load(self.state, 'receiver').id, journal.id)
+
+    def test_a_hand_provisioned_host_is_verified_without_restart(self):
+        """The unit already runs the bundle's binary, from a release that lacks its companions."""
+        deployer, sha = self.provisioned_receiver()
+        self.assertEqual(self.release('receiver-01', sha), {'receiver-directory': RECEIVER_NEW})
+        unit = self.unit()
+        seen, run = [], self.fake.run
+
+        def observe(host, argv, timeout):
+            if argv == probe_argv(sha):
+                seen.append((host, LOCK in self.fake.held, self.release(host, sha)))
+            return run(host, argv, timeout)
+        self.fake.run = observe
+        plans, problems = deployer.assess(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(([plan.action for plan in plans], problems), (['skip'], []))
+        self.assertEqual(deployer.release_hosts(plans), ['receiver-01'])
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(journal.status, 'committed')
+        self.assertIn('verification without restart', [event['message'] for event in journal.data['events']])
+        self.assertIn('committed %s, verified without restart' % journal.id, self.lines)
+        # Only the missing companions are added; the unit and process stay as they were.
+        self.assertEqual([d for _, op, d in self.fake.log if op == 'upload'],
+                         ['/opt/receiver-pir/releases/.partial-%s/%s' % (journal.id, name)
+                          for name in ('receiver-probe', 'probe-fixture.json')])
+        self.assertEqual({op for _, op, _ in self.fake.log}, {'mkdir', 'upload', 'rename'})
+        self.assertEqual((self.restarts(), self.unit()), ([], unit))
+        self.assertEqual(seen, [('receiver-01', True, self.staged())])
+        self.assertEqual([record['phase'] for record in journal.hosts], ['pending'])
+        self.assertEqual(journal.touched(), [])
+
+    def test_an_unchanged_target_that_is_not_ready_fails_its_verification(self):
+        deployer, sha = self.provisioned_receiver()
+        self.fake.unhealthy.add(('receiver-01', sha))
+        with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
+        self.assertNotIn(probe_argv(sha), [argv for _, argv in self.fake.runs])
+        self.assertEqual([op for _, op, _ in self.fake.log if op in ('write', 'systemctl')], [])
+
+    def test_a_failed_verification_is_retried_in_full(self):
+        """A failed check leaves the release complete; the retry runs the check again."""
+        deployer, sha = self.provisioned_receiver()
+        self.fake.exact_result = (1, '{"passed":false,"category":"answer_mismatch"}')
+        with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
+        self.assertEqual(self.release('receiver-01', sha), self.staged())
+        self.fake.exact_result = (0, 'exact answers ok')
+        self.fake.log.clear()
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.fake.log, [])
+        self.assertEqual([argv for _, argv in self.fake.runs].count(probe_argv(sha)), 2)
+        self.assertEqual(self.restarts(), [])
+
+    def test_a_hand_provisioned_host_with_a_separate_check_host(self):
+        self.check_on_coordinator()
+        with self.subTest('conflict'):
+            # The check host holds another bundle's probe: nothing is uploaded anywhere.
+            deployer, sha = self.provisioned_receiver()
+            self.fake.put('coordinator', receiver_release(sha) + '/receiver-probe', b'an older probe')
+            with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
+                deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+            self.assertEqual(self.fake.log, [])
+            self.assertEqual(self.release('receiver-01', sha), {'receiver-directory': RECEIVER_NEW})
+        with self.subTest('verified'):
+            self.fake, self.state = FakeFleet(), self.dir / 'state-verified'
+            deployer, sha = self.provisioned_receiver()
+            plans, problems = deployer.assess(sha, self.receiver_binary, companions=self.companions)
+            self.assertEqual((deployer.release_hosts(plans), problems), (['receiver-01', 'coordinator'], []))
+            journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+            self.assertEqual(journal.status, 'committed')
+            for host in ('receiver-01', 'coordinator'):
+                self.assertEqual(self.release(host, sha), self.staged(), host)
+            self.assertEqual(self.fake.runs[-1], ('coordinator', probe_argv(sha)))
+            self.assertEqual(self.restarts(), [])
+            self.assertEqual([op for _, op, _ in self.fake.log if op in ('write', 'systemctl')], [])
 
     def test_a_conflict_on_a_later_host_stages_nothing_anywhere(self):
         """The check host holds bundle A; bundle B shares its server but not its probe."""
@@ -1189,6 +1285,29 @@ class CommandLineTests(Fleet):
                                       '--allow-unit-drift'), 1)
         self.assertIn(problem, self.lines)
         self.assertEqual(self.fake.log, [])
+
+    def test_plan_preflight_and_deploy_agree_on_verifying_a_provisioned_host(self):
+        """`preflight --stage` completes the release; the deploy still runs the exact check."""
+        _, sha = self.provisioned_receiver()
+        revision = '5' * 40
+        archive = self.receiver_bundle(revision)
+        source = ['--archive', str(archive), '--sha', revision]
+        verifies = 'deploy verifies without restart: stages missing release files, checks readiness and exact answers'
+        self.assertEqual(self.run_cli('plan', 'receiver', *source), 0, self.lines)
+        self.assertIn('server@receiver-01 receiver-pir.service: skip', self.lines)
+        self.assertIn(verifies, self.lines)
+        self.assertEqual(self.fake.log, [])
+        self.assertEqual(self.run_cli('preflight', 'receiver', *source, '--stage'), 0, self.lines)
+        self.assertIn(verifies, self.lines)
+        self.assertEqual([d.rsplit('/', 1)[1] for _, op, d in self.fake.log if op == 'upload'],
+                         ['receiver-probe', 'probe-fixture.json'])
+        self.assertNotIn(probe_argv(sha), [argv for _, argv in self.fake.runs])
+        self.fake.log.clear()
+        self.assertEqual(self.run_cli('deploy', 'receiver', *source), 0, self.lines)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'committed')
+        self.assertEqual(self.fake.runs[-1], ('receiver-01', probe_argv(sha)))
+        self.assertEqual((self.fake.log, self.restarts()), ([], []))
+        self.assertTrue(any(line.endswith(', verified without restart') for line in self.lines), self.lines)
 
     def test_preflight_stage_uploads_nothing_when_a_later_host_conflicts(self):
         """The check host holds bundle A; preflight --stage of bundle B (same server, other probe)."""

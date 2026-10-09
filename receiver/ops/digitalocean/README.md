@@ -106,6 +106,9 @@ that. The check first waits up to 300 seconds (`--await-feed-reads`) for the
 restarted process to complete a read of both NEAR feeds, which proves the key file
 the unit names. A failed check, or one still running at its 480-second `timeout`,
 fails the deploy. A failure, or `rollback`, restores the previous unit file and binary.
+A deploy whose binary and unit already run restarts nothing but is still a locked,
+journaled verification without restart: it stages any release file a host lacks,
+checks readiness and runs the `exact_check`.
 Report `status receiver` and the rollback command after each deploy.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
@@ -215,7 +218,8 @@ deploy inventory, so no deploy can reach it.
 1. `cloud-init.yaml` installs Caddy and `ufw`, creates the `receiver-pir` user,
    `/opt/receiver-pir/releases` and `/srv/receiver-pir`, and opens SSH, HTTP, HTTPS
    and port 18380 from the private network.
-2. Install the first `receiver-directory` as
+2. Install the first `receiver-directory` from a verified bundle (`tools/ci/release.py
+   extract`, as for [the monitor](#monitoring)) as
    `/opt/receiver-pir/releases/<sha256>/receiver-directory`, where `<sha256>` is
    its `sha256sum`, the tool's release layout.
 3. Check the nodes' private RPC URLs and the `--bind` address (the Droplet's private
@@ -231,6 +235,10 @@ deploy inventory, so no deploy can reach it.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
+
+The host is not qualified until a deploy of that bundle commits, after the steps
+[before the first tool deploy](#release-and-deploy). It restarts nothing, but
+stages the probe and fixture and runs the exact check.
 
 After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool cannot change
