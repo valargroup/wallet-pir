@@ -135,3 +135,59 @@ fn positions_must_cover_exactly_the_manifest_records() {
     // The rejections left the primed cache usable.
     compare(&mut cache, &cmxs, two);
 }
+#[test]
+fn shared_path_checks_match_individual_path_calls() {
+    use receiver_directory::Error;
+    /// The first failing [`WitnessSnapshot::path`] call, as a comparable string.
+    fn individually(proof: &WitnessSnapshot, leaves: &[(u32, Hash)]) -> String {
+        format!(
+            "{:?}",
+            leaves
+                .iter()
+                .try_for_each(|(p, cmx)| proof.path(*p, *cmx).map(|_| ()))
+        )
+    }
+    let cmxs = leaves(70);
+    let positions: BTreeSet<u32> = [0, 1, 2, 9, 33, 34, 35, 64, 69].into_iter().collect();
+    let manifest = manifest(cmxs.len(), positions.len());
+    let encoded = WitnessSnapshot::build(&manifest, &cmxs, &positions)
+        .unwrap()
+        .encode();
+    // The same file with its first level-0 node replaced by another valid hash, which
+    // breaks only the paths that use it.
+    let mut swapped = encoded.clone();
+    swapped.copy_within(152 + 37 + 5..152 + 2 * 37, 152 + 5);
+    let at = |p: u32| (p, cmxs[p as usize]);
+    let all: Vec<_> = positions.iter().map(|p| at(*p)).collect();
+    let mut wrong = all.clone();
+    wrong[3].1 = cmxs[10];
+    let mut invalid = all.clone();
+    invalid[4].1 = [255; 32];
+    let cases: Vec<Vec<(u32, Hash)>> = vec![
+        all.clone(),
+        all.iter().rev().copied().collect(),
+        [all.clone(), all.clone()].concat(),
+        // A verified position seen again with another commitment.
+        vec![at(33), (33, cmxs[34])],
+        wrong,
+        invalid,
+        // Missing a sibling, then outside the tree.
+        vec![at(0), at(5)],
+        vec![at(0), (70, cmxs[0])],
+        vec![],
+    ];
+    for bytes in [&encoded, &swapped] {
+        let proof = WitnessSnapshot::decode(bytes, &manifest).unwrap();
+        for leaves in &cases {
+            assert_eq!(
+                format!("{:?}", proof.check_paths(leaves.iter().copied())),
+                individually(&proof, leaves),
+                "{leaves:?}"
+            );
+        }
+    }
+    let proof = WitnessSnapshot::decode(&encoded, &manifest).unwrap();
+    proof.check_paths(all.clone()).unwrap();
+    let proof = WitnessSnapshot::decode(&swapped, &manifest).unwrap();
+    assert!(matches!(proof.check_paths(all), Err(Error::Malformed)));
+}

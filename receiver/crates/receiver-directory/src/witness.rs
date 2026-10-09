@@ -6,7 +6,7 @@ use orchard::{
     note::ExtractedNoteCommitment,
     tree::{MerkleHashOrchard, MerklePath},
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 mod cache;
 pub use cache::WitnessCache;
@@ -134,6 +134,53 @@ impl WitnessSnapshot {
     /// Returns a path bound to the requested commitment. The caller must additionally
     /// verify it against local chain state, never just against this file's root.
     pub fn path(&self, position: u32, cmx: Hash) -> Result<[[u8; 32]; 32], Error> {
+        let path = self.siblings(position)?;
+        if MerklePath::from_parts(position, path)
+            .root(leaf(cmx)?)
+            .to_bytes()
+            != self.root
+        {
+            return Err(Error::Malformed);
+        }
+        Ok(path.map(|h| h.to_bytes()))
+    }
+
+    /// Checks [`Self::path`] for every `(position, cmx)` in order, failing as the first
+    /// failing call would. An ancestor that already reached the root with the same
+    /// value is not hashed again, so leaves that share subtrees share that work.
+    pub fn check_paths(&self, leaves: impl IntoIterator<Item = (u32, Hash)>) -> Result<(), Error> {
+        let mut verified = HashMap::<(u8, u32), MerkleHashOrchard>::new();
+        let mut visited = Vec::with_capacity(32);
+        for (position, cmx) in leaves {
+            let path = self.siblings(position)?;
+            let mut node = MerkleHashOrchard::from_cmx(&leaf(cmx)?);
+            visited.clear();
+            let mut depth = 0;
+            while depth < 32 {
+                let key = (depth, position >> depth);
+                if verified.get(&key) == Some(&node) {
+                    break;
+                }
+                visited.push((key, node));
+                let sibling = &path[depth as usize];
+                node = if key.1 & 1 == 0 {
+                    MerkleHashOrchard::combine(depth.into(), &node, sibling)
+                } else {
+                    MerkleHashOrchard::combine(depth.into(), sibling, &node)
+                };
+                depth += 1;
+            }
+            if depth == 32 && node.to_bytes() != self.root {
+                return Err(Error::Malformed);
+            }
+            verified.extend(visited.drain(..));
+        }
+        Ok(())
+    }
+
+    /// The sibling of each of `position`'s ancestors, failing with [`Error::Coverage`]
+    /// for a position outside the tree or a sibling missing from the file.
+    fn siblings(&self, position: u32) -> Result<[MerkleHashOrchard; 32], Error> {
         if u64::from(position) >= self.tree_size {
             return Err(Error::Coverage);
         }
@@ -146,16 +193,11 @@ impl WitnessSnapshot {
                 *self.nodes.get(&(depth, index)).ok_or(Error::Coverage)?
             };
         }
-        let commitment =
-            Option::<ExtractedNoteCommitment>::from(ExtractedNoteCommitment::from_bytes(&cmx))
-                .ok_or(Error::Malformed)?;
-        if MerklePath::from_parts(position, path)
-            .root(commitment)
-            .to_bytes()
-            != self.root
-        {
-            return Err(Error::Malformed);
-        }
-        Ok(path.map(|h| h.to_bytes()))
+        Ok(path)
     }
+}
+
+/// The commitment `cmx`, failing with [`Error::Malformed`] when it is not a field element.
+fn leaf(cmx: Hash) -> Result<ExtractedNoteCommitment, Error> {
+    Option::from(ExtractedNoteCommitment::from_bytes(&cmx)).ok_or(Error::Malformed)
 }
