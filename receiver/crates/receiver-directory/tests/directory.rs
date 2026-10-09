@@ -219,6 +219,10 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     store.record("near-payouts", &[], 100, 350).unwrap();
     store.record("near-payouts", &[], 100, 320).unwrap();
     assert_eq!(store.read("near-payouts").unwrap(), Some(350));
+    // One that advances the cursor sets its own read time, even an earlier one.
+    store.record("near-payouts", &[], 110, 340).unwrap();
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(340));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // A feed's start is its first one.
