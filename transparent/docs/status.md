@@ -6,6 +6,36 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Sealed tier boundary rule, 2026-10-08
+
+`main` at `569f68e6` changes how `shard-cutoff` picks the boundary between the archive and recent
+tiers. It still finds the height six calendar months before the anchor. It then moves the boundary
+back to the start of the archive shard that is still filling at that height, so the last archive
+shard is sealed when it is full rather than cut off part-way. No publication or cutover was made:
+v11 keeps serving with `recent_from` 3,289,805.
+
+- **Checked on the live journal.** The new tool was run read-only on the coordinator at v11's
+  anchor, 3,500,738
+  ([evidence](../evidence/tier-boundary-sealed-2026-10-08/README.md)):
+  - the six-month height is 3,289,805, the same as v11's;
+  - the boundary moves back to **3,231,753**, with 81 archive shards before it;
+  - this matches the live map: shards 0–80 are sealed and full, and shard 81 starts at
+    3,231,753, with the same hash on both sides of the boundary;
+  - live shard 81, cut short by the old rule, is 23.6% full.
+- **Next full publication.** At the journal tip, 3,511,195, the six-month height is 3,301,394,
+  but the boundary is still 3,231,753, again with 81 archive shards. A full publication made now
+  would start the recent tier there. The boundary only moves in whole archive shards.
+- **Cost.** Each run took 20–24 minutes on the coordinator, under a 12 GiB, two-core limit at
+  idle priority, most of it replaying 3.3 million blocks. The process peaked under 700 MiB.
+- **Recent replicas.** The recent tier would gain heights 3,231,753–3,289,804, about two more
+  recent shards (11 instead of 9; the count could be one higher or lower). Each recent shard
+  reserves 176.1 MiB of a replica's 5 GiB runtime cache, and uses about 112 MiB once built.
+  - Eleven shards fill 38% of the cache; the planner allows 27.
+  - Available host memory would fall from 71% to about 68% on recent-01, and from 77% to about
+    75% on recent-02.
+  - The shard server would use about 1.5 GB of its 7 GiB `MemoryMax`.
+  - Both replicas have room. The bytes per shard are high confidence and the shard count medium.
+
 ## Txid display v2 in production from genesis, 2026-10-08
 
 Production `/v1/txid/` serves [txid display v2](txid-display.md) from height 1.

@@ -1,0 +1,25 @@
+calendar cutoff 3289805; replaying 0-3289804 through the archive-wide sealer
+anchor 3500738 at 2026-09-29 21:49:08 UTC; cutoff time 2026-03-29 21:49:08 UTC; calendar height 3289805; cutoff height 3231753 (archive 0-3231752 in 81 shards, recent 3231753-3500738); written to /root/claude-cutoff-569f68e6/cutoff-3500738.json
+	Command being timed: "/srv/wallet-pir-build-569f68e6/target/release-fast/shard-cutoff --data-dir /srv/transparent-activity/full-v3/journal --anchor-height 3500738 --months 6 --archive-geometry archive-wide --zakura-cookie /root/.cache/zakura/.cookie --source-sha 569f68e6 --out /root/claude-cutoff-569f68e6/cutoff-3500738.json"
+	User time (seconds): 781.56
+	System time (seconds): 39.58
+	Percent of CPU this job got: 68%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 19:50.68
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 703156
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 313190
+	Voluntary context switches: 119396
+	Involuntary context switches: 159241
+	Swaps: 0
+	File system inputs: 82629200
+	File system outputs: 24
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

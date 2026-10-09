@@ -1,0 +1,51 @@
+{
+  "anchor": {
+    "hash": "00000000007b54884a0fdfd1c741e38ae1c538431126285a0ff410c288068665",
+    "height": 3500738,
+    "time": "2026-09-29T21:49:08+00:00"
+  },
+  "cutoff": {
+    "archive_shards": 81,
+    "block_time": "2026-02-07T06:49:47+00:00",
+    "calendar_height": 3289805,
+    "first_height_at_or_after_cutoff_time": 3289805,
+    "hash": "000000000040f6b6703993620395949259681c6e9c11ef776d3871e1473f8ed3",
+    "height": 3231753,
+    "last_height_before_cutoff_time": 3289804,
+    "previous_block_time": "2026-02-07T06:49:27+00:00",
+    "previous_hash": "0000000001129e280a867a52c038c918acbf26d9b7bcb3f9f2e6c4cbbdc5f29b",
+    "previous_height": 3231752,
+    "scanned": [
+      3289805,
+      3291805
+    ],
+    "time": "2026-03-29T21:49:08+00:00"
+  },
+  "generated_at": "2026-10-09T00:36:11.858922452+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3511177,
+    "data_dir": "/srv/transparent-activity/full-v3/journal",
+    "start_height": 0
+  },
+  "network": "main",
+  "rule": {
+    "archive_geometry": "archive-wide",
+    "description": "cutoff_time = anchor header time minus the calendar months, day clamped to the target month's last day, time of day kept; cutoff_height = 1 + the highest height whose header time is before cutoff_time; proved final by eleven consecutive blocks at or after cutoff_time from cutoff_height; the boundary is the first height of the archive shard still open at cutoff_height under the archive geometry's seal thresholds, or cutoff_height when none is",
+    "months": 6,
+    "window": 2000
+  },
+  "schema": "transparent-cutoff-v2",
+  "source": "rpc",
+  "tiers": {
+    "archive": [
+      0,
+      3231752
+    ],
+    "recent": [
+      3231753,
+      3500738
+    ]
+  },
+  "tool_sha": "569f68e6"
+}
