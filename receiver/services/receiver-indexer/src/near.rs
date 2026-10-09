@@ -279,7 +279,9 @@ impl Explorer {
     /// Reads `feed` back to its cursor, or to `since` on the first read, and records
     /// each swap's Orchard receiver in `store`, with when the read began, and each
     /// completed payout with its reported transactions, all in one transaction (see
-    /// [`ProviderStore::record`]). Times are capped at the read's start, so a record
+    /// [`ProviderStore::record`]). Only a read that began without a cursor records
+    /// `since` as where the feed started, so a restart with another `since` cannot
+    /// move the start past history it never read. Times are capped at the read's start, so a record
     /// dated in the future cannot hide later swaps. A read past its page bound fails
     /// and records nothing. Returns how many receivers it recorded.
     pub async fn sync(
@@ -292,6 +294,8 @@ impl Explorer {
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs() as i64;
         let cursor = store.cursor(feed.name())?;
+        // Decided before fetching: a read that found a cursor reads back only to it.
+        let initial_since = cursor.is_none().then_some(since);
         let floor = cursor.map_or(since, |c| c - feed.overlap());
         let mut newest = cursor.unwrap_or(since).min(read_at);
         let mut found = Vec::new();
@@ -343,8 +347,15 @@ impl Explorer {
                 _ => break,
             }
         }
-        // Only a completed read says where the feed started.
-        store.record(feed.name(), since, &found, &completed, newest, read_at)?;
+        // Only a completed initial read says where the feed started.
+        store.record(
+            feed.name(),
+            initial_since,
+            &found,
+            &completed,
+            newest,
+            read_at,
+        )?;
         Ok(found.len())
     }
 
@@ -451,7 +462,7 @@ mod tests {
         let old = (receiver(1), true, 1_500);
         let recent = (receiver(2), true, until - 60);
         store
-            .record(payouts, 1_000, &[old, recent], &[], until, until + 30)
+            .record(payouts, Some(1_000), &[old, recent], &[], until, until + 30)
             .unwrap();
         let sets = provider_sets(&store).unwrap();
         assert_eq!(sets.len(), 1);
@@ -463,7 +474,7 @@ mod tests {
         // Recent needs both feeds, and reaches back from the older read.
         let refund = (receiver(3), false, until - 120);
         store
-            .record(refunds, 2_000, &[refund], &[], until, until)
+            .record(refunds, Some(2_000), &[refund], &[], until, until)
             .unwrap();
         let sets = provider_sets(&store).unwrap();
         assert_eq!(sets[0].label, "near-intents/recent");
@@ -499,6 +510,41 @@ mod tests {
         let mut working = Explorer::at(format!("{origin}/ok"));
         working.sync(&mut store, feed, 2_000).await.unwrap();
         assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));
+    }
+
+    /// A restart with an earlier or later `since` follows the saved cursor, so the
+    /// published seen set keeps declaring the first read's start rather than claim
+    /// history no read fetched.
+    #[tokio::test]
+    async fn a_restart_with_another_since_keeps_the_published_start() {
+        use axum::{routing::get, Router};
+        let app = Router::new().route("/", get(|| async { "[]" }));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}/", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider.sqlite");
+        // The seen set's declared start.
+        let since_unix = |store: &ProviderStore| {
+            let sets = provider_sets(store).unwrap();
+            assert_eq!(sets[0].label, "near-intents/seen");
+            sets[0].since_unix
+        };
+        let mut store = ProviderStore::open(&path).unwrap();
+        Explorer::at(origin.clone())
+            .sync(&mut store, Feed::Payouts, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(since_unix(&store), 2_000);
+        for since in [1_000, 3_000] {
+            drop(store);
+            store = ProviderStore::open(&path).unwrap();
+            Explorer::at(origin.clone())
+                .sync(&mut store, Feed::Payouts, since)
+                .await
+                .unwrap();
+            assert_eq!(since_unix(&store), 2_000);
+        }
     }
 
     /// A read that reaches its page bound, first read included, or receives a page
@@ -694,7 +740,7 @@ mod tests {
         provider
             .record(
                 "near-payouts",
-                0,
+                Some(0),
                 &[],
                 &[(receiver(1), [7; 32])],
                 now,
@@ -735,7 +781,14 @@ mod tests {
         index.append(&block).unwrap();
         let now = 1_000_000;
         provider
-            .record("near-payouts", 0, &[], &[(receiver(1), [7; 32])], now, 0)
+            .record(
+                "near-payouts",
+                Some(0),
+                &[],
+                &[(receiver(1), [7; 32])],
+                now,
+                0,
+            )
             .unwrap();
         report(&mut provider, &index, now).unwrap();
         assert!(provider.unmatched(i64::MAX).unwrap().is_empty());
@@ -804,14 +857,21 @@ mod tests {
         // The indexed payout, then a later one to the same receiver that is not indexed.
         let payouts = [(receiver(1), [7; 32]), (receiver(1), [8; 32])];
         provider
-            .record("near-payouts", 0, &[], &payouts, now, now - 2 * 60 * 60)
+            .record(
+                "near-payouts",
+                Some(0),
+                &[],
+                &payouts,
+                now,
+                now - 2 * 60 * 60,
+            )
             .unwrap();
         let payouts = [(receiver(2), [9; 32])];
         provider
-            .record("near-payouts", 0, &[], &payouts, now, now - 60)
+            .record("near-payouts", None, &[], &payouts, now, now - 60)
             .unwrap();
         provider
-            .record("near-payouts", 0, &[], &[], now, now - 30)
+            .record("near-payouts", None, &[], &[], now, now - 30)
             .unwrap();
         let first = report(&mut provider, &index, now).unwrap();
         assert_eq!(first["payouts_checked"], 2);

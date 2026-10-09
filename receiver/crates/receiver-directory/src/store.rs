@@ -377,18 +377,21 @@ impl ProviderStore {
     /// up to `cursor`, its new position, where `true` marks a payout address and `false`
     /// a refund address, each with its swap's creation time; the completed payouts it
     /// saw, each a payout receiver and the transaction (protocol byte order) that paid
-    /// it, so each payment can be checked against the index; and `since`, where the
-    /// feed's first read began. A receiver keeps its latest time, a payout the earliest
-    /// start of any read that saw it complete, whatever order they commit in (a
-    /// receiver reused across swaps has one payout per transaction), and the feed its
-    /// first start. The cursor and read time move as one pair: a read that advances the
-    /// cursor also sets the read time, one that reaches the same cursor can only
-    /// advance the read time, and one behind the cursor changes neither, so a stale
-    /// read cannot make the feed look fresher.
+    /// it, so each payment can be checked against the index; and `initial_since`, where
+    /// the read began reading if it began without a cursor. A receiver keeps its latest
+    /// time and a payout the earliest start of any read that saw it complete, whatever
+    /// order they commit in (a receiver reused across swaps has one payout per
+    /// transaction). Only an initial read sets the feed's start, or lowers it to its
+    /// own, so racing initial reads keep the earliest; a read that followed the cursor
+    /// passes `None` and never moves it, since it read back only to the cursor and
+    /// covers no earlier history. The cursor and read time move as one pair: a read
+    /// that advances the cursor also sets the read time, one that reaches the same
+    /// cursor can only advance the read time, and one behind the cursor changes
+    /// neither, so a stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
-        since: i64,
+        initial_since: Option<i64>,
         receivers: &[(Receiver, bool, i64)],
         completions: &[(Receiver, Hash)],
         cursor: i64,
@@ -435,11 +438,13 @@ impl ProviderStore {
                 params![receiver.as_bytes(), txid.as_slice(), read_at],
             )?;
         }
-        tx.execute(
-            "INSERT INTO starts VALUES (?1,?2) ON CONFLICT(feed)
-             DO UPDATE SET started_at=MIN(started_at,excluded.started_at)",
-            params![feed, since],
-        )?;
+        if let Some(since) = initial_since {
+            tx.execute(
+                "INSERT INTO starts VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET started_at=MIN(started_at,excluded.started_at)",
+                params![feed, since],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }

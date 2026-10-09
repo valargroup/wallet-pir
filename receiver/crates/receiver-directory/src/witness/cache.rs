@@ -38,13 +38,21 @@ impl WitnessCache {
         manifest.validate()?;
         if manifest.start_position != 0
             || manifest.end_position != commitments.len() as u64
-            || commitments.is_empty()
             || positions.len() as u64 != manifest.records
             || positions
                 .iter()
                 .any(|p| u64::from(*p) >= manifest.end_position)
         {
             return Err(Error::Coverage);
+        }
+        // An empty tree, so no records or positions either, has no levels to combine.
+        if commitments.is_empty() {
+            self.levels.clear();
+            return WitnessSnapshot::from_nodes(
+                manifest,
+                MerkleHashOrchard::empty_root(32.into()).to_bytes(),
+                BTreeMap::new(),
+            );
         }
         // A depth-32 tree holds at most 2^32 leaves.
         if commitments.len() as u64 > 1 << 32 {
