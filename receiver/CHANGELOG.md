@@ -32,7 +32,7 @@
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, keeps publishing and
   serving each canonical tip from memory while revoking orphaned sessions,
-  republishes a paused tip when its provider sets change, and
+  republishes a paused tip when its provider sets or report change, and
   feeds the `near-intents` filter sets from the NEAR Intents explorer when given a
   partner key. It checks each block against its header's merkle root, fails over
   between nodes, bounds each node response, publishes a few blocks

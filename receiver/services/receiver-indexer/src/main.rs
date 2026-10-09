@@ -261,9 +261,6 @@ async fn check_serving(publications: &Publications, rpc: &ZakuraClient, tip: u64
 
 /// The publication [`refresh`] last activated, with what it was built from.
 struct Active {
-    id: [u8; 32],
-    /// The recovery epoch it was published at.
-    epoch: u64,
     /// Its terminal height and hash.
     anchor: (u32, [u8; 32]),
     /// The [`receiver_indexer::near::digest`] of its provider sets.
@@ -273,10 +270,10 @@ struct Active {
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
 /// `nodes`, which serves the whole pass, rewinding past a reorg, then publishes a
-/// directory with fresh NEAR filters. While serving, a chain that has not moved since
-/// `active` is republished only for new provider sets, and otherwise only a changed
-/// report, which time alone can change, replaces `active`'s.
-/// `now` is the report's time, in Unix seconds.
+/// directory with fresh NEAR filters and report. While serving, `active` stays while
+/// it is served at an unmoved tip and was built from the same provider sets and
+/// report, which time alone can change; otherwise a new one is built once the previous
+/// revision's grace ends. `now` is the report's time, in Unix seconds.
 async fn refresh(
     args: &Args,
     nodes: &[ZakuraClient],
@@ -336,31 +333,6 @@ async fn refresh(
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
-    // A publication's filters and report come from one capture of the provider store,
-    // so a feed read committing meanwhile cannot make them describe different states.
-    let mut captured = None;
-    if let Some(serving) =
-        serving.filter(|s| tip.height == end && s.anchors().first() == Some(&(end, tip.hash)))
-    {
-        let capture = receiver_indexer::near::capture(&provider_store, now)?;
-        let inputs = receiver_indexer::near::digest(&capture.sets);
-        if let Some(active) = active
-            .as_mut()
-            .filter(|a| a.anchor == (end, tip.hash) && a.inputs == inputs)
-        {
-            let (report, matched) = capture.report(&store)?;
-            if report != active.report {
-                if !serving.replace_report(active.id, report.clone(), active.epoch) {
-                    return Err("publication changed before its report; retrying".into());
-                }
-                info!(%report, "receiver report");
-                active.report = report;
-            }
-            provider_store.match_payouts(&matched)?;
-            return Ok(());
-        }
-        captured = Some(capture);
-    }
     // Wait out the previous revision's grace before building the next (see
     // `Publications::ready_at`); a later poll publishes.
     if serving.is_some_and(|s| s.ready_at().is_some()) {
@@ -402,14 +374,22 @@ async fn refresh(
         );
     }
     log_stage("ingestion", started);
+    // A publication's filters and report come from one capture of the provider store,
+    // so a feed read committing meanwhile cannot make them describe different states.
+    // The report describes the reconciled index the publication is built from.
+    let capture = receiver_indexer::near::capture(&provider_store, now)?;
+    let inputs = receiver_indexer::near::digest(&capture.sets);
+    let (report, matched) = capture.report(&store)?;
+    if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
+        if active.anchor == (tip.height, tip.hash)
+            && serving.anchors().first() == Some(&active.anchor)
+            && (active.inputs, &active.report) == (inputs, &report)
+        {
+            return Ok(());
+        }
+    }
     let started = std::time::Instant::now();
     let records = store.counts()?.0;
-    // A capture taken before an unmoved chain was found unpublished needs no retaking.
-    let capture = match captured {
-        Some(capture) => capture,
-        None => receiver_indexer::near::capture(&provider_store, now)?,
-    };
-    let inputs = receiver_indexer::near::digest(&capture.sets);
     // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
@@ -477,17 +457,11 @@ async fn refresh(
         serving.revoke();
         return Err("chain changed during PIR preparation; retrying".into());
     }
-    // The report describes the reconciled index this publication was built from, and
-    // activates with it.
-    let (report, matched) = capture.report(&store)?;
-    let (id, anchor) = (publication.id(), (anchor.end_height, anchor.end_hash));
-    let epoch = epoch.unwrap();
-    if !serving.publish(publication.with_report(report.clone()), epoch) {
+    let anchor = (anchor.end_height, anchor.end_hash);
+    if !serving.publish(publication.with_report(report.clone()), epoch.unwrap()) {
         return Err("publication invalidated during preparation; retrying".into());
     }
     *active = Some(Active {
-        id,
-        epoch,
         anchor,
         inputs,
         report,
@@ -786,56 +760,34 @@ mod tests {
         }
     }
 
-    /// With the chain paused, a completed feed read republishes with its coverage, a
-    /// payout crossing its grace replaces only the report, and nothing new changes
-    /// nothing.
+    /// With the chain paused, a refresh with nothing new keeps the publication, and a
+    /// changed report, which time alone can change, republishes it.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_paused_chain_still_publishes_new_feeds_and_reports() {
+    async fn a_paused_chain_republishes_only_for_new_sets_or_reports() {
         let mut paused = Paused::new(|_| {}).await;
-        paused.refresh(NOW).await;
-        let first = paused.get("health").await;
-        paused.refresh(NOW).await;
-        assert_eq!(paused.get("health").await, first);
-        // A completed read of the payout feed, with no new block.
-        let mut provider = paused.provider();
+        // A completed read of the payout feed that saw a payout complete.
         let payout = super::common::receiver();
-        provider
+        paused
+            .provider()
             .record(
                 "near-payouts",
                 Some(NOW - 100),
                 &[(payout, true, NOW - 50)],
-                &[],
-                NOW - 50,
-                NOW - 10,
-            )
-            .unwrap();
-        paused.refresh(NOW).await;
-        let fed = paused.get("health").await;
-        assert_ne!(fed["serving"], first["serving"]);
-        let manifest = paused.get("init").await;
-        assert_eq!(
-            manifest["directory"]["filters"][0]["label"],
-            "near-intents/seen"
-        );
-        assert_eq!(manifest["directory"]["filters"][0]["until_unix"], NOW - 10);
-        // A payout NEAR reports complete, still within its grace.
-        provider
-            .record(
-                "near-payouts",
-                None,
-                &[],
                 &[(payout, [7; 32])],
                 NOW - 50,
                 NOW - 10,
             )
             .unwrap();
-        paused.refresh(NOW + 3600 - 11).await;
-        assert_eq!(paused.get("health").await, fed);
-        // Its grace ends with no new block or read: only the report changes, and the
-        // displaced publication keeps its grace.
-        paused.refresh(NOW + 3600).await;
+        paused.refresh(NOW).await;
+        let first = paused.get("health").await;
+        assert_eq!(first["indexer"]["payouts_missing"], 0);
+        paused.refresh(NOW).await;
+        assert_eq!(paused.get("health").await, first);
+        assert!(paused.publications.ready_at().is_none());
+        // The payout's grace ends with no new block or read: the same directory is
+        // republished with the new report.
+        paused.refresh(NOW - 10 + 3600).await;
         let reported = paused.get("health").await;
-        assert_eq!(reported["serving"], fed["serving"]);
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
         assert!(paused.publications.ready_at().is_some());
     }
@@ -859,44 +811,6 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
-    }
-
-    /// With the chain paused and the filters unchanged, a report swapped in describes
-    /// the feed state the filters were compared in.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_paused_report_swap_reports_the_compared_feed_state() {
-        // Refund reads newer than the payout read move the report but not the recent
-        // set, whose window ends at the older read.
-        let reads = std::sync::atomic::AtomicI64::new(NOW - 10);
-        let mut paused = Paused::new(move |provider| {
-            let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            let feed = receiver_indexer::near::Feed::Refunds.name();
-            provider
-                .record(feed, Some(NOW - 100), &[], &[], NOW - 50, read)
-                .unwrap();
-        })
-        .await;
-        paused
-            .provider()
-            .record(
-                "near-payouts",
-                Some(NOW - 100),
-                &[],
-                &[],
-                NOW - 50,
-                NOW - 20,
-            )
-            .unwrap();
-        paused.refresh(NOW).await;
-        let first = paused.get("health").await;
-        paused.refresh(NOW).await;
-        let swapped = paused.get("health").await;
-        assert_eq!(swapped["serving"], first["serving"]);
-        assert_ne!(swapped["indexer"], first["indexer"]);
-        let (until, read) = paused.until_and_read("recent", "near-payouts").await;
-        assert_eq!((until, read), (json!(NOW - 20), json!(NOW - 20)));
-        let refunds = paused.provider().read("near-refunds").unwrap();
-        assert_eq!(swapped["indexer"]["feeds"]["near-refunds"], json!(refunds));
     }
 
     /// A one-shot run writes nothing for a manifest over the size clients read.

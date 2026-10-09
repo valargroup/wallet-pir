@@ -184,9 +184,7 @@ Ironwood activation. With `--serve`, the process polls every `--poll-seconds`
 (default 10), prepares each new canonical tip in memory, writing no publication
 files, and serves on `--bind` (default `127.0.0.1:18380`), a loopback, private IPv4
 or unique-local IPv6 address behind a TLS proxy. While no block arrives, it
-republishes the same tip when the provider sets change, and when only health's
-report changes, such as a payout passing its grace, it replaces that report on the
-current publication, keeping its sessions. A separate guard rechecks served anchors
+republishes the same tip when the provider sets or health's report change. A separate guard rechecks served anchors
 and revokes every session once a node shows one is off its chain, unless a
 revocation or rotation stopped serving that anchor during the check; a failed
 check keeps serving. A recovery epoch fences work that began before a revocation.
