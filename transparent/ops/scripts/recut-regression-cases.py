@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Re-cut the frozen regression case specification for a new accepted publication.
 
-The deployed regression runner compares the served shard map byte for byte
-against `map_sha256` and refuses on any difference, so a fixture frozen against
-one publication cannot gate a later one. Continuous publication moves both
-boundaries the cases were chosen around:
+The deployed regression runner pins the set identity and every sealed entry
+of the publication a fixture was exported against. A new schema or a re-cut
+rewrites those entries, and even while they stand every checkpoint ages into
+settled history. Continuous publication moves both boundaries the cases were
+chosen around:
 
   * the anchor advances with the tip, and
   * the cutoff advances with it, because `shard-cutoff` derives the cutoff from
@@ -40,40 +41,48 @@ import argparse
 import json
 from pathlib import Path
 
-PREVIOUS_ANCHOR = 3473686
-PREVIOUS_CUTOFF = 3262749
+# The schema v11 cut of 2026-10-09: anchor 3511700, served `recent_from`.
+PREVIOUS_ANCHOR = 3511700
+PREVIOUS_CUTOFF = 3289805
 
 # (case id, profile, required_from role, [checkpoint roles])
 # A role is ('abs', height) | ('cutoff', delta) | ('anchor', delta).
+# The tail checkpoint sampled by one cut is settled history at the next, so it
+# stays put like any other absolute height.
+SAMPLED = ('abs', 3492693)
 ROLES = [
     ('unused-p2pkh', 'unused', ('abs', 0),
-     [('abs', 0), ('cutoff', -1), ('cutoff', 1), ('anchor', 0)]),
+     [('abs', 0), ('cutoff', -1), ('cutoff', 1), SAMPLED, ('anchor', 0)]),
     ('unused-p2sh', 'unused-p2sh', ('abs', 0),
-     [('abs', 0), ('cutoff', 1), ('anchor', 0)]),
+     [('abs', 0), ('cutoff', 1), SAMPLED, ('anchor', 0)]),
     ('small-active', 'small-active', ('abs', 0),
-     [('abs', 3423034), ('abs', 3423035), ('abs', 3423036), ('anchor', 0)]),
+     [('abs', 3423034), ('abs', 3423035), ('abs', 3423036), SAMPLED,
+      ('anchor', 0)]),
     ('zero-balance', 'zero-balance', ('abs', 0),
-     [('abs', 2981966), ('abs', 2981967), ('abs', 3423637), ('anchor', 0)]),
+     [('abs', 2981966), ('abs', 2981967), ('abs', 3423637), SAMPLED,
+      ('anchor', 0)]),
     ('old-receive-recent-spend', 'cross-tier', ('abs', 0),
      [('abs', 1080215), ('cutoff', -1), ('cutoff', 0), ('abs', 3332159),
-      ('abs', 3332160), ('anchor', 0)]),
+      ('abs', 3332160), SAMPLED, ('anchor', 0)]),
     ('offline-receive-spend', 'offline', ('abs', 0),
      [('abs', 163548), ('abs', 163726), ('abs', 3439126), ('abs', 3465622),
-      ('abs', 3472534), ('anchor', 0)]),
+      ('abs', 3472534), SAMPLED, ('anchor', 0)]),
     ('active-p2sh', 'p2sh', ('abs', 0),
-     [('abs', 3460734), ('abs', 3460735), ('abs', 3460736), ('anchor', 0)]),
+     [('abs', 3460734), ('abs', 3460735), ('abs', 3460736), SAMPLED,
+      ('anchor', 0)]),
     ('reused-pages', 'reused-script', ('abs', 3463930),
-     [('abs', 3463930), ('abs', 3469904), ('abs', 3469905), ('anchor', 0)]),
+     [('abs', 3463930), ('abs', 3469904), ('abs', 3469905), SAMPLED,
+      ('anchor', 0)]),
     ('multi-script-self-transfer', 'multi-script', ('abs', 0),
-     [('cutoff', -1), ('cutoff', 0), ('cutoff', 1), ('anchor', 0)]),
+     [('cutoff', -1), ('cutoff', 0), ('cutoff', 1), SAMPLED, ('anchor', 0)]),
     ('recent-birthday', 'recent-restore', ('cutoff', 0),
-     [('cutoff', 0), ('cutoff', 1), ('anchor', -1), ('anchor', 0)]),
+     [('cutoff', 0), ('cutoff', 1), SAMPLED, ('anchor', -1), ('anchor', 0)]),
     # The coinbase heights are real coinbase outputs, not "eight below the tip".
     # Holding them absolute keeps the case meaningful and moves it out of the
     # reorg-exposed window; it stops probing a near-tip coinbase, which is
     # reported as a coverage note rather than silently accepted.
     ('coinbase', 'coinbase', ('abs', 0),
-     [('abs', 3473678), ('abs', 3473679), ('anchor', 0)]),
+     [('abs', 3473678), ('abs', 3473679), SAMPLED, ('anchor', 0)]),
 ]
 
 

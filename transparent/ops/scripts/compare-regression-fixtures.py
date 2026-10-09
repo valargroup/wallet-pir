@@ -24,12 +24,21 @@ Two kinds of finding, separated because they mean different things:
             legitimate -- an active wallet keeps transacting -- but each one is a
             decision, not an outcome.
 
+A schema that appends transaction metadata to each event (journal v3, shard
+schema v11) changes every event's bytes without changing what it records. With
+--event-metadata, events are compared by their legacy 87-byte encoding, which
+v3 keeps as a prefix; UTXOs, spends, history and balance still compare exactly.
+
 This reads two files and writes a report. It contacts no service and changes
 nothing.
 """
 import argparse
 import json
 from pathlib import Path
+
+# Hex digits in a legacy event record. A v3 record is this prefix, one flags
+# byte and the metadata varints.
+LEGACY_EVENT_HEX = 2 * 87
 
 
 def load(path):
@@ -53,7 +62,16 @@ def summarize(expected):
     }
 
 
-def compare_case(previous, nxt, tolerance):
+def legacy_events(expected):
+    """The expected state with each event cut to its legacy encoding."""
+    events = sorted(
+        ({'script': e['script'], 'event': e['event'][:LEGACY_EVENT_HEX]}
+         for e in expected['events']),
+        key=lambda e: (e['script'], e['event']))
+    return {**expected, 'events': events}
+
+
+def compare_case(previous, nxt, tolerance, event_metadata=False):
     """Return (blocking, review) findings for one case present in both fixtures."""
     blocking, review = [], []
     case_id = previous['id']
@@ -78,7 +96,20 @@ def compare_case(previous, nxt, tolerance):
                 f"{old['anchor']['hash'][:16]}... -> {new['anchor']['hash'][:16]}..., "
                 'so sealed history was reorganised')
             continue
-        if old['expected'] != new['expected']:
+        old_expected, new_expected = old['expected'], new['expected']
+        if event_metadata:
+            if any(len(e['event']) != LEGACY_EVENT_HEX for e in old_expected['events']):
+                blocking.append(
+                    f'{case_id}: block {height} already carries event metadata '
+                    'in the previous fixture; compare without --event-metadata')
+                continue
+            if any(len(e['event']) < LEGACY_EVENT_HEX for e in new_expected['events']):
+                blocking.append(
+                    f'{case_id}: block {height} has an event shorter than the '
+                    'legacy encoding in the next fixture')
+                continue
+            old_expected, new_expected = legacy_events(old_expected), legacy_events(new_expected)
+        if old_expected != new_expected:
             before, after = summarize(old['expected']), summarize(new['expected'])
             moved = {k: (before[k], after[k]) for k in before if before[k] != after[k]}
             blocking.append(
@@ -104,7 +135,7 @@ def compare_case(previous, nxt, tolerance):
     return blocking, review
 
 
-def compare(previous, nxt, tolerance, same_anchor=False):
+def compare(previous, nxt, tolerance, same_anchor=False, event_metadata=False):
     blocking, review, notes = [], [], []
 
     old_anchor = max(int(h) for h in previous['accepted_headers'])
@@ -128,6 +159,9 @@ def compare(previous, nxt, tolerance, same_anchor=False):
         notes.append('same-anchor schema replacement: case definitions and expectations must be identical')
     elif new_anchor <= old_anchor:
         blocking.append(f'new anchor {new_anchor} is not above {old_anchor}')
+    if event_metadata:
+        notes.append('event metadata: events compared by their legacy 87-byte '
+                     'encoding; UTXOs, spends, history and balance exactly')
 
     for height, hash_ in previous['accepted_headers'].items():
         other = nxt['accepted_headers'].get(height)
@@ -144,7 +178,7 @@ def compare(previous, nxt, tolerance, same_anchor=False):
         review.append(f'{case_id}: new case, no previous expectations to compare')
     for case_id in sorted(set(old_cases) & set(new_cases)):
         case_blocking, case_review = compare_case(
-            old_cases[case_id], new_cases[case_id], tolerance)
+            old_cases[case_id], new_cases[case_id], tolerance, event_metadata)
         blocking.extend(case_blocking)
         review.extend(case_review)
     return blocking, review, notes
@@ -176,11 +210,14 @@ def main():
                    help='relative anchor-state change reported for review')
     p.add_argument('--same-anchor', action='store_true',
                    help='schema replacement at identical height; require unchanged cases, expectations, cutoff and map identity')
+    p.add_argument('--event-metadata', action='store_true',
+                   help='the next fixture appends v3 transaction metadata to events; compare events by their legacy 87-byte encoding')
     p.add_argument('--out', type=Path, help='write the findings as JSON')
     a = p.parse_args()
 
     previous, nxt = load(a.previous), load(a.next_)
-    blocking, review, notes = compare(previous, nxt, a.tolerance, a.same_anchor)
+    blocking, review, notes = compare(previous, nxt, a.tolerance, a.same_anchor,
+                                      a.event_metadata)
 
     for note in notes:
         print(f'  {note}')

@@ -1,0 +1,691 @@
+{
+  "checkpoints": [
+    {
+      "anchor": {
+        "hash": "00000000006672ff8b8ae0f10661e0605d1f24a2d1a1df0e18c7280574ae19be",
+        "height": 3289805
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 80722,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 754626,
+          "routes": [
+            "/v1/filters/shards/82/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 454357,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 12792,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/directory"
+          ],
+          "up": 52744
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 303653,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/pages"
+          ],
+          "up": 77832
+        },
+        "setup_directory": {
+          "calls": 1,
+          "down": 20121,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 20117,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 150814,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 753774,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 2.525298341
+    },
+    {
+      "anchor": {
+        "hash": "00000000005456a7f1343ca4758ab6403ba99871b31c52d8e302a34560ac48e0",
+        "height": 3289806
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 461443,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 12792,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/directory"
+          ],
+          "up": 52744
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 311685,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/pages"
+          ],
+          "up": 77832
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 609060,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 1.4711471010000001
+    },
+    {
+      "anchor": {
+        "hash": "00000000002600a2bc04cb08728fd7bef0229d2de863ac37b6c78ddb8802310d",
+        "height": 3492693
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 7,
+          "down": 721991,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 19,
+          "routes": [
+            "/v1/filters/shards/83/filter",
+            "/v1/filters/shards/84/filter",
+            "/v1/filters/shards/85/filter",
+            "/v1/filters/shards/86/filter",
+            "/v1/filters/shards/87/filter",
+            "/v1/filters/shards/88/filter",
+            "/v1/filters/shards/89/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 939074,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 460424,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 4,
+          "down": 57792,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/manifest",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/manifest",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/manifest",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 5,
+          "down": 28240,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/directory",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/query/directory",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/query/directory",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/query/directory",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/directory"
+          ],
+          "up": 263720
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 155909,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/pages"
+          ],
+          "up": 77832
+        },
+        "setup_directory": {
+          "calls": 3,
+          "down": 60363,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/setup/directory/0",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/setup/directory/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1222019,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 3.008139227
+    },
+    {
+      "anchor": {
+        "hash": "000000000070ecf3edd3927642dd8c728eed827a3dff8e26182b33bd17508fa4",
+        "height": 3511699
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 31350,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 596224,
+          "routes": [
+            "/v1/filters/shards/90/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 461869,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 1.084671324
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 454702,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.464848838
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "repeat",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 467008,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.474561186
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "fresh-final",
+      "publication": {
+        "filter_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "d95330b1e51db212438da5984b5bd79b1fb40340816e79b8a4d94529f30ad558",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3511910,
+          "manifest_digest": "064d1afd79ead02847cdf617b090695ccde20a2630179c86e56653db83fb01dd",
+          "revision": 1081,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 9,
+          "down": 834063,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 26,
+          "routes": [
+            "/v1/filters/shards/82/filter",
+            "/v1/filters/shards/83/filter",
+            "/v1/filters/shards/84/filter",
+            "/v1/filters/shards/85/filter",
+            "/v1/filters/shards/86/filter",
+            "/v1/filters/shards/87/filter",
+            "/v1/filters/shards/88/filter",
+            "/v1/filters/shards/89/filter",
+            "/v1/filters/shards/90/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 913582,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 3550,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 459249,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 4,
+          "down": 57792,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/manifest",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/manifest",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/manifest",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 5,
+          "down": 28240,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/directory",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/query/directory",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/query/directory",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/query/directory",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/directory"
+          ],
+          "up": 263720
+        },
+        "query_pages": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 153049,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/query/pages"
+          ],
+          "up": 77832
+        },
+        "setup_directory": {
+          "calls": 4,
+          "down": 80484,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/setup/directory/0",
+            "/v1/shards/84/revisions/da3871eb09fd5856d26245de0acda5793e885fdf0427ceca5298289197d5e8de/setup/directory/0",
+            "/v1/shards/85/revisions/a8534af57d11db052314567f7dd3289b3b30b0ca70b1b4857b1717bd31fa244f/setup/directory/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 20117,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 152808,
+          "routes": [
+            "/v1/shards/82/revisions/df0061313a3dddd4fab1d5227f1460feed4124a2cdb83616cba26a3f80646d62/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1348548,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 3.383012499
+    }
+  ],
+  "error": null,
+  "http": {
+    "attempts": 77,
+    "failed_attempts": 0,
+    "failed_requests": 0,
+    "log": "case-recent-birthday.http.ndjson",
+    "recovered_requests": 0,
+    "requests": 77
+  },
+  "id": "recent-birthday",
+  "passed": true,
+  "profile": "recent-restore"
+}

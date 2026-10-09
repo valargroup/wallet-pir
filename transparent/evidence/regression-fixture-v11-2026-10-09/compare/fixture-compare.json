@@ -1,0 +1,21 @@
+{
+  "notes": [
+    "anchor 3499341 -> 3511887",
+    "cutoff 3262749 -> 3289805",
+    "map 3780f252bde6256f... -> 2a8709b23a85e339...",
+    "event metadata: events compared by their legacy 87-byte encoding; UTXOs, spends, history and balance exactly"
+  ],
+  "blocking": [],
+  "review": [
+    "active-p2sh: balance 1000000 -> 0 at the anchor (> 25%)",
+    "coinbase: events 1643 -> 2937 at the anchor (> 25%)",
+    "coinbase: utxos 3 -> 27 at the anchor (> 25%)",
+    "coinbase: balance 375623399 -> 3381309030 at the anchor (> 25%)",
+    "multi-script-self-transfer: no checkpoint height in common to cross-check",
+    "recent-birthday: no checkpoint height in common to cross-check",
+    "reused-pages: events 106 -> 647 at the anchor (> 25%)",
+    "reused-pages: utxos 2 -> 15 at the anchor (> 25%)",
+    "reused-pages: balance 55747589938 -> 646128415038 at the anchor (> 25%)",
+    "small-active: balance 75441400 -> 0 at the anchor (> 25%)"
+  ]
+}

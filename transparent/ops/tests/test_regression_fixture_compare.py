@@ -201,6 +201,64 @@ class CompareTest(unittest.TestCase):
         self.assertTrue(any('no checkpoint height in common' in r for r in review),
                         review)
 
+    def metadata_pair(self):
+        """A legacy fixture and its v3 re-export: same events plus metadata."""
+        legacy = [{'script': P2PKH, 'event': f'{i:02x}' * 87} for i in (1, 2)]
+        extended = [{'script': e['script'], 'event': e['event'] + '2802'}
+                    for e in legacy]
+        previous = copy.deepcopy(self.previous)
+        nxt = copy.deepcopy(self.next_)
+        previous['cases'][0]['checkpoints'][0]['expected']['events'] = legacy
+        nxt['cases'][0]['checkpoints'][0]['expected']['events'] = extended
+        return previous, nxt
+
+    def test_appended_event_metadata_blocks_unless_explicit(self):
+        previous, nxt = self.metadata_pair()
+        blocking, _, _ = compare.compare(previous, nxt, .25)
+        self.assertTrue(any('different expected state' in b for b in blocking),
+                        blocking)
+        blocking, review, notes = compare.compare(
+            previous, nxt, .25, event_metadata=True)
+        self.assertEqual((blocking, review), ([], []))
+        self.assertTrue(any('legacy 87-byte' in n for n in notes), notes)
+
+    def test_event_metadata_mode_still_compares_everything_else(self):
+        for change in ['legacy', 'event', 'balance', 'spends', 'history']:
+            with self.subTest(change=change):
+                previous, nxt = self.metadata_pair()
+                expected = nxt['cases'][0]['checkpoints'][0]['expected']
+                if change == 'legacy':
+                    expected['events'][0]['event'] = 'ff' + expected['events'][0]['event'][2:]
+                elif change == 'event':
+                    expected['events'].pop()
+                elif change == 'balance':
+                    expected['confirmed_balance'] += 1
+                elif change == 'spends':
+                    expected['spends']['x:0'] = {}
+                else:
+                    expected['history']['x'] = {}
+                blocking, _, _ = compare.compare(
+                    previous, nxt, .25, event_metadata=True)
+                self.assertTrue(
+                    any('different expected state' in b for b in blocking),
+                    blocking)
+
+    def test_event_metadata_mode_refuses_misuse(self):
+        previous, nxt = self.metadata_pair()
+        # The previous fixture already carries metadata: truncating would hide
+        # a metadata change.
+        carried = copy.deepcopy(previous)
+        carried['cases'][0]['checkpoints'][0]['expected']['events'] = copy.deepcopy(
+            nxt['cases'][0]['checkpoints'][0]['expected']['events'])
+        blocking, _, _ = compare.compare(carried, nxt, .25, event_metadata=True)
+        self.assertTrue(any('already carries event metadata' in b for b in blocking),
+                        blocking)
+        short = nxt['cases'][0]['checkpoints'][0]['expected']['events']
+        short[0]['event'] = short[0]['event'][:100]
+        blocking, _, _ = compare.compare(previous, nxt, .25, event_metadata=True)
+        self.assertTrue(any('shorter than the legacy' in b for b in blocking),
+                        blocking)
+
     def test_unsupported_schema_is_refused(self):
         bad = ROOT / 'ops/tests/_bad_fixture.json'
         bad.write_text(json.dumps({'schema': 'something-else'}))

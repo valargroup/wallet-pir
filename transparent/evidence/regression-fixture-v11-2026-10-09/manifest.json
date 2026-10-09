@@ -1,0 +1,222 @@
+{
+ "run_id": "regression-fixture-v11-2026-10-09",
+ "kind": "schema v11 regression fixture re-cut: read-only journal export on the coordinator, comparison with the v10 fixture, and the public production regression; nothing published, deployed, restarted or reconfigured; production lock not taken",
+ "window_utc": {
+  "source_transfer": "2026-10-09T15:10Z (first, truncated) and 15:11Z (verified re-extraction)",
+  "build": [
+   "2026-10-09T15:11:57Z",
+   "2026-10-09T15:14:18Z"
+  ],
+  "served_map_fetch": "2026-10-09T15:14:22Z",
+  "export": [
+   "2026-10-09T15:14:32Z",
+   "2026-10-09T15:18:05Z"
+  ],
+  "regression": [
+   "2026-10-09T15:33:32Z",
+   "2026-10-09T15:40:42Z"
+  ]
+ },
+ "source": {
+  "repository": "valargroup/wallet-pir",
+  "commit": "66b0b9fb20bfd112e6f083f5097bdb1e90ba7cde",
+  "on_main": true,
+  "transfer": "git archive 66b0b9fb (tar.gz) into /srv/claude-regression-export-66b0b9fb... on the coordinator; tree digest a7bf79cf93ebfb4b1dcce80eac501ffb9af2f33a74bce7a1a634e629b2724547 (sha256 of sorted per-file sha256 lines) equal to a fresh local git archive; build tree removed afterwards",
+  "exporter_and_runner_inputs_equal_to": "a317455e9feecdd2639d5348188c6a2341819a4d (transparent-regression, transparent crates, Cargo.toml, Cargo.lock unchanged)"
+ },
+ "build": {
+  "exporter": {
+   "host": "coordinator",
+   "command": "CARGO_INCREMENTAL=0 RUSTFLAGS='-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq' CXXFLAGS=-mpclmul CFLAGS=-mpclmul cargo build --locked --profile release-fast -p transparent-regression --bin regression-export",
+   "toolchain": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+   "profile": "release-fast (no LTO)",
+   "duration": "2m 20s",
+   "limits": "systemd-run --scope MemoryMax=12G MemorySwapMax=0 CPUQuota=200%, nice 19, ionice idle",
+   "binary_sha256": "2448cd1e86ba5e11f283e62432bcaf9e5b8bd2b4679116fd616386948d828bd8",
+   "target_size": "431M"
+  },
+  "runner": {
+   "host": "roman-dev-2 (development hub, x86_64, 8 vCPU, 31 GiB)",
+   "command": "CARGO_INCREMENTAL=0 cargo build --locked --profile release-fast -p transparent-regression --bin transparent-regression",
+   "toolchain": "rustc 1.97.1",
+   "duration": "1m 57s",
+   "binary_sha256": "b688052496f0c5bb15ba5115a195acafc12929de7f4071eaf3e5f4802dfc1213"
+  }
+ },
+ "commands": {
+  "recut": "python3 -B transparent/ops/scripts/recut-regression-cases.py --previous-cases transparent/tools/transparent-regression/fixtures/mainnet-cases.json --self-check --anchor 3511700 --cutoff 3289805 --out mainnet-cases-v11.json (raw/recut.log)",
+  "export": "regression-export --data-dir /srv/transparent-activity/full-v3/journal --map shards.json --cases mainnet-cases.json --cutoff-height 3289805 --source-sha 66b0b9fb20bfd112e6f083f5097bdb1e90ba7cde --out mainnet-v11.json, under the build's limits (raw/coordinator/run-export.sh, run-on-coordinator.sh)",
+  "compare": "python3 -B transparent/ops/scripts/compare-regression-fixtures.py --previous <v10 mainnet.json> --next mainnet-v11.json --event-metadata --out fixture-compare.json; repeated without --event-metadata; compare/v10-checkpoints-from-v11-events.py <v10 mainnet.json> mainnet-v11.json",
+  "regression": "transparent-regression --fixture transparent/tools/transparent-regression/fixtures/mainnet.json --shard-url https://transparent-pir.valargroup.dev --filter-url https://enhance-pir.valargroup.dev --source-sha 66b0b9fb20bfd112e6f083f5097bdb1e90ba7cde --out-dir regression (defaults: 3 HTTP attempts, 60 s request deadline, 1800 s case deadline)"
+ },
+ "inputs": {
+  "journal": {
+   "path": "/srv/transparent-activity/full-v3/journal",
+   "meta": {
+    "version": 3,
+    "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+    "start_height": 0
+   },
+   "committed_lengths_at_start": {
+    "events_bin": 42714809217,
+    "blocks_bin": 168570624,
+    "blocks": 3511888,
+    "covered_through": 3511887
+   },
+   "access": "EventStore::open_existing, no writer lock, committed prefix only; ingest kept appending"
+  },
+  "served_map": {
+   "file": "raw/served-map/shards-3511887.json",
+   "sha256": "2a8709b23a85e3396eb9c611cea6708208c3648db3178a650bb7e3e0576052ef",
+   "bytes": 49851,
+   "origins": [
+    "https://transparent-pir.valargroup.dev/v1/filters/shards",
+    "https://enhance-pir.valargroup.dev/v1/filters/shards"
+   ],
+   "origins_identical": true,
+   "x_shard_map_sha256_header": "2a8709b23a85e3396eb9c611cea6708208c3648db3178a650bb7e3e0576052ef",
+   "shards": 91,
+   "geometries": {
+    "archive-wide": "0-81",
+    "recent-4k-8k": "82-90"
+   },
+   "sealed": 90,
+   "tail": {
+    "shard_id": 90,
+    "start_height": 3506149,
+    "end_height": 3511887,
+    "revision": 1058,
+    "sealed": false
+   },
+   "recent_from": 3289805,
+   "recuts": "absent (never re-cut)",
+   "profile": "zcash-transparent-range-v2",
+   "range_envelope_version": 1
+  },
+  "cases": {
+   "file": "raw/mainnet-cases.json",
+   "sha256": "41ee4d6613fb006e9e12c2008cfc34717fbb1968396f752e3d8e7213e1fc0ff9",
+   "cases": 11,
+   "checkpoints": 57,
+   "anchor": 3511700,
+   "cutoff": 3289805,
+   "sampled_tail_checkpoint": 3492693
+  },
+  "previous_fixture": {
+   "path": "transparent/tools/transparent-regression/fixtures/mainnet.json at 66b0b9fb",
+   "sha256": "8401c9309aa507e41593a75934b6d109b66450b3e0039be3392111d3825af4bc",
+   "map_sha256": "3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f",
+   "schema": "v10",
+   "anchor": 3473686,
+   "cutoff": 3262749
+  }
+ },
+ "outputs": {
+  "fixture": {
+   "path": "transparent/tools/transparent-regression/fixtures/mainnet.json",
+   "sha256": "a6115f1ae764fea7b0630b8924f3767f33ee86a6d07f21a45aff024202d36388",
+   "bytes": 7610562,
+   "map_sha256": "2a8709b23a85e3396eb9c611cea6708208c3648db3178a650bb7e3e0576052ef",
+   "publication_file_sha256": "2a8709b23a85e3396eb9c611cea6708208c3648db3178a650bb7e3e0576052ef",
+   "accepted_headers": 119,
+   "final_events": 4096,
+   "event_record_bytes": {
+    "89": 1474,
+    "91": 213,
+    "92": 2393,
+    "93": 9,
+    "94": 7
+   }
+  },
+  "export_process": {
+   "wall": "3:32.56",
+   "user_s": 53.47,
+   "sys_s": 18.15,
+   "cpu_percent": 33,
+   "max_rss_kib": 332416,
+   "fs_inputs_512b": 53311744,
+   "exit": 0
+  },
+  "compare": {
+   "event_metadata_mode": {
+    "blocking": 0,
+    "review": 10
+   },
+   "plain_mode": {
+    "blocking_state_differences": 18,
+    "exit": 1
+   },
+   "v10_checkpoints_from_v11_events": {
+    "checked": 46,
+    "failures": 0
+   }
+  },
+  "regression": {
+   "report": "regression/report.json",
+   "passed": true,
+   "cases": "11/11",
+   "syncs": "79/79 (57 checkpoints + 11 repeat + 11 fresh-final)",
+   "fixture_sha256": "a6115f1ae764fea7b0630b8924f3767f33ee86a6d07f21a45aff024202d36388",
+   "sealed_prefix_shards": 90,
+   "sealed_prefix_sha256": "29a656d3d5ccbfd5ade1500ac92ec35ec0739b1f68221feaebc62d5a9b990c3d",
+   "preflight": {
+    "map_sha256_both_origins": "ef05eb81754d9950ac70e685645a058c3004d363983e07c494fdaa1d7e46cf54",
+    "tail": {
+     "shard_id": 90,
+     "revision": 1078,
+     "end_height": 3511907,
+     "sealed": false
+    },
+    "origin_tail_skew_blocks": 0
+   },
+   "tail_during_run": {
+    "revisions": [
+     1078,
+     1082
+    ],
+    "end_heights": [
+     3511907,
+     3511911
+    ]
+   },
+   "http": {
+    "logical_requests": 2674,
+    "attempts": 2674,
+    "failed_requests": 0,
+    "failed_attempts": 0,
+    "recovered_requests": 0,
+    "note": "2 preflight + 2,672 in cases"
+   },
+   "sync_seconds_total": 289.7,
+   "provisional_anchor_syncs": 34,
+   "runner_wall": "7:10.27",
+   "runner_max_rss_kib": 123800,
+   "sqlite": {
+    "stores": 22,
+    "bytes_total": "479M",
+    "retained_at": "roman-dev-2:/root/claude-regression-v11-runner-66b0b9fb/regression (not committed)",
+    "checksums": "regression/sqlite-sha256.txt",
+    "sizes": "regression/sqlite-sizes.txt"
+   }
+  }
+ },
+ "hosts": {
+  "coordinator": "enhance-pir-coordinator-01, DigitalOcean, Intel Xeon Gold 6548N 8 vCPU, 64 GiB, Ubuntu 24.04.4, kernel 6.8.0-124; shared with the v11 publisher, zakurad, enhance coordinator and the 5 QPS load",
+  "regression_client": "roman-dev-2, development hub, x86_64 8 vCPU, 31 GiB; public HTTPS to both origins"
+ },
+ "headroom": {
+  "before_export": "raw/coordinator/headroom-before.txt (root 76%, /srv/transparent-activity 41%, 53.7 GB available memory)",
+  "after_export": "raw/coordinator/headroom-after.txt (root 77%, 53.6 GB available memory)",
+  "production_lock": "free before start; held by nobody during the run"
+ },
+ "failed_attempts": [
+  "15:10 UTC: two copies of the driver (one started by Roman, one by the agent) ran concurrently and wrote the same local archive; one extracted a truncated archive (3,459 of 4,856 files, gzip unexpected EOF), the other stopped at the existing-directory check. The tree was re-extracted from the complete archive and verified against a fresh git archive before building.",
+  "15:24 UTC: the runner on the Mac never started (blocked in dyld behind syspolicyd for about 9 minutes, zero CPU); it was stopped by PID before sending any request and the regression ran from roman-dev-2 instead. The SSH session that launched the hub run later timed out at the client after the run had finished; the remote log records exit 0 at 15:40:42."
+ ],
+ "limits": [
+  "expectations and publication share journal and ingest provenance; this detects publication, retrieval and wallet regressions, not ingest errors",
+  "synthetic script groupings, not wallets or population weights",
+  "the anchor lies in unsealed shard 90 at export, so its repeat check is the provisional rule until shard 90 seals",
+  "regression is one run of the reference HTTP client and SQLite store, not capacity or application qualification"
+ ]
+}

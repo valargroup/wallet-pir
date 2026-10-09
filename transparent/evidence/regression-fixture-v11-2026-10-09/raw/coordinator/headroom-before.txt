@@ -1,0 +1,7 @@
+2026-10-09T15:14:32Z
+               total        used        free      shared  buff/cache   available
+Mem:     67427414016 13704232960 15972597760    39591936 38543245312 53723181056
+Swap:              0           0           0
+Filesystem        1B-blocks         Used    Available Use% Mounted on
+/dev/vda1      206900281344 157128142848  49755361280  76% /
+/dev/sdb       268304384000 108300914688 160003469312  41% /srv/transparent-activity

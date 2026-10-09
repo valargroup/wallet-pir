@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Wallet regression re-pinned to schema v11, 2026-10-09
+
+The public wallet regression passes again: **11/11 cases and 79/79 syncs** against both
+origins, with all 2,674 requests succeeding first time, at 15:33–15:40 UTC. Since the
+v11 cutover it had stopped at preflight, because its fixture pinned the v10 map and its
+expected events lacked v11's transaction metadata. Nothing in production changed
+([evidence](../evidence/regression-fixture-v11-2026-10-09/README.md)).
+
+- **New fixture.** Exported read-only on the coordinator from the v3 journal by
+  `regression-export` at `66b0b9fb`, against the map both origins served (91 shards, no
+  re-cuts). It pins 90 sealed entries and the tail's continuity. Same 11 cases and scripts;
+  the anchor moved to 3,511,700 and the tier probes to the served boundary 3,289,805,
+  plus one checkpoint at 3,492,693 in continuously published history.
+- **Checked against v10.** Every shared checkpoint reduces identically once events are
+  compared without their appended metadata (new `--event-metadata` comparison mode),
+  and all 46 v10 checkpoints reproduce from the v11 events. Four cases kept transacting
+  since v10 and were accepted as they are.
+- **Cost.** The replay took 3 min 33 s under the usual 12 GiB / two-core idle-priority
+  limits; the build tree was removed afterwards.
+- **Not covered.** Ingest correctness (the fixture shares journal provenance), capacity
+  and application qualification. A future declared re-cut of the publication will need
+  a new export.
+
 ## Fleet redeploy to a317455e, 2026-10-09
 
 The history workers and the publisher run `main` at `a317455e`, the release from full-CI run
