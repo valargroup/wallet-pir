@@ -63,6 +63,7 @@ RECEIVER_OLD = b'receiver-directory built from c7f6d296'
 RECEIVER_NEW = b'receiver-directory built from a later revision'
 RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
 RECEIVER_LIVE = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/current'})
+RECEIVER_PROBE = ['/opt/receiver-pir/tools/receiver-probe', '--origin', 'https://receiver.example', '--no-auth']
 
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
@@ -85,7 +86,10 @@ INVENTORY = {
                       'controller': [{'host': 'coordinator'}]},
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}']},
         },
-        'receiver': {'roles': {'server': [{'host': 'receiver-01', 'vars': {'listen': '10.0.0.11:18380'}}]}},
+        'receiver': {
+            'roles': {'server': [{'host': 'receiver-01', 'vars': {'listen': '10.0.0.11:18380'}}]},
+            'exact_check': {'host': 'receiver-01', 'argv': RECEIVER_PROBE, 'timeout': 120},
+        },
     },
 }
 
@@ -573,7 +577,7 @@ class ReceiverTests(Fleet):
         sha = sha256(RECEIVER_NEW)
         before = dict(self.fake.host('receiver-01').files)
         # Only the binary path differs from the hand-installed unit, so this is no drift.
-        journal = deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
+        journal = deployer.deploy(sha, self.receiver_binary)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(journal.hosts[0]['drift'], [])
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
@@ -595,7 +599,7 @@ class ReceiverTests(Fleet):
 
     def test_template_argument_change_takes_effect_and_rolls_back(self):
         sha = sha256(RECEIVER_NEW)
-        self.receiver_fleet().deploy(sha, self.receiver_binary, skip_exact_check=True)
+        self.receiver_fleet().deploy(sha, self.receiver_binary)
         deployed = self.unit()
         template = self.dir / 'receiver-pir.service.in'
         template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
@@ -607,10 +611,10 @@ class ReceiverTests(Fleet):
         # The same, already staged binary: only the arguments change, and the
         # plan shows them as drift for review.
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
-            deployer.deploy(sha, skip_exact_check=True)
+            deployer.deploy(sha)
         self.assertIn('--concurrency 16', '\n'.join(line for line in self.lines if 'drift Service.ExecStart' in line))
         self.assertEqual(self.fake.log, [])
-        journal = deployer.deploy(sha, allow_drift=True, skip_exact_check=True)
+        journal = deployer.deploy(sha, allow_drift=True)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertIn('--concurrency 16', self.unit())
@@ -628,10 +632,40 @@ class ReceiverTests(Fleet):
         sha = sha256(RECEIVER_NEW)
         self.fake.unhealthy.add(('receiver-01', sha))
         with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
-            deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
+            deployer.deploy(sha, self.receiver_binary)
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
         self.assertEqual(self.unit(), RECEIVER_LIVE)
         self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+        self.assertNotIn(RECEIVER_PROBE, [argv for _, argv in self.fake.runs])
+
+    def test_the_probe_runs_on_the_receiver_under_the_lock_before_commit(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        seen, run = [], self.fake.run
+
+        def observe(host, argv, timeout):
+            if argv == RECEIVER_PROBE:
+                seen.append((host, timeout, LOCK in self.fake.held, Journal.load(self.state, 'receiver').status,
+                             self.running('receiver-01', 'receiver-pir.service')))
+            return run(host, argv, timeout)
+        self.fake.run = observe
+        self.assertEqual(deployer.deploy(sha, self.receiver_binary).status, 'committed')
+        self.assertEqual(seen, [('receiver-01', 120, True, 'verifying', sha)])
+
+    def test_a_failed_or_timed_out_probe_rolls_back(self):
+        for i, result in enumerate([(1, '{"passed":false,"category":"answer_mismatch"}'),
+                                    (124, 'timed out after 120s'),
+                                    subprocess.TimeoutExpired(['ssh', 'receiver-01'], 150)]):
+            with self.subTest(result=result):
+                self.fake, self.state = FakeFleet(), self.dir / ('state-%d' % i)
+                deployer = self.receiver_fleet()
+                self.fake.exact_result = result
+                with self.assertRaises((DeployError, subprocess.TimeoutExpired)):
+                    deployer.deploy(sha256(RECEIVER_NEW), self.receiver_binary)
+                self.assertEqual([argv for _, argv in self.fake.runs][-1], RECEIVER_PROBE)
+                self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+                self.assertEqual(self.unit(), RECEIVER_LIVE)
+                self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
 
 
 class UnitTests(unittest.TestCase):
@@ -674,6 +708,8 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(SERVICES['receiver'].order, ('server',))
         self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
+        (server,) = descriptors.targets(SERVICES['receiver'], inventory)
+        self.assertEqual(descriptors.exact_check(SERVICES['receiver'], inventory)['host'], server.host)
 
 
 class LocalExecutor(SSHExecutor):
@@ -705,6 +741,8 @@ class HelperTests(unittest.TestCase):
             self.assertIsNone(executor.read('local', os.path.join(tmp, 'b', 'unit.conf')))
             self.assertGreater(executor.free_bytes('local', os.path.join(tmp, 'missing', 'dir')), 0)
             self.assertEqual(executor.run('local', ['sh', '-c', 'echo hi; exit 3'], 10), (3, 'hi\n'))
+            # An exact check past its timeout is killed and fails like any other.
+            self.assertEqual(executor.run('local', ['sleep', '10'], 1), (124, 'timed out after 1s'))
 
     def test_helper_http_get(self):
         class Handler(http.server.BaseHTTPRequestHandler):

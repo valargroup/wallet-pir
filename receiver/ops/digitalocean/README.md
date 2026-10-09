@@ -76,7 +76,7 @@ by hand.
 ```sh
 ops/scripts/wallet-pir-deploy.py plan receiver --archive receiver-pir.tar.gz --sha <rev>
 ops/scripts/wallet-pir-deploy.py preflight receiver --archive receiver-pir.tar.gz --sha <rev> --stage
-ops/scripts/wallet-pir-deploy.py deploy receiver --archive receiver-pir.tar.gz --sha <rev> --skip-exact-check
+ops/scripts/wallet-pir-deploy.py deploy receiver --archive receiver-pir.tar.gz --sha <rev>
 ops/scripts/wallet-pir-deploy.py status receiver
 ops/scripts/wallet-pir-deploy.py rollback receiver [--transaction ID]
 ```
@@ -88,11 +88,17 @@ and writes `/etc/systemd/system/receiver-pir.service` from the template with
 executable's digest and a health answer from
 `http://10.70.0.11:18380/v1/receiver/health` whose `serving` is set, within 300
 seconds: health answers at once, but `serving` stays null until the first
-publication from the index. A failure, or `rollback`, restores the previous unit
-file and binary. The inventory has no `exact_check` for the receiver; the monitor's
-receiver probe below is that check, so confirm its next run passes after a deploy
-and roll back if it does not. Report `status receiver` and the rollback command
-after each deploy.
+publication from the index. Then, still under the lock and before it commits, it
+runs the inventory's `exact_check`: the [deploy probe](#deploy-probe) on the
+Droplet itself, which looks up the pinned payment with one live encrypted query
+over the public origin and checks the filter file and private health, as the
+monitor's probe below does. It runs on the Droplet because the coordinator, in
+`ams3` on `10.142.0.0/16`, cannot reach the private health route. Its chain checks
+use the fleet nodes the service reads, the only ones the Droplet reaches, so it
+gates the deploy but is not an independent oracle; the monitor's probe remains
+that. A failed check, or one still running at its 120-second `timeout`, fails the
+deploy. A failure, or `rollback`, restores the previous unit file and binary.
+Report `status receiver` and the rollback command after each deploy.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
 reviewed commit and deploy from that checkout. `plan` prints each changed setting
@@ -105,12 +111,14 @@ Before the first tool deploy, once:
 
 1. Add the Droplet to the coordinator's real inventory as in
    [`deploy-inventory.example.json`](../../../enhance/ops/deploy/deploy-inventory.example.json):
-   a host with its SSH address, and `services.receiver.roles.server` on it with
-   `vars.listen` set to the `--bind` address, `10.70.0.11:18380`. Add its host key
+   a host with its SSH address, `services.receiver.roles.server` on it with
+   `vars.listen` set to the `--bind` address, `10.70.0.11:18380`, and
+   `services.receiver.exact_check` on the same host, as there. Add its host key
    to the inventory's pinned `known_hosts` and update `known_hosts_sha256`.
 2. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
    for root on the Droplet.
-3. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
+3. Install the [deploy probe](#deploy-probe).
+4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
 
 The live Droplet still runs the unit installed by hand, which starts
@@ -126,6 +134,37 @@ that does is refused, except an `ExecStart`-only managed drop-in from an earlier
 directory. That first transaction's rollback returns to `current`, so leave
 `current` alone. Deploying the binary that already runs is a no-op that leaves the
 hand-installed unit in place until the template changes.
+
+### Deploy probe
+
+The inventory's `exact_check` runs `/opt/receiver-pir/tools/receiver-probe` with
+`/opt/receiver-pir/tools/receiver-probe-fixture.json`, the `receiver-probe` and
+`probe-fixture.json` of a `receiver-pir` bundle. A deploy installs only
+`receiver-directory`, so install these before the first deploy, and again when a
+release changes either; a new fixture also needs its digest in the check's
+`--fixture-sha256`. On the coordinator, `release.py extract` checks every file
+against the bundle's `SHA256SUMS`; copy the result to the Droplet and install it
+there under the production lock, checking the digests again:
+
+```sh
+tools/ci/release.py extract --sha <rev> --kind receiver-pir --archive receiver-pir.tar.gz --output receiver-pir-<rev>
+scp -r receiver-pir-<rev> <droplet>:/root/receiver-pir-tools.new
+flock -n /run/lock/wallet-pir-production.lock ssh <droplet> sh -s <<'EOF'
+set -eu
+cd /root/receiver-pir-tools.new
+sha256sum -c SHA256SUMS
+install -D -m 0755 -o root -g root receiver-probe /opt/receiver-pir/tools/receiver-probe
+install -m 0644 -o root -g root probe-fixture.json /opt/receiver-pir/tools/receiver-probe-fixture.json
+cmp receiver-probe /opt/receiver-pir/tools/receiver-probe
+cmp probe-fixture.json /opt/receiver-pir/tools/receiver-probe-fixture.json
+cd /
+rm -r /root/receiver-pir-tools.new
+EOF
+```
+
+Then run the check's `argv` once by hand on the Droplet and confirm it prints
+`"passed":true`, which also shows that the Droplet reaches the public origin and
+both nodes.
 
 ## Host provisioning
 

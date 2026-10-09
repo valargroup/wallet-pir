@@ -31,8 +31,9 @@ BINARIES = {
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],
     # The receiver directory's indexer and server, which
-    # ops/scripts/wallet-pir-deploy.py deploys, and its pir-monitor probe;
-    # receiver/ops/digitalocean/README.md installs the probe.
+    # ops/scripts/wallet-pir-deploy.py deploys, and its probe, which pir-monitor
+    # and the deploy's exact check run; receiver/ops/digitalocean/README.md
+    # installs it for both.
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {

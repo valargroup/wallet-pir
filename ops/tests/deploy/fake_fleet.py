@@ -50,7 +50,7 @@ class FakeFleet(Executor):
         self.identity_override = {}   # (host, unit) -> binary_sha256 the health reports
         self.health_shapes = {}       # (host, unit) -> f(ready, exe sha256) giving its own health body
         self.self_check_fails = set()
-        self.exact_result = (0, 'exact answers ok')
+        self.exact_result = (0, 'exact answers ok')  # or an exception the transport raises
         self.endpoints = {}
         self.held = set()
 
@@ -208,6 +208,8 @@ class FakeFleet(Executor):
         data = self.host(host).files.get(argv[0])
         if data is not None:
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
+        if isinstance(self.exact_result, BaseException):
+            raise self.exact_result
         return self.exact_result
 
     @contextlib.contextmanager
