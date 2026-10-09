@@ -1127,27 +1127,61 @@ mod observation_tests {
 
     #[test]
     fn retries_share_one_deadline_including_backoff_and_response_reads() {
+        // The first retry waits one second jittered by up to half. A budget
+        // of three seconds always leaves room for it, and leaves the second
+        // attempt between one and a half and two seconds. The server answers
+        // that attempt after two and a half: past what is left, short of a
+        // fresh budget. So the second attempt fails only if it shares the
+        // first one's deadline, whatever the jitter drew.
+        const BUDGET: Duration = Duration::from_millis(3_000);
+        const ANSWER_AFTER: Duration = Duration::from_millis(2_500);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        // Never blocks without bound and never panics on a client that gave
+        // up, so a failure is an assertion below rather than a hung or
+        // panicking server thread.
         let server = std::thread::spawn(move || {
-            let (mut first, _) = listener.accept().unwrap();
-            read_headers(&mut first);
-            first
-                .write_all(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                .unwrap();
-            drop(first);
-            let (mut second, _) = listener.accept().unwrap();
-            read_headers(&mut second);
-            // Longer than the remaining budget, but shorter than a fresh one.
-            std::thread::sleep(Duration::from_millis(900));
-            let _ = second.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            let deadline = Instant::now() + Duration::from_secs(20);
+            let mut served = 0usize;
+            while served < 2 && Instant::now() < deadline {
+                let mut stream = match listener.accept() {
+                    Ok((stream, _)) => stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                let _ = stream.set_nonblocking(false);
+                let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+                let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
+                let mut headers = Vec::new();
+                let mut byte = [0];
+                while !headers.ends_with(b"\r\n\r\n") && headers.len() < 8192 {
+                    match stream.read(&mut byte) {
+                        Ok(1) => headers.push(byte[0]),
+                        _ => break,
+                    }
+                }
+                served += 1;
+                if served == 1 {
+                    let _ = stream.write_all(
+                        b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                    );
+                } else {
+                    std::thread::sleep(ANSWER_AFTER);
+                    let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+                }
+            }
+            served
         });
         let events = Arc::new(Mutex::new(Vec::new()));
         let saved = events.clone();
         let mut client = HttpShardTransport::new(
             format!("http://{address}"),
             &HttpOptions {
-                timeout: Duration::from_millis(1500),
+                timeout: BUDGET,
                 user_agent: "deadline-test".into(),
             },
         )
@@ -1160,8 +1194,11 @@ mod observation_tests {
             "second attempt must not receive a fresh timeout"
         );
         let elapsed = started.elapsed();
-        server.join().unwrap();
-        assert!(elapsed < Duration::from_millis(1850), "{elapsed:?}");
+        assert_eq!(server.join().unwrap(), 2, "the retry was sent");
+        // The budget plus scheduling slack on a loaded machine; a fresh
+        // budget for the second attempt would also have failed the
+        // assertion above.
+        assert!(elapsed < BUDGET + Duration::from_secs(2), "{elapsed:?}");
         let events = events.lock().unwrap();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].status, Some(503));
