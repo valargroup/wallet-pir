@@ -30,9 +30,9 @@ const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
 /// How far back a refund read starts before the cursor, for swaps the explorer lists
 /// late. A payout read reaches back [`RECENT_SECS`] instead, so it sees a payout
-/// complete up to a day after its swap was created, the window [`report`] checks. At
-/// about 5,500 swaps a day into ZEC (October 2026) that is six pages, 33 seconds at
-/// the explorer's rate limit, on each poll.
+/// complete up to a day after its swap was created, the window [`Capture::report`]
+/// checks. At about 5,500 swaps a day into ZEC (October 2026) that is six pages, 33
+/// seconds at the explorer's rate limit, on each poll.
 const OVERLAP_SECS: i64 = 3600;
 /// Bound on one read, about a month of swaps, so an explorer that ignores paging cannot
 /// loop forever. It bounds a first read too: one from a `since` too far back fails
@@ -113,39 +113,66 @@ pub fn digest(sets: &[ProviderSet]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// The feed's health for monitoring: when each feed's last complete read began, and how
-/// many payouts first seen complete more than an hour before `now`, however long ago,
-/// still have no payment to their receiver in the transaction NEAR reported in `index`.
-/// Matched payouts are recorded and not checked again until a [`rewind`], and one
-/// that stays missing stays in the count. A missing payout means the indexer missed
-/// it, or NEAR paid it without the zero OVK, which a seed restore cannot find.
-pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
-    let (unmatched, feeds) = provider.view(|provider| -> Result<_> {
+/// The provider sets and report inputs read from one state of a [`ProviderStore`], so
+/// a publication's filters and its [`Capture::report`] describe the same feed state.
+pub struct Capture {
+    /// The NEAR filter sets; see [`provider_sets`].
+    pub sets: Vec<ProviderSet>,
+    /// When each feed's last complete read began.
+    feeds: serde_json::Map<String, serde_json::Value>,
+    /// Payouts first seen complete more than an hour before the capture's time that no
+    /// check has matched yet.
+    unmatched: Vec<(Receiver, receiver_directory::Hash)>,
+}
+
+/// Reads [`provider_sets`] and the inputs of a report at `now`, in Unix seconds, in
+/// one read transaction of `store`.
+pub fn capture(store: &ProviderStore, now: i64) -> Result<Capture> {
+    store.view(|store| {
         let mut feeds = serde_json::Map::new();
         for feed in [Feed::Payouts, Feed::Refunds] {
-            feeds.insert(feed.name().into(), provider.read(feed.name())?.into());
+            feeds.insert(feed.name().into(), store.read(feed.name())?.into());
         }
-        Ok((provider.unmatched(now - COMPLETION_GRACE_SECS)?, feeds))
-    })?;
-    let mut matched = Vec::new();
-    for payout in &unmatched {
-        if index.paid_in(&payout.0, &payout.1)? {
-            matched.push(*payout);
+        Ok(Capture {
+            sets: sets_in(store)?,
+            feeds,
+            unmatched: store.unmatched(now - COMPLETION_GRACE_SECS)?,
+        })
+    })
+}
+
+impl Capture {
+    /// The feed's health for monitoring: when each feed's last complete read began, and
+    /// how many payouts first seen complete more than an hour before the capture's time,
+    /// however long ago, still have no payment to their receiver in the transaction NEAR
+    /// reported in `index`. Also returns the payouts it matched, for
+    /// [`ProviderStore::match_payouts`] once the report is published; they are not
+    /// checked again until a [`rewind`], and one that stays missing stays in the count.
+    /// A missing payout means the indexer missed it, or NEAR paid it without the zero
+    /// OVK, which a seed restore cannot find.
+    pub fn report(
+        &self,
+        index: &Store,
+    ) -> Result<(serde_json::Value, Vec<(Receiver, receiver_directory::Hash)>)> {
+        let mut matched = Vec::new();
+        for payout in &self.unmatched {
+            if index.paid_in(&payout.0, &payout.1)? {
+                matched.push(*payout);
+            }
         }
+        let report = serde_json::json!({
+            "feeds": self.feeds,
+            "payouts_checked": self.unmatched.len(),
+            "payouts_missing": self.unmatched.len() - matched.len(),
+        });
+        Ok((report, matched))
     }
-    provider.match_payouts(&matched)?;
-    let missing = unmatched.len() - matched.len();
-    Ok(serde_json::json!({
-        "feeds": feeds,
-        "payouts_checked": unmatched.len(),
-        "payouts_missing": missing,
-    }))
 }
 
 /// Rewinds `index` to the saved block at `height` with `hash` (see [`Store::rewind`]),
 /// first forgetting every payout match (see [`ProviderStore::forget_matches`]), since
 /// the rewind can remove a matched payment. In that order a crash between the two
-/// databases' writes only makes the next [`report`] check payouts again.
+/// databases' writes only makes the next [`Capture::report`] check payouts again.
 pub fn rewind(
     provider: &mut ProviderStore,
     index: &mut Store,
@@ -593,6 +620,14 @@ mod tests {
         assert_eq!(completed[0].1[1], 0x7e);
     }
 
+    /// [`Capture::report`] for the current state of `provider` at `now`, recording the
+    /// payouts it matched.
+    fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
+        let (report, matched) = capture(provider, now)?.report(index)?;
+        provider.match_payouts(&matched)?;
+        Ok(report)
+    }
+
     /// A receiver from the spending key with every byte `seed`.
     fn receiver(seed: u8) -> Receiver {
         let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
@@ -683,6 +718,77 @@ mod tests {
             report(&mut provider, &index, now).unwrap()["payouts_missing"],
             0
         );
+    }
+
+    /// A matched payout in a provider store at `provider_path` and its payment indexed at
+    /// `index_path`, with `trigger` installed on the database at `fail` so that
+    /// [`rewind`] fails there. Returns the result of rewinding below the payment, after
+    /// both databases closed.
+    fn failing_rewind(
+        provider_path: &std::path::Path,
+        index_path: &std::path::Path,
+        fail: &std::path::Path,
+        trigger: &str,
+    ) -> Result<()> {
+        let mut provider = ProviderStore::open(provider_path).unwrap();
+        let (mut index, block) = paid_index(index_path);
+        index.append(&block).unwrap();
+        let now = 1_000_000;
+        provider
+            .record("near-payouts", 0, &[], &[(receiver(1), [7; 32])], now, 0)
+            .unwrap();
+        report(&mut provider, &index, now).unwrap();
+        assert!(provider.unmatched(i64::MAX).unwrap().is_empty());
+        rusqlite::Connection::open(fail)
+            .unwrap()
+            .execute_batch(trigger)
+            .unwrap();
+        rewind(&mut provider, &mut index, 99, [2; 32])
+    }
+
+    /// A failure to forget matches leaves the index un-rewound, so no matched payout
+    /// can outlive its payment.
+    #[test]
+    fn a_failed_forget_leaves_the_index_unrewound() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("provider.sqlite"),
+            dir.path().join("directory.sqlite"),
+        );
+        let failed = failing_rewind(
+            &provider_path,
+            &index_path,
+            &provider_path,
+            "CREATE TRIGGER fail BEFORE DELETE ON matched_payouts
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        );
+        assert!(failed.is_err());
+        let provider = ProviderStore::open(&provider_path).unwrap();
+        let (index, _) = paid_index(&index_path);
+        assert_eq!(index.tip().unwrap().height, 100);
+        assert!(provider.unmatched(i64::MAX).unwrap().is_empty());
+    }
+
+    /// A failure during the index rewind leaves every match durably forgotten.
+    #[test]
+    fn a_failed_index_rewind_leaves_matches_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("provider.sqlite"),
+            dir.path().join("directory.sqlite"),
+        );
+        let failed = failing_rewind(
+            &provider_path,
+            &index_path,
+            &index_path,
+            "CREATE TRIGGER fail BEFORE DELETE ON blocks
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        );
+        assert!(failed.is_err());
+        let provider = ProviderStore::open(&provider_path).unwrap();
+        let (index, _) = paid_index(&index_path);
+        assert_eq!(index.tip().unwrap().height, 100);
+        assert_eq!(provider.unmatched(i64::MAX).unwrap().len(), 1);
     }
 
     /// A payout first seen complete more than an hour ago with no indexed payment in its
