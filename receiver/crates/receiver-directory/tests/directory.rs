@@ -238,17 +238,29 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // A feed's start is its first read's.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A completion keeps when a read first saw it.
+    // A completion keeps the earliest read that saw it.
     store
         .record("near-payouts", 60, &[], &[payout, refund], 110, 500)
         .unwrap();
     assert_eq!(store.completed(0, 450).unwrap(), [payout]);
     assert_eq!(store.completed(450, 600).unwrap(), [refund]);
+    // An earlier read committing after a later one lowers the completion to its start,
+    // without moving the cursor and read time; a still later read cannot raise it.
+    store
+        .record("near-payouts", 60, &[], &[refund], 110, 300)
+        .unwrap();
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    store
+        .record("near-payouts", 60, &[], &[refund], 110, 600)
+        .unwrap();
+    assert_eq!(store.completed(0, 400).unwrap().len(), 2);
+    assert!(store.completed(301, 700).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.completed(0, 600).unwrap().len(), 2);
+    assert_eq!(store.completed(0, 300).unwrap().len(), 2);
 }
 
 /// A read that fails partway, here on its completions, records nothing: neither its
