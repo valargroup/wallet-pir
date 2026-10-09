@@ -32,8 +32,6 @@ pub enum ZakuraError {
     MissingTreeSize(u64),
     #[error("Ironwood tree root is unavailable at height {0}")]
     MissingTreeRoot(u64),
-    #[error("no node has reached height {0}")]
-    Behind(u64),
     #[error("RPC response is larger than {0} bytes")]
     Oversized(usize),
     #[error("invalid RPC response: {0}")]
@@ -60,17 +58,17 @@ pub(crate) const VERBOSE_BLOCK_RESPONSE_BYTES: usize = (zakura_chain::block::MAX
     * 128
     + RPC_OVERHEAD_BYTES;
 
-/// Nodes' JSON-RPC endpoints, tried in order, and their cookie, if they require one.
+/// One node's JSON-RPC endpoint and its cookie, if it requires one.
 #[derive(Clone)]
 pub struct ZakuraClient {
     http: reqwest::Client,
-    rpc_urls: Vec<String>,
+    url: String,
     cookie: Option<Arc<Cookie>>,
 }
 
 /// A node's `user:password` cookie file and the credentials last read from it, shared
 /// by a client's clones. A node rotates its cookie when it restarts, so a rejected
-/// request rereads the file (see [`ZakuraClient::call_at`]).
+/// request rereads the file (see [`ZakuraClient::call`]).
 struct Cookie {
     path: PathBuf,
     /// `None` after a failed read, so the next request reads the file again.
@@ -159,119 +157,80 @@ pub(crate) struct Commitments {
 
 impl ZakuraClient {
     /// A client that authenticates with the node's `user:password` cookie file, which
-    /// must be readable now and is reread whenever a node rejects it.
+    /// must be readable now and is reread whenever the node rejects it.
     pub fn from_cookie_file(
-        rpc_urls: Vec<String>,
+        url: String,
         cookie_path: impl AsRef<Path>,
     ) -> Result<Self, ZakuraError> {
         let path = cookie_path.as_ref().to_owned();
         let credentials = Mutex::new(Some(read_cookie(&path)?));
-        Self::with_cookie(rpc_urls, Some(Arc::new(Cookie { path, credentials })))
+        Self::with_cookie(url, Some(Arc::new(Cookie { path, credentials })))
     }
 
-    /// A client for explicitly selected nodes whose RPC disables authentication.
-    pub fn unauthenticated(rpc_urls: Vec<String>) -> Result<Self, ZakuraError> {
-        Self::with_cookie(rpc_urls, None)
+    /// A client for an explicitly selected node whose RPC disables authentication.
+    pub fn unauthenticated(url: String) -> Result<Self, ZakuraError> {
+        Self::with_cookie(url, None)
     }
 
     /// See [`Self::from_cookie_file`] and [`Self::unauthenticated`].
-    fn with_cookie(
-        rpc_urls: Vec<String>,
-        cookie: Option<Arc<Cookie>>,
-    ) -> Result<Self, ZakuraError> {
-        if rpc_urls.is_empty() {
-            return Err(ZakuraError::Block("no node RPC endpoint".into()));
-        }
+    fn with_cookie(url: String, cookie: Option<Arc<Cookie>>) -> Result<Self, ZakuraError> {
         Ok(Self {
             http: reqwest::Client::builder()
                 .connect_timeout(std::time::Duration::from_secs(5))
                 .timeout(std::time::Duration::from_secs(120))
                 .build()?,
-            rpc_urls,
+            url,
             cookie,
         })
     }
 
-    /// The highest chain tip among the nodes that answer, so a lagging first node
-    /// cannot hide blocks a later one has.
-    pub async fn tip_height(&self) -> Result<u64, ZakuraError> {
-        let (mut best, mut last) = (None, None);
-        for url in &self.rpc_urls {
-            match self
-                .call_at::<u64>(url, "getblockcount", &json!([]), SCALAR_RESPONSE_BYTES)
-                .await
-            {
-                Ok(tip) => best = best.max(Some(tip)),
+    /// The `nodes` that report a tip, each with its tip, highest first and in `nodes`
+    /// order among equal tips. A caller runs a whole pass on the first, so every read
+    /// in it comes from one node, and the next pass ranks again. Fails, with the last
+    /// node's error, only when no node answers.
+    pub async fn ranked(nodes: &[ZakuraClient]) -> Result<Vec<(u64, ZakuraClient)>, ZakuraError> {
+        let (mut ranked, mut last) = (Vec::new(), None);
+        for node in nodes {
+            match node.tip_height().await {
+                Ok(tip) => ranked.push((tip, node.clone())),
                 Err(error) => last = Some(error),
             }
         }
-        best.ok_or_else(|| last.expect("at least one node RPC endpoint"))
+        if ranked.is_empty() {
+            return Err(last.unwrap_or_else(|| ZakuraError::Block("no node RPC endpoint".into())));
+        }
+        // A stable sort keeps the configured order among equal tips.
+        ranked.sort_by_key(|(tip, _)| std::cmp::Reverse(*tip));
+        Ok(ranked)
     }
 
-    /// The hash of the block at `height`, in RPC display order, from the node with the
-    /// highest tip that has reached it (the next highest if that call fails), so a node
-    /// on a stale fork just behind the tip cannot pin the chain the directory follows.
+    /// The node's chain tip height.
+    pub async fn tip_height(&self) -> Result<u64, ZakuraError> {
+        self.call("getblockcount", json!([]), SCALAR_RESPONSE_BYTES)
+            .await
+    }
+
+    /// The hash of the node's block at `height`, in RPC display order.
     pub async fn block_hash(&self, height: u64) -> Result<String, ZakuraError> {
-        let mut last = ZakuraError::Behind(height);
-        let mut reached = Vec::new();
-        for (order, url) in self.rpc_urls.iter().enumerate() {
-            match self
-                .call_at::<u64>(url, "getblockcount", &json!([]), SCALAR_RESPONSE_BYTES)
-                .await
-            {
-                Ok(tip) if tip >= height => reached.push((std::cmp::Reverse(tip), order, url)),
-                Ok(_) => last = ZakuraError::Behind(height),
-                Err(error) => last = error,
-            }
-        }
-        reached.sort();
-        for (_, _, url) in reached {
-            match self
-                .call_at(url, "getblockhash", &json!([height]), SCALAR_RESPONSE_BYTES)
-                .await
-            {
-                Ok(hash) => return Ok(hash),
-                Err(error) => last = error,
-            }
-        }
-        Err(last)
+        self.call("getblockhash", json!([height]), SCALAR_RESPONSE_BYTES)
+            .await
     }
 
-    /// One JSON-RPC call to the first node that answers it with a response of at most
-    /// `limit` bytes. Callers validate answers against each other (batch links and
-    /// anchors), so nodes may differ between calls.
+    /// One JSON-RPC call to the node, authenticated unless it disables
+    /// authentication. A rejected request rereads the cookie and, if it changed, is
+    /// retried once with the new one. A response body over `limit` bytes is
+    /// [`ZakuraError::Oversized`], refused before it is buffered past the limit; the
+    /// client's timeout covers reading it.
     pub(crate) async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,
         limit: usize,
     ) -> Result<T, ZakuraError> {
-        let mut last = None;
-        for url in &self.rpc_urls {
-            match self.call_at(url, method, &params, limit).await {
-                Ok(result) => return Ok(result),
-                Err(error) => last = Some(error),
-            }
-        }
-        Err(last.expect("at least one node RPC endpoint"))
-    }
-
-    /// One JSON-RPC call to `url`, authenticated unless the node disables
-    /// authentication. A rejected request rereads the cookie and, if it changed, is
-    /// retried once with the new one. A response body over `limit` bytes is
-    /// [`ZakuraError::Oversized`], refused before it is buffered past the limit; the
-    /// client's timeout covers reading it.
-    async fn call_at<T: DeserializeOwned>(
-        &self,
-        url: &str,
-        method: &str,
-        params: &serde_json::Value,
-        limit: usize,
-    ) -> Result<T, ZakuraError> {
         let body =
             json!({"jsonrpc": "1.0", "id": "receiver-indexer", "method": method, "params": params});
         let send = |credentials: Option<&(String, String)>| {
-            let mut request = self.http.post(url);
+            let mut request = self.http.post(&self.url);
             if let Some((username, password)) = credentials {
                 request = request.basic_auth(username, Some(password));
             }
@@ -319,27 +278,14 @@ impl ZakuraClient {
 mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
-    use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    /// A node at tip `tip` whose block hashes are `fill` repeated, refusing heights
-    /// above its tip as nodes do. Returns its URL.
-    async fn node(tip: u64, fill: &'static str) -> String {
-        async fn handler(
-            State((tip, fill)): State<(u64, &'static str)>,
-            Json(request): Json<Value>,
-        ) -> Json<Value> {
-            Json(match request["method"].as_str().unwrap() {
-                "getblockcount" => json!({"result": tip, "error": null}),
-                _ if request["params"][0].as_u64().unwrap() > tip => {
-                    json!({"result": null, "error": {"code": -8, "message": "out of range"}})
-                }
-                _ => json!({"result": fill.repeat(64), "error": null}),
-            })
-        }
-        let app = Router::new()
-            .route("/", post(handler))
-            .with_state((tip, fill));
+    /// A node at tip `tip`. Returns its URL.
+    async fn node(tip: u64) -> String {
+        let app = Router::new().route(
+            "/",
+            post(move || async move { Json(json!({"result": tip, "error": null})) }),
+        );
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
@@ -394,7 +340,7 @@ mod tests {
             std::fs::write(&path, cookie).unwrap();
         };
         rotate("user:a");
-        let rpc = ZakuraClient::from_cookie_file(vec![url], &path).unwrap();
+        let rpc = ZakuraClient::from_cookie_file(url, &path).unwrap();
         let clone = rpc.clone();
         assert_eq!(rpc.tip_height().await.unwrap(), 7);
         rotate("user:b");
@@ -421,26 +367,6 @@ mod tests {
             ));
             assert_eq!(requests.load(Ordering::SeqCst), 1 + usize::from(retried));
         }
-    }
-
-    /// A node that rejects the cookie does not stop a call reaching the next node.
-    #[tokio::test]
-    async fn a_rejected_cookie_falls_back_to_the_next_node() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".cookie");
-        std::fs::write(&path, "user:a").unwrap();
-        let requests = Arc::new(AtomicUsize::new(0));
-        let rejecting = cookie_node(Arc::new(Mutex::new("user:b".into())), requests.clone());
-        let accepting = cookie_node(Arc::new(Mutex::new("user:a".into())), Arc::default());
-        let rpc =
-            ZakuraClient::from_cookie_file(vec![rejecting.await, accepting.await], &path).unwrap();
-        assert_eq!(
-            rpc.call::<u64>("getblockcount", json!([]), SCALAR_RESPONSE_BYTES)
-                .await
-                .unwrap(),
-            7
-        );
-        assert_eq!(requests.load(Ordering::SeqCst), 1);
     }
 
     /// A node that answers every request with `chunks`, declaring `declared` as the
@@ -512,13 +438,13 @@ mod tests {
 
     /// A response over its method's limit is refused whether it declares its length or
     /// not, one at the limit is accepted, and a bounded body that is not a response is
-    /// a decoding error. A node sending too much does not stop a call reaching the next.
+    /// a decoding error.
     #[tokio::test]
     async fn responses_are_bounded_per_call() {
         let limit = SCALAR_RESPONSE_BYTES;
         let tip = r#"{"result": 7, "error": null}"#;
         let call = |url: String| async move {
-            ZakuraClient::unauthenticated(vec![url])
+            ZakuraClient::unauthenticated(url)
                 .unwrap()
                 .call::<u64>("getblockcount", json!([]), limit)
                 .await
@@ -541,7 +467,7 @@ mod tests {
         // A declared length over the limit is refused before the body is read.
         let declared = raw_node(vec![], Some(1 << 30)).await;
         assert!(matches!(
-            call(declared.clone()).await,
+            call(declared).await,
             Err(ZakuraError::Oversized(l)) if l == limit
         ));
         let chunked = raw_node(vec![half.clone(), half.clone(), b" ".to_vec()], None).await;
@@ -551,33 +477,34 @@ mod tests {
         ));
         let malformed = raw_node(vec![b"{\"result\": 7".to_vec()], Some(12)).await;
         assert!(matches!(call(malformed).await, Err(ZakuraError::Decode(_))));
-        let rpc = ZakuraClient::unauthenticated(vec![declared, node(9, "a").await]).unwrap();
-        assert_eq!(
-            rpc.call::<u64>("getblockcount", json!([]), limit)
-                .await
-                .unwrap(),
-            9
-        );
-        assert_eq!(rpc.tip_height().await.unwrap(), 9);
     }
 
-    /// A lagging first node hides neither the freshest node's tip nor its blocks.
+    /// Nodes rank by tip, highest first and in configured order among equal tips,
+    /// leaving out a node that does not answer; with none answering ranking fails.
     #[tokio::test]
-    async fn a_lagging_first_node_defers_to_the_freshest_node() {
-        let rpc = ZakuraClient::unauthenticated(vec![
-            "http://127.0.0.1:1".into(),
-            node(100, "a").await,
-            node(105, "b").await,
-        ])
-        .unwrap();
-        assert_eq!(rpc.tip_height().await.unwrap(), 105);
-        assert_eq!(rpc.block_hash(103).await.unwrap(), "b".repeat(64));
-        // A node that reached the height but trails the freshest one, as a node on a
-        // stale fork would, does not answer for it.
-        assert_eq!(rpc.block_hash(50).await.unwrap(), "b".repeat(64));
-        assert!(matches!(
-            rpc.block_hash(106).await,
-            Err(ZakuraError::Behind(106))
-        ));
+    async fn nodes_rank_by_tip() {
+        let client = |url: String| ZakuraClient::unauthenticated(url).unwrap();
+        let down = client("http://127.0.0.1:1".into());
+        let nodes = [
+            down.clone(),
+            client(node(100).await),
+            client(node(105).await),
+            client(node(105).await),
+        ];
+        let ranked = ZakuraClient::ranked(&nodes).await.unwrap();
+        let order: Vec<_> = ranked
+            .iter()
+            .map(|(tip, node)| (*tip, node.url.clone()))
+            .collect();
+        let urls: Vec<_> = nodes[1..].iter().map(|node| node.url.clone()).collect();
+        assert_eq!(
+            order,
+            [
+                (105, urls[1].clone()),
+                (105, urls[2].clone()),
+                (100, urls[0].clone())
+            ]
+        );
+        assert!(ZakuraClient::ranked(&[down]).await.is_err());
     }
 }

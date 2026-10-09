@@ -35,7 +35,8 @@ struct Args {
     /// Publish common witness data. Requires commitment history from position zero.
     #[arg(long)]
     witnesses: bool,
-    /// A node's RPC endpoint. Repeat it for fallbacks, tried in order.
+    /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the one with
+    /// the highest tip (see [`ZakuraClient::ranked`]).
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -97,11 +98,15 @@ async fn main() -> Result<()> {
     if args.serve && !private {
         return Err("continuous serving requires a loopback or private bind".into());
     }
-    let rpc = match &args.cookie {
-        Some(p) => ZakuraClient::from_cookie_file(args.rpc_url.clone(), p)?,
-        None => ZakuraClient::unauthenticated(args.rpc_url.clone())?,
-    };
-    let genesis: Hash = rpc.block_hash(0).await?.parse()?;
+    let nodes = args
+        .rpc_url
+        .iter()
+        .map(|url| match &args.cookie {
+            Some(p) => ZakuraClient::from_cookie_file(url.clone(), p),
+            None => ZakuraClient::unauthenticated(url.clone()),
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let genesis: Hash = freshest(&nodes).await?.1.block_hash(0).await?.parse()?;
     if genesis != Network::Mainnet.genesis_hash() {
         return Err("this indexer currently requires mainnet".into());
     }
@@ -110,7 +115,7 @@ async fn main() -> Result<()> {
     if !args.serve {
         refresh(
             &args,
-            &rpc,
+            &nodes,
             genesis,
             None,
             &mut active,
@@ -129,11 +134,15 @@ async fn main() -> Result<()> {
     );
     // Canonical checks continue while indexing, proofs and PIR preparation are in progress.
     let guard_publications = publications.clone();
-    let guard_rpc = rpc.clone();
+    let guard_nodes = nodes.clone();
     let poll_seconds = args.poll_seconds;
     let guard = tokio::spawn(async move {
         loop {
-            if let Err(error) = check_serving(&guard_publications, &guard_rpc).await {
+            let checked = async {
+                let (tip, rpc) = freshest(&guard_nodes).await?;
+                check_serving(&guard_publications, &rpc, tip).await
+            };
+            if let Err(error) = checked.await {
                 warn!(%error, "canonical validation deferred; still serving");
             }
             tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
@@ -176,7 +185,7 @@ async fn main() -> Result<()> {
             let started = std::time::Instant::now();
             if let Err(error) = refresh(
                 &args,
-                &rpc,
+                &nodes,
                 genesis,
                 Some(&publications),
                 &mut active,
@@ -217,16 +226,21 @@ async fn shutdown() {
     }
 }
 
-/// Revokes every session once a node shows a served anchor is off its chain, unless a
-/// revocation or rotation stopped serving that anchor during the check (see
-/// [`Publications::revoke_serving`]). A failed request or a node behind an anchor
-/// proves nothing, so sessions keep serving.
-async fn check_serving(publications: &Publications, rpc: &ZakuraClient) -> Result<()> {
+/// The node with the highest tip, which runs a whole pass, and its tip (see
+/// [`ZakuraClient::ranked`]).
+async fn freshest(nodes: &[ZakuraClient]) -> Result<(u64, ZakuraClient)> {
+    Ok(ZakuraClient::ranked(nodes).await?.swap_remove(0))
+}
+
+/// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
+/// its chain, unless a revocation or rotation stopped serving that anchor during the
+/// check (see [`Publications::revoke_serving`]). A failed request or a node behind an
+/// anchor proves nothing, so sessions keep serving.
+async fn check_serving(publications: &Publications, rpc: &ZakuraClient, tip: u64) -> Result<()> {
     let (epoch, anchors) = publications.serving();
     if anchors.is_empty() {
         return Ok(());
     }
-    let tip = rpc.tip_height().await?;
     for (height, hash) in anchors {
         if u64::from(height) <= tip && !is_canonical(rpc, height, hash).await? {
             if publications.revoke_serving(epoch, (height, hash)) {
@@ -250,14 +264,15 @@ struct Active {
     report: serde_json::Value,
 }
 
-/// Brings the index to the requested end on the canonical chain, rewinding past a
-/// reorg, then publishes a directory with fresh NEAR filters. While serving, a chain
-/// that has not moved since `active` is republished only for new provider sets, and
-/// otherwise only a changed report, which time alone can change, replaces `active`'s.
+/// Brings the index to the requested end on the canonical chain of the freshest of
+/// `nodes`, which serves the whole pass, rewinding past a reorg, then publishes a
+/// directory with fresh NEAR filters. While serving, a chain that has not moved since
+/// `active` is republished only for new provider sets, and otherwise only a changed
+/// report, which time alone can change, replaces `active`'s.
 /// `now` is the report's time, in Unix seconds.
 async fn refresh(
     args: &Args,
-    rpc: &ZakuraClient,
+    nodes: &[ZakuraClient],
     genesis: Hash,
     serving: Option<&Publications>,
     active: &mut Option<Active>,
@@ -265,8 +280,10 @@ async fn refresh(
     now: i64,
 ) -> Result<()> {
     let refresh_started = std::time::Instant::now();
+    let (node_tip, node) = freshest(nodes).await?;
+    let rpc = &node;
     if let Some(serving) = serving {
-        check_serving(serving, rpc).await?;
+        check_serving(serving, rpc, node_tip).await?;
     }
     let boundary = rpc.receiver_boundary(args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
@@ -280,7 +297,7 @@ async fn refresh(
         },
     )?;
     let mut provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
-    let node_tip = u32::try_from(rpc.tip_height().await?)?;
+    let node_tip = u32::try_from(node_tip)?;
     let end = args
         .end_height
         .unwrap_or(node_tip.saturating_sub(args.depth));
@@ -594,7 +611,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::unauthenticated(url).unwrap()
     }
 
     /// An empty publication ending at block `[hash; 32]`, height 101.
@@ -622,7 +639,7 @@ mod tests {
         assert!(publications.publish(publication(1), 0));
         let check = tokio::spawn({
             let (publications, rpc) = (publications.clone(), rpc.clone());
-            async move { check_serving(&publications, &rpc).await.unwrap() }
+            async move { check_serving(&publications, &rpc, 200).await.unwrap() }
         });
         // While the check of A waits for the node, a rewind revokes A and B is published.
         node.asked.notified().await;
@@ -632,10 +649,10 @@ mod tests {
         check.await.unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         gate.add_permits(10);
-        check_serving(&publications, &rpc).await.unwrap();
+        check_serving(&publications, &rpc, 200).await.unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         node.hashes.lock().unwrap().insert(101, [3; 32]);
-        check_serving(&publications, &rpc).await.unwrap();
+        check_serving(&publications, &rpc, 200).await.unwrap();
         assert!(publications.anchors().is_empty());
     }
 
@@ -725,7 +742,7 @@ mod tests {
         async fn refresh(&mut self, now: i64) {
             refresh(
                 &self.args,
-                &self.rpc,
+                std::slice::from_ref(&self.rpc),
                 Network::Mainnet.genesis_hash(),
                 Some(&self.publications),
                 &mut self.active,

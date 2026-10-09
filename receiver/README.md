@@ -162,13 +162,12 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 `--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
 authentication. A request a node rejects rereads the cookie and is retried once
 with it if it changed, so a node restart that rotates the cookie needs no indexer
-restart. Repeat `--rpc-url` for more nodes: the highest tip among them sets
-the target, and a block hash comes from the first node that has reached its
-height, so a lagging node cannot hide a reorg. Other calls fall back in order.
-Each response is read only up to a bound for its method: 4 KiB for a tip or a
+restart. Repeat `--rpc-url` for more nodes: each pass, and each check of the
+served anchors, runs on the node with the highest tip, so all its reads come from
+one chain; a pass that fails is retried at the next poll, which ranks the nodes
+again. Each response is read only up to a bound for its method: 4 KiB for a tip or a
 hash and, from the 2 MB maximum block, about 4.1 MB for a raw block's hex and
-4.8 MB for a verbose block's transaction IDs. A larger response is an error, so
-the call moves on to the next node.
+4.8 MB for a verbose block's transaction IDs. A larger response is an error.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
 (default 2) blocks below the node's tip, or a test range from `--start-height` to
 `--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch

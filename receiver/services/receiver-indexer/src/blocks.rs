@@ -324,7 +324,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::unauthenticated(url).unwrap()
     }
 
     /// The root is the bytes the node gives, unreversed: the pinned node encodes its

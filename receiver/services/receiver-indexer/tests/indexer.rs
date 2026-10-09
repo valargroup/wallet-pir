@@ -423,10 +423,6 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
         peak: Arc<AtomicUsize>,
     }
     async fn handler(State(s): State<BatchRpc>, Json(r): Json<Value>) -> Json<Value> {
-        // Block hash lookups first check the tip; those checks are not counted calls.
-        if r["method"] == "getblockcount" {
-            return Json(json!({"result": 3496114 + s.blocks.len(), "error": null}));
-        }
         let call = s.calls.fetch_add(1, Ordering::SeqCst) + 1;
         let terminal = s.blocks.last().unwrap().hash().to_string();
         let result = match r["method"].as_str().unwrap() {
@@ -518,7 +514,7 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
             .route("/", post(handler))
             .with_state(state.clone());
         let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let client = ZakuraClient::unauthenticated(vec![url]).unwrap();
+        let client = ZakuraClient::unauthenticated(url).unwrap();
         let previous = Checkpoint {
             height: 3496113,
             hash: [0; 32],
@@ -572,7 +568,7 @@ async fn a_block_read_by_hash_is_that_block() {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::unauthenticated(url).unwrap()
     };
     let b = block();
     let hash = b.hash().0;

@@ -53,8 +53,8 @@ struct Args {
     #[arg(long)]
     fixture_sha256: String,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
-    /// reached the publication check it one at a time, highest tip first and in this
-    /// order among equal tips, until one completes the checks.
+    /// reached the publication check it one at a time, ranked as
+    /// [`ZakuraClient::ranked`] does, until one completes the checks.
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -183,14 +183,15 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             json!({"fixture": "outside coverage"}),
         )));
     }
-    let oracle = oracle(
-        &args.rpc_url,
-        args.cookie.as_deref(),
-        directory,
-        fixture.height,
-        args.witnesses,
-    );
-    let (verified, tip) = match oracle.await? {
+    let nodes = args
+        .rpc_url
+        .iter()
+        .map(|url| match &args.cookie {
+            Some(path) => ZakuraClient::from_cookie_file(url.clone(), path),
+            None => ZakuraClient::unauthenticated(url.clone()),
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let (verified, tip) = match oracle(&nodes, directory, fixture.height, args.witnesses).await {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
@@ -505,54 +506,37 @@ async fn indexer_report(
 }
 
 /// Checks the publication with [`verify`] on the nodes that have reached it, one at a
-/// time, highest tip first and in `urls` order among equal tips. The first node to
-/// complete the checks decides, and the first valid evidence against the publication
-/// is final rather than retried on a friendlier node; only a node that could not
-/// complete them hands over to the next. Returns the result with the highest tip any
-/// node reported, from which lag is measured whichever node verified. With no node
-/// completing the checks it is `oracle_unavailable`, with each node's tip or failure
-/// and each attempt's error.
+/// time in [`ZakuraClient::ranked`] order. The first node to complete the checks
+/// decides, and the first valid evidence against the publication is final rather than
+/// retried on a friendlier node; only a node that could not complete them hands over
+/// to the next. Returns the result with the highest tip any node reported, from which
+/// lag is measured whichever node verified. With no node completing the checks it is
+/// `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
-    urls: &[String],
-    cookie: Option<&std::path::Path>,
+    nodes: &[ZakuraClient],
     directory: &receiver_directory::snapshot::Manifest,
     fixture_height: u32,
     witnesses: bool,
-) -> Result<std::result::Result<(Verified, u64), Failure>> {
+) -> std::result::Result<(Verified, u64), Failure> {
     let height = u64::from(directory.end_height);
-    let (mut tips, mut reached, mut top) = (Vec::<Value>::new(), Vec::new(), 0);
-    for (node, url) in urls.iter().enumerate() {
-        let rpc = match cookie {
-            Some(path) => ZakuraClient::from_cookie_file(vec![url.clone()], path)?,
-            None => ZakuraClient::unauthenticated(vec![url.clone()])?,
-        };
-        match rpc.tip_height().await {
-            Ok(tip) => {
-                tips.push(tip.into());
-                top = top.max(tip);
-                if tip >= height {
-                    reached.push((node, rpc, tip));
-                }
-            }
-            Err(error) => tips.push(error.to_string().into()),
-        }
-    }
-    // A stable sort keeps the configured order among equal tips.
-    reached.sort_by_key(|(_, _, tip)| std::cmp::Reverse(*tip));
+    let unavailable = |detail: Value| ("oracle_unavailable", detail);
+    let ranked = ZakuraClient::ranked(nodes)
+        .await
+        .map_err(|error| unavailable(json!({"end_height": height, "error": error.to_string()})))?;
+    let top = ranked[0].0;
     let mut attempts = Vec::new();
-    for (node, rpc, _) in &reached {
+    for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
         match verify(rpc, directory, fixture_height, witnesses).await {
-            Verdict::Verified(verified) => return Ok(Ok((verified, top))),
-            Verdict::Failed(failure) => return Ok(Err(failure)),
+            Verdict::Verified(verified) => return Ok((verified, top)),
+            Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
-                attempts.push(json!({"node": node, "error": error.to_string()}))
+                attempts.push(json!({"node_tip": tip, "error": error.to_string()}))
             }
         }
     }
-    Ok(Err((
-        "oracle_unavailable",
-        json!({"end_height": height, "nodes": tips, "attempts": attempts}),
-    )))
+    Err(unavailable(
+        json!({"end_height": height, "node_tip": top, "attempts": attempts}),
+    ))
 }
 
 /// The validated session manifest the origin serves now.
@@ -630,7 +614,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::unauthenticated(url).unwrap()
     }
 
     /// [`super::common::manifest`] ending at Ironwood activation, where a node reports
@@ -833,15 +817,13 @@ mod tests {
         nodes: &[Node],
         witnesses: bool,
     ) -> std::result::Result<(u64, Option<Hash>), Failure> {
-        let mut urls = Vec::new();
+        let mut clients = Vec::new();
         for node in nodes {
-            urls.push(serve_node(*node).await);
+            clients.push(ZakuraClient::unauthenticated(serve_node(*node).await).unwrap());
         }
         let directory = anchored();
         let fixture_height = directory.end_height - 1;
-        let (verified, top) = oracle(&urls, None, &directory, fixture_height, witnesses)
-            .await
-            .unwrap()?;
+        let (verified, top) = oracle(&clients, &directory, fixture_height, witnesses).await?;
         assert_eq!(verified.fixture_hash, fixture_block().0.hash().0);
         Ok((top, verified.root))
     }
@@ -888,7 +870,7 @@ mod tests {
         let (category, detail) = decide(&nodes[2..], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert_eq!(detail["attempts"].as_array().unwrap().len(), 4);
-        assert_eq!(detail["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(detail["node_tip"], end + 50);
         let (category, detail) = decide(&[behind], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert!(detail["attempts"].as_array().unwrap().is_empty());
