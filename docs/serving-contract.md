@@ -62,7 +62,7 @@ code maps to each product's codes rather than unifying them.
 |---|---|---|---|---|
 | Overload | 429, `Retry-After: 1` | 429, no `Retry-After` | 503, `Retry-After` | 429, `Retry-After: 1` |
 | Stale routing or revision | 409 | 409 | 409 with `map_sha256` | 409 |
-| Revoked or expired session | 410 | 410 | — | 410 when revoked; 409 once a displaced session's 60 s grace ends |
+| Revoked or expired session | 410 | 410 | — | 410 when revoked, and a session file still being sent is cut short; 409 once a displaced session's 60 s grace ends |
 | Not assigned here | — | — | 421 | — |
 | No authority or not ready | 503 | 503 | 503 | 503 |
 | Worker refused before acceptance | 503 with `x-enhance-evaluation: not-accepted`; the router may retry once elsewhere | — | — | — |
@@ -86,6 +86,8 @@ keeps its own limits and refusal mapping:
 Receiver reads the upload within 15 seconds, capped at the largest query, before
 the query waits for a permit. It answers a client at its cap or a full queue with
 429 and `Retry-After: 1`, a slow upload with 408 and an oversized one with 413.
+A query longer than its session's query is 413 and a shorter one 400, both
+refused before it waits for a permit.
 
 Transparent keeps its own admission (`transparent-shard-server/src/admission.rs`).
 It counts running and queued requests together, starts the deadline before the
