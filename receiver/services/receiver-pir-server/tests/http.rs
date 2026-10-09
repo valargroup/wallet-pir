@@ -513,9 +513,12 @@ async fn health_reports_the_owners_fields_beside_its_own() {
 fn rotation_waits_for_the_previous_revisions_grace() {
     let publications = Publications::default();
     let publish = |height: u32| {
-        let mut next = snapshot(1);
-        next.manifest.end_height = height;
-        next.manifest.end_hash = [height as u8; 32];
+        let mut m = manifest(MIN_ROWS);
+        (m.end_height, m.end_hash) = (height, [height as u8; 32]);
+        // Below the moving tip, so the record need not repeat its hash.
+        let mut paid = record(0, 1);
+        paid.payment.height = 100;
+        let next = Snapshot::build(m, &[paid], &[]).unwrap();
         publications.publish(
             Publication::new(Server::new(next).unwrap(), None).unwrap(),
             0,
@@ -829,6 +832,17 @@ async fn reject_incomplete_or_inconsistent_pagination() {
         RECORD_BYTES,
     };
     use sha2::{Digest, Sha256};
+    /// A server that skips validation: it serves `rows` as every row file.
+    struct Impostor(Vec<u8>);
+    impl Transport for Impostor {
+        async fn get(&self, url: &str, _: usize) -> Result<Vec<u8>, Error> {
+            assert!(url.contains("/v1/receiver/rows/"));
+            Ok(self.0.clone())
+        }
+        async fn post(&self, _: &str, _: Vec<u8>, _: usize) -> Result<Vec<u8>, Error> {
+            unreachable!("the row file answers every lookup")
+        }
+    }
     // Model a faulty indexer that publishes correctly hashed but inconsistent page data.
     for fault in 0..3 {
         let mut data = snapshot(2);
@@ -854,15 +868,69 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             }
         }
         data.manifest.data_sha256 = Sha256::digest(&data.data).into();
-        let server = serve(data).await;
-        let mut client = connect(&server.origin, Http(http()), accepted(), 0)
-            .await
-            .unwrap();
+        assert!(
+            matches!(
+                Server::new(data.clone()),
+                Err(Error::Directory(receiver_directory::Error::Malformed))
+            ),
+            "fault {fault} must not be prepared"
+        );
+        // A wallet still refuses the same rows from a server that skips that check.
+        let manifest = receiver_pir::Manifest {
+            protocol: receiver_pir::PROTOCOL.into(),
+            directory: data.manifest,
+            public_digest: [0; 32],
+        };
+        let mut client =
+            DirectoryClient::connect_manifest("", Impostor(data.data), accepted(), manifest, 450)
+                .await
+                .unwrap();
         assert!(
             client.lookup(receiver(), accepted()).await.is_err(),
             "fault {fault} must not produce partial success"
         );
     }
+}
+
+/// A snapshot whose digest covers page zero stored outside its bucket is refused,
+/// since every lookup would miss it and report an empty history.
+#[test]
+fn a_misbucketed_snapshot_is_never_prepared() {
+    use receiver_directory::{
+        snapshot::{row_for, ROW_BYTES},
+        RECORD_BYTES,
+    };
+    use sha2::{Digest, Sha256};
+    let mut misplaced = snapshot(1);
+    let bucket = row_for(&misplaced.manifest, &receiver(), 0).unwrap();
+    let from = bucket * ROW_BYTES;
+    let to = ((bucket + 1) % MIN_ROWS as usize) * ROW_BYTES;
+    let slot = misplaced.data[from..from + RECORD_BYTES].to_vec();
+    assert_eq!(Record::decode(&slot).unwrap(), Some(record(0, 1)));
+    misplaced.data[from..from + RECORD_BYTES].fill(0);
+    misplaced.data[to..to + RECORD_BYTES].copy_from_slice(&slot);
+    misplaced.manifest.data_sha256 = Sha256::digest(&misplaced.data).into();
+    assert!(matches!(
+        Server::new(misplaced),
+        Err(Error::Directory(receiver_directory::Error::Malformed))
+    ));
+}
+
+/// A valid publication is prepared and accepted both without a witness file and with
+/// one that proves its record.
+#[test]
+fn a_valid_publication_is_accepted_with_or_without_witnesses() {
+    use receiver_directory::witness::WitnessSnapshot;
+    let mut manifest = snapshot(0).manifest;
+    (manifest.start_position, manifest.end_position) = (0, 1);
+    let mut paid = record(0, 1);
+    (paid.payment.position, paid.payment.cmx) = (0, [1; 32]);
+    let snapshot = Snapshot::build(manifest, &[paid], &[]).unwrap();
+    let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
+        .unwrap()
+        .encode();
+    Publication::new(Server::new(snapshot.clone()).unwrap(), None).unwrap();
+    Publication::new(Server::new(snapshot).unwrap(), Some(proof)).unwrap();
 }
 
 #[tokio::test]
@@ -1062,7 +1130,10 @@ fn encrypted_publication_roundtrip_and_fail_closed() {
 fn reject_corrupt_rows_before_preprocessing() {
     let mut snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &[]).unwrap();
     snapshot.data[0] ^= 1;
-    assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
+    assert!(matches!(
+        Server::new(snapshot),
+        Err(Error::Directory(receiver_directory::Error::Malformed))
+    ));
     // The directory refuses a smaller table before the PIR profile sees it.
     assert!(Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).is_err());
 }

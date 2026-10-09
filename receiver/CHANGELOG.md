@@ -9,7 +9,7 @@
   the manifest declares them, with when its feed started and last completed a read;
   directory profile `ironwood-zero-ovk-receiver-v1`, whose revision hashes every
   field at fixed width and refuses unknown ones), and common `IWPROOF1` witness
-  files.
+  files, built from histories of at most 2^22 commitments.
 - Add encrypted receiver lookups (`ironwood-receiver-pir-v1-two-mask-m29`, the
   shared `pir-native` profile) and a row-file mode chosen by remaining work, both
   bound to one accepted publication and run over a host-supplied transport. A PIR
@@ -17,7 +17,8 @@
   to one receiver cannot fail a lookup. An HTTP service serves each publication's
   sessions, rows, witnesses and filters, with process identity and the indexer's
   latest report at `/v1/receiver/health` and the shared HTTP metrics, and refuses
-  a witness file without a path for every served record. A replaced
+  a publication that fails `Snapshot::validate` and a witness file without a path
+  for every served record. A replaced
   publication keeps serving its sessions for 60 seconds, and the next replacement
   waits for that to end; a revocation stops session files and query answers
   still being sent at their next frame.
@@ -39,7 +40,8 @@
   missing from the index and when the running process last read each NEAR feed,
   and logs with `tracing`. Its `receiver-probe` binary is a `pir-monitor` service
   probe that runs one live encrypted lookup of a pinned payment, checked against the
-  fixture and the node's block, checking chain facts on one node at a time, highest
-  tip first; with `--witnesses` it checks the witness file against the node's
-  Ironwood root, and a deploy runs it with `--await-feed-reads` to wait for the
-  restarted process to read both NEAR feeds.
+  fixture and the node's block, for the fixture's independently decoded receiver,
+  which recovery must reproduce, checking chain facts on one node at a time,
+  highest tip first; with `--witnesses` it checks the witness file against the
+  node's Ironwood root, and a deploy runs it with `--await-feed-reads` to wait for
+  the restarted process to read both NEAR feeds.

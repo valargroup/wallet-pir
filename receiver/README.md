@@ -43,6 +43,13 @@ immutable revision is a domain-separated SHA-256 of every field at fixed width, 
 Enhance and Status hash their manifests, and a manifest with a field this version
 does not know is refused.
 
+`Snapshot::validate` checks a supplied publication whole, before a server prepares
+it: the row and filter digests, the declared filter sets and a paid set of exactly
+the records' receivers, every slot and row padding, each record's coverage and
+bucket, the exact record count, and every receiver's pages and unique outputs and
+positions. A record stored outside its bucket would otherwise make lookups of that
+receiver find nothing.
+
 ## Filters
 
 Each publication carries an `IWFLT1` filter file of labeled BIP 158 Golomb-coded
@@ -229,12 +236,14 @@ completing them, it fails as `oracle_unavailable`, listing each attempt, rather
 than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
-zero-OVK Action with its txid, height, Action index and note position, the probe
-recovers its receiver, and the answer must hold that payment at that position and
-height with the fixture's fields, the node's block hash and the index of the
-fixture's transaction in the node's block, read by hash and checked against its
-merkle root. A fixture that fails its pin, or whose transaction is not in that
-block, is `oracle_invalid`. The lookup is reported as `phase:
+zero-OVK Action with its txid, height, Action index, note position and the
+receiver it pays, decoded independently of recovery. Before any request the probe
+requires recovery to reproduce that receiver, which it then looks up, so a
+recovery regression shared with the indexer cannot pass. The answer must hold that
+payment at that position and height with the fixture's fields, the node's block
+hash and the index of the fixture's transaction in the node's block, read by hash
+and checked against its merkle root. A fixture that fails its SHA-256 or receiver
+pin, or whose transaction is not in that block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
 With `--witnesses`, which a deployment must pass when its indexer runs with
@@ -279,6 +288,12 @@ returns a receiver's complete history or an error. Over PIR it reads up to
 the client across batches and reconnect for a new revision. The server sees the
 mode and the number of queries, so it learns how many lookups found several
 payments, but never which receivers were looked up.
+
+Building the file reads every commitment since the empty tree. The builder refuses
+a history of more than 2^22 (4,194,304) commitments before reading it, a limit on
+its memory rather than on the format, about 460 days ahead of mainnet's October 2026
+size. Reaching it stops fresh witness publication, so the service goes stale instead
+of running out of memory, until the limit is raised.
 
 ## Tests
 
