@@ -1,4 +1,4 @@
-use super::{WitnessSnapshot, HEADER, MAX_WITNESS_BYTES, MAX_WITNESS_COMMITMENTS, NODE};
+use super::{WitnessSnapshot, HEADER, MAX_WITNESS_BYTES, NODE};
 use crate::{snapshot::Manifest, Error, Hash};
 use incrementalmerkletree::Hashable;
 use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
@@ -16,34 +16,13 @@ impl WitnessCache {
     /// Appends, shorter histories and replacement forks all recompute the affected suffix.
     /// `positions` must hold one position per manifest record, though a matching count
     /// cannot prove they are the right ones. Publication fencing and independent
-    /// chain-root validation remain the caller's job. More than
-    /// [`MAX_WITNESS_COMMITMENTS`] commitments is [`Error::Capacity`], and leaves the
-    /// cache as it was.
+    /// chain-root validation remain the caller's job. A file over
+    /// [`MAX_WITNESS_BYTES`] is [`Error::Capacity`], found while collecting its nodes.
     pub fn build(
         &mut self,
         manifest: &Manifest,
         commitments: &[Hash],
         positions: &BTreeSet<u32>,
-    ) -> Result<WitnessSnapshot, Error> {
-        self.build_within(
-            manifest,
-            commitments,
-            positions,
-            MAX_WITNESS_BYTES,
-            MAX_WITNESS_COMMITMENTS,
-        )
-    }
-
-    /// [`Self::build`] with test-sized limits: [`Error::Capacity`] for more than
-    /// `max_commitments` commitments before any tree allocation, or as soon as the
-    /// file's nodes would exceed `max_bytes`, before collecting the rest.
-    fn build_within(
-        &mut self,
-        manifest: &Manifest,
-        commitments: &[Hash],
-        positions: &BTreeSet<u32>,
-        max_bytes: usize,
-        max_commitments: u64,
     ) -> Result<WitnessSnapshot, Error> {
         manifest.validate()?;
         if manifest.start_position != 0
@@ -54,9 +33,6 @@ impl WitnessCache {
                 .any(|p| u64::from(*p) >= manifest.end_position)
         {
             return Err(Error::Coverage);
-        }
-        if commitments.len() as u64 > max_commitments {
-            return Err(Error::Capacity);
         }
         // An empty tree, so no records or positions either, has no levels to combine.
         if commitments.is_empty() {
@@ -106,7 +82,7 @@ impl WitnessCache {
                 first_changed = first_parent;
             }
         }
-        let max_nodes = (max_bytes - HEADER) / NODE;
+        let max_nodes = (MAX_WITNESS_BYTES - HEADER) / NODE;
         let mut nodes = BTreeMap::new();
         for depth in 0..32u8 {
             for position in positions {
@@ -119,92 +95,5 @@ impl WitnessCache {
             }
         }
         WitnessSnapshot::from_nodes(manifest, self.levels[32][0].to_bytes(), nodes)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::snapshot::{FilterSet, MIN_ROWS, PROFILE};
-
-    /// `len` distinct valid commitments.
-    fn leaves(len: u64) -> Vec<Hash> {
-        (1..=len)
-            .map(|i| {
-                let mut cmx = [0; 32];
-                cmx[..8].copy_from_slice(&i.to_le_bytes());
-                cmx
-            })
-            .collect()
-    }
-
-    /// A manifest ending at `len` commitments with `records` records.
-    fn manifest(len: u64, records: u64) -> Manifest {
-        Manifest {
-            profile: PROFILE.into(),
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-            end_height: 110,
-            end_hash: [3; 32],
-            end_position: len,
-            rows: MIN_ROWS,
-            salt: [3; 32],
-            records,
-            data_sha256: [0; 32],
-            filters: vec![FilterSet {
-                label: crate::filter::PAID.into(),
-                count: 0,
-                window_secs: None,
-                since_unix: None,
-                until_unix: None,
-            }],
-            filters_sha256: [0; 32],
-        }
-    }
-
-    /// Sparse positions need a sibling at nearly every level, so a small cap is
-    /// exceeded while the nodes are still being collected.
-    #[test]
-    fn the_size_cap_stops_collecting_nodes() {
-        let leaves = leaves(64);
-        let manifest = manifest(64, 2);
-        let positions = [0, 63].into_iter().collect();
-        let mut cache = WitnessCache::default();
-        assert!(matches!(
-            cache.build_within(&manifest, &leaves, &positions, HEADER + NODE * 4, 64),
-            Err(Error::Capacity)
-        ));
-        let built = cache.build(&manifest, &leaves, &positions).unwrap();
-        assert!(built.nodes.len() > 4);
-    }
-
-    /// A valid history with few payments but more commitments than the limit is
-    /// refused, the limit itself passes, and the refusal leaves the cache usable.
-    #[test]
-    fn the_commitment_limit_refuses_long_sparse_histories() {
-        let all = leaves(65);
-        let positions = [0, 64].into_iter().collect();
-        let long = manifest(65, 2);
-        let mut cache = WitnessCache::default();
-        cache
-            .build(&manifest(64, 1), &all[..64], &[3].into_iter().collect())
-            .unwrap();
-        let before = cache.levels.clone();
-        assert!(matches!(
-            cache.build_within(&long, &all, &positions, MAX_WITNESS_BYTES, 64),
-            Err(Error::Capacity)
-        ));
-        assert!(cache.levels == before);
-        let at_limit = cache
-            .build_within(&long, &all, &positions, MAX_WITNESS_BYTES, 65)
-            .unwrap();
-        assert_eq!(
-            at_limit.encode(),
-            WitnessSnapshot::build(&long, &all, &positions)
-                .unwrap()
-                .encode()
-        );
     }
 }

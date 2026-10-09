@@ -3033,7 +3033,6 @@ dependencies = [
  "bitcoin",
  "hex",
  "incrementalmerkletree",
- "receiver-directory",
  "rusqlite",
  "serde",
  "serde_json",

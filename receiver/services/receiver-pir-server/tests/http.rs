@@ -1125,8 +1125,9 @@ fn reject_corrupt_rows_before_preprocessing() {
         Server::new(snapshot),
         Err(Error::Directory(receiver_directory::Error::Malformed))
     ));
-    // The directory refuses a smaller table before the PIR profile sees it.
-    assert!(Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).is_err());
+    // No PIR profile serves a smaller table.
+    let small = Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).unwrap();
+    assert!(matches!(Server::new(small), Err(Error::Unsupported)));
 }
 
 /// A session manifest is valid up to exactly [`receiver_pir::MAX_MANIFEST_BYTES`] of

@@ -9,7 +9,7 @@
   the manifest declares them, with when its feed started and last completed a read;
   directory profile `ironwood-zero-ovk-receiver-v1`, whose revision hashes every
   field at fixed width and refuses unknown ones), and common `IWPROOF1` witness
-  files, built from histories of at most 2^22 commitments.
+  files, built from histories within a caller-set commitment limit.
 - Add encrypted receiver lookups (`ironwood-receiver-pir-v1-two-mask-m29`, the
   shared `pir-native` profile) and a row-file mode chosen by remaining work, both
   bound to one accepted publication and run over a host-supplied transport. A PIR
