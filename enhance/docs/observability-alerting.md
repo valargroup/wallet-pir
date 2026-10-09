@@ -123,6 +123,11 @@ The independent checker requires:
 - `PIR_MONITOR_STATE_PATH=/var/lib/pir-monitor/incidents.sqlite`
 - `PIR_MONITOR_ALERT_MODE=shadow` initially; `active` after qualification.
 
+Its incidents link to `PIR_MONITOR_ORIGIN`'s APM dashboard, except the service
+probes' (Status, Transparent and receiver), which link to
+`PIR_MONITOR_PUBLIC_STATUS_URL`, by default
+`https://monitor-pir.valargroup.dev/monitor-status`.
+
 Package the independently extracted **production** oracle with its canonical
 anchor; synthetic test fixtures cannot establish live correctness. Validate its
 anchor with Zakura before deployment. Never update expected bytes using answers
