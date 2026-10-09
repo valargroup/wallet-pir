@@ -17,6 +17,14 @@ The receiver terminal block at 3,497,109 and Enhance generation 446's anchor at
 wire sizes, and the single-query timing are in [the evidence record](results.json),
 and the run metadata in [`manifest.json`](manifest.json).
 
+The run made one query, so the record's fifty-lookup byte count,
+`lookup_payload_bytes.fifty_single_page_lookups_including_setup`, is derived rather
+than observed: 14,336 + 50 × (135,220 + 5,172) = 7,033,936 bytes, assuming one
+shared setup and fifty single-page lookups at the historical q48 request and
+response sizes. Like the other byte counts, it excludes manifest, HTTP/TLS,
+Enhance, witness and spentness traffic. The manifest's `derived` entry classifies
+it by path.
+
 This record is historical. It measured the `ironwood-receiver-pir-v1-q48` protocol,
 since replaced by `ironwood-receiver-pir-v1-two-mask-m29`, whose request at 8192
 rows is 77,876 bytes rather than 135,220. The opt-in test below existed at the
