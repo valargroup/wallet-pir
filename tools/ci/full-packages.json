@@ -13,7 +13,8 @@
   ],
   "receiver": [
     "receiver-directory",
-    "receiver-pir"
+    "receiver-pir",
+    "receiver-pir-server"
   ],
   "transparent": [
     "transparent-native",

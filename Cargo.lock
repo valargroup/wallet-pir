@@ -3060,6 +3060,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "receiver-pir-server"
+version = "0.0.1"
+dependencies = [
+ "axum",
+ "hex",
+ "pir-control",
+ "pir-observability",
+ "receiver-directory",
+ "receiver-pir",
+ "reqwest",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
