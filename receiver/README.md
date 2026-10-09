@@ -182,7 +182,8 @@ it, gives each feed's last read and how many
 payouts NEAR reported complete more than an hour earlier have no indexed payment to
 their receiver in the transaction NEAR reported, the signal that the index missed
 one or NEAR stopped paying with the zero OVK. A payout without a reported
-transaction is not checked.
+transaction is not checked. A matched payout is not checked again until a reorg
+rewinds the index, which first forgets every match.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.

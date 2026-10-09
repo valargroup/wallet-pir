@@ -86,9 +86,9 @@ pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
 /// The feed's health for monitoring: when each feed's last complete read began, and how
 /// many payouts first seen complete more than an hour before `now`, however long ago,
 /// still have no payment to their receiver in the transaction NEAR reported in `index`.
-/// Matched payouts are recorded and not checked again, so one that stays missing stays
-/// in the count. A missing payout means the indexer missed it, or NEAR paid it without
-/// the zero OVK, which a seed restore cannot find.
+/// Matched payouts are recorded and not checked again until a [`rewind`], and one
+/// that stays missing stays in the count. A missing payout means the indexer missed
+/// it, or NEAR paid it without the zero OVK, which a seed restore cannot find.
 pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
     let unmatched = provider.unmatched(now - COMPLETION_GRACE_SECS)?;
     let mut matched = Vec::new();
@@ -108,6 +108,21 @@ pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<s
         "payouts_checked": unmatched.len(),
         "payouts_missing": missing,
     }))
+}
+
+/// Rewinds `index` to the saved block at `height` with `hash` (see [`Store::rewind`]),
+/// first forgetting every payout match (see [`ProviderStore::forget_matches`]), since
+/// the rewind can remove a matched payment. In that order a crash between the two
+/// databases' writes only makes the next [`report`] check payouts again.
+pub fn rewind(
+    provider: &mut ProviderStore,
+    index: &mut Store,
+    height: u32,
+    hash: receiver_directory::Hash,
+) -> Result<()> {
+    provider.forget_matches()?;
+    index.rewind(height, hash)?;
+    Ok(())
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
@@ -370,12 +385,6 @@ mod tests {
     fn provider_sets_reach_back_from_the_last_complete_read() {
         let dir = tempfile::tempdir().unwrap();
         let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
-        let receiver = |seed| {
-            let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
-            let fvk = orchard::keys::FullViewingKey::from(&sk);
-            let address = fvk.address_at(0u32, orchard::keys::Scope::External);
-            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
-        };
         let (payouts, refunds) = (Feed::Payouts.name(), Feed::Refunds.name());
         // A feed that never finished a read publishes nothing.
         assert!(provider_sets(&store).unwrap().is_empty());
@@ -552,19 +561,23 @@ mod tests {
         assert_eq!(completed[0].1[1], 0x7e);
     }
 
-    /// A payout first seen complete more than an hour ago with no indexed payment in its
-    /// transaction is reported missing, even to a receiver paid before; a newer one is
-    /// not checked yet.
-    #[test]
-    fn report_counts_completed_payouts_missing_from_the_index() {
+    /// A receiver from the spending key with every byte `seed`.
+    fn receiver(seed: u8) -> Receiver {
+        let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
+        let fvk = orchard::keys::FullViewingKey::from(&sk);
+        let address = fvk.address_at(0u32, orchard::keys::Scope::External);
+        Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+    }
+
+    /// An index from height 100 whose first block pays `receiver(1)` in transaction
+    /// `[7; 32]`, and that block.
+    fn paid_index(path: &std::path::Path) -> (Store, receiver_directory::store::IndexedBlock) {
         use receiver_directory::{
             store::{Config, IndexedBlock},
             Payment,
         };
-        let dir = tempfile::tempdir().unwrap();
-        let mut provider = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
-        let mut index = Store::open(
-            dir.path().join("directory.sqlite"),
+        let index = Store::open(
+            path,
             Config {
                 genesis: [1; 32],
                 start_height: 100,
@@ -573,12 +586,6 @@ mod tests {
             },
         )
         .unwrap();
-        let receiver = |seed| {
-            let sk = orchard::keys::SpendingKey::from_bytes([seed; 32]).unwrap();
-            let fvk = orchard::keys::FullViewingKey::from(&sk);
-            let address = fvk.address_at(0u32, orchard::keys::Scope::External);
-            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
-        };
         let payment = Payment {
             height: 100,
             block_hash: [3; 32],
@@ -591,18 +598,70 @@ mod tests {
             ephemeral_key: [0; 32],
             ciphertext_prefix: [0; 52],
         };
-        index
-            .append(&IndexedBlock {
-                height: 100,
-                hash: [3; 32],
-                parent: [2; 32],
-                start_position: 0,
-                end_position: 1,
-                coinbase_actions: 0,
-                payments: vec![(receiver(1), payment)],
-                commitments: vec![[5; 32]],
-            })
+        let block = IndexedBlock {
+            height: 100,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 0,
+            end_position: 1,
+            coinbase_actions: 0,
+            payments: vec![(receiver(1), payment)],
+            commitments: vec![[5; 32]],
+        };
+        (index, block)
+    }
+
+    /// A payout matched before a rewind removed its payment is reported missing,
+    /// after both databases reopen, until reindexing restores the payment.
+    #[test]
+    fn a_rewind_rechecks_matched_payouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("provider.sqlite"),
+            dir.path().join("directory.sqlite"),
+        );
+        let mut provider = ProviderStore::open(&provider_path).unwrap();
+        let (mut index, block) = paid_index(&index_path);
+        index.append(&block).unwrap();
+        let now = 1_000_000;
+        provider
+            .record(
+                "near-payouts",
+                0,
+                &[],
+                &[(receiver(1), [7; 32])],
+                now,
+                now - 2 * 60 * 60,
+            )
             .unwrap();
+        assert_eq!(
+            report(&mut provider, &index, now).unwrap()["payouts_missing"],
+            0
+        );
+        rewind(&mut provider, &mut index, 99, [2; 32]).unwrap();
+        drop((provider, index));
+        let mut provider = ProviderStore::open(&provider_path).unwrap();
+        let (mut index, block) = paid_index(&index_path);
+        assert_eq!(
+            report(&mut provider, &index, now).unwrap()["payouts_missing"],
+            1
+        );
+        index.append(&block).unwrap();
+        assert_eq!(
+            report(&mut provider, &index, now).unwrap()["payouts_missing"],
+            0
+        );
+    }
+
+    /// A payout first seen complete more than an hour ago with no indexed payment in its
+    /// transaction is reported missing, even to a receiver paid before; a newer one is
+    /// not checked yet.
+    #[test]
+    fn report_counts_completed_payouts_missing_from_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut provider = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let (mut index, block) = paid_index(&dir.path().join("directory.sqlite"));
+        index.append(&block).unwrap();
         let now = 1_000_000;
         // The indexed payout, then a later one to the same receiver that is not indexed.
         let payouts = [(receiver(1), [7; 32]), (receiver(1), [8; 32])];

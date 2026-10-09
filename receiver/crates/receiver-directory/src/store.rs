@@ -462,6 +462,14 @@ impl ProviderStore {
         .collect()
     }
 
+    /// Forgets every payout [`Self::match_payouts`] recorded, so later checks look each
+    /// up again. A rewind of the index can remove a matched payment, so call this
+    /// before rewinding.
+    pub fn forget_matches(&mut self) -> Result<(), Error> {
+        self.db.execute("DELETE FROM matched_payouts", [])?;
+        Ok(())
+    }
+
     /// Records payouts found in the index, so later checks skip them.
     pub fn match_payouts(&mut self, payouts: &[(Receiver, Hash)]) -> Result<(), Error> {
         let tx = self.db.transaction()?;

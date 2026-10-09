@@ -275,7 +275,7 @@ async fn refresh(
         if let Some(serving) = serving {
             serving.revoke();
         }
-        store.rewind(tip.height, tip.hash)?;
+        receiver_indexer::near::rewind(&mut provider_store, &mut store, tip.height, tip.hash)?;
     }
     if end < tip.height {
         return Err("end height precedes stored tip".into());
