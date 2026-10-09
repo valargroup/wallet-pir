@@ -11,4 +11,4 @@ Reproduce the pinned 43 bytes, `RECEIVER_HEX` in `../../common/mod.rs`, from thi
 python3 -c "import json, ua; r = json.load(open('near-explorer-record.json')); print(dict(ua.receivers(r['refundTo']))[3].hex())"
 ```
 
-Typecode 3 is the Orchard receiver. The output must equal the record's `refundTo_orchard_receiver_hex`.
+Typecode 3 is the Orchard receiver. The output must equal the record's `refundTo_orchard_receiver_hex`, and the `receiver` field of `../zero-ovk-action.json`, which carries the pin for the receiver probe. Recovery must reproduce the pin; nothing derives the pin from recovery.

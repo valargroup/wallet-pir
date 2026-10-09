@@ -1,6 +1,7 @@
 //! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
+    witness::MAX_WITNESS_COMMITMENTS,
     Error, Hash, Payment, Receiver, Record,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -84,21 +85,28 @@ impl Store {
 
     /// Build the publication's common proofs, reusing unchanged subtrees from `cache`.
     /// Old indexes without all commitments must be rebuilt before producing proofs.
+    /// A history beyond [`MAX_WITNESS_COMMITMENTS`] is [`Error::Capacity`], found
+    /// before any commitment is read.
     pub fn witnesses(
         &self,
         manifest: &Manifest,
         cache: &mut crate::witness::WitnessCache,
     ) -> Result<crate::witness::WitnessSnapshot, Error> {
-        let (commitments, positions) = self.witness_inputs(manifest)?;
+        let (commitments, positions) = self.witness_inputs(manifest, MAX_WITNESS_COMMITMENTS)?;
         cache.build(manifest, &commitments, &positions)
     }
 
     /// The commitments below `manifest`'s end and the indexed payment positions, read
-    /// from one database view.
+    /// from one database view, or [`Error::Capacity`] for more than `max_commitments`.
     fn witness_inputs(
         &self,
         manifest: &Manifest,
+        max_commitments: u64,
     ) -> Result<(Vec<Hash>, std::collections::BTreeSet<u32>), Error> {
+        manifest.validate()?;
+        if manifest.end_position > max_commitments {
+            return Err(Error::Capacity);
+        }
         // Bind the commitments and payment positions to a single database view.
         let tx = self.db.unchecked_transaction()?;
         let checkpoint = self.checkpoint(manifest.end_height)?;
@@ -562,5 +570,97 @@ fn tip(db: &Connection, c: &Config) -> Result<Checkpoint, Error> {
         None => Ok(boundary(c)),
         Some(Some(p)) => Ok(p),
         Some(None) => Err(Error::Malformed),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snapshot::{FilterSet, MIN_ROWS};
+    use orchard::keys::{FullViewingKey, Scope, SpendingKey};
+
+    /// A history longer than the witness limit is refused from its manifest alone,
+    /// before any commitment row is read, and the limit itself passes.
+    #[test]
+    fn witness_inputs_refuse_long_histories_before_reading_commitments() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            genesis: [1; 32],
+            start_height: 100,
+            start_parent: [2; 32],
+            start_position: 0,
+        };
+        let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+        let fvk = FullViewingKey::from(&SpendingKey::from_bytes([7; 32]).unwrap());
+        let receiver =
+            Receiver::from_bytes(fvk.address_at(0u32, Scope::External).to_raw_address_bytes())
+                .unwrap();
+        // One payment among four commitments, after a coinbase Action.
+        let commitments = vec![[1; 32], [2; 32], [3; 32], [4; 32]];
+        let payment = Payment {
+            height: 100,
+            block_hash: [3; 32],
+            txid: [5; 32],
+            tx_index: 1,
+            action_index: 0,
+            position: 2,
+            action_nullifier: [6; 32],
+            cmx: commitments[2],
+            ephemeral_key: [7; 32],
+            ciphertext_prefix: [8; 52],
+        };
+        store
+            .append(&IndexedBlock {
+                height: 100,
+                hash: [3; 32],
+                parent: [2; 32],
+                start_position: 0,
+                end_position: 4,
+                coinbase_actions: 1,
+                payments: vec![(receiver, payment)],
+                commitments: commitments.clone(),
+            })
+            .unwrap();
+        let manifest = Manifest {
+            profile: PROFILE.into(),
+            genesis: [1; 32],
+            start_height: 100,
+            start_parent: [2; 32],
+            start_position: 0,
+            end_height: 100,
+            end_hash: [3; 32],
+            end_position: 4,
+            rows: MIN_ROWS,
+            salt: [3; 32],
+            records: 1,
+            data_sha256: [0; 32],
+            filters: vec![FilterSet {
+                label: crate::filter::PAID.into(),
+                count: 1,
+                window_secs: None,
+                since_unix: None,
+                until_unix: None,
+            }],
+            filters_sha256: [0; 32],
+        };
+        let (read, positions) = store.witness_inputs(&manifest, 4).unwrap();
+        assert_eq!((read, positions), (commitments, [2].into_iter().collect()));
+        assert!(matches!(
+            store.witness_inputs(&manifest, 3),
+            Err(Error::Capacity)
+        ));
+        // With a gap in the rows, reading them fails, but the limit still refuses first.
+        store
+            .db
+            .execute("DELETE FROM commitments WHERE position=0", [])
+            .unwrap();
+        assert!(matches!(
+            store.witness_inputs(&manifest, 4),
+            Err(Error::Coverage)
+        ));
+        assert!(matches!(
+            store.witness_inputs(&manifest, 3),
+            Err(Error::Capacity)
+        ));
     }
 }
