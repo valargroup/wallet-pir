@@ -599,6 +599,52 @@ fn coinbase_payments_are_refused() {
     assert_eq!(store.counts().unwrap(), (1, 2));
 }
 
+/// A block whose payments a snapshot would refuse is not appended: here a receiver's
+/// later position in an earlier transaction, and one txid at two transaction indexes.
+#[cfg(feature = "store")]
+#[test]
+fn unsnapshottable_payments_are_refused() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let block = |payments: Vec<Record>| IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 200,
+        end_position: 202,
+        coinbase_actions: 0,
+        commitments: vec![[6; 32]; 2],
+        payments: payments
+            .into_iter()
+            .map(|mut r| {
+                r.payment.height = 100;
+                (r.receiver, r.payment)
+            })
+            .collect(),
+    };
+    let (mut first, second) = (record(0, 2), record(1, 2));
+    first.payment.tx_index = 3;
+    let mut relocated = second.clone();
+    relocated.receiver = other_receiver();
+    (relocated.payment.txid, relocated.payment.action_index) = (first.payment.txid, 1);
+    for bad in [second.clone(), relocated] {
+        assert!(matches!(
+            store.append(&block(vec![first.clone(), bad])),
+            Err(Error::Malformed)
+        ));
+        assert_eq!(store.counts().unwrap(), (0, 0));
+    }
+    first.payment.tx_index = 1;
+    store.append(&block(vec![first, second])).unwrap();
+}
+
 /// A store's positions stay within the note commitment tree, so every tip it reaches
 /// can be published: a start or block past `TREE_SIZE` is refused, and one ending
 /// exactly at it is valid.

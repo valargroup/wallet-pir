@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 /// The directory format a manifest commits to.
 pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
@@ -353,7 +354,7 @@ impl Snapshot {
 /// The fields of a [`Record`] that [`check_pages`] reads, so validating a publication
 /// need not hold its records whole.
 #[derive(Clone, Copy)]
-struct PageMeta {
+pub(crate) struct PageMeta {
     receiver: Receiver,
     page: u32,
     total: u32,
@@ -410,16 +411,13 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
 /// total, each continuing the last as [`check_next`] requires, no two records share
-/// an output or note position, and no two, of any receivers, disagree on the hash of
-/// a height, the txid at a height and transaction index, or the location of a txid.
+/// an output or note position, and all agree on their [`Locations`].
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     let mut previous: Option<PageMeta> = None;
     let mut outputs = BTreeSet::new();
     let mut positions = BTreeSet::new();
-    let mut blocks = BTreeMap::new();
-    let mut txids = BTreeMap::new();
-    let mut locations = BTreeMap::new();
+    let mut locations = Locations::default();
     for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
         match previous {
@@ -437,15 +435,7 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
         previous = Some(record);
         if !outputs.insert((record.txid, record.action_index))
             || !positions.insert(record.position)
-            || *blocks.entry(record.height).or_insert(record.block_hash) != record.block_hash
-            || *txids
-                .entry((record.height, record.tx_index))
-                .or_insert(record.txid)
-                != record.txid
-            || *locations
-                .entry(record.txid)
-                .or_insert((record.height, record.tx_index))
-                != (record.height, record.tx_index)
+            || !locations.add(&record)
         {
             return Err(Error::Malformed);
         }
@@ -454,6 +444,25 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
         return Err(Error::Malformed);
     }
     Ok(())
+}
+
+/// The chain locations of the records seen so far, of any receivers: one block hash
+/// per height, one txid per transaction index at a height, and one location per txid.
+#[derive(Default)]
+pub(crate) struct Locations {
+    blocks: BTreeMap<u32, Hash>,
+    txids: BTreeMap<(u32, u32), Hash>,
+    transactions: BTreeMap<Hash, (u32, u32)>,
+}
+
+impl Locations {
+    /// Adds `r`'s location, or returns `false` if it disagrees with an earlier one.
+    pub(crate) fn add(&mut self, r: &PageMeta) -> bool {
+        let location = (r.height, r.tx_index);
+        *self.blocks.entry(r.height).or_insert(r.block_hash) == r.block_hash
+            && *self.txids.entry(location).or_insert(r.txid) == r.txid
+            && *self.transactions.entry(r.txid).or_insert(location) == location
+    }
 }
 
 /// Rejects a record whose payment lies outside the manifest's blocks or positions, or

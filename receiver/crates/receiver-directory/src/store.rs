@@ -133,8 +133,10 @@ impl Store {
         tip(&self.db, &self.config)
     }
 
-    /// Reject gaps, changed parents, coinbase payments and malformed records before
-    /// advancing coverage.
+    /// Reject gaps, changed parents, coinbase payments, malformed records and payments
+    /// a snapshot would refuse before advancing coverage: each must continue its
+    /// receiver's last stored payment as [`snapshot::check_next`] requires, and the
+    /// block's payments must agree on their block hash and transaction locations.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -173,6 +175,7 @@ impl Store {
             )?;
         }
         let mut previous_position = None;
+        let mut locations = snapshot::Locations::default();
         for (receiver, p) in &block.payments {
             // Coinbase recipients are excluded: the coinbase is transaction zero, and its
             // Actions take the block's first positions.
@@ -190,13 +193,30 @@ impl Store {
                 return Err(Error::Malformed);
             }
             previous_position = Some(p.position);
-            let record = Record {
+            let mut record = Record {
                 receiver: *receiver,
-                page: 0,
-                total: 1,
+                page: 1,
+                total: 2,
                 payment: p.clone(),
+            };
+            if !locations.add(&(&record).into()) {
+                return Err(Error::Malformed);
             }
-            .encode()?;
+            let last: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT record FROM payments WHERE receiver=?1 ORDER BY position DESC LIMIT 1",
+                    [receiver.as_bytes()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(last) = last {
+                // Stored as a lone page; compare as the page before this one.
+                let mut last = Record::decode(&last)?.ok_or(Error::Malformed)?;
+                last.total = 2;
+                snapshot::check_next(&last, &record)?;
+            }
+            (record.page, record.total) = (0, 1);
+            let record = record.encode()?;
             tx.execute(
                 "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
                 params![
