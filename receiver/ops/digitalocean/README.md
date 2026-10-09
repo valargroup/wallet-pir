@@ -227,50 +227,17 @@ runs the exact check.
 
 After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool writes only
-unit files, so the `Caddyfile` changes through [`caddy.py`](caddy.py), on the
-coordinator under the same lock, held with `flock -n` as
-`ops/scripts/wallet-pir-terraform.sh` and `near-key.py` above hold it. `flock -n`
-fails at once while a deploy, rollback or Terraform run holds the lock; then wait
-and run it again, never without the lock. The helper reads the receiver host, its
-SSH settings and the exact check from the inventory `WALLET_PIR_DEPLOY_INVENTORY`
-names:
+unit files, so the `Caddyfile` changes through [`caddy.py`](caddy.py), which
+validates, keeps the predecessor, reloads, verifies and restores on failure (see
+its docstring). Run it on the coordinator with `flock -n`, as
+`ops/scripts/wallet-pir-terraform.sh` and `near-key.py` run; if the lock is held,
+wait and run it again:
 
 ```sh
 flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/caddy.py apply receiver/ops/digitalocean/Caddyfile
 ```
 
-It follows Transparent's router workflow: it validates the candidate beside the
-live file, keeps the live file as `/etc/caddy/Caddyfile.before-<UTC time>`,
-renames the candidate over it, reloads Caddy and verifies, and after a failed
-reload or verification puts a copy of the backup back, reloads and verifies
-again. Verification is the exact check from the running release, without
-`--await-feed-reads` since nothing restarts, run on the Droplet, plus
-`/v1/receiver/health` and `/metrics` answering 404 at the public origin, checked
-from the coordinator. The live configuration must pass it first, or nothing
-changes. Backups are never removed. A live file that already holds the
-candidate, as an apply cut off between the rename and the reload leaves it, is
-validated, reloaded and verified without a new backup; if that fails, nothing
-is restored and the helper prints the latest backup and its restore command. It
-exits 0 when the candidate is live and verified, 3 when it refused before any
-change, 4 for an invalid candidate (nothing replaced), 5 when it restored and
-verified the predecessor, 6 when restoring failed, 7 when a candidate already
-on disk failed its reload or verification and 75 when an SSH step timed out or
-lost its connection. It
-keeps no journal, and SSH's deadline does not stop the remote step, which may
-still run after `flock` releases the lock. After 6 or 75, check under the lock
-whether `/etc/caddy/Caddyfile` is the candidate or the printed backup (the journal,
-`journalctl -u caddy`, shows whether a reload applied), and restore that backup
-by hand if needed; after 7, restore the printed backup if it is the configuration
-to return to:
-
-```sh
-flock -n /run/lock/wallet-pir-production.lock ssh <droplet> 'cp -p /etc/caddy/Caddyfile.before-<time> /etc/caddy/.Caddyfile.restore &&
-  mv /etc/caddy/.Caddyfile.restore /etc/caddy/Caddyfile && systemctl reload caddy'
-```
-
-Then run `caddy.py apply` with a copy of that backup, which, as the live file
-already matches it, validates, reloads and verifies it. A Caddy change touches neither the unit nor
-the binary, so the baseline stays valid.
+A Caddy change touches neither the unit nor the binary, so the baseline stays valid.
 
 The service publishes from memory and writes no publication files; the index keeps
 only `directory.sqlite` and `provider.sqlite`. A `publications/` directory left by
