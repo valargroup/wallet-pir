@@ -322,9 +322,9 @@ another receiver, is off the node's chain or outside the publication
 recent set goes stale, a recent completed payout to an Orchard receiver has no
 parsable transaction (`payouts_uncheckable`) or a request fails (availability).
 
-`pir-monitor` is not a deploy-tool service, so install `receiver-probe` on the
-monitor host from the bundle, checked against its `SHA256SUMS` on the coordinator
-and again on the monitor host:
+`pir-monitor` is not a deploy-tool service for any product, so install
+`receiver-probe` on the monitor host from the bundle, checked against its
+`SHA256SUMS` on the coordinator and again on the monitor host:
 
 ```sh
 tools/ci/release.py extract --sha <rev> --kind receiver-pir --archive receiver-pir.tar.gz --output receiver-pir-<rev>

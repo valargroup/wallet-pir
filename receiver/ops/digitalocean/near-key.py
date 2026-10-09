@@ -10,6 +10,7 @@ named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
 The key travels only on SSH's stdin, never in an argument or in output. A key
 file is written whole under a temporary name and published without replacing
 an existing name, so an installed id never changes; a retry uses a new id.
+It only stages the file: a locked deploy that names the id activates it.
 """
 import os
 from pathlib import Path

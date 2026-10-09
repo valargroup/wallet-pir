@@ -121,6 +121,7 @@ template_vars = ["NEAR_KEY"]
 [services.receiver.roles.server]
 unit = "receiver-pir.service"
 mode = "template"
+# Rendered from the coordinator's checkout, as every template role is.
 template = "../../../receiver/ops/digitalocean/receiver-pir.service.in"
 # The unit names the NEAR key file, so a drop-in must not supply another key.
 owns_unit = true
