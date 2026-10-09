@@ -84,25 +84,28 @@ pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
 }
 
 /// The feed's health for monitoring: when each feed's last complete read began, and how
-/// many payouts first seen complete between a day and an hour before `now` have no
-/// payment to their receiver in the transaction NEAR reported in `index`. A missing
-/// payout means the indexer missed it, or NEAR paid it without the zero OVK, which a
-/// seed restore cannot find.
-pub fn report(provider: &ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
-    let completed = provider.completed(now - RECENT_SECS, now - COMPLETION_GRACE_SECS)?;
-    let mut missing = 0;
-    for (receiver, txid) in &completed {
-        if !index.paid_in(receiver, txid)? {
-            missing += 1;
+/// many payouts first seen complete more than an hour before `now`, however long ago,
+/// still have no payment to their receiver in the transaction NEAR reported in `index`.
+/// Matched payouts are recorded and not checked again, so one that stays missing stays
+/// in the count. A missing payout means the indexer missed it, or NEAR paid it without
+/// the zero OVK, which a seed restore cannot find.
+pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
+    let unmatched = provider.unmatched(now - COMPLETION_GRACE_SECS)?;
+    let mut matched = Vec::new();
+    for payout in &unmatched {
+        if index.paid_in(&payout.0, &payout.1)? {
+            matched.push(*payout);
         }
     }
+    provider.match_payouts(&matched)?;
+    let missing = unmatched.len() - matched.len();
     let mut feeds = serde_json::Map::new();
     for feed in [Feed::Payouts, Feed::Refunds] {
         feeds.insert(feed.name().into(), provider.read(feed.name())?.into());
     }
     Ok(serde_json::json!({
         "feeds": feeds,
-        "payouts_checked": completed.len(),
+        "payouts_checked": unmatched.len(),
         "payouts_missing": missing,
     }))
 }
@@ -450,7 +453,7 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() <= now);
-        let completed = store.completed(0, now + 60).unwrap();
+        let completed = store.unmatched(now + 60).unwrap();
         assert_eq!(completed.len(), 1);
         // The explorer's displayed hex is reversed into protocol byte order.
         assert_eq!(completed[0].1[0], 0x7f);
@@ -521,9 +524,14 @@ mod tests {
             .record_completions(&[(receiver(2), [9; 32])], now - 60)
             .unwrap();
         provider.record("near-payouts", &[], now, now - 30).unwrap();
-        let report = report(&provider, &index, now).unwrap();
+        let first = report(&mut provider, &index, now).unwrap();
+        assert_eq!(first["payouts_checked"], 2);
+        assert_eq!(first["payouts_missing"], 1);
+        // A day later the matched payout is not checked again, while the missing one,
+        // though old, is still reported, now beside the newer unindexed payout.
+        let report = report(&mut provider, &index, now + 24 * 60 * 60).unwrap();
         assert_eq!(report["payouts_checked"], 2);
-        assert_eq!(report["payouts_missing"], 1);
+        assert_eq!(report["payouts_missing"], 2);
         assert_eq!(report["feeds"]["near-payouts"], now - 30);
         assert!(report["feeds"]["near-refunds"].is_null());
     }
