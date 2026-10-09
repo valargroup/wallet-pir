@@ -22,9 +22,10 @@
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, serves each canonical tip
   from memory while revoking orphaned sessions, feeds the `near-intents` filter
-  sets from the NEAR Intents explorer and reports completed NEAR payouts missing
-  from the index or recently reported without a usable recipient or transaction,
-  and when the running process last read each NEAR feed. `receiver-directory
-  probe`, also built as `receiver-probe`, is a `pir-monitor` service probe that
-  looks up a pinned payment over live encrypted PIR; a deploy runs it with
-  `--await-feed-reads` to wait for the restarted process to read both NEAR feeds.
+  sets from the NEAR Intents explorer and reports completed NEAR payouts to Orchard
+  receivers missing from the index or recently reported without a parsable
+  transaction, and when the running process last read each NEAR feed.
+  `receiver-directory probe`, also built as `receiver-probe`, is a `pir-monitor`
+  service probe that looks up a pinned payment over live encrypted PIR; a deploy runs
+  it with `--await-feed-reads` to wait for the restarted process to read both NEAR
+  feeds.

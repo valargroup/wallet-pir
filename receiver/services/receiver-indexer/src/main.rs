@@ -294,7 +294,7 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let mut provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
+    let provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
     let node_tip = u32::try_from(node_tip)?;
     let requested = args
         .end_height
@@ -322,9 +322,6 @@ async fn refresh(
         if let Some(serving) = serving {
             serving.revoke();
         }
-        // Forget payout matches first, since the rewind can remove a matched payment: a
-        // failure between the two databases' writes then only rechecks payouts.
-        provider_store.forget_matches()?;
         store.rewind(tip.height, tip.hash)?;
     }
     // See `Args::depth`; an explicit `--end-height` is kept.
@@ -386,7 +383,7 @@ async fn refresh(
     let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
     let capture = receiver_indexer::near::capture(&provider_store, anchor_time)?;
     let inputs = receiver_indexer::near::digest(&capture.sets);
-    let (report, matched) = capture.report(&store)?;
+    let report = capture.report(&store)?;
     if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
         if active.anchor == (tip.height, tip.hash)
             && serving.anchors().first() == Some(&active.anchor)
@@ -487,7 +484,6 @@ async fn refresh(
         inputs,
         report,
     });
-    provider_store.match_payouts(&matched)?;
     log_stage("activate", started);
     info!(
         height = end_height,
@@ -669,8 +665,6 @@ mod tests {
         dir: tempfile::TempDir,
         args: Args,
         rpc: ZakuraClient,
-        /// The node's block hashes by height.
-        hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
         /// The time in the node's block headers, [`NOW`] at first.
         time: Arc<Mutex<i64>>,
         publications: Publications,
@@ -699,7 +693,7 @@ mod tests {
                 (height, [3; 32]),
             ]);
             *node.time.lock().unwrap() = NOW;
-            let (hashes, time) = (node.hashes.clone(), node.time.clone());
+            let time = node.time.clone();
             let rpc = serve_node(node).await;
             let mut store = Store::open(
                 dir.path().join("directory.sqlite"),
@@ -743,7 +737,6 @@ mod tests {
                 dir,
                 args,
                 rpc,
-                hashes,
                 time,
                 publications,
                 origin,
@@ -896,38 +889,6 @@ mod tests {
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();
         assert!(latest > until.as_i64().unwrap());
-    }
-
-    /// A rewind forgets payout matches before it rewinds the index, so a failure
-    /// between the two databases' writes cannot leave a match that outlives its payment.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn a_rewind_forgets_matches_before_rewinding_the_index() {
-        let mut paused = Paused::new(|_| {}).await;
-        let payout = (super::common::receiver(), [7; 32]);
-        paused.provider().match_payouts(&[payout]).unwrap();
-        let provider = paused.dir.path().join("provider.sqlite");
-        rusqlite::Connection::open(provider)
-            .unwrap()
-            .execute_batch(
-                "CREATE TRIGGER fail BEFORE DELETE ON matched_payouts
-                 BEGIN SELECT RAISE(ABORT, 'injected'); END;",
-            )
-            .unwrap();
-        // The node's chain replaces the indexed block, but forgetting fails.
-        let height = receiver_indexer::blocks::ironwood_activation();
-        paused.hashes.lock().unwrap().insert(height.into(), [4; 32]);
-        assert!(paused.refresh().await.is_err());
-        let index = Store::open(
-            paused.dir.path().join("directory.sqlite"),
-            Config {
-                genesis: Network::Mainnet.genesis_hash().0,
-                start_height: height,
-                start_parent: [2; 32],
-                start_position: 0,
-            },
-        )
-        .unwrap();
-        assert_eq!(index.tip().unwrap().height, height);
     }
 
     /// A one-shot run writes nothing for a manifest over the size clients read.

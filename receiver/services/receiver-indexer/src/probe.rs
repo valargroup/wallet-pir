@@ -2,20 +2,19 @@
 //! probe` or `receiver-probe`, and a deploy's exact check. With `--await-feed-reads` it
 //! first waits for the running process to read both NEAR feeds (`feeds_not_read`
 //! otherwise). It then checks the publication against independent mainnet nodes, one at
-//! a time and freshest first, looks up a pinned historical payment over live encrypted
-//! PIR, as Transparent's canary checks one query against a pinned row, checks the
-//! witness file (with `--witnesses`) and the filter file against the manifest, then
-//! checks the NEAR feed's freshness and the indexer's payout check, which health
-//! reports on the private network. It prints one JSON line: `passed`, on failure a
-//! `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"` with
-//! `queries` and `correct`. `answer_mismatch` marks served data that is wrong, which
-//! the monitor treats as a correctness incident; `oracle_invalid` a fixture that fails
-//! its pin, including an Action whose recovered receiver differs from the fixture's
-//! pinned one; anything else, such as `oracle_unavailable` when no node that reached
-//! the publication can complete the chain checks, or `payouts_uncheckable` when the
-//! indexer's report counts a recent completed payout that NEAR gave no usable
-//! recipient or transaction for, is an availability failure. Every response body is
-//! bounded before it is buffered.
+//! a time and freshest first, looks up a pinned payment over live encrypted PIR, as
+//! Transparent's canary checks one query against a pinned row, checks the witness file
+//! (with `--witnesses`) and the filter file against the manifest, then checks the NEAR
+//! feed's freshness and the indexer's payout check, which health reports on the private
+//! network. It prints one JSON line: `passed`, on failure a `category` and `detail`, and
+//! the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
+//! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
+//! correctness incident; `oracle_invalid` a fixture that fails its pin, including an
+//! Action whose recovered receiver differs from the fixture's pinned one; anything else,
+//! such as `oracle_unavailable` when no node that reached the publication can complete
+//! the chain checks, or `payouts_uncheckable` when the indexer's report counts a recent
+//! completed payout to an Orchard receiver that NEAR gave no parsable transaction for,
+//! is an availability failure. Every response body is bounded before it is buffered.
 use crate::{
     near::Feed,
     read_limited,
