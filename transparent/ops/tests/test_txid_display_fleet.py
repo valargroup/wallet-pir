@@ -5,6 +5,12 @@ The ssh shim records its argv and runs the remote command locally; the rsync
 shim records its argv and runs the real rsync with the remote prefix removed,
 so publication atomicity and hard-link reuse are the real filesystem's. The
 worker's `txid-control` is a script that answers like the control socket.
+
+Workers run Linux, so the publish step uses GNU `mv -T` and `sync -f`. The
+commands each ship builds are checked everywhere; running them through the
+shims needs those GNU tools and an rsync that hard-links with --link-dest, so
+those tests skip, with the reason, where a feature probe finds them missing
+(macOS ships BSD mv).
 """
 import contextlib
 import hashlib
@@ -13,6 +19,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
@@ -73,8 +80,51 @@ print(json.dumps({'ok': True, 'role': 'recent-replica', 'active': None, 'staged'
 '''
 
 
-@unittest.skipUnless(REAL_RSYNC, 'rsync is required')
-class AdapterTests(unittest.TestCase):
+
+
+def gnu_execution_missing():
+    """Why the worker's ship commands cannot run on this machine, or '' when they can."""
+    def run(*argv, env=None):
+        try:
+            return subprocess.run(argv, capture_output=True, timeout=30, env=env).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    missing = []
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # The rsync shim comes first in PATH; an rsync that re-runs `rsync` from
+        # PATH for a local copy (openrsync does) would run the shim instead.
+        decoy = root / 'bin/rsync'
+        decoy.parent.mkdir()
+        decoy.write_text('#!/bin/sh\nexit 97\n')
+        decoy.chmod(0o755)
+        shimmed = dict(os.environ, PATH=str(decoy.parent) + os.pathsep + os.environ['PATH'])
+        (root / 'a').mkdir()
+        if not (run('mv', '-T', str(root / 'a'), str(root / 'b')) and (root / 'b').is_dir()):
+            missing.append('GNU mv -T')
+        elif not run('sync', '-f', str(root / 'b')):
+            missing.append('GNU sync -f')
+        source, previous, target = root / 'source', root / 'previous', root / 'target'
+        source.mkdir()
+        (source / 'f').write_bytes(b'x')
+        target.mkdir()
+        (target / 'stale').write_bytes(b'y')
+        flags = ('-a', '--delete', '--numeric-ids')
+        if not (REAL_RSYNC and run(REAL_RSYNC, *flags, str(source) + '/', str(previous) + '/')
+                and run(REAL_RSYNC, *flags, '--link-dest=' + str(previous), str(source) + '/', str(target) + '/',
+                        env=shimmed)
+                and not (target / 'stale').exists()
+                and (target / 'f').stat().st_ino == (previous / 'f').stat().st_ino):
+            missing.append('an rsync that copies locally by itself and hard-links with --link-dest')
+    return ', '.join(missing) and 'needs ' + ', '.join(missing) + ' (the workers run Linux)'
+
+
+GNU_EXECUTION_MISSING = gnu_execution_missing()
+
+
+class Harness:
+    """Shims for ssh, rsync and the worker's txid-control under a temporary root."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -104,7 +154,7 @@ class AdapterTests(unittest.TestCase):
         (self.source / REVISION / 'manifest.json').write_text('{"shard_id": 4}')
         (self.source / REVISION / 'pages.0.bin').write_bytes(b'\0' * 4096)
         self.env = patch.dict(os.environ, PATH=str(shims) + os.pathsep + os.environ['PATH'], SHIM_LOG=str(self.log),
-                              CONTROL_LOG=str(self.control_log), REAL_RSYNC=REAL_RSYNC)
+                              CONTROL_LOG=str(self.control_log), REAL_RSYNC=REAL_RSYNC or '')
         self.env.start()
         self.addCleanup(self.env.stop)
 
@@ -126,27 +176,20 @@ class AdapterTests(unittest.TestCase):
         return self.call({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate', 'source': str(self.source),
                           'name': DIGEST, 'link_dest': None, **overrides})
 
-    def test_ship_publishes_by_rename_with_pinned_multiplexed_ssh(self):
+
+
+@unittest.skipIf(GNU_EXECUTION_MISSING, GNU_EXECUTION_MISSING)
+class ShipExecutionTests(Harness, unittest.TestCase):
+    """Runs each ship's commands through the shims on the local filesystem."""
+
+    def test_ship_publishes_by_rename(self):
         code, reply = self.ship()
         self.assertEqual((code, reply['ok'], reply['directory']), (0, True, '%s/%s' % (self.publications, DIGEST)))
         final = self.publications / DIGEST
         self.assertEqual((final / REVISION / 'manifest.json').read_text(), '{"shard_id": 4}')
         self.assertFalse((self.publications / ('.tmp-' + DIGEST)).exists())
-        probe, publish = self.calls('ssh')
-        options = probe[:-2]
-        for option in ('-oBatchMode=yes', '-oStrictHostKeyChecking=yes', '-oControlMaster=auto',
-                       'UserKnownHostsFile=/opt/transparent-publisher/credentials/known_hosts',
-                       'ControlPath=%s/ship-%%C' % (self.root / 'state/ssh')):
-            self.assertIn(option, options)
-        self.assertEqual(options[options.index('-i') + 1], '/opt/transparent-publisher/credentials/deploy-ssh')
-        self.assertEqual(probe[-2], 'root@10.142.0.6')
-        self.assertIn('mv -T', publish[-1])
-        rsync, = self.calls('rsync')
-        self.assertEqual(rsync[:3], ['-a', '--delete', '--numeric-ids'])
-        self.assertIn('--link-dest=%s' % self.staged, rsync)
-        self.assertEqual(rsync[-2:], [str(self.source) + '/', 'root@10.142.0.6:%s/.tmp-%s/' % (self.publications,
-                                                                                               DIGEST)])
-        self.assertIn('ControlPath=%s/ship-%%C' % (self.root / 'state/ssh'), rsync[rsync.index('-e') + 1])
+        self.assertEqual(len(self.calls('ssh')), 2)
+        self.assertEqual(len(self.calls('rsync')), 1)
         # A content-addressed directory that exists is complete: reused, not copied again.
         code, reply = self.ship()
         self.assertEqual((code, reply.get('reused')), (0, True))
@@ -204,6 +247,61 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertFalse((self.publications / DIGEST / 'partial').exists())
         self.assertFalse((self.publications / ('.tmp-' + DIGEST)).exists())
+
+
+class AdapterTests(Harness, unittest.TestCase):
+    def test_ship_builds_pinned_ssh_rsync_and_rename_commands(self):
+        seen = []
+
+        def run(argv, input=None, capture_output=True, timeout=None):
+            seen.append(argv)
+            return subprocess.CompletedProcess(argv, 0, state.encode() if len(seen) == 1 else b'', b'')
+        fleet = F.Fleet(F.load_config(self.root / 'fleet.json'), run=run)
+        final, partial = '%s/%s' % (self.publications, DIGEST), '%s/.tmp-%s' % (self.publications, DIGEST)
+        previous = '%s/%s' % (self.publications, PREVIOUS)
+        with contextlib.redirect_stderr(io.StringIO()):
+            for state, link_dest, links in (('nolink\n', None, ['--link-dest=%s' % self.staged]),
+                                            ('link\n', previous, ['--link-dest=' + previous,
+                                                                   '--link-dest=%s' % self.staged])):
+                with self.subTest(state=state):
+                    seen.clear()
+                    reply = fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate',
+                                          'source': str(self.source), 'name': DIGEST, 'link_dest': link_dest})
+                    self.assertEqual(reply['directory'], final)
+                    probe, rsync, publish = seen
+                    self.assertEqual(probe[0], 'ssh')
+                    options = probe[1:-2]
+                    self.assertEqual(options, fleet.ssh_options('ship'))
+                    for option in ('-oBatchMode=yes', '-oStrictHostKeyChecking=yes', '-oControlMaster=auto',
+                                   'UserKnownHostsFile=/opt/transparent-publisher/credentials/known_hosts',
+                                   'ControlPath=%s/ship-%%C' % (self.root / 'state/ssh')):
+                        self.assertIn(option, options)
+                    self.assertEqual(options[options.index('-i') + 1],
+                                     '/opt/transparent-publisher/credentials/deploy-ssh')
+                    self.assertEqual(probe[-2], 'root@10.142.0.6')
+                    self.assertIn('mkdir -p %s %s;' % (shlex.quote(str(self.publications)),
+                                                      shlex.quote(str(self.staged))), probe[-1])
+                    self.assertIn('if [ -d %s ]; then echo present;' % shlex.quote(final), probe[-1])
+                    self.assertIn('[ -n %s ] && [ -d %s ]' % ((shlex.quote(link_dest or ''),) * 2), probe[-1])
+                    # Flags, then link sources (previous candidate first), then transport, then source and partial.
+                    self.assertEqual(rsync[:5 + len(links)], ['rsync', '-a', '--delete', '--numeric-ids', *links,
+                                                              '-e'])
+                    self.assertEqual(shlex.split(rsync[-3]), ['ssh', *fleet.ssh_options('ship')])
+                    self.assertEqual(rsync[-2:], [str(self.source) + '/', 'root@10.142.0.6:%s/' % partial])
+                    self.assertEqual(publish[:-1], probe[:-1])
+                    self.assertEqual(publish[-1], 'set -eu; test ! -e %s; mv -T %s %s; sync -f %s' % (
+                        shlex.quote(final), shlex.quote(partial), shlex.quote(final), shlex.quote(final)))
+            # A staged revision links nothing, and a present directory is reused without a copy.
+            seen.clear()
+            state = 'nolink\n'
+            fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'staged', 'source': str(self.source),
+                          'name': REVISION, 'link_dest': None})
+            self.assertEqual(seen[1][:5], ['rsync', '-a', '--delete', '--numeric-ids', '-e'])
+            seen.clear()
+            state = 'present\n'
+            reply = fleet.handle({'operation': 'ship', 'worker': 'recent', 'kind': 'candidate',
+                                  'source': str(self.source), 'name': DIGEST, 'link_dest': None})
+            self.assertEqual((reply['reused'], len(seen)), (True, 1))
 
     def test_ship_refuses_unsafe_requests_before_any_transfer(self):
         for overrides in ({'name': 'not-a-digest'}, {'kind': 'everything'}, {'source': str(self.root / 'missing')},
