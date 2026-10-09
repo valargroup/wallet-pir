@@ -572,15 +572,19 @@ async fn oracle(
 }
 
 /// Sends `request` for a wallet-facing artifact and decodes its body. A failed request
-/// or a non-success status is an error; a successful body over `limit` bytes, or one
-/// `decode` refuses, is wrong served data: `answer_mismatch` naming `artifact`.
+/// or any status other than 2xx (redirects are not followed) is an error; a successful
+/// body over `limit` bytes, or one `decode` refuses, is wrong served data:
+/// `answer_mismatch` naming `artifact`.
 async fn fetch<T, E: std::fmt::Display>(
     request: reqwest::RequestBuilder,
     limit: usize,
     artifact: &str,
     decode: impl FnOnce(&[u8]) -> std::result::Result<T, E>,
 ) -> Result<std::result::Result<T, Failure>> {
-    let response = request.send().await?.error_for_status()?;
+    let response = request.send().await?;
+    if !response.status().is_success() {
+        return Err(format!("{artifact}: status {}", response.status()).into());
+    }
     let error = match read_limited(response, limit).await {
         Ok(body) => match decode(&body) {
             Ok(value) => return Ok(Ok(value)),
@@ -1244,7 +1248,7 @@ mod tests {
 
     /// A successful `init` response with malformed JSON, over its bound, or with a
     /// manifest that fails validation (protocol or geometry) is an answer mismatch; a
-    /// failed one is not.
+    /// failed or redirected one is not, whatever its body.
     #[tokio::test]
     async fn an_invalid_served_manifest_is_an_answer_mismatch() {
         use axum::http::StatusCode;
@@ -1259,6 +1263,8 @@ mod tests {
             (StatusCode::OK, json(&protocol), true),
             (StatusCode::OK, json(&geometry), true),
             (StatusCode::INTERNAL_SERVER_ERROR, json(&manifest(0)), false),
+            (StatusCode::FOUND, "<html>moved</html>".to_owned(), false),
+            (StatusCode::FOUND, " ".repeat(MAX_MANIFEST_BYTES + 1), false),
         ] {
             let app = Router::new().route(
                 "/v1/receiver/init",
