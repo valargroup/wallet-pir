@@ -94,3 +94,13 @@ pending work and completion metadata. Changing shard schema and seal thresholds
 requires a separate publication lineage and consumer migration; a database
 schema migration does not authorize reuse of old shard identifiers. A lower target requires an
 explicit accepted-anchor rollback. See [testing](testing.md) for regression checks.
+
+A [declared re-cut](architecture.md#declared-re-cuts) keeps the lineage and changes no store
+schema. A store keeps coverage, events and setups under the revisions it read them from, and
+the sync finds them in the re-cut map by height and digest rather than by shard id. A custom
+store must give the same coverage answer as the reference stores: a committed range replaces
+every range of that script it contains, whatever shard id they carry, and a store keyed by
+script and start height must not refuse a range starting where one it replaces did. The
+conformance suite checks this. A map that rewrites sealed history the store holds below a
+block the wallet's chain accepts, without declaring it, is refused with `MapDiverged`; so is
+a re-cut published during a sync, after which the next sync starts from the re-cut map.
