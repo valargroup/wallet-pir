@@ -9,4 +9,4 @@
   the manifest declares them, with when its feed started and last completed a read;
   directory profile `ironwood-zero-ovk-receiver-v1`, whose revision hashes every
   field at fixed width and refuses unknown ones), and common `IWPROOF1` witness
-  files, built from histories of at most 2^22 commitments.
+  files, built from histories within a caller-set commitment limit.

@@ -85,11 +85,8 @@ The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
 terminal height and hash, tree size and root. Sorted 37-byte nodes (level, index,
 hash) follow, with every sibling of each payment position. It is capped at 64 MiB.
 
-Building the file reads every commitment since the empty tree. The builder refuses
-a history of more than 2^22 (4,194,304) commitments before reading it, a limit on
-its memory rather than on the format, about 460 days ahead of mainnet's October 2026
-size. Reaching it stops fresh witness publication, so the service goes stale instead
-of running out of memory, until the limit is raised.
+Building the file reads every commitment since the empty tree, so the store
+refuses a history longer than the caller's commitment limit before reading it.
 
 ## Tests
 

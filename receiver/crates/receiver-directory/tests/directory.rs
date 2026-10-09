@@ -844,6 +844,7 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
 fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     allow_small_tables();
     use receiver_directory::{
+        snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
         witness::WitnessCache,
     };
@@ -876,14 +877,21 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     // A fresh cache builds from scratch; the reused one must match it byte for byte.
     let full = |store: &Store, m| {
         store
-            .witnesses(m, &mut WitnessCache::default())
+            .witnesses(m, &mut WitnessCache::default(), TREE_SIZE)
             .unwrap()
             .encode()
     };
     let expected = full(&store, &first.manifest);
+    // The caller's commitment limit admits exactly the history's length.
+    let len = first.manifest.end_position;
+    store.witnesses(&first.manifest, &mut cache, len).unwrap();
+    assert!(matches!(
+        store.witnesses(&first.manifest, &mut cache, len - 1),
+        Err(Error::Capacity)
+    ));
     assert_eq!(
         store
-            .witnesses(&first.manifest, &mut cache)
+            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         expected
@@ -899,16 +907,18 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let second = store.snapshot(8, &[]).unwrap();
     assert_eq!(
         store
-            .witnesses(&second.manifest, &mut cache)
+            .witnesses(&second.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         full(&store, &second.manifest)
     );
     store.rewind(100, [3; 32]).unwrap();
-    assert!(store.witnesses(&second.manifest, &mut cache).is_err());
+    assert!(store
+        .witnesses(&second.manifest, &mut cache, TREE_SIZE)
+        .is_err());
     assert_eq!(
         store
-            .witnesses(&first.manifest, &mut cache)
+            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         expected
@@ -921,14 +931,14 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let replacement = store.snapshot(8, &[]).unwrap();
     assert_eq!(
         store
-            .witnesses(&replacement.manifest, &mut cache)
+            .witnesses(&replacement.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         full(&store, &replacement.manifest)
     );
     let mut wrong = replacement.manifest;
     wrong.end_position -= 1;
-    assert!(store.witnesses(&wrong, &mut cache).is_err());
+    assert!(store.witnesses(&wrong, &mut cache, TREE_SIZE).is_err());
 }
 
 /// Indexed blocks before the first commitment publish a header-only proof file
@@ -941,6 +951,7 @@ fn store_proofs_cover_empty_indexed_blocks() {
     use incrementalmerkletree::Hashable;
     use orchard::tree::MerkleHashOrchard;
     use receiver_directory::{
+        snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
         witness::WitnessCache,
     };
@@ -968,7 +979,10 @@ fn store_proofs_cover_empty_indexed_blocks() {
     let empty = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!((empty.records, empty.end_position), (0, 0));
     let mut cache = WitnessCache::default();
-    let proof = store.witnesses(&empty, &mut cache).unwrap().encode();
+    let proof = store
+        .witnesses(&empty, &mut cache, TREE_SIZE)
+        .unwrap()
+        .encode();
     assert_eq!(proof.len(), 152);
     assert_eq!(
         &proof[116..148],
@@ -979,14 +993,23 @@ fn store_proofs_cover_empty_indexed_blocks() {
     store.append(&block).unwrap();
     let one = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!(
-        store.witnesses(&one, &mut cache).unwrap().encode(),
         store
-            .witnesses(&one, &mut WitnessCache::default())
+            .witnesses(&one, &mut cache, TREE_SIZE)
+            .unwrap()
+            .encode(),
+        store
+            .witnesses(&one, &mut WitnessCache::default(), TREE_SIZE)
             .unwrap()
             .encode()
     );
     store.rewind(101, [4; 32]).unwrap();
-    assert_eq!(store.witnesses(&empty, &mut cache).unwrap().encode(), proof);
+    assert_eq!(
+        store
+            .witnesses(&empty, &mut cache, TREE_SIZE)
+            .unwrap()
+            .encode(),
+        proof
+    );
 }
 
 /// A history with more payments than the table has slots fails with
