@@ -157,9 +157,9 @@ zero, so the index must start at Ironwood activation. With `--serve`, the proces
 polls every `--poll-seconds` (default 10), prepares each new canonical tip in
 memory, writing no publication files, and serves on `--bind` (default
 `127.0.0.1:18380`), a loopback, private IPv4 or unique-local IPv6 address behind a
-TLS proxy. A separate
-guard rechecks served anchors and revokes every session once a node shows one is
-off its chain; a failed check keeps serving. A recovery epoch fences work that
+TLS proxy. A separate guard rechecks served anchors and revokes every session
+once a node shows one is off its chain, unless a revocation or rotation stopped
+serving that anchor during the check; a failed check keeps serving. A recovery epoch fences work that
 began before a revocation. The previous revision stays available for 60 seconds,
 and the next one waits for that to end. Logs go to standard error through
 `tracing`, filtered by `RUST_LOG` (default `info`).

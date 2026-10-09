@@ -205,18 +205,21 @@ async fn shutdown() {
     }
 }
 
-/// Revokes every session once a node shows a served anchor is off its chain. A failed
-/// request or a node behind an anchor proves nothing, so sessions keep serving.
+/// Revokes every session once a node shows a served anchor is off its chain, unless a
+/// revocation or rotation stopped serving that anchor during the check (see
+/// [`Publications::revoke_serving`]). A failed request or a node behind an anchor
+/// proves nothing, so sessions keep serving.
 async fn check_serving(publications: &Publications, rpc: &ZakuraClient) -> Result<()> {
-    let anchors = publications.anchors();
+    let (epoch, anchors) = publications.serving();
     if anchors.is_empty() {
         return Ok(());
     }
     let tip = rpc.tip_height().await?;
     for (height, hash) in anchors {
         if u64::from(height) <= tip && !is_canonical(rpc, height, hash).await? {
-            publications.revoke();
-            warn!(height, "revoked noncanonical receiver sessions");
+            if publications.revoke_serving(epoch, (height, hash)) {
+                warn!(height, "revoked noncanonical receiver sessions");
+            }
             break;
         }
     }
@@ -469,4 +472,96 @@ fn unix_now() -> i64 {
 /// Whether `hash` is the node's canonical block at `height`.
 async fn is_canonical(rpc: &ZakuraClient, height: u32, hash: [u8; 32]) -> Result<bool> {
     Ok(rpc.block_hash(u64::from(height)).await?.parse::<Hash>()?.0 == hash)
+}
+
+#[cfg(test)]
+#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+mod common;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::State, routing::post, Json, Router};
+    use serde_json::{json, Value};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
+    use tokio::sync::{Notify, Semaphore};
+
+    /// A node's tip and block hashes by height. Each block hash request signals
+    /// `asked`, then waits for a permit from `gate` if there is one.
+    #[derive(Clone, Default)]
+    struct Node {
+        tip: Arc<Mutex<u64>>,
+        hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
+        gate: Option<Arc<Semaphore>>,
+        asked: Arc<Notify>,
+    }
+
+    /// Serves `node` over JSON-RPC and returns a client for it.
+    async fn serve_node(node: Node) -> ZakuraClient {
+        async fn handler(State(node): State<Node>, Json(r): Json<Value>) -> Json<Value> {
+            let result = match r["method"].as_str().unwrap() {
+                "getblockcount" => json!(*node.tip.lock().unwrap()),
+                "getblockhash" => {
+                    node.asked.notify_one();
+                    if let Some(gate) = &node.gate {
+                        gate.acquire().await.unwrap().forget();
+                    }
+                    let height = r["params"][0].as_u64().unwrap();
+                    json!(Hash(node.hashes.lock().unwrap()[&height]).to_string())
+                }
+                method => panic!("unexpected {method}"),
+            };
+            Json(json!({"result": result, "error": null}))
+        }
+        let app = Router::new().route("/", post(handler)).with_state(node);
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        ZakuraClient::unauthenticated(vec![url]).unwrap()
+    }
+
+    /// An empty publication ending at block `[hash; 32]`, height 101.
+    fn publication(hash: u8) -> Publication {
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.end_hash = [hash; 32];
+        let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
+        Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+    }
+
+    /// A check that finds an anchor off the chain after a revocation and a new
+    /// publication replaced it leaves the new one serving; a served anchor off the
+    /// chain is revoked.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_stale_failure_does_not_revoke_a_newer_publication() {
+        let gate = Arc::new(Semaphore::new(0));
+        let node = Node {
+            gate: Some(gate.clone()),
+            ..Node::default()
+        };
+        *node.tip.lock().unwrap() = 200;
+        node.hashes.lock().unwrap().insert(101, [2; 32]);
+        let rpc = serve_node(node.clone()).await;
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        let check = tokio::spawn({
+            let (publications, rpc) = (publications.clone(), rpc.clone());
+            async move { check_serving(&publications, &rpc).await.unwrap() }
+        });
+        // While the check of A waits for the node, a rewind revokes A and B is published.
+        node.asked.notified().await;
+        publications.revoke();
+        assert!(publications.publish(publication(2), 1));
+        gate.add_permits(1);
+        check.await.unwrap();
+        assert_eq!(publications.anchors(), [(101, [2; 32])]);
+        gate.add_permits(10);
+        check_serving(&publications, &rpc).await.unwrap();
+        assert_eq!(publications.anchors(), [(101, [2; 32])]);
+        node.hashes.lock().unwrap().insert(101, [3; 32]);
+        check_serving(&publications, &rpc).await.unwrap();
+        assert!(publications.anchors().is_empty());
+    }
 }
