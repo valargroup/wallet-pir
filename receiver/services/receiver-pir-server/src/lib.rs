@@ -349,9 +349,14 @@ mod tests {
             queue.acquire(|| ()).await.unwrap(),
         ];
         let response = tokio::spawn(reqwest::Client::new().post(url).body(body).send());
-        while queue.waiting_available() == WAITING {
-            tokio::time::sleep(Duration::from_millis(1)).await;
-        }
+        // A request refused before it queues fails here rather than hanging.
+        tokio::time::timeout(WAIT, async {
+            while queue.waiting_available() == WAITING {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("the query was selected and queued");
         during();
         drop(held);
         response.await.unwrap().unwrap()

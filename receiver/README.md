@@ -182,8 +182,9 @@ explorer into `provider.sqlite` and publishes the `near-intents` recent and seen
 sets; without one, publications carry no provider sets. Health's `indexer` report,
 activated with each publication, gives each feed's last read and `payouts_missing`,
 completed NEAR payouts with no indexed payment: the signal that the index missed
-one or NEAR stopped paying with the zero OVK. `services/receiver-indexer/src/near.rs`
-documents the feed and the report.
+one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
+first seen in the last day that NEAR reported without a usable transaction.
+`services/receiver-indexer/src/near.rs` documents the feed and the report.
 
 Health's `near.reads` gives, for each NEAR feed, when the last read this process
 completed began, or null until one completes, so unlike the report's `feeds` it
