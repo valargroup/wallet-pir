@@ -685,6 +685,77 @@ mod tests {
         );
     }
 
+    /// A matched payout in a provider store at `provider_path` and its payment indexed at
+    /// `index_path`, with `trigger` installed on the database at `fail` so that
+    /// [`rewind`] fails there. Returns the result of rewinding below the payment, after
+    /// both databases closed.
+    fn failing_rewind(
+        provider_path: &std::path::Path,
+        index_path: &std::path::Path,
+        fail: &std::path::Path,
+        trigger: &str,
+    ) -> Result<()> {
+        let mut provider = ProviderStore::open(provider_path).unwrap();
+        let (mut index, block) = paid_index(index_path);
+        index.append(&block).unwrap();
+        let now = 1_000_000;
+        provider
+            .record("near-payouts", 0, &[], &[(receiver(1), [7; 32])], now, 0)
+            .unwrap();
+        report(&mut provider, &index, now).unwrap();
+        assert!(provider.unmatched(i64::MAX).unwrap().is_empty());
+        rusqlite::Connection::open(fail)
+            .unwrap()
+            .execute_batch(trigger)
+            .unwrap();
+        rewind(&mut provider, &mut index, 99, [2; 32])
+    }
+
+    /// A failure to forget matches leaves the index un-rewound, so no matched payout
+    /// can outlive its payment.
+    #[test]
+    fn a_failed_forget_leaves_the_index_unrewound() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("provider.sqlite"),
+            dir.path().join("directory.sqlite"),
+        );
+        let failed = failing_rewind(
+            &provider_path,
+            &index_path,
+            &provider_path,
+            "CREATE TRIGGER fail BEFORE DELETE ON matched_payouts
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        );
+        assert!(failed.is_err());
+        let provider = ProviderStore::open(&provider_path).unwrap();
+        let (index, _) = paid_index(&index_path);
+        assert_eq!(index.tip().unwrap().height, 100);
+        assert!(provider.unmatched(i64::MAX).unwrap().is_empty());
+    }
+
+    /// A failure during the index rewind leaves every match durably forgotten.
+    #[test]
+    fn a_failed_index_rewind_leaves_matches_forgotten() {
+        let dir = tempfile::tempdir().unwrap();
+        let (provider_path, index_path) = (
+            dir.path().join("provider.sqlite"),
+            dir.path().join("directory.sqlite"),
+        );
+        let failed = failing_rewind(
+            &provider_path,
+            &index_path,
+            &index_path,
+            "CREATE TRIGGER fail BEFORE DELETE ON blocks
+             BEGIN SELECT RAISE(ABORT, 'injected'); END;",
+        );
+        assert!(failed.is_err());
+        let provider = ProviderStore::open(&provider_path).unwrap();
+        let (index, _) = paid_index(&index_path);
+        assert_eq!(index.tip().unwrap().height, 100);
+        assert_eq!(provider.unmatched(i64::MAX).unwrap().len(), 1);
+    }
+
     /// A payout first seen complete more than an hour ago with no indexed payment in its
     /// transaction is reported missing, even to a receiver paid before; a newer one is
     /// not checked yet.
