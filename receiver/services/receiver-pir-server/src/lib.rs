@@ -1,4 +1,7 @@
 //! Receiver PIR serving with immutable publications and atomic session revocation.
+#[cfg(test)]
+#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
+mod common;
 pub mod publication;
 use axum::{
     body::{Body, Bytes},
@@ -61,14 +64,18 @@ const ENDPOINTS: [&str; 7] = [
 /// the shared HTTP observations; both are for operators, and a deployment's edge proxies
 /// only the wallet routes. A revocation aborts the session files still being sent.
 pub fn router_with_publications(publications: Publications) -> Router {
-    let metrics = pir_observability::HttpMetrics::default();
-    metrics.initialize(&ENDPOINTS);
-    let service = Service {
+    router(Service {
         publications,
         queue: Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true)),
         clients: ClientSlots::new(PER_CLIENT),
-        metrics: metrics.clone(),
-    };
+        metrics: pir_observability::HttpMetrics::default(),
+    })
+}
+
+/// The routes of [`router_with_publications`] over `service`.
+fn router(service: Service) -> Router {
+    let metrics = service.metrics.clone();
+    metrics.initialize(&ENDPOINTS);
     Router::new()
         .route("/v1/receiver/health", get(health))
         .route(
@@ -234,7 +241,8 @@ fn overloaded() -> Response {
 
 /// Answers one PIR query against the publication its header names. The upload is
 /// read before the query waits for an evaluation slot, so a slow upload holds only
-/// its client's place.
+/// its client's place, and a body longer or shorter than that session's query is
+/// refused (413 or 400) without waiting.
 async fn query(State(s): State<Service>, request: Request) -> Response {
     let Some(client) = s.clients.try_acquire(&client_key(request.headers(), None)) else {
         return overloaded();
@@ -253,6 +261,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Ok(p) => p,
         Err(status) => return status.into_response(),
     };
+    let expected = query_bytes(publication.manifest().rows).expect("a served geometry");
+    match body.len().cmp(&expected) {
+        std::cmp::Ordering::Greater => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
+        std::cmp::Ordering::Less => return StatusCode::BAD_REQUEST.into_response(),
+        std::cmp::Ordering::Equal => {}
+    }
     let Ok(permit) = s.queue.acquire(|| ()).await else {
         return overloaded();
     };
@@ -270,5 +284,67 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         Ok(Err(Error::Revision)) => StatusCode::CONFLICT.into_response(),
         Ok(Err(Error::Malformed)) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// With every evaluation slot held, a query of the wrong length is still refused at
+    /// once, while one of the right length waits and is then told to retry.
+    #[tokio::test]
+    async fn wrong_lengths_are_refused_without_waiting_for_evaluation() {
+        let snapshot = receiver_directory::snapshot::Snapshot::build(
+            common::manifest(receiver_pir::MIN_ROWS),
+            &[],
+            &[],
+        )
+        .unwrap();
+        let publication =
+            Publication::new(receiver_pir::server::Server::new(snapshot).unwrap(), None).unwrap();
+        let mut header = MAGIC.to_vec();
+        header.extend(publication.id);
+        let exact = query_bytes(receiver_pir::MIN_ROWS).unwrap();
+        let publications = Publications::default();
+        assert!(publications.publish(publication, 0));
+        let queue = Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true));
+        let _held = [
+            queue.acquire(|| ()).await.unwrap(),
+            queue.acquire(|| ()).await.unwrap(),
+        ];
+        let app = router(Service {
+            publications,
+            queue,
+            clients: ClientSlots::new(PER_CLIENT),
+            metrics: pir_observability::HttpMetrics::default(),
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let http = reqwest::Client::new();
+        let post = |len: usize, client: &str| {
+            let mut body = header.clone();
+            body.resize(len, 0);
+            http.post(&url)
+                .header("x-forwarded-for", client)
+                .body(body)
+                .send()
+        };
+        for (len, status) in [
+            (exact + 1, StatusCode::PAYLOAD_TOO_LARGE),
+            (exact - 1, StatusCode::BAD_REQUEST),
+        ] {
+            let started = std::time::Instant::now();
+            assert_eq!(post(len, "10.0.0.1").await.unwrap().status(), status);
+            assert!(started.elapsed() < WAIT / 2);
+        }
+        let started = std::time::Instant::now();
+        assert_eq!(
+            post(exact, "10.0.0.2").await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        assert!(started.elapsed() >= WAIT);
+        server.abort();
     }
 }

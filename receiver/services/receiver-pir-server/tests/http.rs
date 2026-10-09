@@ -533,6 +533,42 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .is_empty());
 }
 
+/// A query must be exactly its session's length: a longer one is 413 and a shorter
+/// one 400, even below the largest supported query.
+#[tokio::test]
+async fn queries_must_match_their_sessions_length() {
+    use receiver_pir::{query_bytes, MAX_ROWS};
+    let pir = Server::new(snapshot(1)).unwrap();
+    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
+    let server = serve_publication(Publication::new(pir, None).unwrap()).await;
+    let post = |body: Vec<u8>| {
+        http()
+            .post(format!("{}/v1/receiver/query", server.origin))
+            .body(body)
+            .send()
+    };
+    let query = client.prepare(receiver(), 0).unwrap();
+    let exact = query.body().to_vec();
+    assert_eq!(exact.len(), query_bytes(MIN_ROWS).unwrap());
+    assert!(exact.len() + 1 < query_bytes(MAX_ROWS).unwrap());
+    let mut longer = exact.clone();
+    longer.push(0);
+    assert_eq!(
+        post(longer).await.unwrap().status(),
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let mut shorter = exact.clone();
+    shorter.pop();
+    assert_eq!(
+        post(shorter).await.unwrap().status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let answer = post(exact).await.unwrap();
+    assert!(answer.status().is_success());
+    let answer = answer.bytes().await.unwrap();
+    assert_eq!(client.decode(query, &answer).unwrap(), Some(record(0, 1)));
+}
+
 #[tokio::test]
 async fn long_histories_load_the_row_file() {
     use receiver_pir::transport::MAX_PIR_PAGES;

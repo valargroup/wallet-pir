@@ -86,6 +86,8 @@ keeps its own limits and refusal mapping:
 Receiver reads the upload within 15 seconds, capped at the largest query, before
 the query waits for a permit. It answers a client at its cap or a full queue with
 429 and `Retry-After: 1`, a slow upload with 408 and an oversized one with 413.
+A query longer than its session's query is 413 and a shorter one 400, both
+refused before it waits for a permit.
 
 Transparent keeps its own admission (`transparent-shard-server/src/admission.rs`).
 It counts running and queued requests together, starts the deadline before the
