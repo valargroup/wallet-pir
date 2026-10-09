@@ -99,8 +99,18 @@ A [declared re-cut](architecture.md#declared-re-cuts) keeps the lineage and chan
 schema. A store keeps coverage, events and setups under the revisions it read them from, and
 the sync finds them in the re-cut map by height and digest rather than by shard id. A custom
 store must give the same coverage answer as the reference stores: a committed range replaces
-every range of that script it contains, whatever shard id they carry, and a store keyed by
+every range of that script it contains, whatever shard id they carry; a range strictly inside
+the one the script holds starting nearest at or below it changes nothing; and a store keyed by
 script and start height must not refuse a range starting where one it replaces did. The
-conformance suite checks this. A map that rewrites sealed history the store holds below a
-block the wallet's chain accepts, without declaring it, is refused with `MapDiverged`; so is
-a re-cut published during a sync, after which the next sync starts from the re-cut map.
+conformance suite checks this, and a custom store should keep each range's source anchor,
+without which a declaration is matched against the covered endpoint alone.
+
+A map that rewrites sealed history the store holds, over a block the wallet's chain still
+accepts, and declares no re-cut of it ends the sync with
+`SyncError::SealedRewrite { start_height, revision_digest }` before anything is rolled back or
+read. It does not resolve by retrying the same map; an adapter reports the publication as
+changed. The store keeps no re-cut epoch, so a replica still serving a map from before a re-cut
+the store has followed produces the same error: an adapter that records the epoch it last
+synced at, and treats a map with a lower one as behind before syncing, tells the two apart. A
+re-cut published during a sync ends that sync with `MapDiverged`, and the next sync starts from
+the re-cut map.

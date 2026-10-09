@@ -426,29 +426,47 @@ declaration whose epochs do not rise, whose entries do not follow one another fr
 changed height, that marks any entry but the last unsealed, names a digest the map still
 publishes or one declared twice, or names a geometry without seal parameters, and a map whose
 entry at a declared entry's geometry and start height does not carry a higher revision. The
-newest re-cut's first height must be a shard boundary of the map.
+newest re-cut's first height must be a shard boundary of the map. Every declared digest and
+terminal block hash must be 64 lowercase hex digits, every declared height must fit in 32
+bits, and a map may declare at most 65,536 superseded entries across all its re-cuts
+(`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
+store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
 
 A wallet (`transparent-wallet` `sync.rs`) keeps its history across a declared re-cut:
 
 - Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
-  good while the map publishes that revision there, or declares exactly that revision (same
-  id, range and terminal block) superseded. Nothing under it is read again.
-- Sealed coverage the map describes differently without declaring it counts as reorganised.
-  At the top of coverage it rolls back like a reorg; at or below a block the wallet's chain
-  accepts, it is refused with `MapDiverged` before anything is rolled back or read, because
-  the chain did not change there and the map did.
+  good while the map publishes that revision there, or declares exactly that revision
+  superseded: same digest, shard id and start height, sealed, ending on the same block. The
+  block a range ends on is its source anchor, which every store since SQLite schema 2 keeps;
+  a range without one (an older custom store) matches a declaration only if its covered end
+  height and block are the declared ones. Nothing under a matched range is read again.
+- A sealed range the map neither still publishes nor declares superseded is judged by the
+  block it rests on. If the wallet's chain rejects that block, it is a reorg and is rolled
+  back like any other. If the chain still accepts it, the chain did not change and the map
+  did: the sync ends with `SyncError::SealedRewrite { start_height, revision_digest }`
+  before anything is rolled back or read, whichever range the store holds newest. If the
+  chain cannot place the block, the sync stops as for any unknown block
+  (`chain-unknown`). A range cut short of its shard's end by a target or a rollback is left
+  to the ordinary chain checks, because a reorg above the cut changes the shard's digest
+  without touching what the range covers.
 - Unfinished page work under a revision the map no longer publishes is dropped and done
   again under the shard now covering its heights. What that revision already saved stays
-  when the map declares it sealed and the wallet's chain accepts its last block. Otherwise
-  the store rolls back from where the revision began (its declared start, or the lowest
-  height it saved an event at), moved down to the start of the shard now covering that
-  height. Events are kept once per outpoint, so reading a height again never counts one
-  twice.
+  only when the map declares it sealed (under the same shard id) and the wallet's chain
+  still accepts the target block that item was read for, which the store keeps with it and
+  which every event it saved lies at or below. The declaration's own heights and blocks are
+  not relied on. Otherwise the store rolls back from the lowest height the revision saved an
+  event at, or from its declared start if that is lower, moved down to the start of the
+  shard now covering that height; a revision that saved nothing leaves nothing to roll
+  back. Events are kept once per outpoint, so reading a height again never counts one
+  twice. Kept events sit without coverage until the gap is read, so a sync stopped first
+  reports the range uncovered.
 - Provisional coverage from a tail the map no longer publishes is rolled back from its start
   and read again from the new tail, as for any replaced tail.
 - A new coverage range replaces every range of the script it contains, whatever shard it
   came from, so a wider shard starting at a covered height does not clash with the narrower
-  ones in either store. The SQLite schema is unchanged (version 4).
+  ones. A range strictly inside the one the script holds starting nearest at or below it
+  changes nothing. Both reference stores follow these rules, and the SQLite schema is
+  unchanged (version 4).
 - A map refreshed during a sync whose re-cut epoch differs from the one the sync started
   from ends that sync with `MapDiverged`; so does one that moves the shard id the walk
   resumes at to another start height. The next sync starts from the re-cut map.
