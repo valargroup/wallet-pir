@@ -85,7 +85,13 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result['groups'], ['receiver'])
         self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
 
-    def test_receiver_probe_pin_changes_run_the_tools_check(self):
+    def test_receiver_probe_pin_changes_run_both_pin_checks(self):
+        # The README's monitor config pin is checked in tools/tests, the deploy
+        # inventory's exact-check pin in ops/tests.
+        for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md',
+                     'enhance/ops/deploy/deploy-inventory.example.json']:
+            helpers = fast.plan(self.packages, [path])['helpers']
+            self.assertIn('check-ops-shared', helpers, path)
         for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md']:
             self.assertIn('check-tools', fast.plan(self.packages, [path])['helpers'], path)
 

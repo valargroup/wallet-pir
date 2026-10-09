@@ -60,8 +60,12 @@ def route(path):
     if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
         return {'check-docs', 'check-tools'}, {'ops'}
     if path in {'receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md'}:
-        # tools/tests pins the probe fixture to the README's monitor config.
-        return {'check-docs', 'check-tools'}, {'ops'}
+        # tools/tests pins the probe fixture to the README's monitor config, and
+        # ops/tests to the deploy inventory's exact check.
+        return {'check-docs', 'check-tools', 'check-ops-shared'}, {'ops'}
+    if path == 'enhance/ops/deploy/deploy-inventory.example.json':
+        # ops/tests pins the receiver's exact check, fixture pin included.
+        return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts', 'check-ops-shared'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('receiver/ops/'):
