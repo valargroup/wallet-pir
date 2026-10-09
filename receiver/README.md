@@ -199,11 +199,14 @@ As Transparent's canary checks one query against a pinned row hash, it looks up 
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
 recovers its receiver, and the answer must hold that payment at that position and
-height with the fixture's fields and the node's block hash. A fixture that fails
-its pin is `oracle_invalid`. The lookup is reported as `phase:
+height with the fixture's fields, the node's block hash and the index of the
+fixture's transaction in the node's block, read by hash and checked against its
+merkle root. A fixture that fails its pin, or whose transaction is not in that
+block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
-A run moves about 140 KB, of which the filter file was about 37 KB in October 2026.
+A run moves about 140 KB from the service, of which the filter file was about 37 KB
+in October 2026, and the fixture's block from the node.
 It fails as `answer_mismatch` when the served anchor is off the node's chain or
 claims a tree size other than the node's after that block (read by its hash), the
 lookup misses or misreports the payment, the filter file is wrong or a completed

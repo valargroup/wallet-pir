@@ -227,7 +227,18 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         Some(payment) if expected(payment) => {
             let node: zakura_chain::block::Hash =
                 rpc.block_hash(u64::from(fixture.height)).await?.parse()?;
-            node.0 == payment.block_hash
+            if node.0 == payment.block_hash {
+                let block = rpc.receiver_block(node.0).await?;
+                match check_tx_index(&block, &txid, payment) {
+                    Ok(correct) => correct,
+                    Err(failure) => {
+                        *lookup = Some((queries, false));
+                        return Ok(Some(failure));
+                    }
+                }
+            } else {
+                false
+            }
         }
         _ => false,
     };
@@ -296,6 +307,22 @@ async fn check_anchor(
         )));
     }
     Ok(None)
+}
+
+/// Whether `payment`, the fixture's as served, has the transaction index of the
+/// fixture's transaction `txid` in `block`, the oracle's canonical block at the
+/// fixture's height. A fixture whose transaction is not in that block is invalid.
+fn check_tx_index(
+    block: &zakura_chain::block::Block,
+    txid: &Hash,
+    payment: &Payment,
+) -> std::result::Result<bool, Failure> {
+    let index = block
+        .transactions
+        .iter()
+        .position(|tx| tx.hash().0 == *txid)
+        .ok_or(("oracle_invalid", json!({"fixture": "not in its block"})))?;
+    Ok(u32::try_from(index).is_ok_and(|index| index == payment.tx_index))
 }
 
 /// Checks the session's filter file, which wallets test before any lookup: its digest
@@ -560,6 +587,40 @@ mod tests {
                 stale.then_some("stale_publication")
             );
         }
+    }
+
+    /// The served payment must carry its transaction's index in the oracle's block,
+    /// and a fixture transaction missing from that block is invalid.
+    #[test]
+    fn the_transaction_index_comes_from_the_oracles_block() {
+        use zakura_chain::{
+            block::Block,
+            serialization::{ZcashDeserialize, ZcashSerialize},
+            transaction::Transaction,
+        };
+        let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
+        let refund = Transaction::zcash_deserialize(raw.unwrap().as_slice()).unwrap();
+        let mut first = refund.clone();
+        if let Transaction::V6 { expiry_height, .. } = &mut first {
+            expiry_height.0 += 1;
+        }
+        // A header and empty solution, then the two transactions.
+        let mut bytes = vec![0u8; 140];
+        bytes[..4].copy_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&[0xfd, 0x40, 0x05]);
+        bytes.extend_from_slice(&[0; 1344]);
+        bytes.push(2);
+        first.zcash_serialize(&mut bytes).unwrap();
+        refund.zcash_serialize(&mut bytes).unwrap();
+        let block = Block::zcash_deserialize(bytes.as_slice()).unwrap();
+        let txid = refund.hash().0;
+        let mut payment = super::common::record(0, 1).payment;
+        payment.tx_index = 1;
+        assert_eq!(check_tx_index(&block, &txid, &payment), Ok(true));
+        payment.tx_index = 0;
+        assert_eq!(check_tx_index(&block, &txid, &payment), Ok(false));
+        let missing = check_tx_index(&block, &[0; 32], &payment);
+        assert_eq!(missing.unwrap_err().0, "oracle_invalid");
     }
 
     /// A session manifest whose directory salt starts with `salt`.
