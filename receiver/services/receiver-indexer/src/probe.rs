@@ -626,7 +626,7 @@ mod tests {
     }
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
-    /// anchor's height, `[anchor; 32]`, with the tree size after it. Genesis is
+    /// anchor's height `end`, `[anchor; 32]`, with the tree size after it. Genesis is
     /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
     /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
     /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
@@ -636,6 +636,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
+        end: u64,
         anchor: u8,
         fixture: u8,
         size: Option<u64>,
@@ -648,6 +649,7 @@ mod tests {
     fn good(tip: u64) -> Node {
         Node {
             tip,
+            end: u64::from(anchored().end_height),
             anchor: 3,
             fixture: 5,
             size: Some(300),
@@ -659,7 +661,7 @@ mod tests {
 
     /// Serves `node`. Returns its URL.
     async fn serve_node(node: Node) -> String {
-        let end = u64::from(anchored().end_height);
+        let end = node.end;
         let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new().route(
             "/",
@@ -838,6 +840,55 @@ mod tests {
         assert_eq!(category, "oracle_unavailable");
         assert_eq!(detail["attempts"].as_array().unwrap().len(), 2);
         assert_eq!(decide(&[rootless, moved], false).await, Ok((end + 3, None)));
+    }
+
+    /// Wallets require history from Ironwood activation, so a publication starting
+    /// after it fails before any lookup, though it holds the fixture and agrees with the
+    /// node; one starting at activation reaches the lookup.
+    #[tokio::test]
+    async fn a_publication_must_start_at_ironwood_activation() {
+        let activation = crate::blocks::ironwood_activation();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
+        fixture["height"] = (activation + 1).into();
+        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
+        std::fs::write(&path, fixture.to_string()).unwrap();
+        let node = Node {
+            end: u64::from(activation) + 2,
+            ..good(u64::from(activation) + 2)
+        };
+        let rpc = serve_node(node).await;
+        for (start, reaches_lookup) in [(activation + 1, false), (activation, true)] {
+            let mut directory = anchored();
+            (directory.start_height, directory.end_height) = (start, activation + 2);
+            let snapshot =
+                receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
+            let server = receiver_pir::server::Server::new(snapshot).unwrap();
+            let publications = receiver_pir_server::Publications::default();
+            let publication = receiver_pir_server::Publication::new(server, None).unwrap();
+            assert!(publications.publish(publication, 0));
+            let app = receiver_pir_server::router_with_publications(publications);
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            let args = Args::parse_from([
+                "probe",
+                "--origin",
+                &origin,
+                "--health-url",
+                &format!("{origin}/v1/receiver/health"),
+                "--fixture",
+                path.to_str().unwrap(),
+                "--rpc-url",
+                &rpc,
+                "--no-auth",
+            ]);
+            let mut lookup = None;
+            let result = probe(args, &mut lookup).await;
+            assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
+            assert_eq!(result.is_err(), !reaches_lookup, "{start}");
+        }
     }
 
     /// The node's Ironwood root and the witness file's agree byte for byte: the pinned
