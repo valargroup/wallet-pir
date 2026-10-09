@@ -204,10 +204,16 @@ its pin is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
 A run moves about 140 KB, of which the filter file was about 37 KB in October 2026.
-It fails as `answer_mismatch` when the served anchor is off the node's chain, the
+It fails as `answer_mismatch` when the served anchor is off the node's chain or
+claims a tree size other than the node's after that block (read by its hash), the
 lookup misses or misreports the payment, the filter file is wrong or a completed
-payout is missing from the index, and otherwise when the publication trails the node by more than 12 blocks
-or the recent set is older than wallets trust (15 minutes). It reads the payout
+payout is missing from the index. A node that cannot give the tree size, or whose
+chain changes while it is read, is `oracle_unavailable`. The probe fails otherwise
+when the publication trails the node by more than `--max-lag` blocks (default 12)
+or the recent set is older than wallets trust (15 minutes). The lag bound must
+cover the indexer's `--depth` plus its publication delay (a poll and PIR
+preparation) and a rotation's 60-second grace, so about ten blocks more than the
+depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout
 check from health, which only the private network reaches, and accepts it only
 when health reports serving the probed publication or the one the origin serves
 after a rotation. Every response body is bounded by the protocol's sizes before it

@@ -24,9 +24,6 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
-/// Blocks a publication may trail the node's tip: the indexer's depth, its poll and a
-/// rotation's grace, with margin.
-const MAX_LAG_BLOCKS: u64 = 12;
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// Bound on the health report, a few hundred bytes.
@@ -58,6 +55,11 @@ struct Args {
     cookie: Option<PathBuf>,
     #[arg(long)]
     no_auth: bool,
+    /// Blocks the publication may trail the freshest node's tip. It must cover the
+    /// indexer's `--depth` plus its publication delay (a poll and PIR preparation) and
+    /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
+    #[arg(long, default_value_t = 12)]
+    max_lag: u64,
 }
 
 /// A failed check's category and detail.
@@ -157,19 +159,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             )))
         }
     };
-    let node: zakura_chain::block::Hash = rpc.block_hash(height).await?.parse()?;
-    let genesis: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
-    if node.0 != directory.end_hash || genesis.0 != directory.genesis {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"anchor_off_chain": height}),
-        )));
-    }
-    if tip - height > MAX_LAG_BLOCKS {
-        return Ok(Some((
-            "stale_publication",
-            json!({"end_height": height, "node_tip": tip}),
-        )));
+    if let Some(failure) = check_anchor(&rpc, tip, directory, args.max_lag).await? {
+        return Ok(Some(failure));
     }
     if directory.start_height > fixture.height || directory.end_height < fixture.height {
         return Ok(Some((
@@ -262,6 +253,49 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
     }
     indexer_report(&http, origin, &args.health_url, &id).await
+}
+
+/// Checks the publication's anchor against `rpc`, the oracle node at tip `tip`: its
+/// hash and genesis, the tree size after it (read by that hash, see
+/// [`ZakuraClient::receiver_boundary`]), which is the coverage the manifest claims, and
+/// that it trails `tip` by at most `max_lag` blocks. A boundary the node cannot give is
+/// `oracle_unavailable`, not evidence against the publication.
+async fn check_anchor(
+    rpc: &ZakuraClient,
+    tip: u64,
+    directory: &receiver_directory::snapshot::Manifest,
+    max_lag: u64,
+) -> Result<Option<Failure>> {
+    let height = directory.end_height;
+    let boundary = match rpc.receiver_boundary(height).await {
+        Ok(boundary) => boundary,
+        Err(error) => {
+            return Ok(Some((
+                "oracle_unavailable",
+                json!({"end_height": height, "boundary": error.to_string()}),
+            )))
+        }
+    };
+    let genesis: zakura_chain::block::Hash = rpc.block_hash(0).await?.parse()?;
+    if boundary.hash != directory.end_hash || genesis.0 != directory.genesis {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"anchor_off_chain": height}),
+        )));
+    }
+    if boundary.position != directory.end_position {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"end_position": directory.end_position, "node_tree_size": boundary.position}),
+        )));
+    }
+    if tip - u64::from(height) > max_lag {
+        return Ok(Some((
+            "stale_publication",
+            json!({"end_height": height, "node_tip": tip}),
+        )));
+    }
+    Ok(None)
 }
 
 /// Checks the session's filter file, which wallets test before any lookup: its digest
@@ -422,6 +456,110 @@ mod tests {
             panic!("no node reached the publication");
         };
         assert_eq!(tips.len(), 2);
+    }
+
+    /// A node at tip `tip` on a chain whose block at every positive height is
+    /// `[hash; 32]`, reporting Ironwood tree size `size`, and genesis `[1; 32]` as
+    /// [`super::common::manifest`] declares. With `reorg`, every second hash it gives
+    /// is `[9; 32]`, as when the chain changes between two reads. Returns a client.
+    async fn chain(tip: u64, hash: u8, size: Option<u64>, reorg: bool) -> ZakuraClient {
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let app = Router::new().route(
+            "/",
+            routing::post(move |Json(request): Json<Value>| async move {
+                let display = |byte| zakura_chain::block::Hash([byte; 32]).to_string();
+                let result = match request["method"].as_str().unwrap() {
+                    "getblockcount" => json!(tip),
+                    "getblockhash" if request["params"][0] == 0 => json!(display(1)),
+                    "getblockhash" => {
+                        let second = asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst) % 2;
+                        json!(display(if reorg && second == 1 { 9 } else { hash }))
+                    }
+                    "getblock" => match size {
+                        Some(size) => json!({"trees": {"ironwood": {"size": size}}}),
+                        None => json!({"trees": {}}),
+                    },
+                    method => panic!("unexpected {method}"),
+                };
+                Json(json!({"result": result, "error": null}))
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        ZakuraClient::unauthenticated(vec![url]).unwrap()
+    }
+
+    /// [`super::common::manifest`] ending at Ironwood activation, where a node reports
+    /// tree sizes.
+    fn anchored() -> receiver_directory::snapshot::Manifest {
+        let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
+        directory.end_height = receiver_indexer::blocks::ironwood_activation();
+        directory
+    }
+
+    /// The anchor must have the node's hash and the tree size after that block. A node
+    /// that cannot give the size, or whose chain changes during the read, proves
+    /// nothing against the publication.
+    #[tokio::test]
+    async fn the_anchor_must_match_the_nodes_hash_and_tree_size() {
+        let directory = anchored();
+        let tip = u64::from(directory.end_height);
+        let check = |rpc: ZakuraClient| {
+            let directory = directory.clone();
+            async move {
+                check_anchor(&rpc, tip, &directory, 12)
+                    .await
+                    .unwrap()
+                    .map(|failure| failure.0)
+            }
+        };
+        assert_eq!(check(chain(tip, 3, Some(300), false).await).await, None);
+        for (hash, size, reorg, expected) in [
+            (3, Some(301), false, "answer_mismatch"),
+            (4, Some(300), false, "answer_mismatch"),
+            (3, None, false, "oracle_unavailable"),
+            (3, Some(300), true, "oracle_unavailable"),
+        ] {
+            let rpc = chain(tip, hash, size, reorg).await;
+            assert_eq!(check(rpc).await, Some(expected), "{hash} {size:?} {reorg}");
+        }
+    }
+
+    /// `--max-lag` defaults to 12 and bounds the publication's lag inclusively.
+    #[tokio::test]
+    async fn the_lag_bound_is_configurable() {
+        let args = |extra: &[&str]| {
+            let required = [
+                "receiver-probe",
+                "--origin",
+                "https://receiver",
+                "--health-url",
+                "http://10.0.0.1/health",
+                "--fixture",
+                "fixture.json",
+                "--fixture-sha256",
+                "00",
+                "--rpc-url",
+                "http://node",
+                "--no-auth",
+            ];
+            Args::try_parse_from(required.iter().chain(extra)).unwrap()
+        };
+        assert_eq!(args(&[]).max_lag, 12);
+        // A depth of 50 needs about ten more blocks for the poll, preparation and grace.
+        let max_lag = args(&["--max-lag", "60"]).max_lag;
+        assert_eq!(max_lag, 60);
+        let directory = anchored();
+        let height = u64::from(directory.end_height);
+        for (lag, stale) in [(60, false), (61, true)] {
+            let rpc = chain(height + lag, 3, Some(300), false).await;
+            let failure = check_anchor(&rpc, height + lag, &directory, max_lag);
+            assert_eq!(
+                failure.await.unwrap().map(|f| f.0),
+                stale.then_some("stale_publication")
+            );
+        }
     }
 
     /// A session manifest whose directory salt starts with `salt`.
