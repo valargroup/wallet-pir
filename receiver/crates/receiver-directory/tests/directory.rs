@@ -291,7 +291,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
     assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
-    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(700));
 }
 
 /// Only a feed's first read sets its start. A read that followed the cursor, before
