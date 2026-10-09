@@ -101,8 +101,10 @@ monitor's probe below does. It runs on the Droplet because the coordinator, in
 `ams3` on `10.142.0.0/16`, cannot reach the private health route. Its chain checks
 use the fleet nodes the service reads, the only ones the Droplet reaches, so it
 gates the deploy but is not an independent oracle; the monitor's probe remains
-that. A failed check, or one still running at its 120-second `timeout`, fails the
-deploy. A failure, or `rollback`, restores the previous unit file and binary.
+that. The check first waits up to 300 seconds (`--await-feed-reads`) for the
+restarted process to complete a read of both NEAR feeds, which proves the key file
+the unit names. A failed check, or one still running at its 480-second `timeout`,
+fails the deploy. A failure, or `rollback`, restores the previous unit file and binary.
 Report `status receiver` and the rollback command after each deploy.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a

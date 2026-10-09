@@ -10,7 +10,8 @@ negative cases run it against mutated copies. The unit is the template
 `wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
 The example inventory's `exact_check` must probe this edge, listener, fixture and
 nodes from the receiver's own host before a deploy commits, running the probe and
-fixture the deploy stages from the same bundle. The Terraform firewall must admit
+fixture the deploy stages from the same bundle, and wait for the restarted process
+to read both NEAR feeds. The Terraform firewall must admit
 the coordinator's SSH, which every locked operation needs. The runbook's monitor
 probe config must be the array `pir-monitor` reads, and its merge must keep the
 monitor's other probes.
@@ -181,7 +182,12 @@ def check_exact_check(service, unit, caddy, fixture, descriptor):
     nodes = lambda words: [words[i + 1] for i, word in enumerate(words) if word == '--rpc-url']
     assert nodes(argv) and nodes(argv) == nodes(served), (nodes(argv), nodes(served))
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
-    assert isinstance(check.get('timeout'), int) and 0 < check['timeout'] <= 300, check.get('timeout')
+    # The probe first waits for the restarted process to read both NEAR feeds, which
+    # proves the key the unit names; the timeout leaves 120 to 300 seconds for the rest.
+    assert '--await-feed-reads' in argv, argv
+    wait = int(option('--await-feed-reads'))
+    timeout = check.get('timeout')
+    assert wait > 0 and isinstance(timeout, int) and wait + 120 <= timeout <= wait + 300, (wait, timeout)
 
 
 def ssh_sources(tf, firewall):
@@ -276,6 +282,8 @@ class ReceiverOpsContract(unittest.TestCase):
             mutated(swap(hashlib.sha256(self.fixture).hexdigest(), '0' * 64)),
             mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
             mutated(lambda check, argv: argv.remove('--no-auth')),
+            mutated(lambda check, argv: argv.__delitem__(slice(argv.index('--await-feed-reads'), None))),
+            mutated(lambda check, argv: check.update(timeout=300)),
         ]:
             self.assertNotEqual(service, self.service)
             with self.assertRaises(AssertionError):

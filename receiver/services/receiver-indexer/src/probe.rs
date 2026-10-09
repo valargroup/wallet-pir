@@ -1,4 +1,6 @@
-//! A `pir-monitor` service probe for the receiver directory. It checks the served
+//! A `pir-monitor` service probe for the receiver directory, also run as a deploy's
+//! exact check. With `--await-feed-reads` it first waits for the running process to
+//! read both NEAR feeds (`feeds_not_read` otherwise). It then checks the served
 //! publication against independent nodes, looks up a pinned historical payment over live
 //! encrypted PIR, as Transparent's canary checks one query against a pinned row, checks
 //! the filter file against the manifest, then checks the NEAR feed's freshness and the indexer's payout check, which health reports
@@ -14,7 +16,7 @@ use receiver_directory::{
     filter::{Filters, MAX_FILTERS_BYTES},
     Hash, Payment,
 };
-use receiver_indexer::zakura::ZakuraClient;
+use receiver_indexer::{near::Feed, zakura::ZakuraClient};
 use receiver_pir::{
     public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
     MAX_MANIFEST_BYTES,
@@ -22,12 +24,14 @@ use receiver_pir::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// Bound on the health report, a few hundred bytes.
 const MAX_HEALTH_BYTES: usize = 64 * 1024;
+/// How often `--await-feed-reads` polls health.
+const FEED_READS_POLL: Duration = Duration::from_secs(2);
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -60,6 +64,16 @@ struct Args {
     /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
     #[arg(long, default_value_t = 12)]
     max_lag: u64,
+    /// Before any network check, wait up to this many seconds for health's `near.reads`
+    /// to show that the running process completed a read of both NEAR feeds, as a
+    /// deploy that sets the partner key must. Feeds are read in turn at the explorer's
+    /// 5.5-second request pacing (about 40 seconds a poll at October 2026 volume), and
+    /// the 60-second poll interval starts after both, so the deploy's 300 allows about
+    /// three polls. That is a budget, not a worst-case bound: a first read of a new
+    /// provider database can take far longer. Without this flag, as in the monitor's
+    /// periodic probe, nothing waits.
+    #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
+    await_feed_reads: Option<u64>,
 }
 
 /// A failed check's category and detail.
@@ -146,6 +160,13 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
+    if let Some(secs) = args.await_feed_reads {
+        let wait = Duration::from_secs(secs);
+        let gate = await_feed_reads(&http, &args.health_url, wait, FEED_READS_POLL);
+        if let Some(failure) = gate.await {
+            return Ok(Some(failure));
+        }
+    }
     let origin = args.origin.trim_end_matches('/');
     let manifest = fetch_manifest(&http, origin).await?;
     let directory = &manifest.directory;
@@ -264,6 +285,46 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
     }
     indexer_report(&http, origin, &args.health_url, &id).await
+}
+
+/// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
+/// feeds, each request bounded by the time left of `wait`. At the deadline it fails as
+/// `feeds_not_read` with the last reads seen and the last request error.
+async fn await_feed_reads(
+    http: &reqwest::Client,
+    health_url: &str,
+    wait: Duration,
+    poll: Duration,
+) -> Option<Failure> {
+    let deadline = tokio::time::Instant::now() + wait;
+    let (mut reads, mut error) = (Value::Null, None);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Some((
+                "feeds_not_read",
+                json!({"waited_secs": wait.as_secs(), "reads": reads, "last_error": error}),
+            ));
+        }
+        let health = tokio::time::timeout(remaining, get(http, health_url, MAX_HEALTH_BYTES));
+        match health.await {
+            Ok(Ok(body)) => match serde_json::from_slice::<Value>(&body) {
+                Ok(health) => {
+                    reads = health["near"]["reads"].clone();
+                    if [Feed::Payouts, Feed::Refunds]
+                        .iter()
+                        .all(|feed| reads[feed.name()].as_i64().is_some())
+                    {
+                        return None;
+                    }
+                }
+                Err(e) => error = Some(e.to_string()),
+            },
+            Ok(Err(e)) => error = Some(e.to_string()),
+            Err(_) => error = Some("health did not answer before the deadline".to_owned()),
+        }
+        tokio::time::sleep_until((tokio::time::Instant::now() + poll).min(deadline)).await;
+    }
 }
 
 /// Checks the publication's anchor against `rpc`, the oracle node at tip `tip`: its
@@ -686,6 +747,132 @@ mod tests {
         let origin = serve(altered).await;
         let check = check_filters(&http, &origin, "x", &snapshot.manifest);
         assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
+    }
+
+    /// A health route that answers its `n`th request, from 0, with `answer(n)`. Returns
+    /// its URL and the request count.
+    async fn health_route(
+        answer: impl Fn(usize) -> (axum::http::StatusCode, String) + Clone + Send + Sync + 'static,
+    ) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::{atomic::Ordering, Arc};
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = asked.clone();
+        let app = Router::new().route(
+            "/health",
+            routing::get(move || {
+                let answer = answer.clone();
+                let n = count.fetch_add(1, Ordering::SeqCst);
+                async move { answer(n) }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/health", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        (url, asked)
+    }
+
+    /// A health body whose `near.reads` are `payouts` and `refunds`.
+    fn reads(payouts: Value, refunds: Value) -> (axum::http::StatusCode, String) {
+        let health = json!({"near": {"reads": {"near-payouts": payouts, "near-refunds": refunds}}});
+        (axum::http::StatusCode::OK, health.to_string())
+    }
+
+    /// The feed gate passes once health shows both feeds read, however late within its
+    /// wait, and otherwise fails at its deadline with the last reads and request error.
+    #[tokio::test]
+    async fn the_feed_gate_waits_for_both_reads() {
+        use std::sync::atomic::Ordering;
+        let http = reqwest::Client::new();
+        let poll = Duration::from_millis(50);
+        let gate = |url: String, secs| {
+            let http = http.clone();
+            async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
+        };
+        let (url, asked) = health_route(|_| reads(json!(5), json!(6))).await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        // The refund feed's read appears on the fourth request.
+        let (url, asked) =
+            health_route(|n| reads(json!(5), if n < 3 { Value::Null } else { json!(6) })).await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        let (url, _) = health_route(|_| reads(json!(5), Value::Null)).await;
+        let (category, detail) = gate(url, 1).await.unwrap();
+        assert_eq!(category, "feeds_not_read");
+        assert_eq!(
+            detail,
+            json!({"waited_secs": 1, "reads": {"near-payouts": 5, "near-refunds": null},
+                "last_error": null})
+        );
+        // A failed request is reported after later answers, and a body without reads
+        // (an older server) never passes.
+        let (url, _) = health_route(|n| match n {
+            0 => (axum::http::StatusCode::SERVICE_UNAVAILABLE, String::new()),
+            _ => (
+                axum::http::StatusCode::OK,
+                json!({"serving": "x"}).to_string(),
+            ),
+        })
+        .await;
+        let (category, detail) = gate(url, 1).await.unwrap();
+        assert_eq!(
+            (category, &detail["reads"]),
+            ("feeds_not_read", &Value::Null)
+        );
+        assert!(
+            detail["last_error"].as_str().unwrap().contains("503"),
+            "{detail}"
+        );
+    }
+
+    /// With `--await-feed-reads`, a gate that fails ends the probe before it asks the
+    /// origin for anything.
+    #[tokio::test]
+    async fn the_feed_gate_runs_before_the_origin_is_asked() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let asked = std::sync::Arc::new(AtomicUsize::new(0));
+        let count = asked.clone();
+        let app = Router::new().route(
+            "/v1/receiver/init",
+            routing::get(move || {
+                count.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let (health, _) = health_route(|_| reads(Value::Null, Value::Null)).await;
+        let fixture = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../ops/digitalocean/probe-fixture.json"
+        );
+        let digest = hex::encode(Sha256::digest(std::fs::read(fixture).unwrap()));
+        let argv = |extra: &[&str]| {
+            let required = [
+                "receiver-probe",
+                "--origin",
+                &origin,
+                "--health-url",
+                &health,
+                "--fixture",
+                fixture,
+                "--fixture-sha256",
+                &digest,
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--no-auth",
+            ];
+            Args::try_parse_from(required.iter().chain(extra))
+        };
+        let gated = argv(&["--await-feed-reads", "1"]).unwrap();
+        let failure = probe(gated, &mut None).await;
+        assert_eq!(failure.unwrap().unwrap().0, "feeds_not_read");
+        assert_eq!(asked.load(Ordering::SeqCst), 0);
+        // Without the flag the probe goes straight to the origin.
+        assert!(probe(argv(&[]).unwrap(), &mut None).await.is_err());
+        assert_eq!(asked.load(Ordering::SeqCst), 1);
+        assert!(argv(&["--await-feed-reads", "0"]).is_err());
     }
 
     /// Health's report counts only for the probed publication, or the one the origin

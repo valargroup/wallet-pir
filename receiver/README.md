@@ -242,7 +242,9 @@ depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads t
 check from health, which only the private network reaches, and accepts it only
 when health reports serving the probed publication or the one the origin serves
 after a rotation. Every response body is bounded by the protocol's sizes before it
-is read. The key is never logged. Without a key, publications carry no provider sets.
+is read. With `--await-feed-reads <seconds>`, as a deploy runs it, the probe first
+waits that long for health's `near.reads` to show both feeds read by the running
+process, and fails as `feeds_not_read` otherwise. The key is never logged. Without a key, publications carry no provider sets.
 
 ## Wallet use
 

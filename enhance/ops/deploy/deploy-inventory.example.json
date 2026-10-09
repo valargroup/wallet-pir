@@ -61,8 +61,9 @@
                  "--health-url", "http://10.70.0.11:18380/v1/receiver/health",
                  "--fixture", "{release_dir}/probe-fixture.json",
                  "--fixture-sha256", "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
-                 "--rpc-url", "http://10.70.0.19:8232", "--rpc-url", "http://10.70.0.6:8232", "--no-auth"],
-        "timeout": 120
+                 "--rpc-url", "http://10.70.0.19:8232", "--rpc-url", "http://10.70.0.6:8232", "--no-auth",
+                 "--await-feed-reads", "300"],
+        "timeout": 480
       }
     }
   }
