@@ -135,10 +135,9 @@ impl Store {
 
     /// Reject gaps, changed parents, coinbase payments, malformed records and payments
     /// a snapshot would refuse before advancing coverage: the block's payments must
-    /// follow chain order by position, transaction index and action index and agree on
-    /// their block hash and transaction locations, and a txid already stored must keep
-    /// its height and transaction index. Heights and position ranges order the blocks,
-    /// so each receiver's pages continue as [`snapshot::check_next`] requires.
+    /// share its hash and follow chain order by position, transaction index and action
+    /// index, with one txid per transaction. Heights and position ranges order the
+    /// blocks, so each receiver's pages continue as [`snapshot::check_next`] requires.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -176,8 +175,7 @@ impl Store {
                 ],
             )?;
         }
-        let mut previous_output = None;
-        let mut locations = snapshot::Locations::default();
+        let mut last: Option<&Payment> = None;
         for (receiver, p) in &block.payments {
             // Coinbase recipients are excluded: the coinbase is transaction zero, and its
             // Actions take the block's first positions.
@@ -190,37 +188,23 @@ impl Store {
                     .commitments
                     .get((p.position - block.start_position) as usize)
                     != Some(&p.cmx)
-                || previous_output.is_some_and(|(position, output)| {
-                    p.position <= position || (p.tx_index, p.action_index) <= output
+                || last.is_some_and(|q| {
+                    p.position <= q.position
+                        || (p.tx_index, p.action_index) <= (q.tx_index, q.action_index)
+                        || (p.tx_index == q.tx_index && p.txid != q.txid)
                 })
             {
                 return Err(Error::Malformed);
             }
-            previous_output = Some((p.position, (p.tx_index, p.action_index)));
+            last = Some(p);
             // Stored as a lone page; a snapshot numbers the pages.
             let record = Record {
                 receiver: *receiver,
                 page: 0,
                 total: 1,
                 payment: p.clone(),
-            };
-            if !locations.add(&(&record).into()) {
-                return Err(Error::Malformed);
             }
-            let stored: Option<Vec<u8>> = tx
-                .query_row(
-                    "SELECT record FROM payments WHERE txid=?1 LIMIT 1",
-                    [p.txid.as_slice()],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(stored) = stored {
-                let stored = Record::decode(&stored)?.ok_or(Error::Malformed)?.payment;
-                if (stored.height, stored.tx_index) != (p.height, p.tx_index) {
-                    return Err(Error::Malformed);
-                }
-            }
-            let record = record.encode()?;
+            .encode()?;
             tx.execute(
                 "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
                 params![
