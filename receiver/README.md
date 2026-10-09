@@ -213,8 +213,13 @@ rewinds the index, which first forgets every match.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
-Its chain checks use the first `--rpc-url` node that has reached the publication;
-with none, it fails as `oracle_unavailable` rather than skipping them.
+Its chain checks run on one `--rpc-url` node at a time among those that have
+reached the publication, highest tip first and in the given order among equal
+tips. A node that cannot complete them, from an RPC failure, an undecodable
+answer, missing tree data or a chain that changes during its reads, hands over to
+the next, but valid evidence against the publication is final. With no node
+completing them, it fails as `oracle_unavailable`, listing each attempt, rather
+than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
@@ -230,10 +235,10 @@ in October 2026, and the fixture's block from the node.
 It fails as `answer_mismatch` when the served anchor is off the node's chain or
 claims a tree size other than the node's after that block (read by its hash), the
 lookup misses or misreports the payment, the filter file is wrong or a completed
-payout is missing from the index. A node that cannot give the tree size, or whose
-chain changes while it is read, is `oracle_unavailable`. The probe fails otherwise
-when the publication trails the node by more than `--max-lag` blocks (default 12)
-or the recent set is older than wallets trust (15 minutes). The lag bound must
+payout is missing from the index. The probe fails otherwise when the publication
+trails the highest tip any node reports, whichever node checked it, by more than
+`--max-lag` blocks (default 12) or the recent set is older than wallets trust (15
+minutes). The lag bound must
 cover the indexer's `--depth` plus its publication delay (a poll and PIR
 preparation) and a rotation's 60-second grace, so about ten blocks more than the
 depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout
