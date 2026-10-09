@@ -19,8 +19,8 @@ PLAIN_PATH = re.compile(r'^/[A-Za-z0-9._/-]+$')
 PLAIN_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 HOST_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
 # A template value: no whitespace, `=`, `/` or quotes, so it cannot add a unit
-# line or a path segment wherever a template puts it.
-TEMPLATE_VALUE = re.compile(r'[A-Za-z0-9._:-]+')
+# line or a path segment wherever a template puts it. NEAR key ids use it too.
+TEMPLATE_VALUE = re.compile(r'[A-Za-z0-9._-]+')
 LOCK_PATH = '/run/lock/wallet-pir-production.lock'
 
 
@@ -221,7 +221,7 @@ def template_values(service, inventory, sha):
         require(isinstance(configured.get(name), str) and configured[name],
                 'inventory: %s.template_vars.%s is required' % (service.name, name))
         require(TEMPLATE_VALUE.fullmatch(configured[name]),
-                'inventory: %s.template_vars.%s must be letters, digits, ".", "_", ":" or "-"'
+                'inventory: %s.template_vars.%s must be letters, digits, ".", "_" or "-"'
                 % (service.name, name))
         values[name] = configured[name]
     return values

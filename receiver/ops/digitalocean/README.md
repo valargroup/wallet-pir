@@ -119,20 +119,17 @@ are those of any deploy, and a commit refreshes the baseline.
 
 Before the first tool deploy, once:
 
-1. Install the key the Droplet runs with as a versioned key file, `<id>` such as
-   the date, from Infisical as [below](#installing-or-rotating-the-near-key), or
-   from the Droplet's own `near.env` through the coordinator, which neither prints
-   nor stores it (`sed` passes the line with its newline):
-   `ssh <droplet> sed -n 's/^NEAR_INTENTS_EXPLORER=//p' /etc/receiver-pir/near.env | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.py install <droplet> <id>`.
-2. Add the Droplet to the coordinator's real inventory as in
+1. Add the Droplet to the coordinator's real inventory as in
    [`deploy-inventory.example.json`](../../../enhance/ops/deploy/deploy-inventory.example.json):
    a host with its SSH address, `services.receiver.template_vars.NEAR_KEY` set to
-   `<id>`, `services.receiver.roles.server` on the host with
+   a new key id `<id>`, such as the date, `services.receiver.roles.server` on the host with
    `vars.listen` set to the `--bind` address, `10.70.0.11:18380`, and
    `services.receiver.exact_check` on the same host, as there. Add its host key
    to the inventory's pinned `known_hosts` and update `known_hosts_sha256`.
-3. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
+2. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
    for root on the Droplet.
+3. Install the key the Droplet runs with as key file `<id>`, from Infisical as
+   [below](#installing-or-rotating-the-near-key).
 4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
 
@@ -161,22 +158,18 @@ A key change installs a new file and deploys a unit that names it, on the
 coordinator:
 
 1. Install the key under a new id, such as the date, with
-   [`near-key.py`](near-key.py), under the lock and with only the key on stdin as
-   one line ending in a newline, here from Infisical:
+   [`near-key.py`](near-key.py), which reaches the Droplet over the pinned SSH of
+   the inventory `WALLET_PIR_DEPLOY_INVENTORY` names, here from Infisical:
 
    ```sh
-   infisical run --projectId=<project> --env=prod --path=/valargroup --silent -- sh -c \
-     'printf "%s\n" "$NEAR_INTENTS_EXPLORER" | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.py install <droplet> 2026-10-09'
+   infisical run --projectId=<project> --env=prod --path=/valargroup --silent -- \
+     flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.py 2026-10-09
    ```
 
-   It writes `near-2026-10-09.env`, owned by root with mode 0600, and changes
-   nothing else; the service reads it only once a deploy names it. Input without
-   its final newline is refused as possibly truncated, and stdin must end within
-   30 seconds, so a stalled producer cannot hold the lock. An id already
-   installed with the same key is a no-op, and one with another key is refused.
-   Key files are never edited or deleted: they are a few bytes each, and rolling
-   back through several transactions needs the older ones. The legacy `near.env`
-   stays too.
+   It writes `near-2026-10-09.env` (root, mode 0600) and changes nothing else; the
+   service reads it only once a deploy names it. Key files are never replaced or
+   deleted, since rolling back through several transactions needs the older ones,
+   so a retry uses a new id. The legacy `near.env` stays too.
 2. Set `services.receiver.template_vars.NEAR_KEY` to the new id in the
    coordinator's inventory.
 3. Deploy the running release again with the reviewed drift. `plan` should show one
@@ -205,8 +198,8 @@ origin and both nodes.
 
 ## Host provisioning
 
-These steps prepare a new Droplet before it serves anything. It is not yet in the
-deploy inventory, so no deploy can reach it.
+These steps prepare a new Droplet before it serves anything; no deploy reaches it
+before its baseline is captured.
 
 1. `cloud-init.yaml` installs Caddy and `ufw`, creates the `receiver-pir` user,
    `/opt/receiver-pir/releases` and `/srv/receiver-pir`, and opens SSH, HTTP, HTTPS
@@ -222,9 +215,8 @@ deploy inventory, so no deploy can reach it.
    `--near-since` sets where a new provider database's first read starts; keep it
    at the feed's original start.
 4. Install the NEAR Intents explorer partner key, which the recent and seen filters
-   need, as key file `<id>` with `near-key.py`, as in
-   [Installing or rotating the NEAR key](#installing-or-rotating-the-near-key).
-   Without it the service does not start.
+   need, as key file `<id>` with steps 1 to 3 [before the first tool
+   deploy](#release-and-deploy). Without it the service does not start.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.

@@ -1,191 +1,87 @@
 #!/usr/bin/env python3
-"""Installs a NEAR Intents explorer partner key on the receiver Droplet.
+"""Installs a NEAR Intents explorer partner key on the receiver Droplet as /etc/receiver-pir/near-<id>.env.
 
-The key becomes /etc/receiver-pir/near-<id>.env, the file the unit names through
-the deploy inventory's NEAR_KEY (see README.md). Run it on the coordinator under
-the production lock, with exactly one newline-terminated key line on stdin:
+Run it on the coordinator under the production lock, with the key in
+NEAR_INTENTS_EXPLORER (as `infisical run` sets it) and the deploy inventory
+named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
 
-    printf '%s\\n' "$KEY" | flock -n /run/lock/wallet-pir-production.lock near-key.py install <droplet> <id>
+    flock -n /run/lock/wallet-pir-production.lock near-key.py <id>
 
-Input without its final newline is refused as incomplete, so a producer that
-dies partway cannot install a truncated key. Stdin must end within 30 seconds
-and hold at most one line of 4096 characters, so a stalled or runaway producer
-cannot hold the lock. The key never appears in an argument, in output or in a
-file on the coordinator; it reaches the Droplet on SSH's stdin. Key files are
-never edited or deleted: an id already installed with the same key is a no-op
-and one with another key is refused. All of them stay, a few bytes each,
-because rolling back through several deploys needs the key files their units
-name.
+The key travels only on SSH's stdin, never in an argument or in output. A key
+file is written whole under a temporary name and published without replacing
+an existing name, so an installed id never changes; a retry uses a new id.
 """
 import os
+from pathlib import Path
 import re
-import select
 import shlex
 import subprocess
 import sys
-import time
 
-ID = re.compile(r'[A-Za-z0-9._-]+')
-KEY_LINE = re.compile(rb'[A-Za-z0-9._~+/=-]{1,4096}\n')
-# The longest acceptable stdin: a 4096-character key and its newline.
-MAX_STDIN = 4097
-STDIN_SECONDS = 30
-# The whole remote step, connection included.
+sys.dont_write_bytecode = True
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / 'ops/lib'))
+from wallet_pir_ops.deploy import descriptors  # noqa: E402
+from wallet_pir_ops.deploy.remote import SSHExecutor  # noqa: E402
+
+KEY = re.compile(r'[A-Za-z0-9._~+/=-]{1,4096}')
 REMOTE_SECONDS = 60
-SSH = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10',
-       '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3']
-USAGE = 'usage: near-key.py install <droplet> <id>, with one key line on stdin'
 
-# Runs on the Droplet as root, with the id as its argument and the key line on
-# stdin, which it checks again. A temporary file is never named near-*.env, so
-# one an interrupted run leaves is never read as a key.
+# Runs on the Droplet as root with the id as its argument and the key file's
+# content on stdin. The temporary name is never near-*.env, so one an
+# interrupted run leaves is never read as a key.
 REMOTE = r'''
-import os, re, secrets, stat, sys
-
+import os, sys
 directory = "/etc/receiver-pir"
-key_id = sys.argv[1]
-data = sys.stdin.buffer.read(4098)
-if not re.fullmatch(r"[A-Za-z0-9._-]+", key_id) or not re.fullmatch(rb"[A-Za-z0-9._~+/=-]{1,4096}\n", data):
-    sys.exit("refused: malformed id, or stdin is not one complete key line")
-content = b"NEAR_INTENTS_EXPLORER=" + data
-final = os.path.join(directory, "near-" + key_id + ".env")
-temp_prefix = ".near-" + key_id + "."
-# Exactly the names this program creates for this id, so cleanup never takes
-# another link, such as a backup or a longer dotted id's temporary name.
-temp_name = re.compile(re.escape(temp_prefix) + r"[0-9a-f]{16}\.tmp")
-
-
-def refuse(reason):
-    """Exits 1, leaving the existing final name untouched."""
-    sys.exit("refused: " + final + " " + reason + "; key files are never replaced")
-
-
-def sync_directories():
-    """Fsyncs the key directory and its parent, making the published name durable."""
-    for path in (directory, os.path.dirname(directory)):
-        dfd = os.open(path, os.O_RDONLY)
-        try:
-            os.fsync(dfd)
-        finally:
-            os.close(dfd)
-
-
-def settle():
-    """Exits for an existing final name: 0 if it is a private file holding this key, else 1.
-
-    Checked on the open file: owned by this user (root), mode without group or
-    other bits, and one name. An earlier run killed between its publishing link
-    and removing its temporary name leaves that name linked to the file, so such
-    names are removed first. Success first makes the file and its name durable,
-    which that earlier run may not have done.
-    """
-    try:
-        fd = os.open(final, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        refuse("is not a regular file")
-    info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode):
-        refuse("is not a regular file")
-    for name in os.listdir(directory):
-        path = os.path.join(directory, name)
-        if temp_name.fullmatch(name) and os.path.samestat(os.lstat(path), info):
-            os.unlink(path)
-    info = os.fstat(fd)
-    if info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
-        refuse("is not a private file of this user with one name")
-    current = b""
-    while len(current) <= len(content):
-        chunk = os.read(fd, len(content) + 1 - len(current))
-        if not chunk:
-            break
-        current += chunk
-    if current != content:
-        refuse("holds another key")
-    os.fsync(fd)
-    sync_directories()
-    print(final + " is already installed with this key")
-    sys.exit(0)
-
-
+final = os.path.join(directory, "near-%s.env" % sys.argv[1])
+temp = os.path.join(directory, ".near-%s.%d.tmp" % (sys.argv[1], os.getpid()))
+data = sys.stdin.buffer.read()
+if not data.endswith(b"\n"):
+    sys.exit("refused: the key file content arrived incomplete")
 os.makedirs(directory, mode=0o700, exist_ok=True)
-info = os.lstat(directory)
-if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
-    sys.exit("refused: " + directory + " must be a directory owned by this user and writable by no one else")
-if os.path.lexists(final):
-    settle()
-temp = os.path.join(directory, temp_prefix + secrets.token_hex(8) + ".tmp")
-fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-published = False
+with open(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600), "wb") as handle:
+    handle.write(data)
+    handle.flush()
+    os.fsync(handle.fileno())
 try:
-    with os.fdopen(fd, "wb") as handle:
-        handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
-    try:
-        os.link(temp, final)
-        published = True
-    except FileExistsError:
-        pass
+    os.link(temp, final)
+except FileExistsError:
+    sys.exit("refused: %s exists; key files are never replaced, so install under a new id" % final)
 finally:
-    try:
-        os.unlink(temp)
-    except FileNotFoundError:
-        pass
-if not published:
-    settle()
-sync_directories()
+    os.unlink(temp)
+fd = os.open(directory, os.O_RDONLY)
+os.fsync(fd)
+os.close(fd)
 print("installed " + final)
 '''
 
 
-class Refused(Exception):
-    pass
-
-
-def read_stdin(fd, seconds, limit):
-    """Reads `fd` to its end within `seconds`, refusing it as soon as it passes `limit` bytes."""
-    deadline = time.monotonic() + seconds
-    data = b''
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise Refused('stdin did not end within %g seconds' % seconds)
-        if not select.select([fd], [], [], remaining)[0]:
-            continue
-        chunk = os.read(fd, limit + 1 - len(data))
-        if not chunk:
-            return data
-        data += chunk
-        if len(data) > limit:
-            raise Refused('stdin holds more than one key line of at most 4096 characters')
-
-
-def main(argv=None, stdin=0):
-    """Validates the arguments and stdin, then installs the key over SSH; returns the exit status."""
+def main(argv=None):
+    """Validates the id and the key, then installs the key file over pinned SSH; returns the exit status."""
     argv = sys.argv[1:] if argv is None else argv
-    if len(argv) != 3 or argv[0] != 'install' or not argv[1] or argv[1].startswith('-'):
-        print(USAGE, file=sys.stderr)
+    key = os.environ.get('NEAR_INTENTS_EXPLORER', '')
+    inventory_path = os.environ.get('WALLET_PIR_DEPLOY_INVENTORY')
+    if len(argv) != 1 or not descriptors.TEMPLATE_VALUE.fullmatch(argv[0]) or not inventory_path:
+        print('usage: near-key.py <id>, with WALLET_PIR_DEPLOY_INVENTORY set; the id is a template value '
+              '(letters, digits, ".", "_" or "-")', file=sys.stderr)
         return 2
-    _, droplet, key_id = argv
-    if not ID.fullmatch(key_id):
-        print("near-key.py: the id must be letters, digits, '.', '_' or '-'", file=sys.stderr)
+    if not KEY.fullmatch(key):
+        print('near-key.py: NEAR_INTENTS_EXPLORER must be one key of letters, digits and ._~+/=- (not shown)',
+              file=sys.stderr)
         return 2
+    inventory = descriptors.load_inventory(inventory_path)
+    service = descriptors.load_descriptors(ROOT / 'enhance/ops/deploy/deploy.toml')['receiver']
+    (server,) = descriptors.targets(service, inventory)
+    prefix = ['sudo', '-n', '--'] if inventory.hosts[server.host].get('sudo') else []
+    command = SSHExecutor(inventory).raw_transport(server.host) + [
+        shlex.join([*prefix, 'python3', '-c', REMOTE, argv[0]])]
     try:
-        line = read_stdin(stdin, STDIN_SECONDS, MAX_STDIN)
-        if not line.endswith(b'\n'):
-            raise Refused('stdin ended without a newline, so the key may be incomplete')
-        if not KEY_LINE.fullmatch(line):
-            raise Refused('stdin must hold one line of letters, digits and ._~+/=- (not shown)')
-    except Refused as refusal:
-        print('near-key.py: %s; nothing was installed' % refusal, file=sys.stderr)
-        return 2
-    command = SSH + [droplet, 'python3 -c %s %s' % (shlex.quote(REMOTE), key_id)]
-    try:
-        return subprocess.run(command, input=line, timeout=REMOTE_SECONDS).returncode
+        return subprocess.run(command, input=b'NEAR_INTENTS_EXPLORER=%s\n' % key.encode(),
+                              timeout=REMOTE_SECONDS).returncode
     except subprocess.TimeoutExpired:
-        print('near-key.py: timed out after %g seconds; run it again, which reports whether the key '
-              'is installed' % REMOTE_SECONDS, file=sys.stderr)
-        return 124
+        print('near-key.py: timed out after %d seconds; the key may be installed, so retry with a new id'
+              % REMOTE_SECONDS, file=sys.stderr)
+        return 1
 
 
 if __name__ == '__main__':
