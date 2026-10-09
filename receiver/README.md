@@ -185,10 +185,13 @@ The swap provider sets come from the NEAR Intents explorer. While serving with a
 partner key in `NEAR_INTENTS_EXPLORER`, the indexer reads every swap into or out
 of ZEC every `--near-poll-seconds` (default 60), whichever app created it, into
 `provider.sqlite`. Its first read starts a day back, or at `--near-since`, and a
-feed counts as started only once that read completes. Later reads go back from
-the newest swap seen: an hour for refunds, a day for payouts, so a payout that
-completes within a day of its swap is seen complete (about six pages, 33 seconds
-at the explorer's rate limit, at October 2026 volume). Each publication declares
+feed counts as started only once that read completes. Once a feed has a cursor,
+`--near-since` no longer applies: a restart with an earlier value neither reads
+nor claims the earlier history, so moving a feed's start back needs a backfill.
+Later reads go back from the newest swap seen: an hour for refunds, a day for
+payouts, so a payout that completes within a day of its swap is seen complete
+(about six pages, 33 seconds at the explorer's rate limit, at October 2026
+volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
 record missing an address is skipped and dates are capped at the read's start. A

@@ -512,6 +512,41 @@ mod tests {
         assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));
     }
 
+    /// A restart with an earlier or later `since` follows the saved cursor, so the
+    /// published seen set keeps declaring the first read's start rather than claim
+    /// history no read fetched.
+    #[tokio::test]
+    async fn a_restart_with_another_since_keeps_the_published_start() {
+        use axum::{routing::get, Router};
+        let app = Router::new().route("/", get(|| async { "[]" }));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}/", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider.sqlite");
+        // The seen set's declared start.
+        let since_unix = |store: &ProviderStore| {
+            let sets = provider_sets(store).unwrap();
+            assert_eq!(sets[0].label, "near-intents/seen");
+            sets[0].since_unix
+        };
+        let mut store = ProviderStore::open(&path).unwrap();
+        Explorer::at(origin.clone())
+            .sync(&mut store, Feed::Payouts, 2_000)
+            .await
+            .unwrap();
+        assert_eq!(since_unix(&store), 2_000);
+        for since in [1_000, 3_000] {
+            drop(store);
+            store = ProviderStore::open(&path).unwrap();
+            Explorer::at(origin.clone())
+                .sync(&mut store, Feed::Payouts, since)
+                .await
+                .unwrap();
+            assert_eq!(since_unix(&store), 2_000);
+        }
+    }
+
     /// A read that reaches its page bound, first read included, or receives a page
     /// longer than it asked for fails and records nothing; one that ends on its last
     /// allowed page succeeds.
