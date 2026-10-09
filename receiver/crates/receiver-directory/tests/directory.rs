@@ -1035,3 +1035,135 @@ fn a_history_beyond_the_slots_fails_before_loading_records() {
     assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
     assert!(matches!(store.snapshot(4, &[]), Err(Error::Malformed)));
 }
+
+/// Recomputes `s`'s digests after an edit, so validation reaches its semantic checks.
+fn rehash(s: &mut Snapshot) {
+    use sha2::{Digest, Sha256};
+    s.manifest.data_sha256 = Sha256::digest(&s.data).into();
+    s.manifest.filters_sha256 = Sha256::digest(&s.filters).into();
+}
+
+/// The byte offset of `r`'s slot in `s`'s rows.
+fn slot_of(s: &Snapshot, r: &Record) -> usize {
+    let encoded = r.encode().unwrap();
+    (0..s.manifest.rows as usize)
+        .flat_map(|row| (0..SLOTS).map(move |slot| row * ROW_BYTES + slot * RECORD_BYTES))
+        .find(|offset| s.data[*offset..offset + RECORD_BYTES] == encoded)
+        .unwrap()
+}
+
+/// Writes `r` into the slot at `offset`, or empties it.
+fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
+    let bytes = r.map_or([0; RECORD_BYTES], |r| r.encode().unwrap());
+    s.data[offset..offset + RECORD_BYTES].copy_from_slice(&bytes);
+}
+
+/// A supplied publication is checked as a whole: digests, placement, count, pages,
+/// uniqueness, padding, coverage and the paid set, each edit rehashed so the digests
+/// alone cannot catch it.
+#[test]
+fn supplied_publications_are_validated_record_by_record() {
+    allow_small_tables();
+    let (a0, a1) = (record(0, 2), record(1, 2));
+    let mut b = record(0, 1);
+    b.receiver = other_receiver();
+    (b.payment.txid, b.payment.position) = ([9; 32], 210);
+    let valid = Snapshot::build(manifest(8), &[a0.clone(), a1.clone(), b.clone()], &[]).unwrap();
+    valid.validate().unwrap();
+    Snapshot::build(manifest(8), &[], &[])
+        .unwrap()
+        .validate()
+        .unwrap();
+    let refused = |edit: &dyn Fn(&mut Snapshot)| {
+        let mut s = valid.clone();
+        edit(&mut s);
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    };
+
+    // An edit without a matching digest is refused before any record is read.
+    let mut stale = valid.clone();
+    stale.data[0] ^= 1;
+    assert!(matches!(stale.validate(), Err(Error::Malformed)));
+
+    // Page zero stored outside its bucket: a lookup of the right row finds nothing.
+    let mut misplaced = valid.clone();
+    let from = slot_of(&misplaced, &b);
+    let bucket = row_for(&valid.manifest, &b.receiver, 0).unwrap();
+    let to = ((bucket + 1) % 8) * ROW_BYTES + (SLOTS - 1) * RECORD_BYTES;
+    assert!(misplaced.data[to..to + RECORD_BYTES]
+        .iter()
+        .all(|x| *x == 0));
+    put(&mut misplaced, from, None);
+    put(&mut misplaced, to, Some(&b));
+    rehash(&mut misplaced);
+    assert_eq!(
+        lookup_row(
+            &misplaced.manifest,
+            &b.receiver,
+            0,
+            row(&misplaced, &b.receiver, 0)
+        )
+        .unwrap(),
+        None
+    );
+    assert!(matches!(misplaced.validate(), Err(Error::Malformed)));
+
+    // A missing page, a duplicate page and an inconsistent total.
+    refused(&|s| {
+        put(s, slot_of(s, &a1), None);
+        s.manifest.records -= 1;
+    });
+    refused(&|s| {
+        let mut again = a1.clone();
+        (again.payment.txid, again.payment.position) = ([7; 32], 205);
+        let offset = slot_of(s, &a1) + RECORD_BYTES;
+        assert!(s.data[offset..offset + RECORD_BYTES]
+            .iter()
+            .all(|x| *x == 0));
+        put(s, offset, Some(&again));
+        s.manifest.records += 1;
+    });
+    refused(&|s| {
+        let mut wider = a1.clone();
+        wider.total = 3;
+        put(s, slot_of(s, &a1), Some(&wider));
+    });
+
+    // More or fewer records than the manifest declares.
+    refused(&|s| s.manifest.records += 1);
+    refused(&|s| s.manifest.records -= 1);
+
+    // A repeated note position or output.
+    for repeat in [
+        |b: &mut Record| b.payment.position = 200,
+        |b: &mut Record| b.payment.txid = [0; 32],
+    ] {
+        refused(&|s| {
+            let mut repeated = b.clone();
+            repeat(&mut repeated);
+            put(s, slot_of(s, &b), Some(&repeated));
+        });
+    }
+
+    // Nonzero row padding and a payment outside the covered positions.
+    refused(&|s| s.data[ROW_BYTES - 1] = 1);
+    refused(&|s| {
+        let mut outside = b.clone();
+        outside.payment.position = s.manifest.end_position;
+        put(s, slot_of(s, &b), Some(&outside));
+    });
+
+    // A paid set of the declared size but other receivers.
+    refused(&|s| {
+        use receiver_directory::filter::{Filter, Filters};
+        let third = {
+            let sk = orchard::keys::SpendingKey::from_bytes([4; 32]).unwrap();
+            let fvk = orchard::keys::FullViewingKey::from(&sk);
+            let address = fvk.address_at(0u32, orchard::keys::Scope::External);
+            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+        };
+        let paid = Filter::build(&s.manifest.salt, &[receiver(), third]);
+        s.filters = Filters::new(paid, []).unwrap().encode().unwrap();
+    });
+}

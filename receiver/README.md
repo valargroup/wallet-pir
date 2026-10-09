@@ -36,6 +36,13 @@ immutable revision is a domain-separated SHA-256 of every field at fixed width, 
 Enhance and Status hash their manifests, and a manifest with a field this version
 does not know is refused.
 
+`Snapshot::validate` checks a supplied publication whole, before a server prepares
+it: the row and filter digests, the declared filter sets and a paid set of exactly
+the records' receivers, every slot and row padding, each record's coverage and
+bucket, the exact record count, and every receiver's pages and unique outputs and
+positions. A record stored outside its bucket would otherwise make lookups of that
+receiver find nothing.
+
 ## Filters
 
 Each publication carries an `IWFLT1` filter file of labeled BIP 158 Golomb-coded
