@@ -14,7 +14,11 @@ fn row<'a>(s: &'a Snapshot, r: &Receiver, page: u32) -> &'a [u8] {
 
 #[test]
 fn public_refund_requires_authenticated_recovery() {
-    // Recovery must yield exactly the independently decoded receiver.
+    // Recovery must yield exactly the independently decoded receiver, which the
+    // fixture also carries for the probe.
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/zero-ovk-action.json")).unwrap();
+    assert_eq!(fixture["receiver"], RECEIVER_HEX);
     let recovered = action().recover_receiver().unwrap().unwrap();
     assert_eq!(
         recovered.as_bytes().as_slice(),
