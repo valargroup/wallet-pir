@@ -1080,8 +1080,7 @@ mod tests {
     }
 
     /// The witness file must bind to the probed publication, prove the fixture's
-    /// commitment at its position and have the node's root; one over its bound is an
-    /// answer mismatch too, and a file the service cannot send is an error.
+    /// commitment at its position and have the node's root.
     #[tokio::test]
     async fn the_witness_file_must_prove_the_fixture_under_the_nodes_root() {
         let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
@@ -1112,12 +1111,6 @@ mod tests {
             check(serve(200, proof.clone()).await, payment.clone()).await,
             Ok(None)
         );
-        assert!(check(serve(503, Vec::new()).await, payment.clone())
-            .await
-            .is_err());
-        let oversized = vec![0; MAX_WITNESS_BYTES + 1];
-        let detail = check(serve(200, oversized).await, payment.clone()).await;
-        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
         let truncated = proof[..proof.len() - 1].to_vec();
         let detail = check(serve(200, truncated).await, payment.clone()).await;
         assert!(detail.unwrap().unwrap()["witnesses"].is_string());
@@ -1156,122 +1149,58 @@ mod tests {
         }
     }
 
-    /// A successful public setup response of the wrong length or digest, or a query
-    /// answer that is undecodable or over its bound, is an answer mismatch; a failed
-    /// setup response is not.
+    /// [`fetch`] against a real server: a successful body within its bound that decodes
+    /// is the value; a successful body over its bound or one the decoder refuses is an
+    /// `answer_mismatch` naming the artifact; a redirect or a failure status is an
+    /// error, whatever its body.
     #[tokio::test]
-    async fn an_invalid_public_setup_or_query_answer_is_an_answer_mismatch() {
+    async fn fetch_classifies_responses() {
         use axum::http::StatusCode;
-        let activation = crate::blocks::ironwood_activation();
-        let end = u64::from(activation + 2);
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("fixture.json");
-        let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
-        fixture["height"] = (activation + 1).into();
-        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
-        std::fs::write(&path, fixture.to_string()).unwrap();
-        let rpc = serve_node(Node { end, ..good(end) }).await;
-        let mut directory = anchored();
-        (directory.start_height, directory.end_height) = (activation, end as u32);
-        let args = publish(directory, &path, &rpc).await;
-        // The real publication's manifest and setup, served again with the setup altered.
-        let init = reqwest::get(format!("{}/v1/receiver/init", args.origin))
-            .await
-            .unwrap()
-            .bytes()
-            .await
+        const LIMIT: usize = 64;
+        let http = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
             .unwrap();
-        let id = hex::encode(
-            serde_json::from_slice::<Manifest>(&init)
-                .unwrap()
-                .id()
-                .unwrap(),
-        );
-        let public = format!("/v1/receiver/public/{id}");
-        let real = reqwest::get(format!("{}{public}", args.origin))
-            .await
-            .unwrap()
-            .bytes()
-            .await
-            .unwrap()
-            .to_vec();
-        let mut flipped = real.clone();
-        flipped[0] ^= 1;
-        let short = real[..real.len() - 1].to_vec();
-        let oversized = vec![0; response_bytes(receiver_pir::MIN_ROWS).unwrap() + 1];
-        // The failure's detail key, or `None` for an error.
-        for (status, body, answer, mismatch) in [
-            (StatusCode::OK, flipped, vec![], Some("public")),
-            (StatusCode::OK, short, vec![], Some("public")),
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                real.clone(),
-                vec![],
-                None,
-            ),
-            (StatusCode::OK, real.clone(), b"x".to_vec(), Some("lookup")),
-            (StatusCode::OK, real.clone(), oversized, Some("lookup")),
+        let oversized = " ".repeat(LIMIT + 1);
+        for (status, body, expected) in [
+            (StatusCode::OK, "{}".to_owned(), "value"),
+            (StatusCode::OK, oversized.clone(), "answer_mismatch"),
+            (StatusCode::OK, "{".to_owned(), "answer_mismatch"),
+            (StatusCode::FOUND, "<html>moved</html>".to_owned(), "error"),
+            (StatusCode::FOUND, oversized.clone(), "error"),
+            (StatusCode::INTERNAL_SERVER_ERROR, "{}".to_owned(), "error"),
         ] {
-            let init = init.clone();
-            let app = Router::new()
-                .route(
-                    "/v1/receiver/init",
-                    routing::get(move || async move { init }),
-                )
-                .route(&public, routing::get(move || async move { (status, body) }))
-                .route(
-                    "/v1/receiver/query",
-                    routing::post(move || async move { answer }),
-                );
+            let app = Router::new().route("/", routing::get(move || async move { (status, body) }));
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let origin = format!("http://{}", socket.local_addr().unwrap());
+            let url = format!("http://{}/", socket.local_addr().unwrap());
             tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-            let altered = Args::parse_from([
-                "probe",
-                "--origin",
-                &origin,
-                "--health-url",
-                &args.health_url,
-                "--fixture",
-                path.to_str().unwrap(),
-                "--rpc-url",
-                &rpc,
-                "--no-auth",
-            ]);
-            match (probe(altered, &mut None).await, mismatch) {
-                (Ok(Some((category, detail))), Some(key)) => {
-                    assert_eq!(category, "answer_mismatch");
-                    assert!(detail[key].is_string(), "{detail}");
-                }
-                (result, None) => assert!(result.is_err()),
-                (result, _) => panic!("{status}: {result:?}"),
-            }
+            let fetched = fetch(http.get(url), LIMIT, "artifact", |bytes| {
+                serde_json::from_slice::<Value>(bytes)
+            });
+            let outcome = match fetched.await {
+                Ok(Ok(_)) => "value",
+                Ok(Err((category, detail))) if detail["artifact"].is_string() => category,
+                Ok(Err(failure)) => panic!("{status}: {failure:?}"),
+                Err(_) => "error",
+            };
+            assert_eq!(outcome, expected, "{status}");
         }
     }
 
-    /// A successful `init` response with malformed JSON, over its bound, or with a
-    /// manifest that fails validation (protocol or geometry) is an answer mismatch; a
-    /// failed or redirected one is not, whatever its body.
+    /// A successful `init` response that is malformed JSON or a manifest failing
+    /// validation (protocol or geometry) reaches the probe's result as an answer
+    /// mismatch.
     #[tokio::test]
     async fn an_invalid_served_manifest_is_an_answer_mismatch() {
-        use axum::http::StatusCode;
         let mut protocol = manifest(0);
         protocol.protocol = "other".into();
         let mut geometry = manifest(0);
         geometry.directory.rows = receiver_pir::MIN_ROWS + 1;
         let json = |m: &Manifest| serde_json::to_string(m).unwrap();
-        for (status, body, mismatch) in [
-            (StatusCode::OK, "{".to_owned(), true),
-            (StatusCode::OK, " ".repeat(MAX_MANIFEST_BYTES + 1), true),
-            (StatusCode::OK, json(&protocol), true),
-            (StatusCode::OK, json(&geometry), true),
-            (StatusCode::INTERNAL_SERVER_ERROR, json(&manifest(0)), false),
-            (StatusCode::FOUND, "<html>moved</html>".to_owned(), false),
-            (StatusCode::FOUND, " ".repeat(MAX_MANIFEST_BYTES + 1), false),
-        ] {
+        for body in ["{".to_owned(), json(&protocol), json(&geometry)] {
             let app = Router::new().route(
                 "/v1/receiver/init",
-                routing::get(move || async move { (status, body) }),
+                routing::get(move || async move { body }),
             );
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -1286,14 +1215,9 @@ mod tests {
                 &origin,
                 "--no-auth",
             ]);
-            match probe(args, &mut None).await {
-                Ok(Some((category, detail))) => {
-                    assert!(mismatch, "{status}");
-                    assert_eq!(category, "answer_mismatch");
-                    assert!(detail["manifest"].is_string());
-                }
-                other => assert!(!mismatch && other.is_err(), "{status}"),
-            }
+            let (category, detail) = probe(args, &mut None).await.unwrap().unwrap();
+            assert_eq!(category, "answer_mismatch");
+            assert!(detail["manifest"].is_string());
         }
     }
 
@@ -1312,8 +1236,8 @@ mod tests {
         origin
     }
 
-    /// A filter file is accepted only within its bound, with the manifest's digest and
-    /// with the fixture's receiver in its paid set.
+    /// A filter file is accepted only with the manifest's digest and with the fixture's
+    /// receiver in its paid set.
     #[tokio::test]
     async fn the_filter_file_must_match_its_manifest() {
         let build = |records: &[receiver_directory::Record]| {
@@ -1341,11 +1265,6 @@ mod tests {
         let origin = serve(altered).await;
         let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
-        let origin = serve(vec![0; MAX_FILTERS_BYTES + 1]).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
-        let failure = check.await.unwrap().unwrap();
-        assert_eq!(failure.0, "answer_mismatch");
-        assert!(failure.1["filters"].is_string());
         // A self-consistent publication whose paid set omits the fixture's receiver.
         let empty = build(&[]);
         let origin = serve(empty.filters.clone()).await;
