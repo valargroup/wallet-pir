@@ -73,9 +73,15 @@ fn main() {
         for &position in &positions {
             let (query, slot) = client.prepare_position(position).unwrap();
             let binding = QueryBinding::decode(query.body()).unwrap();
-            let coefficients = packing.query_coefficients(query.body(), binding).unwrap();
+            let coefficients = packing
+                .query_coefficients(query.body(), binding, packing.params.db_rows)
+                .unwrap();
             let response = packing
-                .pack(query.body(), &evaluation.evaluate(&coefficients).unwrap())
+                .pack(
+                    query.body(),
+                    &evaluation.evaluate(&coefficients).unwrap(),
+                    packing.params.db_rows,
+                )
                 .unwrap();
             upload = query.body().len();
             download = response.len();

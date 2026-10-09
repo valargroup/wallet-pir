@@ -897,7 +897,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
     })?;
     let binding = QueryBinding::decode(&bytes).map_err(bad)?;
     let session = hex::encode(binding.session_id);
-    let (routes, preferred, epoch, pack) = {
+    let (routes, preferred, epoch, pack, query_rows) = {
         let i = r.inner.lock().unwrap();
         if i.fence.revocation.sessions.contains(&session) {
             return Err((StatusCode::GONE, "noncanonical_session".into()));
@@ -910,7 +910,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .clone()
             .ok_or_else(|| unavailable("router not activated"))?;
         let m = &loaded.view.snapshots[0].manifest;
-        crate::query_serving::validate_binding(m, binding)?;
+        let query_rows = crate::query_serving::validate_binding(m, binding)?;
         let pack = loaded
             .packing
             .get(&session)
@@ -927,12 +927,20 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .get(&binding.shard_id)
             .cloned()
             .unwrap_or_default();
-        (routes, preferred, loaded.view.controller_epoch, pack)
+        (
+            routes,
+            preferred,
+            loaded.view.controller_epoch,
+            pack,
+            query_rows,
+        )
     };
     // Once admitted, the task owns the permit through cancellation and CPU work.
     let router = r.clone();
     let task = crate::query_serving::admitted(async move {
-        let coefficients = pack.query_coefficients(&bytes, binding).map_err(bad)?;
+        let coefficients = pack
+            .query_coefficients(&bytes, binding, query_rows)
+            .map_err(bad)?;
         let request = Evaluate {
             binding: Some(binding.encode()),
             generation: binding.generation,
@@ -967,7 +975,7 @@ async fn serve(r: PackingRouter, request: Request) -> Result<Response, Error> {
             .map_err(unavailable)?;
         let (response, guards, packing_time) = tokio::task::spawn_blocking(move || {
             let began = Instant::now();
-            let response = pack.pack(&bytes, &answer).map_err(bad)?;
+            let response = pack.pack(&bytes, &answer, query_rows).map_err(bad)?;
             Ok::<_, Error>((response, (permit, pack), began.elapsed()))
         })
         .await

@@ -195,9 +195,10 @@ fn prepare(
         };
         let (query, slot) = client.prepare_position(position)?;
         let body = query.body().to_vec();
-        let coefficients = packing.query_coefficients(&body, QueryBinding::decode(&body)?)?;
+        let coefficients =
+            packing.query_coefficients(&body, QueryBinding::decode(&body)?, client.query_rows())?;
         let intermediate = eval.evaluate(&coefficients)?;
-        let response = packing.pack(&body, &intermediate)?;
+        let response = packing.pack(&body, &intermediate, client.query_rows())?;
         let row = client.decode(query, &response)?;
         if row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES] != records(position, 1)? {
             return Err("incorrect fixture answer".into());
@@ -275,13 +276,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 &fixture.samples[(worker + iteration) % fixture.samples.len()];
                             let body = sample.body.clone();
                             let intermediate = sample.intermediate.clone();
+                            // Fixture domains are full, so queries select every row.
+                            let rows = fixture.rows as usize;
                             let coefficients =
-                                pack.query_coefficients(&body, QueryBinding::decode(&body)?)?;
+                                pack.query_coefficients(&body, QueryBinding::decode(&body)?, rows)?;
                             if iteration == 0 {
                                 barrier.wait();
                             }
                             let at = Instant::now();
-                            let response = pack.pack(&body, &intermediate)?;
+                            let response = pack.pack(&body, &intermediate, rows)?;
                             times.push(at.elapsed().as_secs_f64() * 1000.0);
                             if hex::encode(Sha256::digest(&response)) != sample.response_sha256 {
                                 return Err("response differs from exact-answer fixture".into());

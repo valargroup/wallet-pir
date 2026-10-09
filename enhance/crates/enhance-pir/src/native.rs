@@ -37,6 +37,23 @@ pub fn parse(bytes: &[u8], rows: usize) -> Result<(NativeKeys, Vec<u64>), String
     }
     parse_with(&packing_setup(), bytes, rows)
 }
+const _: () = assert!(crate::protocol::QUERY_ROW_QUANTUM as usize == D);
+/// Parses an upload that selects over all `rows` or, at the shorter length,
+/// over only the domain's first `query_rows`, zero-filled back to `rows`. Wallets
+/// send the shorter upload; servers accept both while older wallets remain.
+pub fn parse_selection(
+    bytes: &[u8],
+    query_rows: usize,
+    rows: usize,
+) -> Result<(NativeKeys, Vec<u64>), String> {
+    if bytes.len() == request_len(rows) {
+        return parse(bytes, rows);
+    }
+    if rows > 32768 {
+        return Err("native query framing".into());
+    }
+    pir_native::parse_prefix_with(&packing_setup(), bytes, query_rows, rows)
+}
 /// Decode an Enhance row, truncated to its logical width.
 pub fn decode(secret: &NativeSecret, public: &[u8], body: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = decode_cols(secret, public, body, COLS)?;

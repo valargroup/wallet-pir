@@ -71,6 +71,20 @@ bytes, not hex text.
 
 Reject wrong versions, lengths and every mismatched response field. Use fresh PIR
 randomness and a fresh request ID for every request, including retries and cover.
+
+A native (v9) query follows the header with the 27,648-byte packing key and a
+49-bit selection over the domain's first *query rows*: the end of the last row any
+of its units can hold, rounded up to 2,048-row blocks (`QueryShard::query_rows`).
+Every later row is prescribed zero padding, so the omitted selection changes no
+answer. Full and composed domains select every logical row; only the growing
+domain uploads less, for example 140,544 instead of 228,352 bytes after the header
+at 18,313 used rows. The count depends only on the domain's records, which the
+session ID binds, so every query to a session, real or cover, has one length, and
+cover targets are drawn below it. Servers also accept the full-length selection
+from older wallets. Someone watching encrypted traffic, though not the server,
+which sees the domain in the header, can tell queries to the growing domain apart
+by length. The server and wallet share the
+[query-rows vector](../crates/enhance-pir/tests/fixtures/query-rows.json).
 HTTP 409 has code `stale_routing`; HTTP 410 distinguishes `noncanonical_session`
 from `session_unavailable`. HTTP 429 is `overloaded`; HTTP 503 is
 `temporarily_unavailable`. Refresh routing on 409/410 and at least every 30 seconds

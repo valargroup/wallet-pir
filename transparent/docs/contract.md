@@ -108,7 +108,9 @@ recovery. Query directory buckets and overflow pages privately. Public filter
 downloads depend only on public chain intervals, not on wallet-script partitions.
 
 V1 evaluation accepts service contact, network identity on a direct connection,
-generation/coverage selection, timing, and query-count leakage. No cover traffic
+generation/coverage selection, timing, and query-count leakage. A pages query to the
+growing tail is shorter than one to a sealed shard, so an observer of encrypted
+traffic, like the server from the request path, can tell which of the two it is. No cover traffic
 or anonymity against public-chain correlation is claimed. Filter-triggered contact
 can reveal activity; unusually large retrievals can narrow likely scripts.
 The explicit [parent-filter experiment](parent-filter-evaluation.md) additionally accepts

@@ -178,9 +178,36 @@ impl TableProfile {
         prepare_with(&self.setup, &self.masks, self.rows, target)
     }
 
+    /// Fresh secret and upload selecting row `target` among only the first
+    /// `query_rows`, under the leading full-shape masks. `query_rows` must be
+    /// public and the same for every query to the table.
+    pub fn prepare_prefix(
+        &self,
+        query_rows: usize,
+        target: usize,
+    ) -> Result<(NativeSecret, Vec<u8>), String> {
+        if query_rows > self.rows {
+            return Err("native query shape".into());
+        }
+        prepare_with(&self.setup, &self.masks, query_rows, target)
+    }
+
     /// Parses an upload into its key and lifted selection.
     pub fn parse(&self, bytes: &[u8]) -> Result<(NativeKeys, Vec<u64>), String> {
         parse_with(&self.setup, bytes, self.rows)
+    }
+
+    /// Parses an upload over every row or, at the shorter length, over only
+    /// the first `query_rows`, zero-filled back to every row.
+    pub fn parse_selection(
+        &self,
+        bytes: &[u8],
+        query_rows: usize,
+    ) -> Result<(NativeKeys, Vec<u64>), String> {
+        if bytes.len() == request_len(self.rows) {
+            return self.parse(bytes);
+        }
+        parse_prefix_with(&self.setup, bytes, query_rows, self.rows)
     }
 
     /// Decodes one segment's body under that segment's published masks,

@@ -205,10 +205,28 @@ impl TableClient {
     /// the wrong runtime fail rather than decode. A fresh secret is sampled for
     /// every query and never leaves the returned value.
     pub fn prepare(&self, revision: &str, row: usize) -> Result<PreparedQuery, ClientError> {
-        if row >= self.profile.rows {
+        self.prepare_prefix(revision, self.profile.rows, row)
+    }
+
+    /// Prepares one query that selects among only the first `query_rows`,
+    /// which the revision's verified manifest fixes for every query to the
+    /// table (see [`ShardManifest::pages_query_rows`]). Never derived from
+    /// `row`: the upload's length is all the service learns from it.
+    ///
+    /// [`ShardManifest::pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    pub fn prepare_prefix(
+        &self,
+        revision: &str,
+        query_rows: usize,
+        row: usize,
+    ) -> Result<PreparedQuery, ClientError> {
+        if row >= query_rows || query_rows > self.profile.rows {
             return Err(ClientError::Session("row outside table".into()));
         }
-        let (secret, upload) = self.profile.prepare(row).map_err(ClientError::Pir)?;
+        let (secret, upload) = self
+            .profile
+            .prepare_prefix(query_rows, row)
+            .map_err(ClientError::Pir)?;
         let mut body = transparent_shard::manifest::query_binding_for_schema(
             &self.schema,
             revision,
@@ -306,14 +324,17 @@ impl TableClient {
 
     /// Fetches one row from every segment of a shard, charging what it cost.
     ///
-    /// Uses a query a batch already sent for this row when one is stashed;
-    /// the charge is the same either way.
+    /// The query selects among the first `query_rows`; see
+    /// [`prepare_prefix`](Self::prepare_prefix). Uses a query a batch already
+    /// sent for this row when one is stashed; the charge is the same either way.
+    #[allow(clippy::too_many_arguments)]
     pub fn fetch_row(
         &mut self,
         transport: &mut impl ShardTransport,
         shard_id: u64,
         revision: &str,
         segments: u32,
+        query_rows: usize,
         row: usize,
         charges: &mut ByteCharges,
     ) -> Result<Vec<Vec<u8>>, ClientError> {
@@ -323,7 +344,11 @@ impl TableClient {
                 self.stashed.remove(revision);
             }
             match next {
-                Some(stashed) if stashed.row == row => {
+                Some(stashed)
+                    if stashed.row == row
+                        && stashed.query.body.len()
+                            == 8 + transparent_native::request_len(query_rows) =>
+                {
                     let response = match stashed.reply {
                         Ok(response) => response,
                         Err(error) => {
@@ -345,7 +370,7 @@ impl TableClient {
                 }
             }
         }
-        let query = self.prepare(revision, row)?;
+        let query = self.prepare_prefix(revision, query_rows, row)?;
         let uploaded = query.body.len() as u64;
         let response = transport
             .query(shard_id, revision, self.table, &query.body)

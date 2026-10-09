@@ -9,7 +9,8 @@
 //! rows and columns — stays with each product and is passed in.
 //!
 //! Per query the client uploads one `K_g` packing key (27,648 bytes) and a
-//! 49-bit selection vector (`rows * 49 / 8` bytes). Per 2,048-coefficient block
+//! 49-bit selection vector (`rows * 49 / 8` bytes), or only its prefix over the
+//! rows that can hold data (`parse_prefix_with`). Per 2,048-coefficient block
 //! the server publishes both masks (14,848 bytes) and answers with a 22-bit
 //! body (5,632 bytes). Correctness certificates for this mode are
 //! snapshot-specific.
@@ -172,6 +173,29 @@ pub fn parse_with(
     if query.len() != rows {
         return Err("native query framing".into());
     }
+    Ok((keys, query))
+}
+
+/// Parses an upload that selects over only the first `query_rows` of a
+/// `rows`-row table, and returns the selection zero-filled back to `rows`.
+///
+/// A client may send this shorter upload when every row from `query_rows` on
+/// is zero: those selection coefficients multiply zero rows, so the scan, and
+/// therefore the response, is bit-identical to the full upload's. Encrypted
+/// under a prefix of the full-shape masks, the shorter upload is byte for byte
+/// the prefix of the full one. `query_rows` must come from public, session-bound
+/// geometry that every client of the table shares, never from the target.
+pub fn parse_prefix_with(
+    setup: &NativeSetup,
+    bytes: &[u8],
+    query_rows: usize,
+    rows: usize,
+) -> Result<(NativeKeys, Vec<u64>), String> {
+    if query_rows == 0 || query_rows > rows || !rows.is_multiple_of(D) {
+        return Err("native query framing".into());
+    }
+    let (keys, mut query) = parse_with(setup, bytes, query_rows)?;
+    query.resize(rows, 0);
     Ok((keys, query))
 }
 

@@ -135,3 +135,88 @@ fn sizes_are_the_deployed_profile() {
     assert_eq!(request_len(8_192), 27_648 + 50_176);
     assert_eq!(response_len(D), BLOCK_RESPONSE_BYTES);
 }
+
+/// A prefix upload over the rows that can hold data is the full upload's byte
+/// prefix, and over a table that is zero from `query_rows` on it is answered
+/// bit-identically. One nonzero row past the prefix breaks decoding, which is
+/// why servers check the zero tail before accepting prefixes.
+#[test]
+fn prefix_upload_is_exact_over_a_zero_tail() {
+    let (rows, query_rows, cols, target) = (3 * D, D, D, 1_789usize);
+    let masks = public_query_masks([21; 32], rows, cols).unwrap();
+    let setup = NativeSetup::new(params(), [22; 32]);
+    let mut rng = ChaCha20Rng::from_seed([23; 32]);
+    let mut db = vec![0u16; rows * cols];
+    for c in 0..cols {
+        for r in 0..query_rows {
+            db[c * rows + r] = rng.next_u32() as u16;
+        }
+    }
+    let answer = |db: &[u16], query: &[u64]| {
+        let hint = hint(&masks, rows, cols, |c| &db[c * rows..(c + 1) * rows]).unwrap();
+        let blocks = preprocess(&setup, &hint).unwrap();
+        let scan: Vec<u64> = (0..cols)
+            .map(|c| {
+                db[c * rows..(c + 1) * rows]
+                    .iter()
+                    .zip(query)
+                    .fold(0u64, |a, (&x, &q)| {
+                        a.wrapping_add((x as u64).wrapping_mul(q))
+                    })
+                    & (Q - 1)
+            })
+            .collect();
+        (publish(&blocks).unwrap(), blocks, scan)
+    };
+
+    let (secret, full) = upload(&setup, &masks, rows, target);
+    let (_, short) = upload(&setup, &masks, query_rows, target);
+    assert_eq!(short.len(), request_len(query_rows));
+    assert_eq!(short, full[..request_len(query_rows)]);
+
+    let (full_keys, full_query) = parse_with(&setup, &full, rows).unwrap();
+    let (keys, query) = parse_prefix_with(&setup, &short, query_rows, rows).unwrap();
+    assert_eq!(query.len(), rows);
+    assert_eq!(query[..query_rows], full_query[..query_rows]);
+    assert!(query[query_rows..].iter().all(|&x| x == 0));
+
+    let (public, blocks, scan) = answer(&db, &query);
+    let (_, _, full_scan) = answer(&db, &full_query);
+    assert_eq!(scan, full_scan);
+    let response = pack(&blocks, &keys, &scan).unwrap();
+    assert_eq!(response, pack(&blocks, &full_keys, &full_scan).unwrap());
+    let expected: Vec<u8> = (0..cols)
+        .flat_map(|c| db[c * rows + target].to_le_bytes())
+        .collect();
+    assert_eq!(
+        decode_cols(&secret, &public, &response, cols).unwrap(),
+        expected
+    );
+
+    // Data past the prefix is in the hint but not in the zero-filled scan.
+    for c in 0..cols {
+        db[c * rows + query_rows + 7] = rng.next_u32() as u16 | 1;
+    }
+    let (public, blocks, scan) = answer(&db, &query);
+    let response = pack(&blocks, &keys, &scan).unwrap();
+    assert_ne!(
+        decode_cols(&secret, &public, &response, cols).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn prefix_parse_takes_only_its_exact_shape() {
+    let setup = NativeSetup::new(params(), [24; 32]);
+    let masks = public_query_masks([25; 32], 2 * D, D).unwrap();
+    let (_, short) = upload(&setup, &masks, D, 3);
+    assert!(parse_prefix_with(&setup, &short, D, 2 * D).is_ok());
+    assert!(parse_prefix_with(&setup, &short, D, D).is_ok());
+    assert!(parse_prefix_with(&setup, &short, 2 * D, 2 * D).is_err());
+    assert!(parse_prefix_with(&setup, &short[..short.len() - 1], D, 2 * D).is_err());
+    assert!(parse_prefix_with(&setup, &short, 0, 2 * D).is_err());
+    assert!(parse_prefix_with(&setup, &short, 2 * D, D).is_err());
+    assert!(parse_prefix_with(&setup, &short, D, D + 8).is_err());
+    assert!(parse_prefix_with(&setup, &short, D / 2, 2 * D).is_err());
+    assert!(parse_with(&setup, &short, 2 * D).is_err());
+}

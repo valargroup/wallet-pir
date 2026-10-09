@@ -296,7 +296,13 @@ table, so one query is answered by every segment of every shard of that geometry
 encoding, mask seed, setup id and sizes); the wallet re-derives it and refuses any
 difference. Each segment publishes its own 14,848 bytes of rounded masks. A query is an
 8-byte revision binding, the 27,648-byte key and a 49-bit selection (`rows * 49 / 8` bytes):
-77,832 bytes at 8,192 rows and 228,360 at 32,768. Each segment answers with the binding, an
+77,832 bytes at 8,192 rows and 228,360 at 32,768. A pages query to an unsealed single-segment
+tail selects only its first `ShardManifest::pages_query_rows`: the page rows it holds rounded
+up to 2,048-row blocks, every later row being zero. That is 40,200 bytes while the tail holds
+at most 2,048 page rows. The count comes from digest-bound manifest fields alone, so every
+pages query to that revision has one length; sealed shards and the directory keep the full
+selection, and servers accept it from older wallets for the tail too. Segment verification
+refuses a tail whose rows past that count hold data. Each segment answers with the binding, an
 8-byte mask epoch and a 5,632-byte body. The server parses a query once, scans each segment
 modulo 2^54 and packs against that segment's preprocessing.
 

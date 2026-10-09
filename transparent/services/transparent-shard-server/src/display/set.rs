@@ -186,6 +186,7 @@ impl DisplayRevision {
                     rows,
                     row_bytes,
                     sha256: segment.sha256.clone(),
+                    zero_from_row: rows,
                 };
                 source.verify()?;
                 sources.push(source);

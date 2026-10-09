@@ -242,7 +242,34 @@ impl ShardManifest {
         }
         Ok(Some(table))
     }
+
+    /// Rows a pages query selects over.
+    ///
+    /// For an unsealed current-schema tail in one segment, the page rows it
+    /// holds rounded up to whole [`QUERY_ROW_QUANTUM`] blocks: page rows are
+    /// appended from row zero and every later row is zero, so the selection
+    /// coefficients a wallet omits cannot change the answer. Every other shard
+    /// selects over a whole segment, so sealed shards of one geometry keep
+    /// uploads of one length, and a multi-segment shard's query, which every
+    /// segment answers, covers each segment's rows. Only digest-bound fields
+    /// decide it, so wallet and server derive the same count, and it never
+    /// depends on the row a query selects.
+    pub fn pages_query_rows(&self) -> u64 {
+        let full = self.page_segments.first().map_or(0, |segment| segment.rows);
+        if self.sealed || self.schema != SCHEMA || self.page_segments.len() != 1 {
+            return full;
+        }
+        self.occupancy
+            .page_rows
+            .max(1)
+            .next_multiple_of(QUERY_ROW_QUANTUM)
+            .min(full)
+    }
 }
+
+/// Pages queries of a growing tail select over whole blocks of this many rows:
+/// the native ring degree.
+pub const QUERY_ROW_QUANTUM: u64 = 2048;
 
 /// The manifest field for a choice table.
 pub fn encode_directory_choice(table: &crate::choice::ChoiceTable) -> String {
@@ -405,6 +432,36 @@ mod tests {
             },
             sealed,
         }
+    }
+
+    /// Only an unsealed current-schema tail in one segment selects over fewer
+    /// rows than a segment holds, and then over whole blocks covering every
+    /// page row it holds.
+    #[test]
+    fn only_a_growing_single_segment_tail_selects_a_prefix() {
+        let mut tail = manifest();
+        tail.sealed = false;
+        for (page_rows, rows) in [
+            (0, 2_048),
+            (1, 2_048),
+            (1_879, 2_048),
+            (2_048, 2_048),
+            (2_049, 4_096),
+            (4_096, 4_096),
+        ] {
+            tail.occupancy.page_rows = page_rows;
+            assert_eq!(tail.pages_query_rows(), rows, "{page_rows}");
+        }
+        tail.occupancy.page_rows = 1_879;
+        assert_eq!(manifest().pages_query_rows(), 4_096);
+        let mut legacy = tail.clone();
+        legacy.schema = LEGACY_SCHEMA.to_string();
+        assert_eq!(legacy.pages_query_rows(), 4_096);
+        let mut segmented = tail.clone();
+        segmented
+            .page_segments
+            .push(segmented.page_segments[0].clone());
+        assert_eq!(segmented.pages_query_rows(), 4_096);
     }
 
     /// A first publication supersedes nothing.

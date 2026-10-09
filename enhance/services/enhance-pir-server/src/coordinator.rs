@@ -1133,7 +1133,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
         .cloned()
         .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no routing view".into()))?;
     let manifest = &snapshot.saved.manifest;
-    super::query_serving::validate_binding(manifest, binding)?;
+    let query_rows = super::query_serving::validate_binding(manifest, binding)?;
     let pack = snapshot
         .packing
         .get(&binding.shard_id)
@@ -1142,7 +1142,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
     // The admitted task owns capacity even if its HTTP caller disconnects.
     super::query_serving::admitted(async move {
         let coefficients = pack
-            .query_coefficients(&body, binding)
+            .query_coefficients(&body, binding, query_rows)
             .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
         let request = worker::Evaluate {
             binding: Some(binding.encode()),
@@ -1159,7 +1159,7 @@ async fn query(State(c): State<Coordinator>, request: Request) -> QueryResult<Re
             .ok_or((StatusCode::SERVICE_UNAVAILABLE, "no replica route".into()))?;
         let answer = evaluate_query(&c, &request, routes).await?;
         let (response, guards) = tokio::task::spawn_blocking(move || {
-            let response = pack.pack(&body, &answer)?;
+            let response = pack.pack(&body, &answer, query_rows)?;
             Ok::<_, String>((response, (permit, snapshot, generation_pin, pack)))
         })
         .await

@@ -62,6 +62,8 @@ use transparent_native::{
 };
 use transparent_shard::layout::Geometry;
 
+const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
+
 /// Explicit build policy for reproducible hardware-path comparisons. The
 /// portable feature selects the library's existing fallback; it changes no
 /// parameters or wire encoding and never depends on a client request.
@@ -227,6 +229,12 @@ impl SharedParams {
         8 + self.profile.scheme.request_bytes
     }
 
+    /// The length of a query that selects over only the first `query_rows`,
+    /// which a revision's manifest fixes for every query to the table.
+    pub fn prefix_query_bytes(&self, query_rows: usize) -> usize {
+        8 + native::request_len(query_rows)
+    }
+
     /// Bytes one segment's answer carries: binding, epoch and body.
     pub fn response_bytes(&self) -> usize {
         16 + self.profile.scheme.response_bytes
@@ -243,16 +251,27 @@ impl SharedParams {
 
     /// Checks the binding and length, then parses the key and selection once
     /// for every segment that will answer them.
-    pub fn parse(&self, binding: [u8; 8], body: &[u8]) -> Result<ParsedQuery, String> {
+    ///
+    /// `query_rows` is the revision's [`pages_query_rows`] for pages and every
+    /// row otherwise. A body selecting over only those rows is zero-filled to
+    /// the full selection; the rows it omits are zero in every segment.
+    ///
+    /// [`pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    pub fn parse(
+        &self,
+        binding: [u8; 8],
+        body: &[u8],
+        query_rows: usize,
+    ) -> Result<ParsedQuery, String> {
         if body.get(..8) != Some(binding.as_slice()) {
             return Err("query does not name this revision and table".to_string());
         }
-        // A fixed length for every query: a body that varied with the selection
-        // would leak through its size alone.
-        if body.len() != self.query_bytes() {
+        // Fixed lengths for every query to a revision's table: a body that
+        // varied with the selection would leak it through its size alone.
+        if body.len() != self.query_bytes() && body.len() != self.prefix_query_bytes(query_rows) {
             return Err("query has the wrong fixed length".to_string());
         }
-        let (keys, query) = self.profile.parse(&body[8..])?;
+        let (keys, query) = self.profile.parse_selection(&body[8..], query_rows)?;
         Ok(ParsedQuery { keys, query })
     }
 }
@@ -497,7 +516,7 @@ impl TableRuntime {
         binding: [u8; 8],
         body: &[u8],
     ) -> Result<Vec<u8>, String> {
-        self.answer(binding, &shared.parse(binding, body)?)
+        self.answer(binding, &shared.parse(binding, body, shared.profile.rows)?)
     }
 
     /// Checks a runtime this process did not build against the segment's
@@ -1354,6 +1373,7 @@ mod tests {
             rows: Table::Directory.rows(geometry),
             row_bytes: Table::Directory.row_bytes(geometry),
             sha256: hex::encode(Sha256::digest(&rows)),
+            zero_from_row: Table::Directory.rows(geometry),
         };
         assert!(std::process::Command::new("mkfifo")
             .arg(&source.path)
