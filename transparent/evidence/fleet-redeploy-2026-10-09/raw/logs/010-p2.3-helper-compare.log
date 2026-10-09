@@ -1,0 +1,16 @@
+### start 2026-10-09T11:54:56.675Z
+### cmd:
+
+for h in $R01 $R02 $A03; do $W root@$h "hostname; for f in headless-console.py storage-policy.py; do cmp -s /opt/transparent-publisher/staged/\$f /usr/local/lib/transparent-pir/\$f && echo \"\$f identical to installed\" || echo \"\$f DIFFERS or absent\"; done"; done
+
+### output:
+transparent-pir-recent-01
+headless-console.py identical to installed
+storage-policy.py identical to installed
+transparent-pir-recent-02
+headless-console.py identical to installed
+storage-policy.py identical to installed
+transparent-pir-archive-03
+headless-console.py DIFFERS or absent
+storage-policy.py DIFFERS or absent
+### end 2026-10-09T11:54:57.700Z rc=0

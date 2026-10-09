@@ -8,9 +8,16 @@
 //!
 //! The helpers are the shared `pir-native` crate, which Transparent uses too.
 //! This module adds Enhance's shape and its shard-bound setup.
+//!
+//! Servers accept a query's selection at either of two widths, told apart by
+//! the upload's exact length: the 49-bit nearest-rounded query this crate's
+//! client sends, and the 44-bit dithered query of `pir-native`. The width is
+//! not part of the session, the parameter identity or the envelope, so a
+//! client that sends 49 bits is unaffected by the other.
 pub use pir_native::{
-    decode_cols, pack, params, parse_with, prepare_with, public_len, publish, request_len,
-    response, response_len, D, KEY_BYTES, MASK_BITS, Q, QUERY_BITS, Q_BITS, RESPONSE_BITS,
+    accepted_query_bits, decode_cols, pack, params, parse_accepted, parse_with, prepare_with,
+    public_len, publish, request_len, request_len_bits, response, response_len, D,
+    DITHERED_QUERY_BITS, KEY_BYTES, MASK_BITS, Q, QUERY_BITS, Q_BITS, RESPONSE_BITS,
 };
 use reinspiring::native::*;
 pub const COLS: usize = 12288;
@@ -31,11 +38,13 @@ pub fn prepare(shard: u64, rows: usize, target: usize) -> Result<(NativeSecret, 
     }
     prepare_with(&packing_setup(), &query_masks(shard), rows, target)
 }
+/// Parses an upload at 49 bits or at 44 dithered bits, whichever its exact
+/// length names; any other length is refused.
 pub fn parse(bytes: &[u8], rows: usize) -> Result<(NativeKeys, Vec<u64>), String> {
     if rows > 32768 {
         return Err("native query framing".into());
     }
-    parse_with(&packing_setup(), bytes, rows)
+    parse_accepted(&packing_setup(), bytes, rows)
 }
 /// Decode an Enhance row, truncated to its logical width.
 pub fn decode(secret: &NativeSecret, public: &[u8], body: &[u8]) -> Result<Vec<u8>, String> {
@@ -92,5 +101,34 @@ mod tests {
         let row = decode_cols(&secret, &published, &response, cols).unwrap();
         let expected: Vec<u8> = db.iter().flat_map(|c| c[target].to_le_bytes()).collect();
         assert_eq!(row, expected);
+    }
+
+    /// The server's parse takes the 49-bit query this crate's client sends and
+    /// the 44-bit dithered one, and refuses every other length.
+    #[test]
+    fn the_server_parse_accepts_both_query_widths() {
+        let rows = 4096;
+        let (_, legacy) = prepare(0, rows, 7).unwrap();
+        assert_eq!(legacy.len(), request_len(rows));
+        assert_eq!(legacy.len(), 27_648 + 25_088);
+        let (_, dithered) =
+            pir_native::prepare_dithered(&packing_setup(), &query_masks(0), rows, 7).unwrap();
+        assert_eq!(dithered.len(), request_len_bits(rows, DITHERED_QUERY_BITS));
+        assert_eq!(dithered.len(), 27_648 + 22_528);
+        for body in [&legacy, &dithered] {
+            let (keys, query) = parse(body, rows).unwrap();
+            assert_eq!(query.len(), rows);
+            assert_eq!(keys.kg_words(), parse(body, rows).unwrap().0.kg_words());
+        }
+        for len in [
+            dithered.len() - 1,
+            dithered.len() + 1,
+            legacy.len() - 1,
+            legacy.len() + 1,
+            request_len_bits(rows, 47),
+            request_len_bits(2 * rows, DITHERED_QUERY_BITS),
+        ] {
+            assert!(parse(&vec![0; len], rows).is_err(), "{len} bytes");
+        }
     }
 }

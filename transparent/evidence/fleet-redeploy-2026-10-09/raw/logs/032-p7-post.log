@@ -1,0 +1,29 @@
+### start 2026-10-09T13:30:00.060Z
+### cmd:
+bash $DEP/steps/p7-post.sh
+### output:
+new_binary True True warm 164 164 {'bytes': 38528316640, 'hits': 164, 'limit_bytes': 103079215104, 'misses': 0, 'pending_saves': 0, 'restore_slots': 4, 'write_failures': 0} prewarm_failed 0 fd2bcf54ac4f
+membership age 0.2 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'fd2bcf54ac4f'), 'transparent-pir-recent-02': ('serving', True, True, 'fd2bcf54ac4f'), 'transparent-pir-archive-03': ('serving', True, True, 'fd2bcf54ac4f')}
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /usr/local/bin/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /usr/local/bin/transparent-shard-server
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /proc/3255967/exe
+NRestarts=0
+MemoryCurrent=33554370560
+ActiveEnterTimestamp=Fri 2026-10-09 13:03:06 UTC
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-archive-03/shard-control
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-archive-03/transparent-shard-server
+1053fd4dfb6acfe5d55ab2d2e800b1293f12469d502645f93873a28b2e1e24c1  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-archive-03/worker.service
+MemAvailable:   32042120 kB
+{'ready': True, 'mode': 'warm', 'warm_runtimes': 164, 'target_runtimes': 164, 'prewarm_failed': 0, 'runtime_cache': {'bytes': 38528316640, 'hits': 164, 'limit_bytes': 103079215104, 'misses': 0, 'pending_saves': 0, 'restore_slots': 4, 'write_failures': 0}, 'map_sha256': 'fd2bcf54ac4f74932db02ebee2312c6238a9c8b435459a1cae9f9f7432624aa1', 'started_unix': 1791551210}
+controller serving 3511810 3511810 12.838710784
+MemTotal:       65847080 kB
+MemAvailable:   32048264 kB
+MemoryCurrent=33554612224
+MemoryPeak=33893822464
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       193G  133G   60G  69% /
+2c2
+< caddy_http_request_duration_seconds_count{code="503",handler="subroute",method="GET",server="srv0"} 2
+---
+> caddy_http_request_duration_seconds_count{code="503",handler="subroute",method="GET",server="srv0"} 3
+### end 2026-10-09T13:30:00.792Z rc=0

@@ -29,6 +29,17 @@
 //! `cutoff_time`, their median does too, and every later block must exceed
 //! that median. The tool checks those eleven inside the scanned window.
 //!
+//! The recorded boundary is not that calendar height but the start of the
+//! archive shard still open there. The tool replays the journal from its first
+//! height through the archive sealer under `--archive-geometry`'s thresholds,
+//! exactly as the publisher does, and stops before the calendar height. If a
+//! shard is still accumulating, the boundary moves back to its first height;
+//! if the last block sealed one, the calendar height already is a boundary.
+//! Either way every archive shard is sealed by a threshold, never cut short by
+//! the geometry change, and the recent tier starts at or before the calendar
+//! height, so it still covers at least `--months`. A boundary that would leave
+//! the archive tier empty is refused.
+//!
 //! # Sources
 //!
 //! Header times come from the node, since the journal stores block hashes but
@@ -41,9 +52,13 @@ use chrono::{DateTime, Months, Utc};
 use clap::Parser;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use transparent_events::TransparentEvent;
+use transparent_filter::ScriptBytes;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::state::StateReader;
 use transparent_filter_server::zakura::ZakuraClient;
+use transparent_shard::layout::{by_name as geometry_by_name, Geometry};
+use transparent_shard::seal::{PageBasis, SealPolicy, Sealer};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -61,6 +76,10 @@ struct Cli {
     /// Calendar months between the cutoff and the anchor.
     #[arg(long, default_value_t = 6)]
     months: u32,
+    /// Archive geometry the publication will use; its seal thresholds decide
+    /// where the archive's last shard ends.
+    #[arg(long, default_value = "archive-wide")]
+    archive_geometry: String,
     /// The node's `[state] cache_dir`; reads header times from its RocksDB.
     #[arg(long)]
     state_dir: Option<PathBuf>,
@@ -236,6 +255,38 @@ fn derive(
     })
 }
 
+/// Moves `calendar` back to the first height of the archive shard open there.
+///
+/// Offers `start..calendar` to an archive sealer, as the publisher would, and
+/// returns the boundary with the number of archive shards before it.
+fn seal_back(
+    events: &mut impl FnMut(u64) -> Result<Vec<(ScriptBytes, TransparentEvent)>, BoxError>,
+    archive: &Geometry,
+    start: u64,
+    calendar: u64,
+) -> Result<(u64, u64), BoxError> {
+    let mut sealer = Sealer::resume(
+        SealPolicy::for_geometry(archive),
+        start,
+        PageBasis::default(),
+        *archive,
+        0,
+    );
+    for height in start..calendar {
+        sealer.push_block(height, &events(height)?)?;
+    }
+    let boundary = sealer.open_start().unwrap_or(calendar);
+    if boundary == start {
+        return Err(format!(
+            "the first {} shard is still open at the calendar cutoff {calendar}; \
+             the archive tier would be empty",
+            archive.name
+        )
+        .into());
+    }
+    Ok((boundary, sealer.next_shard_id()))
+}
+
 /// The anchor time minus `months` calendar months, day clamped to the month.
 fn cutoff_time(anchor_time: DateTime<Utc>, months: u32) -> Result<DateTime<Utc>, BoxError> {
     anchor_time
@@ -255,6 +306,8 @@ fn main() -> Result<(), BoxError> {
     if cli.months == 0 {
         return Err("--months must be at least one".into());
     }
+    let archive = geometry_by_name(&cli.archive_geometry)
+        .ok_or_else(|| format!("unknown geometry {:?}", cli.archive_geometry))?;
 
     let mut headers: Box<dyn Headers> = match (&cli.state_dir, &cli.zakura_cookie) {
         (Some(dir), _) => Box::new(StateHeaders(StateReader::open(
@@ -306,7 +359,22 @@ fn main() -> Result<(), BoxError> {
         cutoff_at,
         cli.window,
     )?;
-    let cutoff = derived.cutoff_height;
+    let calendar = derived.cutoff_height;
+    eprintln!(
+        "calendar cutoff {calendar}; replaying {start}-{} through the {} sealer",
+        calendar - 1,
+        archive.name
+    );
+    let (cutoff, archive_shards) = seal_back(
+        &mut |height| {
+            store
+                .events_at(height)?
+                .ok_or_else(|| format!("height {height} is missing from the journal").into())
+        },
+        archive,
+        start,
+        calendar,
+    )?;
     if let Some(expected) = cli.expect_cutoff {
         if expected != cutoff {
             return Err(format!(
@@ -332,7 +400,7 @@ fn main() -> Result<(), BoxError> {
     let previous_block_time = cached.time(cutoff - 1)?;
 
     let record = serde_json::json!({
-        "schema": "transparent-cutoff-v1",
+        "schema": "transparent-cutoff-v2",
         "generated_at": Utc::now().to_rfc3339(),
         "tool_sha": cli.source_sha,
         "source": cached.inner.label(),
@@ -354,8 +422,12 @@ fn main() -> Result<(), BoxError> {
                             day clamped to the target month's last day, time of day kept; \
                             cutoff_height = 1 + the highest height whose header time is \
                             before cutoff_time; proved final by eleven consecutive blocks \
-                            at or after cutoff_time from cutoff_height",
+                            at or after cutoff_time from cutoff_height; the boundary is the \
+                            first height of the archive shard still open at cutoff_height \
+                            under the archive geometry's seal thresholds, or cutoff_height \
+                            when none is",
             "window": cli.window,
+            "archive_geometry": archive.name,
         },
         "cutoff": {
             "time": cutoff_at.to_rfc3339(),
@@ -365,6 +437,8 @@ fn main() -> Result<(), BoxError> {
             "previous_height": cutoff - 1,
             "previous_hash": previous_hash,
             "previous_block_time": previous_block_time.to_rfc3339(),
+            "calendar_height": calendar,
+            "archive_shards": archive_shards,
             "first_height_at_or_after_cutoff_time": derived.first_at_or_after,
             "last_height_before_cutoff_time": derived.last_before,
             "scanned": [derived.scanned.0, derived.scanned.1],
@@ -379,8 +453,9 @@ fn main() -> Result<(), BoxError> {
         Some(path) => {
             std::fs::write(path, &bytes)?;
             eprintln!(
-                "anchor {anchor} at {anchor_time}; cutoff time {cutoff_at}; cutoff height {cutoff} \
-                 (archive {start}-{}, recent {cutoff}-{anchor}); written to {}",
+                "anchor {anchor} at {anchor_time}; cutoff time {cutoff_at}; calendar height \
+                 {calendar}; cutoff height {cutoff} (archive {start}-{} in {archive_shards} \
+                 shards, recent {cutoff}-{anchor}); written to {}",
                 cutoff - 1,
                 path.display()
             );
@@ -440,6 +515,18 @@ mod tests {
     fn a_journal_that_begins_after_the_cutoff_time_is_refused() {
         let mut times = |height: u64| Ok(at(100 * height as i64));
         let error = derive(&mut times, 60, 200, at(5_000), 20).unwrap_err();
+        assert!(
+            error.to_string().contains("archive tier would be empty"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn an_archive_shard_still_open_from_the_start_is_refused() {
+        // Empty blocks reach no threshold, so the first archive shard is still
+        // open at the calendar height and moving back would empty the tier.
+        let archive = geometry_by_name("archive-wide").unwrap();
+        let error = seal_back(&mut |_| Ok(Vec::new()), archive, 0, 100).unwrap_err();
         assert!(
             error.to_string().contains("archive tier would be empty"),
             "{error}"

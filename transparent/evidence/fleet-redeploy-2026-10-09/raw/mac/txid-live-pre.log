@@ -1,0 +1,9 @@
+2026-10-09T11:11:05Z
+
+running 1 test
+live cold lookup: Provenance { map_sha256: "3b480028e9c1154e2646ea455934cbc10fa2c658fb2f938b51c64a0aa174c755", shard_id: 411, revision: 0, manifest_digest: "5a9e6112986cb3fecdda6adac9ddf3da776cf583f52bc5d8b79d4ceec660304b", tier: Archive }, up 80400 B, down 50383 B
+test txid_live_lookup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 24 filtered out; finished in 3.88s
+
+target/release/deps/txid_client-06d1c0da2ecb681d txid_live_lookup --ignored   0.10s user 0.01s system 2% cpu 4.396 total

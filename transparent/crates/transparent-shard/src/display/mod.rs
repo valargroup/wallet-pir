@@ -3,16 +3,16 @@
 //! A display publication is its own sequence of shards, independent of the
 //! history shards: sealed archive shards that are built once, and one recent
 //! shard covering the tip that is rebuilt as blocks arrive. Inside a shard,
-//! every txid belongs to exactly one bucket, `H(domain, txid) mod N`, and each
-//! bucket is a separate native table, so a lookup scans and downloads only its
-//! own bucket. Both candidate directory rows lie inside that bucket's table.
-//! Overflow pages are scoped to the shard and are not bucketed.
+//! every entry belongs to exactly one bucket, `H(domain, tag) mod N`, and each
+//! bucket is a separate native table of fixed-size entries, so a lookup scans
+//! and downloads only its own bucket. Both candidate rows lie inside that
+//! bucket's table, and a lookup is always exactly those two rows.
 //!
-//! The record codec, directory entry, row container and fragment format are
-//! the ones in [`crate::txid`]; only placement, table identity and the
-//! manifest differ. The bucket a lookup names and the tier its shard belongs
-//! to are disclosed to the server, in addition to the range, page count and
-//! timing that the single-table capability already discloses.
+//! The entry codec and row format are the ones in [`crate::txid`]; only
+//! placement, table identity and the manifest are here. The bucket a lookup
+//! names, the tier its shard belongs to, the range and timing are disclosed
+//! to the server; with fixed-size entries nothing about the transaction's
+//! size is.
 
 pub mod geometry;
 pub mod manifest;
@@ -29,37 +29,33 @@ pub use split::{
     chunk_base, DisplayChunkRef, DisplayIndexChunk, DisplayRecentMap, SplitChunk, SplitMap,
     INDEX_CHUNK_SHARDS,
 };
-pub use tables::{
-    build_shard, directory_rows_for, find_directory_unique, verify, verify_rows, BuiltBucket,
-    BuiltDisplay, VerifiedDisplay,
-};
+pub use tables::{build_shard, rows_for, verify, verify_rows, BuiltBucket, BuiltDisplay};
 
 use crate::layout::Geometry;
-use crate::txid::{self, DirectoryEntry};
+use crate::txid::{self, Tag};
 use sha2::{Digest, Sha256};
-use transparent_events::Txid;
 
-/// Identifies the display shard layout: bucketed directory tables beside one
-/// shard-scoped pages table, with the `txid` record codec inside.
-pub const DISPLAY_SCHEMA: &str = "transparent-txid-display-shard-v1";
-/// Domain of the bucket hash. Shard-independent, so a txid's bucket is the
+/// Identifies the display shard layout: one bucketed table of fixed-size
+/// entries per bucket, with the `txid` entry codec inside.
+pub const DISPLAY_SCHEMA: &str = "transparent-txid-display-shard-v2";
+/// Domain of the bucket hash. Shard-independent, so an entry's bucket is the
 /// same whichever shard its height selects.
-pub const BUCKET_DOMAIN: &[u8] = b"transparent-txid-display/bucket/v1";
+pub const BUCKET_DOMAIN: &[u8] = b"transparent-txid-display/bucket/v2";
 /// Upper bound on buckets per shard; a decoder bound, not a target.
 pub const MAX_BUCKETS: u32 = 64;
 
-/// The bucket `txid` belongs to among `n_buckets`.
-pub fn bucket(txid: &Txid, n_buckets: u32) -> u32 {
+/// The bucket of the entry tagged `tag` among `n_buckets`.
+pub fn bucket(tag: &Tag, n_buckets: u32) -> u32 {
     assert!(n_buckets > 0, "a shard has at least one bucket");
     let digest = Sha256::new()
         .chain_update(BUCKET_DOMAIN)
-        .chain_update(txid.0)
+        .chain_update(tag.0)
         .finalize();
     (u64::from_le_bytes(digest[..8].try_into().unwrap()) % u64::from(n_buckets)) as u32
 }
 
-/// The two candidate directory rows of `txid` inside its bucket's table.
-pub fn candidate_rows(txid: &Txid, shard_id: u64, bucket: u32, rows: u64) -> [u64; 2] {
+/// The two candidate rows of the entry tagged `tag` inside its bucket's table.
+pub fn candidate_rows(tag: &Tag, shard_id: u64, bucket: u32, rows: u64) -> [u64; 2] {
     std::array::from_fn(|choice| {
         let digest = Sha256::new()
             .chain_update(DISPLAY_SCHEMA)
@@ -67,36 +63,29 @@ pub fn candidate_rows(txid: &Txid, shard_id: u64, bucket: u32, rows: u64) -> [u6
             .chain_update([choice as u8])
             .chain_update(shard_id.to_le_bytes())
             .chain_update(bucket.to_le_bytes())
-            .chain_update(txid.0)
+            .chain_update(tag.0)
             .finalize();
         u64::from_le_bytes(digest[..8].try_into().unwrap()) % rows
     })
 }
 
-/// One private table of a display shard.
+/// One private table of a display shard: the entries of one bucket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DisplayTable {
-    /// The directory of one bucket.
     Directory(u32),
-    /// The shard's overflow pages.
-    Pages,
 }
 
 impl DisplayTable {
-    /// Wire and binding name: `directory-{b}` or `pages`.
+    /// Wire and binding name: `directory-{b}`.
     pub fn label(&self) -> String {
         match self {
             Self::Directory(bucket) => format!("directory-{bucket}"),
-            Self::Pages => "pages".to_string(),
         }
     }
 
     /// Parses a canonical label; leading zeros and out-of-range buckets are
     /// refused so one table never has two names.
     pub fn parse(label: &str) -> Option<Self> {
-        if label == "pages" {
-            return Some(Self::Pages);
-        }
         let digits = label.strip_prefix("directory-")?;
         if digits.is_empty()
             || !digits.bytes().all(|b| b.is_ascii_digit())
@@ -113,18 +102,15 @@ impl DisplayTable {
         format!("{}.{segment}.bin", self.label())
     }
 
-    pub fn is_directory(&self) -> bool {
-        matches!(self, Self::Directory(_))
+    pub fn bucket(&self) -> u32 {
+        match self {
+            Self::Directory(bucket) => *bucket,
+        }
     }
-}
 
-impl DisplayTable {
     /// The native table kind this table is served as.
     pub fn kind(&self) -> DisplayKind {
-        match self {
-            Self::Directory(_) => DisplayKind::TxDirectory,
-            Self::Pages => DisplayKind::TxPages,
-        }
+        DisplayKind::TxDirectory
     }
 }
 
@@ -134,7 +120,6 @@ impl DisplayTable {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DisplayKind {
     TxDirectory,
-    TxPages,
 }
 
 impl DisplayKind {
@@ -142,16 +127,12 @@ impl DisplayKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::TxDirectory => "txdirectory",
-            Self::TxPages => "txpages",
         }
     }
 
     /// Rows in one segment of this table, at `geometry`.
     pub fn rows(self, geometry: &Geometry) -> u64 {
-        match self {
-            Self::TxDirectory => geometry.directory_rows,
-            Self::TxPages => geometry.page_rows,
-        }
+        geometry.directory_rows
     }
 
     /// Bytes in one row of this table, at any geometry.
@@ -195,22 +176,19 @@ pub fn query_binding(manifest_digest: &str, table: DisplayTable) -> [u8; 8] {
     crate::manifest::query_binding_for_schema(DISPLAY_SCHEMA, manifest_digest, &table.label())
 }
 
-/// Decodes every directory entry of one directory row.
-pub fn row_entries(row: &[u8]) -> Result<Vec<DirectoryEntry>, txid::Error> {
-    txid::entries(row)?
-        .into_iter()
-        .map(DirectoryEntry::decode)
-        .collect()
+/// Decodes every entry of one row.
+pub fn row_entries(row: &[u8]) -> Result<Vec<txid::DisplayEntry>, txid::Error> {
+    txid::row_entries(row)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use transparent_events::Txid;
 
     #[test]
     fn labels_round_trip_and_are_canonical() {
         for table in [
-            DisplayTable::Pages,
             DisplayTable::Directory(0),
             DisplayTable::Directory(7),
             DisplayTable::Directory(MAX_BUCKETS - 1),
@@ -224,40 +202,28 @@ mod tests {
             "directory-64",
             "directory--1",
             "txdirectory",
-            "Pages",
+            "pages",
         ] {
             assert_eq!(DisplayTable::parse(bad), None, "{bad}");
         }
         assert_eq!(DisplayTable::Directory(3).file_name(1), "directory-3.1.bin");
-        assert_eq!(DisplayTable::Pages.file_name(0), "pages.0.bin");
     }
 
     /// Seeds are published by every running server; they must never move.
     #[test]
     fn setup_seeds_are_golden() {
-        for (geometry, kind, seed) in [
-            (&TXID_2K, DisplayKind::TxDirectory, 0x57a7_3ced_5e98_120a),
-            (&TXID_2K, DisplayKind::TxPages, 0x6231_4f48_472b_6e15),
-            (
-                &geometry::TXID_4K,
-                DisplayKind::TxDirectory,
-                0x28bc_e699_56cc_2d7e,
-            ),
-            (
-                &geometry::TXID_4K,
-                DisplayKind::TxPages,
-                0x95df_53a3_e525_1353,
-            ),
+        for (geometry, seed) in [
+            (&TXID_2K, 0x57a7_3ced_5e98_120a),
+            (&geometry::TXID_4K, 0x28bc_e699_56cc_2d7e),
         ] {
             assert_eq!(
-                setup_seed(geometry, kind),
+                setup_seed(geometry, DisplayKind::TxDirectory),
                 seed,
-                "{} {kind:?}",
+                "{}",
                 geometry.name
             );
         }
         assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
-        assert_eq!(DisplayTable::Pages.kind(), DisplayKind::TxPages);
     }
 
     #[test]
@@ -268,14 +234,10 @@ mod tests {
         let t1 = DisplayTable::Directory(1);
         assert_ne!(query_binding(&a, t0), query_binding(&a, t1));
         assert_ne!(query_binding(&a, t0), query_binding(&b, t0));
+        // Distinct from the history binding of the same digest and label.
         assert_ne!(
             query_binding(&a, t0),
-            query_binding(&a, DisplayTable::Pages)
-        );
-        // Distinct from the history binding of the same digest and kind.
-        assert_ne!(
-            query_binding(&a, DisplayTable::Pages),
-            crate::manifest::query_binding(&a, "pages")
+            crate::manifest::query_binding(&a, "directory-0")
         );
     }
 
@@ -284,17 +246,17 @@ mod tests {
         let n = 4;
         let mut counts = [0u32; 4];
         for i in 0u32..40_000 {
-            let txid = Txid(Sha256::digest(i.to_le_bytes()).into());
-            counts[bucket(&txid, n) as usize] += 1;
+            let tag = Tag::of(&Txid(Sha256::digest(i.to_le_bytes()).into()));
+            counts[bucket(&tag, n) as usize] += 1;
         }
         // Binomial(40,000, 1/4): sigma is about 87; five sigma either way.
         for count in counts {
             assert!((10_000 - 435..=10_000 + 435).contains(&count), "{counts:?}");
         }
-        let txid = Txid([9; 32]);
-        assert_eq!(bucket(&txid, 1), 0);
-        let rows = candidate_rows(&txid, 3, bucket(&txid, 4), 2048);
+        let tag = Tag::of(&Txid([9; 32]));
+        assert_eq!(bucket(&tag, 1), 0);
+        let rows = candidate_rows(&tag, 3, bucket(&tag, 4), 2048);
         assert!(rows.iter().all(|r| *r < 2048));
-        assert_ne!(rows, candidate_rows(&txid, 4, bucket(&txid, 4), 2048));
+        assert_ne!(rows, candidate_rows(&tag, 4, bucket(&tag, 4), 2048));
     }
 }

@@ -123,6 +123,26 @@ class Templates(unittest.TestCase):
         receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
         self.assertEqual(str(M.LOAD_BINARY),receipt['binaries']['examples/rate-query']['retained_path'])
 
+    def test_legacy_hosts_install_the_deployed_pair_and_controller_and_12ce_otherwise(self):
+        selected=[]
+        def deployed(name):
+            selected.append(name); return Path('/portable')/name
+        with patch.object(M.I,'worker_binary',side_effect=deployed):
+            for name in ('transparent-shard-server','shard-control'):
+                self.assertEqual(M.selected_binary('worker',name,False),Path('/portable')/name)
+            self.assertEqual(M.selected_binary('coordinator','transparent-publish-controller',False),
+                             Path('/portable/transparent-publish-controller'))
+            # The coordinator keeps its 12ce shard-control, filter and planner.
+            for name in ('shard-control','transparent-filter-server','shard-assign'):
+                self.assertEqual(M.selected_binary('coordinator',name,False),M.RELEASE/name)
+            self.assertEqual(M.selected_binary('worker','transparent-publish-controller',False),
+                             M.RELEASE/'transparent-publish-controller')
+        self.assertEqual(selected,['transparent-shard-server','shard-control','transparent-publish-controller'])
+        receipt=json.loads((HERE.parents[1]/'evidence/activity-metadata-2026-09-30/release-12ce1291.json').read_text())
+        self.assertEqual(str(M.RELEASE/'shard-assign'),receipt['binaries']['shard-assign']['retained_path'])
+        with patch.object(M.C,'binary',side_effect=lambda name:Path('/candidate')/name):
+            self.assertEqual(M.selected_binary('coordinator','shard-control',True),Path('/candidate/shard-control'))
+
     def template(self):
         plan=worker_plan()
         plan['transaction']=T.TOKEN;plan['baseline_root']=T.ROOT+T.TOKEN

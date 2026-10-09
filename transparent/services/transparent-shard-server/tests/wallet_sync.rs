@@ -237,7 +237,6 @@ fn publish_profiled(
         );
 
         let manifest = ShardManifest {
-            txid_display: None,
             schema: SCHEMA.to_string(),
             profile: profile.to_string(),
             geometry: geometry.name.to_string(),
@@ -331,7 +330,6 @@ fn publish_profiled(
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: None,
             manifest_digest: digest.clone(),
             revision: manifest.revision,
             sealed: manifest.sealed,
@@ -359,6 +357,7 @@ fn publish_profiled(
             })
             .collect(),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.join("shards.json"),
@@ -538,10 +537,16 @@ fn parse_init(raw: &[u8]) -> ServiceGeometry {
                 directory_row_bytes: entry["directory_row_bytes"].as_u64().unwrap() as u32,
                 directory_scheme: serde_json::from_value(entry["directory_scheme"].clone())
                     .unwrap(),
+                directory_scheme_dq44: serde_json::from_value(
+                    entry["directory_scheme_dq44"].clone(),
+                )
+                .unwrap(),
                 directory_setup_seed: entry["directory_setup_seed"].as_u64().unwrap(),
                 page_rows: entry["page_rows"].as_u64().unwrap(),
                 page_row_bytes: entry["page_row_bytes"].as_u64().unwrap() as u32,
                 pages_scheme: serde_json::from_value(entry["pages_scheme"].clone()).unwrap(),
+                pages_scheme_dq44: serde_json::from_value(entry["pages_scheme_dq44"].clone())
+                    .unwrap(),
                 pages_setup_seed: entry["pages_setup_seed"].as_u64().unwrap(),
             })
             .collect(),
@@ -603,6 +608,18 @@ async fn run_sync(
     birthday: u64,
     map: ShardMap,
 ) -> transparent_wallet::SyncOutcome {
+    run_sync_with_init(dir, base, wallet, birthday, map, |_| {}).await
+}
+
+/// [`run_sync`] with the init document edited before the wallet reads it.
+async fn run_sync_with_init(
+    dir: &Path,
+    base: String,
+    wallet: Vec<ScriptBytes>,
+    birthday: u64,
+    map: ShardMap,
+    edit: fn(&mut serde_json::Value),
+) -> transparent_wallet::SyncOutcome {
     let filters = PublishedFilters::load(dir, &map);
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     tokio::task::spawn_blocking(move || {
@@ -619,7 +636,9 @@ async fn run_sync(
             .unwrap()
             .bytes()
             .unwrap();
-        let geometry = parse_init(&raw);
+        let mut init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        edit(&mut init);
+        let geometry = parse_init(&serde_json::to_vec(&init).unwrap());
         let mut filters = filters;
         sync(
             &map,
@@ -763,6 +782,48 @@ async fn a_service_serving_another_schema_is_refused() {
         matches!(error, transparent_wallet::SyncError::Schema { .. }),
         "expected a schema refusal, got {error}"
     );
+}
+
+/// A wallet sends 44-bit dithered queries to a service advertising them, and
+/// the 49-bit queries every service accepts to one whose init carries no
+/// dithered schemes, as a service that predates them does not. Both answer
+/// over HTTP and reconstruct the same history.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
+    let dir = tempfile::tempdir().unwrap();
+    let per_shard = chain();
+    let map = publish(dir.path(), &per_shard);
+    let base = serve(dir.path()).await;
+    let wallet = vec![script(1), script(2), script(3)];
+    let expected = traverse(&per_shard, &wallet, 0);
+
+    let rows = RECENT_8K.directory_rows as usize;
+    assert_eq!(RECENT_8K.page_rows as usize, rows);
+    let dithered = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
+    let legacy = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
+        for entry in init["geometries"].as_array_mut().unwrap() {
+            let entry = entry.as_object_mut().unwrap();
+            assert!(entry.remove("directory_scheme_dq44").is_some());
+            assert!(entry.remove("pages_scheme_dq44").is_some());
+        }
+    })
+    .await;
+    for (outcome, upload) in [
+        (
+            &dithered,
+            8 + transparent_native::dithered_request_len(rows),
+        ),
+        (&legacy, 8 + transparent_native::request_len(rows)),
+    ] {
+        compare(&outcome.ledger, &expected);
+        assert!(outcome.charges.queries() > 0);
+        assert_eq!(
+            outcome.charges.query_upload(),
+            outcome.charges.queries() * upload as u64,
+            "every query is {upload} bytes"
+        );
+    }
+    assert_eq!(dithered.charges.queries(), legacy.charges.queries());
 }
 
 #[tokio::test(flavor = "multi_thread")]

@@ -80,9 +80,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let pack =
                 (reserved_bytes(rows, row_bytes) - rows * u64::from(row_bytes)) as f64 / 1048576.0;
             // What a wallet uploads per query: the binding, the K_g key, and
-            // the first-dimension query, which is the only term that follows
-            // the row count.
-            let query = 8 + transparent_native::request_len(sc.db_rows);
+            // the 44-bit dithered first-dimension query, which is the only
+            // term that follows the row count.
+            let query = 8 + transparent_native::dithered_request_len(sc.db_rows);
             println!(
                 "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1} {query:>10}",
                 sc.db_rows,

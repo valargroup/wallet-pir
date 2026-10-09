@@ -1,0 +1,5 @@
+{
+  "version": 3,
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "start_height": 0
+}          42714809217            168570624

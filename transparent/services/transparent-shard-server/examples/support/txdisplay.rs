@@ -3,10 +3,11 @@
 //!
 //! A lookup is the map, the shard's manifest, the bucket's setup (all cached),
 //! then a fixed transcript: exactly two directory queries, even when both
-//! candidate rows coincide, and exactly `pages` page queries for a paged
-//! record. Decoded rows are deduplicated by (segment, row) before the entry is
-//! found and the record assembled. Any failure is an error, never `Absent`;
-//! a 409 refreshes the map and retries the lookup once.
+//! candidate rows coincide, found or absent. Every entry has the same size,
+//! so found and absent send the same requests with the same body sizes.
+//! Decoded rows are deduplicated by (segment, row) before the entry is found
+//! by its tag. Any failure is an error, never `Absent`; a 409 refreshes the
+//! map and retries the lookup once.
 //!
 //! Every request's header and body bytes are computed from what HTTP/1.1
 //! puts on the wire, and the client sets every request header itself so the
@@ -26,7 +27,7 @@ use transparent_shard::display::{
     self, display_by_name, DisplayManifest, DisplayMap, DisplayMapEntry, DisplayTable,
 };
 use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{self, TransparentDisplayRecord};
+use transparent_shard::txid::{self, DisplayEntry, Tag};
 use transparent_shard_server::display::kind;
 use transparent_shard_server::shardset::{setup_seed, Table};
 
@@ -68,7 +69,7 @@ fn protocol(error: impl std::fmt::Display) -> LookupError {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum LookupResult {
-    Found(TransparentDisplayRecord),
+    Found(DisplayEntry),
     Absent,
     PlacementUnknown,
     Unsupported,
@@ -77,7 +78,7 @@ pub enum LookupResult {
 /// One private query as it happened.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct QueryTrace {
-    /// `directory-{b}` or `pages`.
+    /// `directory-{b}`.
     pub table: String,
     /// The row selected within every segment.
     pub row: u64,
@@ -139,7 +140,8 @@ pub struct LookupReport {
     pub digest: Option<String>,
     pub map_sha256: Option<String>,
     pub bucket: Option<u32>,
-    /// `inline`, `pages-{k}` or `absent`; empty when nothing was queried.
+    /// `complete` or `omission` for a found entry, `absent`, or `query` for
+    /// a single directory query; empty when nothing was queried.
     pub class: String,
     pub queries: Vec<QueryTrace>,
     pub bytes: ByteCounts,
@@ -183,6 +185,9 @@ struct InitTable {
     rows: u64,
     row_bytes: u32,
     scheme: NativeScheme,
+    /// The 44-bit dithered scheme; absent from a service that predates it.
+    #[serde(default)]
+    scheme_dq44: Option<NativeScheme>,
     setup_seed: u64,
 }
 
@@ -190,7 +195,6 @@ struct InitTable {
 struct InitGeometry {
     name: String,
     txdirectory: InitTable,
-    txpages: InitTable,
 }
 
 #[derive(Deserialize)]
@@ -213,7 +217,6 @@ struct Located {
     entry: Arc<DisplayMapEntry>,
     geometry: &'static Geometry,
     bucket: u32,
-    manifest: Arc<DisplayManifest>,
 }
 
 /// One table of one revision, ready to be queried.
@@ -222,6 +225,8 @@ struct Target {
     entry: Arc<DisplayMapEntry>,
     table: DisplayTable,
     profile: Arc<TableProfile>,
+    /// Whether queries go at 44 dithered bits rather than 49.
+    dithered: bool,
     setups: Arc<Vec<Arc<Setup>>>,
 }
 
@@ -503,12 +508,14 @@ impl DisplayClient {
         Ok(cached)
     }
 
+    /// The derived profile, checked against init, and whether init's
+    /// dithered scheme reproduces too; queries use it only then.
     fn profile(
         &self,
         init: &Init,
         geometry: &'static Geometry,
         table: Table,
-    ) -> Result<Arc<TableProfile>, LookupError> {
+    ) -> Result<(Arc<TableProfile>, bool), LookupError> {
         let profile = {
             let cached = self
                 .inner
@@ -541,13 +548,11 @@ impl DisplayClient {
                 }
             }
         };
+        // Every display table is served with the `txdirectory` parameters.
         let served = init
             .geometries
             .get(geometry.name)
-            .map(|g| match table {
-                Table::TxPages => &g.txpages,
-                _ => &g.txdirectory,
-            })
+            .map(|g| &g.txdirectory)
             .ok_or_else(|| protocol("init does not declare the geometry"))?;
         if served.scheme != profile.scheme
             || served.rows != table.rows(geometry)
@@ -560,7 +565,8 @@ impl DisplayClient {
                 geometry.name
             )));
         }
-        Ok(profile)
+        let dithered = served.scheme_dq44.as_ref() == Some(&profile.dithered_scheme);
+        Ok((profile, dithered))
     }
 
     async fn manifest(
@@ -623,14 +629,10 @@ impl DisplayClient {
             let exchange = self.fetch(&path, accounting, |b| &mut b.setup).await?;
             accounting.lock().unwrap().cold.setups += 1;
             let s: serde_json::Value = serde_json::from_slice(&exchange.body).map_err(protocol)?;
-            let bucket = match table {
-                DisplayTable::Directory(b) => serde_json::json!(b),
-                DisplayTable::Pages => serde_json::Value::Null,
-            };
             if s["manifest_digest"] != *digest
                 || s["shard_id"] != entry.shard_id
                 || s["table"] != table.label()
-                || s["bucket"] != bucket
+                || s["bucket"] != table.bucket()
                 || s["segment"] != segment
                 || s["segments"] != segments
                 || s["geometry"] != entry.geometry
@@ -678,6 +680,7 @@ impl DisplayClient {
             entry,
             table,
             profile,
+            dithered,
             setups,
         } = target;
         let mut trace = QueryTrace {
@@ -687,11 +690,16 @@ impl DisplayClient {
         };
         let prepared = Instant::now();
         let prepare_profile = profile.clone();
-        let (secret, upload) =
-            tokio::task::spawn_blocking(move || prepare_profile.prepare(row as usize))
-                .await
-                .map_err(protocol)?
-                .map_err(protocol)?;
+        let (secret, upload) = tokio::task::spawn_blocking(move || {
+            if dithered {
+                prepare_profile.prepare_dithered(row as usize)
+            } else {
+                prepare_profile.prepare(row as usize)
+            }
+        })
+        .await
+        .map_err(protocol)?
+        .map_err(protocol)?;
         trace.prepare_s = prepared.elapsed().as_secs_f64();
         let binding = display::query_binding(&entry.manifest_digest, table);
         let mut body = binding.to_vec();
@@ -854,7 +862,7 @@ impl DisplayClient {
                     Err(result) => return Ok(Err(result)),
                 };
                 let rows = display::candidate_rows(
-                    &txid,
+                    &Tag::of(&txid),
                     located.entry.shard_id,
                     located.bucket,
                     located.geometry.directory_rows,
@@ -868,9 +876,7 @@ impl DisplayClient {
                     )
                     .await?;
                 let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-                let contains = txid::find_directory(&rows, txid)
-                    .map_err(protocol)?
-                    .is_some();
+                let contains = txid::find_entry(&rows, &txid).map_err(protocol)?.is_some();
                 Ok::<_, LookupError>(Ok(contains))
             }
             .await;
@@ -930,15 +936,16 @@ impl DisplayClient {
         if !init.geometries.contains_key(geometry.name) {
             return Ok(Err(LookupResult::Unsupported));
         }
-        let bucket = display::bucket(&txid, entry.n_buckets);
+        let bucket = display::bucket(&Tag::of(&txid), entry.n_buckets);
         report.bucket = Some(bucket);
-        let manifest = self.manifest(&entry, accounting).await?;
+        // Fetched and checked against the map entry; the entry already says
+        // how many segments the bucket's table has.
+        self.manifest(&entry, accounting).await?;
         Ok(Ok(Located {
             init,
             entry,
             geometry,
             bucket,
-            manifest,
         }))
     }
 
@@ -950,7 +957,7 @@ impl DisplayClient {
         segments: u32,
         accounting: &Arc<Mutex<Accounting>>,
     ) -> Result<Target, LookupError> {
-        let profile = self.profile(&located.init, located.geometry, kind(table))?;
+        let (profile, dithered) = self.profile(&located.init, located.geometry, kind(table))?;
         let mut setups = Vec::new();
         for segment in 0..segments {
             setups.push(
@@ -969,6 +976,7 @@ impl DisplayClient {
             entry: located.entry.clone(),
             table,
             profile,
+            dithered,
             setups: Arc::new(setups),
         })
     }
@@ -1002,59 +1010,25 @@ impl DisplayClient {
             Ok(located) => located,
             Err(result) => return Ok(result),
         };
-        let geometry = located.geometry;
-
-        // Directory phase: exactly two queries, whether or not they coincide.
+        // Exactly two queries, whether or not they coincide, found or not.
         let rows = display::candidate_rows(
-            &txid,
+            &Tag::of(&txid),
             located.entry.shard_id,
             located.bucket,
-            geometry.directory_rows,
+            located.geometry.directory_rows,
         );
         let decoded = self.directory(&located, &rows, accounting, report).await?;
         let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-        let Some(found) = txid::find_directory(&rows, txid).map_err(protocol)? else {
-            report.class = "absent".into();
-            return Ok(LookupResult::Absent);
-        };
-        if found.pages == 0 {
-            report.class = "inline".into();
-            let record = txid::assemble(&found, &[]).map_err(protocol)?;
-            return Ok(LookupResult::Found(record));
+        match txid::find_entry(&rows, &txid).map_err(protocol)? {
+            Some(entry) => {
+                report.class = entry_class(&entry).into();
+                Ok(LookupResult::Found(entry))
+            }
+            None => {
+                report.class = "absent".into();
+                Ok(LookupResult::Absent)
+            }
         }
-
-        // Page phase: exactly `pages` queries, one per page of the extent.
-        report.class = format!("pages-{}", found.pages);
-        let page_rows = geometry.page_rows;
-        let segments = located.manifest.page_segments.len() as u32;
-        let first = u64::from(found.first_page)
-            .checked_sub(1)
-            .ok_or_else(|| protocol("page locator"))?;
-        let end = first + u64::from(found.pages);
-        if end > u64::from(segments) * page_rows {
-            return Err(protocol("page extent outside the shard"));
-        }
-        let target = self
-            .target(&located, DisplayTable::Pages, segments, accounting)
-            .await?;
-        let pages: Vec<u64> = (first..end).collect();
-        let selected: Vec<u64> = pages.iter().map(|page| page % page_rows).collect();
-        let decoded = self.queries(&target, &selected, accounting, report).await?;
-        let mut rows = Vec::with_capacity(pages.len());
-        for page in pages {
-            let key = ((page / page_rows) as usize, page % page_rows);
-            rows.push(
-                decoded
-                    .get(&key)
-                    .cloned()
-                    .ok_or_else(|| protocol("page row missing"))?,
-            );
-        }
-        let record = txid::assemble(&found, &rows).map_err(protocol)?;
-        if record.txid != txid {
-            return Err(protocol("assembled another transaction"));
-        }
-        Ok(LookupResult::Found(record))
     }
 }
 
@@ -1076,12 +1050,22 @@ fn error_chain(error: &(dyn std::error::Error + 'static)) -> String {
     text
 }
 
-/// SHA-256 of a record's canonical encoding: the exactness oracle fixtures
+/// SHA-256 of an entry's canonical encoding: the exactness oracle fixtures
 /// carry.
-pub fn record_sha256(record: &TransparentDisplayRecord) -> String {
+pub fn entry_sha256(entry: &DisplayEntry) -> String {
     hex::encode(Sha256::digest(
-        record.encode().expect("a decoded record encodes"),
+        entry.encode().expect("a decoded entry encodes"),
     ))
+}
+
+/// `complete` when the entry holds every displayed fact, else `omission`;
+/// the classes `txid-inventory fixture` assigns.
+pub fn entry_class(entry: &DisplayEntry) -> &'static str {
+    if entry.is_complete() {
+        "complete"
+    } else {
+        "omission"
+    }
 }
 
 /// Parses a txid in display (reversed) hex.

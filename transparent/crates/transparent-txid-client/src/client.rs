@@ -10,29 +10,35 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, SystemTime};
 use transparent_events::Txid;
 use transparent_native::{NativeScheme, TableProfile};
 use transparent_shard::display::{
     self, display_by_name, DisplayIndexChunk, DisplayKind, DisplayManifest, DisplayMapEntry,
-    DisplayRecentMap, DisplayTable,
+    DisplayRecentMap, DisplaySealParams, DisplayTable,
 };
 use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{self, TransparentDisplayRecord};
+use transparent_shard::txid::{self, Tag};
 
 /// Native profiles are a pure function of geometry and table kind and costly
 /// to derive, so clients may share them; nothing network-facing is shared.
 pub type ProfileCache = Arc<Mutex<HashMap<(&'static str, DisplayKind), Arc<TableProfile>>>>;
 
-/// A cached map older than this is fetched again before a height above its
-/// coverage is reported as [`Placement::Above`].
-const ABOVE_REFRESH_AGE: Duration = Duration::from_secs(30);
+/// A cached map at least this old, by the wall clock, is fetched again
+/// before a height outside its coverage is reported as [`Placement::Below`]
+/// or [`Placement::Above`].
+pub const PLACEMENT_REFRESH_AGE: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 struct InitTable {
     rows: u64,
     row_bytes: u32,
+    /// The 49-bit query, which every service accepts.
     scheme: NativeScheme,
+    /// The 44-bit dithered query over the same setup. Absent from a service
+    /// that predates it; used only when it reproduces, as `scheme` must.
+    #[serde(default)]
+    scheme_dq44: Option<NativeScheme>,
     setup_seed: u64,
 }
 
@@ -40,7 +46,6 @@ struct InitTable {
 struct InitGeometry {
     name: String,
     txdirectory: InitTable,
-    txpages: InitTable,
 }
 
 #[derive(Deserialize)]
@@ -60,7 +65,35 @@ struct Init {
 struct CachedMap {
     map: DisplayRecentMap,
     sha256: String,
-    fetched: Instant,
+    /// Wall-clock time of the fetch. A monotonic clock stops while a phone
+    /// sleeps, so a map fetched before a long sleep would look fresh after it.
+    fetched: SystemTime,
+}
+
+impl CachedMap {
+    /// Whether the map is at least `age` old; a clock that went back since
+    /// the fetch counts as old.
+    fn older_than(&self, age: Duration) -> bool {
+        self.fetched
+            .elapsed()
+            .map_or(true, |elapsed| elapsed >= age)
+    }
+}
+
+/// The chain a publication serves. No publication changes it, so a map
+/// naming another chain than the first map this client accepted is refused.
+#[derive(Clone, PartialEq, Eq)]
+struct Chain {
+    network: String,
+    genesis_hash: String,
+}
+
+/// What a publication of one chain may change only as a whole new
+/// publication; init is fetched again when it does.
+#[derive(Clone, PartialEq, Eq)]
+struct Layout {
+    schema: String,
+    seal: DisplaySealParams,
 }
 
 struct Setup {
@@ -75,32 +108,65 @@ struct Located {
     map_sha256: String,
     geometry: &'static Geometry,
     bucket: u32,
-    manifest: Arc<DisplayManifest>,
 }
 
 /// One table of one revision, ready to be queried.
 struct Target {
     table: DisplayTable,
     profile: Arc<TableProfile>,
+    /// Whether queries go at 44 dithered bits rather than 49.
+    dithered: bool,
     setups: Vec<Arc<Setup>>,
 }
 
-/// One attempt's result before the 409 retry policy is applied.
+/// One attempt's result before the retry policy is applied.
 enum Attempt {
     Done(TxidLookup),
-    /// The cached map was older than [`ABOVE_REFRESH_AGE`] and the height lies
-    /// above it.
-    RefreshForAbove,
+    /// Fetch init, the map, or both again, then try once more: the height
+    /// lies outside a map at least the placement refresh age old, or the map
+    /// names a geometry init does not list. Only documents this lookup has
+    /// not fetched are named.
+    Refetch {
+        init: bool,
+        map: bool,
+    },
+}
+
+/// What one lookup has fetched and revealed so far, which bounds it. Init
+/// and the map are fetched at most once each for a missing document, a stale
+/// placement or a missing geometry; the map once more after a 409, and init
+/// once more after each map that changes the publication's layout. A lookup
+/// therefore sends at most 2 map, 3 init and 4 query requests.
+#[derive(Default)]
+struct Fresh {
+    /// Fetch the map before the next attempt uses it.
+    refresh_map: bool,
+    /// This lookup fetched the map, so its placement is final.
+    map: bool,
+    /// This lookup fetched init.
+    init: bool,
+    /// The bucket count of the shard this lookup named a bucket table of,
+    /// in a setup or query path.
+    buckets: Option<u32>,
 }
 
 /// The txid display client. Holds caches only; every request goes through
-/// the transport passed to [`TxidDisplayClient::lookup`].
+/// the transport passed to [`TxidDisplayClient::lookup`]. It pins the chain
+/// (network and genesis hash) of the first map it accepts, so a wallet keeps
+/// one client per chain and origin.
 pub struct TxidDisplayClient {
     profiles: ProfileCache,
+    placement_refresh_age: Duration,
     init: Option<Arc<Init>>,
     map: Option<Arc<CachedMap>>,
+    /// The chain of the first map accepted; never changes.
+    chain: Option<Chain>,
+    /// The layout of the last map accepted; kept when the map is dropped.
+    layout: Option<Layout>,
     /// Index chunks by digest; immutable, so kept while the map names them.
     chunks: HashMap<String, Arc<DisplayIndexChunk>>,
+    /// Manifests and setups by revision digest, kept while the map names the
+    /// revision through its recent entry or a cached chunk.
     manifests: HashMap<String, Arc<DisplayManifest>>,
     setups: HashMap<(String, DisplayTable, u32), Arc<Setup>>,
 }
@@ -158,16 +224,47 @@ impl TxidDisplayClient {
     pub fn with_profiles(profiles: ProfileCache) -> Self {
         Self {
             profiles,
+            placement_refresh_age: PLACEMENT_REFRESH_AGE,
             init: None,
             map: None,
+            chain: None,
+            layout: None,
             chunks: HashMap::new(),
             manifests: HashMap::new(),
             setups: HashMap::new(),
         }
     }
 
+    /// Sets how old a cached map must be before a height outside it is
+    /// placed only after fetching the map again; [`PLACEMENT_REFRESH_AGE`]
+    /// by default. For tests: zero refetches the map for every such lookup
+    /// that has not already fetched it, as a map gone stale would. A low age
+    /// makes every lookup outside the map's coverage visible to the server
+    /// as a map request.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn with_placement_refresh_age(mut self, age: Duration) -> Self {
+        self.placement_refresh_age = age;
+        self
+    }
+
     pub fn profiles(&self) -> ProfileCache {
         self.profiles.clone()
+    }
+
+    /// The manifest digests of the revisions whose manifest or setups this
+    /// client holds, sorted. For tests: lookups address revisions by the
+    /// digests the map names, never by what is cached.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn cached_revisions(&self) -> Vec<&str> {
+        let mut digests: Vec<&str> = self
+            .manifests
+            .keys()
+            .chain(self.setups.keys().map(|(digest, _, _)| digest))
+            .map(String::as_str)
+            .collect();
+        digests.sort_unstable();
+        digests.dedup();
+        digests
     }
 
     /// The SHA-256 of the recent map this client holds, if any.
@@ -179,16 +276,25 @@ impl TxidDisplayClient {
     ///
     /// The map is validated as a lookup validates it (the
     /// `X-Txid-Map-Sha256` header and the canonical encoding) and, once
-    /// valid, replaces the cached map, so [`Self::map_sha256`] reports it.
-    /// On any error the previously cached map is kept. Sends exactly one
-    /// `GET /v1/txid/map` unless `cancel` returns true first; statuses
-    /// map to errors as in [`Self::lookup`], with no retry.
+    /// valid, replaces the cached map, so [`Self::map_sha256`] reports it,
+    /// and prunes the caches as a lookup's refresh does. A map naming
+    /// another network or genesis hash than the first map accepted is
+    /// [`ProtocolKind::Map`]. On any error the previously cached map is
+    /// kept. Once a map is accepted, a cached init naming a schema or codec
+    /// this client does not support is dropped, so the next lookup asks
+    /// again. Sends exactly one `GET /v1/txid/map` unless `cancel` returns
+    /// true first; statuses map to errors as in [`Self::lookup`], with no
+    /// retry.
     pub fn refresh_map(
         &mut self,
         transport: &mut impl TxidTransport,
         cancel: &dyn Fn() -> bool,
     ) -> Result<[u8; 32], TxidError> {
-        let cached = self.map(transport, cancel, true)?;
+        let cached = self.fetch_map(transport, cancel)?;
+        // Lookups return before the map while init is unsupported.
+        if self.init.as_ref().is_some_and(|init| !init.supported) {
+            self.init = None;
+        }
         let mut sha256 = [0; 32];
         hex::decode_to_slice(&cached.sha256, &mut sha256).expect("a hex SHA-256");
         Ok(sha256)
@@ -205,7 +311,14 @@ impl TxidDisplayClient {
     /// request.
     ///
     /// A 409 refreshes the recent map and retries the whole lookup once; a
-    /// second 409 is [`TxidError::Stale`]. Nothing else is retried.
+    /// second 409 is [`TxidError::Stale`], as is a retry that would name the
+    /// txid's bucket under another bucket count than this lookup already
+    /// named. A height outside a map at least the placement refresh age old
+    /// refreshes the map and is placed again once. A geometry the map names
+    /// but init lacks refetches whichever of init and the map this lookup
+    /// has not fetched, once, before [`TxidLookup::Unsupported`]. Nothing
+    /// else is retried. A lookup sends at most 2 map, 3 init and 4 query
+    /// requests.
     pub fn lookup(
         &mut self,
         transport: &mut impl TxidTransport,
@@ -214,17 +327,22 @@ impl TxidDisplayClient {
         cancel: &dyn Fn() -> bool,
     ) -> Result<TxidLookup, TxidError> {
         let txid = Txid(txid);
-        // Every later attempt fetches the map afresh; an attempt made with a
-        // fresh map never asks for another placement refresh.
-        let mut refresh = false;
+        // A refetch names only documents this lookup has not fetched, and a
+        // 409 is retried once, so the loop ends.
+        let mut fresh = Fresh::default();
         let mut stale_retried = false;
         loop {
-            match self.attempt(transport, cancel, txid, mined_height, refresh) {
+            match self.attempt(transport, cancel, txid, mined_height, &mut fresh) {
                 Ok(Attempt::Done(lookup)) => return Ok(lookup),
-                Ok(Attempt::RefreshForAbove) => refresh = true,
+                Ok(Attempt::Refetch { init, map }) => {
+                    if init {
+                        self.init = None;
+                    }
+                    fresh.refresh_map |= map;
+                }
                 Err(TxidError::Stale) if !stale_retried => {
                     stale_retried = true;
-                    refresh = true;
+                    fresh.refresh_map = true;
                 }
                 Err(error) => return Err(error),
             }
@@ -237,9 +355,9 @@ impl TxidDisplayClient {
         cancel: &dyn Fn() -> bool,
         txid: Txid,
         height: u64,
-        refresh: bool,
+        fresh: &mut Fresh,
     ) -> Result<Attempt, TxidError> {
-        let located = match self.locate(transport, cancel, txid, height, refresh)? {
+        let located = match self.locate(transport, cancel, txid, height, fresh)? {
             Ok(located) => located,
             Err(attempt) => return Ok(attempt),
         };
@@ -252,58 +370,24 @@ impl TxidDisplayClient {
             tier: tier(&located.entry),
         };
 
-        // Directory phase: exactly two queries, whether or not they coincide.
+        // Exactly two queries, whether or not they coincide, found or not.
         let rows = display::candidate_rows(
-            &txid,
+            &Tag::of(&txid),
             located.entry.shard_id,
             located.bucket,
             geometry.directory_rows,
         );
         let segments = located.entry.directory_segments[located.bucket as usize];
         let table = DisplayTable::Directory(located.bucket);
+        // Setup and query paths name the bucket table from here on.
+        fresh.buckets = Some(located.entry.n_buckets);
         let target = self.target(transport, cancel, &located, table, segments)?;
         let decoded = self.queries(transport, cancel, &located, &target, &rows)?;
         let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-        let Some(found) =
-            txid::find_directory(&rows, txid).map_err(protocol(ProtocolKind::Decode))?
-        else {
-            return Ok(Attempt::Done(TxidLookup::Absent));
-        };
-        if found.pages == 0 {
-            let record = txid::assemble(&found, &[]).map_err(protocol(ProtocolKind::Decode))?;
-            return Ok(Attempt::Done(TxidLookup::Found { record, provenance }));
+        match txid::find_entry(&rows, &txid).map_err(protocol(ProtocolKind::Decode))? {
+            Some(entry) => Ok(Attempt::Done(TxidLookup::Found { entry, provenance })),
+            None => Ok(Attempt::Done(TxidLookup::Absent)),
         }
-
-        // Page phase: exactly `pages` queries, one per page of the extent.
-        let page_rows = geometry.page_rows;
-        let segments = located.manifest.page_segments.len() as u32;
-        let first = u64::from(found.first_page)
-            .checked_sub(1)
-            .ok_or(TxidError::Protocol(ProtocolKind::Pages))?;
-        let end = first + u64::from(found.pages);
-        if end > u64::from(segments) * page_rows {
-            return Err(TxidError::Protocol(ProtocolKind::Pages));
-        }
-        let target = self.target(transport, cancel, &located, DisplayTable::Pages, segments)?;
-        let pages: Vec<u64> = (first..end).collect();
-        let selected: Vec<u64> = pages.iter().map(|page| page % page_rows).collect();
-        let decoded = self.queries(transport, cancel, &located, &target, &selected)?;
-        let mut rows = Vec::with_capacity(pages.len());
-        for page in pages {
-            let key = ((page / page_rows) as usize, page % page_rows);
-            rows.push(
-                decoded
-                    .get(&key)
-                    .cloned()
-                    .ok_or(TxidError::Protocol(ProtocolKind::Pages))?,
-            );
-        }
-        let record: TransparentDisplayRecord =
-            txid::assemble(&found, &rows).map_err(protocol(ProtocolKind::Decode))?;
-        if record.txid != txid {
-            return Err(TxidError::Protocol(ProtocolKind::Decode));
-        }
-        Ok(Attempt::Done(TxidLookup::Found { record, provenance }))
     }
 
     /// Init, recent map, index chunk, placement and manifest: everything
@@ -314,13 +398,27 @@ impl TxidDisplayClient {
         cancel: &dyn Fn() -> bool,
         txid: Txid,
         height: u64,
-        refresh: bool,
+        fresh: &mut Fresh,
     ) -> Result<Result<Located, Attempt>, TxidError> {
-        let init = self.init(transport, cancel)?;
+        let mut init = self.init(transport, cancel, fresh)?;
         if !init.supported {
             return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
         }
-        let cached = self.map(transport, cancel, refresh)?;
+        let cached = match (&self.map, fresh.refresh_map) {
+            (Some(cached), false) => cached.clone(),
+            _ => {
+                fresh.refresh_map = false;
+                fresh.map = true;
+                self.fetch_map(transport, cancel)?
+            }
+        };
+        // A map of another layout dropped init.
+        if self.init.is_none() {
+            init = self.init(transport, cancel, fresh)?;
+            if !init.supported {
+                return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
+            }
+        }
         if cached.map.schema != display::DISPLAY_SCHEMA {
             return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
         }
@@ -328,10 +426,22 @@ impl TxidDisplayClient {
             .map
             .check_shape()
             .map_err(protocol(ProtocolKind::Map))?;
+        // A placement from a map this lookup did not fetch, and old enough
+        // to have been replaced, is checked against the current map first:
+        // a new publication may start lower or reach further.
+        let stale = !fresh.map && cached.older_than(self.placement_refresh_age);
+        let placement = move |placement| {
+            if stale {
+                Attempt::Refetch {
+                    init: false,
+                    map: true,
+                }
+            } else {
+                Attempt::Done(TxidLookup::PlacementUnknown(placement))
+            }
+        };
         if height < cached.map.start_height {
-            return Ok(Err(Attempt::Done(TxidLookup::PlacementUnknown(
-                Placement::Below,
-            ))));
+            return Ok(Err(placement(Placement::Below)));
         }
         let entry = match cached.map.chunk_for_height(height) {
             Some(index) => self
@@ -349,29 +459,43 @@ impl TxidDisplayClient {
             // The shape and chunk checks make the shards contiguous, so only
             // the tip is left; a map that is not fresh may not have reached
             // it yet.
-            return Ok(Err(
-                if !refresh && cached.fetched.elapsed() >= ABOVE_REFRESH_AGE {
-                    Attempt::RefreshForAbove
-                } else {
-                    Attempt::Done(TxidLookup::PlacementUnknown(Placement::Above))
-                },
-            ));
+            return Ok(Err(placement(Placement::Above)));
         };
         let Some(geometry) = display_by_name(&entry.geometry) else {
             return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
         };
         if !init.geometries.contains_key(geometry.name) {
-            return Ok(Err(Attempt::Done(TxidLookup::Unsupported)));
+            // Init lists the geometries of the publication it came from, and
+            // the map names the shards of the one it came from. During a
+            // swap either may be the older: a later publication may add a
+            // geometry, or drop the one an old map names.
+            return Ok(Err(if fresh.init && fresh.map {
+                Attempt::Done(TxidLookup::Unsupported)
+            } else {
+                Attempt::Refetch {
+                    init: !fresh.init,
+                    map: !fresh.map,
+                }
+            }));
         }
-        let bucket = display::bucket(&txid, entry.n_buckets);
-        let manifest = self.manifest(transport, cancel, &entry)?;
+        // The bucket is the tag modulo the bucket count; naming it under a
+        // second count would tell the server more of the tag.
+        if fresh
+            .buckets
+            .is_some_and(|buckets| buckets != entry.n_buckets)
+        {
+            return Err(TxidError::Stale);
+        }
+        let bucket = display::bucket(&Tag::of(&txid), entry.n_buckets);
+        // Fetched and checked against the map entry before any query, even
+        // though the entry already carries what a lookup needs.
+        self.manifest(transport, cancel, &entry)?;
         Ok(Ok(Located {
             init,
             entry,
             map_sha256: cached.sha256.clone(),
             geometry,
             bucket,
-            manifest,
         }))
     }
 
@@ -379,6 +503,7 @@ impl TxidDisplayClient {
         &mut self,
         transport: &mut impl TxidTransport,
         cancel: &dyn Fn() -> bool,
+        fresh: &mut Fresh,
     ) -> Result<Arc<Init>, TxidError> {
         if let Some(init) = &self.init {
             return Ok(init.clone());
@@ -403,18 +528,16 @@ impl TxidDisplayClient {
                 .collect(),
         });
         self.init = Some(init.clone());
+        fresh.init = true;
         Ok(init)
     }
 
-    fn map(
+    /// Fetches and validates the recent map and makes it the cached one.
+    fn fetch_map(
         &mut self,
         transport: &mut impl TxidTransport,
         cancel: &dyn Fn() -> bool,
-        refresh: bool,
     ) -> Result<Arc<CachedMap>, TxidError> {
-        if let (false, Some(cached)) = (refresh, &self.map) {
-            return Ok(cached.clone());
-        }
         let reply = send(
             transport,
             cancel,
@@ -429,25 +552,46 @@ impl TxidDisplayClient {
         if map.to_bytes() != reply.body {
             return Err(TxidError::Protocol(ProtocolKind::MapCanonical));
         }
-        // Chunks the new map no longer names are never asked for again. A
-        // sealed revision is final, so its manifest and setups stay while its
-        // shard is listed; a superseded recent revision's go.
+        let chain = Chain {
+            network: map.network.clone(),
+            genesis_hash: map.genesis_hash.clone(),
+        };
+        if self.chain.as_ref().is_some_and(|known| *known != chain) {
+            return Err(TxidError::Protocol(ProtocolKind::Map));
+        }
+        self.chain = Some(chain);
+        let layout = Layout {
+            schema: map.schema.clone(),
+            seal: map.seal,
+        };
+        if self.layout.as_ref().is_some_and(|old| *old != layout) {
+            self.init = None;
+        }
+        self.layout = Some(layout);
+        // Lookups ask only for what the map names, and only by digest.
+        // Chunks it no longer names are dropped, and with them every
+        // manifest and setup it no longer names through its recent entry
+        // or a chunk still held: a superseded recent revision, the archives
+        // of a chunk a seal or the window replaced (fetched again on their
+        // next use), and everything of a publication this map replaced,
+        // whatever shard ids it reuses.
         let named: HashSet<&str> = map.chunks.iter().map(|c| c.sha256.as_str()).collect();
         self.chunks
             .retain(|digest, _| named.contains(digest.as_str()));
-        let archives = map.first_shard_id..map.first_shard_id + map.archives;
-        let recent = map.recent.as_ref().map(|r| r.manifest_digest.as_str());
-        self.manifests.retain(|digest, manifest| {
-            Some(digest.as_str()) == recent
-                || (manifest.sealed && archives.contains(&manifest.shard_id))
-        });
-        let manifests = &self.manifests;
+        let revisions: HashSet<&str> = map
+            .recent
+            .iter()
+            .chain(self.chunks.values().flat_map(|chunk| chunk.shards.iter()))
+            .map(|entry| entry.manifest_digest.as_str())
+            .collect();
+        self.manifests
+            .retain(|digest, _| revisions.contains(digest.as_str()));
         self.setups
-            .retain(|(digest, _, _), _| manifests.contains_key(digest));
+            .retain(|(digest, _, _), _| revisions.contains(digest.as_str()));
         let cached = Arc::new(CachedMap {
             map,
             sha256,
-            fetched: Instant::now(),
+            fetched: SystemTime::now(),
         });
         self.map = Some(cached.clone());
         Ok(cached)
@@ -497,6 +641,11 @@ impl TxidDisplayClient {
         entry: &DisplayMapEntry,
     ) -> Result<Arc<DisplayManifest>, TxidError> {
         if let Some(manifest) = self.manifests.get(&entry.manifest_digest) {
+            // The digest was checked when the manifest was cached; a map
+            // naming it must still describe it, field for field.
+            if !entry.describes(manifest) {
+                return Err(TxidError::Protocol(ProtocolKind::Manifest));
+            }
             return Ok(manifest.clone());
         }
         let path = format!(
@@ -523,13 +672,17 @@ impl TxidDisplayClient {
     }
 
     /// The locally derived profile of `kind` at `geometry`, checked against
-    /// what init publishes.
+    /// what init publishes, and whether init's dithered scheme reproduces too.
+    ///
+    /// The 49-bit scheme must reproduce. Queries go at 44 dithered bits when
+    /// init also publishes the dithered scheme and it reproduces; otherwise at
+    /// the 49 bits every service accepts.
     fn profile(
         &self,
         init: &Init,
         geometry: &'static Geometry,
         kind: DisplayKind,
-    ) -> Result<Arc<TableProfile>, TxidError> {
+    ) -> Result<(Arc<TableProfile>, bool), TxidError> {
         let cached = self
             .profiles
             .lock()
@@ -562,7 +715,6 @@ impl TxidDisplayClient {
             .geometries
             .get(geometry.name)
             .map(|g| match kind {
-                DisplayKind::TxPages => &g.txpages,
                 DisplayKind::TxDirectory => &g.txdirectory,
             })
             .ok_or(TxidError::Protocol(ProtocolKind::Profile))?;
@@ -573,7 +725,8 @@ impl TxidDisplayClient {
         {
             return Err(TxidError::Protocol(ProtocolKind::Profile));
         }
-        Ok(profile)
+        let dithered = served.scheme_dq44.as_ref() == Some(&profile.dithered_scheme);
+        Ok((profile, dithered))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -605,10 +758,7 @@ impl TxidDisplayClient {
         )?;
         let bad = TxidError::Protocol(ProtocolKind::Setup);
         let s: serde_json::Value = serde_json::from_slice(&reply.body).map_err(|_| bad.clone())?;
-        let bucket = match table {
-            DisplayTable::Directory(b) => serde_json::json!(b),
-            DisplayTable::Pages => serde_json::Value::Null,
-        };
+        let bucket = serde_json::json!(table.bucket());
         if s["manifest_digest"] != *digest
             || s["shard_id"] != entry.shard_id
             || s["table"] != table.label()
@@ -652,7 +802,7 @@ impl TxidDisplayClient {
         table: DisplayTable,
         segments: u32,
     ) -> Result<Target, TxidError> {
-        let profile = self.profile(&located.init, located.geometry, table.kind())?;
+        let (profile, dithered) = self.profile(&located.init, located.geometry, table.kind())?;
         let mut setups = Vec::with_capacity(segments as usize);
         for segment in 0..segments {
             setups.push(self.setup(
@@ -668,6 +818,7 @@ impl TxidDisplayClient {
         Ok(Target {
             table,
             profile,
+            dithered,
             setups,
         })
     }
@@ -695,10 +846,12 @@ impl TxidDisplayClient {
         );
         let mut unique = BTreeMap::new();
         for &row in rows {
-            let (secret, upload) = target
-                .profile
-                .prepare(row as usize)
-                .map_err(protocol(ProtocolKind::Profile))?;
+            let (secret, upload) = if target.dithered {
+                target.profile.prepare_dithered(row as usize)
+            } else {
+                target.profile.prepare(row as usize)
+            }
+            .map_err(protocol(ProtocolKind::Profile))?;
             let mut body = binding.to_vec();
             body.extend(upload);
             let reply = send(
@@ -980,5 +1133,646 @@ mod tests {
         let request = TxidRequest::new(Route::Query, "/x".into(), vec![1]);
         assert_eq!(request.content_type(), Some("application/octet-stream"));
         assert_eq!(request.template(), Route::Query.template());
+    }
+
+    /// An init document listing `geometries`. The listed parameters are
+    /// placeholders: these lookups end before a profile is compared.
+    fn init_with(geometries: &[&str]) -> TxidReply {
+        let scheme = NativeScheme {
+            profile: String::new(),
+            d: 0,
+            q_bits: 0,
+            p_bits: 0,
+            gadget_bits: 0,
+            ell: 0,
+            secret: String::new(),
+            mask_bits: 0,
+            query_bits: 0,
+            response_bits: 0,
+            rows: 0,
+            row_bytes: 0,
+            cols: 0,
+            native_encoding: String::new(),
+            query_mask_seed: String::new(),
+            packing_setup_id: String::new(),
+            request_bytes: 0,
+            public_bytes: 0,
+            response_bytes: 0,
+        };
+        let mut reply = init(txid::CODEC);
+        let mut document: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+        document["geometries"] = geometries
+            .iter()
+            .map(|name| {
+                serde_json::json!({
+                    "name": name,
+                    "txdirectory": {
+                        "rows": 0,
+                        "row_bytes": 0,
+                        "scheme": scheme,
+                        "setup_seed": 0,
+                    },
+                })
+            })
+            .collect();
+        reply.body = document.to_string().into_bytes();
+        reply
+    }
+
+    fn hex_of(text: &str) -> String {
+        hex::encode(Sha256::digest(text))
+    }
+
+    /// A map of one recent shard over `start..=end` in `geometry`.
+    fn recent_map(start: u64, end: u64, geometry: &str) -> DisplayRecentMap {
+        DisplayRecentMap {
+            recent: Some(DisplayMapEntry {
+                shard_id: 0,
+                start_height: start,
+                end_height: end,
+                parent_block_hash: hex_of(&format!("block {}", start - 1)),
+                terminal_block_hash: hex_of(&format!("block {end}")),
+                geometry: geometry.into(),
+                n_buckets: 1,
+                directory_segments: vec![1],
+                records: 10,
+                min_bucket_records: 10,
+                manifest_digest: hex_of(&format!("recent {start} {end} {geometry}")),
+                revision: 3,
+                sealed: false,
+            }),
+            ..map(start)
+        }
+    }
+
+    fn served(map: &DisplayRecentMap) -> Result<TxidReply, TransportError> {
+        map_reply(map.to_bytes(), Some(map.sha256()))
+    }
+
+    /// 503, which ends a lookup at the request it answers.
+    fn busy() -> Result<TxidReply, TransportError> {
+        Ok(reply(503))
+    }
+
+    /// The routes sent since the last call; every scripted reply was used.
+    fn sent(transport: &mut Scripted) -> Vec<Route> {
+        assert!(transport.replies.is_empty(), "unused replies");
+        transport.sent.drain(..).map(|r| r.route).collect()
+    }
+
+    /// Sets the cached map's wall-clock fetch time to `at`.
+    fn fetched_at(client: &mut TxidDisplayClient, at: SystemTime) {
+        let cached = client.map.take().unwrap();
+        client.map = Some(Arc::new(CachedMap {
+            map: cached.map.clone(),
+            sha256: cached.sha256.clone(),
+            fetched: at,
+        }));
+    }
+
+    /// Makes the cached map as old as [`PLACEMENT_REFRESH_AGE`].
+    fn age(client: &mut TxidDisplayClient) {
+        fetched_at(client, SystemTime::now() - PLACEMENT_REFRESH_AGE);
+    }
+
+    const BUSY: TxidError = TxidError::Unavailable { retry_after: None };
+
+    fn placed(placement: Placement) -> Result<TxidLookup, TxidError> {
+        Ok(TxidLookup::PlacementUnknown(placement))
+    }
+
+    /// A valid one-bucket `txid-2k` manifest of shard 0 over 100..=109.
+    fn sample_manifest(sealed: bool) -> DisplayManifest {
+        let entries: Vec<_> = (0u8..4)
+            .map(|i| {
+                txid::DisplayFacts {
+                    txid: Txid([i; 32]),
+                    coinbase: false,
+                    fee: 1,
+                    has_shielded_components: false,
+                    spent: vec![txid::DisplayOutput {
+                        value: 2,
+                        script: vec![0; 25],
+                    }],
+                    outputs: vec![txid::DisplayOutput {
+                        value: 1,
+                        script: vec![0; 25],
+                    }],
+                }
+                .entry()
+                .unwrap()
+            })
+            .collect();
+        let built = display::build_shard(0, &display::TXID_2K, 1, &entries).unwrap();
+        let manifest = DisplayManifest::new(
+            display::ManifestHeader {
+                network: "main".into(),
+                genesis_hash: "00".repeat(32),
+                shard_id: 0,
+                start_height: 100,
+                end_height: 109,
+                parent_block_hash: "11".repeat(32),
+                terminal_block_hash: "22".repeat(32),
+                parent_manifest_digest: String::new(),
+                sealed,
+                revision: if sealed { 0 } else { 3 },
+                supersedes: String::new(),
+                archive_target: 1,
+            },
+            &display::TXID_2K,
+            &built,
+        );
+        manifest.validate().unwrap();
+        manifest
+    }
+
+    #[test]
+    fn a_stale_map_is_fetched_again_before_a_placement() {
+        let old = recent_map(100, 200, "txid-2k");
+        let mut transport = Scripted::default();
+        transport.replies.push_back(Ok(init_with(&["txid-2k"])));
+        transport.replies.push_back(served(&old));
+        let mut client = TxidDisplayClient::new();
+        // A fresh map places a height below or above it with no request.
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 60, &never),
+            placed(Placement::Below)
+        );
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 250, &never),
+            placed(Placement::Above)
+        );
+        assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+
+        // A stale one is fetched once, and the placement is the new map's.
+        // So is one fetched "after" now: the wall clock went back.
+        for (height, placement, back) in [
+            (60, Placement::Below, false),
+            (250, Placement::Above, false),
+            (60, Placement::Below, true),
+        ] {
+            if back {
+                fetched_at(&mut client, SystemTime::now() + Duration::from_secs(3_600));
+            } else {
+                age(&mut client);
+            }
+            transport.replies.push_back(served(&old));
+            assert_eq!(
+                client.lookup(&mut transport, [1; 32], height, &never),
+                placed(placement)
+            );
+            assert_eq!(sent(&mut transport), [Route::Map]);
+        }
+
+        // A new publication starting lower or reaching further covers the
+        // height, and the lookup goes on to the shard.
+        age(&mut client);
+        transport
+            .replies
+            .extend([served(&recent_map(50, 200, "txid-2k")), busy()]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 60, &never),
+            Err(BUSY)
+        );
+        assert_eq!(sent(&mut transport), [Route::Map, Route::Manifest]);
+        age(&mut client);
+        transport
+            .replies
+            .extend([served(&recent_map(50, 300, "txid-2k")), busy()]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 250, &never),
+            Err(BUSY)
+        );
+        assert_eq!(sent(&mut transport), [Route::Map, Route::Manifest]);
+    }
+
+    #[test]
+    fn a_placement_refresh_is_taken_once_per_lookup() {
+        let map = recent_map(100, 200, "txid-2k");
+        let mut transport = Scripted::default();
+        transport.replies.push_back(Ok(init_with(&["txid-2k"])));
+        transport.replies.push_back(served(&map));
+        let mut client = TxidDisplayClient::new().with_placement_refresh_age(Duration::ZERO);
+        // A map this lookup fetched is final, however old.
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 60, &never),
+            placed(Placement::Below)
+        );
+        assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        // A later lookup fetches it once, and no more.
+        for height in [60, 250] {
+            transport.replies.push_back(served(&map));
+            assert!(matches!(
+                client.lookup(&mut transport, [1; 32], height, &never),
+                Ok(TxidLookup::PlacementUnknown(_))
+            ));
+            assert_eq!(sent(&mut transport), [Route::Map]);
+        }
+        // A height the map covers is not a placement: nothing is refetched.
+        transport.replies.push_back(busy());
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(sent(&mut transport), [Route::Manifest]);
+    }
+
+    #[test]
+    fn a_failed_placement_refresh_is_an_error_not_a_placement() {
+        let map = recent_map(100, 200, "txid-2k");
+        let mut transport = Scripted::default();
+        transport
+            .replies
+            .extend([Ok(init_with(&["txid-2k"])), served(&map)]);
+        let mut client = TxidDisplayClient::new();
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 60, &never),
+            placed(Placement::Below)
+        );
+        assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        // Once stale, a placement waits on the refresh, and its failure is
+        // the lookup's error; the map held is kept.
+        let held = client.map_sha256().unwrap().to_string();
+        for (reply, expected) in [
+            (
+                Ok(TxidReply {
+                    retry_after: Some("5".into()),
+                    ..reply(503)
+                }),
+                TxidError::Unavailable {
+                    retry_after: Some(Duration::from_secs(5)),
+                },
+            ),
+            (
+                Err(TransportError("reset".into())),
+                TxidError::Transport(TransportError("reset".into())),
+            ),
+            (Ok(reply(404)), TxidError::Refused(404)),
+        ] {
+            age(&mut client);
+            transport.replies.push_back(reply);
+            assert_eq!(
+                client.lookup(&mut transport, [1; 32], 60, &never),
+                Err(expected)
+            );
+            assert_eq!(sent(&mut transport), [Route::Map]);
+            assert_eq!(client.map_sha256(), Some(held.as_str()));
+        }
+        // Cancelled before the refresh: nothing is sent.
+        age(&mut client);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 60, &|| true),
+            Err(TxidError::Cancelled)
+        );
+        assert!(sent(&mut transport).is_empty());
+    }
+
+    #[test]
+    fn a_geometry_init_lacks_refetches_init_and_the_map_once() {
+        let two = recent_map(100, 200, "txid-2k");
+        let four = recent_map(100, 200, "txid-4k");
+        let mut transport = Scripted::default();
+        transport
+            .replies
+            .extend([Ok(init_with(&["txid-2k"])), served(&two), busy()]);
+        let mut client = TxidDisplayClient::new();
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Init, Route::Map, Route::Manifest]
+        );
+
+        // The publication moves to another registered geometry. Init, cached
+        // from the old one, is fetched again and now lists it; so is the map,
+        // which this lookup had not fetched.
+        transport.replies.push_back(served(&four));
+        client.refresh_map(&mut transport, &never).unwrap();
+        transport.replies.extend([
+            Ok(init_with(&["txid-2k", "txid-4k"])),
+            served(&four),
+            busy(),
+        ]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Map, Route::Init, Route::Map, Route::Manifest]
+        );
+        transport.replies.push_back(busy());
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(sent(&mut transport), [Route::Manifest]);
+
+        // A server whose init keeps lacking it: no refetch in a lookup that
+        // fetched both, then one of each per lookup, never a query.
+        let mut client = TxidDisplayClient::new();
+        transport
+            .replies
+            .extend([Ok(init_with(&["txid-2k"])), served(&four)]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Ok(TxidLookup::Unsupported)
+        );
+        assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        for _ in 0..2 {
+            transport
+                .replies
+                .extend([Ok(init_with(&["txid-2k"])), served(&four)]);
+            assert_eq!(
+                client.lookup(&mut transport, [1; 32], 150, &never),
+                Ok(TxidLookup::Unsupported)
+            );
+            assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        }
+    }
+
+    #[test]
+    fn a_map_older_than_init_is_fetched_again_for_a_missing_geometry() {
+        // The client holds a map naming txid-2k. The publication moved to
+        // txid-4k alone, and this lookup's init comes from it: the map is
+        // the stale document, so it is fetched again rather than returning
+        // `Unsupported` for every lookup it covers.
+        let mut transport = Scripted::default();
+        transport
+            .replies
+            .push_back(served(&recent_map(100, 200, "txid-2k")));
+        let mut client = TxidDisplayClient::new();
+        client.refresh_map(&mut transport, &never).unwrap();
+        transport.replies.extend([
+            Ok(init_with(&["txid-4k"])),
+            served(&recent_map(100, 200, "txid-4k")),
+            busy(),
+        ]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Map, Route::Init, Route::Map, Route::Manifest]
+        );
+    }
+
+    #[test]
+    fn a_new_layout_refetches_init_and_another_chain_is_refused() {
+        let mut transport = Scripted::default();
+        transport.replies.extend([
+            Ok(init_with(&["txid-2k"])),
+            served(&recent_map(100, 200, "txid-2k")),
+            busy(),
+        ]);
+        let mut client = TxidDisplayClient::new();
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Init, Route::Map, Route::Manifest]
+        );
+
+        // The recent shard moves: the same layout, init kept.
+        transport
+            .replies
+            .extend([served(&recent_map(100, 201, "txid-2k")), busy()]);
+        client.refresh_map(&mut transport, &never).unwrap();
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(sent(&mut transport), [Route::Map, Route::Manifest]);
+
+        // Other seal parameters: init is fetched again, also after the map
+        // was dropped.
+        let seals: [fn(&mut DisplaySealParams); 2] =
+            [|seal| seal.archive_target = 2, |seal| seal.reorg_margin = 2];
+        for (index, mutate) in seals.into_iter().enumerate() {
+            let mut other = recent_map(100, 202 + index as u64, "txid-2k");
+            mutate(&mut other.seal);
+            if index == 1 {
+                client.invalidate_map();
+            }
+            transport.replies.push_back(served(&other));
+            client.refresh_map(&mut transport, &never).unwrap();
+            transport
+                .replies
+                .extend([Ok(init_with(&["txid-2k"])), busy()]);
+            assert_eq!(
+                client.lookup(&mut transport, [1; 32], 150, &never),
+                Err(BUSY)
+            );
+            assert_eq!(
+                sent(&mut transport),
+                [Route::Map, Route::Init, Route::Manifest],
+                "{index}"
+            );
+        }
+        let current = recent_map(100, 203, "txid-2k");
+        let mut current_seal = current.clone();
+        current_seal.seal.reorg_margin = 2;
+        assert_eq!(client.map_sha256(), Some(current_seal.sha256().as_str()));
+
+        // Another network or genesis is another chain: refused, and the map
+        // held is kept, also after it was dropped.
+        let chains: [fn(&mut DisplayRecentMap); 2] = [
+            |m| m.network = "test".into(),
+            |m| m.genesis_hash = "11".repeat(32),
+        ];
+        for mutate in chains {
+            let mut other = current_seal.clone();
+            mutate(&mut other);
+            transport.replies.push_back(served(&other));
+            assert_eq!(
+                client.refresh_map(&mut transport, &never),
+                Err(TxidError::Protocol(ProtocolKind::Map))
+            );
+            assert_eq!(client.map_sha256(), Some(current_seal.sha256().as_str()));
+            client.invalidate_map();
+            transport.replies.push_back(served(&other));
+            assert_eq!(
+                client.lookup(&mut transport, [1; 32], 150, &never),
+                Err(TxidError::Protocol(ProtocolKind::Map))
+            );
+            assert_eq!(sent(&mut transport), [Route::Map, Route::Map]);
+            transport.replies.push_back(served(&current_seal));
+            client.refresh_map(&mut transport, &never).unwrap();
+            sent(&mut transport);
+        }
+
+        // Within a lookup: a 409 brings a map of another layout, whose init
+        // this client does not support. Lookups then send nothing, until
+        // `refresh_map` drops the unsupported init.
+        let mut other = recent_map(100, 210, "txid-2k");
+        other.seal.recent_floor = 2;
+        transport.replies.extend([
+            Ok(reply(409)),
+            served(&other),
+            Ok(init("transparent-txid-display-v9")),
+        ]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Ok(TxidLookup::Unsupported)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Manifest, Route::Map, Route::Init]
+        );
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Ok(TxidLookup::Unsupported)
+        );
+        assert!(sent(&mut transport).is_empty());
+        transport
+            .replies
+            .extend([served(&other), Ok(init_with(&["txid-2k"])), busy()]);
+        client.refresh_map(&mut transport, &never).unwrap();
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 150, &never),
+            Err(BUSY)
+        );
+        assert_eq!(
+            sent(&mut transport),
+            [Route::Map, Route::Init, Route::Manifest]
+        );
+    }
+
+    #[test]
+    fn a_cached_manifest_must_still_describe_the_entry() {
+        let manifest = sample_manifest(false);
+        let digest = manifest.digest();
+        let mut map = map(100);
+        map.recent = Some(DisplayMapEntry::from_manifest(&manifest, &digest));
+        // Same digest, another entry: the shape check passes, the cached
+        // manifest does not describe it.
+        map.recent.as_mut().unwrap().records += 1;
+        map.check_shape().unwrap();
+        let mut client = TxidDisplayClient::new();
+        client.manifests.insert(digest, Arc::new(manifest));
+        let mut transport = Scripted::default();
+        transport
+            .replies
+            .extend([Ok(init_with(&["txid-2k"])), served(&map)]);
+        assert_eq!(
+            client.lookup(&mut transport, [1; 32], 105, &never),
+            Err(TxidError::Protocol(ProtocolKind::Manifest))
+        );
+        assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+    }
+
+    #[test]
+    fn a_map_with_no_bucket_or_too_many_is_refused_before_any_query() {
+        let none = |m: &mut DisplayRecentMap| {
+            m.seal.n_recent = 0;
+            let recent = m.recent.as_mut().unwrap();
+            recent.n_buckets = 0;
+            recent.directory_segments.clear();
+        };
+        let excess = |m: &mut DisplayRecentMap| {
+            m.seal.n_recent = display::MAX_BUCKETS + 1;
+            let recent = m.recent.as_mut().unwrap();
+            recent.n_buckets = m.seal.n_recent;
+            recent.directory_segments = vec![1; m.seal.n_recent as usize];
+        };
+        for mutate in [none, excess] {
+            let mut hostile = recent_map(100, 200, "txid-2k");
+            mutate(&mut hostile);
+            let mut transport = Scripted::default();
+            transport
+                .replies
+                .extend([Ok(init_with(&["txid-2k"])), served(&hostile)]);
+            assert_eq!(
+                TxidDisplayClient::new().lookup(&mut transport, [1; 32], 150, &never),
+                Err(TxidError::Protocol(ProtocolKind::Map))
+            );
+            assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        }
+    }
+
+    #[test]
+    fn a_new_map_keeps_only_the_revisions_it_names() {
+        // Retention reads digests only, so one manifest stands in for all.
+        let manifest = Arc::new(sample_manifest(true));
+        let setup = Arc::new(Setup {
+            public_params: Vec::new(),
+            epoch: [0; 8],
+        });
+        let digest = |n: u8| format!("{n:02x}").repeat(32);
+        let archive = |shard_id: u64, n: u8| DisplayMapEntry {
+            shard_id,
+            sealed: true,
+            revision: 0,
+            manifest_digest: digest(n),
+            ..recent_map(100, 109, "txid-2k").recent.unwrap()
+        };
+        let chunk = |base_shard_id: u64, shards: Vec<DisplayMapEntry>| {
+            Arc::new(DisplayIndexChunk {
+                schema: display::DISPLAY_SCHEMA.into(),
+                base_shard_id,
+                shards,
+            })
+        };
+        let mut client = TxidDisplayClient::new();
+        // Chunk 0xa0 lists archives 0 and 1 (revisions 1, 2); chunk 0xa1
+        // lists archive 32 (revision 3); revision 4 is the recent shard's.
+        client
+            .chunks
+            .insert(digest(0xa0), chunk(0, vec![archive(0, 1), archive(1, 2)]));
+        client
+            .chunks
+            .insert(digest(0xa1), chunk(32, vec![archive(32, 3)]));
+        for n in 1..=4 {
+            client.manifests.insert(digest(n), manifest.clone());
+            client
+                .setups
+                .insert((digest(n), DisplayTable::Directory(0), 0), setup.clone());
+        }
+        let mut next = recent_map(100, 300, "txid-2k");
+        let named = |chunks: &[u8]| {
+            chunks
+                .iter()
+                .map(|&n| display::DisplayChunkRef {
+                    start_height: 100,
+                    sha256: digest(n),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut transport = Scripted::default();
+
+        // A seal replaced chunk 0xa1 and a block the recent revision: the
+        // archives of chunk 0xa0 stay, the rest goes.
+        next.chunks = named(&[0xa0, 0xb1]);
+        transport.replies.push_back(served(&next));
+        client.refresh_map(&mut transport, &never).unwrap();
+        assert_eq!(client.cached_revisions(), [digest(1), digest(2)]);
+        assert_eq!(client.chunks.keys().collect::<Vec<_>>(), [&digest(0xa0)]);
+        // The recent revision the map names keeps its manifest and setups.
+        let recent = next.recent.as_ref().unwrap().manifest_digest.clone();
+        client.manifests.insert(recent.clone(), manifest.clone());
+        client.setups.insert(
+            (recent.clone(), DisplayTable::Directory(0), 0),
+            setup.clone(),
+        );
+        transport.replies.push_back(served(&next));
+        client.refresh_map(&mut transport, &never).unwrap();
+        let mut kept = vec![digest(1), digest(2), recent];
+        kept.sort();
+        assert_eq!(client.cached_revisions(), kept);
+
+        // A fresh publication reuses shard ids 0 and 1 under new digests:
+        // nothing of the old one stays, whatever ids it had.
+        let mut fresh = recent_map(50, 300, "txid-2k");
+        fresh.chunks = named(&[0xc0]);
+        transport.replies.push_back(served(&fresh));
+        client.refresh_map(&mut transport, &never).unwrap();
+        assert!(client.cached_revisions().is_empty());
+        assert!(client.chunks.is_empty());
+        assert!(transport.replies.is_empty());
     }
 }

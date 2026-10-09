@@ -43,6 +43,8 @@ use transparent_filter::BlockHash;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
 use transparent_shard::display::{plan_seals, DisplayManifest, DisplayMap, DisplayMapEntry};
 use transparent_shard::manifest::PublishedRevision;
+use transparent_shard_server::display::prebuild::Shipped;
+use transparent_shard_server::runtime::disk::ShippedRuntimes;
 
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// Command-adapter workers are asked to collect every this many cycles.
@@ -55,9 +57,17 @@ const LAG_ALERT_EVERY: Duration = Duration::from_secs(60);
 /// rollback since the last activation.
 pub const INVALIDATE_FILE: &str = "invalidate.json";
 
+/// Builds a revision's runtimes into a candidate directory; see
+/// [`transparent_shard_server::display::prebuild::build_shipped`].
+pub type Prebuild = fn(&Path, &Path) -> Result<Vec<Shipped>, String>;
+
 pub struct Settings {
     /// Skip re-verifying sealed revisions at startup.
     pub trust_sealed: bool,
+    /// Build the recent revision's runtimes into each candidate, so recent
+    /// replicas load them instead of building (`--ship-runtimes`). A failed
+    /// build is counted and the candidate ships without them.
+    pub ship_runtimes: Option<Prebuild>,
     /// Unused candidates kept besides the active and worker-held ones.
     pub retain_candidates: usize,
     /// Above this many unsealed records in the cache, a `lag` alert repeats
@@ -74,6 +84,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             trust_sealed: false,
+            ship_runtimes: None,
             retain_candidates: 3,
             max_recent_records: None,
             exit_when_idle: false,
@@ -295,6 +306,8 @@ pub struct Controller {
     /// What `invalidate.json` holds.
     saved_invalidations: Invalidations,
     lag_alerted: Option<Instant>,
+    /// Cycles whose runtime prebuild failed since this process started.
+    prebuild_failures: u64,
     last_cycle: Value,
     maps: Vec<DisplayMap>,
     _lock: std::fs::File,
@@ -440,6 +453,7 @@ impl Controller {
             rollback: saved_invalidations.rollback.clone(),
             saved_invalidations,
             lag_alerted: None,
+            prebuild_failures: 0,
             last_cycle: Value::Null,
             maps: Vec::new(),
             _lock: lock,
@@ -1174,6 +1188,7 @@ impl Controller {
         let candidate_started = Instant::now();
         let (candidate, sha) = write_candidate(&self.root, &map).map_err(retry)?;
         let candidate_ms = ms(candidate_started);
+        let prebuild = self.prebuild(&candidate, &recent.digest).await;
 
         self.deliver_invalidations().await;
         // The rollback record vouches only for what replicas held when it was
@@ -1232,7 +1247,12 @@ impl Controller {
             "cycle": self.active.cycle, "tip": tip, "tip_hash": tip_hash,
             "first_observed_ms": fresh.iter().map(|f| f.1).min(),
             "build_s": t.build_s, "verify_s": t.verify_s, "digest_s": t.digest_s,
-            "write_s": t.write_s, "candidate_ms": candidate_ms, "ship_ms": report.ship_ms,
+            "write_s": t.write_s, "candidate_ms": candidate_ms,
+            "prebuild_ms": prebuild.as_ref().map(|p| p.0),
+            "shipped_bytes": prebuild.as_ref().map(|p| p.1.iter().map(|f| f.bytes).sum::<u64>()),
+            "shipped": prebuild.as_ref().map(|p| &p.1),
+            "prebuild_failures": self.prebuild_failures,
+            "ship_ms": report.ship_ms,
             "prepare_ms": report.prepare_ms, "activate_ms": report.activate_ms,
             "activated_ms": activated_ms, "cycle_ms": ms(started),
             "freshness_ms": fresh.iter().map(|f| activated_ms.saturating_sub(f.1)).collect::<Vec<_>>(),
@@ -1247,6 +1267,35 @@ impl Controller {
         self.timeline.record("cycle", self.last_cycle.clone());
         self.collect().await;
         Ok(())
+    }
+
+    /// With `--ship-runtimes`, builds the recent revision's runtimes into the
+    /// candidate root; returns the milliseconds taken and the files written.
+    /// A failure is logged and counted, its files are removed, and the
+    /// candidate ships without runtimes: replicas then build their own.
+    async fn prebuild(&mut self, candidate: &Path, recent: &str) -> Option<(u64, Vec<Shipped>)> {
+        let build = self.settings.ship_runtimes?;
+        let started = Instant::now();
+        let (revision, root) = (candidate.join(recent), candidate.to_path_buf());
+        let built = tokio::task::spawn_blocking(move || build(&revision, &root))
+            .await
+            .unwrap_or_else(|error| Err(error.to_string()));
+        match built {
+            Ok(files) => Some((ms(started), files)),
+            Err(error) => {
+                self.prebuild_failures += 1;
+                tracing::warn!(%error, failures = self.prebuild_failures,
+                    "runtime prebuild failed; the candidate ships without runtimes");
+                self.timeline.record(
+                    "error",
+                    json!({"stage": "prebuild", "error": error, "failures": self.prebuild_failures}),
+                );
+                if let Err(error) = remove_shipped(candidate) {
+                    tracing::error!(%error, "could not remove partial shipped runtimes");
+                }
+                None
+            }
+        }
     }
 
     /// Activates the current candidate on workers that are behind it, such as
@@ -1373,6 +1422,7 @@ impl Controller {
             "last_cycle": self.last_cycle,
             "failures": self.failures,
             "stalled": self.failures >= STALL_FAILURES,
+            "prebuild_failures": self.prebuild_failures,
             "workers": self.fleet.workers.iter().map(|w| json!({
                 "name": w.config.name, "role": w.config.role.as_str(), "known": w.known,
                 "expected": w.expected, "staged": w.staged,
@@ -1381,6 +1431,21 @@ impl Controller {
         });
         *self.settings.status.write().unwrap() = status;
     }
+}
+
+/// Removes every shipped runtime file, finished or partial, from a
+/// candidate's root.
+fn remove_shipped(candidate: &Path) -> std::io::Result<()> {
+    for entry in std::fs::read_dir(candidate)? {
+        let entry = entry?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if entry.file_type()?.is_file()
+            && (ShippedRuntimes::is_entry(&name) || name.ends_with(".partial"))
+        {
+            std::fs::remove_file(entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn seal_event(job: &SealJob) -> Value {
@@ -1685,18 +1750,11 @@ pub fn bench_recent(
         };
         let shard = super::publisher::publish_shard(temp.path(), &layout, &spec, &records)?;
         let segments = shard.entry.directory_segments.iter().sum::<u32>() as u64;
-        let capacity = segments * g.directory_rows * transparent_shard::txid::ROW_BYTES as u64;
-        let histogram = &shard.manifest.buckets[0].page_histogram;
+        let slots = segments * g.directory_rows * transparent_shard::txid::SLOTS_PER_ROW as u64;
         out.push(json!({
             "geometry": geometry, "records": size,
             "directory_segments": shard.entry.directory_segments,
-            "page_segments": shard.entry.page_segments,
-            "used_bytes": shard.used_bytes, "fill": shard.used_bytes as f64 / capacity as f64,
-            "payload_bytes": shard.manifest.payload_bytes,
-            "page_rows_used": shard.manifest.page_rows_used,
-            "inline_records": shard.manifest.buckets[0].inline_records,
-            "paged_records": size - shard.manifest.buckets[0].inline_records,
-            "max_pages": histogram.keys().max(),
+            "used_bytes": shard.used_bytes, "fill": size as f64 / slots as f64,
             "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
             "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
         }));
@@ -1709,7 +1767,8 @@ pub const SYNTHETIC_GENESIS: &str =
     "5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e5e";
 
 /// Writes a v3 journal of synthetic blocks `[start, start + blocks)` with
-/// display sidecars and no history events, for local replay and benches.
+/// display sidecars and the events their sources imply, for local replay and
+/// benches.
 ///
 /// Each block holds between half and one and a half times `mean_records`
 /// records of [`synthetic_records`]' size mix. Deterministic in `seed`.
@@ -1733,11 +1792,12 @@ pub fn synth_journal(
                 .unwrap(),
         );
         let count = mean_records / 2 + block_seed % (mean_records + 1);
-        let records = synthetic_records(count, block_seed);
+        let sources = synthetic_sources(count, block_seed);
         let hash = transparent_filter::BlockHash::from_internal_bytes(
             Sha256::digest([b"synthetic".as_slice(), &block_seed.to_le_bytes()].concat()).into(),
         );
-        store.append_block_with_display(height, hash, &[], &records)?;
+        let events = crate::display_journal::implied_events(height, &sources)?;
+        store.append_block_with_display(height, hash, &events, &sources)?;
         total += count;
         if (height - start + 1).is_multiple_of(1_000) {
             store.commit()?;
@@ -1747,17 +1807,19 @@ pub fn synth_journal(
     Ok(total)
 }
 
-/// Records with a recent-era size mix, after the sampled priors: about 90%
-/// inline payloads of 50-110 bytes, about 10% one page that mostly sits just
-/// above the inline cutoff, and about 0.1% two to fifteen pages.
-pub fn synthetic_records(
+/// Source records with a mainnet-like case mix: mostly one recipient with
+/// shielded change or zcashd-style two outputs, then unshielding, several
+/// source scripts, more than two outputs and outputs without an address.
+/// Every input spends a distinct, synthetic outpoint.
+pub fn synthetic_sources(
     count: u64,
     seed: u64,
-) -> Vec<transparent_shard::txid::TransparentDisplayRecord> {
+) -> Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x> {
     use sha2::{Digest, Sha256};
     use transparent_events::{FeeState, TransactionMetadata, Txid};
-    use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
-    const FRAGMENT: u64 = 4_050;
+    use transparent_shard::txid::DisplayOutput;
+    use transparent_shard::txid_v1::TransparentDisplayRecord;
+    use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
     let mut x = seed ^ 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
         x ^= x << 13;
@@ -1765,45 +1827,80 @@ pub fn synthetic_records(
         x ^= x << 17;
         x
     };
+    let p2pkh = |tag: u64| {
+        let mut script = vec![0x76, 0xa9, 0x14];
+        script.extend_from_slice(&Sha256::digest(tag.to_le_bytes())[..20]);
+        script.extend_from_slice(&[0x88, 0xac]);
+        script
+    };
     (0..count)
         .map(|i| {
+            let txid = Txid(Sha256::digest([seed.to_le_bytes(), i.to_le_bytes()].concat()).into());
             let class = next() % 1_000;
-            let payload = if class < 900 {
-                50 + next() % 61
-            } else if class < 999 {
-                // Overflow records average about 350 bytes: most just miss
-                // the cutoff, a few fill the page.
-                let small = next() % 8 != 0;
-                if small {
-                    129 + next() % 400
-                } else {
-                    129 + next() % (FRAGMENT - 128)
-                }
-            } else {
-                let pages = 2 + next() % 14;
-                FRAGMENT * (pages - 1) + 1 + next() % FRAGMENT
+            let (inputs, outputs, distinct, shielded) = match class {
+                0..=599 => (1 + next() % 3, 1, false, true),
+                600..=849 => (1 + next() % 3, 2, false, false),
+                850..=909 => (0, 1, false, true),
+                910..=959 => (2 + next() % 4, 1, true, false),
+                _ => (1, 3 + next() % 5, false, false),
             };
-            let mut record = TransparentDisplayRecord {
-                txid: Txid(Sha256::digest([seed.to_le_bytes(), i.to_le_bytes()].concat()).into()),
-                coinbase: false,
-                metadata: TransactionMetadata {
-                    fee: FeeState::Exact(10_000),
-                    transparent_input_count: 1,
-                    has_shielded_components: false,
+            let outputs: Vec<_> = (0..outputs)
+                .map(|o| DisplayOutput {
+                    value: 1_000 + next() % 1_000_000,
+                    script: if class >= 990 && o == 0 {
+                        vec![0x6a; 1 + (next() % 40) as usize]
+                    } else {
+                        p2pkh(next())
+                    },
+                })
+                .collect();
+            // Extra inputs of one zatoshi each raise the fee by as much;
+            // shielded change takes what the first input leaves over.
+            let fee = 10_000 + inputs.saturating_sub(1);
+            let paid = outputs.iter().map(|o| o.value).sum::<u64>() + 10_000;
+            let inputs: Vec<_> = (0..inputs)
+                .map(|n| DisplayInput {
+                    prevout_txid: Txid(
+                        Sha256::digest([txid.0.as_slice(), &n.to_le_bytes()].concat()).into(),
+                    ),
+                    prevout_index: n as u32,
+                    value: if n == 0 {
+                        paid + 50_000 * u64::from(shielded)
+                    } else {
+                        1
+                    },
+                    script: p2pkh(if distinct {
+                        seed ^ i << 8 ^ n
+                    } else {
+                        seed ^ i << 8
+                    }),
+                })
+                .collect();
+            TransparentDisplayRecordV2x {
+                record: TransparentDisplayRecord {
+                    txid,
+                    coinbase: false,
+                    metadata: TransactionMetadata {
+                        fee: FeeState::Exact(if inputs.is_empty() { 10_000 } else { fee }),
+                        transparent_input_count: inputs.len() as u32,
+                        has_shielded_components: shielded,
+                    },
+                    outputs,
                 },
-                outputs: vec![DisplayOutput {
-                    value: 1_000,
-                    script: Vec::new(),
-                }],
-            };
-            // The script length's varint grows with it; settle in two passes.
-            for _ in 0..2 {
-                let len = record.encode().map(|b| b.len() as u64).unwrap_or(0);
-                let script = record.outputs[0].script.len() as u64;
-                let wanted = (script + payload).saturating_sub(len);
-                record.outputs[0].script = vec![0x51; wanted as usize];
+                inputs,
             }
-            record
+        })
+        .collect()
+}
+
+/// The published entries of [`synthetic_sources`].
+pub fn synthetic_records(count: u64, seed: u64) -> Vec<transparent_shard::txid::DisplayRecord> {
+    synthetic_sources(count, seed)
+        .iter()
+        .map(|source| {
+            source
+                .display_record()
+                .expect("a synthetic source is valid")
         })
         .collect()
 }

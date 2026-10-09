@@ -1,0 +1,1569 @@
+{
+  "architecture": "aarch64",
+  "cargo_lock_sha256": "c5d8d4868f807ebbda1d147d8412d9e59ca8aaf907142cbb5e60b3b77996b07e",
+  "chain_parser_sha": "af944f5194ef2e9921bc96af017629450375013c",
+  "codec": "transparent-txid-display-v2",
+  "command": "make transparent-txid-demo OFFLINE=1 REPORT=<report>",
+  "cpu": "Apple M4 Max",
+  "elapsed_seconds": 3.016206209,
+  "fixture_sha256": "d44ca98d32068ce4a1cd072dcf5d22fe44affb497d8b0839a391fb177f863bd8",
+  "fixture_source_sha": "7d283dab150b2f9872ed3b7b1dcd76ed5c9282ae",
+  "format": "transparent-txid-native-demo-v2",
+  "generated_at_unix_seconds": 1791422857,
+  "limitations": "Server protocol evidence only; trusted publisher; range, tier, bucket and timing leakage. No production capacity, cryptographic release, wallet recovery or Vizor qualification.",
+  "network": "zcash-mainnet frozen vectors; loopback HTTP; no runtime external lookup",
+  "os": "macos",
+  "passed": true,
+  "profile": "release-fast",
+  "ram_bytes": 137438953472,
+  "runs": [
+    {
+      "absent_transcript": [
+        {
+          "reply_bytes": 5648,
+          "request_bytes": 40200,
+          "route": "Query",
+          "status": 200
+        },
+        {
+          "reply_bytes": 5648,
+          "request_bytes": 40200,
+          "route": "Query",
+          "status": 200
+        }
+      ],
+      "cases": {
+        "coinbase": 3,
+        "external_transparent_unshielding": 5,
+        "large_output_list": 3,
+        "multiple_source_scripts": 1,
+        "ordinary_send_with_change": 1,
+        "several_outputs": 4
+      },
+      "checkpoint_restart": true,
+      "elapsed_seconds": 2.04415025,
+      "end_height": 347501,
+      "http_header_shapes": [
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        }
+      ],
+      "http_safe_paths": [
+        "GET /v1/txid/init",
+        "GET /v1/txid/map",
+        "GET /v1/txid/map/0/36282ed9864ad43da8b475b2cee229093f24a3753e7fcf8d9f437641526da0e8",
+        "GET /v1/txid/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/manifest",
+        "GET /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/setup/directory-0/0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "POST /v1/txid/archive/shards/0/revisions/a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748/query/directory-0",
+        "GET /v1/txid/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/manifest",
+        "GET /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/setup/directory-0/0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "GET /v1/txid/init",
+        "POST /v1/txid/recent/shards/1/revisions/3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a/query/directory-0",
+        "GET /v1/txid/recent/shards/1/revisions/0000000000000000000000000000000000000000000000000000000000000000/setup/directory-0/0"
+      ],
+      "lookups": [
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 1,
+          "height": 347499,
+          "input_count": 0,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "122b6abe0e45c0e050d95d76bb0236986127891f7951a7a1634399a364e7667d",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 4,
+          "height": 347499,
+          "input_count": 2,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "cb2d92626b8f1aff4646fc61de7ab323a6dc75fe1d6413a47f6a1c3281487902",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 0,
+          "height": 347499,
+          "input_count": 2,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "826f137e5208b465c5af8f3ac29e7f4f009177bb4f49cc9155e70fafaee3831a",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 0,
+          "height": 347499,
+          "input_count": 5,
+          "output_count": 1,
+          "requests": 2,
+          "txid": "6cccda14a0c5f969057015011a019bae121034bc1d3d80d3c9a3861edfd68a18",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 0,
+          "height": 347499,
+          "input_count": 5,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "b3ac3c2fef6b4dd60c1f75ca0cb66a0971630f76ba2958ad402b162b42e14d01",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 10,
+          "height": 347499,
+          "input_count": 0,
+          "output_count": 104,
+          "requests": 2,
+          "txid": "beeb8b10b23e33ca16d8574d324a3c501ad44a474d74bd20a2031f2e1f6cf011",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 10,
+          "height": 347499,
+          "input_count": 0,
+          "output_count": 300,
+          "requests": 2,
+          "txid": "18b9e2be11d15ed8874def4d3a766b9832617868283dd14c6c8f798522137d24",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 10,
+          "height": 347499,
+          "input_count": 0,
+          "output_count": 300,
+          "requests": 2,
+          "txid": "6cc29d52b1f7c6b96318c07ba0d0e3a626256493b1b9a732d9027bf1a8762419",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 10,
+          "height": 347499,
+          "input_count": 0,
+          "output_count": 300,
+          "requests": 2,
+          "txid": "8b2d3eea7ce5cb71d6968c95d20db6af8579368e5c75fa39ad36866dfc580f59",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 1,
+          "height": 347500,
+          "input_count": 0,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "0bd2a05dd5f04f48adc990b382d4836e9fe2082a4753092d90cb8089453e607f",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 1,
+          "height": 347501,
+          "input_count": 0,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "784a03729367aab3b9b6fcd4ae18fa6df49c2ca4badee0e7e2f269bb1bb7d89d",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 0,
+          "height": 347501,
+          "input_count": 1,
+          "output_count": 2,
+          "requests": 2,
+          "txid": "af0e93da89e6f267aa4f9a025bf6e39ca7c98668924c7da29f8766839782b170",
+          "upload_bytes": 80400
+        },
+        {
+          "complete": true,
+          "download_bytes": 11296,
+          "flags": 2,
+          "height": 347501,
+          "input_count": 0,
+          "output_count": 1,
+          "requests": 2,
+          "txid": "763478158640c404f5bd479a3bfe1391a0fac8479b957564303bf85158372955",
+          "upload_bytes": 80400
+        }
+      ],
+      "map_sha256": "621d3ebd56ee6612a6f245d828d66eb2c0918eb7cd8b9515cfaa7569048a248b",
+      "negative_controls": [
+        "missing_txid",
+        "wrong_revision",
+        "wrong_binding",
+        "altered_entry",
+        "unknown_placement",
+        "unsupported_codec"
+      ],
+      "publish_seconds": 0.049799290999999996,
+      "records": 13,
+      "shards": [
+        {
+          "manifest_digest": "a90dc12dddfc3183cef32b0d17c56115c769e3cd4ebe03892ec0b52fb497a748",
+          "packing": [
+            {
+              "bytes": 8388608,
+              "entries": 9,
+              "file": "directory-0.0.bin",
+              "occupied_rows": 9,
+              "sha256": "b42cca1a228aab5533d86763f4ec5b417d21a8e4f55422d4f63bdb1aa457d1bf"
+            }
+          ],
+          "records": 9,
+          "sealed": true,
+          "shard_id": 0
+        },
+        {
+          "manifest_digest": "3c9f17d322c9d62c0e34acc1926280ccf510f7949a523f511c8f0e2d8754171a",
+          "packing": [
+            {
+              "bytes": 8388608,
+              "entries": 4,
+              "file": "directory-0.0.bin",
+              "occupied_rows": 4,
+              "sha256": "b66fcdbb9fa99edcb669ebec5309ec4f51a78be534895f140bbe8a7818b09283"
+            }
+          ],
+          "records": 4,
+          "sealed": false,
+          "shard_id": 1
+        }
+      ],
+      "start_height": 347499
+    },
+    {
+      "absent_transcript": [
+        {
+          "reply_bytes": 5648,
+          "request_bytes": 40200,
+          "route": "Query",
+          "status": 200
+        },
+        {
+          "reply_bytes": 5648,
+          "request_bytes": 40200,
+          "route": "Query",
+          "status": 200
+        }
+      ],
+      "cases": {
+        "coinbase": 1,
+        "unusual_output_script": 1
+      },
+      "checkpoint_restart": true,
+      "elapsed_seconds": 0.804907625,
+      "end_height": 0,
+      "http_header_shapes": [
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "content-type",
+          "value_bytes": 24
+        },
+        {
+          "name": "content-length",
+          "value_bytes": 5
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        },
+        {
+          "name": "accept",
+          "value_bytes": 3
+        },
+        {
+          "name": "host",
+          "value_bytes": 15
+        }
+      ],
+      "http_safe_paths": [
+        "GET /v1/txid/init",
+        "GET /v1/txid/map",
+        "GET /v1/txid/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/manifest",
+        "GET /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/setup/directory-0/0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "GET /v1/txid/init",
+        "POST /v1/txid/recent/shards/0/revisions/af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63/query/directory-0",
+        "GET /v1/txid/recent/shards/0/revisions/0000000000000000000000000000000000000000000000000000000000000000/setup/directory-0/0"
+      ],
+      "lookups": [
+        {
+          "complete": false,
+          "download_bytes": 11296,
+          "flags": 1,
+          "height": 0,
+          "input_count": 0,
+          "output_count": 1,
+          "requests": 2,
+          "txid": "db4d7a85b768123f1dff1d4c4cece70083b2d27e117b4ac2e31d087988a5eac4",
+          "upload_bytes": 80400
+        }
+      ],
+      "map_sha256": "971b9504aa252a63da6a20b7777bbc662f79ef041e77f181ca849733b3c36ec1",
+      "negative_controls": [
+        "missing_txid",
+        "wrong_revision",
+        "wrong_binding",
+        "altered_entry",
+        "unknown_placement",
+        "unsupported_codec"
+      ],
+      "publish_seconds": 0.022562543,
+      "records": 1,
+      "shards": [
+        {
+          "manifest_digest": "af6952ddd0a145a205d64b45ecdb5597f3c2227ad5a9ead46933995181c22e63",
+          "packing": [
+            {
+              "bytes": 8388608,
+              "entries": 1,
+              "file": "directory-0.0.bin",
+              "occupied_rows": 1,
+              "sha256": "7907be0971c8b4f6f43965b56e386f25a3b6818fadb4894f315e1f5d7f6189a9"
+            }
+          ],
+          "records": 1,
+          "sealed": false,
+          "shard_id": 0
+        }
+      ],
+      "start_height": 0
+    }
+  ],
+  "source_dirty": false,
+  "source_sha": "9557d843b6c9e5346d3e0ece9b9549ff4bad22bf"
+}

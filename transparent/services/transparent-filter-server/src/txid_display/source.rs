@@ -24,7 +24,8 @@ use crate::zakura::ZakuraClient;
 use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant};
 use transparent_filter::BlockHash;
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::txid::DisplayRecord;
+use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
 /// Most blocks one poll returns, so a catch-up still publishes as it goes.
 const BATCH: u64 = 64;
@@ -32,7 +33,7 @@ const BATCH: u64 = 64;
 pub struct SourceBlock {
     pub height: u64,
     pub hash: BlockHash,
-    pub records: Vec<TransparentDisplayRecord>,
+    pub records: Vec<DisplayRecord>,
     pub observed_ms: u64,
     pub ingested_ms: u64,
 }
@@ -245,7 +246,7 @@ impl LiveSource {
         &mut self,
         store: &mut EventStore,
         height: u64,
-    ) -> Result<(BlockHash, Vec<TransparentDisplayRecord>), SourceError> {
+    ) -> Result<(BlockHash, Vec<DisplayRecord>), SourceError> {
         let fetched = self.rpc.block(height).await.map_err(transient)?;
         let parent = fetched.1.header.previous_block_hash.to_string();
         let expected = store
@@ -256,7 +257,7 @@ impl LiveSource {
         if parent != expected {
             return Err(transient("node reorganized while fetching block; retry"));
         }
-        let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched)
+        let built = build_fetched_block_events(&self.rpc, &mut self.outputs, height, fetched, true)
             .await
             .map_err(transient)?;
         if self.rpc.block_hash(height).await.map_err(transient)?
@@ -266,7 +267,13 @@ impl LiveSource {
         }
         store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
         store.commit()?;
-        Ok((built.block_hash, built.display))
+        let records = built
+            .display
+            .iter()
+            .map(|source| source.display_record())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| EventStoreError::Invariant(e.to_string()))?;
+        Ok((built.block_hash, records))
     }
 }
 
@@ -339,10 +346,10 @@ pub enum ScriptStep {
     /// reorganization followed by ingest would.
     Reorg {
         ancestor: u64,
-        blocks: Vec<(BlockHash, Vec<TransparentDisplayRecord>)>,
+        blocks: Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)>,
     },
     /// Append these blocks to the journal and show them.
-    Extend(Vec<(BlockHash, Vec<TransparentDisplayRecord>)>),
+    Extend(Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)>),
     /// Roll the journal back to `ancestor`, then fail as a journal write
     /// would before ingesting the replacement: the controller exits.
     FailAfterRollback(u64),
@@ -412,16 +419,19 @@ impl Script {
     }
 }
 
-/// Commits `blocks` after the journal's end.
+/// Commits `blocks` after the journal's end, with the events their source
+/// records imply.
 fn append(
     store: &mut EventStore,
-    blocks: Vec<(BlockHash, Vec<TransparentDisplayRecord>)>,
+    blocks: Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)>,
 ) -> Result<(), EventStoreError> {
     let next = store
         .covered_through()
         .map_or(store.start_height(), |h| h + 1);
-    for (offset, (hash, records)) in blocks.into_iter().enumerate() {
-        store.append_block_with_display(next + offset as u64, hash, &[], &records)?;
+    for (offset, (hash, sources)) in blocks.into_iter().enumerate() {
+        let height = next + offset as u64;
+        let events = crate::display_journal::implied_events(height, &sources)?;
+        store.append_block_with_display(height, hash, &events, &sources)?;
     }
     store.commit()
 }

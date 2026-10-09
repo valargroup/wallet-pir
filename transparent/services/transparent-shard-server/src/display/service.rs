@@ -3,8 +3,8 @@
 //! The query and setup paths are copies of the history worker's
 //! (`crate::service`), kept separate so the history path does not change for
 //! a proof of concept. What differs is the address: a revision is resolved
-//! with its tier and this worker's role, a table is a bucket directory or the
-//! shard's pages, and the binding names the bucket. Everything that bounds
+//! with its tier and this worker's role, a table is one bucket's entries, and
+//! the binding names the bucket. Everything that bounds
 //! work is the history worker's own: the runtime cache, admission, work-memory
 //! reservations and their status codes.
 
@@ -13,7 +13,8 @@ use super::{kind, runtime_key, tier};
 use crate::admission::{Admission, AdmissionConfig, AdmissionError};
 use crate::metrics::{Metrics, Snapshot};
 use crate::runtime::{
-    disk::DiskCache, warm_bytes, CacheError, RuntimeCache, RuntimeHandle, SharedParams,
+    disk::{DiskCache, ShippedRuntimes},
+    warm_bytes, CacheError, Produced, RuntimeCache, RuntimeHandle, SharedParams,
 };
 use crate::service::{ReadinessMode, ServiceConfig};
 use crate::shardset::{SegmentSource, Table};
@@ -87,32 +88,44 @@ impl DisplayRuntime {
     }
 
     /// Finds or builds the runtime of one segment, retrying transient
-    /// admission pressure as the prewarm does. Also says whether it had to be
-    /// produced: an operation reports its own builds this way, not as a delta
-    /// of the process-wide counter, which concurrent stages and requests move.
+    /// admission pressure as the prewarm does. Also says whether and how it
+    /// had to be produced (`None` when it was resident): an operation reports
+    /// its own builds this way, not as a delta of the process-wide counter,
+    /// which concurrent stages and requests move.
+    ///
+    /// `shipped` is tried before a restore or build, for an unsealed revision
+    /// only: archives are built once per seal by `stage`, and are never
+    /// shipped.
     pub(crate) async fn runtime(
         &self,
         revision: &DisplayRevision,
         table: DisplayTable,
         segment: u32,
         cancelled: &AtomicBool,
-    ) -> Result<(RuntimeHandle, bool), CacheError> {
+        shipped: Option<&ShippedRuntimes>,
+    ) -> Result<(RuntimeHandle, Option<Produced>), CacheError> {
         let source = revision
             .segment(table, segment)
             .cloned()
             .ok_or_else(|| CacheError::Failed("display segment is not held".into()))?;
         let key = runtime_key(&revision.digest, table, segment);
         if let Some(handle) = self.cache.cached(&key) {
-            return Ok((handle, false));
+            return Ok((handle, None));
         }
         let shared = self
             .params(revision.geometry, kind(table))
             .map_err(CacheError::Failed)?;
+        let shipped = shipped.filter(|_| !revision.manifest.sealed);
         crate::prewarm::retry(cancelled, std::time::Duration::from_secs(30), || {
-            self.cache.get(key.clone(), shared.clone(), source.clone())
+            self.cache.get_from(
+                key.clone(),
+                shared.clone(),
+                source.clone(),
+                shipped.cloned(),
+            )
         })
         .await
-        .map(|handle| (handle, true))
+        .map(|(handle, produced)| (handle, Some(produced)))
     }
 }
 
@@ -125,7 +138,33 @@ struct WarmState {
     count: AtomicU64,
     /// Targets that were not resident when the prewarm reached them.
     built: AtomicU64,
+    /// Of those, loaded from shipped runtimes, and refused ones produced
+    /// here instead; and the self-checks' summed time.
+    shipped: AtomicU64,
+    shipped_fallbacks: AtomicU64,
+    self_check_micros: AtomicU64,
     pins: Mutex<Vec<(String, RuntimeHandle)>>,
+}
+
+impl WarmState {
+    /// Counts how the prewarm came by one target.
+    fn record(&self, produced: Option<Produced>) {
+        let Some(produced) = produced else {
+            return;
+        };
+        self.built.fetch_add(1, Ordering::Relaxed);
+        match produced {
+            Produced::Shipped { check_micros } => {
+                self.shipped.fetch_add(1, Ordering::Relaxed);
+                self.self_check_micros
+                    .fetch_add(check_micros, Ordering::Relaxed);
+            }
+            Produced::Fallback => {
+                self.shipped_fallbacks.fetch_add(1, Ordering::Relaxed);
+            }
+            Produced::Joined | Produced::Restored | Produced::Built => {}
+        }
+    }
 }
 
 struct Inner {
@@ -147,11 +186,16 @@ pub struct DisplayState {
 }
 
 /// One geometry's table kind, as `GET /v1/txid/init` publishes it.
+///
+/// `scheme` is the 49-bit query, which clients deployed before dithering read
+/// and send; `scheme_dq44` is the 44-bit dithered query over the same setup.
+/// The service accepts either, by the body's exact length.
 #[derive(Serialize)]
 pub struct TableInit {
     pub rows: u64,
     pub row_bytes: u32,
     pub scheme: transparent_native::NativeScheme,
+    pub scheme_dq44: transparent_native::NativeScheme,
     pub setup_seed: u64,
 }
 
@@ -159,7 +203,6 @@ pub struct TableInit {
 pub struct GeometryInit {
     pub name: String,
     pub txdirectory: TableInit,
-    pub txpages: TableInit,
 }
 
 /// What `GET /v1/txid/init` returns.
@@ -190,7 +233,7 @@ pub struct SetupResponse {
     pub manifest_digest: String,
     pub geometry: String,
     pub table: String,
-    pub bucket: Option<u32>,
+    pub bucket: u32,
     pub segment: u32,
     pub segments: u32,
     pub public_params: String,
@@ -207,11 +250,9 @@ impl DisplayState {
         let mut params = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                let shared = runtime.params(geometry, table)?;
-                max_query_bytes = max_query_bytes.max(shared.query_bytes());
-                params.insert((geometry.name, table), shared);
-            }
+            let shared = runtime.params(geometry, Table::TxDirectory)?;
+            max_query_bytes = max_query_bytes.max(shared.query_bytes());
+            params.insert((geometry.name, Table::TxDirectory), shared);
         }
         if params.is_empty() {
             return Err("the display set names no geometry to serve".into());
@@ -247,6 +288,9 @@ impl DisplayState {
                     cancelled: AtomicBool::new(false),
                     count: AtomicU64::new(0),
                     built: AtomicU64::new(0),
+                    shipped: AtomicU64::new(0),
+                    shipped_fallbacks: AtomicU64::new(0),
+                    self_check_micros: AtomicU64::new(0),
                     pins: Mutex::new(Vec::new()),
                 },
                 prewarm_slots,
@@ -284,16 +328,20 @@ impl DisplayState {
                         };
                         match inner
                             .runtime
-                            .runtime(revision, table, segment, &inner.warm.cancelled)
+                            .runtime(
+                                revision,
+                                table,
+                                segment,
+                                &inner.warm.cancelled,
+                                inner.set.shipped.as_ref(),
+                            )
                             .await
                         {
-                            Ok((handle, built)) => {
+                            Ok((handle, produced)) => {
                                 if inner.warm.cancelled.load(Ordering::Acquire) {
                                     break;
                                 }
-                                if built {
-                                    inner.warm.built.fetch_add(1, Ordering::Relaxed);
-                                }
+                                inner.warm.record(produced);
                                 inner.warm.count.fetch_add(1, Ordering::Release);
                                 if inner.warm.mode == ReadinessMode::Warm {
                                     inner.warm.pins.lock().unwrap().push((digest, handle));
@@ -349,6 +397,17 @@ impl DisplayState {
     /// for this snapshot.
     pub fn built(&self) -> u64 {
         self.inner.warm.built.load(Ordering::Relaxed)
+    }
+
+    /// Of [`Self::built`], runtimes loaded from shipped files, shipped ones
+    /// refused and produced here instead, and the self-checks' summed time.
+    pub fn shipped(&self) -> (u64, u64, std::time::Duration) {
+        let warm = &self.inner.warm;
+        (
+            warm.shipped.load(Ordering::Relaxed),
+            warm.shipped_fallbacks.load(Ordering::Relaxed),
+            std::time::Duration::from_micros(warm.self_check_micros.load(Ordering::Relaxed)),
+        )
     }
 
     pub fn is_warm(&self) -> bool {
@@ -600,13 +659,16 @@ impl RequestError {
     }
 }
 
-/// The request body limit: the longest query any display geometry accepts.
-/// Fixed at startup, before any publication is loaded.
+/// The request body limit: the longest query any display geometry accepts,
+/// at either width. Fixed at startup, before any publication is loaded.
 pub fn body_limit() -> usize {
     display::DISPLAY_PROFILES
         .iter()
-        .flat_map(|geometry| [geometry.directory_rows, geometry.page_rows])
-        .map(|rows| 8 + transparent_native::request_len(rows as usize))
+        .map(|geometry| geometry.directory_rows as usize)
+        .map(|rows| {
+            8 + transparent_native::request_len(rows)
+                .max(transparent_native::dithered_request_len(rows))
+        })
         .max()
         .unwrap_or(0)
 }
@@ -714,6 +776,7 @@ async fn init(State(state): State<DisplayState>) -> Response {
             rows: kind.rows(geometry),
             row_bytes: kind.row_bytes(geometry),
             scheme: shared.scheme().clone(),
+            scheme_dq44: shared.dithered_scheme().clone(),
             setup_seed: shared.setup_seed,
         }
     };
@@ -736,7 +799,6 @@ async fn init(State(state): State<DisplayState>) -> Response {
             .map(|geometry| GeometryInit {
                 name: geometry.name.into(),
                 txdirectory: table(geometry, Table::TxDirectory),
-                txpages: table(geometry, Table::TxPages),
             })
             .collect(),
     };
@@ -940,10 +1002,7 @@ async fn setup(
         manifest_digest: digest,
         geometry: geometry.into(),
         table: table.label(),
-        bucket: match table {
-            DisplayTable::Directory(bucket) => Some(bucket),
-            DisplayTable::Pages => None,
-        },
+        bucket: table.bucket(),
         segment,
         segments,
         public_params: BASE64_STANDARD.encode(&built.public_params),
@@ -1008,9 +1067,8 @@ async fn query_inner(
         }
     };
 
-    // The exact length is known before a byte is read; anything else is
-    // refused before it is buffered or queued.
-    let expected = shared.query_bytes();
+    // The two exact lengths, 49-bit and 44-bit dithered, are known before a
+    // byte is read; anything else is refused before it is buffered or queued.
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -1024,15 +1082,20 @@ async fn query_inner(
         Metrics::incr(&metrics.query_length_rejections);
         return RequestError::LengthRequired.into_response(&map_digest);
     };
-    if declared != expected as u64 {
+    let Some(expected) = usize::try_from(declared)
+        .ok()
+        .filter(|&len| shared.accepts_query_bytes(len))
+    else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
-            "a {label} query for geometry {} must be exactly {expected} bytes, not {declared}",
-            shared.geometry.name
+            "a {label} query for geometry {} must be exactly {} or {} bytes, not {declared}",
+            shared.geometry.name,
+            shared.query_bytes(),
+            shared.dithered_query_bytes(),
         ))
         .into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
-    }
+    };
 
     let pending = match runtime.admission.try_enter(Some(expected)) {
         Ok(pending) => pending,
@@ -1194,12 +1257,6 @@ mod tests {
             .unwrap()
             .reserved_bytes();
         assert_eq!(reserved, 75_545_144, "a 2,048-row display table");
-        assert_eq!(
-            reserved,
-            SharedParams::build(&TXID_2K, Table::TxPages)
-                .unwrap()
-                .reserved_bytes()
-        );
         let limit = 1536 << 20;
         // Charged memory with a build in flight: the process, the active and
         // retired recent runtimes and the build's own allocation so far.

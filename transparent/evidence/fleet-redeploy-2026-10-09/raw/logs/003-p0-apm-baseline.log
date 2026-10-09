@@ -1,0 +1,22 @@
+### start 2026-10-09T11:15:03.481Z
+### cmd:
+
+curl -s 127.0.0.1:3002/api/quality > $DEP/baseline/apm-quality.json; python3 - <<"EOF"
+import json
+q=json.load(open("/root/deploy-a317455e/baseline/apm-quality.json"))
+print(type(q).__name__, list(q.keys())[:20] if isinstance(q,dict) else len(q))
+def walk(o,p=""):
+    if isinstance(o,dict):
+        for k,v in o.items():
+            if k in ("incidents","open_incidents","alerts"): print(p+"/"+k, json.dumps(v)[:600])
+            walk(v,p+"/"+k)
+    elif isinstance(o,list):
+        for i,v in enumerate(o[:50]): walk(v,p+"[%d]"%i)
+walk(q)
+EOF
+cat /opt/transparent-publisher/v11/scaler/status.json 2>/dev/null | python3 -c "import json,sys;s=json.load(sys.stdin);print({k:s.get(k) for k in (\"mode\",\"decision\",\"desired\",\"serving\",\"offered_qps\",\"utc\")})" || ls /opt/transparent-publisher/v11/scaler/
+
+### output:
+dict ['collected_at', 'dropped_batches', 'history', 'persisted_at', 'publication', 'range_seconds', 'retention_seconds', 'schema_version', 'service', 'sources', 'storage_error', 'synthetic']
+{'mode': 'observe', 'decision': {'action': 'hold', 'decided_unix': 1791544470.3736079, 'reason': 'steady: desired 2, serving 2, offered 4.1 qps'}, 'desired': None, 'serving': None, 'offered_qps': 4.059959851836812, 'utc': None}
+### end 2026-10-09T11:15:03.682Z rc=0

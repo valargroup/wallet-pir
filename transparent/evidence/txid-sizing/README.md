@@ -3,7 +3,21 @@
 [Findings](../../../docs/transparent-txid-sizing-and-anonymity-findings.md) distinguish
 measured sample bytes, synthetic routing controls, and geometry projections.
 [Reproduction](../../tools/txid-sizing/README.md) regenerates the compact reports offline.
-Fresh acquisition requires the explicitly sanctioned read-only gateway credential.
+The earlier acquisition used the explicitly sanctioned read-only gateway. The
+2026-10-07 continuation uses Roman's coordinator journal only; no RPC scan is
+authorized. See the [census handoff](../../tools/txid-sizing/JOURNAL-CENSUS.md).
+
+## Coordinator journal tooling (2026-10-07)
+
+The [local validation receipt](journal-tooling-validation.json) pins the new
+census helper, synthetic algorithm profile and focused checks. The separate
+[eligibility guard receipt](journal-eligibility-validation.json) records the later
+coinbase/ineligible-record refusals without rewriting that earlier receipt. The
+[shared-route receipt](journal-shared-route-validation.json) validates observable
+shared-page group intersections and bounded hash-directory projections. These contain no
+coordinator census results; the fixed-anchor JSON and ingest exclusion/source
+receipt are still required. The [exact command](../../tools/txid-sizing/JOURNAL-CENSUS.md)
+compares independent routing, shared pages and smaller page tables.
 
 ## Completed one-day probability study
 

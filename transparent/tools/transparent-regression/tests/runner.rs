@@ -359,3 +359,29 @@ fn frozen_mainnet_fixture_has_exact_prefixes_and_required_wallet_profiles() {
         "fixture must include arbitrary interior anchors"
     );
 }
+
+/// A map that was never re-cut omits `recuts`; one that spells the list out
+/// empty is the same map. Both must load, validate and keep the bytes the
+/// export digested.
+#[test]
+fn fixture_map_without_recuts_loads_absent_or_empty() {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/fixtures/mainnet.json"
+    ))
+    .unwrap();
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    value["map"].as_object_mut().unwrap().remove("recuts");
+    let absent: Fixture = serde_json::from_value(value.clone()).unwrap();
+    value["map"]["recuts"] = serde_json::json!([]);
+    let empty: Fixture = serde_json::from_value(value).unwrap();
+    for f in [&absent, &empty] {
+        transparent_regression::validate(f).unwrap();
+        assert!(f.map.recuts.is_empty());
+        let canonical = serde_json::to_vec(&f.map).unwrap();
+        assert!(!String::from_utf8(canonical.clone())
+            .unwrap()
+            .contains("recuts"));
+        assert_eq!(f.map_sha256, hex::encode(Sha256::digest(&canonical)));
+    }
+}

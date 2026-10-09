@@ -1,0 +1,120 @@
+{"roster_workers": ["transparent-pir-archive-03", "transparent-pir-recent-01", "transparent-pir-recent-02"], "load_mode": "running", "sampler_follows_roster": true}
+{
+  "file": "/etc/pir-quality/transparent-production.json",
+  "before": {
+    "publisher_url": "http://127.0.0.1:8094/metrics",
+    "roster": "/opt/transparent-publisher/roster.json",
+    "synthetic_status": "/opt/transparent-5qps-20260929/status.json",
+    "host_snapshot": "/var/lib/pir-apm/hosts.json",
+    "public_origins": [
+      "https://transparent-pir.valargroup.dev",
+      "https://enhance-pir.valargroup.dev"
+    ],
+    "router_metrics_url": "file:///var/lib/pir-apm/edge.prom"
+  },
+  "after": {
+    "publisher_url": "http://127.0.0.1:8094/metrics",
+    "roster": "/opt/transparent-publisher/v11/roster.json",
+    "synthetic_status": "/srv/transparent-activity/canonical-load/v11/status.json",
+    "host_snapshot": "/var/lib/pir-apm/hosts.json",
+    "public_origins": [
+      "https://transparent-pir.valargroup.dev",
+      "https://enhance-pir.valargroup.dev"
+    ],
+    "router_metrics_url": "file:///var/lib/pir-apm/edge.prom"
+  }
+}
+{
+  "file": "/etc/pir-quality/hosts.json",
+  "before": {
+    "ssh": {
+      "key": "/opt/transparent-publisher/credentials/deploy-ssh",
+      "known_hosts": "/opt/transparent-publisher/credentials/known_hosts"
+    },
+    "targets": [
+      {
+        "sources": [
+          "transparent-publisher"
+        ],
+        "unit": "transparent-publish-controller.service",
+        "data_dir": "/srv/zakura"
+      },
+      {
+        "sources": [
+          "enhance-init"
+        ],
+        "unit": "enhance-pir-coordinator.service",
+        "data_dir": "/srv/zakura"
+      },
+      {
+        "sources": [
+          "enhance-query-0"
+        ],
+        "unit": "enhance-pir-query-ingress.service",
+        "data_dir": "/"
+      },
+      {
+        "sources": [
+          "transparent-edge"
+        ],
+        "unit": "caddy.service",
+        "data_dir": "/",
+        "host": "root@10.142.0.11",
+        "edge": true
+      }
+    ],
+    "output": "/var/lib/pir-apm/hosts.json",
+    "edge_output": "/var/lib/pir-apm/edge.prom",
+    "roster": {
+      "path": "/opt/transparent-publisher/roster.json",
+      "unit": "transparent-shard-server.service",
+      "data_dir": "/"
+    }
+  },
+  "after": {
+    "ssh": {
+      "key": "/opt/transparent-publisher/credentials/deploy-ssh",
+      "known_hosts": "/opt/transparent-publisher/credentials/known_hosts"
+    },
+    "targets": [
+      {
+        "sources": [
+          "transparent-publisher"
+        ],
+        "unit": "transparent-publish-controller.service",
+        "data_dir": "/srv/zakura"
+      },
+      {
+        "sources": [
+          "enhance-init"
+        ],
+        "unit": "enhance-pir-coordinator.service",
+        "data_dir": "/srv/zakura"
+      },
+      {
+        "sources": [
+          "enhance-query-0"
+        ],
+        "unit": "enhance-pir-query-ingress.service",
+        "data_dir": "/"
+      },
+      {
+        "sources": [
+          "transparent-edge"
+        ],
+        "unit": "caddy.service",
+        "data_dir": "/",
+        "host": "root@10.142.0.11",
+        "edge": true
+      }
+    ],
+    "output": "/var/lib/pir-apm/hosts.json",
+    "edge_output": "/var/lib/pir-apm/edge.prom",
+    "roster": {
+      "path": "/opt/transparent-publisher/v11/roster.json",
+      "unit": "transparent-shard-server.service",
+      "data_dir": "/"
+    }
+  }
+}
+{"apply": true, "changed": ["/etc/pir-quality/transparent-production.json", "/etc/pir-quality/hosts.json"], "restarted": "pir-apm", "backup_dir": "/root/transparent-quality-v11-20261009/backup"}

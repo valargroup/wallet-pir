@@ -1,0 +1,36 @@
+### start 2026-10-09T11:07:14.960Z
+### cmd:
+
+python3 - <<"EOF"
+import json, time, urllib.request
+m = json.load(open("/opt/transparent-publisher/v11/state/membership.json"))
+assert time.time() - m["updated_unix"] < 10, "membership stale"
+assert m["routed_recent"] == 2 and all(v["state"] == "serving" and v["warm"] for v in m["members"].values()), m
+s = json.load(urllib.request.urlopen("http://127.0.0.1:8094/v1/status"))
+assert s["phase"] == "serving" and s["node_height"] - s["public_height"] <= 2, s
+l = json.load(open("/srv/transparent-activity/canonical-load/v11/status.json"))
+assert l["mode"] == "running" and l["trailing_60s"]["errors"] == 0, (l["mode"], l["trailing_60s"])
+assert json.load(open("/opt/transparent-publisher/v11/scaler/policy.json"))["mode"] == "observe"
+print("health gates ok")
+print(json.dumps(s))
+print(json.dumps(l["trailing_60s"]))
+print({k:(v["state"],v["map_sha256"][:12],v.get("rendered")) for k,v in m["members"].items()})
+EOF
+test -e /opt/transparent-publisher/scaler/disabled && test ! -e $LOAD/latched.json && echo actuator-off-no-latch
+df -h / /srv/zakura /srv/transparent-activity
+free -g | sed -n 2p
+lslocks | grep wallet-pir-production || echo lock-free
+
+### output:
+health gates ok
+{"candidate_height": 3511697, "cycle_seconds": 15.244824522, "freshness_seconds": 23.90461333, "ingest_error": "block became noncanonical during extraction", "journal_height": 3511697, "map_sha256": "b35584e310ab3b230e8321d8a6a8738dfd6ac2249d2cc979875c18f1c97ed194", "node_hash": "0000000000104237b53522ddc7197d0e10e16212e600476e0d7001fbe1b18fdf", "node_height": 3511697, "phase": "serving", "public_hash": "0000000000104237b53522ddc7197d0e10e16212e600476e0d7001fbe1b18fdf", "public_height": 3511697, "ready_replicas": 2, "reorg_depth": 1}
+{"exact": 300, "errors": 0, "missed_slots": 0, "completed_qps": 5.0, "http_p50_seconds": 0.01844545, "http_p95_seconds": 0.042523351, "http_p99_seconds": 0.054510567, "max_schedule_lag_seconds": 0.006092281}
+{'transparent-pir-recent-01': ('serving', 'b35584e310ab', True), 'transparent-pir-recent-02': ('serving', 'b35584e310ab', True), 'transparent-pir-archive-03': ('serving', 'b35584e310ab', True)}
+actuator-off-no-latch
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       193G  146G   47G  76% /
+/dev/sda        1.0T  790G  234G  78% /srv/zakura
+/dev/sdb        250G  101G  150G  41% /srv/transparent-activity
+Mem:              62          13          18           0          31          48
+lock-free
+### end 2026-10-09T11:07:15.058Z rc=0

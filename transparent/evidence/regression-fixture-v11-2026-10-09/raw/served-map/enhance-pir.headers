@@ -1,0 +1,9 @@
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+cache-control: no-cache
+content-type: application/json
+date: Fri, 09 Oct 2026 15:14:23 GMT
+server: Caddy
+x-shard-map-sha256: 2a8709b23a85e3396eb9c611cea6708208c3648db3178a650bb7e3e0576052ef
+content-length: 49851
+

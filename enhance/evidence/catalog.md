@@ -4,6 +4,7 @@ These are dated records, not claims about the current source or live fleet. Use 
 
 | Run | Recorded subject |
 |---|---|
+| [dithered-query-2026-10-09](dithered-query-2026-10-09/README.md) | Synthetic correctness screen of Enhance and Status shapes at 49-bit nearest and 44-bit dithered queries |
 | [mixed-fee-production-2026-10-06](mixed-fee-production-2026-10-06/README.md) | Production coordinator deploy of exact mixed-transaction fees, historical journal rebuild and adoption, oracle and exact-answer acceptance |
 | [mixed-fee-publication-2026-10-06](mixed-fee-publication-2026-10-06/README.md) | Exact whole-transaction fees, journal rebuild and staged adoption: local producer, CLI and HTTP PIR tests |
 | [prod-soak-2026-09-27](prod-soak-2026-09-27/README.md) | Six-hour joint Enhance/Status production soak, freezes traced to fsync, and fixes deployed during the run |

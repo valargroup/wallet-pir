@@ -1,0 +1,7 @@
+python3 transparent/tools/txid-display/demo.py --report "/Users/roman/projects/wallet-pir/.claude/worktrees/clever-satoshi-5032fa/transparent/evidence/txid-display-v2-2026-10-08/native-demo.json" --offline
+independent frozen fixture verification passed: four blocks, sixteen transactions, fifteen prevouts, display v2 entries
+TARGET_LEASE {"target": "/Users/roman/projects/wallet-pir/target/dev-lanes/55c157c1b90bc79a3fa7/lane-0", "compatibility": "55c157c1b90bc79a3fa7", "owner_pid": 97745}
+native transparent txid demo passed; report /Users/roman/projects/wallet-pir/.claude/worktrees/clever-satoshi-5032fa/transparent/evidence/txid-display-v2-2026-10-08/native-demo.json
+Error: "independent entry comparison failed for 122b6abe0e45c0e050d95d76bb0236986127891f7951a7a1634399a364e7667d"
+confirmed native gate and independent-oracle exit control passed
+exit 0

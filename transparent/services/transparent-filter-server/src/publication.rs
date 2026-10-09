@@ -96,9 +96,6 @@ pub struct PublishOptions {
     /// turning this on never changes an existing digest.
     #[arg(long, value_enum, default_value_t = DirectoryChoice::Off)]
     pub directory_choice: DirectoryChoice,
-    /// Require complete display sidecars and publish private txid tables.
-    #[arg(long)]
-    pub txid_display: bool,
     /// Range-filter profile every shard is published under.
     ///
     /// Fixes the filters' Golomb-Rice parameters and is named in the map and
@@ -297,13 +294,6 @@ pub fn publish(
             Err(error) => return Err(error.into()),
         };
 
-    if previous
-        .values()
-        .any(|entry| entry.txid_segments.is_some() != cli.txid_display)
-    {
-        return Err("changing txid capability requires a separate publication directory".into());
-    }
-
     // Preserve sealed artifacts only while their chain endpoints agree. A
     // changed sealed suffix belongs to a separate publication directory.
     let mut resume_height = first;
@@ -382,20 +372,6 @@ pub fn publish(
             &events,
         )?;
 
-        let display = if cli.txid_display {
-            let mut records = Vec::new();
-            for height in shard.start_height..=shard.end_height {
-                records.extend(store.display_at(height)?);
-            }
-            Some(transparent_shard::txid::build(
-                shard.shard_id,
-                geometry,
-                &records,
-            )?)
-        } else {
-            None
-        };
-
         // The sealer sized this shard's tables from the packing rule; the
         // builder laid them out under the same rule. Nothing compared the two
         // before, so a divergence would have published a table sized for
@@ -457,7 +433,6 @@ pub fn publish(
         );
         let page_segments =
             table_digests(&built.pages, geometry.page_rows, geometry.page_row_bytes);
-        let txid_display = display.as_ref().map(|d| d.manifest(geometry));
         let make = |revision: u32, supersedes: String, with_choice: bool| ShardManifest {
             schema: SCHEMA.to_string(),
             profile: cli.range_profile.clone(),
@@ -500,7 +475,6 @@ pub fn publish(
                 txids: shard.occupancy.txids,
                 excluded_scripts: built.excluded_scripts,
             },
-            txid_display: txid_display.clone(),
             directory_choice: built
                 .choice
                 .as_ref()
@@ -558,14 +532,6 @@ pub fn publish(
             write_immutable(&dir, &format!("pages.{index}.bin"), segment)?;
         }
 
-        if let Some(display) = &display {
-            for (index, segment) in display.directory.iter().enumerate() {
-                write_immutable(&dir, &format!("txdirectory.{index}.bin"), segment)?;
-            }
-            for (index, segment) in display.pages.iter().enumerate() {
-                write_immutable(&dir, &format!("txpages.{index}.bin"), segment)?;
-            }
-        }
         eprintln!(
             "shard {:>3} {}-{} ({} blocks) scripts {} pages {} events {} segments {}/{} {}",
             shard.shard_id,
@@ -597,9 +563,6 @@ pub fn publish(
             txids: shard.occupancy.txids,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: display
-                .as_ref()
-                .map(|d| [d.directory.len() as u32, d.pages.len() as u32]),
             manifest_digest: digest.clone(),
             revision,
             sealed: manifest.sealed,
@@ -720,6 +683,11 @@ pub fn publish(
             })
             .collect(),
         shards: entries,
+        // This publisher never re-cuts. A re-cutting one must carry every
+        // earlier declaration forward, with seal parameters for each geometry
+        // it names, or wallets holding superseded revisions stop recognizing
+        // them.
+        recuts: Vec::new(),
     };
     if !reorg && previous_dir != &cli.output && previous_dir.exists() {
         link_superseded_tails(previous_dir, &cli.output, &map.shards, store)?;
@@ -798,10 +766,7 @@ pub trait Journal {
     fn display_at(
         &self,
         _height: u64,
-    ) -> Result<
-        Vec<transparent_shard::txid::TransparentDisplayRecord>,
-        crate::events::EventStoreError,
-    > {
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, crate::events::EventStoreError> {
         Err(crate::events::EventStoreError::Invariant(
             "journal has no display capability".into(),
         ))
@@ -826,10 +791,7 @@ impl Journal for EventStore {
     fn display_at(
         &self,
         height: u64,
-    ) -> Result<
-        Vec<transparent_shard::txid::TransparentDisplayRecord>,
-        crate::events::EventStoreError,
-    > {
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, crate::events::EventStoreError> {
         self.display_at(height)
     }
     fn genesis_hash(&self) -> &str {
@@ -1008,7 +970,6 @@ mod tests {
             record: None,
             source_sha: None,
             directory_choice: DirectoryChoice::Off,
-            txid_display: false,
             range_profile: transparent_filter::RANGE_PROFILE.to_string(),
         }
     }

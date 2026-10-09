@@ -1,0 +1,48 @@
+  anchor 3499341 -> 3511887
+  cutoff 3262749 -> 3289805
+  map 3780f252bde6256f... -> 2a8709b23a85e339...
+
+case                                  events         utxos             balance
+unused-p2pkh                               0             0                   0
+unused-p2sh                                0             0                   0
+small-active                            1->2          1->0         75441400->0
+zero-balance                               4             0                   0
+old-receive-recent-spend                   2             0                   0
+offline-receive-spend                      2             0                   0
+active-p2sh                             1->2          1->0          1000000->0
+reused-pages                        106->647         2->1555747589938->646128415038
+multi-script-self-transfer          478->488           140             3150355
+recent-birthday                           12             0                   0
+coinbase                          1643->2937         3->27375623399->3381309030
+
+BLOCKING (18) -- do not freeze:
+  - active-p2sh: same block 3460735, same hash, different expected state (field-level difference)
+  - active-p2sh: same block 3460736, same hash, different expected state (field-level difference)
+  - coinbase: same block 3473678, same hash, different expected state (field-level difference)
+  - coinbase: same block 3473679, same hash, different expected state (field-level difference)
+  - offline-receive-spend: same block 163726, same hash, different expected state (field-level difference)
+  - offline-receive-spend: same block 3439126, same hash, different expected state (field-level difference)
+  - offline-receive-spend: same block 3465622, same hash, different expected state (field-level difference)
+  - offline-receive-spend: same block 3472534, same hash, different expected state (field-level difference)
+  - old-receive-recent-spend: same block 1080215, same hash, different expected state (field-level difference)
+  - old-receive-recent-spend: same block 3332159, same hash, different expected state (field-level difference)
+  - old-receive-recent-spend: same block 3332160, same hash, different expected state (field-level difference)
+  - reused-pages: same block 3463930, same hash, different expected state (field-level difference)
+  - reused-pages: same block 3469904, same hash, different expected state (field-level difference)
+  - reused-pages: same block 3469905, same hash, different expected state (field-level difference)
+  - small-active: same block 3423035, same hash, different expected state (field-level difference)
+  - small-active: same block 3423036, same hash, different expected state (field-level difference)
+  - zero-balance: same block 2981967, same hash, different expected state (field-level difference)
+  - zero-balance: same block 3423637, same hash, different expected state (field-level difference)
+
+REVIEW (10) -- decide each before freezing:
+  - active-p2sh: balance 1000000 -> 0 at the anchor (> 25%)
+  - coinbase: events 1643 -> 2937 at the anchor (> 25%)
+  - coinbase: utxos 3 -> 27 at the anchor (> 25%)
+  - coinbase: balance 375623399 -> 3381309030 at the anchor (> 25%)
+  - multi-script-self-transfer: no checkpoint height in common to cross-check
+  - recent-birthday: no checkpoint height in common to cross-check
+  - reused-pages: events 106 -> 647 at the anchor (> 25%)
+  - reused-pages: utxos 2 -> 15 at the anchor (> 25%)
+  - reused-pages: balance 55747589938 -> 646128415038 at the anchor (> 25%)
+  - small-active: balance 75441400 -> 0 at the anchor (> 25%)

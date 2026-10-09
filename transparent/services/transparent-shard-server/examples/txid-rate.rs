@@ -5,9 +5,9 @@
 //! a dispatcher that falls behind skips the slots it missed instead of
 //! bursting to catch up. Two units:
 //!
-//! - `lookup`: the client's whole transcript (map, manifest, setup, two
-//!   directory queries, the record's page queries), checked against the
-//!   fixture's `record_sha256`, or `Absent` for controls.
+//! - `lookup`: the client's whole transcript (map, manifest, setup, then
+//!   exactly two directory queries, found or absent), checked against the
+//!   fixture's `entry_sha256`, or `Absent` for controls.
 //! - `query`: one directory query, like for like with the history reference
 //!   load, which sends single-row queries.
 //!
@@ -26,6 +26,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use transparent_shard::display::DisplayMap;
 use txdisplay::{DisplayClient, LookupReport, LookupResult};
+
+/// The fixture schema `txid-inventory fixture` writes, with `entry_sha256`.
+const FIXTURE_SCHEMA: &str = "transparent-txid-display-fixture-v2";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -75,7 +78,7 @@ struct Sample {
     #[serde(default)]
     class: String,
     #[serde(default)]
-    record_sha256: Option<String>,
+    entry_sha256: Option<String>,
     #[serde(default)]
     kind: Option<String>,
 }
@@ -157,16 +160,9 @@ fn pick<'a>(
     None
 }
 
-fn http_phases(report: &LookupReport) -> f64 {
-    let phase = |pages: bool| {
-        report
-            .queries
-            .iter()
-            .filter(|q| (q.table == "pages") == pages)
-            .map(|q| q.http_s)
-            .fold(0.0, f64::max)
-    };
-    phase(false) + phase(true)
+/// The lookup's HTTP time: its queries run concurrently, in one phase.
+fn http_seconds(report: &LookupReport) -> f64 {
+    report.queries.iter().map(|q| q.http_s).fold(0.0, f64::max)
 }
 
 fn emit_queries(sequence: u64, report: &LookupReport, cold: bool) {
@@ -201,7 +197,7 @@ async fn run_unit(
         );
         return;
     };
-    let expected = if sample.record_sha256.is_some() {
+    let expected = if sample.entry_sha256.is_some() {
         "found"
     } else {
         "absent"
@@ -209,9 +205,9 @@ async fn run_unit(
     match unit {
         Unit::Lookup => match client.lookup(txid, Some(sample.height)).await {
             Ok(report) => {
-                let exact = match (&report.result, &sample.record_sha256) {
-                    (LookupResult::Found(record), Some(sha)) => {
-                        txdisplay::record_sha256(record) == *sha
+                let exact = match (&report.result, &sample.entry_sha256) {
+                    (LookupResult::Found(entry), Some(sha)) => {
+                        txdisplay::entry_sha256(entry) == *sha
                     }
                     (LookupResult::Absent, None) => true,
                     _ => false,
@@ -222,7 +218,7 @@ async fn run_unit(
                     "schedule_lag_seconds": lag, "total_seconds": report.total_s,
                     "prepare_seconds": report.queries.iter().map(|q| q.prepare_s).sum::<f64>(),
                     "decode_seconds": report.queries.iter().map(|q| q.decode_s).sum::<f64>(),
-                    "http_seconds": http_phases(&report),
+                    "http_seconds": http_seconds(&report),
                     "class": report.class, "fixture_class": sample.class,
                     "control": sample.kind,
                     "shard_id": report.shard_id, "sealed": report.sealed,
@@ -249,10 +245,10 @@ async fn run_unit(
                     emit(serde_json::json!({
                         "event": "lookup", "unit": "query", "unix": unix, "sequence": sequence,
                         "schedule_lag_seconds": lag, "total_seconds": report.total_s,
-                        "http_seconds": http_phases(&report),
+                        "http_seconds": http_seconds(&report),
                         "shard_id": report.shard_id, "sealed": report.sealed,
                         "bucket": report.bucket, "choice": choice,
-                        // A single row has no record to compare; exactness is
+                        // A single row has no entry to compare; exactness is
                         // the binding and epoch checks and a well-formed row.
                         "outcome": report.outcome, "contains": contains,
                         "expected": expected,
@@ -279,7 +275,7 @@ async fn main() -> Result<(), Error> {
     let share = recent_share(&args.mix)?;
     let raw = std::fs::read(&args.fixture)?;
     let fixture: Fixture = serde_json::from_slice(&raw)?;
-    if fixture.schema != "transparent-txid-display-fixture-v1" || fixture.samples.is_empty() {
+    if fixture.schema != FIXTURE_SCHEMA || fixture.samples.is_empty() {
         return Err("not a txid display fixture with samples".into());
     }
     let client = DisplayClient::new(&args.url, None, None)?;

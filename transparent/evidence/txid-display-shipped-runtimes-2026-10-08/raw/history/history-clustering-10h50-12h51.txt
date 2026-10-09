@@ -1,0 +1,8 @@
+Slow history queries (transparent 5 QPS load, queries-20261008T10..12) versus display ship/prepare intervals
+derived from the controller timeline (cycles >= 2233), span 10:50:17-12:51:04 UTC, 98 cycles.
+time coverage: ship 3.9%  prepare 2.1%  outside 94.0%
+ship     history queries   1386  >1s   1 (0.07%)  >3s   0
+prepare  history queries    718  >1s   1 (0.14%)  >3s   0
+outside  history queries  31797  >1s  55 (0.17%)  >3s  18
+Hourly history latency (same log): 10-07 05h/08h/10h and 10-08 00h/07h/08h had 2-14 queries over 3 s before the
+deploy (max 3.3-4.6 s); 10-08 11h had 18 (max 5.5 s) and 12h had 0 (max 2.2 s).

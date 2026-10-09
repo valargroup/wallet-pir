@@ -169,19 +169,25 @@ pub struct ServiceState {
 /// and `row_bytes`, and refuses to proceed unless it reproduces what the
 /// service sent, so the service cannot choose parameters for it — including
 /// parameters that would leak the selection.
+///
+/// Each table publishes two schemes. `*_scheme` is the 49-bit query, which
+/// wallets deployed before dithering read and send; they ignore the keys they
+/// do not know. `*_scheme_dq44` is the 44-bit dithered query over the same
+/// setup, which a newer wallet sends when it reproduces the scheme. The
+/// service accepts either, by the body's exact length.
 #[derive(Serialize)]
 pub struct GeometryInit {
     pub name: String,
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
     pub directory_scheme: transparent_native::NativeScheme,
+    pub directory_scheme_dq44: transparent_native::NativeScheme,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
+    pub pages_scheme_dq44: transparent_native::NativeScheme,
     pub pages_setup_seed: u64,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub txid_tables: Vec<serde_json::Value>,
 }
 
 /// What `GET /v1/shards/init` returns.
@@ -253,20 +259,7 @@ impl ServiceState {
         let mut params: HashMap<ParamsKey, Arc<SharedParams>> = HashMap::new();
         let mut max_query_bytes = 0usize;
         for geometry in set.geometries() {
-            for table in Table::ALL {
-                if matches!(table, Table::TxDirectory | Table::TxPages)
-                    && !set
-                        .map
-                        .shards
-                        .iter()
-                        .any(|s| s.geometry == geometry.name && s.txid_segments.is_some())
-                    && !set
-                        .revisions()
-                        .iter()
-                        .any(|s| s.geometry.name == geometry.name && s.segments(table) > 0)
-                {
-                    continue;
-                }
+            for table in Table::HISTORY {
                 let shared =
                     match previous.and_then(|s| s.inner.params.get(&(geometry.name, table))) {
                         Some(shared) => shared.clone(),
@@ -282,7 +275,7 @@ impl ServiceState {
         let target = set
             .current()
             .map(|s| {
-                Table::ALL
+                Table::HISTORY
                     .iter()
                     .map(|t| s.segments(*t) as usize)
                     .sum::<usize>()
@@ -301,7 +294,7 @@ impl ServiceState {
         // is refused here rather than discovered under load.
         let mut assigned = Vec::new();
         for shard in set.current() {
-            for table in Table::ALL {
+            for table in Table::HISTORY {
                 for _ in 0..shard.segments(table) {
                     assigned.push(params[&(shard.geometry.name, table)].as_ref());
                 }
@@ -1014,17 +1007,13 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 directory_rows: geometry.directory_rows,
                 directory_row_bytes: geometry.directory_row_bytes as u32,
                 directory_scheme: directory.scheme().clone(),
+                directory_scheme_dq44: directory.dithered_scheme().clone(),
                 directory_setup_seed: directory.setup_seed,
                 page_rows: geometry.page_rows,
                 page_row_bytes: geometry.page_row_bytes as u32,
                 pages_scheme: pages.scheme().clone(),
+                pages_scheme_dq44: pages.dithered_scheme().clone(),
                 pages_setup_seed: pages.setup_seed,
-                txid_tables: if inner.set.map.shards.iter().any(|s| s.geometry == geometry.name && s.txid_segments.is_some()) {
-                    [Table::TxDirectory, Table::TxPages].into_iter().map(|table| {
-                        let shared = &inner.params[&(geometry.name, table)];
-                        serde_json::json!({"table": table.as_str(), "rows": table.rows(geometry), "row_bytes": table.row_bytes(geometry), "scheme": shared.scheme(), "setup_seed": shared.setup_seed, "codec": transparent_shard::txid::CODEC})
-                    }).collect()
-                } else { Vec::new() },
             }
         })
         .collect();
@@ -1193,12 +1182,12 @@ async fn query_inner(
         (shard.segments(table), state.shared(shard, table))
     };
 
-    // The exact length this table's query must have is known before a single
-    // body byte is read, so a body of any other length is refused here — before
-    // it is buffered, before it queues, before any runtime is built for it.
-    // The global body limit is the ceiling for the widest geometry; this is the
-    // check for the one actually addressed.
-    let expected = shared.query_bytes();
+    // The two exact lengths this table's query may have — 49-bit or 44-bit
+    // dithered — are known before a single body byte is read, so a body of any
+    // other length is refused here — before it is buffered, before it queues,
+    // before any runtime is built for it. The global body limit is the ceiling
+    // for the widest geometry; this is the check for the one actually
+    // addressed.
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -1213,16 +1202,21 @@ async fn query_inner(
         Metrics::incr(&metrics.query_length_rejections);
         return RequestError::LengthRequired.into_response(&map_digest);
     };
-    if declared != expected as u64 {
+    let Some(expected) = usize::try_from(declared)
+        .ok()
+        .filter(|&len| shared.accepts_query_bytes(len))
+    else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
-            "a {} query for geometry {} must be exactly {expected} bytes, not {declared}",
+            "a {} query for geometry {} must be exactly {} or {} bytes, not {declared}",
             table.as_str(),
-            shared.geometry.name
+            shared.geometry.name,
+            shared.query_bytes(),
+            shared.dithered_query_bytes(),
         ))
         .into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
-    }
+    };
 
     // Counted, and its bytes budgeted, before the body is read. A worker that
     // buffered first and counted afterwards would be bounded only by how many

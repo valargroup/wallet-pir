@@ -1,0 +1,10 @@
+### start 2026-10-09T12:45:43.204Z
+### cmd:
+bash $DEP/steps/load-gate.sh; grep -v Deprecation $DEP/load-samples.log | awk -v s=2026-10-09T12:33:54Z "\$1>s {print \$2, \$4, \$5, \$8}" | sort | uniq -c
+### output:
+running 2026-10-09T12:45:34.033400+00:00 1791549234.6405072 {'ready': 1, 'paused': 3, 'query': 3415, 'http_attempts': 3415} {'exact': 300, 'errors': 0, 'missed_slots': 0, 'completed_qps': 5.0, 'http_p50_seconds': 0.015763761, 'http_p95_seconds': 0.032565373, 'http_p99_seconds': 0.042596062, 'max_schedule_lag_seconds': 0.074629722} incidents 0 []
+no-latch
+active
+     46 running 0 0 nolatch
+      1 starting 0 0 nolatch
+### end 2026-10-09T12:45:43.237Z rc=0

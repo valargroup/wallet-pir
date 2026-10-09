@@ -7,7 +7,9 @@
 //! `txid-index-<sha256>.json` per index chunk. The split is derived from the
 //! full map here too: files that are present must equal the derivation, and
 //! a directory without them (written before the split) is served from the
-//! derivation alone.
+//! derivation alone. With `--ship-runtimes` it also writes the recent
+//! revision's runtimes there as plain `.runtime` files; their presence marks
+//! the set as shipped (see `super::prebuild`).
 //! Every manifest is read and checked, whatever the worker's role, so any
 //! worker can serve the map and every manifest. Tables are verified only for
 //! the revisions the role serves: streamed SHA-256 per segment, then every
@@ -21,6 +23,7 @@
 
 use super::{kind, runtime_key, serves};
 use crate::assignment::WorkerRole;
+use crate::runtime::disk::ShippedRuntimes;
 use crate::shardset::{LoadError, SegmentSource};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
@@ -82,10 +85,8 @@ pub struct DisplayRevision {
     pub canonical: Vec<u8>,
     pub geometry: &'static Geometry,
     pub dir: PathBuf,
-    /// Segments of each bucket directory, in bucket order. Empty unless held.
+    /// Segments of each bucket's table, in bucket order. Empty unless held.
     pub buckets: Vec<Vec<SegmentSource>>,
-    /// The shard's page segments. Empty unless held.
-    pub pages: Vec<SegmentSource>,
 }
 
 impl DisplayRevision {
@@ -116,14 +117,13 @@ impl DisplayRevision {
             geometry,
             dir: dir.to_path_buf(),
             buckets: Vec::new(),
-            pages: Vec::new(),
         })
     }
 
     /// Whether this worker holds the revision's tables. Every display shard
-    /// has at least one page segment, so a held revision has a nonempty list.
+    /// has at least one bucket, so a held revision has a nonempty list.
     pub fn held(&self) -> bool {
-        !self.pages.is_empty()
+        !self.buckets.is_empty()
     }
 
     /// Segments of `table`, or `None` for a bucket outside the shard.
@@ -134,14 +134,12 @@ impl DisplayRevision {
     }
 
     pub fn segment(&self, table: DisplayTable, segment: u32) -> Option<&SegmentSource> {
-        match table {
-            DisplayTable::Directory(bucket) => self.buckets.get(bucket as usize)?,
-            DisplayTable::Pages => &self.pages,
-        }
-        .get(segment as usize)
+        self.buckets
+            .get(table.bucket() as usize)?
+            .get(segment as usize)
     }
 
-    /// Every table segment, bucket directories first.
+    /// Every table segment, in bucket order.
     pub fn targets(&self) -> Vec<(DisplayTable, u32)> {
         let mut targets = Vec::new();
         for table in self.manifest.tables() {
@@ -165,7 +163,6 @@ impl DisplayRevision {
         let geometry = self.geometry;
         let shard_id = self.manifest.shard_id;
         let mut buckets = Vec::new();
-        let mut pages = Vec::new();
         for table in self.manifest.tables() {
             let published = self
                 .manifest
@@ -193,14 +190,11 @@ impl DisplayRevision {
                 source.verify()?;
                 sources.push(source);
             }
-            match table {
-                DisplayTable::Directory(_) => buckets.push(sources),
-                DisplayTable::Pages => pages = sources,
-            }
+            buckets.push(sources);
         }
 
-        // Bucket membership, candidate rows, duplicates, page extents, orphan
-        // fragments and counts, one row at a time.
+        // Canonical rows, bucket membership, candidate rows, duplicates and
+        // counts, one row at a time.
         let open = |sources: &[SegmentSource]| {
             sources
                 .iter()
@@ -216,23 +210,18 @@ impl DisplayRevision {
             .iter()
             .map(|sources| open(sources))
             .collect::<Result<Vec<_>, _>>()?;
-        let mut page_files = open(&pages)?;
         let directory_segments: Vec<usize> = buckets.iter().map(Vec::len).collect();
         let records: Vec<u64> = self.manifest.buckets.iter().map(|b| b.records).collect();
-        let verified = display::verify_rows(
+        display::verify_rows(
             shard_id,
             geometry,
             &directory_segments,
-            pages.len(),
             &records,
             |table, segment, row| {
-                let file = match table {
-                    DisplayTable::Directory(bucket) => directory_files
-                        .get_mut(bucket as usize)
-                        .and_then(|files| files.get_mut(segment)),
-                    DisplayTable::Pages => page_files.get_mut(segment),
-                }
-                .ok_or_else(|| txid::Error("display segment out of range".into()))?;
+                let file = directory_files
+                    .get_mut(table.bucket() as usize)
+                    .and_then(|files| files.get_mut(segment))
+                    .ok_or_else(|| txid::Error("display segment out of range".into()))?;
                 file.seek(SeekFrom::Start((row * ROW_BYTES) as u64))
                     .map_err(|error| txid::Error(error.to_string()))?;
                 let mut bytes = vec![0; ROW_BYTES];
@@ -242,19 +231,7 @@ impl DisplayRevision {
             },
         )
         .map_err(|error| invalid(format!("display shard {shard_id}: {}", error.0)))?;
-        let declared: Vec<_> = self
-            .manifest
-            .buckets
-            .iter()
-            .map(|bucket| bucket.page_histogram.clone())
-            .collect();
-        if verified.page_histograms != declared {
-            return Err(invalid(format!(
-                "display shard {shard_id}: page-count classes disagree with the rows"
-            )));
-        }
         self.buckets = buckets;
-        self.pages = pages;
         Ok(self)
     }
 
@@ -267,12 +244,7 @@ impl DisplayRevision {
         }
         let mut revision = old.clone();
         revision.dir = dir.to_path_buf();
-        for source in revision
-            .buckets
-            .iter_mut()
-            .flatten()
-            .chain(revision.pages.iter_mut())
-        {
+        for source in revision.buckets.iter_mut().flatten() {
             let next = dir.join(source.path.file_name()?);
             let a = std::fs::metadata(&source.path).ok()?;
             let b = std::fs::metadata(&next).ok()?;
@@ -302,6 +274,9 @@ pub struct DisplaySet {
     by_digest: BTreeMap<String, usize>,
     /// Superseded revisions past the retention bound: logged, not served.
     pub excess: Vec<PathBuf>,
+    /// The publication directory, when the publisher shipped runtimes as
+    /// plain files beside its revisions; see [`ShippedRuntimes`].
+    pub shipped: Option<ShippedRuntimes>,
 }
 
 impl DisplaySet {
@@ -346,6 +321,7 @@ impl DisplaySet {
             .collect();
 
         let mut found: BTreeMap<String, DisplayRevision> = BTreeMap::new();
+        let mut shipped = None;
         for entry in std::fs::read_dir(dir).map_err(|source| LoadError::Io {
             path: dir.to_path_buf(),
             source,
@@ -357,6 +333,8 @@ impl DisplaySet {
             if entry.path().is_dir() {
                 let revision = DisplayRevision::read(&entry.path())?;
                 found.insert(revision.digest.clone(), revision);
+            } else if ShippedRuntimes::is_entry(&entry.file_name().to_string_lossy()) {
+                shipped = Some(ShippedRuntimes::new(dir.to_path_buf()));
             }
         }
 
@@ -474,6 +452,7 @@ impl DisplaySet {
             revisions,
             by_digest,
             excess,
+            shipped,
         })
     }
 
@@ -600,16 +579,14 @@ mod tests {
         assert!(owner.held(&shards[0].digest).is_some());
         assert!(owner.revision(&shards[1].digest).is_some());
         assert!(owner.held(&shards[1].digest).is_none());
-        assert_eq!(owner.warm_targets().len(), 2);
+        // One bucket, so one table of one segment.
+        assert_eq!(owner.warm_targets().len(), 1);
         let replica = DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).unwrap();
         assert!(replica.held(&shards[0].digest).is_none());
         assert!(replica.held(&shards[1].digest).is_some());
         assert_eq!(
             replica.runtime_key_strings(),
-            HashSet::from([
-                format!("{}/directory-0", shards[1].digest),
-                shards[1].digest.clone()
-            ])
+            HashSet::from([format!("{}/directory-0", shards[1].digest)])
         );
 
         // A second candidate linking the same files takes the sources over.
@@ -618,7 +595,6 @@ mod tests {
             DisplaySet::open_reusing(&next, 3, Some(&owner), &[], WorkerRole::ArchiveOwner)
                 .unwrap();
         let held = reused.held(&shards[0].digest).unwrap();
-        assert!(held.pages[0].path.starts_with(&next));
         assert!(held.buckets[0][0].path.starts_with(&next));
     }
 
@@ -635,7 +611,7 @@ mod tests {
 
         // A segment changed after publication. The candidate shares inodes
         // with the store, so write a fresh copy rather than editing in place.
-        let segment = dir.join(&shards[1].digest).join("pages.0.bin");
+        let segment = dir.join(&shards[1].digest).join("directory-0.0.bin");
         let mut bytes = std::fs::read(&segment).unwrap();
         bytes[100] ^= 1;
         std::fs::remove_file(&segment).unwrap();

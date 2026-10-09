@@ -1,10 +1,11 @@
 //! Bytes per txid display lookup: computed from the native lengths, and
 //! measured on the wire.
 //!
-//! - `formula`: body bytes of the fixed transcript per geometry and page
-//!   class, warm and cold, for the display geometries and, for comparison,
-//!   the display tables attached to history geometries. Header and metadata
-//!   sizes are estimates given on the command line; bodies are exact.
+//! - `formula`: body bytes of the fixed transcript, exactly two directory
+//!   queries whether the entry is found or not, per geometry, warm and cold,
+//!   for the display geometries and, for comparison, display tables at
+//!   history geometries' directory sizes. Header and metadata sizes are
+//!   estimates given on the command line; bodies are exact.
 //! - `measure`: lookups through a TCP byte meter, cold (a fresh client and
 //!   connections), warm, and recent-stale (a warm client after the recent
 //!   revision moved on), with the client's computed bytes beside the
@@ -36,8 +37,6 @@ enum Command {
     Formula {
         #[arg(long, default_value_t = 1)]
         directory_segments: u64,
-        #[arg(long, default_value_t = 1)]
-        page_segments: u64,
         /// Canonical manifest bytes (measure one; about 1.5 KB at N=1).
         #[arg(long, default_value_t = 1_500)]
         manifest_bytes: u64,
@@ -75,12 +74,12 @@ enum Command {
     },
 }
 
-/// Body bytes of one query and of its answer, for a table of `rows` rows
-/// of 4,096 bytes answered by `segments` segments.
+/// Body bytes of one 44-bit dithered query and of its answer, for a table of
+/// `rows` rows of 4,096 bytes answered by `segments` segments.
 fn query_bytes(rows: u64, segments: u64) -> (u64, u64) {
     let cols = transparent_shard::txid::ROW_BYTES / 2;
     (
-        8 + transparent_native::request_len(rows as usize) as u64,
+        8 + transparent_native::dithered_request_len(rows as usize) as u64,
         segments * (16 + transparent_native::response_len(cols) as u64),
     )
 }
@@ -91,10 +90,8 @@ fn setup_bytes(json: u64) -> u64 {
     4 * public.div_ceil(3) + json
 }
 
-#[allow(clippy::too_many_arguments)]
 fn formula(
     directory_segments: u64,
-    page_segments: u64,
     manifest_bytes: u64,
     map_bytes: u64,
     header_bytes: u64,
@@ -110,40 +107,34 @@ fn formula(
     let mut rows = Vec::new();
     for (geometry, attachment) in geometries {
         let (dir_up, dir_down) = query_bytes(geometry.directory_rows, directory_segments);
-        let (page_up, page_down) = query_bytes(geometry.page_rows, page_segments);
-        for pages in 0..=5u64 {
-            let queries = 2 + pages;
-            let up = 2 * dir_up + pages * page_up;
-            let down = 2 * dir_down + pages * page_down;
-            let warm = up + down;
-            let setups = directory_segments + if pages > 0 { page_segments } else { 0 };
-            for (state, metadata, requests) in [
-                ("warm", 0, queries),
-                (
-                    "cold",
-                    setups * setup + manifest_bytes + map_bytes,
-                    queries + setups + 2,
-                ),
-            ] {
-                let headers = requests * header_bytes;
-                let total = warm + metadata + headers;
-                rows.push(serde_json::json!({
-                    "geometry": geometry.name,
-                    "attachment": attachment,
-                    "directory_rows": geometry.directory_rows,
-                    "page_rows": geometry.page_rows,
-                    "class": if pages == 0 { "inline".to_string() } else { format!("pages-{pages}") },
-                    "state": state,
-                    "queries": queries,
-                    "query_up": up,
-                    "query_down": down,
-                    "query_bytes": warm,
-                    "metadata": metadata,
-                    "headers_estimate": headers,
-                    "total": total,
-                    "under_300k": total <= 300_000,
-                }));
-            }
+        let queries = 2;
+        let (up, down) = (queries * dir_up, queries * dir_down);
+        let warm = up + down;
+        let setups = directory_segments;
+        for (state, metadata, requests) in [
+            ("warm", 0, queries),
+            (
+                "cold",
+                setups * setup + manifest_bytes + map_bytes,
+                queries + setups + 2,
+            ),
+        ] {
+            let headers = requests * header_bytes;
+            let total = warm + metadata + headers;
+            rows.push(serde_json::json!({
+                "geometry": geometry.name,
+                "attachment": attachment,
+                "directory_rows": geometry.directory_rows,
+                "state": state,
+                "queries": queries,
+                "query_up": up,
+                "query_down": down,
+                "query_bytes": warm,
+                "metadata": metadata,
+                "headers_estimate": headers,
+                "total": total,
+                "under_300k": total <= 300_000,
+            }));
         }
     }
     rows
@@ -154,11 +145,15 @@ struct Sample {
     txid: String,
     height: u64,
     class: String,
-    record_sha256: Option<String>,
+    entry_sha256: Option<String>,
 }
+
+/// The fixture schema `txid-inventory fixture` writes, with `entry_sha256`.
+const FIXTURE_SCHEMA: &str = "transparent-txid-display-fixture-v2";
 
 #[derive(Deserialize)]
 struct Fixture {
+    schema: String,
     samples: Vec<Sample>,
 }
 
@@ -217,8 +212,8 @@ async fn measured(
     let (up, down) = meter.snapshot();
     let connections = meter.connections();
     let report = client.lookup(txid, Some(sample.height)).await?;
-    let exact = match (&report.result, &sample.record_sha256) {
-        (LookupResult::Found(record), Some(sha)) => txdisplay::record_sha256(record) == *sha,
+    let exact = match (&report.result, &sample.entry_sha256) {
+        (LookupResult::Found(entry), Some(sha)) => txdisplay::entry_sha256(entry) == *sha,
         (LookupResult::Absent, None) => true,
         _ => false,
     };
@@ -274,6 +269,9 @@ async fn measure(
     only: Option<&str>,
 ) -> Result<serde_json::Value, Error> {
     let fixture: Fixture = serde_json::from_slice(&std::fs::read(fixture)?)?;
+    if fixture.schema != FIXTURE_SCHEMA {
+        return Err(format!("not a {FIXTURE_SCHEMA} document: {}", fixture.schema).into());
+    }
     let url = reqwest::Url::parse(url)?;
     let upstream = tokio::net::lookup_host((
         url.host_str().ok_or("URL host")?.trim_matches(['[', ']']),
@@ -371,7 +369,6 @@ async fn main() -> Result<(), Error> {
     match Args::parse().command {
         Command::Formula {
             directory_segments,
-            page_segments,
             manifest_bytes,
             map_entry_bytes,
             map_entries,
@@ -381,7 +378,6 @@ async fn main() -> Result<(), Error> {
         } => {
             let rows = formula(
                 directory_segments,
-                page_segments,
                 manifest_bytes,
                 map_entry_bytes * map_entries,
                 header_bytes,
@@ -389,9 +385,8 @@ async fn main() -> Result<(), Error> {
             );
             for row in &rows {
                 eprintln!(
-                    "{:<14} {:<9} {:<5} {:>9} B (queries {:>9} B)",
+                    "{:<14} {:<5} {:>9} B (queries {:>9} B)",
                     row["geometry"].as_str().unwrap_or_default(),
-                    row["class"].as_str().unwrap_or_default(),
                     row["state"].as_str().unwrap_or_default(),
                     row["total"],
                     row["query_bytes"],
@@ -434,26 +429,36 @@ mod tests {
     use super::*;
 
     /// The figures the design was argued from, reproduced from the native
-    /// lengths: 40,200 B per query at 2,048 rows, and the warm transcripts.
+    /// lengths: 38,920 B per dithered query at 2,048 rows (40,200 B at the 49
+    /// bits every server also accepts), and the warm transcripts, which are
+    /// two directory queries for every lookup.
     #[test]
     fn warm_transcripts_match_the_native_lengths() {
-        assert_eq!(query_bytes(2_048, 1), (40_200, 5_648));
-        assert_eq!(query_bytes(4_096, 1).0, 52_744);
-        assert_eq!(query_bytes(32_768, 1).0, 228_360);
-        let rows = formula(1, 1, 0, 0, 0, 0);
-        let warm = |geometry: &str, class: &str| {
+        assert_eq!(query_bytes(2_048, 1), (38_920, 5_648));
+        assert_eq!(query_bytes(4_096, 1).0, 50_184);
+        assert_eq!(query_bytes(32_768, 1).0, 207_880);
+        // The 49-bit lengths the design was first argued from.
+        let legacy = |rows: usize| 8 + transparent_native::request_len(rows) as u64;
+        assert_eq!(
+            (legacy(2_048), legacy(4_096), legacy(32_768)),
+            (40_200, 52_744, 228_360)
+        );
+        let rows = formula(1, 0, 0, 0, 0);
+        let total = |geometry: &str, state: &str| {
             rows.iter()
-                .find(|r| r["geometry"] == geometry && r["class"] == class && r["state"] == "warm")
+                .find(|r| r["geometry"] == geometry && r["state"] == state)
                 .unwrap()["total"]
                 .as_u64()
                 .unwrap()
         };
-        assert_eq!(warm("txid-2k", "inline"), 91_696);
-        assert_eq!(warm("txid-2k", "pages-1"), 137_544);
-        assert_eq!(warm("txid-2k", "pages-5"), 320_936);
-        assert_eq!(warm("txid-4k", "inline"), 116_784);
-        assert_eq!(warm("recent-4k-8k", "pages-1"), 200_264);
-        assert_eq!(warm("archive-wide", "inline"), 468_016);
+        // Two dithered queries: 2,560, 5,120 and 40,960 B below the 49-bit
+        // totals of 91,696, 116,784 and 468,016.
+        assert_eq!(total("txid-2k", "warm"), 89_136);
+        assert_eq!(total("txid-4k", "warm"), 111_664);
+        assert_eq!(total("archive-wide", "warm"), 427_056);
         assert_eq!(setup_bytes(0), 19_800);
+        // Cold adds one setup per directory segment, plus map and manifest.
+        assert_eq!(total("txid-2k", "cold"), 89_136 + 19_800);
+        assert!(rows.iter().all(|r| r["queries"] == 2));
     }
 }

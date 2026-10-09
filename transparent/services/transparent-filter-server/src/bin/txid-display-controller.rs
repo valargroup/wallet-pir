@@ -121,6 +121,11 @@ enum Command {
         /// Skip re-verifying sealed revisions at startup.
         #[arg(long)]
         trust_sealed: bool,
+        /// Build the recent revision's runtimes into every candidate, so
+        /// recent replicas load and self-check them instead of building.
+        /// `TRANSPARENT_BUILD_THREADS` sizes the build pool.
+        #[arg(long)]
+        ship_runtimes: bool,
         #[arg(long, default_value = "127.0.0.1:8099")]
         status_listen: std::net::SocketAddr,
         /// Alert when the recent shard holds more records than this.
@@ -254,6 +259,7 @@ async fn main() -> Result<(), BoxError> {
             step_interval_ms,
             replay_end,
             trust_sealed,
+            ship_runtimes,
             status_listen,
             max_recent_records,
             exit_when_idle,
@@ -285,6 +291,10 @@ async fn main() -> Result<(), BoxError> {
             };
             let settings = Settings {
                 trust_sealed,
+                ship_runtimes: ship_runtimes.then_some(
+                    transparent_shard_server::display::prebuild::build_shipped
+                        as controller::Prebuild,
+                ),
                 max_recent_records,
                 exit_when_idle,
                 ..Settings::default()

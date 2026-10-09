@@ -11,8 +11,8 @@
 //! block and sealing once over a long range give the same shards. That is what
 //! lets an archive be rebuilt later, from the journal, to the same digest.
 
-use super::bucket;
-use crate::txid::TransparentDisplayRecord;
+use super::{bucket, MAX_BUCKETS};
+use crate::txid::DisplayEntry;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
 
@@ -27,6 +27,19 @@ pub struct DisplaySealParams {
     pub recent_floor: u64,
     /// Blocks a sealed range must lie below the tip.
     pub reorg_margin: u64,
+}
+
+impl DisplaySealParams {
+    /// Checks both bucket counts lie in `1..=MAX_BUCKETS`, so every bucket
+    /// computation has a divisor and every table label is valid.
+    pub fn check(&self) -> Result<(), String> {
+        for (tier, buckets) in [("archive", self.n_archive), ("recent", self.n_recent)] {
+            if !(1..=MAX_BUCKETS).contains(&buckets) {
+                return Err(format!("{buckets} {tier} display buckets"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for DisplaySealParams {
@@ -50,15 +63,15 @@ pub struct HeightCounts {
 
 pub fn height_counts(
     params: &DisplaySealParams,
-    records: &[TransparentDisplayRecord],
+    entries: &[impl AsRef<DisplayEntry>],
 ) -> HeightCounts {
     let mut counts = HeightCounts {
         archive: vec![0; params.n_archive as usize],
         recent: vec![0; params.n_recent as usize],
     };
-    for record in records {
-        counts.archive[bucket(&record.txid, params.n_archive) as usize] += 1;
-        counts.recent[bucket(&record.txid, params.n_recent) as usize] += 1;
+    for entry in entries.iter().map(AsRef::as_ref) {
+        counts.archive[bucket(&entry.tag, params.n_archive) as usize] += 1;
+        counts.recent[bucket(&entry.tag, params.n_recent) as usize] += 1;
     }
     counts
 }
@@ -228,7 +241,7 @@ mod tests {
             ..params()
         };
         assert!(plan_seals(&p, 0, &[]).is_empty());
-        let counts = height_counts(&p, &[]);
+        let counts = height_counts(&p, &[] as &[DisplayEntry]);
         assert_eq!(counts.archive, vec![0; 4]);
         assert_eq!(counts.recent, vec![0]);
     }

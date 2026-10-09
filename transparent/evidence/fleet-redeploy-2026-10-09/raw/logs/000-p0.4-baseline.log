@@ -1,0 +1,77 @@
+### start 2026-10-09T11:06:55.649Z
+### cmd:
+
+mkdir -p $DEP/baseline && cd $DEP/baseline
+cp -p /opt/transparent-publisher/v11/{fleet.json,controller.json,roster.json} /opt/transparent-publisher/v11/state/membership.json $LOAD/pins.json $LOAD/status.json .
+curl -s 127.0.0.1:8094/v1/status > controller-status.json
+for h in $R01 $R02 $A03; do curl -s http://$h:8093/v1/ready > ready-$h.json; done
+for h in $TD01 $R01; do curl -s http://$h:8095/v1/ready > txid-ready-$h.json; done
+curl -s https://transparent-pir.valargroup.dev/v1/shards > map-public.json
+curl -s https://enhance-pir.valargroup.dev/v1/filters/shards > map-filters.json
+cmp map-public.json map-filters.json && echo origins-agree
+sha256sum /usr/local/bin/{transparent-publish-controller,shard-assign,shard-control,transparent-filter-server} | tee coordinator-bins.txt
+for h in $R01 $R02 $A03; do $W root@$h "hostname; sha256sum /usr/local/bin/transparent-shard-server /usr/local/bin/shard-control /etc/systemd/system/transparent-shard-server.service; free -b | sed -n 2p; df -B1 / | tail -1; systemctl show transparent-shard-server -p NRestarts -p MemoryCurrent -p MainPID; sha256sum /proc/\$(systemctl show -p MainPID --value transparent-shard-server)/exe" > host-$h.txt; cat host-$h.txt; done
+grep -E "caddy_http_request_duration_seconds_count\{code=\"5" /var/lib/pir-apm/edge.prom > router-5xx.prom || true
+wc -l router-5xx.prom; ls -la; sha256sum map-public.json
+
+### output:
+origins-agree
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /usr/local/bin/transparent-publish-controller
+a22f7a93cb7f18a4b256020a997b7106ac43ca87a104e98245999b696c2c3d8d  /usr/local/bin/shard-assign
+fe5edd221ef12073bf5c5fc1ec39313edc7cd76bcc300fda0d513965e6fca125  /usr/local/bin/shard-control
+161fd6582a4b0f7df37466a87f3e235fe72d61be17657b1a0ce8f51df1b16876  /usr/local/bin/transparent-filter-server
+transparent-pir-recent-01
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /usr/local/bin/transparent-shard-server
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /usr/local/bin/shard-control
+616904005dfe5a5236a83aaf2a9082743103fdb789bd31607f5998fdc7bd2fa0  /etc/systemd/system/transparent-shard-server.service
+Mem:      8326942720  2674720768   558215168   103202816  5674250240  5652221952
+/dev/vda1      165295407104 23969230848 141309399040  15% /
+MainPID=2046036
+NRestarts=0
+MemoryCurrent=1296220160
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /proc/2046036/exe
+transparent-pir-recent-02
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /usr/local/bin/transparent-shard-server
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /usr/local/bin/shard-control
+dea49c0c8a1b4b673d9af0526669e770532b7e4fac85ef3a5812d16cd021ca35  /etc/systemd/system/transparent-shard-server.service
+Mem:      8326942720  2057957376  1208729600     4263936  5386252288  6268985344
+/dev/vda1      165295407104 18428280832 146850349056  12% /
+MainPID=1316245
+NRestarts=0
+MemoryCurrent=1303605248
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /proc/1316245/exe
+transparent-pir-archive-03
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /usr/local/bin/transparent-shard-server
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /usr/local/bin/shard-control
+1053fd4dfb6acfe5d55ab2d2e800b1293f12469d502645f93873a28b2e1e24c1  /etc/systemd/system/transparent-shard-server.service
+Mem:     67427409920 34572574720 20102955008     4272128 13462319104 32854835200
+/dev/vda1      206900281344 142595805184 64287698944  69% /
+MainPID=2974411
+NRestarts=0
+MemoryCurrent=33543364608
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /proc/2974411/exe
+1 router-5xx.prom
+total 180
+drwxr-xr-x 2 root root  4096 Oct  9 11:06 .
+drwx------ 4 root root  4096 Oct  9 11:06 ..
+-rw-r--r-- 1 root root   515 Oct  9 11:06 controller-status.json
+-rw------- 1 root root   806 Oct  3 17:43 controller.json
+-rw-r--r-- 1 root root   408 Oct  9 11:06 coordinator-bins.txt
+-rw------- 1 root root   993 Oct  7 16:53 fleet.json
+-rw-r--r-- 1 root root   624 Oct  9 11:06 host-10.142.0.10.txt
+-rw-r--r-- 1 root root   626 Oct  9 11:06 host-10.142.0.7.txt
+-rw-r--r-- 1 root root   624 Oct  9 11:06 host-10.142.0.8.txt
+-rw-r--r-- 1 root root 49850 Oct  9 11:06 map-filters.json
+-rw-r--r-- 1 root root 49850 Oct  9 11:06 map-public.json
+-rw------- 1 root root  1637 Oct  9 11:06 membership.json
+-rw------- 1 root root   301 Oct  3 17:43 pins.json
+-rw-r--r-- 1 root root   822 Oct  9 11:06 ready-10.142.0.10.json
+-rw-r--r-- 1 root root   818 Oct  9 11:06 ready-10.142.0.7.json
+-rw-r--r-- 1 root root   822 Oct  9 11:06 ready-10.142.0.8.json
+-rw------- 1 root root   924 Oct  6 13:26 roster.json
+-rw-r--r-- 1 root root   103 Oct  9 11:06 router-5xx.prom
+-rw-r--r-- 1 root root  3136 Oct  9 11:06 status.json
+-rw-r--r-- 1 root root   369 Oct  9 11:06 txid-ready-10.142.0.10.json
+-rw-r--r-- 1 root root   372 Oct  9 11:06 txid-ready-10.142.0.6.json
+86140443ad37b59bf9f7657409dacae22724ae681915b58a921ea414a7e60f5c  map-public.json
+### end 2026-10-09T11:06:57.913Z rc=0

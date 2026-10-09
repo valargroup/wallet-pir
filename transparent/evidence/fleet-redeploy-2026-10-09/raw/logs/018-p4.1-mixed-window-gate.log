@@ -1,0 +1,12 @@
+### start 2026-10-09T12:31:40.715Z
+### cmd:
+
+python3 -c "import json;l=json.load(open(\"$LOAD/status.json\"));print(l[\"mode\"],l[\"utc\"],l[\"started_unix\"],l[\"counts\"],l[\"trailing_60s\"],l[\"incidents\"],l[\"reasons\"])"
+test ! -e $LOAD/latched.json && echo no-latch
+grep -v Deprecation $DEP/load-samples.log | awk "{print \$2, \$4, \$5, \$8}" | sort | uniq -c
+
+### output:
+running 2026-10-09T12:31:33.643887+00:00 1791547208.9883027 {'ready': 1, 'paused': 3, 'query': 9337, 'http_attempts': 9337} {'exact': 300, 'errors': 0, 'missed_slots': 0, 'completed_qps': 5.0, 'http_p50_seconds': 0.013510053, 'http_p95_seconds': 0.028920135, 'http_p99_seconds': 0.039455389, 'max_schedule_lag_seconds': 0.001027253} 0 []
+no-latch
+    125 running 0 0 nolatch
+### end 2026-10-09T12:31:40.740Z rc=0

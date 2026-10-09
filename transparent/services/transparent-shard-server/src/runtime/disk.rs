@@ -240,6 +240,26 @@ impl DiskCache {
         {
             return Err(io::Error::other("runtime disk cache budget exhausted"));
         }
+        self.write(key, shared, source_sha, runtime, true)
+            .map(|_| ())
+    }
+
+    /// Writes one entry at [`Self::path`] through a `.partial` and an atomic
+    /// rename, without the cache's lock or budget, and returns its length.
+    /// [`Self::save`] calls it under both, `durable`: the file, then the
+    /// directory, are fsynced. A shipped-runtime writer calls it alone on a
+    /// directory nothing else writes to, not durable: a file lost to a crash
+    /// is only a counted fallback build on the worker, and fsyncing two
+    /// 40 MiB files would add over a second to every block.
+    fn write(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+        runtime: &TableRuntime,
+        durable: bool,
+    ) -> io::Result<u64> {
+        let path = self.path(key, shared, source_sha);
         let temp = path.with_extension("partial");
         let result = (|| {
             let file = File::create(&temp)?;
@@ -250,7 +270,11 @@ impl DiskCache {
                 output: BufWriter::with_capacity(
                     1 << 20,
                     HashWriter {
-                        output: IncrementalWriteback::new(&file),
+                        output: IncrementalWriteback {
+                            file: &file,
+                            pending: 0,
+                            sync: durable,
+                        },
                         hash: Sha256::new(),
                     },
                 ),
@@ -270,16 +294,21 @@ impl DiskCache {
             drop(writer);
             (&file).seek(SeekFrom::Start(32))?;
             (&file).write_all(&checksum)?;
-            file.sync_all()?;
-            crate::filecache::consumed(&file);
-            if !Self::entry_bytes_range(shared).contains(&file.metadata()?.len()) {
+            if durable {
+                file.sync_all()?;
+                crate::filecache::consumed(&file);
+            }
+            let length = file.metadata()?.len();
+            if !Self::entry_bytes_range(shared).contains(&length) {
                 return Err(invalid(
                     "runtime export layout changed; bump the cache format",
                 ));
             }
             fs::rename(&temp, &path)?;
-            File::open(&self.directory)?.sync_all()?;
-            Ok(())
+            if durable {
+                File::open(&self.directory)?.sync_all()?;
+            }
+            Ok(length)
         })();
         if result.is_err() {
             let _ = fs::remove_file(&temp);
@@ -303,7 +332,7 @@ impl DiskCache {
         let mut largest = 0u64;
         let mut total = 0u64;
         for shard in set.current() {
-            for table in super::Table::ALL {
+            for table in super::Table::HISTORY {
                 if shard.segments(table) == 0 {
                     continue;
                 }
@@ -425,6 +454,63 @@ impl DiskCache {
     }
 }
 
+/// Runtimes a publisher built and shipped beside a publication, in this
+/// module's entry format, as plain files of the publication directory.
+///
+/// A view, not a cache: it has no budget, lock or collection, because the
+/// directory belongs to the publication and goes with it. A worker only
+/// loads from it, and a runtime loaded from it is never saved to the
+/// worker's own disk cache. A file is found by the same identity a cache
+/// entry is, so one made for another revision, table, segment, source or
+/// scheme is simply not found, and a loaded one passes every check
+/// [`DiskCache::load`] makes.
+#[derive(Clone, Debug)]
+pub struct ShippedRuntimes(DiskCache);
+
+impl ShippedRuntimes {
+    pub fn new(directory: PathBuf) -> Self {
+        Self(DiskCache {
+            directory,
+            max_bytes: u64::MAX,
+            restore_slots: 1,
+        })
+    }
+
+    pub fn directory(&self) -> &Path {
+        &self.0.directory
+    }
+
+    /// Whether `name` is the file name of a shipped runtime.
+    pub fn is_entry(name: &str) -> bool {
+        name.ends_with(".runtime")
+    }
+
+    pub fn path(&self, key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> PathBuf {
+        self.0.path(key, shared, source_sha)
+    }
+
+    pub fn load(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+    ) -> io::Result<TableRuntime> {
+        self.0.load(key, shared, source_sha)
+    }
+
+    /// Writes one runtime into the directory, atomically but not durably;
+    /// returns its length. For the publisher only.
+    pub fn write(
+        &self,
+        key: &RuntimeKey,
+        shared: &SharedParams,
+        source_sha: &str,
+        runtime: &TableRuntime,
+    ) -> io::Result<u64> {
+        self.0.write(key, shared, source_sha, runtime, false)
+    }
+}
+
 struct HashReader<R> {
     input: R,
     hash: Sha256,
@@ -444,12 +530,19 @@ impl<R: Read> Read for HashReader<R> {
 struct IncrementalWriteback<'a> {
     file: &'a File,
     pending: usize,
+    /// Off for a writer that does not fsync at all.
+    sync: bool,
 }
 impl<'a> IncrementalWriteback<'a> {
     const CHUNK: usize = 8 << 20;
 
+    #[cfg(test)]
     fn new(file: &'a File) -> Self {
-        Self { file, pending: 0 }
+        Self {
+            file,
+            pending: 0,
+            sync: true,
+        }
     }
 }
 impl Write for IncrementalWriteback<'_> {
@@ -460,7 +553,9 @@ impl Write for IncrementalWriteback<'_> {
         // Sync before accepting more data: a failed barrier must not report an
         // error after consuming bytes, which could make a retry duplicate them.
         if self.pending == Self::CHUNK {
-            self.file.sync_data()?;
+            if self.sync {
+                self.file.sync_data()?;
+            }
             self.pending = 0;
         }
         let n = self
@@ -638,7 +733,7 @@ mod tests {
     #[test]
     fn restored_runtimes_answer_identically_at_deployed_geometries() {
         for geometry in [&RECENT_8K, &ARCHIVE_WIDE] {
-            for table in Table::ALL {
+            for table in [Table::Directory, Table::Pages, Table::TxDirectory] {
                 let dir = tempfile::tempdir().unwrap();
                 let shared = SharedParams::build(geometry, table).unwrap();
                 let rows: Vec<_> = (0..table.rows(geometry) as usize
@@ -1005,5 +1100,266 @@ mod cache_integration_tests {
             .unwrap();
         fs::remove_file(&source.path).unwrap();
         fs::write(&source.path, rows).unwrap();
+    }
+}
+#[cfg(test)]
+mod shipped_tests {
+    use super::*;
+    use crate::metrics::Metrics;
+    use crate::runtime::{Produced, RuntimeCache};
+    use crate::shardset::{SegmentSource, Table};
+    use std::sync::Arc;
+    use transparent_shard::display::TXID_2K;
+
+    struct Segment {
+        shared: Arc<SharedParams>,
+        rows: Vec<u8>,
+        source: SegmentSource,
+        key: RuntimeKey,
+    }
+
+    /// A `txid-2k` segment of `table` whose first `filled` rows hold bytes
+    /// drawn from `seed`, written under `dir`.
+    fn segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
+        let shared = Arc::new(SharedParams::build(&TXID_2K, table).unwrap());
+        let profile = &shared.profile;
+        let mut rows = vec![0u8; profile.rows * profile.row_bytes];
+        for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {
+            *byte = ((i + seed * 7_919).wrapping_mul(2_654_435_761) >> 9) as u8;
+        }
+        let path = dir.join(format!("{}-{seed}.bin", table.as_str()));
+        fs::write(&path, &rows).unwrap();
+        let source = SegmentSource {
+            path,
+            rows: profile.rows as u64,
+            row_bytes: profile.row_bytes as u32,
+            sha256: hex::encode(Sha256::digest(&rows)),
+        };
+        Segment {
+            shared,
+            rows,
+            source,
+            key: (format!("{}/directory-0", "ab".repeat(32)), table, 0),
+        }
+    }
+
+    fn candidate(dir: &Path, name: &str) -> ShippedRuntimes {
+        let path = dir.join(name);
+        fs::create_dir_all(&path).unwrap();
+        ShippedRuntimes::new(path)
+    }
+
+    /// A runtime loaded from a shipped file is the runtime this worker would
+    /// have built: the same published masks, digest and epoch, byte-identical
+    /// answers and correctly decoded rows, for a full directory and a partly
+    /// filled page table. It is never written to the worker's disk cache.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_shipped_runtime_is_the_locally_built_runtime() {
+        for (table, filled) in [(Table::TxDirectory, 2_048), (Table::TxDirectory, 700)] {
+            let dir = tempfile::tempdir().unwrap();
+            let s = segment(dir.path(), table, filled, 1);
+            let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+            let shipped = candidate(dir.path(), "candidate");
+            let bytes = shipped
+                .write(&s.key, &s.shared, &s.source.sha256, &local)
+                .unwrap();
+            assert!(DiskCache::entry_bytes_range(&s.shared).contains(&bytes));
+            let disk =
+                DiskCache::new(dir.path().join("cache"), s.shared.reserved_bytes() * 4).unwrap();
+            let metrics = Arc::new(Metrics::default());
+            let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone())
+                .with_disk(Some(disk.clone()));
+            let (handle, produced) = cache
+                .get_from(
+                    s.key.clone(),
+                    s.shared.clone(),
+                    s.source.clone(),
+                    Some(shipped),
+                )
+                .await
+                .unwrap();
+            assert!(matches!(produced, Produced::Shipped { .. }), "{produced:?}");
+            assert_eq!(Metrics::get(&metrics.shipped_loads), 1);
+            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
+            assert_eq!(Metrics::get(&metrics.builds), 0);
+            assert_eq!(Metrics::get(&metrics.disk_hits), 0);
+            assert_eq!(Metrics::get(&metrics.disk_save_pending), 0);
+            assert_eq!(
+                disk.used_bytes().unwrap(),
+                0,
+                "a shipped runtime is never saved"
+            );
+            let loaded = handle.get();
+            assert_eq!(loaded.public_params, local.public_params);
+            assert_eq!(loaded.public_params_sha256, local.public_params_sha256);
+            assert_eq!(loaded.public_params_epoch, local.public_params_epoch);
+            let profile = &s.shared.profile;
+            let binding = [9u8; 8];
+            for selected in [0, filled / 2, filled - 1, profile.rows - 1] {
+                let (secret, upload) = profile.prepare(selected).unwrap();
+                let mut body = binding.to_vec();
+                body.extend(upload);
+                let answer = loaded.evaluate(&s.shared, binding, &body).unwrap();
+                assert_eq!(answer, local.evaluate(&s.shared, binding, &body).unwrap());
+                let row = profile
+                    .decode(&secret, &loaded.public_params, &answer[16..])
+                    .unwrap();
+                let at = selected * profile.row_bytes;
+                assert_eq!(
+                    row,
+                    &s.rows[at..at + profile.row_bytes],
+                    "{table:?} {selected}"
+                );
+            }
+        }
+    }
+
+    /// Every shipped file the worker cannot use is counted as a fallback and
+    /// the runtime is built here, publishing what a local build publishes: a
+    /// missing file, a truncated or corrupted one, and one made for another
+    /// revision or another table and placed under this one's name.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn refused_shipped_files_fall_back_to_a_counted_local_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = segment(dir.path(), Table::TxDirectory, 700, 2);
+        let local = TableRuntime::build(&s.shared, &s.rows).unwrap();
+        let mut other_revision = s.key.clone();
+        other_revision.0 = "cd".repeat(32);
+        let mut other_bucket = s.key.clone();
+        other_bucket.0 = format!("{}/directory-1", "ab".repeat(32));
+        type Prepare<'a> = Box<dyn Fn(&ShippedRuntimes) + 'a>;
+        let cases: Vec<(&str, Prepare)> = vec![
+            ("missing", Box::new(|_| {})),
+            (
+                "truncated",
+                Box::new(|shipped| {
+                    let path = shipped.path(&s.key, &s.shared, &s.source.sha256);
+                    let length = shipped
+                        .write(&s.key, &s.shared, &s.source.sha256, &local)
+                        .unwrap();
+                    let file = OpenOptions::new().write(true).open(path).unwrap();
+                    file.set_len(length / 2).unwrap();
+                }),
+            ),
+            (
+                "corrupted",
+                Box::new(|shipped| {
+                    let path = shipped.path(&s.key, &s.shared, &s.source.sha256);
+                    shipped
+                        .write(&s.key, &s.shared, &s.source.sha256, &local)
+                        .unwrap();
+                    let mut bytes = fs::read(&path).unwrap();
+                    let middle = bytes.len() / 2;
+                    bytes[middle] ^= 0x40;
+                    fs::write(&path, bytes).unwrap();
+                }),
+            ),
+            (
+                "another revision",
+                Box::new(|shipped| {
+                    shipped
+                        .write(&other_revision, &s.shared, &s.source.sha256, &local)
+                        .unwrap();
+                    fs::rename(
+                        shipped.path(&other_revision, &s.shared, &s.source.sha256),
+                        shipped.path(&s.key, &s.shared, &s.source.sha256),
+                    )
+                    .unwrap();
+                }),
+            ),
+            (
+                "another table",
+                Box::new(|shipped| {
+                    shipped
+                        .write(&other_bucket, &s.shared, &s.source.sha256, &local)
+                        .unwrap();
+                    fs::rename(
+                        shipped.path(&other_bucket, &s.shared, &s.source.sha256),
+                        shipped.path(&s.key, &s.shared, &s.source.sha256),
+                    )
+                    .unwrap();
+                }),
+            ),
+        ];
+        for (name, prepare) in cases {
+            let shipped = candidate(dir.path(), name);
+            prepare(&shipped);
+            let metrics = Arc::new(Metrics::default());
+            let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
+            let (handle, produced) = cache
+                .get_from(
+                    s.key.clone(),
+                    s.shared.clone(),
+                    s.source.clone(),
+                    Some(shipped),
+                )
+                .await
+                .unwrap();
+            assert_eq!(produced, Produced::Fallback, "{name}");
+            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1, "{name}");
+            assert_eq!(Metrics::get(&metrics.shipped_loads), 0, "{name}");
+            assert_eq!(Metrics::get(&metrics.builds), 1, "{name}");
+            assert_eq!(handle.get().public_params, local.public_params, "{name}");
+        }
+        // With nothing offered, a build is not a fallback.
+        let metrics = Arc::new(Metrics::default());
+        let cache = RuntimeCache::new(s.shared.reserved_bytes() * 2, 1, metrics.clone());
+        let (_, produced) = cache
+            .get_from(s.key.clone(), s.shared.clone(), s.source.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(produced, Produced::Built);
+        assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 0);
+    }
+
+    /// The disk format's own checks cannot tell whether a database matches
+    /// its preprocessing, or is the segment's at all. The self-check can: a
+    /// file holding rows A's database with rows B's preprocessing, saved
+    /// under A's identity, loads, but fails the self-check and is replaced by
+    /// a local build; so does a consistent runtime of rows B under A's name.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_self_check_refuses_a_database_its_preprocessing_was_not_built_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = segment(dir.path(), Table::TxDirectory, 2_048, 4);
+        let b = segment(dir.path(), Table::TxDirectory, 2_048, 5);
+        let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
+        let expected = from_a.public_params.clone();
+        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        let TableRuntime { server, .. } = from_a;
+        let forged = TableRuntime::assemble(server, from_b.preprocessed).unwrap();
+        let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
+        // The forged database is the segment's, so only its answer can fail.
+        for (name, runtime, database_differs) in
+            [("forged", &forged, false), ("other rows", &from_b, true)]
+        {
+            let shipped = candidate(dir.path(), name);
+            shipped
+                .write(&a.key, &a.shared, &a.source.sha256, runtime)
+                .unwrap();
+            let loaded = shipped.load(&a.key, &a.shared, &a.source.sha256).unwrap();
+            let refused = loaded.self_check(&a.shared, &a.rows).unwrap_err();
+            assert_eq!(
+                refused.contains("differs from the segment"),
+                database_differs,
+                "{name}: {refused}"
+            );
+            let metrics = Arc::new(Metrics::default());
+            let cache = RuntimeCache::new(a.shared.reserved_bytes() * 2, 1, metrics.clone());
+            let (handle, produced) = cache
+                .get_from(
+                    a.key.clone(),
+                    a.shared.clone(),
+                    a.source.clone(),
+                    Some(shipped),
+                )
+                .await
+                .unwrap();
+            assert_eq!(produced, Produced::Fallback, "{name}");
+            assert_eq!(Metrics::get(&metrics.shipped_fallbacks), 1);
+            assert_eq!(handle.get().public_params, expected);
+        }
+        // The check passes for a runtime of the segment's own rows.
+        let own = TableRuntime::build(&a.shared, &a.rows).unwrap();
+        assert!(own.self_check(&a.shared, &a.rows).unwrap() < 2_048);
     }
 }

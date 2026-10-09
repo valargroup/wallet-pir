@@ -1,9 +1,19 @@
 # Offline txid sizing and routing intersection tools
 
-These are analysis helpers, not a production codec, migration, or PIR client.
+These are analysis helpers for the display-v1 record, not a production codec,
+migration, or PIR client. Display v2 replaced that record on `main`; the Rust
+exporter builds against v1 at revision `a368f19b52330186dbf56f49066b2b03b4da368a`.
 Read the [findings](../../../docs/transparent-txid-sizing-and-anonymity-findings.md)
 and [source/discovery pins](../../evidence/txid-sizing/sources.json) before interpreting
 results. `UNQUALIFIED` is intentional. No secrets or encrypted query bodies are inputs.
+
+## Coordinator journal census
+
+The [read-only census handoff](JOURNAL-CENSUS.md) provides the exact command for
+the orchestrator-owned genesis display journal, output definitions and required
+ingest receipt. It compares shared page tables and 256/512/1024-row layouts.
+No full-journal output has been measured in this checkout. Retained source pins
+are verified at their original Git revisions rather than against evolving code.
 
 ## Reproduce on this hub
 

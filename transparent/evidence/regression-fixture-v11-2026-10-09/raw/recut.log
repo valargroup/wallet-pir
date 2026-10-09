@@ -1,0 +1,25 @@
+self-check: ROLES reproduces transparent/tools/transparent-regression/fixtures/mainnet-cases.json exactly (11 cases)
+anchor 3473686 -> 3511700   cutoff 3262749 -> 3289805
+case                          req_from  heights
+unused-p2pkh                         0  [0, 3289804, 3289806, 3492693, 3511700]
+unused-p2sh                          0  [0, 3289806, 3492693, 3511700]
+small-active                         0  [3423034, 3423035, 3423036, 3492693, 3511700]
+zero-balance                         0  [2981966, 2981967, 3423637, 3492693, 3511700]
+old-receive-recent-spend             0  [1080215, 3289804, 3289805, 3332159, 3332160, 3492693, 3511700]
+offline-receive-spend                0  [163548, 163726, 3439126, 3465622, 3472534, 3492693, 3511700]
+active-p2sh                          0  [3460734, 3460735, 3460736, 3492693, 3511700]
+reused-pages                   3463930  [3463930, 3469904, 3469905, 3492693, 3511700]
+multi-script-self-transfer           0  [3289804, 3289805, 3289806, 3492693, 3511700]
+recent-birthday                3289805  [3289805, 3289806, 3492693, 3511699, 3511700]
+coinbase                             0  [3473678, 3473679, 3492693, 3511700]
+
+11 cases, 57 checkpoints
+
+review before export:
+  - recent-birthday required_from moves 3262749 -> 3289805. regression-export refuses with "birthday omits earlier activity" if any of its 10 scripts were active in between. Re-select that case if it does.
+  - cutoff moved 3262749 -> 3289805; heights in that span change tier. Confirm the published archive/recent split agrees.
+  - unused-p2pkh and unused-p2sh must still have no activity at the new anchor, or the exporter fails their profile check.
+  - coinbase checkpoints stay at 3473678/3473679 and are now deeply confirmed; this case no longer probes a near-tip coinbase.
+  - Compare exported expectations against the previous fixture before freezing: a case whose event count or balance changed character needs review, not acceptance.
+
+wrote /private/tmp/claude-501/-Users-roman-projects-wallet-pir--claude-worktrees-affectionate-wright-3a72f9/10c749d6-dea3-49ea-99ff-fdd14ed4e77a/scratchpad/v11/mainnet-cases-v11.json

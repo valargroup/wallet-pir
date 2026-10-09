@@ -157,6 +157,30 @@ Background and measurements:
 - If one block's runtimes exceed about 150 MiB, or rsync takes more than 2 s on the
   private network, stop and report before deploying.
 
+## Built and benched, 2026-10-07
+
+Implemented through the benchmarks; the deploy below has not started.
+[Bench evidence](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md),
+[design as built](txid-display.md#shipped-recent-runtimes). Where source or
+measurement differed from this plan:
+- The controller copied only `built`, `reused` and `seconds` from a prepare
+  reply into `workers[]`, not every field; `shipped`, `shipped_fallbacks` and
+  `self_check_ms` are now copied explicitly.
+- Shipped files are written without fsync: fsyncing added about 0.3 s per
+  file to every block, and a lost file is only a counted fallback build.
+- The shipped load reads the segment with `source.load()`, which verifies it
+  as `source.verify()` does and supplies the self-check's rows. The self-check
+  also compares the whole encoded database with the segment.
+- A publication counts as shipped only when its directory holds a `.runtime`
+  file, so a controller without `--ship-runtimes` causes no fallbacks.
+- `pytest` is not installed on roman-dev-2; the ops tests run with
+  `python3 -B -m unittest` (as `make` runs them).
+- On equal CPUs the cycle got slower (p50 4.2 → 6.4 s): the prebuild runs on
+  the critical path. Block to serving improves only if the coordinator builds
+  faster than recent-01 does under history load. Set
+  `TRANSPARENT_BUILD_THREADS` on the controller unit deliberately: by default
+  the build pool takes half the host's cores.
+
 ## Deploy (production; from Roman's Mac over SSH, not from the hub)
 
 This is a gate: production deploy. Roman approved this direction on 2026-10-07; confirm

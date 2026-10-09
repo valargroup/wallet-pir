@@ -180,6 +180,9 @@ pub struct Metrics {
     pub disk_hits: AtomicU64,
     pub disk_misses: AtomicU64,
     pub disk_load_micros: AtomicU64,
+    pub shipped_loads: AtomicU64,
+    pub shipped_fallbacks: AtomicU64,
+    pub shipped_check_micros: AtomicU64,
     pub disk_write_failures: AtomicU64,
     pub disk_save_pending: AtomicU64,
     pub cache_hits: AtomicU64,
@@ -243,6 +246,9 @@ impl Default for Metrics {
             disk_hits: AtomicU64::new(0),
             disk_misses: AtomicU64::new(0),
             disk_load_micros: AtomicU64::new(0),
+            shipped_loads: AtomicU64::new(0),
+            shipped_fallbacks: AtomicU64::new(0),
+            shipped_check_micros: AtomicU64::new(0),
             disk_write_failures: AtomicU64::new(0),
             disk_save_pending: AtomicU64::new(0),
             cache_hits: AtomicU64::new(0),
@@ -385,6 +391,24 @@ impl Metrics {
             "counter",
             "Microseconds spent restoring runtimes.",
             Self::get(&self.disk_load_micros),
+        );
+        line(
+            "transparent_shard_shipped_loads_total",
+            "counter",
+            "Runtimes loaded from files shipped with a publication and self-checked.",
+            Self::get(&self.shipped_loads),
+        );
+        line(
+            "transparent_shard_shipped_fallbacks_total",
+            "counter",
+            "Shipped runtimes missing, rejected or failing their self-check, then produced here.",
+            Self::get(&self.shipped_fallbacks),
+        );
+        line(
+            "transparent_shard_shipped_check_micros_total",
+            "counter",
+            "Microseconds spent self-checking shipped runtimes.",
+            Self::get(&self.shipped_check_micros),
         );
         line(
             "transparent_shard_disk_save_pending",

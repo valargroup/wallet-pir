@@ -147,6 +147,39 @@ pub enum SyncError {
         "the refreshed shard map is not a continuation of the one this sync started from: {0}"
     )]
     MapDiverged(String),
+    /// The map contradicts sealed history the store holds on the wallet's own
+    /// chain, and declares no re-cut of it.
+    ///
+    /// Sealed content is immutable. A sealed range described differently is a
+    /// reorg when the chain has moved, and is rolled back as one. This is the
+    /// other case: the chain accepts the block the stored range rests on and
+    /// also the block the map's sealed shard now covering its start ends on,
+    /// at or below the target. Both are on the chain the wallet follows, so
+    /// nothing explains the change but the publisher, and retrying does not
+    /// resolve it while the publisher serves this history. When the chain
+    /// does not yet accept the replacement's end block, as when the publisher
+    /// followed a shallow reorg through a shard it had just sealed before the
+    /// wallet's chain did, the sync stops with
+    /// [`IncompleteReason::ChainUnknown`] instead and becomes an ordinary reorg
+    /// once the chain moves. Refused before anything is read, and after
+    /// rolling back only a reorg the wallet's chain itself shows, which runs
+    /// first so that no map can hold it back. Distinct from
+    /// [`MapDiverged`](Self::MapDiverged), which a re-cut published mid-sync
+    /// also produces and which the next sync resolves.
+    ///
+    /// A replica still serving a map from before a re-cut the store has
+    /// already followed looks the same from here, since the store keeps no
+    /// re-cut epoch: an embedding that records the epoch it last synced at
+    /// can tell the two apart before calling the sync.
+    #[error(
+        "the map replaces the sealed shard the store holds from height {start_height} (revision \
+         {revision_digest}) with another the wallet's chain also accepts, and declares no re-cut \
+         of it"
+    )]
+    SealedRewrite {
+        start_height: u64,
+        revision_digest: String,
+    },
 }
 
 /// Map refreshes one sync will spend recovering a withdrawn revision.
@@ -184,10 +217,14 @@ pub struct GeometryParams {
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
     pub directory_scheme: transparent_native::NativeScheme,
+    /// The 44-bit dithered directory scheme, when the service advertises one.
+    pub directory_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
+    /// The 44-bit dithered page scheme, when the service advertises one.
+    pub pages_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub pages_setup_seed: u64,
 }
 
@@ -268,6 +305,7 @@ impl Clients {
                     geometry.directory_rows,
                     geometry.directory_row_bytes as u32,
                     &params.directory_scheme,
+                    params.directory_scheme_dq44.as_ref(),
                 )?,
                 pages: TableClient::new_with_schema(
                     &self.schema,
@@ -276,6 +314,7 @@ impl Clients {
                     geometry.page_rows,
                     geometry.page_row_bytes as u32,
                     &params.pages_scheme,
+                    params.pages_scheme_dq44.as_ref(),
                 )?,
             };
             self.prepared.insert(name.to_string(), clients);
@@ -601,48 +640,30 @@ pub fn sync_into<S: WalletStore>(
     let mut rolled_back_to: Option<u64> = None;
     let mut replaced_revisions: Vec<String> = Vec::new();
 
+    // Every revision the map's re-cuts declare, by digest, looked up once.
+    let declared = map.superseded_index();
+
     // Reorg detection over what the store holds. Every distinct block the
     // coverage rests on is asked of the wallet's chain, newest first; the
     // first rejected one rolls everything above the highest accepted block
-    // below it back. Sealed coverage the map now describes differently is
-    // the same finding from the publication's side.
+    // below it back.
     let mut rests_on: BTreeMap<u64, String> = BTreeMap::new();
+    // Settled ranges the map neither still publishes nor declares superseded.
+    let mut rewritten: Vec<CoverageRange> = Vec::new();
     for entry in store.scripts()? {
         for range in store.coverage(&entry.script)? {
             rests_on
                 .entry(range.end_height)
                 .or_insert(range.terminal_block_hash.clone());
-            if range.kind == CoverageKind::Settled {
-                if let Some(published) = map.shards.get(range.shard_id as usize) {
-                    if published.sealed
-                        && range
-                            .source_anchor
-                            .as_ref()
-                            .is_none_or(|source| range.end_height == source.height)
-                        && published.start_height == range.start_height
-                        && (published.manifest_digest != range.revision_digest
-                            || range.source_anchor.as_ref().is_some_and(|source| {
-                                published.end_height != source.height
-                                    || published.terminal_block_hash != source.hash
-                            }))
-                    {
-                        // Sealed content is immutable; a different sealed
-                        // shard at the same place is another chain.
-                        rests_on.insert(range.end_height, "reorganised".into());
-                    }
-                }
+            if range.kind == CoverageKind::Settled && !vouches_for(map, &declared, &range) {
+                rewritten.push(range);
             }
         }
     }
     let mut ancestor: Option<u64> = None;
     let mut unknown: Option<u64> = None;
     for (height, hash) in rests_on.iter().rev() {
-        let acceptance = if hash == "reorganised" {
-            Acceptance::Rejected
-        } else {
-            chain.is_accepted(*height, hash)
-        };
-        match acceptance {
+        match chain.is_accepted(*height, hash) {
             Acceptance::Rejected => {
                 // Roll back to the highest accepted block below this one.
                 let mut below = map.start_height.saturating_sub(1);
@@ -665,30 +686,66 @@ pub fn sync_into<S: WalletStore>(
         store.rollback_above(&accepted_at(chain, map, height)?, "reorg")?;
         rolled_back_to = Some(height);
     } else if let Some(height) = unknown {
-        if ancestor.is_none() && !rests_on.is_empty() {
+        if !rests_on.is_empty() {
             // Nothing could be confirmed. Reading on would either accept a
             // branch the wallet has not seen or roll back on a guess.
-            let ledger = store.ledger()?;
-            let (covered, settled) = coverage_summary(store, map, target_anchor.height)?;
-            return Ok(SyncReport {
-                ledger,
+            return chain_unknown(
+                store,
+                map,
+                target_anchor,
                 charges,
-                matched_shards: Vec::new(),
-                unproductive_matches: 0,
-                covered_through: covered,
-                settled_through: settled,
-                provisional: provisional_of(store, map)?,
-                map_refreshes: 0,
-                completion: Completion::Incomplete {
-                    reason: IncompleteReason::ChainUnknown { height },
-                    pending: store.pending()?.len(),
-                },
+                height,
                 rolled_back_to,
                 replaced_revisions,
-                scripts_added: 0,
-                commits: store.last_commit()? - first_commit,
-            });
+                first_commit,
+            );
         }
+    }
+
+    // Sealed content is immutable, so a sealed range the map now describes
+    // differently, without declaring a re-cut of it, is judged by what the
+    // wallet's chain says; see `judge_rewrite`. Only after the scan above,
+    // which depends on the chain alone, has rolled back any reorg the chain
+    // shows, and only for the ranges that rollback kept: a map cannot hold
+    // back a reorg by changing history below it. A contradiction on the
+    // wallet's own chain is refused before anything else is rolled back or
+    // read; anything the chain cannot settle yet stops the sync as an
+    // unknown block does.
+    let mut contradiction: Option<&CoverageRange> = None;
+    let mut unplaced: Option<u64> = None;
+    for range in rewritten
+        .iter()
+        .filter(|range| ancestor.is_none_or(|kept| range.end_height <= kept))
+    {
+        match judge_rewrite(map, range, target_anchor, chain) {
+            Rewrite::Reorg => {}
+            Rewrite::Contradiction => {
+                if contradiction.is_none_or(|held| held.start_height > range.start_height) {
+                    contradiction = Some(range);
+                }
+            }
+            Rewrite::Unsettled(height) => {
+                unplaced = Some(unplaced.map_or(height, |held| held.max(height)));
+            }
+        }
+    }
+    if let Some(range) = contradiction {
+        return Err(SyncError::SealedRewrite {
+            start_height: range.start_height,
+            revision_digest: range.revision_digest.clone(),
+        });
+    }
+    if let Some(height) = unplaced {
+        return chain_unknown(
+            store,
+            map,
+            target_anchor,
+            charges,
+            height,
+            rolled_back_to,
+            replaced_revisions,
+            first_commit,
+        );
     }
 
     // Provisional reconciliation. A tail revision the map has moved past is
@@ -696,21 +753,38 @@ pub fn sync_into<S: WalletStore>(
     let mut truncate_from: Option<u64> = None;
     let mut promote: Vec<(u64, String)> = Vec::new();
     // A partially retrieved revision may have events and pending pages but no
-    // completed coverage yet. Replacing it must rewind those events too.
+    // completed coverage yet. Unfinished work under a revision the map no
+    // longer publishes is dropped, and what it saved is rolled back from
+    // where the revision began, never from wherever the map now puts its
+    // shard id: a re-cut gives that id to another range.
+    let mut dropped: Vec<u64> = Vec::new();
+    let mut saved: Option<Vec<StoredEvent>> = None;
     for pending in store.pending()? {
-        let published = map.shards.get(pending.shard_id as usize).ok_or_else(|| {
-            SyncError::MapDiverged(format!(
-                "publication withdraws pending shard {}",
-                pending.shard_id
-            ))
-        })?;
-        if published.manifest_digest != pending.revision_digest {
-            truncate_from = Some(
-                truncate_from.map_or(published.start_height, |h| h.min(published.start_height)),
-            );
-            if !replaced_revisions.contains(&pending.revision_digest) {
-                replaced_revisions.push(pending.revision_digest);
+        if map
+            .shards
+            .get(pending.shard_id as usize)
+            .is_some_and(|published| published.manifest_digest == pending.revision_digest)
+        {
+            continue;
+        }
+        if saved.is_none() {
+            saved = Some(store.events()?);
+        }
+        let lowest_saved = saved
+            .iter()
+            .flatten()
+            .filter(|stored| stored.revision_digest == pending.revision_digest)
+            .map(|stored| event_height(&stored.event))
+            .min();
+        let declared = declared.get(pending.revision_digest.as_str()).copied();
+        match unfinished(&pending, declared, lowest_saved, chain) {
+            Unfinished::Rewind(height) => {
+                truncate_from = Some(truncate_from.map_or(height, |held| held.min(height)));
             }
+            Unfinished::Drop => dropped.extend(pending.id),
+        }
+        if !replaced_revisions.contains(&pending.revision_digest) {
+            replaced_revisions.push(pending.revision_digest);
         }
     }
     for range in store.provisional()? {
@@ -732,12 +806,16 @@ pub fn sync_into<S: WalletStore>(
         }
     }
     if let Some(start) = truncate_from {
+        // From the start of the shard now covering that height: at or below
+        // everything the replaced revision saved, and a boundary the map names
+        // a block for, so the rollback never depends on the wallet's chain
+        // holding a hash inside a shard.
+        let start = map
+            .shard_for_height(start)
+            .map_or(start, |entry| entry.start_height.min(start));
         let below = start.saturating_sub(1);
         if rolled_back_to.is_none_or(|held| held > below) {
-            store.rollback_above(
-                &accepted_at(chain, map, below)?,
-                "provisional tail replaced",
-            )?;
+            store.rollback_above(&accepted_at(chain, map, below)?, "replaced revision")?;
             rolled_back_to = Some(below);
         }
     }
@@ -748,7 +826,10 @@ pub fn sync_into<S: WalletStore>(
     let discard: Vec<u64> = store
         .pending()?
         .iter()
-        .filter(|p| p.target_anchor.as_ref() != Some(target_anchor))
+        .filter(|p| {
+            p.target_anchor.as_ref() != Some(target_anchor)
+                || p.id.is_some_and(|id| dropped.contains(&id))
+        })
         .filter_map(|p| p.id)
         .collect();
     if !discard.is_empty() {
@@ -808,8 +889,8 @@ pub fn sync_into<S: WalletStore>(
                 continue;
             };
             if entry.manifest_digest != digest {
-                // Its revision is gone; the reconciliation above rolled its
-                // coverage back and the ordinary planning will re-derive it.
+                // Its revision is gone, here only after a refresh mid-sync;
+                // the ordinary planning re-derives the range.
                 continue;
             }
             let entry = entry.clone();
@@ -849,12 +930,10 @@ pub fn sync_into<S: WalletStore>(
                     if !matched_shards.contains(&shard_id) {
                         matched_shards.push(shard_id);
                     }
+                    let events = store.events()?;
                     for item in &items {
-                        if store.events()?.iter().any(|e| {
-                            e.script == item.script
-                                && e.shard_id == shard_id
-                                && event_height(&e.event) <= target_anchor.height
-                        }) && !active_scripts.contains(&item.script)
+                        if holds_history(&events, &item.script, &entry, target_anchor.height)
+                            && !active_scripts.contains(&item.script)
                         {
                             active_scripts.push(item.script.clone());
                         }
@@ -1027,6 +1106,7 @@ pub fn sync_into<S: WalletStore>(
                             refreshes,
                         });
                     }
+                    check_resume(&fresh.shards[resume], &entry).map_err(SyncError::MapDiverged)?;
                     let resume_start = fresh.shards[resume].start_height;
                     let below = resume_start.saturating_sub(1);
                     store.rollback_above(
@@ -1101,6 +1181,189 @@ pub fn sync_into<S: WalletStore>(
         scripts_added,
         commits: store.last_commit()? - first_commit,
     })
+}
+
+/// Whether the map still vouches for a settled range the store holds.
+///
+/// The range is looked up by the height it starts at, not by its shard id: a
+/// re-cut renumbers shards, so the id it was read under may now name another
+/// range. The map vouches for it when it still publishes that revision there,
+/// or when one of its re-cuts declares exactly that revision superseded: the
+/// same digest, shard id and start height, sealed, ending on the same block.
+/// That keeps a wallet's history across the re-cut without re-reading it.
+///
+/// The block a range ends on is its source anchor, the published endpoint,
+/// when the store kept one, which every store since schema 2 does. A range
+/// without one matches a declaration when it ends inside the declared range,
+/// or at its end on the declared block. A range with an endpoint but cut
+/// short of its shard's end by a target or a rollback is left to the chain
+/// checks, as is anything the map's sealed shards do not cover.
+fn vouches_for(
+    map: &ShardMap,
+    declared: &BTreeMap<&str, &transparent_filter::SupersededShard>,
+    range: &CoverageRange,
+) -> bool {
+    if range
+        .source_anchor
+        .as_ref()
+        .is_some_and(|source| source.height != range.end_height)
+    {
+        return true;
+    }
+    let Some(entry) = map.shard_for_height(range.start_height) else {
+        return true;
+    };
+    if !entry.sealed {
+        return true;
+    }
+    if entry.start_height == range.start_height
+        && entry.manifest_digest == range.revision_digest
+        && range.source_anchor.as_ref().is_none_or(|source| {
+            source.height == entry.end_height && source.hash == entry.terminal_block_hash
+        })
+    {
+        return true;
+    }
+    declared
+        .get(range.revision_digest.as_str())
+        .is_some_and(|declared| {
+            let ends_as_declared = match &range.source_anchor {
+                Some(source) => {
+                    declared.end_height == source.height
+                        && declared.terminal_block_hash == source.hash
+                }
+                // Without a recorded endpoint a range may have been cut short
+                // of its shard by a target or a rollback, as one with an
+                // endpoint is above: inside the declared range it matches,
+                // and at the declared end it must rest on the declared block.
+                None => {
+                    range.end_height < declared.end_height
+                        || (range.end_height == declared.end_height
+                            && range.terminal_block_hash == declared.terminal_block_hash)
+                }
+            };
+            declared.sealed
+                && declared.shard_id == range.shard_id
+                && declared.start_height == range.start_height
+                && ends_as_declared
+        })
+}
+
+/// What a settled range the map no longer vouches for means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rewrite {
+    /// The wallet's chain rejects the block the range rests on: a reorg,
+    /// rolled back like any other.
+    Reorg,
+    /// The wallet's chain accepts both the block the range rests on and the
+    /// one the shard now covering its start ends on: the publisher
+    /// contradicts itself on the chain the wallet follows. Retrying does not
+    /// change that while it serves this history.
+    Contradiction,
+    /// The chain cannot settle it yet; the height is the block it would need
+    /// to confirm. A publisher that followed a shallow reorg across a shard it
+    /// had just sealed, before the wallet's chain did, looks like this, and
+    /// becomes an ordinary reorg once the chain moves.
+    Unsettled(u64),
+}
+
+/// Judges a settled range `vouches_for` refused, by what the wallet's chain
+/// says about the block it rests on and about the block the map's shard now
+/// covering its start ends on.
+///
+/// Sealing is not delayed for finality, so a publisher can follow a reorg
+/// through a just-sealed shard before the wallet's chain does. Only when the
+/// chain accepts the replacement's end too, at or below the target, is the
+/// change the publisher's alone.
+fn judge_rewrite(
+    map: &ShardMap,
+    range: &CoverageRange,
+    target: &Anchor,
+    chain: &impl ChainView,
+) -> Rewrite {
+    match chain.is_accepted(range.end_height, &range.terminal_block_hash) {
+        Acceptance::Rejected => Rewrite::Reorg,
+        Acceptance::Unknown => Rewrite::Unsettled(range.end_height),
+        Acceptance::Accepted => match map.shard_for_height(range.start_height) {
+            Some(entry)
+                if entry.sealed
+                    && entry.end_height <= target.height
+                    && chain.is_accepted(entry.end_height, &entry.terminal_block_hash)
+                        == Acceptance::Accepted =>
+            {
+                Rewrite::Contradiction
+            }
+            Some(entry) => Rewrite::Unsettled(entry.end_height),
+            // `vouches_for` refuses only ranges a sealed shard covers, so
+            // this and the unsealed case above are not reached; both would
+            // be the publisher ahead of or apart from the chain, not settled.
+            None => Rewrite::Unsettled(range.end_height),
+        },
+    }
+}
+
+/// What becomes of unfinished page work under a revision the map no longer
+/// publishes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Unfinished {
+    /// Dropped, and what the revision saved stays.
+    Drop,
+    /// Dropped, and the store rolls back from this height.
+    Rewind(u64),
+}
+
+/// Decides [`Unfinished`] for one item, from what the wallet itself stored.
+///
+/// Every event an item saved lies at or below the target it was read for,
+/// which the store keeps with it. So when a declared re-cut replaced the
+/// sealed revision and the wallet's chain still accepts that target block,
+/// what was saved is history on the chain the wallet follows, which a re-cut
+/// does not change: it stays, the script's gap is read again under the shard
+/// now covering it, and events are kept once per outpoint. The declaration
+/// only says this is a re-cut; nothing it claims about heights or blocks is
+/// relied on.
+///
+/// Otherwise what the revision saved is rolled back from the lowest height it
+/// saved anything at, or the declared start if that is lower; never from the
+/// declared start alone, which the wallet has not checked. A revision that
+/// saved nothing leaves nothing to roll back.
+fn unfinished(
+    pending: &PendingPages,
+    declared: Option<&transparent_filter::SupersededShard>,
+    lowest_saved: Option<u64>,
+    chain: &impl ChainView,
+) -> Unfinished {
+    let declared = declared.filter(|declared| declared.shard_id == pending.shard_id);
+    let target_held = pending.target_anchor.as_ref().is_some_and(|target| {
+        chain.is_accepted(target.height, &target.hash) == Acceptance::Accepted
+    });
+    if declared.is_some_and(|declared| declared.sealed) && target_held {
+        return Unfinished::Drop;
+    }
+    match lowest_saved {
+        Some(lowest) => Unfinished::Rewind(
+            declared.map_or(lowest, |declared| declared.start_height.min(lowest)),
+        ),
+        None => Unfinished::Drop,
+    }
+}
+
+/// Whether `script` has stored history inside `entry`'s range, up to the
+/// target.
+///
+/// By height rather than by the revision that recorded it: an event is kept
+/// once per outpoint, so history first read under a revision a re-cut has
+/// since replaced keeps that revision's name when the new shard is read.
+fn holds_history(
+    events: &[StoredEvent],
+    script: &[u8],
+    entry: &transparent_filter::ShardMapEntry,
+    through: u64,
+) -> bool {
+    let range = entry.start_height..=entry.end_height.min(through);
+    events
+        .iter()
+        .any(|stored| stored.script == script && range.contains(&event_height(&stored.event)))
 }
 
 fn previous_digest_of(map: &ShardMap, shard_id: u64) -> String {
@@ -1348,10 +1611,7 @@ fn read_shard_into<S: WalletStore>(
             let mut unproductive = 0u64;
             let events = store.events()?;
             for script in &matched_scripts {
-                let has_history = events
-                    .iter()
-                    .any(|stored| stored.script == *script && stored.shard_id == entry.shard_id);
-                if has_history {
+                if holds_history(&events, script, entry, target_anchor.height) {
                     found.push(script.clone());
                 } else {
                     unproductive += 1;
@@ -1727,6 +1987,17 @@ fn check_continuation(
     if fresh.start_height != started_from.start_height {
         return Err("its coverage begins at a different height".into());
     }
+    // A re-cut redraws the boundaries this walk was planned over and gives
+    // shard ids to other ranges, even where it lies above everything covered
+    // so far. This sync ends; the next starts from the re-cut map, whose
+    // declaration lets it keep what the store holds.
+    if fresh.recut_epoch() != started_from.recut_epoch() {
+        return Err(format!(
+            "it is re-cut epoch {}, this sync started from epoch {}",
+            fresh.recut_epoch(),
+            started_from.recut_epoch()
+        ));
+    }
     // New geometries may appear as a set grows into another tier; the seal
     // parameters of a geometry already in use may not change, because they are
     // what the boundaries were derived from.
@@ -1768,6 +2039,26 @@ fn check_continuation(
         }
     } else if covered_through >= started_from.start_height {
         return Err("it publishes no shards at all".into());
+    }
+    Ok(())
+}
+
+/// Checks the shard the walk resumes at after a refresh.
+///
+/// The walk resumes by shard id, which is sound only while the id still names
+/// a range starting where the withdrawn one did. `check_continuation` already
+/// refuses a refreshed map that changes covered history or its re-cut epoch,
+/// so with a well-formed map this holds; it is checked again here because
+/// resuming anywhere else would skip or repeat heights.
+fn check_resume(
+    resumed: &transparent_filter::ShardMapEntry,
+    withdrawn: &transparent_filter::ShardMapEntry,
+) -> Result<(), String> {
+    if resumed.start_height != withdrawn.start_height {
+        return Err(format!(
+            "it moves shard {} from height {} to {}",
+            withdrawn.shard_id, withdrawn.start_height, resumed.start_height
+        ));
     }
     Ok(())
 }
@@ -2389,6 +2680,40 @@ fn accepted_at(chain: &impl ChainView, map: &ShardMap, height: u64) -> Result<An
     }
 }
 
+/// The report of a sync stopped because the wallet's chain cannot confirm a
+/// block at `height`: whatever was already rolled back, and nothing read.
+#[allow(clippy::too_many_arguments)]
+fn chain_unknown<S: WalletStore>(
+    store: &S,
+    map: &ShardMap,
+    target_anchor: &Anchor,
+    charges: ByteCharges,
+    height: u64,
+    rolled_back_to: Option<u64>,
+    replaced_revisions: Vec<String>,
+    first_commit: u64,
+) -> Result<SyncReport, SyncError> {
+    let (covered, settled) = coverage_summary(store, map, target_anchor.height)?;
+    Ok(SyncReport {
+        ledger: store.ledger()?,
+        charges,
+        matched_shards: Vec::new(),
+        unproductive_matches: 0,
+        covered_through: covered,
+        settled_through: settled,
+        provisional: provisional_of(store, map)?,
+        map_refreshes: 0,
+        completion: Completion::Incomplete {
+            reason: IncompleteReason::ChainUnknown { height },
+            pending: store.pending()?.len(),
+        },
+        rolled_back_to,
+        replaced_revisions,
+        scripts_added: 0,
+        commits: store.last_commit()? - first_commit,
+    })
+}
+
 fn incomplete_at<S: WalletStore>(
     store: &S,
     reason: IncompleteReason,
@@ -2416,6 +2741,7 @@ fn incomplete_at<S: WalletStore>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapters::StaticChain;
     use transparent_filter::{SealParameters, ShardMapEntry};
 
     fn entry(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardMapEntry {
@@ -2432,7 +2758,6 @@ mod tests {
             txids: 1,
             directory_segments: 1,
             page_segments: 1,
-            txid_segments: None,
             manifest_digest: format!("{:064x}", shard_id + 300),
             revision: 0,
             sealed,
@@ -2457,6 +2782,7 @@ mod tests {
             start_height: 100,
             seal,
             shards,
+            recuts: Vec::new(),
         }
     }
 
@@ -2505,12 +2831,355 @@ mod tests {
     /// Sealed content is immutable, so a shard whose covered range now reads
     /// differently means a different set — not a longer one. This is the check
     /// that makes the resume point provably equal to where coverage stopped.
+    ///
+    /// A declared re-cut is no continuation either, even when it lies wholly above
+    /// what the sync has covered: it gives the ids the walk resumes by to
+    /// other ranges. That sync ends, and the next starts from the re-cut map.
     #[test]
     fn a_re_cut_covered_shard_is_not_a_continuation() {
         let before = map(vec![entry(0, 100, 199, true), entry(1, 200, 249, false)]);
         let mut after = before.clone();
         after.shards[0].end_height = 149;
         assert!(check_continuation(&before, &after, 199).is_err());
+
+        // Shards 1 and 2 re-cut into one, the tail renumbered above it.
+        let before = map(vec![
+            entry(0, 100, 199, true),
+            entry(1, 200, 249, true),
+            entry(2, 250, 299, true),
+            entry(3, 300, 320, false),
+        ]);
+        let mut wide = entry(1, 200, 299, true);
+        wide.revision = 1;
+        wide.manifest_digest = "aa".repeat(32);
+        let mut tail = entry(2, 300, 321, false);
+        tail.revision = 1;
+        tail.manifest_digest = "bb".repeat(32);
+        let undeclared = map(vec![before.shards[0].clone(), wide, tail]);
+        let mut declared = undeclared.clone();
+        declared.recuts.push(transparent_filter::Recut {
+            epoch: 1,
+            from_height: 200,
+            superseded: before.shards[1..]
+                .iter()
+                .map(|entry| transparent_filter::SupersededShard {
+                    shard_id: entry.shard_id,
+                    geometry: entry.geometry.clone(),
+                    start_height: entry.start_height,
+                    end_height: entry.end_height,
+                    terminal_block_hash: entry.terminal_block_hash.clone(),
+                    manifest_digest: entry.manifest_digest.clone(),
+                    revision: entry.revision,
+                    sealed: entry.sealed,
+                })
+                .collect(),
+        });
+        for covered in [199, 249] {
+            assert!(
+                check_continuation(&before, &declared, covered).is_err(),
+                "a declared re-cut ends the sync with {covered} covered"
+            );
+        }
+        assert!(
+            check_continuation(&before, &undeclared, 249).is_err(),
+            "an undeclared re-cut of covered history"
+        );
+        // Wholly above coverage and undeclared, it is the walk's resume
+        // point, not this check, that refuses a shard id moved elsewhere.
+        assert!(check_continuation(&before, &undeclared, 199).is_ok());
+        // The same map refreshed again continues itself.
+        assert!(check_continuation(&declared, &declared, 321).is_ok());
+    }
+
+    /// Stored sealed coverage is found in the map by the height it starts at.
+    /// A re-cut that declares the revision it replaced keeps that coverage
+    /// good; the same re-cut undeclared, or a declaration that disagrees with
+    /// what the store holds, does not.
+    #[test]
+    fn sealed_coverage_is_vouched_for_by_height_or_by_declaration() {
+        let before = map(vec![
+            entry(0, 100, 199, true),
+            entry(1, 200, 249, true),
+            entry(2, 250, 299, true),
+            entry(3, 300, 320, false),
+        ]);
+        let held = |shard: &ShardMapEntry| CoverageRange {
+            script: vec![1],
+            start_height: shard.start_height,
+            end_height: shard.end_height,
+            kind: CoverageKind::Settled,
+            shard_id: shard.shard_id,
+            revision_digest: shard.manifest_digest.clone(),
+            terminal_block_hash: shard.terminal_block_hash.clone(),
+            source_anchor: Some(Anchor {
+                height: shard.end_height,
+                hash: shard.terminal_block_hash.clone(),
+            }),
+        };
+        let mut wide = entry(1, 200, 299, true);
+        wide.revision = 1;
+        wide.manifest_digest = "aa".repeat(32);
+        let mut tail = entry(2, 300, 321, false);
+        tail.revision = 1;
+        tail.manifest_digest = "bb".repeat(32);
+        let undeclared = map(vec![before.shards[0].clone(), wide, tail]);
+        let mut declared = undeclared.clone();
+        declared.recuts.push(transparent_filter::Recut {
+            epoch: 1,
+            from_height: 200,
+            superseded: before.shards[1..]
+                .iter()
+                .map(|entry| transparent_filter::SupersededShard {
+                    shard_id: entry.shard_id,
+                    geometry: entry.geometry.clone(),
+                    start_height: entry.start_height,
+                    end_height: entry.end_height,
+                    terminal_block_hash: entry.terminal_block_hash.clone(),
+                    manifest_digest: entry.manifest_digest.clone(),
+                    revision: entry.revision,
+                    sealed: entry.sealed,
+                })
+                .collect(),
+        });
+        let vouches = |map: &ShardMap, range: &CoverageRange| {
+            vouches_for(map, &map.superseded_index(), range)
+        };
+        for shard in &before.shards[..3] {
+            assert!(vouches(&before, &held(shard)));
+            assert!(vouches(&declared, &held(shard)), "{}", shard.shard_id);
+        }
+        assert!(vouches(&undeclared, &held(&before.shards[0])));
+        assert!(!vouches(&undeclared, &held(&before.shards[1])));
+        assert!(
+            !vouches(&undeclared, &held(&before.shards[2])),
+            "a sealed range whose start the map no longer cuts at"
+        );
+        // A declaration must name what the store holds.
+        let mut moved = held(&before.shards[1]);
+        moved.shard_id = 7;
+        assert!(!vouches(&declared, &moved));
+        let mut longer = held(&before.shards[1]);
+        longer.end_height += 1;
+        longer.source_anchor.as_mut().unwrap().height += 1;
+        assert!(!vouches(&declared, &longer));
+        // A range cut short of its shard is left to the chain checks.
+        let mut clipped = held(&before.shards[1]);
+        clipped.end_height -= 10;
+        assert!(vouches(&undeclared, &clipped));
+        // Without a source anchor, the covered endpoint must be the declared
+        // one; the published revision itself is still matched by digest.
+        let mut legacy = held(&before.shards[1]);
+        legacy.source_anchor = None;
+        assert!(vouches(&declared, &legacy));
+        legacy.terminal_block_hash = "ee".repeat(32);
+        assert!(
+            !vouches(&declared, &legacy),
+            "at the declared end, another block"
+        );
+        // Cut short by a target, it rests on a block inside the range.
+        legacy.end_height -= 10;
+        assert!(vouches(&declared, &legacy));
+        legacy.end_height += 11;
+        assert!(!vouches(&declared, &legacy), "past the declared end");
+        let mut legacy_published = held(&before.shards[0]);
+        legacy_published.source_anchor = None;
+        legacy_published.terminal_block_hash = "ee".repeat(32);
+        assert!(vouches(&declared, &legacy_published));
+    }
+
+    /// A sealed range the map no longer vouches for is a contradiction only
+    /// when the wallet's chain accepts both the block it rests on and the
+    /// block the replacement ends on, at or below the target. A publisher
+    /// that followed a shallow reorg through a just-sealed shard before the
+    /// wallet's chain did is unsettled, not refused, and becomes a reorg once
+    /// the chain moves.
+    #[test]
+    fn a_rewrite_is_refused_only_when_both_blocks_are_on_the_wallets_chain() {
+        let stored = entry(1, 200, 249, true);
+        let held = CoverageRange {
+            script: vec![1],
+            start_height: 200,
+            end_height: 249,
+            kind: CoverageKind::Settled,
+            shard_id: 1,
+            revision_digest: stored.manifest_digest.clone(),
+            terminal_block_hash: stored.terminal_block_hash.clone(),
+            source_anchor: Some(Anchor {
+                height: 249,
+                hash: stored.terminal_block_hash.clone(),
+            }),
+        };
+        let mut replacement = stored.clone();
+        replacement.manifest_digest = "aa".repeat(32);
+        replacement.terminal_block_hash = "bb".repeat(32);
+        let republished = map(vec![entry(0, 100, 199, true), replacement.clone()]);
+        let target = Anchor {
+            height: 260,
+            hash: "cc".repeat(32),
+        };
+        let chain = |at_249: &str| StaticChain {
+            hashes: [(249, at_249.to_string()), (260, target.hash.clone())].into(),
+        };
+        // The wallet's chain still holds the old block: the publisher is
+        // ahead of it through a reorg, or wrong; either way, not yet.
+        assert_eq!(
+            judge_rewrite(
+                &republished,
+                &held,
+                &target,
+                &chain(&stored.terminal_block_hash)
+            ),
+            Rewrite::Unsettled(249)
+        );
+        // Once the chain moves to the publisher's branch, it is a reorg.
+        assert_eq!(
+            judge_rewrite(&republished, &held, &target, &chain(&"bb".repeat(32))),
+            Rewrite::Reorg
+        );
+        assert_eq!(
+            judge_rewrite(&republished, &held, &target, &StaticChain::default()),
+            Rewrite::Unsettled(249)
+        );
+        // Both blocks on the wallet's chain, at different heights: an
+        // undeclared re-cut or a rewrite, and the publisher's alone.
+        let mut wider = replacement.clone();
+        wider.end_height = 259;
+        wider.terminal_block_hash = "dd".repeat(32);
+        let recut = map(vec![entry(0, 100, 199, true), wider.clone()]);
+        let both = StaticChain {
+            hashes: [
+                (249, stored.terminal_block_hash.clone()),
+                (259, "dd".repeat(32)),
+                (260, target.hash.clone()),
+            ]
+            .into(),
+        };
+        assert_eq!(
+            judge_rewrite(&recut, &held, &target, &both),
+            Rewrite::Contradiction
+        );
+        // Not when the replacement ends past the target or is unsealed.
+        let early = Anchor {
+            height: 255,
+            hash: "ee".repeat(32),
+        };
+        assert_eq!(
+            judge_rewrite(&recut, &held, &early, &both),
+            Rewrite::Unsettled(259)
+        );
+        let mut unsealed = recut.clone();
+        unsealed.shards[1].sealed = false;
+        assert_eq!(
+            judge_rewrite(&unsealed, &held, &target, &both),
+            Rewrite::Unsettled(259)
+        );
+    }
+
+    /// Unfinished pages under a revision the map no longer publishes keep
+    /// what they saved only for a declared sealed re-cut whose item's own
+    /// target the chain still accepts; nothing else the declaration says is
+    /// relied on.
+    #[test]
+    fn unfinished_work_keeps_its_events_only_over_an_accepted_target() {
+        let target = Anchor {
+            height: 260,
+            hash: "aa".repeat(32),
+        };
+        let item = PendingPages {
+            id: Some(1),
+            shard_id: 2,
+            revision_digest: "11".repeat(32),
+            script: vec![1],
+            first_page: 0,
+            page_count: 0,
+            inline: Vec::new(),
+            next_ordinal: 0,
+            attempts: 0,
+            validated_events: 0,
+            boundary: None,
+            target_anchor: Some(target.clone()),
+        };
+        let declaration = |shard_id: u64, sealed: bool| transparent_filter::SupersededShard {
+            shard_id,
+            geometry: "recent-8k".into(),
+            start_height: 250,
+            end_height: 299,
+            terminal_block_hash: "bb".repeat(32),
+            manifest_digest: item.revision_digest.clone(),
+            revision: 0,
+            sealed,
+        };
+        let accepting = StaticChain {
+            hashes: [(260, target.hash.clone()), (299, "bb".repeat(32))].into(),
+        };
+        // The target since reorganised away; the declared end still accepted.
+        let reorganised = StaticChain {
+            hashes: [(260, "cc".repeat(32)), (299, "bb".repeat(32))].into(),
+        };
+        let sealed = declaration(2, true);
+        assert_eq!(
+            unfinished(&item, Some(&sealed), Some(255), &accepting),
+            Unfinished::Drop,
+            "declared, sealed, target accepted: the saved events stay"
+        );
+        assert_eq!(
+            unfinished(&item, Some(&sealed), Some(255), &reorganised),
+            Unfinished::Rewind(250),
+            "a declaration whose end the chain accepts cannot keep events read for a target \
+             it no longer accepts"
+        );
+        let mut forged = sealed.clone();
+        forged.start_height = 258;
+        assert_eq!(
+            unfinished(&item, Some(&forged), Some(255), &reorganised),
+            Unfinished::Rewind(255),
+            "never from the declared start alone"
+        );
+        assert_eq!(
+            unfinished(&item, Some(&declaration(2, false)), Some(255), &accepting),
+            Unfinished::Rewind(250),
+            "a declared tail is rolled back"
+        );
+        assert_eq!(
+            unfinished(&item, Some(&declaration(3, true)), Some(255), &accepting),
+            Unfinished::Rewind(255),
+            "a declaration under another id is no declaration of this item"
+        );
+        assert_eq!(
+            unfinished(&item, None, Some(255), &accepting),
+            Unfinished::Rewind(255),
+            "undeclared: from the lowest saved height"
+        );
+        assert_eq!(unfinished(&item, None, None, &accepting), Unfinished::Drop);
+        let unknown = StaticChain::default();
+        assert_eq!(
+            unfinished(&item, Some(&sealed), Some(255), &unknown),
+            Unfinished::Rewind(250),
+            "a target the chain cannot place is not held"
+        );
+        let mut untargeted = item.clone();
+        untargeted.target_anchor = None;
+        assert_eq!(
+            unfinished(&untargeted, Some(&sealed), Some(255), &accepting),
+            Unfinished::Rewind(250)
+        );
+    }
+
+    /// The walk resumes after a refresh only at a shard starting where the
+    /// withdrawn one did; anything else would skip or repeat heights.
+    #[test]
+    fn the_walk_resumes_only_where_the_withdrawn_shard_started() {
+        let withdrawn = entry(2, 250, 299, true);
+        let mut republished = withdrawn.clone();
+        republished.manifest_digest = "aa".repeat(32);
+        republished.end_height = 320;
+        assert_eq!(check_resume(&republished, &withdrawn), Ok(()));
+        let moved = entry(2, 300, 349, true);
+        let error = check_resume(&moved, &withdrawn).unwrap_err();
+        assert!(
+            error.contains("moves shard 2 from height 250 to 300"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -2616,7 +3285,6 @@ mod tests {
                 txids: 1,
                 excluded_scripts: 0,
             },
-            txid_display: None,
             directory_choice: None,
         }
     }

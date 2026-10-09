@@ -52,23 +52,32 @@ ID = re.compile('[a-zA-Z0-9-]{1,64}')
 INPUTS = {'.input-transparent-shard-server':0o755, '.input-shard-control':0o755,
           '.input-transparent-shard-server.service':0o644}
 
-# Qualified main CI 36819961986; native Rust/Cargo/toolchain inputs equal the
-# retained 12ce publication tools. Select portable worker bytes explicitly:
-# the coordinator's target-cpu=native build SIGILLs on AVX2-only recent hosts.
-WORKER_COMPILED_SHA = '80c94f32d7d8cde6615226d41b9cdd7627cc774b'
+# Production since 2026-10-09 runs the transparent-publisher bundle of full CI
+# 37921342549 at a317455e (x86-64-v3): this worker pair on every recent and
+# archive worker, this controller on the coordinator
+# (transparent/evidence/fleet-redeploy-2026-10-09). The coordinator's filter,
+# shard-assign and shard-control stay the frozen 12ce release artifacts. The
+# 2026-10-03 cutover staged the earlier 80c94f32 pair 6db1fa05/6dfe78fa. Select
+# portable bytes explicitly: the coordinator's target-cpu=native build SIGILLs
+# on AVX2-only recent hosts.
+DEPLOYED_SHA = 'a317455e9feecdd2639d5348188c6a2341819a4d'
 WORKER_ROOT = Path('/srv/transparent-activity/portable-workers/releases')
 WORKER_HASHES = {
-    'transparent-shard-server':'6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430',
-    'shard-control':'6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170',
+    'transparent-shard-server':'34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c',
+    'shard-control':'9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66',
+}
+COORDINATOR_HASHES = {
+    'transparent-publish-controller':'13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba',
 }
 
 
 def worker_binary(name):
-    require(name in WORKER_HASHES, 'unsupported portable worker executable')
-    path = WORKER_ROOT/WORKER_HASHES[name]/name
+    pins = {**WORKER_HASHES, **COORDINATOR_HASHES}
+    require(name in pins, 'unsupported portable worker executable')
+    path = WORKER_ROOT/pins[name]/name
     no_links(path)
     require(path.is_file() and path.stat().st_mode & 0o777 == 0o755 and
-            P.checksum(path) == WORKER_HASHES[name], 'portable worker artifact identity/mode differs')
+            P.checksum(path) == pins[name], 'portable worker artifact identity/mode differs')
     return path
 
 
@@ -947,7 +956,7 @@ class ServicePreparation(Preparation):
                 controller.get('initial_publication') == str(P.OUTPUT) and
                 controller.get('fleet_config') == '/opt/transparent-publisher/v11/fleet.json' and
                 controller.get('fleet_command') == str(SOURCE/self.request['source_sha']/'transparent/ops/scripts/transparent-live-fleet.py') and
-                controller.get('source_sha') == (C.SOURCE_SHA if self.candidate else P.RELEASE_SHA) and
+                controller.get('source_sha') == (C.SOURCE_SHA if self.candidate else DEPLOYED_SHA) and
                 controller.get('shadow') is False, 'controller inputs are not the frozen v11 namespace')
         require(fleet.get('state_dir') == '/opt/transparent-publisher/v11/state' and
                 fleet.get('roster') == '/opt/transparent-publisher/v11/roster.json' and

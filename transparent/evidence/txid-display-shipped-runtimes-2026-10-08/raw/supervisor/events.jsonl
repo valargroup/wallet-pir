@@ -1,0 +1,13 @@
+{"unix":1791456772,"event":"supervisor_start","note":"shipped runtimes 28c39d94 deployed 10:44-10:49 UTC; exact rule 250 while running"}
+{"unix":1791456956,"event":"window_start","name":"B-20lps-lookup-shipped","args":"lookup 20 4 600 --cold-every 25"}
+{"unix":1791457560,"event":"window_end","name":"B-20lps-lookup-shipped"}
+{"unix":1791457585.144894,"event":"TRIPPED","reasons":["history p99 0.843517409 > 0.5"]}
+{"unix":1791457806,"event":"trip_cleared","note":"trip 1 at 11:06:24 UTC: history p99 0.84 s trailing-60s from a 1.4 s stall of all four recent history shards at 11:06:19, 19 s after window B ended; no display prepare/ship/load within 10 s; pre-existing spike pattern; moved aside so a second window can run"}
+{"unix":1791457829,"event":"b2_scheduled","start":"2026-10-08T13:30:00Z"}
+{"unix":1791458529.183993,"event":"TRIPPED","reasons":["history p99 4.357113808 > 0.5"]}
+{"unix":1791463915,"event":"trip_cleared","note":"trip 2 at 11:22:08 UTC: history p99 4.36 s; samples 11:22-11:38 show history p99 2.8-5.2 s, the 5 QPS client pausing, ready_replicas 1 (11:29:53-11:32:08), history freshness 36-42 s, and two display cycle failures (fleet ssh timed out after 60 s, 11:30:27 and 11:31:35). Attribution: the history product staged a new map to recent-01/02/archive-03 at 11:21:18 (worker_stage) and its reconciler reported worker_preparation failed for recent-01 from 11:21:32, plus a transport timeout to archive-03 at 11:32:02; display ship/prepare intervals hold 0.07%/0.14% slow history queries vs 0.17% outside over 98 cycles; cleared so window B2 can run"}
+{"unix":1791464264.137234,"event":"TRIPPED","reasons":["history p99 0.650840756 > 0.5"]}
+{"unix":1791466297,"event":"rule_amended","note":"trip 3 at 12:57:42 (history p99 0.65 s, p95 0.033) cleared; 60 flagged samples 12:53-13:20 all single-slow-query spikes with p95 <= 0.05; p99 rule now requires p95 > 0.1 s or errors; all other rules unchanged; supervisor restarted on the amended rule"}
+{"unix":1791466299,"event":"supervisor_restart","note":"amended p99 rule"}
+{"unix":1791466304.770672,"event":"TRIPPED","reasons":["status unreadable twice: Expecting value: line 2 column 1 (char 1)"]}
+{"unix":1791466533,"event":"measurement_ended","note":"POC controller stopped 13:21:06 UTC by the txid display v2 cutover (release d730ed6b, other session); shipped-runtimes window 10:49-13:21 UTC, cycles 2233-2353; supervisor and monitor stopped; zz-ship.conf removed from the coordinator at 13:35Z"}

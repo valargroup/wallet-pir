@@ -1,0 +1,36 @@
+### start 2026-10-09T11:50:44.624Z
+### cmd:
+
+sha256sum $R/transparent-publisher.tar.gz
+python3 -B $SRC/tools/ci/release.py extract --sha $NEW_SHA --kind transparent-publisher --archive $R/transparent-publisher.tar.gz --output $R/binaries
+cat $R/binaries/SHA256SUMS
+chmod -R a-w $R
+$R/binaries/transparent-publish-controller --help >/dev/null && $R/binaries/transparent-shard-server --help >/dev/null && echo executables-run
+ls -la $R $R/binaries
+
+### output:
+23cfeb121738ff7e765689248e65150c8555f554d4698d421264cbfe9615a83c  /opt/transparent-publisher/releases/a317455e9feecdd2639d5348188c6a2341819a4d/transparent-publisher.tar.gz
+3116ba9798d9c9d332cc35142fc2a47ac143f5037e24b854665d5c4fd08091cb  revision
+1c61ed6f967271815775816b77a03bff6f2b59429477a819b3ec2aa2b052ebb3  shard-assign
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  shard-control
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  transparent-publish-controller
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  transparent-shard-server
+executables-run
+/opt/transparent-publisher/releases/a317455e9feecdd2639d5348188c6a2341819a4d:
+total 6108
+dr-x------ 3 root root    4096 Oct  9 11:50 .
+drwxr-xr-x 7 root root    4096 Oct  9 11:50 ..
+dr-xr-xr-x 2 root root    4096 Oct  9 11:50 binaries
+-r--r--r-- 1 root root 6239939 Oct  9 11:50 transparent-publisher.tar.gz
+
+/opt/transparent-publisher/releases/a317455e9feecdd2639d5348188c6a2341819a4d/binaries:
+total 15436
+dr-xr-xr-x 2 root root    4096 Oct  9 11:50 .
+dr-x------ 3 root root    4096 Oct  9 11:50 ..
+-r--r--r-- 1 root root     422 Oct  9 11:50 SHA256SUMS
+-r--r--r-- 1 root root      41 Oct  9 11:50 revision
+-r-xr-xr-x 1 root root 1387992 Oct  9 11:50 shard-assign
+-r-xr-xr-x 1 root root  567536 Oct  9 11:50 shard-control
+-r-xr-xr-x 1 root root 7995752 Oct  9 11:50 transparent-publish-controller
+-r-xr-xr-x 1 root root 5830264 Oct  9 11:50 transparent-shard-server
+### end 2026-10-09T11:50:44.915Z rc=0

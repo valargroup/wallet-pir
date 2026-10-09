@@ -1,0 +1,63 @@
+{
+  "run_id": "txid-display-v2-native-demo-2026-10-08",
+  "started_utc": "2026-10-08T01:27:26Z",
+  "source_sha": "9557d843b6c9e5346d3e0ece9b9549ff4bad22bf",
+  "source_dirty": false,
+  "command": "CARGO_TARGET_DIR=/Users/roman/projects/wallet-pir/target make transparent-txid-demo OFFLINE=1 REPORT=<this directory>/native-demo.json",
+  "profile": "release-fast",
+  "codec": "transparent-txid-display-v2",
+  "schema": "transparent-txid-display-shard-v2",
+  "geometry": "txid-2k (2,048 rows x 4,096 B, one table per bucket, 36 entries per row)",
+  "seal_policy": "demo: n_archive=n_recent=1, archive_target=1, recent_floor=1, reorg_margin=1; mainnet run publishes archive 347499 and recent 347500-347501; genesis run publishes recent 0",
+  "fixture": "transparent/services/transparent-shard-server/examples/fixtures/txid-confirmed.json",
+  "fixture_sha256": "d44ca98d32068ce4a1cd072dcf5d22fe44affb497d8b0839a391fb177f863bd8",
+  "independent_oracle": "examples/fixtures/verify_fixture.py (Python standard library only) derives each 113-byte entry from the raw blocks and fifteen parent transactions",
+  "host": {
+    "os": "macos",
+    "architecture": "aarch64",
+    "cpu": "Apple M4 Max",
+    "ram_bytes": 137438953472,
+    "machine": "arm64"
+  },
+  "network": "zcash-mainnet frozen vectors; loopback HTTP; no runtime external lookup",
+  "workload": "one lookup per eligible transaction (14) after a warm-up lookup, plus absent, below-placement, foreign-codec, wrong-binding and unserved-revision controls; concurrency 1",
+  "results": {
+    "passed": true,
+    "eligible_records": 14,
+    "cases": [
+      {
+        "coinbase": 3,
+        "external_transparent_unshielding": 5,
+        "large_output_list": 3,
+        "multiple_source_scripts": 1,
+        "ordinary_send_with_change": 1,
+        "several_outputs": 4
+      },
+      {
+        "coinbase": 1,
+        "unusual_output_script": 1
+      }
+    ],
+    "per_lookup_after_warmup": {
+      "requests": 2,
+      "upload_bytes": 80400,
+      "download_bytes": 11296
+    },
+    "absent_transcript": [
+      {
+        "reply_bytes": 5648,
+        "request_bytes": 40200,
+        "route": "Query",
+        "status": 200
+      },
+      {
+        "reply_bytes": 5648,
+        "request_bytes": 40200,
+        "route": "Query",
+        "status": 200
+      }
+    ],
+    "corrupted_oracle": "exit nonzero, no report written (qualification.log)"
+  },
+  "limitations": "Server protocol evidence only; trusted publisher; range, tier, bucket and timing leakage. No production capacity, cryptographic release, wallet recovery or Vizor qualification."
+}

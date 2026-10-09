@@ -1,0 +1,34 @@
+{
+  "wrong_pin": {
+    "exit_status": 1,
+    "result": {
+      "category": "oracle_invalid",
+      "duration_seconds": 0.004613569,
+      "passed": false
+    }
+  },
+  "wrong_anchor_hash": {
+    "exit_status": 1,
+    "result": {
+      "category": "oracle_invalid",
+      "duration_seconds": 0.267148302,
+      "passed": false
+    }
+  },
+  "wrong_plaintext_expectation": {
+    "exit_status": 1,
+    "result": {
+      "category": "answer_mismatch",
+      "duration_seconds": 1.208742551,
+      "passed": false
+    }
+  },
+  "control_pass": {
+    "exit_status": 0,
+    "result": {
+      "category": "",
+      "duration_seconds": 1.1815488379999999,
+      "passed": true
+    }
+  }
+}

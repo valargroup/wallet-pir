@@ -30,6 +30,8 @@ pub mod records;
 pub mod seal;
 pub mod tag;
 pub mod txid;
+pub mod txid_v1;
+pub mod txid_v2x;
 
 pub use build::{
     build_shard, candidate_rows, choice_table, place_scripts, placement_order, verify_choice,

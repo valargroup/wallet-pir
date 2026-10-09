@@ -557,7 +557,8 @@ async fn activate_worker(
         "name": name, "role": worker.config.role.as_str(), "ship_ms": ship_ms,
         "prepare_ms": prepare_ms, "activate_ms": activate_ms,
         "built": prepared["built"], "reused": prepared["reused"],
-        "seconds": prepared["seconds"],
+        "shipped": prepared["shipped"], "shipped_fallbacks": prepared["shipped_fallbacks"],
+        "self_check_ms": prepared["self_check_ms"], "seconds": prepared["seconds"],
     }));
     Ok(())
 }

@@ -802,7 +802,6 @@ mod tests {
                 txids: 1,
                 directory_segments: 1,
                 page_segments: 1,
-                txid_segments: None,
                 manifest_digest: format!("{shard_id:064x}"),
                 revision: 0,
                 sealed: true,
@@ -832,6 +831,7 @@ mod tests {
                 },
             )]),
             shards: entries,
+            recuts: Vec::new(),
         };
         (map, records, chain)
     }

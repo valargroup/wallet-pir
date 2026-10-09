@@ -5,7 +5,7 @@
 //! back one block at a time until the stored hash agrees with the node, which
 //! is what makes a reorg a rollback rather than a silently divergent history.
 
-use crate::extract::{extract_block, IndexedEvent};
+use crate::extract::{extract, IndexedEvent};
 use crate::prevout::{prefetch_previous_outputs, OutputCache, ZakuraPreviousOutputs};
 use crate::service::{Phase, ServiceState};
 use crate::store::FilterStore;
@@ -61,7 +61,9 @@ pub struct BuiltFilter {
 pub struct BuiltEvents {
     pub block_hash: BlockHash,
     pub events: Vec<IndexedEvent>,
-    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
+    /// Display source records, one per transaction with a transparent input
+    /// or output, when requested; otherwise empty.
+    pub display: Vec<transparent_shard::txid_v2x::TransparentDisplayRecordV2x>,
     pub rpc_lookups: u64,
     pub cache_hits: u64,
 }
@@ -80,9 +82,10 @@ pub async fn build_block_events(
     zakura: &ZakuraClient,
     cache: &mut OutputCache,
     height: u64,
+    display: bool,
 ) -> Result<BuiltEvents, BoxError> {
     let fetched = zakura.block(height).await?;
-    build_fetched_block_events(zakura, cache, height, fetched).await
+    build_fetched_block_events(zakura, cache, height, fetched, display).await
 }
 
 /// [`build_block_events`] over a block already in hand.
@@ -97,6 +100,7 @@ pub async fn build_fetched_block_events(
     cache: &mut OutputCache,
     height: u64,
     fetched: (String, zakura_chain::block::Block),
+    display: bool,
 ) -> Result<BuiltEvents, BoxError> {
     let (hash_display, block) = fetched;
     let block_hash = BlockHash::from_display_hex(&hash_display)?;
@@ -121,7 +125,7 @@ pub async fn build_fetched_block_events(
         let mut cache_owned = std::mem::replace(cache, OutputCache::new(1));
         move || {
             let mut previous = ZakuraPreviousOutputs::new(&client, runtime, &mut cache_owned);
-            let result = extract_block(&transactions, &mut previous, event_height);
+            let result = extract(&transactions, &mut previous, event_height, display);
             let counts = (previous.rpc_lookups, previous.cache_hits);
             (result, counts.0, counts.1, cache_owned)
         }
@@ -154,7 +158,7 @@ pub async fn build_block_filter(
     cache: &mut OutputCache,
     height: u64,
 ) -> Result<BuiltFilter, BoxError> {
-    let built = build_block_events(zakura, cache, height).await?;
+    let built = build_block_events(zakura, cache, height, false).await?;
     let mut elements: Vec<ScriptBytes> =
         built.events.into_iter().map(|(script, _)| script).collect();
     elements.sort();

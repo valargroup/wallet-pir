@@ -14,7 +14,7 @@ use std::io::Write;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::txid::DisplayRecord;
 
 pub const TIMELINE_FILE: &str = "timeline.jsonl";
 pub const HEIGHTS_FILE: &str = "tooling/heights.bin";
@@ -107,11 +107,7 @@ impl HeightIndex {
         }
     }
 
-    pub fn append(
-        &mut self,
-        height: u64,
-        records: &[TransparentDisplayRecord],
-    ) -> std::io::Result<()> {
+    pub fn append(&mut self, height: u64, records: &[DisplayRecord]) -> std::io::Result<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -169,7 +165,7 @@ mod tests {
         assert_eq!(index.last_height().unwrap(), None);
         for h in [5u64, 6, 8] {
             index
-                .append(h, &[record(h as u32, 10), record(h as u32 + 100, 10)])
+                .append(h, &[record(h as u32, 1), record(h as u32 + 100, 2)])
                 .unwrap();
         }
         index.append(9, &[]).unwrap();

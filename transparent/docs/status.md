@@ -6,6 +6,290 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Wallet regression re-pinned to schema v11, 2026-10-09
+
+The public wallet regression passes again: **11/11 cases and 79/79 syncs** against both
+origins, with all 2,674 requests succeeding first time, at 15:33–15:40 UTC. Since the
+v11 cutover it had stopped at preflight, because its fixture pinned the v10 map and its
+expected events lacked v11's transaction metadata. Nothing in production changed
+([evidence](../evidence/regression-fixture-v11-2026-10-09/README.md)).
+
+- **New fixture.** Exported read-only on the coordinator from the v3 journal by
+  `regression-export` at `66b0b9fb`, against the map both origins served (91 shards, no
+  re-cuts). It pins 90 sealed entries and the tail's continuity. Same 11 cases and scripts;
+  the anchor moved to 3,511,700 and the tier probes to the served boundary 3,289,805,
+  plus one checkpoint at 3,492,693 in continuously published history.
+- **Checked against v10.** Every shared checkpoint reduces identically once events are
+  compared without their appended metadata (new `--event-metadata` comparison mode),
+  and all 46 v10 checkpoints reproduce from the v11 events. Four cases kept transacting
+  since v10 and were accepted as they are.
+- **Cost.** The replay took 3 min 33 s under the usual 12 GiB / two-core idle-priority
+  limits; the build tree was removed afterwards.
+- **Not covered.** Ingest correctness (the fixture shares journal provenance), capacity
+  and application qualification. A future declared re-cut of the publication will need
+  a new export.
+
+## Fleet redeploy to a317455e, 2026-10-09
+
+The history workers and the publisher run `main` at `a317455e`, the release from full-CI run
+37921342549. Roman approved the deploy. Nothing that clients see changed: the publisher still
+declares no re-cuts, and every sealed map entry is the same as before. New on history is runtime
+code that had not served it before: the batched recent hint, admission against memory in use,
+held-byte accounting, restore-slot release and the tail sealer
+([evidence](../evidence/fleet-redeploy-2026-10-09/README.md)).
+
+- **Binaries.**
+  - recent-01, recent-02 and archive-03: `transparent-shard-server` `6db1fa05…` → `34ba7ebb…`,
+    `shard-control` `6dfe78fa…` → `9208555a…`.
+  - Coordinator: `transparent-publish-controller` `a68dca01…` → `13af048e…`. `controller.json`
+    `source_sha` is now `a317455e`, and new publications record it as `tool_sha`.
+  - Unchanged: the coordinator's `shard-assign`, `shard-control` and `transparent-filter-server`,
+    the router, and txid display.
+- **Order.** Each worker was staged and verified with no restart. Then, between 11:59 and 13:08
+  UTC:
+  - recent-01 was rolled, with a 33-minute exact load while the recent tier ran mixed versions;
+  - recent-02 was rolled;
+  - the controller was swapped;
+  - archive-03 was restarted from its disk runtime cache.
+
+  The two-replica roll used `roll-recent-replicas.py` with its other-serving floor set to 1 for
+  this run only; the committed default stays 2.
+- **Outages.**
+  - Recent shards: none. Each replica took 24 s.
+  - Public metadata: at most 3.3 s of 502/503 at the controller restart, not the expected
+    30–60 s.
+  - Archive shards 0–81: 339 s. The shard set loaded in 224 s, then all 164 runtimes were
+    restored from disk in 112 s with no misses.
+  - Publication stalled for the archive window; the first activation after it had 290 s
+    freshness, and the next was back to 12 s.
+- **Validation.**
+  - The 5 QPS exact load ran 30 minutes on the new fleet: 9,088 exact, 0 errors.
+  - Freshness p50 was 12.8 s and max 23.4 s.
+  - Both origins served byte-identical maps, and the sealed prefix equals the pre-deploy map.
+  - Cross-replica setups are identical, and the new `shard-assign` re-serializes the live map.
+  - `txid_live_lookup` passed.
+  - APM opened no incidents; only shadow alerts fired during the archive window.
+  - The independent canary, moved to the v11 fixture by a separate change at 13:50 (below), has
+    passed every sample since, all of them against the fully redeployed fleet: 30 successes and
+    no failures at 14:19.
+  - All workers are warm. archive-03 uses 33.6 GB and has 30.5 GiB available.
+  - Coordinator `/srv/zakura` has 22.8% free.
+- **20 QPS.** 10 minutes on top of the 5 QPS load: 12,290/12,290 exact, 0 errors, 20.51 QPS,
+  p50 17 ms, p99 59 ms. On 2026-09-30 (v10, three recent replicas) p99 was 48 ms; on 2026-09-29
+  (v10, two replicas) it was 53 ms. The 423 missed slots came from the client host, which was
+  also running CI builds.
+- **Not covered.**
+  - The wallet regression still stops with publication drift: its fixture pins the v10 map. No
+    wallet sync ran against production.
+  - Txid display was not redeployed.
+- **Deviation.** The 5 QPS load stayed stopped about 21 minutes longer than needed after the
+  archive was warm.
+- **Rollback.** Material is under `/opt/transparent-publisher/rollback/roll-a317455e/` on each
+  worker. For the controller, copies of the previous binary (`a68dca01…`, also in the `12ce1291`
+  release artifacts) and of `controller.json` are in `/root/deploy-a317455e` on the coordinator.
+- **Pins.** Operations source now selects this release's worker pair (`34ba7ebb…`,
+  `9208555a…`) and controller (`13af048e…`) for version-1 schema operations, and
+  attributes reconciler controls to the live adapter `35b6b436…` and worker `shard-control`.
+  Neither that source nor the portable copies are staged on the coordinator, where the
+  bundle sits read-only under `/opt/transparent-publisher/releases/a317455e…/binaries`.
+  A read-only look at the coordinator on 2026-10-09 found:
+  - `portable-workers/releases` holds only `6db1fa05…` and `6dfe78fa…`;
+  - the `4c85b6c2` tree's adapter is `35b6b436…`, while its staged receipt still records
+    `f3df5c53…`;
+  - the reconciler runs that adapter from its pinned fragment `869e2606…`, active since
+    2026-10-07 15:45 UTC.
+
+  So the 2026-10-03 transaction's recorded rollback, which runs from `4c85b6c2`, fails that
+  tree's receipt check (see
+  [remaining work](remaining-work.md#transparent-operations-after-the-2026-10-09-redeploy)).
+
+## Quality monitoring after the v11 cutover, 2026-10-09
+
+A read-only production inspection on 2026-10-09 found two monitoring inputs that
+the 2026-10-03 v11 cutover left behind. Serving was not affected.
+
+- **Transparent canary failing.** The independent canary on `wallet-pir-monitor-01`
+  reported `oracle_invalid` on every sample: 129 failures, no successes. Its fixture
+  is the 2026-09-29 v10 load fixture, and the canary refuses a fixture whose schema
+  differs from the service's. Its binary is also from before v11: it binds every
+  query to schema v10, so a v11 fixture alone would not make it pass.
+- **APM Transparent view stale.** pir-apm read the pre-v11 roster and the v10
+  load's `status.json`, last written 2026-10-03 17:35 UTC.
+  `/etc/pir-quality/qualified-workers.json` still names the destroyed recent-08;
+  it is the stopped v10 load's pin file, which nothing current reads.
+- **Source fix.** The canary now binds queries to its fixture's schema. A new
+  script derives its pins from the v11 load fixture, and another moves the APM and
+  probe configs. See [observability alerting](../../enhance/docs/observability-alerting.md#seven-day-quality-history-and-transparent-page).
+- **Deployed 13:50 UTC.** The canary was rebuilt from `854f5677`, given the v11
+  load fixture with its anchor at block 3,488,499, and has passed every sample
+  since. Its two shadow incidents closed. APM now reads the v11 roster and load
+  status, which is fresh. Only `pir-monitor` and `pir-apm` were restarted
+  ([evidence](../evidence/quality-monitoring-v11-2026-10-09/README.md)).
+- **Open.** The service and quality alert families stay in shadow pending their
+  24-hour review.
+
+## Sealed tier boundary rule, 2026-10-08
+
+`main` at `569f68e6` changes how `shard-cutoff` picks the boundary between the archive and recent
+tiers. It still finds the height six calendar months before the anchor. It then moves the boundary
+back to the start of the archive shard that is still filling at that height, so the last archive
+shard is sealed when it is full rather than cut off part-way. No publication or cutover was made:
+v11 keeps serving with `recent_from` 3,289,805.
+
+- **Checked on the live journal.** The new tool was run read-only on the coordinator at v11's
+  anchor, 3,500,738
+  ([evidence](../evidence/tier-boundary-sealed-2026-10-08/README.md)):
+  - the six-month height is 3,289,805, the same as v11's;
+  - the boundary moves back to **3,231,753**, with 81 archive shards before it;
+  - this matches the live map: shards 0–80 are sealed and full, and shard 81 starts at
+    3,231,753, with the same hash on both sides of the boundary;
+  - live shard 81, cut short by the old rule, is 23.6% full.
+- **Next full publication.** At the journal tip, 3,511,195, the six-month height is 3,301,394,
+  but the boundary is still 3,231,753, again with 81 archive shards. A full publication made now
+  would start the recent tier there. The boundary only moves in whole archive shards.
+- **Cost.** Each run took 20–24 minutes on the coordinator, under a 12 GiB, two-core limit at
+  idle priority, most of it replaying 3.3 million blocks. The process peaked under 700 MiB.
+- **Recent replicas.** The recent tier would gain heights 3,231,753–3,289,804, about two more
+  recent shards (11 instead of 9; the count could be one higher or lower). Each recent shard
+  reserves 176.1 MiB of a replica's 5 GiB runtime cache, and uses about 112 MiB once built.
+  - Eleven shards fill 38% of the cache; the planner allows 27.
+  - Available host memory would fall from 71% to about 68% on recent-01, and from 77% to about
+    75% on recent-02.
+  - The shard server would use about 1.5 GB of its 7 GiB `MemoryMax`.
+  - Both replicas have room. The bytes per shard are high confidence and the shard count medium.
+
+## Txid display v2 in production from genesis, 2026-10-08
+
+Production `/v1/txid/` serves [txid display v2](txid-display.md) from height 1.
+v1 is retired. Roman approved the host, the deploy and v1's retirement. There
+were no clients, so v2 replaced v1 directly, with no side-by-side lineage.
+
+- **Root.** Bootstrapped offline on the coordinator from the v2x genesis
+  journal (`/srv/txid-display-genesis/journal-v2x`, 3,508,674 blocks) into
+  `/srv/txid-display-genesis/v2/root`, map `d5ab07a7…`:
+  - `txid-2k`, 40,000-entry archives, `max_archive_shards` 1,000;
+  - 425 sealed archives plus recent, 17,024,723 entries;
+  - every archive is one table, at most 54.5% full.
+
+  Census:
+  - all history: 62.3% of entries complete;
+  - the last six months (29 archives): 86.0% complete, 7.6% with more than two
+    outputs, 6.4% with several source scripts (not an omission for a wallet's
+    own multi-address send).
+- **Hosts.**
+  - Archive owner: the new `transparent-pir-txid-display-01`
+    (`m-8vcpu-64gb`, 10.142.0.6; `transparent-txid-display.tf`). Unit: 24 GiB
+    cache, 40G `MemoryMax`, 4 build threads.
+  - Recent replica: recent-01, 2 build threads, `CPUQuota` 200%, no drop-ins.
+  - Controller: the coordinator, `replay-then-live`.
+  - Release: CI full `d730ed6b`.
+
+  Expected memory is about 426 tables × 40.05 MiB = 16.7 GiB, plus about
+  2.5 GiB a year.
+- **Deploy.** `txid-display-*` phases `stage`, `workers`, `route` and
+  `controller` with a v2 request (local deploy state). The v1 firewall rule and
+  router hook stayed in place. Three faults surfaced, all fixed:
+  - the coordinator's publisher known_hosts lacked the new host;
+  - recent-01 kept v1 worker state, which the v2 worker refuses;
+  - the route check read the full map through a 64 KiB helper (`33a63988`).
+- **Verified.** Vizor's `txid_live` passed against production:
+  - a found lookup in 4.0 s with two queries;
+  - an absent txid sends the identical transcript;
+  - a height below the window sends no query;
+  - the txid is in no request.
+
+  `covered_through` followed the tip after the controller started.
+- **Retired.** archive-03's display worker is removed, which returns up to 6G
+  to history.
+
+  Deleted:
+  - the v1 journal and root on the coordinator;
+  - the v1 genesis journal and build directories on the dedicated volume;
+  - v1 worker data on archive-03 and recent-01;
+  - superseded releases.
+
+  Kept: `/srv/zakura/txid-display-poc/measure`.
+- **Not done.**
+  - Shipped runtimes are not enabled for v2.
+  - Wallet clients ship with zakura-core/wallet-libraries#127 and
+    chainapsis/vizor-wallet#885.
+  - Wallet databases created by #879 builds keep the pre-v2 display table; use a fresh wallet database.
+
+## Txid display v2 on `main`, 2026-10-08
+
+`main` now carries [txid display v2](txid-display.md): fixed 113-byte entries
+with the first address-shaped source, outputs 0–1 and named omissions, in one
+table per bucket. History-attached display is removed.
+
+- **Deploy gate.** Do not redeploy txid display from `main` until the v2
+  cutover. The v1 proof of concept keeps running its deployed binaries.
+  `main` derives entries only from v2x source sidecars and serves only v2
+  tables. It reads v1 sidecars only for the oversized history events they
+  hold. The last v1 source is `a368f19b`.
+- **Local evidence.** `make transparent-txid-demo` passed on the frozen
+  mainnet and genesis vectors. All 14 eligible entries matched the independent
+  Python derivation, both after extraction and through PIR lookups. Every
+  lookup, found or absent, sent two queries of 40,200 B and received two
+  replies of 5,648 B. `--corrupt-oracle` failed as required.
+- **Superseded** by the production deployment above.
+
+## Shipped txid display runtimes deployed, 2026-10-08
+
+`--ship-runtimes` ran on the tiered proof of concept from 10:49 to 13:21 UTC, when
+the proof of concept was stopped for the txid display v2 cutover
+([evidence](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md)). Over
+121 cycles: controller prebuild p50 2.8 s, worker prepare p50 1.4 s (was 7.0 s),
+worker CPU 1.5 CPU-s per block (was 11.5–15), 242 shipped loads and 0 fallbacks,
+recent lookup p99 during loads 1.37× the quiet tail (was 2.5×). Block to serving
+p50 6.7 s (was 8.5 s) but p95 29.9 s (was 12.4 s): the 96 MiB candidate copy to
+recent-01 took p50 1.8 s and p95 10.2 s, with 53 of 121 copies over 2 s, so the
+copy tail now owns the block-to-serving tail. History on recent-01 stayed within
+its hourly prewarm range except during another session's bootstrap on the
+coordinator; its multi-second query stalls did not cluster in display copy or
+load intervals. v2 runs without `--ship-runtimes`; the follow-ups are in
+[remaining work](remaining-work.md#txid-display-shipped-runtimes).
+
+## Shipped txid display runtimes, 2026-10-07
+
+`txid-display-controller run --ship-runtimes` ([design](txid-display.md#shipped-recent-runtimes))
+is on `main`, off by default and not deployed. With it the controller builds
+the recent revision's runtimes and ships them at the candidate root; the
+recent replica loads and self-checks them instead of building, and builds
+locally, counted, when a file is missing or refused.
+
+[Pre-deploy bench](../evidence/txid-display-shipped-runtimes-bench-2026-10-07/README.md)
+on roman-dev-2, synthetic chain, controller and worker each on two CPUs:
+- 40.05 MiB per file, 80.09 MiB per block (estimate 80–140 MiB).
+- Controller prebuild p50 4.36 s, p95 5.19 s; worker prepare p50 3.62 → 1.33 s
+  and CPU per block 5.80 → 1.15 CPU-s; 0 fallbacks in 48 loads.
+- Local rsync of one block's delta: 96 MiB in p50 0.33 s. The private-network
+  copy is not measured; production copied a 16 MiB delta in p95 2.37 s.
+- On equal CPUs the controller cycle got slower, p50 4.2 → 6.4 s: the prebuild
+  is on the critical path. Whether production gets faster depends on the
+  coordinator out-building recent-01 under history load, which only the
+  deploy can show.
+
+## Txid display genesis census and layout, 2026-10-08
+
+The genesis display journal completed on the coordinator at 22:56:45 UTC on
+2026-10-07: 3,508,674 blocks and 17,024,724 display records. A read-only
+journal census ran over it
+([evidence](../evidence/txid-display-genesis-census-2026-10-07/README.md)),
+and the layout analysis was derived offline from that census.
+
+- **Inline.** 92.5% of records are at most 128 bytes. No fee is unknown.
+- **Pages.** Old archives need far more page rows than live ones. A 40,000-record
+  archive needs a median of 8,034 rows in Sprout and 116–197 from NU6.1 on, and
+  up to 17,375. At `txid-2k` that is 899 page segments, so genesis needs
+  **1,325 runtimes and 51.8 GiB** built, not 850 and 33.2 GiB.
+- **Host.** The analysis recommends `m-16vcpu-128gb` with today's layout:
+  a 71G `MemoryMax` with a year of growth. On the 64 GB host, only 80,000-record
+  archives before NU6 fit.
+- **Anonymity.** Sharing pages changes no anonymity class under per-archive
+  lookup.
+
+Nothing was built or deployed. Runtime sizes above 4,096 rows are unmeasured.
+
 ## Split txid display map, 2026-10-07
 
 The split map ([design](txid-display.md#split-map)) is on `main`, not deployed.
@@ -219,9 +503,9 @@ This task did not observe it: it had no deploy inventory or SSH. Nothing
 serves from that journal yet. Bootstrap, the cutover and the host remain
 proposals.
 
-**Host decision deferred.** The display-archive host is not chosen yet. It waits
-on layout experiments on real data. For example, shared or smaller page tables
-could shrink page-table memory and change the host class.
+**Host decision deferred** (as of 2026-10-07). The display-archive host was
+not chosen yet; it waited on layout experiments on real data. Those are now
+done ([above](#txid-display-genesis-census-and-layout-2026-10-08)).
 
 Planning only; nothing was changed. At 16:05 UTC the public maps had these
 values:

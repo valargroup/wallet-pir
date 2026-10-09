@@ -1,0 +1,29 @@
+### start 2026-10-09T12:59:26.020Z
+### cmd:
+cat $DEP/steps/p7-archive.sh; echo ---; bash $DEP/steps/p7-archive.sh
+### output:
+# Phase 7: archive-03 onto the new binary from its disk runtime cache (install_worker under the lock).
+. /root/deploy-a317455e/env.sh
+systemctl is-active transparent-5qps-continuous && systemctl stop transparent-5qps-continuous
+grep -E 'caddy_http_request_duration_seconds_count\{code="5' /var/lib/pir-apm/edge.prom > $DEP/router-5xx-before-archive.prom || true
+date -u +%FT%TZ | tee $DEP/archive-start
+s=$(date +%s)
+flock -n -E 75 $LOCK timeout 2700 python3 -B $DEP/install-worker.py $S $FLEET transparent-pir-archive-03 $R/binaries $OUT/transparent-pir-archive-03 install 2>&1 | tee $DEP/archive-03.log
+rc=${PIPESTATUS[0]}; date -u +%FT%TZ | tee $DEP/archive-end; echo "archive-03 install rc=$rc wall=$(( $(date +%s) - s ))s"; exit $rc
+---
+active
+2026-10-09T12:59:26Z
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.273633, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.010936, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.056942, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.056179, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.028012, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 217.110021, "exit_code": 0}
+[2m2026-10-09T13:03:04.068886Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m82 [3mrevisions[0m[2m=[0m82 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"c1f5597767c3a552a8605e63c6160e8e3d86bd0001384831e25008d7f5661ab1" [3mworker_id[0m[2m=[0m"transparent-pir-archive-03" [3massignment_sha256[0m[2m=[0m"67182ffac432f90ee7c01c6e2ac6c26ce235f39cae744e9ac1724e470c543c34" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3511783
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.011602, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 2.486249, "exit_code": 0}
+transparent-pir-archive-03: warm with publication control
+{"worker": "transparent-pir-archive-03", "mode": "install", "done": true}
+2026-10-09T13:08:47Z
+archive-03 install rc=0 wall=561s
+### end 2026-10-09T13:08:47.075Z rc=0

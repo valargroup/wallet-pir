@@ -1,0 +1,17 @@
+{
+  "archive_geometry": "archive-wide",
+  "data_dir": "/srv/transparent-activity/full-v3/journal",
+  "directory_choice": "all",
+  "fleet_command": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py",
+  "fleet_config": "/opt/transparent-publisher/v11/fleet.json",
+  "initial_publication": "/srv/transparent-activity/full-v11/publications/initial",
+  "listen": "127.0.0.1:8094",
+  "publication_root": "/srv/transparent-activity/full-v11/publications",
+  "range_profile": "zcash-transparent-range-v2",
+  "recent_from": 3289805,
+  "recent_geometry": "recent-4k-8k",
+  "rpc_cookie": "/root/.cache/zakura/.cookie",
+  "rpc_url": "http://127.0.0.1:8232",
+  "shadow": false,
+  "source_sha": "a317455e9feecdd2639d5348188c6a2341819a4d"
+}

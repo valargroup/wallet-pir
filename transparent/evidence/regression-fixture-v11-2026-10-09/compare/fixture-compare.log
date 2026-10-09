@@ -1,0 +1,33 @@
+  anchor 3499341 -> 3511887
+  cutoff 3262749 -> 3289805
+  map 3780f252bde6256f... -> 2a8709b23a85e339...
+  event metadata: events compared by their legacy 87-byte encoding; UTXOs, spends, history and balance exactly
+
+case                                  events         utxos             balance
+unused-p2pkh                               0             0                   0
+unused-p2sh                                0             0                   0
+small-active                            1->2          1->0         75441400->0
+zero-balance                               4             0                   0
+old-receive-recent-spend                   2             0                   0
+offline-receive-spend                      2             0                   0
+active-p2sh                             1->2          1->0          1000000->0
+reused-pages                        106->647         2->1555747589938->646128415038
+multi-script-self-transfer          478->488           140             3150355
+recent-birthday                           12             0                   0
+coinbase                          1643->2937         3->27375623399->3381309030
+
+BLOCKING (0): every shared checkpoint reduces identically
+
+REVIEW (10) -- decide each before freezing:
+  - active-p2sh: balance 1000000 -> 0 at the anchor (> 25%)
+  - coinbase: events 1643 -> 2937 at the anchor (> 25%)
+  - coinbase: utxos 3 -> 27 at the anchor (> 25%)
+  - coinbase: balance 375623399 -> 3381309030 at the anchor (> 25%)
+  - multi-script-self-transfer: no checkpoint height in common to cross-check
+  - recent-birthday: no checkpoint height in common to cross-check
+  - reused-pages: events 106 -> 647 at the anchor (> 25%)
+  - reused-pages: utxos 2 -> 15 at the anchor (> 25%)
+  - reused-pages: balance 55747589938 -> 646128415038 at the anchor (> 25%)
+  - small-active: balance 75441400 -> 0 at the anchor (> 25%)
+
+wrote /private/tmp/claude-501/-Users-roman-projects-wallet-pir--claude-worktrees-affectionate-wright-3a72f9/10c749d6-dea3-49ea-99ff-fdd14ed4e77a/scratchpad/v11/compare/fixture-compare.json

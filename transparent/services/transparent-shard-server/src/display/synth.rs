@@ -1,6 +1,6 @@
 //! Synthetic display publications for tests, local benches and tooling.
 //!
-//! Writes the layout the display controller writes, from records supplied by
+//! Writes the layout the display controller writes, from entries supplied by
 //! the caller: immutable `sealed/<digest>/` and `recent/<digest>/` revision
 //! directories, and candidate directories that hard-link them beside a
 //! `txid-shards.json`. Block hashes are a deterministic function of height, so
@@ -9,13 +9,13 @@
 use super::set::{index_file, MANIFEST_FILE, MAP_FILE, RECENT_MAP_FILE};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use transparent_events::{FeeState, TransactionMetadata, Txid};
+use transparent_events::Txid;
 use transparent_shard::display::{
     build_shard, DisplayManifest, DisplayMap, DisplayMapEntry, DisplaySealParams, ManifestHeader,
     DISPLAY_SCHEMA,
 };
 use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
+use transparent_shard::txid::{DisplayEntry, DisplayFacts, DisplayOutput};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 
@@ -50,14 +50,11 @@ pub fn txid(seed: u64, index: u64) -> Txid {
     )
 }
 
-/// A non-coinbase record with one output whose script is `script_len` bytes,
-/// plus `extra_outputs` standard 25-byte outputs.
-pub fn record(
-    seed: u64,
-    index: u64,
-    script_len: usize,
-    extra_outputs: usize,
-) -> TransparentDisplayRecord {
+/// A non-coinbase entry with one output whose script is `script_len` bytes
+/// (a P2PKH script when 25, otherwise a script with no address), plus
+/// `extra_outputs` P2PKH outputs. Every seventh is shielded change; every
+/// eleventh spends two distinct scripts.
+pub fn record(seed: u64, index: u64, script_len: usize, extra_outputs: usize) -> DisplayEntry {
     let p2pkh = |tag: u64| {
         let mut script = vec![0x76, 0xa9, 0x14];
         script.extend_from_slice(&Sha256::digest(tag.to_le_bytes())[..20]);
@@ -76,21 +73,55 @@ pub fn record(
         value: 546 + i,
         script: p2pkh(index ^ (i << 40)),
     }));
-    TransparentDisplayRecord {
+    let fee = 1_000 + index % 9_000;
+    let paid: u64 = outputs.iter().map(|o| o.value).sum::<u64>() + fee;
+    let inputs = 1 + (index % 3);
+    let spent = (0..inputs)
+        .map(|i| DisplayOutput {
+            value: if i == 0 { paid - (inputs - 1) } else { 1 },
+            script: p2pkh(if index.is_multiple_of(11) {
+                1 << 50 | i
+            } else {
+                1 << 50
+            }),
+        })
+        .collect();
+    DisplayFacts {
         txid: txid(seed, index),
         coinbase: false,
-        metadata: TransactionMetadata {
-            fee: FeeState::Exact(1_000 + index % 9_000),
-            transparent_input_count: 1 + (index % 3) as u32,
-            has_shielded_components: index.is_multiple_of(7),
-        },
+        fee,
+        has_shielded_components: index.is_multiple_of(7),
+        spent,
         outputs,
     }
+    .entry()
+    .expect("a synthetic entry is valid")
 }
 
-/// `n` records with a mainnet-like size mix: about 88% inline, 8% one page,
-/// 2.5% two pages, 1% three pages and 0.5% five pages.
-pub fn records(n: usize, seed: u64) -> Vec<TransparentDisplayRecord> {
+/// An unshielding entry: no transparent input, one P2PKH output.
+pub fn unshield(seed: u64, index: u64) -> DisplayEntry {
+    let mut script = vec![0x76, 0xa9, 0x14];
+    script.extend_from_slice(&Sha256::digest(index.to_le_bytes())[..20]);
+    script.extend_from_slice(&[0x88, 0xac]);
+    DisplayFacts {
+        txid: txid(seed, index),
+        coinbase: false,
+        fee: 10_000,
+        has_shielded_components: true,
+        spent: Vec::new(),
+        outputs: vec![DisplayOutput {
+            value: 50_000 + index,
+            script,
+        }],
+    }
+    .entry()
+    .expect("a synthetic entry is valid")
+}
+
+/// `n` entries with a mainnet-like case mix: mostly one recipient, then
+/// zcashd-style two outputs, unshielding, more than two outputs and a few
+/// outputs without an address.
+pub fn records(n: usize, seed: u64) -> Vec<DisplayEntry> {
     (0..n as u64)
         .map(|index| {
             let draw = u64::from_le_bytes(
@@ -100,17 +131,17 @@ pub fn records(n: usize, seed: u64) -> Vec<TransparentDisplayRecord> {
             );
             let spread = (draw >> 16) as usize;
             match draw % 1_000 {
-                0..=879 => record(seed, index, 25, spread % 3),
-                880..=959 => record(seed, index, 150 + spread % 3_850, 0),
-                960..=984 => record(seed, index, 4_100 + spread % 3_900, 0),
-                985..=994 => record(seed, index, 8_200 + spread % 3_900, 0),
-                _ => record(seed, index, 16_300 + spread % 3_800, 0),
+                0..=699 => record(seed, index, 25, 0),
+                700..=879 => record(seed, index, 25, 1),
+                880..=939 => unshield(seed, index),
+                940..=979 => record(seed, index, 25, 2 + spread % 5),
+                _ => record(seed, index, 1 + spread % 80, spread % 2),
             }
         })
         .collect()
 }
 
-/// What one shard revision is, apart from its records.
+/// What one shard revision is, apart from its entries.
 #[derive(Clone, Debug)]
 pub struct ShardSpec {
     pub shard_id: u64,
@@ -144,7 +175,7 @@ impl Published {
 pub fn write_shard(
     root: &Path,
     spec: &ShardSpec,
-    records: &[TransparentDisplayRecord],
+    records: &[DisplayEntry],
 ) -> Result<Published, Error> {
     let built = build_shard(spec.shard_id, spec.geometry, spec.n_buckets, records)
         .map_err(|error| error.0)?;
@@ -291,23 +322,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_size_mix_spans_inline_and_every_page_class() {
-        let records = records(4_000, 1);
-        let mut pages = std::collections::BTreeMap::new();
-        for record in &records {
-            let len = record.encode().unwrap().len();
-            let class = if len <= transparent_shard::txid::INLINE_BYTES {
-                0
-            } else {
-                len.div_ceil(4_050)
-            };
-            *pages.entry(class).or_insert(0usize) += 1;
-        }
-        assert!(pages[&0] > 3_300, "{pages:?}");
-        for class in [1, 2, 3, 5] {
-            assert!(pages.contains_key(&class), "{pages:?}");
-        }
-        assert_eq!(pages.keys().max(), Some(&5));
+    fn the_case_mix_spans_regular_and_every_omission() {
+        let entries = records(4_000, 1);
+        let complete = entries.iter().filter(|e| e.is_complete()).count();
+        assert!(complete > 2_800, "{complete}");
+        assert!(entries
+            .iter()
+            .any(|e| e.input_count == 0 && e.shielded_components));
+        assert!(entries.iter().any(|e| e.more_than_two_outputs()));
+        assert!(entries.iter().any(|e| e.multiple_source_scripts));
+        assert!(entries
+            .iter()
+            .any(|e| e.outputs[0].is_some_and(|o| !o.address.is_address())));
     }
 
     #[test]

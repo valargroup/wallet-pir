@@ -1,0 +1,8 @@
+/opt/transparent-txid-display/releases/28c39d94-ship/transparent-txid-server: OK
+cp: warning: behavior of -n is non-portable and may change in future; use --update=none instead
+activation observed, seal queue empty
+active
+ExecStart={ path=/opt/transparent-txid-display/releases/28c39d94-ship/transparent-txid-server ; argv[]=/opt/transparent-txid-display/releases/28c39d94-ship/transparent-txid-server --listen 10.142.0.10:8095 --role recent-replica --cache-byte
+CPUWeight=50
+CPUQuotaPerSecUSec=2s
+Environment=RUST_LOG=info TRANSPARENT_BUILD_THREADS=2

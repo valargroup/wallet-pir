@@ -1,0 +1,180 @@
+year archives 63.7; directory load at 2,048 rows: {'Sprout': 0.474, 'Overwinter': 0.476, 'Sapling': 0.484, 'Blossom': 0.489, 'Heartwood': 0.471, 'Canopy': 0.537, 'NU5': 0.526, 'NU6': 0.47, 'NU6.1': 0.459, 'NU6.2': 0.464, 'NU6.3': 0.453}
+
+census shared allocations re-priced (GiB held [lo, hi]; reserved):
+  txid-2k  k=1  page segments [899, 899]   held [51.8, 51.8]   reserved [93.2, 93.2]
+  txid-4k  k=1  page segments [588, 588]   held [47.6, 47.6]   reserved [79.3, 79.3]
+  txid-2k  k=4  page segments [685, 739]   held [43.4, 45.6]   reserved [78.2, 82.0]
+  txid-4k  k=4  page segments [391, 391]   held [38.3, 38.3]   reserved [63.9, 63.9]
+  txid-2k  k=16 page segments [667, 681]   held [42.7, 43.3]   reserved [76.9, 77.9]
+  txid-4k  k=16 page segments [342, 342]   held [36.0, 36.0]   reserved [60.0, 60.0]
+  txid-2k  k=64 page segments [663, 666]   held [42.6, 42.7]   reserved [76.6, 76.8]
+  txid-4k  k=64 page segments [334, 334]   held [35.7, 35.7]   reserved [59.4, 59.4]
+
+txid-2k (today)                                            runtimes 1325 pages  899 held  51.8 GiB reserved  93.2; MemoryMax  71G fits ['m-16vcpu-128gb']; reserved MemoryMax 127G fits []; disk  66.8 GB; mean warm  99302 B
+    Sprout     p50  8034 rows ->  2048 x4  warm 0/1/4  92496 155688 345264 cold 120513 265705 455281 | max 17375 ->  2048 x9  warm 1/4 183928 458224
+    Overwinter p50  4055 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max  7245 ->  2048 x4  warm 1/4 155688 345264
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  2048 x2  warm 1/4 144392 300080
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max  3875 ->  2048 x2  warm 1/4 144392 300080
+    Canopy     p50  2471 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max  4445 ->  2048 x3  warm 1/4 150040 322672
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  2048 x3  warm 1/4 150040 322672
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+txid-4k                                                    runtimes 1014 pages  588 held  47.6 GiB reserved  79.3; MemoryMax  67G fits ['m-16vcpu-128gb']; reserved MemoryMax 112G fits []; disk  68.1 GB; mean warm 125171 B
+    Sprout     p50  8034 rows ->  4096 x2  warm 0/1/4 117584 182024 375344 cold 145601 251041 444361 | max 17375 ->  4096 x5  warm 1/4 198968 443120
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  7245 ->  4096 x2  warm 1/4 182024 375344
+    Sapling    p50  2036 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  3772 ->  4096 x1  warm 1/4 176376 352752
+    Blossom    p50  1138 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  1452 ->  4096 x1  warm 1/4 176376 352752
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  3875 ->  4096 x1  warm 1/4 176376 352752
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  4445 ->  4096 x2  warm 1/4 182024 375344
+    NU5        p50  1400 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  5150 ->  4096 x2  warm 1/4 182024 375344
+    NU6        p50   176 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max   993 ->  4096 x1  warm 1/4 176376 352752
+    NU6.1      p50   197 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max   250 ->  4096 x1  warm 1/4 176376 352752
+    NU6.2      p50   176 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max   181 ->  4096 x1  warm 1/4 176376 352752
+    NU6.3      p50   116 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max   620 ->  4096 x1  warm 1/4 176376 352752
+2k directory, 4k pages                                     runtimes 1014 pages  588 held  44.2 GiB reserved  75.9; MemoryMax  62G fits ['m-16vcpu-128gb']; reserved MemoryMax 107G fits []; disk  60.9 GB; mean warm 100083 B
+    Sprout     p50  8034 rows ->  4096 x2  warm 0/1/4  92496 156936 350256 cold 120513 225953 419273 | max 17375 ->  4096 x5  warm 1/4 173880 418032
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  4096 x2  warm 1/4 156936 350256
+    Sapling    p50  2036 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  1452 ->  4096 x1  warm 1/4 151288 327664
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  4096 x2  warm 1/4 156936 350256
+    NU5        p50  1400 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  5150 ->  4096 x2  warm 1/4 156936 350256
+    NU6        p50   176 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max   993 ->  4096 x1  warm 1/4 151288 327664
+    NU6.1      p50   197 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max   250 ->  4096 x1  warm 1/4 151288 327664
+    NU6.2      p50   176 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max   181 ->  4096 x1  warm 1/4 151288 327664
+    NU6.3      p50   116 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max   620 ->  4096 x1  warm 1/4 151288 327664
+2k directory, 8k pages                                     runtimes  895 pages  469 held  46.0 GiB reserved  74.0; MemoryMax  66G fits ['m-16vcpu-128gb']; reserved MemoryMax 106G fits []; disk  68.7 GB; mean warm 102799 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  3772 ->  8192 x1  warm 1/4 176376 428016
+    Blossom    p50  1138 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  1452 ->  8192 x1  warm 1/4 176376 428016
+    Heartwood  p50  3009 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  3875 ->  8192 x1  warm 1/4 176376 428016
+    Canopy     p50  2471 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max   993 ->  8192 x1  warm 1/4 176376 428016
+    NU6.1      p50   197 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max   250 ->  8192 x1  warm 1/4 176376 428016
+    NU6.2      p50   176 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max   181 ->  8192 x1  warm 1/4 176376 428016
+    NU6.3      p50   116 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max   620 ->  8192 x1  warm 1/4 176376 428016
+2k directory, 8k pages before NU6                          runtimes  895 pages  469 held  44.1 GiB reserved  72.1; MemoryMax  62G fits ['m-16vcpu-128gb']; reserved MemoryMax 102G fits []; disk  64.7 GB; mean warm 102467 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  3772 ->  8192 x1  warm 1/4 176376 428016
+    Blossom    p50  1138 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  1452 ->  8192 x1  warm 1/4 176376 428016
+    Heartwood  p50  3009 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  3875 ->  8192 x1  warm 1/4 176376 428016
+    Canopy     p50  2471 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+2k directory, pages sized per archive {2k,4k,8k}           runtimes  895 pages  469 held  39.4 GiB reserved  67.4; MemoryMax  56G fits ['m-16vcpu-128gb']; reserved MemoryMax  96G fits ['m-16vcpu-128gb']; disk  54.6 GB; mean warm 100563 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+2k directory, pages sized per archive {2k,4k,8k,16k}       runtimes  854 pages  428 held  38.2 GiB reserved  64.9; MemoryMax  55G fits ['m-16vcpu-128gb']; reserved MemoryMax  93G fits ['m-16vcpu-128gb']; disk  53.3 GB; mean warm 101555 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 -> 16384 x2  warm 1/4 232200 651312
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+per-archive pages before NU6, NU6+ pages shared k=4        runtimes  837 pages  411 held  37.1 GiB [37.1-37.1] reserved  63.3; MemoryMax  51G fits ['m-16vcpu-128gb']; reserved MemoryMax  87G fits ['m-16vcpu-128gb']; disk  51.6 GB; mean warm 100566 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x2  warm 1/4 144392 300080
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x2  warm 1/4 144392 300080
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+per-archive pages before NU6, NU6+ pages shared k=16       runtimes  828 pages  402 held  36.8 GiB [36.7-36.8] reserved  62.7; MemoryMax  50G fits ['m-8vcpu-64gb']; reserved MemoryMax  85G fits ['m-16vcpu-128gb']; disk  51.2 GB; mean warm 100632 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max   993 ->  2048 x3  warm 1/4 150040 322672
+    NU6.1      p50   197 rows ->  2048 x3  warm 0/1/4  92496 150040 322672 cold 120513 239557 412189 | max   250 ->  2048 x2  warm 1/4 144392 300080
+    NU6.2      p50   176 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max   181 ->  2048 x2  warm 1/4 144392 300080
+    NU6.3      p50   116 rows ->  2048 x2  warm 0/1/4  92496 144392 300080 cold 120513 213409 369097 | max   620 ->  2048 x3  warm 1/4 150040 322672
+per-archive pages before NU6, NU6+ pages shared k=64       runtimes  826 pages  400 held  36.7 GiB [36.7-36.7] reserved  62.5; MemoryMax  50G fits ['m-8vcpu-64gb']; reserved MemoryMax  85G fits ['m-16vcpu-128gb']; disk  51.1 GB; mean warm 100823 B
+    Sprout     p50  8034 rows ->  8192 x1  warm 0/1/4  92496 176376 428016 cold 120513 224893 476533 | max 17375 ->  8192 x3  warm 1/4 187672 473200
+    Overwinter p50  4055 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  7245 ->  8192 x1  warm 1/4 176376 428016
+    Sapling    p50  2036 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  3772 ->  4096 x1  warm 1/4 151288 327664
+    Blossom    p50  1138 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  1452 ->  2048 x1  warm 1/4 138744 277488
+    Heartwood  p50  3009 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  3875 ->  4096 x1  warm 1/4 151288 327664
+    Canopy     p50  2471 rows ->  4096 x1  warm 0/1/4  92496 151288 327664 cold 120513 199805 376181 | max  4445 ->  8192 x1  warm 1/4 176376 428016
+    NU5        p50  1400 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max  5150 ->  8192 x1  warm 1/4 176376 428016
+    NU6        p50   176 rows ->  2048 x7  warm 0/1/4  92496 172632 413040 cold 120513 344149 584557 | max   993 ->  2048 x3  warm 1/4 150040 322672
+    NU6.1      p50   197 rows ->  2048 x7  warm 0/1/4  92496 172632 413040 cold 120513 344149 584557 | max   250 ->  2048 x7  warm 1/4 172632 413040
+    NU6.2      p50   176 rows ->  2048 x7  warm 0/1/4  92496 172632 413040 cold 120513 344149 584557 | max   181 ->  2048 x7  warm 1/4 172632 413040
+    NU6.3      p50   116 rows ->  2048 x7  warm 0/1/4  92496 172632 413040 cold 120513 344149 584557 | max   620 ->  2048 x7  warm 1/4 172632 413040
+80k before NU6 as txid-4k, txid-2k after                   runtimes  756 pages  502 held  34.2 GiB [33.5-34.2] reserved  57.9; MemoryMax  49G fits ['m-8vcpu-64gb']; reserved MemoryMax  84G fits ['m-16vcpu-128gb']; disk  48.1 GB; mean warm 121198 B
+    Sprout     p50 16629 rows ->  4096 x5  warm 0/1/4 117584 198968 443120 cold 145601 329485 573637 | max 24817 ->  4096 x7  warm 1/4 210264 488304
+    Overwinter p50  8525 rows ->  4096 x3  warm 0/1/4 117584 187672 397936 cold 145601 277189 487453 | max 10622 ->  4096 x3  warm 1/4 187672 397936
+    Sapling    p50  4268 rows ->  4096 x2  warm 0/1/4 117584 182024 375344 cold 145601 251041 444361 | max  7232 ->  4096 x2  warm 1/4 182024 375344
+    Blossom    p50  2209 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  2535 ->  4096 x1  warm 1/4 176376 352752
+    Heartwood  p50  5280 rows ->  4096 x2  warm 0/1/4 117584 182024 375344 cold 145601 251041 444361 | max  7292 ->  4096 x2  warm 1/4 182024 375344
+    Canopy     p50  5025 rows ->  4096 x2  warm 0/1/4 117584 182024 375344 cold 145601 251041 444361 | max  8337 ->  4096 x3  warm 1/4 187672 397936
+    NU5        p50  3614 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  9200 ->  4096 x3  warm 1/4 187672 397936
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+80k before NU6, 4k directory, 8k pages, txid-2k after      runtimes  590 pages  336 held  30.5 GiB [29.4-30.5] reserved  48.9; MemoryMax  45G fits ['m-8vcpu-64gb']; reserved MemoryMax  73G fits ['m-16vcpu-128gb']; disk  45.6 GB; mean warm 123251 B
+    Sprout     p50 16926 rows ->  8192 x3  warm 0/1/4 117584 212760 498288 cold 145601 302277 587805 | max 27134 ->  8192 x4  warm 1/4 218408 520880
+    Overwinter p50  7657 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max 12253 ->  8192 x2  warm 1/4 207112 475696
+    Sapling    p50  4222 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7084 ->  8192 x1  warm 1/4 201464 453104
+    Blossom    p50  2148 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  2760 ->  8192 x1  warm 1/4 201464 453104
+    Heartwood  p50  5913 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7402 ->  8192 x1  warm 1/4 201464 453104
+    Canopy     p50  4968 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  8289 ->  8192 x2  warm 1/4 207112 475696
+    NU5        p50  3645 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  9173 ->  8192 x2  warm 1/4 207112 475696
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+80k before NU6, 4k directory, pages {4k,8k}, txid-2k after runtimes  590 pages  336 held  29.6 GiB [28.6-29.6] reserved  48.1; MemoryMax  44G fits ['m-8vcpu-64gb']; reserved MemoryMax  72G fits ['m-16vcpu-128gb']; disk  43.8 GB; mean warm 122637 B
+    Sprout     p50 16926 rows ->  8192 x3  warm 0/1/4 117584 212760 498288 cold 145601 302277 587805 | max 27134 ->  8192 x4  warm 1/4 218408 520880
+    Overwinter p50  7657 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max 12253 ->  8192 x2  warm 1/4 207112 475696
+    Sapling    p50  4222 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7084 ->  8192 x1  warm 1/4 201464 453104
+    Blossom    p50  2148 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  2760 ->  4096 x1  warm 1/4 176376 352752
+    Heartwood  p50  5913 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7402 ->  8192 x1  warm 1/4 201464 453104
+    Canopy     p50  4968 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  8289 ->  8192 x2  warm 1/4 207112 475696
+    NU5        p50  3645 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  9173 ->  8192 x2  warm 1/4 207112 475696
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488
+80k before NU6, 4k directory, pages {4k,8k,16k}, txid-2k after runtimes  535 pages  281 held  28.6 GiB [27.6-28.6] reserved  45.3; MemoryMax  43G fits ['m-8vcpu-64gb']; reserved MemoryMax  69G fits ['m-16vcpu-128gb']; disk  43.4 GB; mean warm 124868 B
+    Sprout     p50 16965 rows -> 16384 x2  warm 0/1/4 117584 257288 676400 cold 145601 326305 745417 | max 29405 -> 16384 x2  warm 1/4 257288 676400
+    Overwinter p50  8593 rows -> 16384 x1  warm 0/1/4 117584 251640 653808 cold 145601 300157 702325 | max 10762 -> 16384 x1  warm 1/4 251640 653808
+    Sapling    p50  4172 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7093 ->  8192 x1  warm 1/4 201464 453104
+    Blossom    p50  2114 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  2678 ->  4096 x1  warm 1/4 176376 352752
+    Heartwood  p50  5216 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  7412 ->  8192 x1  warm 1/4 201464 453104
+    Canopy     p50  4883 rows ->  8192 x1  warm 0/1/4 117584 201464 453104 cold 145601 249981 501621 | max  8164 ->  8192 x1  warm 1/4 201464 453104
+    NU5        p50  3638 rows ->  4096 x1  warm 0/1/4 117584 176376 352752 cold 145601 224893 401269 | max  9272 -> 16384 x1  warm 1/4 251640 653808
+    NU6        p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   993 ->  2048 x1  warm 1/4 138744 277488
+    NU6.1      p50   197 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   250 ->  2048 x1  warm 1/4 138744 277488
+    NU6.2      p50   176 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   181 ->  2048 x1  warm 1/4 138744 277488
+    NU6.3      p50   116 rows ->  2048 x1  warm 0/1/4  92496 138744 277488 cold 120513 187261 326005 | max   620 ->  2048 x1  warm 1/4 138744 277488

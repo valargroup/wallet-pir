@@ -11,22 +11,34 @@
 //! archive index chunk covering the height (archive heights only), the
 //! shard's manifest and the bucket's directory setups when they are not
 //! cached, then exactly two directory queries (even when both candidate rows
-//! coincide). A paged record then fetches the pages setups when not cached
-//! and sends exactly `pages` page queries. An absent txid sends the same two
-//! directory queries. Placement comes from the caller's mined height; nothing
+//! coincide). Entries are fixed-size, so a found txid and an absent one send
+//! the same requests with the same body sizes. Each query carries a 44-bit
+//! dithered selection when init advertises the dithered scheme and it
+//! reproduces locally, and the 49-bit one every service accepts otherwise;
+//! either way every query of one client has the same size. Placement comes from the
+//! caller's mined height; nothing
 //! is asked to discover it, so placement and support results send no query.
 //!
 //! The map is split (see `transparent_shard::display::split`): a small
 //! recent map, refetched after every 409, and immutable index chunks of 32
 //! archives, cached by digest. The full `/v1/txid/shards` listing is not read.
 //!
+//! The client follows a fresh publication (a re-cut or re-layout, with new
+//! shard ids and digests) through the same map: a 409 or a placement from a
+//! stale map fetches it again, a geometry init lacks fetches init and the map
+//! again, and each new map keeps only the manifests and setups of revisions
+//! it names. A map of another chain (network or genesis hash) is refused.
+//! A lookup sends at most 2 map, 3 init and 4 query requests.
+//!
 //! Any validation failure is [`TxidError::Protocol`], never
 //! [`TxidLookup::Absent`].
 
 mod client;
 
-pub use client::{ProfileCache, TxidDisplayClient};
-pub use transparent_shard::txid::{DisplayOutput, TransparentDisplayRecord};
+pub use client::{ProfileCache, TxidDisplayClient, PLACEMENT_REFRESH_AGE};
+pub use transparent_shard::txid::{
+    flags, Address, AddressKind, DisplayEntry, EntryOutput, Tag, OUTPUT_SLOTS,
+};
 
 use std::time::Duration;
 
@@ -209,10 +221,12 @@ pub struct Provenance {
 /// Where a mined height lies relative to the published shards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Placement {
-    /// Before the first height the publication serves.
+    /// Before the first height the publication serves, by a map the lookup
+    /// fetched or one younger than the client's placement refresh age
+    /// ([`PLACEMENT_REFRESH_AGE`] unless a test sets another).
     Below,
-    /// After the last height the publication covers, even after a map
-    /// refresh.
+    /// After the last height the publication covers, by a map the lookup
+    /// fetched or one younger than the client's placement refresh age.
     Above,
 }
 
@@ -220,7 +234,7 @@ pub enum Placement {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TxidLookup {
     Found {
-        record: TransparentDisplayRecord,
+        entry: DisplayEntry,
         provenance: Provenance,
     },
     /// The shard covering the height was queried and does not hold the txid.
@@ -228,7 +242,8 @@ pub enum TxidLookup {
     /// No shard covers the height; nothing was queried.
     PlacementUnknown(Placement),
     /// The server publishes a schema, codec or geometry this client does not
-    /// know; nothing was queried.
+    /// know, or the map names a geometry init does not list although this
+    /// lookup fetched both; nothing was queried.
     Unsupported,
 }
 
@@ -237,8 +252,10 @@ pub enum TxidLookup {
 pub enum ProtocolKind {
     /// The init document does not parse.
     Init,
-    /// The recent map or an index chunk does not parse or is malformed, or
-    /// a chunk is not the one the recent map names.
+    /// The recent map or an index chunk does not parse or is malformed, a
+    /// chunk is not the one the recent map names, or the recent map names
+    /// another network or genesis hash than the first one the client
+    /// accepted.
     Map,
     /// The recent map or an index chunk is not in its canonical encoding.
     MapCanonical,
@@ -256,10 +273,8 @@ pub enum ProtocolKind {
     Epoch,
     /// A response body has the wrong length.
     Length,
-    /// A row, entry or record does not decode, or decodes to another txid.
+    /// A row or entry does not decode, or the same entry is in two rows.
     Decode,
-    /// A directory entry names pages outside the shard.
-    Pages,
     /// An unexpected status code (not 200 nor one with defined semantics).
     Status(u16),
 }
@@ -272,7 +287,9 @@ pub enum TxidError {
     Unavailable {
         retry_after: Option<Duration>,
     },
-    /// The revision stayed unserved after one map refresh and retry (409).
+    /// The revision stayed unserved after one map refresh and retry (409),
+    /// or the retry would have named the txid's bucket under another bucket
+    /// count than the lookup already named.
     Stale,
     /// The server refused the request (400, 408, 411, 421 or another 4xx).
     /// Not retried.

@@ -512,13 +512,16 @@ impl Generation {
         &self,
         bytes: &[u8],
     ) -> Result<(reinspiring::native::NativeKeys, Vec<u64>), Error> {
-        if bytes.len() != HEADER_BYTES + enhance_pir::native::request_len(ROWS)
+        // The selection is 49 bits, as the wallet-pir client sends it, or 44
+        // dithered bits; the exact length says which. The envelope is the same.
+        if bytes.len() < HEADER_BYTES
+            || enhance_pir::native::accepted_query_bits(ROWS, bytes.len() - HEADER_BYTES).is_none()
             || &bytes[..4] != QUERY_MAGIC
             || bytes[4..36] != self.manifest.id()
         {
             return Err(Error::Malformed);
         }
-        enhance_pir::native::parse_with(
+        enhance_pir::native::parse_accepted(
             &native_packing_setup(&self.manifest.network, &self.manifest.salt),
             &bytes[HEADER_BYTES..],
             ROWS,

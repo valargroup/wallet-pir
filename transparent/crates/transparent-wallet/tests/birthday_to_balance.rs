@@ -209,7 +209,6 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: None,
             manifest_digest: format!("{shard_id:064x}"),
             revision: 0,
             sealed: shard_id + 1 < SHARDS,
@@ -234,6 +233,7 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     Published {

@@ -1,0 +1,7 @@
+/opt/transparent-txid-display/releases/28c39d94-ship/txid-display-controller: OK
+activation observed, seal queue empty
+active
+ExecStart={ path=/opt/transparent-txid-display/releases/28c39d94-ship/txid-display-controller ; argv[]=/opt/transparent-txid-display/releases/28c39d94-ship/txid-display-controller run --root /srv/zakura/txid-display-poc/root --journal /srv/zakura/txid-display-poc/journal --workers /opt/transparent-txid-display/workers.json --mode replay-then-live --status-listen 127.0.0.1:8099 --rpc-url http://127
+CPUWeight=20
+CPUQuotaPerSecUSec=2s
+Environment=RUST_LOG=info TRANSPARENT_BUILD_THREADS=2

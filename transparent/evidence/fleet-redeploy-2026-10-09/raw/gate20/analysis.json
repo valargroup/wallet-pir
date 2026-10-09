@@ -1,0 +1,72 @@
+{
+ "overall": {
+  "queries": 12290,
+  "exact": 12290,
+  "p50": 0.017030797,
+  "p95": 0.038468549,
+  "p99": 0.059153636,
+  "max": 0.993921559
+ },
+ "errors": 0,
+ "error_samples": [],
+ "missed_slots": 423,
+ "achieved_qps": 20.5107736026058,
+ "classes": {
+  "archive-wide/directory": {
+   "queries": 1228,
+   "exact": 1228,
+   "p50": 0.015722691,
+   "p95": 0.03303553,
+   "p99": 0.047733121,
+   "max": 0.993921559
+  },
+  "archive-wide/pages": {
+   "queries": 1228,
+   "exact": 1228,
+   "p50": 0.024196401,
+   "p95": 0.045320506,
+   "p99": 0.063853699,
+   "max": 0.864358806
+  },
+  "recent-4k-8k/directory": {
+   "queries": 4920,
+   "exact": 4920,
+   "p50": 0.014754474,
+   "p95": 0.034687936,
+   "p99": 0.052345335,
+   "max": 0.956756149
+  },
+  "recent-4k-8k/pages": {
+   "queries": 4914,
+   "exact": 4914,
+   "p50": 0.017242068,
+   "p95": 0.039907249,
+   "p99": 0.063452963,
+   "max": 0.926162363
+  }
+ },
+ "workers": {
+  "10.142.0.10": {
+   "queries": 6291.0,
+   "errors": 0.0,
+   "slot_utilization": 0.040517461538461544
+  },
+  "10.142.0.8": {
+   "queries": 6287.0,
+   "errors": 0.0,
+   "slot_utilization": 0.05033958136094674
+  },
+  "10.142.0.7": {
+   "queries": 3138.0,
+   "errors": 0.0,
+   "slot_utilization": 0.02528718047337278
+  }
+ },
+ "gate": {
+  "p99_below_2s": true,
+  "p50_below_700ms": true,
+  "no_errors": true,
+  "all_exact": true,
+  "passed": true
+ }
+}

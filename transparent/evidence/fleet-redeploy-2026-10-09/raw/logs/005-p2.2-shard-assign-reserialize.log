@@ -1,0 +1,21 @@
+### start 2026-10-09T11:51:00.282Z
+### cmd:
+
+A=/srv/transparent-activity/full-v11/publications/active.json
+D=$(python3 -c "import json;print(json.load(open(\"$A\"))[\"directory\"])")
+M=$(python3 -c "import json;print(json.load(open(\"$A\"))[\"map_sha256\"])")
+echo "active: $D $M"
+for id in transparent-pir-recent-01 transparent-pir-recent-02 transparent-pir-archive-03; do
+  n=$($R/binaries/shard-assign files --shard-dir $D --assignment /opt/transparent-publisher/v11/state/$M.assignment.json --worker-id $id | wc -l); echo "$id new=$n rc=${PIPESTATUS[0]}"
+  o=$(/usr/local/bin/shard-assign files --shard-dir $D --assignment /opt/transparent-publisher/v11/state/$M.assignment.json --worker-id $id | wc -l); echo "$id old=$o"
+done
+
+### output:
+active: /srv/transparent-activity/full-v11/publications/candidate-3511735-000000000078ed7ce0247cfbfe7b0dc79c1475576cf77456867effb9627cd9ca-1791546567991863425 23c07fce61ac1cad71867781c2371ae8ff13e571a3e4108bd17afedafa3048f5
+transparent-pir-recent-01 new=195 rc=0
+transparent-pir-recent-01 old=195
+transparent-pir-recent-02 new=195 rc=0
+transparent-pir-recent-02 old=195
+transparent-pir-archive-03 new=265 rc=0
+transparent-pir-archive-03 old=265
+### end 2026-10-09T11:51:00.357Z rc=0

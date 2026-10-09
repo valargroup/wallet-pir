@@ -1,5 +1,5 @@
 use super::*;
-use crate::txid_display::fixture::{self, block_hash, chain_records};
+use crate::txid_display::fixture::{self, block_hash, chain_records, chain_sources};
 use crate::txid_display::publisher::{bootstrap, CANDIDATE_PREFIX, SEALED_DIR};
 use crate::txid_display::serving::{Transport, WorkerRole, WorkersFile};
 use crate::txid_display::source::{open_writer, Script, ScriptStep};
@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use transparent_filter::BlockHash;
-use transparent_shard::txid::TransparentDisplayRecord;
+use transparent_shard::txid::{DisplayEntry, DisplayRecord, ENTRY_BYTES};
+use transparent_shard::txid_v2x::TransparentDisplayRecordV2x;
 
 fn settings() -> Settings {
     Settings {
@@ -195,9 +196,9 @@ async fn incremental_stepping_reproduces_bootstrap() {
     }
 }
 
-fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecord>)> {
+fn fork(tag: u8, from: u64, through: u64) -> Vec<(BlockHash, Vec<TransparentDisplayRecordV2x>)> {
     (from..=through)
-        .map(|h| (block_hash(tag, h), chain_records(tag, h)))
+        .map(|h| (block_hash(tag, h), chain_sources(tag, h)))
         .collect()
 }
 
@@ -809,9 +810,10 @@ async fn a_restart_after_a_rollback_still_invalidates() {
     {
         let mut store = open_writer(&journal).unwrap();
         store.rollback_to(Some(120)).unwrap();
-        for (h, (hash, records)) in (121..).zip(fork(2, 121, 122)) {
+        for (h, (hash, sources)) in (121..).zip(fork(2, 121, 122)) {
+            let events = crate::display_journal::implied_events(h, &sources).unwrap();
             store
-                .append_block_with_display(h, hash, &[], &records)
+                .append_block_with_display(h, hash, &events, &sources)
                 .unwrap();
         }
         store.commit().unwrap();
@@ -866,7 +868,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
         .unwrap();
     let before = decided(&counts, tip);
     counts.truncate((tip - 101) as usize);
-    counts.push(height_counts(&params, &[]));
+    counts.push(height_counts(&params, &[] as &[DisplayRecord]));
     let after = decided(&counts, tip);
     assert_eq!(after, before - 1);
     let (log, states) = spawn_fakes(
@@ -1202,21 +1204,37 @@ fn verify_reproduces_a_running_root() {
 }
 
 #[test]
-fn bench_records_follow_the_requested_size_mix() {
-    // Large enough that the 0.1% multi-page tail is countable.
+fn bench_records_follow_the_requested_case_mix() {
+    // Large enough that the 1% of outputs without an address is countable.
     let records = synthetic_records(20_000, 7);
-    let sizes: Vec<usize> = records.iter().map(|r| r.encode().unwrap().len()).collect();
-    let inline = sizes.iter().filter(|s| (50..=110).contains(*s)).count();
-    let one_page = sizes.iter().filter(|s| (129..=4_050).contains(*s)).count();
-    let near_cutoff = sizes.iter().filter(|s| (129..=528).contains(*s)).count();
-    let multi_page = sizes.iter().filter(|s| **s > 4_050).count();
-    assert!((17_600..=18_400).contains(&inline), "{inline} inline");
-    assert!((1_750..=2_250).contains(&one_page), "{one_page} one page");
+    let count = |f: &dyn Fn(&DisplayEntry) -> bool| records.iter().filter(|r| f(&r.entry)).count();
+    let complete = count(&|e| e.is_complete());
+    let unshield = count(&|e| e.input_count == 0);
+    let multiple = count(&|e| e.multiple_source_scripts);
+    let more = count(&|e| e.more_than_two_outputs());
+    let no_address = count(&|e| e.outputs[0].is_some_and(|o| !o.address.is_address()));
+    assert!((17_800..=18_600).contains(&complete), "{complete} complete");
     assert!(
-        near_cutoff * 4 >= one_page * 3,
-        "{near_cutoff} of {one_page} near the cutoff"
+        (1_000..=1_400).contains(&unshield),
+        "{unshield} unshielding"
     );
-    assert!((5..=50).contains(&multi_page), "{multi_page} multi-page");
+    assert!(
+        (850..=1_150).contains(&multiple),
+        "{multiple} multiple sources"
+    );
+    assert!((650..=950).contains(&more), "{more} more than two outputs");
+    assert!(
+        (130..=270).contains(&no_address),
+        "{no_address} without an address"
+    );
+    // Shielded change is a fact, never mixed funding, and every record is
+    // its txid's entry at the fixed width.
+    assert_eq!(count(&|e| e.shielded_and_transparent_funding), 0);
+    assert!(count(&|e| e.shielded_components) > 10_000);
+    for record in &records {
+        assert_eq!(record.entry.encode().unwrap().len(), ENTRY_BYTES);
+        DisplayRecord::new(record.txid, record.entry).unwrap();
+    }
     let temp = tempfile::tempdir().unwrap();
     let lines = bench_recent(&[500], "txid-2k", temp.path(), 7).unwrap();
     assert_eq!(lines[0]["records"], 500);
@@ -1405,4 +1423,123 @@ mod live {
         assert_eq!(controller.active().tip, 9);
         server.abort();
     }
+}
+
+/// Shipped runtime files at the root of `candidate`, by name.
+fn shipped_files(candidate: &Path) -> BTreeSet<String> {
+    listing(candidate)
+        .into_iter()
+        .filter(|name| name.ends_with(".runtime") || name.ends_with(".partial"))
+        .collect()
+}
+
+/// With `--ship-runtimes` every candidate carries one runtime per table
+/// segment of its recent revision, as plain files at its root; the cycle
+/// records the prebuild; revision directories still hold exactly their
+/// manifests' files; and collection removes a candidate with its files.
+#[tokio::test(flavor = "multi_thread")]
+async fn shipped_runtimes_go_out_with_each_candidate_and_go_with_it() {
+    use transparent_shard_server::display::prebuild::build_shipped;
+    use transparent_shard_server::display::set::DisplayRevision;
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let settings = Settings {
+        ship_runtimes: Some(build_shipped),
+        retain_candidates: 1,
+        ..settings()
+    };
+    let run = run_script(&root, &journal, advance(112, 125, 3), vec![], settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let cycles: Vec<Value> = read_timeline(&root)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e["kind"] == "cycle")
+        .collect();
+    assert!(cycles.len() >= 4, "{} cycles", cycles.len());
+    let map = run.maps.last().unwrap();
+    let recent = map.shards.last().unwrap();
+    let candidate = &run.active.directory;
+    let targets = DisplayRevision::read(&candidate.join(&recent.manifest_digest))
+        .unwrap()
+        .targets();
+    let files = shipped_files(candidate);
+    assert_eq!(files.len(), targets.len());
+    assert!(files.iter().all(|name| name.ends_with(".runtime")));
+    for cycle in &cycles {
+        assert!(cycle["prebuild_ms"].is_u64(), "{cycle}");
+        assert_eq!(cycle["prebuild_failures"], 0);
+        let shipped = cycle["shipped"].as_array().unwrap();
+        assert_eq!(shipped.len(), targets.len());
+        assert_eq!(
+            cycle["shipped_bytes"].as_u64().unwrap(),
+            shipped
+                .iter()
+                .map(|f| f["bytes"].as_u64().unwrap())
+                .sum::<u64>()
+        );
+    }
+    for entry in &map.shards {
+        verify_dir(
+            &candidate.join(&entry.manifest_digest),
+            &entry.manifest_digest,
+        )
+        .unwrap();
+    }
+    // Collection kept the active candidate and one other; nothing shipped
+    // is left anywhere else under the root.
+    let candidates: Vec<_> = listing(&root)
+        .into_iter()
+        .filter(|n| n.starts_with(CANDIDATE_PREFIX))
+        .collect();
+    assert!(candidates.len() <= 2, "{candidates:?}");
+    assert!(shipped_files(&root).is_empty());
+    for tier in ["recent", "sealed"] {
+        for revision in listing(&root.join(tier)) {
+            assert!(shipped_files(&root.join(tier).join(revision)).is_empty());
+        }
+    }
+}
+
+/// A prebuild failure is counted, leaves no file behind and never stops the
+/// cycle: the candidate is published without runtimes.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_failed_prebuild_still_publishes_without_runtimes() {
+    fn fails(revision: &Path, candidate: &Path) -> Result<Vec<Shipped>, String> {
+        assert!(revision.starts_with(candidate));
+        std::fs::write(candidate.join("ab-cd.partial"), b"half").unwrap();
+        std::fs::write(candidate.join("ab-cd.runtime"), b"half").unwrap();
+        Err("no room to build".into())
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let settings = Settings {
+        ship_runtimes: Some(fails),
+        ..settings()
+    };
+    let run = run_script(&root, &journal, advance(112, 118, 3), vec![], settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    assert_eq!(run.active.tip, 118);
+    let events = read_timeline(&root).unwrap();
+    let cycles: Vec<_> = events.iter().filter(|e| e["kind"] == "cycle").collect();
+    assert!(cycles.len() >= 2, "{} cycles", cycles.len());
+    for (index, cycle) in cycles.iter().enumerate() {
+        assert!(cycle["prebuild_ms"].is_null());
+        assert_eq!(cycle["prebuild_failures"], index as u64 + 1);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e["kind"] == "error" && e["stage"] == "prebuild")
+            .count(),
+        cycles.len()
+    );
+    assert!(shipped_files(&run.active.directory).is_empty());
 }

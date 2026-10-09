@@ -20,6 +20,9 @@ use transparent_events::{
     FeeState, ReceiveEvent, SpendEvent, TransactionMetadata, TransparentEvent, Txid,
 };
 use transparent_filter::ScriptBytes;
+use transparent_shard::txid::DisplayOutput;
+use transparent_shard::txid_v1::TransparentDisplayRecord;
+use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
 use zakura_chain::transaction::Transaction;
 use zakura_chain::transparent::{Input, OutPoint, Output, Utxo};
 
@@ -89,6 +92,19 @@ pub fn extract_block(
     previous: &mut impl PreviousOutputs,
     height: u32,
 ) -> Result<ExtractedBlock, ExtractError> {
+    extract(transactions, previous, height, true)
+}
+
+/// [`extract_block`], building display source records only when `display`
+/// is set. History and filter ingest never need them, so a record the display
+/// codec refuses (a v2x record is bounded; the block's events are not) can
+/// only stop the display ingest, never the history.
+pub fn extract(
+    transactions: &[Arc<Transaction>],
+    previous: &mut impl PreviousOutputs,
+    height: u32,
+    display: bool,
+) -> Result<ExtractedBlock, ExtractError> {
     // Every output this block creates, keyed by outpoint, for same-block spends.
     let mut created: std::collections::HashMap<OutPoint, Output> = std::collections::HashMap::new();
     for transaction in transactions {
@@ -105,7 +121,7 @@ pub fn extract_block(
     }
 
     let mut events: Vec<IndexedEvent> = Vec::new();
-    let mut display = Vec::new();
+    let mut records = Vec::new();
 
     for (transaction_index, transaction) in transactions.iter().enumerate() {
         let txid = Txid(transaction.hash().0);
@@ -170,24 +186,54 @@ pub fn extract_block(
             .validate(coinbase)
             .map_err(|e| ExtractError::Metadata(e.to_string()))?;
 
-        if !transaction.inputs().is_empty() || !transaction.outputs().is_empty() {
-            let record = transparent_shard::txid::TransparentDisplayRecord {
-                txid,
-                coinbase,
-                metadata,
-                outputs: transaction
-                    .outputs()
-                    .iter()
-                    .map(|o| transparent_shard::txid::DisplayOutput {
-                        value: u64::from(o.value),
-                        script: o.lock_script.as_raw_bytes().to_vec(),
+        if display && (!transaction.inputs().is_empty() || !transaction.outputs().is_empty()) {
+            let output = |o: &Output| DisplayOutput {
+                value: u64::from(o.value),
+                script: o.lock_script.as_raw_bytes().to_vec(),
+            };
+            // Transaction input order, which the published source is chosen
+            // in; the coinbase input spends nothing. No extra lookup: these
+            // are the previous outputs the fee was computed from.
+            let inputs = transaction
+                .inputs()
+                .iter()
+                .filter_map(|input| match input {
+                    Input::PrevOut { outpoint, .. } => Some(outpoint),
+                    Input::Coinbase { .. } => None,
+                })
+                .map(|outpoint| {
+                    let spent = &prevouts
+                        .get(outpoint)
+                        .ok_or_else(|| {
+                            ExtractError::MissingPreviousOutput(outpoint_label(outpoint))
+                        })?
+                        .output;
+                    Ok(DisplayInput {
+                        prevout_txid: Txid(outpoint.hash.0),
+                        prevout_index: outpoint.index,
+                        value: u64::from(spent.value),
+                        script: spent.lock_script.as_raw_bytes().to_vec(),
                     })
-                    .collect(),
+                })
+                .collect::<Result<Vec<_>, ExtractError>>()?;
+            let record = TransparentDisplayRecordV2x {
+                record: TransparentDisplayRecord {
+                    txid,
+                    coinbase,
+                    metadata,
+                    outputs: transaction.outputs().iter().map(output).collect(),
+                },
+                inputs,
             };
             record
                 .encode()
                 .map_err(|e| ExtractError::Metadata(e.to_string()))?;
-            display.push(record);
+            // A source no entry can be derived from stops the ingest here,
+            // not at publication.
+            record
+                .display_record()
+                .map_err(|e| ExtractError::Metadata(e.to_string()))?;
+            records.push(record);
         }
         // Outputs. Coinbase outputs are included; a leading OP_RETURN is not.
         for (output_index, output) in transaction.outputs().iter().enumerate() {
@@ -245,12 +291,17 @@ pub fn extract_block(
         }
     }
 
-    Ok(ExtractedBlock { events, display })
+    Ok(ExtractedBlock {
+        events,
+        display: records,
+    })
 }
 
 pub struct ExtractedBlock {
     pub events: Vec<IndexedEvent>,
-    pub display: Vec<transparent_shard::txid::TransparentDisplayRecord>,
+    /// The display source record of every transaction with a transparent
+    /// input or output, in block order; empty unless display was requested.
+    pub display: Vec<TransparentDisplayRecordV2x>,
 }
 
 pub fn extract_events(
@@ -258,7 +309,7 @@ pub fn extract_events(
     previous: &mut impl PreviousOutputs,
     height: u32,
 ) -> Result<Vec<IndexedEvent>, ExtractError> {
-    Ok(extract_block(transactions, previous, height)?.events)
+    Ok(extract(transactions, previous, height, false)?.events)
 }
 
 /// The element set for one block.
@@ -442,6 +493,67 @@ mod tests {
             extract_events(&[tx], &mut previous, 100).is_err(),
             "negative fees abort extraction"
         );
+    }
+
+    #[test]
+    fn display_entries_take_the_first_address_shaped_source_in_input_order() {
+        use transparent_shard::txid::{Address, AddressKind};
+        let outpoint = |byte: u8| OutPoint {
+            hash: zakura_chain::transaction::Hash([byte; 32]),
+            index: 0,
+        };
+        let p2pk = [&[0x21][..], &[2; 33], &[0xac]].concat();
+        let mut previous = MapPreviousOutputs::default();
+        for (byte, script) in [(20, p2pk.clone()), (21, p2pkh(5)), (22, p2pkh(6))] {
+            previous.scripts.insert(outpoint(byte), script);
+            previous.values.insert(outpoint(byte), 1_000);
+        }
+        let outputs = |n: usize| {
+            (0..n)
+                .map(|i| {
+                    let mut o = output(p2pkh(30 + i as u8));
+                    o.value = Amount::try_from(100).unwrap();
+                    o
+                })
+                .collect::<Vec<_>>()
+        };
+        // A P2PK input first: the source is the next, address-shaped one,
+        // and the distinct scripts are named as an omission.
+        let mixed = transaction(
+            vec![prevout_input(outpoint(20)), prevout_input(outpoint(21))],
+            outputs(3),
+        );
+        let block = extract_block(std::slice::from_ref(&mixed), &mut previous, 9).unwrap();
+        let record = block.display[0].display_record().unwrap();
+        let entry = record.entry;
+        assert_eq!(record.txid, Txid(mixed.hash().0));
+        assert_eq!(entry.source, Address::from_script(&p2pkh(5)));
+        assert!(entry.multiple_source_scripts && entry.more_than_two_outputs());
+        assert_eq!(
+            (entry.input_count, entry.output_count, entry.fee),
+            (2, 3, 1_700)
+        );
+        assert_eq!(
+            entry.outputs[1].unwrap().address,
+            Address::from_script(&p2pkh(31))
+        );
+        // One script, two outputs: a complete regular entry.
+        let mut again = MapPreviousOutputs::default();
+        for byte in [23, 24] {
+            again.scripts.insert(outpoint(byte), p2pkh(7));
+            again.values.insert(outpoint(byte), 1_000);
+        }
+        let regular = transaction(
+            vec![prevout_input(outpoint(23)), prevout_input(outpoint(24))],
+            outputs(2),
+        );
+        let entry = extract_block(&[regular], &mut again, 9).unwrap().display[0]
+            .display_record()
+            .unwrap()
+            .entry;
+        assert!(entry.is_complete());
+        assert_eq!(entry.source.kind, AddressKind::P2pkh);
+        assert_eq!(entry.source, Address::from_script(&p2pkh(7)));
     }
 
     #[test]
@@ -736,6 +848,89 @@ mod tests {
         for (_, event) in events_of(&transactions, &mut previous) {
             assert_eq!(TransparentEvent::from_bytes(&event.to_bytes()), Ok(event));
         }
+    }
+
+    /// Every display source lists its inputs in input order, from the
+    /// previous outputs the fee already needed: no extra lookup, and a
+    /// same-block spend needs none at all. The sidecar round-trips.
+    #[test]
+    fn display_sources_list_inputs_without_extra_lookups() {
+        let funding = transaction(vec![coinbase_input()], vec![output(p2pkh(11))]);
+        let outside = OutPoint {
+            hash: zakura_chain::transaction::Hash([9; 32]),
+            index: 3,
+        };
+        let same_block = OutPoint {
+            hash: funding.hash(),
+            index: 0,
+        };
+        let mut big = output(vec![0x51; 10_001]);
+        big.value = Amount::try_from(500).unwrap();
+        let transactions = vec![
+            funding.clone(),
+            transaction(
+                vec![prevout_input(outside), prevout_input(same_block)],
+                vec![output(p2pkh(12)), big],
+            ),
+        ];
+        let mut previous = MapPreviousOutputs::default();
+        previous.scripts.insert(outside, vec![0x52; 12_000]);
+        previous.values.insert(outside, 600);
+        let listed = extract_block(&transactions, &mut previous, 7).unwrap();
+        assert_eq!(previous.lookups, 1, "only the outside prevout is looked up");
+        assert_eq!(listed.display.len(), 2);
+        // History needs no display source, so builds none, and its events
+        // are the same.
+        let mut again = previous.clone();
+        let history = extract(&transactions, &mut again, 7, false).unwrap();
+        assert!(history.display.is_empty());
+        assert_eq!(history.events, listed.events);
+        assert!(
+            listed.display[0].inputs.is_empty(),
+            "coinbase lists no inputs"
+        );
+        let inputs = &listed.display[1].inputs;
+        assert_eq!(inputs.len(), 2);
+        assert_eq!(
+            (
+                inputs[0].prevout_txid,
+                inputs[0].prevout_index,
+                inputs[0].value
+            ),
+            (Txid([9; 32]), 3, 600)
+        );
+        assert_eq!(inputs[0].script, vec![0x52; 12_000]);
+        assert_eq!(inputs[1].prevout_txid, Txid(funding.hash().0));
+        assert_eq!(
+            (inputs[1].value, inputs[1].script.clone()),
+            (1000, p2pkh(11))
+        );
+
+        let journal = tempfile::tempdir().unwrap();
+        let hash = transparent_filter::BlockHash::from_internal_bytes([5; 32]);
+        let mut store = crate::events::EventStore::open(
+            journal.path(),
+            transparent_filter::MAINNET_GENESIS_DISPLAY,
+            7,
+        )
+        .unwrap();
+        store
+            .append_block_with_display(7, hash, &listed.events, &listed.display)
+            .unwrap();
+        store.commit().unwrap();
+        let name = format!("{}.bin", hash.to_display_hex());
+        assert!(journal.path().join("display-v2x").join(&name).exists());
+        assert!(!journal.path().join("display-v1").exists());
+        assert_eq!(
+            crate::display_journal::read_sources(journal.path(), hash).unwrap(),
+            listed.display
+        );
+        let entries: Vec<_> = listed
+            .display
+            .iter()
+            .map(|source| source.display_record().unwrap())
+            .collect();
+        assert_eq!(store.display_at(7).unwrap(), entries);
     }
 
     #[test]

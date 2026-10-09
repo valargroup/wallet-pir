@@ -1,0 +1,10 @@
+{"checkout": "valargroup/wallet-pir main a368f19b",
+ "command": "nice -n 19 ionice -c 3 txid-sizing-export --journal-census --v2x /srv/txid-display-genesis/journal-v2x 3508673 --anchor-from-journal /srv/txid-display-genesis/scratch-v2x",
+ "compiler": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+ "binary_sha256": "361157b89f25417bccd548bf398b916a25954f1845e7dfda9a2ee76ad2e91f8a",
+ "start_utc": "2026-10-08T05:53:23Z", "end_utc": "2026-10-08T06:34:48Z",
+ "json_sha256": "5983b88fb5545260a82601d68d6ca1b04da53ee782a0dc1d59eb91553838c09a",
+ "ingest_executable_sha256": "9aeb507df494db7e6bcce480fe62ba3d682245a659f22deeb34ea9dc38f2daa7",
+ "ingest_source": "valargroup/wallet-pir main 29cd8c34 (release-fast)",
+ "ingest_command": "eatmydata transparent-event-ingest --state-dir /root/.cache/zakura --workers 6 --txid-display-inputs --start-height 0 --stop-height 3508673 --data-dir /srv/txid-display-genesis/journal-v2x",
+ "ingest_window_utc": "2026-10-08T00:47:43Z..2026-10-08T05:48:49Z, 0 restarts"}

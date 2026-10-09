@@ -697,7 +697,6 @@ mod seed_tests {
             txids: 2,
             directory_segments: 1,
             page_segments: 1,
-            txid_segments: None,
             manifest_digest: "22".repeat(32),
             revision: 0,
             sealed: false,
@@ -718,6 +717,7 @@ mod seed_tests {
             )]
             .into(),
             shards: vec![child],
+            recuts: Vec::new(),
         };
         let map_path = dir.path().join("map.json");
         write_json(&map_path, &map).unwrap();

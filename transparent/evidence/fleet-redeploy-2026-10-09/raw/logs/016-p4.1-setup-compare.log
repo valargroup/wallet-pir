@@ -1,0 +1,11 @@
+### start 2026-10-09T12:00:02.271Z
+### cmd:
+python3 $DEP/setup-compare.py $R01 $R02 || { echo retry-once; python3 $DEP/setup-compare.py $R01 $R02; }
+### output:
+88 True directory same
+88 True pages same
+89 True directory same
+89 True pages same
+90 False directory same
+90 False pages same
+### end 2026-10-09T12:00:02.397Z rc=0

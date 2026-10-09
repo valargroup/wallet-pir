@@ -59,8 +59,6 @@ pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
     for (table, segments) in [
         (Table::Directory, entry.directory_segments),
         (Table::Pages, entry.page_segments),
-        (Table::TxDirectory, entry.txid_segments.map_or(0, |s| s[0])),
-        (Table::TxPages, entry.txid_segments.map_or(0, |s| s[1])),
     ] {
         total +=
             reserved_bytes(table.rows(geometry), table.row_bytes(geometry)) * u64::from(segments);
@@ -551,7 +549,6 @@ mod tests {
             txids: 0,
             directory_segments: 1,
             page_segments: 1,
-            txid_segments: None,
             manifest_digest: format!("{:064x}", shard_id),
             revision: 0,
             sealed: true,
@@ -581,6 +578,7 @@ mod tests {
                 },
             )]),
             shards,
+            recuts: Vec::new(),
         }
     }
 

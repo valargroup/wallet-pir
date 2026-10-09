@@ -9,10 +9,23 @@
 //! rows and columns — stays with each product and is passed in.
 //!
 //! Per query the client uploads one `K_g` packing key (27,648 bytes) and a
-//! 49-bit selection vector (`rows * 49 / 8` bytes). Per 2,048-coefficient block
-//! the server publishes both masks (14,848 bytes) and answers with a 22-bit
-//! body (5,632 bytes). Correctness certificates for this mode are
-//! snapshot-specific.
+//! selection vector. Per 2,048-coefficient block the server publishes both
+//! masks (14,848 bytes) and answers with a 22-bit body (5,632 bytes).
+//! Correctness certificates for this mode are snapshot-specific.
+//!
+//! The selection is uploaded at one of two widths, and the server tells them
+//! apart by the upload's exact length alone:
+//!
+//! - **49 bits, rounded to nearest** (`rows * 49 / 8` bytes): the original
+//!   query, [`prepare_with`] and [`parse_with`]. Every client deployed before
+//!   dithering sends it, and every server keeps accepting it unchanged.
+//! - **44 bits, dithered** (`rows * 44 / 8` bytes): [`prepare_dithered`]
+//!   rounds each coefficient up with probability equal to the fraction it
+//!   drops, using fresh coins, so the rounding errors are independent and zero
+//!   mean. The certificate then budgets them as a variance term rather than a
+//!   worst case, which is what lets the narrower width certify at least as
+//!   strongly as 49 nearest. The server's parse depends only on the width
+//!   ([`parse_bits`], [`parse_accepted`]), not on how the client rounded.
 //!
 //! `tests/golden.rs` pins the bytes. Its digests were produced by the Enhance
 //! and Transparent copies this crate replaced, which agreed byte for byte.
@@ -39,8 +52,11 @@ pub const GADGET_BITS: usize = 19;
 pub const ELL: usize = 2;
 /// Bits each published mask coefficient is rounded to.
 pub const MASK_BITS: usize = 29;
-/// Bits each selection coefficient is uploaded at.
+/// Bits each selection coefficient is uploaded at, rounded to nearest: the
+/// original query, which every server keeps accepting.
 pub const QUERY_BITS: usize = 49;
+/// Bits each selection coefficient is uploaded at under dithered rounding.
+pub const DITHERED_QUERY_BITS: usize = 44;
 /// Bits each response body coefficient is returned at.
 pub const RESPONSE_BITS: usize = 22;
 /// Uploaded `K_g` packing key.
@@ -100,8 +116,39 @@ pub const fn request_len(rows: usize) -> usize {
     KEY_BYTES + (rows * QUERY_BITS).div_ceil(8)
 }
 
+/// Upload bytes for a `rows`-row table whose selection is sent at `bits`.
+pub const fn request_len_bits(rows: usize, bits: usize) -> usize {
+    KEY_BYTES + (rows * bits).div_ceil(8)
+}
+
+/// The selection width of an upload of `len` bytes to a `rows`-row table:
+/// [`QUERY_BITS`] or [`DITHERED_QUERY_BITS`], or `None` for any other length.
+///
+/// The two lengths differ by `rows * 5 / 8` bytes, so for any table of whole
+/// `D`-row blocks exactly one width matches.
+pub const fn accepted_query_bits(rows: usize, len: usize) -> Option<usize> {
+    if len == request_len_bits(rows, QUERY_BITS) {
+        Some(QUERY_BITS)
+    } else if len == request_len_bits(rows, DITHERED_QUERY_BITS) {
+        Some(DITHERED_QUERY_BITS)
+    } else {
+        None
+    }
+}
+
 fn round(x: u64, bits: usize) -> u64 {
     (((x as u128 * (1u128 << bits) + (Q / 2) as u128) / Q as u128) as u64) & ((1 << bits) - 1)
+}
+
+/// Unbiased randomized rounding of `x < Q` to `bits`: up with probability
+/// exactly `dropped / 2^(Q_BITS - bits)`, by comparing the dropped bits with
+/// the low bits of a fresh uniform `coin`. Branch-free in the value. The same
+/// rule as ipir-sp's `down_dithered`.
+fn round_dithered(x: u64, bits: usize, coin: u64) -> u64 {
+    let shift = Q_BITS - bits;
+    let low = (1u64 << shift) - 1;
+    let up = u64::from((coin & low) < (x & low));
+    ((x >> shift) + up) & ((1 << bits) - 1)
 }
 
 /// Canonical published bytes for two-mask blocks: every first mask, then every
@@ -148,13 +195,94 @@ pub fn prepare_with(
     Ok((secret, bytes))
 }
 
-/// Parses an upload into its packing key and the selection lifted back to `q`.
+/// Fresh secret, one-key packing upload and 44-bit dithered selection query.
+pub fn prepare_dithered(
+    setup: &NativeSetup,
+    masks: &[Vec<u64>],
+    rows: usize,
+    target: usize,
+) -> Result<(NativeSecret, Vec<u8>), String> {
+    let mut entropy = [0; 32];
+    rand::rngs::OsRng.fill_bytes(&mut entropy);
+    prepare_dithered_with(
+        setup,
+        masks,
+        rows,
+        target,
+        &mut ChaCha20Rng::from_seed(entropy),
+    )
+}
+
+/// [`prepare_dithered`] over a caller's generator, which must be freshly and
+/// secretly seeded for every query: it draws the secret, the packing key, the
+/// selection's errors and then one rounding coin per row, in that order.
+///
+/// The coins are what makes the rounding errors independent and zero mean.
+/// Coins an observer could predict would let it bias the errors, and coins
+/// reused across queries would correlate them, so they come from the same
+/// per-query generator as the secret.
+pub fn prepare_dithered_with(
+    setup: &NativeSetup,
+    masks: &[Vec<u64>],
+    rows: usize,
+    target: usize,
+    rng: &mut ChaCha20Rng,
+) -> Result<(NativeSecret, Vec<u8>), String> {
+    if target >= rows || !rows.is_multiple_of(D) || masks.len() < rows / D {
+        return Err("native query shape".into());
+    }
+    let secret = NativeSecret::sample(&params(), rng);
+    let keys = NativeKeys::generate_one_key(setup, &secret, rng).map_err(|e| e.to_string())?;
+    let query = secret
+        .encrypt_selection(&masks[..rows / D], target, rng)
+        .map_err(|e| e.to_string())?;
+    let mut bytes = u64s_to_contiguous_bytes(&keys.kg_words(), Q_BITS);
+    let switched: Vec<_> = query
+        .iter()
+        .map(|&x| round_dithered(x, DITHERED_QUERY_BITS, rng.next_u64()))
+        .collect();
+    bytes.extend(u64s_to_contiguous_bytes(&switched, DITHERED_QUERY_BITS));
+    Ok((secret, bytes))
+}
+
+/// Parses a 49-bit upload into its packing key and the selection lifted back
+/// to `q`.
 pub fn parse_with(
     setup: &NativeSetup,
     bytes: &[u8],
     rows: usize,
 ) -> Result<(NativeKeys, Vec<u64>), String> {
-    if rows == 0 || !rows.is_multiple_of(D) || bytes.len() != request_len(rows) {
+    parse_bits(setup, bytes, rows, QUERY_BITS)
+}
+
+/// Parses an upload at whichever accepted width its exact length names; see
+/// [`accepted_query_bits`]. Any other length is refused.
+pub fn parse_accepted(
+    setup: &NativeSetup,
+    bytes: &[u8],
+    rows: usize,
+) -> Result<(NativeKeys, Vec<u64>), String> {
+    let bits = accepted_query_bits(rows, bytes.len()).ok_or("native query framing")?;
+    parse_bits(setup, bytes, rows, bits)
+}
+
+/// Parses an upload whose selection was sent at `bits`, which must be
+/// [`QUERY_BITS`] or [`DITHERED_QUERY_BITS`], into its packing key and the
+/// selection lifted back to `q`.
+///
+/// The lift is the same for either rounding rule: a coefficient sent at
+/// `bits` stands for itself times `2^(Q_BITS - bits)`.
+pub fn parse_bits(
+    setup: &NativeSetup,
+    bytes: &[u8],
+    rows: usize,
+    bits: usize,
+) -> Result<(NativeKeys, Vec<u64>), String> {
+    if !matches!(bits, QUERY_BITS | DITHERED_QUERY_BITS)
+        || rows == 0
+        || !rows.is_multiple_of(D)
+        || bytes.len() != request_len_bits(rows, bits)
+    {
         return Err("native query framing".into());
     }
     let keys = NativeKeys::from_kg_words(
@@ -162,9 +290,9 @@ pub fn parse_with(
         &contiguous_bytes_to_u64s(&bytes[..KEY_BYTES], Q_BITS),
     )
     .map_err(|e| e.to_string())?;
-    let mut query: Vec<u64> = contiguous_bytes_to_u64s(&bytes[KEY_BYTES..], QUERY_BITS)
+    let mut query: Vec<u64> = contiguous_bytes_to_u64s(&bytes[KEY_BYTES..], bits)
         .into_iter()
-        .map(|x| x << (Q_BITS - QUERY_BITS))
+        .map(|x| x << (Q_BITS - bits))
         .collect();
     // The packing leaves up to seven padding bits, which decode as one extra
     // coefficient when they fill a whole word. They are never part of the query.
@@ -306,3 +434,83 @@ pub const PREPARED_BLOCK_MAX_BYTES: u64 = (32 + 2 * D * 8 + 8 + D * D * ELL * 8)
 pub const PREPARED_BLOCK_MIN_BYTES: u64 = (32 + 2 * D * 8 + 8 + D * D * ELL * 4) as u64;
 /// The encoding's magic and block count.
 pub const PREPARED_HEADER_BYTES: u64 = 16;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Dithered rounding moves only to the floor or the ceiling, never moves an
+    /// exact multiple, and rounds up as often as the dropped fraction says:
+    /// the errors have zero mean. Six binomial standard deviations at p = 1/2.
+    #[test]
+    fn dithered_rounding_is_an_unbiased_floor_or_ceiling() {
+        let mut rng = ChaCha20Rng::from_seed([21; 32]);
+        for bits in [DITHERED_QUERY_BITS, QUERY_BITS] {
+            let shift = Q_BITS - bits;
+            let unit = 1u64 << shift;
+            let mask = (1u64 << bits) - 1;
+            for x in [0, unit, Q - unit] {
+                for _ in 0..64 {
+                    assert_eq!(round_dithered(x, bits, rng.next_u64()), x >> shift);
+                }
+            }
+            for x in [
+                1,
+                unit / 4,
+                unit / 2,
+                unit - 1,
+                Q - 1,
+                Q - unit / 3,
+                0x2a5f_0123_4567,
+            ] {
+                let trials = 1u32 << 16;
+                let floor = x >> shift;
+                let ups = (0..trials)
+                    .filter(|_| {
+                        let y = round_dithered(x, bits, rng.next_u64());
+                        // The ceiling of the top coefficient wraps to zero, mod q.
+                        assert!(y == floor || y == (floor + 1) & mask, "bits={bits} x={x}");
+                        y != floor
+                    })
+                    .count() as f64;
+                let expected = trials as f64 * (x & (unit - 1)) as f64 / unit as f64;
+                let sd = (trials as f64 / 4.0).sqrt();
+                assert!(
+                    (ups - expected).abs() <= 6.0 * sd,
+                    "bits={bits} x={x}: {ups} round-ups, expected {expected}"
+                );
+            }
+        }
+    }
+
+    /// Exactly one width matches any length, and the 49-bit length is the
+    /// legacy `request_len`.
+    #[test]
+    fn each_accepted_length_names_one_width() {
+        for rows in [D, 2 * D, 4 * D, 16 * D, 32 * D] {
+            let legacy = request_len(rows);
+            let dithered = request_len_bits(rows, DITHERED_QUERY_BITS);
+            assert_eq!(legacy, request_len_bits(rows, QUERY_BITS));
+            assert_eq!(accepted_query_bits(rows, legacy), Some(QUERY_BITS));
+            assert_eq!(
+                accepted_query_bits(rows, dithered),
+                Some(DITHERED_QUERY_BITS)
+            );
+            assert_eq!(legacy - dithered, rows * 5 / 8);
+            for len in [
+                dithered - 1,
+                dithered + 1,
+                legacy - 1,
+                legacy + 1,
+                KEY_BYTES,
+                0,
+            ] {
+                assert_eq!(
+                    accepted_query_bits(rows, len),
+                    None,
+                    "{rows} rows, {len} bytes"
+                );
+            }
+        }
+    }
+}

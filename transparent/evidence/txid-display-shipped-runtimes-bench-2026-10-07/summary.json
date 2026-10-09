@@ -1,0 +1,246 @@
+{
+ "baseline": {
+  "candidate_ms": {
+   "max": 12,
+   "mean": 9.833,
+   "min": 8,
+   "n": 36,
+   "p50": 10,
+   "p95": 11
+  },
+  "controller_build_s_per_file": null,
+  "controller_write_s_per_file": null,
+  "cycle_ms": {
+   "max": 6072,
+   "mean": 4319.972,
+   "min": 4019,
+   "n": 36,
+   "p50": 4224,
+   "p95": 4807
+  },
+  "cycles": 36,
+  "first_cycle": {
+   "cycle_ms": 4199,
+   "prebuild_ms": null,
+   "prepare_ms": 3520
+  },
+  "prebuild_failures": 0,
+  "prebuild_ms": null,
+  "prepare_ms": {
+   "max": 5444,
+   "mean": 3706.361,
+   "min": 3442,
+   "n": 36,
+   "p50": 3615,
+   "p95": 4214
+  },
+  "recent_records": {
+   "max": 43566,
+   "mean": 43406.361,
+   "min": 43268,
+   "n": 36,
+   "p50": 43405,
+   "p95": 43546
+  },
+  "shipped_file_mib": {},
+  "shipped_files_per_cycle": null,
+  "shipped_mib_per_cycle": null,
+  "worker_built": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 36,
+   "p50": 2,
+   "p95": 2
+  },
+  "worker_cpu_seconds_per_cycle": 5.797,
+  "worker_cpu_seconds_total": 208.69,
+  "worker_prepare_s": {
+   "max": 5.441072692,
+   "mean": 3.706,
+   "min": 3.441950964,
+   "n": 36,
+   "p50": 3.614634767,
+   "p95": 4.213520305
+  },
+  "worker_self_check_ms": {
+   "max": 0.0,
+   "mean": 0.0,
+   "min": 0.0,
+   "n": 36,
+   "p50": 0.0,
+   "p95": 0.0
+  },
+  "worker_shipped": {
+   "max": 0,
+   "mean": 0.0,
+   "min": 0,
+   "n": 36,
+   "p50": 0,
+   "p95": 0
+  },
+  "worker_shipped_fallbacks_total": 0
+ },
+ "rsync_one_block_delta": {
+  "none": {
+   "seconds": {
+    "max": 0.423372094,
+    "mean": 0.347,
+    "min": 0.316662824,
+    "n": 5,
+    "p50": 0.329011328,
+    "p95": 0.423372094
+   },
+   "transferred_mib": [
+    96.095
+   ]
+  },
+  "runtimes": {
+   "seconds": {
+    "max": 0.122931399,
+    "mean": 0.117,
+    "min": 0.112470335,
+    "n": 5,
+    "p50": 0.115448545,
+    "p95": 0.122931399
+   },
+   "transferred_mib": [
+    16.004
+   ]
+  }
+ },
+ "shipped": {
+  "candidate_ms": {
+   "max": 13,
+   "mean": 9.542,
+   "min": 8,
+   "n": 24,
+   "p50": 9,
+   "p95": 11
+  },
+  "controller_build_s_per_file": {
+   "max": 2.16996048,
+   "mean": 1.398,
+   "min": 1.291710813,
+   "n": 48,
+   "p50": 1.352864502,
+   "p95": 1.714943783
+  },
+  "controller_write_s_per_file": {
+   "max": 0.618705808,
+   "mean": 0.45,
+   "min": 0.417928533,
+   "n": 48,
+   "p50": 0.437235904,
+   "p95": 0.51601375
+  },
+  "cycle_ms": {
+   "max": 7535,
+   "mean": 6471.0,
+   "min": 6083,
+   "n": 24,
+   "p50": 6380,
+   "p95": 7203
+  },
+  "cycles": 24,
+  "first_cycle": {
+   "cycle_ms": 6530,
+   "prebuild_ms": 4569,
+   "prepare_ms": 1379
+  },
+  "prebuild_failures": 0,
+  "prebuild_ms": {
+   "max": 5258,
+   "mean": 4476.583,
+   "min": 4212,
+   "n": 24,
+   "p50": 4361,
+   "p95": 5187
+  },
+  "prepare_ms": {
+   "max": 2085,
+   "mean": 1393.0,
+   "min": 1254,
+   "n": 24,
+   "p50": 1333,
+   "p95": 1762
+  },
+  "recent_records": {
+   "max": 43566,
+   "mean": 43406.667,
+   "min": 43268,
+   "n": 24,
+   "p50": 43410,
+   "p95": 43555
+  },
+  "shipped_file_mib": {
+   "directory-0": {
+    "max": 40.04552459716797,
+    "mean": 40.046,
+    "min": 40.04552459716797,
+    "n": 24,
+    "p50": 40.04552459716797,
+    "p95": 40.04552459716797
+   },
+   "pages": {
+    "max": 40.04552459716797,
+    "mean": 40.046,
+    "min": 40.04552459716797,
+    "n": 24,
+    "p50": 40.04552459716797,
+    "p95": 40.04552459716797
+   }
+  },
+  "shipped_files_per_cycle": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 24,
+   "p50": 2,
+   "p95": 2
+  },
+  "shipped_mib_per_cycle": {
+   "max": 80.09104919433594,
+   "mean": 80.091,
+   "min": 80.09104919433594,
+   "n": 24,
+   "p50": 80.09104919433594,
+   "p95": 80.09104919433594
+  },
+  "worker_built": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 24,
+   "p50": 2,
+   "p95": 2
+  },
+  "worker_cpu_seconds_per_cycle": 1.145,
+  "worker_cpu_seconds_total": 27.49,
+  "worker_prepare_s": {
+   "max": 2.085470095,
+   "mean": 1.393,
+   "min": 1.253768015,
+   "n": 24,
+   "p50": 1.332931346,
+   "p95": 1.762372476
+  },
+  "worker_self_check_ms": {
+   "max": 193.488,
+   "mean": 151.263,
+   "min": 128.773,
+   "n": 24,
+   "p50": 145.707,
+   "p95": 188.702
+  },
+  "worker_shipped": {
+   "max": 2,
+   "mean": 2.0,
+   "min": 2,
+   "n": 24,
+   "p50": 2,
+   "p95": 2
+  },
+  "worker_shipped_fallbacks_total": 0
+ }
+}

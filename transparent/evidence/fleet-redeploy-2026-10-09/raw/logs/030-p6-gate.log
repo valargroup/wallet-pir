@@ -1,0 +1,18 @@
+### start 2026-10-09T12:59:07.148Z
+### cmd:
+bash $DEP/steps/load-gate.sh; grep -v Deprecation $DEP/load-samples.log | awk -v s=2026-10-09T12:47:22Z "\$1>s {print \$2, \$4, \$5, \$8}" | sort | uniq -c; python3 - <<"EOF"
+import statistics
+rows=[l.split() for l in open("/root/deploy-a317455e/freshness.log") if len(l.split())>=6 and l.split()[1]=="serving"]
+by={}
+for r in rows: by.setdefault(r[2],[]).append(float(r[4]))
+f=[max(v) for v in by.values()]
+lag=[int(r[3])-int(r[2]) for r in rows]
+print("heights",len(by),"freshness p50",statistics.median(f),"max",max(f),"max node-public",max(lag),"samples",len(rows),"non-serving",sum(1 for l in open("/root/deploy-a317455e/freshness.log") if l.split()[1]!="serving"))
+EOF
+### output:
+running 2026-10-09T12:58:56.525836+00:00 1791550042.6735857 {'ready': 1, 'paused': 3, 'query': 3389, 'http_attempts': 3389} {'exact': 300, 'errors': 0, 'missed_slots': 0, 'completed_qps': 5.0, 'http_p50_seconds': 0.011762879, 'http_p95_seconds': 0.026677681, 'http_p99_seconds': 0.0414656, 'max_schedule_lag_seconds': 0.002262496} incidents 0 []
+no-latch
+active
+     46 running 0 0 nolatch
+heights 11 freshness p50 12.132540308 max 19.290289383 max node-public 2 samples 137 non-serving 0
+### end 2026-10-09T12:59:07.205Z rc=0

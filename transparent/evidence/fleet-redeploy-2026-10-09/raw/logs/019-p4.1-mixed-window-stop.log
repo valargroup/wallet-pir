@@ -1,0 +1,13 @@
+### start 2026-10-09T12:32:58.263Z
+### cmd:
+cat $DEP/steps/p4.1-stop.sh; echo ---; bash $DEP/steps/p4.1-stop.sh
+### output:
+. /root/deploy-a317455e/env.sh
+systemctl stop transparent-5qps-continuous; date -u +%FT%TZ | tee $DEP/mixed-window-end
+test ! -e $LOAD/latched.json && echo stopped-clean
+python3 $DEP/steps/membership.py
+---
+2026-10-09T12:32:58Z
+stopped-clean
+membership age 0.5 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '932d4fdf0e13'), 'transparent-pir-recent-02': ('serving', True, True, '932d4fdf0e13'), 'transparent-pir-archive-03': ('serving', True, True, '932d4fdf0e13')}
+### end 2026-10-09T12:32:58.767Z rc=0

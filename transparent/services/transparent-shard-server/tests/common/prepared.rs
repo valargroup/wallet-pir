@@ -22,6 +22,33 @@ pub fn prepared_shard(
     geometry: &'static Geometry,
     events: &[(ScriptBytes, TransparentEvent)],
 ) -> Arc<BuiltShard> {
+    prepared_in(
+        CACHE.get_or_init(Default::default),
+        id,
+        start,
+        end,
+        genesis,
+        terminal,
+        profile,
+        geometry,
+        events,
+    )
+}
+
+/// The same, over a given cache: the process-wide one is shared by every test
+/// in the binary, which may evict anything between two calls.
+#[allow(clippy::too_many_arguments)]
+fn prepared_in(
+    cache: &Mutex<Cache>,
+    id: u64,
+    start: u64,
+    end: u64,
+    genesis: BlockHash,
+    terminal: BlockHash,
+    profile: &str,
+    geometry: &'static Geometry,
+    events: &[(ScriptBytes, TransparentEvent)],
+) -> Arc<BuiltShard> {
     use sha2::{Digest, Sha256};
     let key = hex::encode(Sha256::digest(
         serde_json::to_vec(&(
@@ -36,7 +63,7 @@ pub fn prepared_shard(
         ))
         .unwrap(),
     ));
-    let mut cache = CACHE.get_or_init(Default::default).lock().unwrap();
+    let mut cache = cache.lock().unwrap();
     if let Some(index) = cache.iter().position(|(k, _, _)| k == &key) {
         let item = cache.remove(index).unwrap();
         let result = item.1.clone();
@@ -65,8 +92,12 @@ mod tests {
 
     #[test]
     fn identical_inputs_reuse_bytes_but_different_anchors_do_not() {
+        // Its own cache: other tests in the binary build through the shared
+        // one concurrently and may evict this entry between two calls.
+        let cache = Mutex::new(Cache::new());
         let anchor = BlockHash::from_internal_bytes([1; 32]);
-        let a = prepared_shard(
+        let a = prepared_in(
+            &cache,
             0,
             1,
             2,
@@ -76,7 +107,8 @@ mod tests {
             &RECENT_4K,
             &[],
         );
-        let b = prepared_shard(
+        let b = prepared_in(
+            &cache,
             0,
             1,
             2,
@@ -87,7 +119,8 @@ mod tests {
             &[],
         );
         assert!(Arc::ptr_eq(&a, &b));
-        let c = prepared_shard(
+        let c = prepared_in(
+            &cache,
             0,
             1,
             2,

@@ -17,9 +17,10 @@ impl WorkMemory {
     /// Leave ten percent of the cgroup limit for unmodelled process overhead.
     /// This complements (and does not replace) the runtime cache budget.
     /// Charge outstanding reservations again even if partly materialized in
-    /// memory.current: conservative admission is preferable to an OOM kill.
+    /// the cgroup's memory in use: conservative admission is preferable to an
+    /// OOM kill. Page cache the kernel can drop is not in use.
     pub fn reserve(self: &Arc<Self>, bytes: u64) -> Option<Reservation> {
-        self.reserve_at(bytes, crate::procmem::cgroup_memory_bytes())
+        self.reserve_at(bytes, crate::procmem::cgroup_memory_in_use_bytes())
     }
 
     /// An already-admitted query may briefly wait for construction scratch to
@@ -30,7 +31,7 @@ impl WorkMemory {
         bytes: u64,
         remaining: std::time::Duration,
     ) -> Option<Reservation> {
-        self.reserve_query_with(bytes, remaining, crate::procmem::cgroup_memory_bytes)
+        self.reserve_query_with(bytes, remaining, crate::procmem::cgroup_memory_in_use_bytes)
             .await
     }
 
@@ -61,7 +62,7 @@ impl WorkMemory {
     /// Restores remain nonblocking; queries have a short bounded wait. All work
     /// uses the same guard.
     pub async fn reserve_build(self: &Arc<Self>, bytes: u64) -> Option<Reservation> {
-        self.reserve_build_with(bytes, crate::procmem::cgroup_memory_bytes)
+        self.reserve_build_with(bytes, crate::procmem::cgroup_memory_in_use_bytes)
             .await
     }
 

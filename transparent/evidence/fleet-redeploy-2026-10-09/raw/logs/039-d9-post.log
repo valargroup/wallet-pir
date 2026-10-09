@@ -1,0 +1,27 @@
+### start 2026-10-09T14:14:32.237Z
+### cmd:
+bash $DEP/steps/load-gate.sh; python3 $DEP/steps/membership.py; for h in $R01 $R02 $A03; do curl -s http://$h:8093/v1/ready | python3 -c "import json,sys;r=json.load(sys.stdin);print(r[\"binary_sha256\"][:12],r[\"ready\"],r[\"mode\"],r[\"warm_runtimes\"],r[\"target_runtimes\"],r[\"runtime_cache\"][\"write_failures\"])"; done; for h in $R01 $R02 $A03; do $W root@$h "hostname; grep MemAvailable /proc/meminfo; systemctl show transparent-shard-server -p MemoryCurrent -p MemoryPeak -p NRestarts"; done
+### output:
+running 2026-10-09T14:14:29.961715+00:00 1791552618.0746014 {'ready': 1, 'paused': 4, 'query': 13144, 'http_attempts': 13144} {'exact': 300, 'errors': 0, 'missed_slots': 0, 'completed_qps': 5.0, 'http_p50_seconds': 0.017361377, 'http_p95_seconds': 0.035812834, 'http_p99_seconds': 0.054923741, 'max_schedule_lag_seconds': 0.009564751} incidents 0 []
+no-latch
+active
+membership age 0.7 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '3bfbea1a00c7'), 'transparent-pir-recent-02': ('serving', True, True, '3bfbea1a00c7'), 'transparent-pir-archive-03': ('serving', True, True, '3bfbea1a00c7')}
+34ba7ebbdb9c True warm 18 18 0
+34ba7ebbdb9c True warm 18 18 0
+34ba7ebbdb9c True warm 164 164 0
+transparent-pir-recent-01
+MemAvailable:    5628780 kB
+NRestarts=0
+MemoryCurrent=1245929472
+MemoryPeak=1445650432
+transparent-pir-recent-02
+MemAvailable:    6324456 kB
+NRestarts=0
+MemoryCurrent=1263194112
+MemoryPeak=1469829120
+transparent-pir-archive-03
+MemAvailable:   32022108 kB
+NRestarts=0
+MemoryCurrent=33616453632
+MemoryPeak=33893822464
+### end 2026-10-09T14:14:33.429Z rc=0

@@ -1,0 +1,97 @@
+{
+ "source": "https://enhance-pir.valargroup.dev/apm/api/quality?service=transparent&range=1h (public aggregate); history omitted",
+ "captures": {
+  "before 2026-10-09T13:40Z": {
+   "collected_at": 1791553247,
+   "storage_error": false,
+   "sources": {
+    "transparent-edge": {
+     "sampled_at": 1791553234,
+     "error": null
+    },
+    "transparent-independent-probe": {
+     "sampled_at": 1791553226,
+     "error": null
+    },
+    "transparent-pir-archive-03": {
+     "sampled_at": 1791553247,
+     "error": null
+    },
+    "transparent-pir-recent-01": {
+     "sampled_at": 1791553247,
+     "error": null
+    },
+    "transparent-pir-recent-02": {
+     "sampled_at": 1791553247,
+     "error": null
+    },
+    "transparent-publisher": {
+     "sampled_at": 1791553247,
+     "error": null
+    }
+   },
+   "synthetic": {
+    "fresh": false,
+    "mode": "running",
+    "utc": "2026-10-03T17:35:31.651283+00:00",
+    "started_unix": 1790942586.276352,
+    "trailing_60s": {
+     "completed_qps": 4.983333333333333,
+     "errors": 0.0,
+     "exact": 299.0,
+     "http_p50_seconds": 0.012978185,
+     "http_p95_seconds": 0.027789307,
+     "http_p99_seconds": 0.034139308,
+     "max_schedule_lag_seconds": 0.086633619,
+     "missed_slots": 0.0
+    }
+   }
+  },
+  "after 2026-10-09T13:51Z": {
+   "collected_at": 1791553867,
+   "storage_error": false,
+   "sources": {
+    "transparent-edge": {
+     "sampled_at": 1791553864,
+     "error": null
+    },
+    "transparent-independent-probe": {
+     "sampled_at": 1791553828,
+     "error": null
+    },
+    "transparent-pir-archive-03": {
+     "sampled_at": 1791553867,
+     "error": null
+    },
+    "transparent-pir-recent-01": {
+     "sampled_at": 1791553867,
+     "error": null
+    },
+    "transparent-pir-recent-02": {
+     "sampled_at": 1791553867,
+     "error": null
+    },
+    "transparent-publisher": {
+     "sampled_at": 1791553867,
+     "error": null
+    }
+   },
+   "synthetic": {
+    "fresh": true,
+    "mode": "running",
+    "utc": "2026-10-09T13:51:06.351917+00:00",
+    "started_unix": 1791552618.0746014,
+    "trailing_60s": {
+     "completed_qps": 5.0,
+     "errors": 0.0,
+     "exact": 300.0,
+     "http_p50_seconds": 0.016031504,
+     "http_p95_seconds": 0.034449091,
+     "http_p99_seconds": 0.054101897,
+     "max_schedule_lag_seconds": 0.002336788,
+     "missed_slots": 0.0
+    }
+   }
+  }
+ }
+}

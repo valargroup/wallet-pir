@@ -56,6 +56,80 @@ authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [S
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
 
+## Transparent operations after the 2026-10-09 redeploy
+
+The [2026-10-09 redeploy](../evidence/fleet-redeploy-2026-10-09/README.md) moved the
+history workers and the controller to `a317455e`. Operations source now pins those
+bytes, and the adapter the reconciler runs, for v11 schema operations
+([deployment](deployment.md#portable-activity-worker-executables)). These items remain;
+the last two were found during the redeploy.
+
+- [ ] Stage the operations source that carries the new pins on the coordinator with
+  `schema-source-plan`, `-preflight` and `-stage`. Every schema operation runs from a
+  staged source, and `4c85b6c2`'s copy still pins the old bytes. Run the read-only
+  preflight first. Attribution files retained on 2026-10-05 carry the old script pin
+  and are now walked as owner records; the reconciler processes they name have exited.
+- [ ] Stage the deployed portable executables on the coordinator before any version-1
+  worker-input, service-input or product preflight. These are `transparent-shard-server`
+  `34ba7ebb…`, `shard-control` `9208555a…` and `transparent-publish-controller`
+  `13af048e…` from full CI 37921342549, whose verified extract is on the coordinator
+  under `/opt/transparent-publisher/releases/a317455e…/binaries`. They go into
+  `/srv/transparent-activity/portable-workers/releases/<sha256>/<name>`, mode 0755,
+  through wrapper plan/preflight and `preflight --stage`. Until then those preflights
+  refuse with "portable worker artifact identity/mode differs".
+- [ ] Make the `4c85b6c2` operations source verify again, or record that the 2026-10-03
+  cutover's rollback is no longer available.
+  - **The change.** On 2026-10-06 the txid display router hook rewrote
+    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The live
+    controller's `fleet_command` and the replica reconciler both run that file.
+  - **Why it refuses.** The receipt still records the original bytes, so every phase of
+    the committed 2026-10-03 schema transaction refuses at receipt verification, its
+    rollback included.
+  - **Why source cannot fix it.** Those phases run `4c85b6c2`'s own code. Only the
+    bootstrap survey, which runs from the staging client, accepts the one replacement.
+  - **One fix.** Stage a new source and point the controller's `fleet_command` and the
+    reconciler and control-sessions units at its adapter, then restart them. Next,
+    restore the original bytes kept by the router-hook transaction. After that, the
+    attribution pins move to the new source.
+- [ ] Re-pin or retire the changed-native candidate `c3c66b9b`. It predates `a317455e`,
+  so version-2 inputs would install older workers and an older controller than
+  production runs, and its 13 supplemental tools have no `a317455e` build.
+- [ ] Port the standard deploy paths to v11; the v11 fleet lives under
+  `/opt/transparent-publisher/v11/`.
+  - `deploy-transparent-publisher.py` `shadow` and `activate` write
+    `/opt/transparent-publisher/controller.json` and `fleet.json`. They default to the
+    v7 publication, the version-2 journal and `/srv/zakura/transparent-publications`.
+    `deploy-transparent-publisher.yml` runs it with those defaults.
+  - `upgrade-transparent-fleet.py` defaults to `/opt/transparent-publisher/fleet.json`.
+  - `deploy-transparent-shard.yml` reads `/opt/transparent-publisher/state/inventory.json`
+    and `roster.json`.
+
+  Run now, they would point the controller back at pre-v11 configuration. The
+  2026-10-09 redeploy used a manual runbook instead (its `raw/steps/`), reusing only
+  `install_worker`.
+- [ ] Give `roll-recent-replicas.py` a reviewed floor for a two-replica tier. It
+  restarts a replica only while two other recent replicas serve
+  (`MIN_OTHER_SERVING = 2`). The tier has two replicas, and the actuator that used to add
+  a temporary third is disabled. The 2026-10-09 roll therefore set the floor to 1 for
+  that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
+  Add an explicit, logged override, or bring up a temporary third replica for each roll.
+
+## Dithered 44-bit queries (source only, 2026-10-09)
+
+Servers in source accept a 49-bit or a 44-bit dithered selection, by exact length, and
+`init` advertises the dithered schemes (`*_scheme_dq44`, display `scheme_dq44`). Wallets
+and txid clients built from this source send 44 bits whenever a service advertises a
+scheme they reproduce, so deploying these servers moves current clients to 44 bits with
+no further switch; older clients keep sending 49
+([architecture](architecture.md#pir-scheme)). Nothing is deployed.
+
+- [ ] Before deploying them, certify every served segment at both widths: 49-bit nearest,
+  as today, and 44-bit dithered (`native_certificate --query-rounding dithered`), at the
+  unchanged floors `{archive-wide-pages: 83, otherwise: 128}`. The `native-certificates`
+  gate and its certifier pin must move to ipir-sp `d76e61a`'s `certify_native.py`, which
+  reads dithered reports; the [screen](../evidence/dithered-query-2026-10-09/README.md)
+  has the shape-level margins.
+
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
 Attempt 7 failed the candidate cache reader, then the locked wrapper completed
@@ -299,6 +373,61 @@ Scope and reproducible acceptance command: [txid display](txid-display.md).
 - [ ] Qualify and implement the later wallet-libraries/Vizor integration at pinned revisions.
 - [ ] Qualify production capacity and release artifacts; obtain deployment approval.
 
+## Txid display v2: senders in fixed-size entries (2026-10-08)
+
+Design: [txid display](txid-display.md). Roman's decisions:
+- cover regular cases only, with exotic ones flagged as omissions and an
+  explicit public enhancement;
+- the first address-shaped source;
+- up to two outputs;
+- one table per bucket;
+- build the code across wallet-pir, wallet-libraries and Vizor before ingest;
+- commit to `main`.
+
+- [x] Code on `main`:
+  - the entry codec and derivation;
+  - extraction from resolved spent outputs;
+  - v2x source sidecars that entries derive from, so an entry change is a
+    republish;
+  - one table per bucket with cuckoo placement;
+  - the worker, controller and wallet client;
+  - the history-attached path removed.
+- [x] Independent oracle: `verify_fixture.py` derives every expected entry
+  from raw blocks and parents; `make transparent-txid-demo` checks extraction
+  and lookups against it.
+- [x] wallet-libraries and Vizor draft PRs: facts, validation, view, and a
+  user-initiated public enhancement
+  ([zakura-core/wallet-libraries#127](https://github.com/zakura-core/wallet-libraries/pull/127),
+  [chainapsis/vizor-wallet#885](https://github.com/chainapsis/vizor-wallet/pull/885),
+  stacked on #879). Adversarial review of all three diffs found no blockers;
+  its fixes are in both PRs and in `b88bf8a7` (history ingest no longer builds
+  display sources).
+- [ ] Oracle coverage: the frozen fixture has no entry with mixed funding
+  (bit 16) and one with several source scripts. Add a transaction with
+  transparent inputs and a positive shielded value balance, so Rust and the
+  Python oracle agree on it by bytes, not only by reading.
+- [ ] Worker `verify_rows` accepts trailing all-empty segments that the
+  builder never emits. Refuse them, since each adds a reply frame to every
+  query of that bucket.
+- [x] v2 cutover, 2026-10-08: production serves v2 from height 1 on a dedicated
+  archive host; v1 is retired and its data deleted
+  ([status](status.md#txid-display-v2-in-production-from-genesis-2026-10-08)).
+- [ ] Ingest phase (after the code is accepted), measured on a development host
+  first:
+  - a v2x genesis journal ingested by another session on 2026-10-08 is
+    publishable as v2 without a new node ingest. Confirm its sidecar count,
+    spot-check it, and derive entries from it with this code;
+  - the share of entries with each omission, against Roman's six-month usage
+    figures (gate: at least 90% complete);
+  - cuckoo load and segments at the chosen `archive_target`, either 40,000
+    or about 60,000 now that one table per bucket halves memory;
+  - source-sidecar bytes from genesis against the 150 GB volume, with 20%
+    headroom.
+- [x] G, Roman: approved a direct v2 deploy (no clients), the 64 GB host and
+  v1's retirement on 2026-10-08.
+- [ ] Re-enable shipped runtimes for v2 once the ship copy no longer worsens
+  block-to-serving p95 under the coordinator's I/O load.
+
 ## Tiered txid display proof of concept (2026-10-05)
 
 Design and leakage: [tiered display publication](txid-display.md#tiered-display-publication-proof-of-concept).
@@ -324,7 +453,8 @@ N=1 buckets; no paid infrastructure; commit to `main`.
 - [ ] Measure each criterion live and write the production results
   ([evidence](../evidence/txid-display-tiered-2026-10-07/README.md),
   [status](status.md#tiered-txid-display-in-production-2026-10-07)):
-  - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes;
+  - [ ] anonymity: at least 10,000 real txids per queried (shard, bucket); report page-count classes
+    (v1 only; v2 entries have none);
   - [x] recent rebuild: at most 20 s from block to serving over at least 300 live blocks, p50 and max.
     **Max failed:** p50 16.0 s, max 97.2 s, 22 of 1,054 live cycles over 20 s;
     Roman accepted the miss for the proof of concept;
@@ -355,13 +485,22 @@ starts dropping archives around mid-December 2026.
   (`transparent-txid-display-genesis-ingest`), stopped at about 20:00 UTC
   after it latched history's load on coordinator disk headroom. The partial
   journal moved to a dedicated 150 GB volume at `/srv/txid-display-genesis`
-  ([status](status.md#tiered-txid-display-in-production-2026-10-07)). Verify
-  block count equals sidecar count and run a spot check.
-- [ ] Layout experiments on real data, such as shared or smaller page tables,
-  before the host is chosen.
-- [ ] G1, Roman: choose the display-archive host. `m-8vcpu-64gb` is
-  recommended at today's layout; the decision is deferred until the layout
-  experiments are done.
+  ([status](status.md#tiered-txid-display-in-production-2026-10-07)) and
+  completed at 22:56:45 UTC: 3,508,674 blocks. The
+  [census](../evidence/txid-display-genesis-census-2026-10-07/README.md) found a
+  sidecar for every committed block. Remaining: a spot check.
+- [x] Layout analysis on real data
+  ([census](../evidence/txid-display-genesis-census-2026-10-07/README.md)).
+  Today's `txid-2k` needs 1,325 runtimes and 51.8 GiB, not 850 and 33.2 GiB.
+  Shared and smaller page tables do not reach 64 GB; only 80,000-record
+  archives before NU6 do.
+- [ ] G1, Roman: choose the display-archive host. Recommended:
+  `m-16vcpu-128gb` (about $672 a month) with today's layout. The alternative is
+  `m-8vcpu-64gb` (about $336), which needs about two weeks of layout work
+  (variant C in [deployment](deployment.md#host-and-memory-options-for-genesis))
+  and a client release.
+- [ ] Ops: raise the 64 GiB `cache_bytes` cap, and count page segments per
+  archive in the window check (1,325 runtimes at cutover).
 - [x] Code: reservation true-up and `shard-residency` display geometries
   (source only; no release carries them yet).
 - [x] Code: split display map, on `main` beside the unchanged full map (source
@@ -399,6 +538,8 @@ pin remains unavailable through the sanctioned read-only RPC interface.
 - [x] Build a parent-free canonical export path with complete eligibility, shared shielded flags, raw outputs and current display bytes; bound unknown exact-fee encoded length using canonical monetary limits.
 - [x] Complete the fixed-anchor, era-stratified whole-range probability sample within the one-day budget; publish clustered uncertainty, all requested cutoffs, 85/90/95/99 frontiers and conservative fee-size membership.
 - [x] Select a useful cutoff strictly above 80% from that bounded study and assess independent coarse/hash lookup with global/broad overflow, joint routes, excess counts, thin revisions and timing. Sample estimates do not qualify population anonymity minima.
+- [x] Add and locally validate the [read-only coordinator journal census command](../tools/txid-sizing/JOURNAL-CENSUS.md), including safe fee-size page bounds, unique identities, shared k-archive tables and smaller page geometries.
+- [ ] Receive Roman's completed genesis-journal JSON at fixed height 3,508,673 with its anchor hash and ingest source/executable and total/eligible/shielded-only exclusion receipt; compare conservative coverage and geometry demand against the existing recommendation. The orchestrator owns the ingest; do not run a gateway scan or resume the old prefix.
 - [ ] Remaining full-data gate: obtain sanctioned bulk/archive-local extraction and reconcile canonical genesis-to-anchor eligibility, exact identity and membership. Resolve exact fees only when their encoded-size uncertainty can change a decision. No full UTXO reconstruction is required for display sizing.
 - [ ] Before changing production geometry, replay all observable joint routes across retained revisions, segment/request counts, refresh boundaries and relevant timing/history conditioning. Require distinct-real-candidate policy decisions for K=1000/10000; padding, fragments and a global overflow route cannot widen a narrow lookup class.
 - [ ] Measure a small representative native workload only where it can change the geometry choice; report reservations and uploaded/returned bytes separately from measured RSS/latency. Exhaustive concurrency/hardware qualification and wallet recovery belong to separate release work.
@@ -668,6 +809,37 @@ None of these block the recovery beta, and none has an implementation decision.
   choice reveals a history-size class. It needs that privacy review, bulk geometry
   sizing and a view on six-week tails before it is built or dropped.
 
+## Declared re-cut of sealed recent shards
+
+The goal is to merge a run of sealed recent shards into fewer archive shards and switch
+routing to the new map with no downtime, while wallets keep everything they hold. The
+map's re-cut declaration, its shape checks and the reference wallet's handling are in
+place ([architecture](architecture.md#declared-re-cuts)); the wallet-libraries adapter and
+Vizor follow separately. What remains is the server side, and no production map is re-cut
+until all of it passes and every client in use reads declarations:
+
+- [ ] A publisher mode that builds the re-cut map from the current one: entries below the
+  first changed height hard-linked byte for byte, the span rebuilt in the archive geometry
+  with its end on an old sealed boundary, every later sealed shard and the tail renumbered
+  at a revision above the one each replaces at its geometry and start height, and a
+  declaration of every replaced entry exactly as published.
+- [ ] The continuous publisher carries every earlier declaration forward on each
+  republication, in rising epochs, and keeps seal parameters for every geometry any
+  declaration names. Today it writes an empty `recuts`
+  (`transparent/services/transparent-filter-server/src/publication.rs`); a republication
+  that dropped a declaration would strand wallets holding the revisions it named.
+- [ ] `shard-verify` checks a declaration against the previous map: identical prefix,
+  unchanged boundary terminal blocks, exact tiling, declared entries equal to what was
+  published, and the revision rule.
+- [ ] Prepare and verify the new archive shards on the archive owner and switch the router
+  at a publication boundary. A wallet that has synced the re-cut map refuses the earlier
+  one, so routing back after the switch stalls such wallets until the re-cut map is served
+  again.
+- [ ] Re-pin the regression fixtures, whose tool treats renumbering as drift.
+- [ ] Acceptance: a bench fleet re-cut under wallet load, with the reference wallet and the
+  adapter keeping their history (no private query for held heights, no rollback below the
+  replaced tail) and the router switch without failed requests.
+
 ## Earlier technical gates and deferred work
 
 Inventory/spot-check/cutoff (Gate 0), mixed census and publication (Gates 1–2),
@@ -689,7 +861,8 @@ The following remain separately scoped; they do not block this recovery beta:
   establish a baseline completion budget, repeat frozen finalists/seeds under
   equal limits and resolve recent-latency/total-byte gates before wider promotion.
 - [ ] Track aged recent-shaped shard growth and re-census before expansion.
-  Epoch re-cutting needs explicit lineage/cache/replay/migration/rollback design.
+  Moving aged recent shards into archive shards is the
+  [declared re-cut](#declared-re-cut-of-sealed-recent-shards) below.
 - [ ] Scope archive/router redundancy for general availability, mobile, sending
   and seed custody, existing-database migration, key reuse and stronger
   completeness/traffic-pattern guarantees as separate decisions.
@@ -788,3 +961,30 @@ shards 0–76; the single-copy availability risk is accepted in
   (same apply; `user_data` changes are ignored, so no droplet changed).
 - [ ] Rehearse archive-owner loss and rebuild on the single owner (restart from
   the disk runtime cache and a cold rebuild), with the public effect recorded.
+
+## Txid display shipped runtimes
+
+From the [2026-10-08 deploy](../evidence/txid-display-shipped-runtimes-2026-10-08/README.md)
+and the review of `6b8c5c91..d993bc75`. The change is on `main` (`229b9eb9`) and off
+by default; v2 does not enable it.
+
+- [ ] Carry the 80 MiB copy within the latency targets before enabling it again:
+  measure the runtime files' rsync in isolation on the private network; try
+  `--whole-file` for `.runtime` files (no basis to delta against), shipping each
+  file as its build finishes instead of after both, or compressing nothing (the
+  files are incompressible). Gate: ship p95 under 2 s over 300 cycles.
+- [ ] Take the prebuild off the critical path where possible: cache
+  `SharedParams` per table kind across controller cycles and reuse
+  `publish_parts`' verification instead of `verify_tables` again (about 0.8 s of
+  the 2.8 s prebuild).
+- [ ] Lower the replica's load-time interference (lookup p99 1.4× the quiet tail
+  while loading or receiving): cap the self-check's build-pool threads or run it
+  at lower priority, and keep rsync's receiver work off the query threads.
+- [ ] Pin the self-check's any-row claim with a test where rows B differ from
+  rows A in one row only; use `rand::rng` for the sampled row and say why it must
+  be unpredictable to the publisher.
+- [ ] Count a refused shipped file once per slot on an `Overloaded` retry.
+- [ ] Document in `txid-display.md` that the prebuild runs before
+  `deliver_invalidations` (a reorg's stale window grows by `prebuild_ms`) and that
+  archive owners receive the recent runtimes at seal boundaries; correct the bench
+  README's 48 loads to run 2's 50.

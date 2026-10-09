@@ -276,9 +276,9 @@ class Fake(Executor):
                     return 503, '{}'
                 return 200, json.dumps({'ready': True, 'role': P.ROLES[key], 'map_sha256': self.active[key],
                                         'warm': True})
-        if url == 'https://pir.example/v1/txid/shards':
+        if url == 'https://pir.example/v1/txid/map':
             routed = self.text('router-01', '/etc/caddy/txid-display/routes.caddy')
-            return (200, json.dumps({'shards': []})) if routed and 'withdrawn' not in routed else (404, '')
+            return (200, json.dumps({'chunks': []})) if routed and 'withdrawn' not in routed else (404, '')
         if url == 'https://pir.example/v1/shards':
             return 200, json.dumps({'shards': []})
         return 0, 'connection refused'
@@ -482,6 +482,8 @@ class RequestTests(Base):
             (('controller', 'recent_floor'), 9999), (('controller', 'archive_target'), 5000),
             (('controller', 'reorg_margin'), 99), (('controller', 'n_archive'), 65), (('controller', 'n_recent'), 0),
             (('controller', 'max_archive_shards'), 0), (('controller', 'archives'), 0),
+            (('controller', 'max_archive_shards'), 1025), (('controller', 'archives'), 1025),
+            (('journal', 'start_height'), -1),
             (('controller', 'n_buckets'), 1), (('controller', 'replay_seals'), KeyError),
             (('controller', 'mode'), 'fast'), (('controller', 'rpc_url'), 'http://10.0.0.1:8232'),
             (('ports', 'worker'), 8096), (('ports', 'controller_status'), 8094),
@@ -496,6 +498,11 @@ class RequestTests(Base):
         ]
         for path, value in refused:
             with self.subTest(path=path, value=value), self.assertRaises(P.PocError):
+                P.validate(mutate(path, value), inventory())
+        # Genesis coverage: a journal from height 0 and a 1,000-archive window.
+        for path, value in [(('journal', 'start_height'), 0), (('controller', 'max_archive_shards'), 1000),
+                            (('controller', 'archives'), 426)]:
+            with self.subTest(path=path, value=value):
                 P.validate(mutate(path, value), inventory())
         remote_elsewhere = descriptors.Inventory(hosts={n: {} for n in HOSTS.values()}, ssh={'mode': 'config'},
                                                  lock={'type': 'remote', 'host': 'router-01'}, services={})

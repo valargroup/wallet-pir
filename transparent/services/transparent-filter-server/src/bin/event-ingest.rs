@@ -86,9 +86,28 @@ struct Cli {
     /// Blocks between progress lines.
     #[arg(long, default_value_t = 1_000)]
     log_every: u64,
-    /// Write complete txid display sidecars before each block checkpoint.
-    #[arg(long)]
+    /// Write each block's txid display source sidecar (`display-v2x/`)
+    /// before its checkpoint: every transparent output, and every transparent
+    /// input with the value and script of the output it spends, from the
+    /// previous outputs the fee already resolves. Published entries are
+    /// derived from it. `--txid-display-inputs` is the same flag.
+    #[arg(long, alias = "txid-display-inputs")]
     txid_display: bool,
+}
+
+/// The display sidecar each appended block carries.
+fn append(
+    store: &mut EventStore,
+    cli: &Cli,
+    height: u64,
+    built: transparent_filter_server::ingest::BuiltEvents,
+) -> Result<(), BoxError> {
+    if cli.txid_display {
+        store.append_block_with_display(height, built.block_hash, &built.events, &built.display)?;
+    } else {
+        store.append_block(height, built.block_hash, &built.events)?;
+    }
+    Ok(())
 }
 
 /// Rolls stored coverage back to the highest block the node still agrees with.
@@ -210,6 +229,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
     reconcile_state(&reader, &mut store, stop)?;
 
     let reader = std::sync::Arc::new(reader);
+    let display = cli.txid_display;
     let started = Instant::now();
     let first = store.next_height();
     let workers = cli.workers.max(1);
@@ -238,7 +258,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
             let reader = reader.clone();
             let at = to_spawn;
             inflight.push_back(tokio::task::spawn_blocking(move || {
-                reader.block_events(at).map(|events| (at, events))
+                reader.block_events(at, display).map(|events| (at, events))
             }));
             to_spawn += 1;
         }
@@ -250,16 +270,7 @@ async fn run_state_backfill(cli: Cli, state_dir: PathBuf) -> Result<(), BoxError
             return Err(format!("extracted height {at} out of order at {height}").into());
         }
         lookups += built.rpc_lookups;
-        if cli.txid_display {
-            store.append_block_with_display(
-                height,
-                built.block_hash,
-                &built.events,
-                &built.display,
-            )?;
-        } else {
-            store.append_block(height, built.block_hash, &built.events)?;
-        }
+        append(&mut store, &cli, height, built)?;
 
         if height % cli.commit_every == 0 {
             store.commit()?;
@@ -376,19 +387,12 @@ async fn main() -> Result<(), BoxError> {
             }));
         }
 
-        let built = build_fetched_block_events(&zakura, &mut cache, height, fetched).await?;
+        let built =
+            build_fetched_block_events(&zakura, &mut cache, height, fetched, cli.txid_display)
+                .await?;
         rpc_lookups += built.rpc_lookups;
         cache_hits += built.cache_hits;
-        if cli.txid_display {
-            store.append_block_with_display(
-                height,
-                built.block_hash,
-                &built.events,
-                &built.display,
-            )?;
-        } else {
-            store.append_block(height, built.block_hash, &built.events)?;
-        }
+        append(&mut store, &cli, height, built)?;
 
         if height % cli.commit_every == 0 {
             store.commit()?;

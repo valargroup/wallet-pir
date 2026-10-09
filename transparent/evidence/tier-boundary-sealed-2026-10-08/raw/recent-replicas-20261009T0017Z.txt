@@ -1,0 +1,84 @@
+=== transparent-pir-recent-01 2026-10-09T00:17:06Z
+--- free -b
+               total        used        free      shared  buff/cache   available
+Mem:      8326942720  2384588800   710991872   103186432  5656281088  5942353920
+Swap:              0           0           0
+--- /proc/meminfo
+MemTotal:        8131780 kB
+MemAvailable:    5803080 kB
+--- systemctl show transparent-shard-server
+NRestarts=0
+MemoryCurrent=1257996288
+MemoryPeak=1741881344
+MemoryHigh=5905580032
+MemoryMax=7516192768
+--- systemctl show transparent-txid-display-worker
+MemoryCurrent=418172928
+MemoryPeak=504991744
+MemoryMax=1610612736
+ActiveState=active
+--- shard server flags
+--cache-bytes 5368709120
+--query-slots 2
+--runtime-cache-max-bytes 10737418240
+--build-slots 1
+--- metrics (selected)
+transparent_shard_assigned_shards 9
+transparent_shard_revisions_held 12
+transparent_shard_cache_budget_bytes 5368709120
+transparent_shard_cache_resident_bytes 1846447200
+transparent_shard_cache_entries 20
+transparent_shard_evictions_total 11847
+transparent_shard_overloads_total 0
+transparent_shard_target_runtimes 18
+transparent_shard_process_rss_bytes 1721860096
+transparent_shard_warm_runtimes 18
+transparent_shard_cgroup_memory_current_bytes 1258520576
+transparent_shard_cgroup_memory_max_bytes 7516192768
+--- ready.runtime_cache
+{"assigned_shards": 9, "binary_sha256": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430", "map_sha256": "e78392e459770fc727e533d1977f30d032ef474bb6b9902e7906f1276d1f38a2", "mode": "warm", "runtime_cache": {"bytes": 1880575744, "hits": 21, "limit_bytes": 10737418240, "misses": 11846, "pending_saves": 0, "restore_slots": 4, "write_failures": 0}, "target_runtimes": 18, "warm_runtimes": 18}
+--- runtime files (bytes, count)
+     16 50379384
+     16 67156600
+=== transparent-pir-recent-02 2026-10-09T00:17:07Z
+--- free -b
+               total        used        free      shared  buff/cache   available
+Mem:      8326942720  1885523968  1455349760     4259840  5312061440  6441418752
+Swap:              0           0           0
+--- /proc/meminfo
+MemTotal:        8131780 kB
+MemAvailable:    6290448 kB
+--- systemctl show transparent-shard-server
+NRestarts=0
+MemoryCurrent=1280630784
+MemoryPeak=1559547904
+MemoryHigh=5905580032
+MemoryMax=7516192768
+--- systemctl show transparent-txid-display-worker
+MemoryCurrent=[not set]
+MemoryPeak=[not set]
+MemoryMax=infinity
+ActiveState=inactive
+--- shard server flags
+--cache-bytes 5368709120
+--query-slots 2
+--runtime-cache-max-bytes 10737418240
+--build-slots 1
+--- metrics (selected)
+transparent_shard_assigned_shards 9
+transparent_shard_revisions_held 12
+transparent_shard_cache_budget_bytes 5368709120
+transparent_shard_cache_resident_bytes 1846447200
+transparent_shard_cache_entries 20
+transparent_shard_evictions_total 11858
+transparent_shard_overloads_total 0
+transparent_shard_target_runtimes 18
+transparent_shard_process_rss_bytes 1746284544
+transparent_shard_warm_runtimes 18
+transparent_shard_cgroup_memory_current_bytes 1280897024
+transparent_shard_cgroup_memory_max_bytes 7516192768
+--- ready.runtime_cache
+{"assigned_shards": 9, "binary_sha256": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430", "map_sha256": "e78392e459770fc727e533d1977f30d032ef474bb6b9902e7906f1276d1f38a2", "mode": "warm", "runtime_cache": {"bytes": 1880575744, "hits": 20, "limit_bytes": 10737418240, "misses": 11858, "pending_saves": 0, "restore_slots": 4, "write_failures": 0}, "target_runtimes": 18, "warm_runtimes": 18}
+--- runtime files (bytes, count)
+     16 50379384
+     16 67156600

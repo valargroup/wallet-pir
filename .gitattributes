@@ -5,3 +5,7 @@ transparent/evidence/productionize-m3-live-2026-09-13/coordinator-check.log whit
 transparent/evidence/v10-cutover-2026-09-28/**/*.log whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof,-space-before-tab
 # Raw receiver host captures keep the command output's column padding.
 receiver/evidence/deployment-2026-10-08/host.txt whitespace=-blank-at-eol
+# Bench run logs as captured: an empty flag list leaves a trailing space.
+transparent/evidence/txid-display-shipped-runtimes-bench-2026-10-07/raw/**/run.log whitespace=-blank-at-eol
+# Raw HTTP response headers as captured by curl -D: CRLF lines ending in a blank line.
+transparent/evidence/regression-fixture-v11-2026-10-09/raw/served-map/*.headers whitespace=cr-at-eol,-blank-at-eol,-blank-at-eof

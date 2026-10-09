@@ -1,0 +1,17 @@
+### start 2026-10-09T12:46:36.822Z
+### cmd:
+bash $DEP/steps/p6-post.sh
+### output:
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  /proc/641897/exe
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  /usr/local/bin/transparent-publish-controller
+NEWC=13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba
+NRestarts=0
+MemoryCurrent=370995200
+ActiveEnterTimestamp=Fri 2026-10-09 12:46:03 UTC
+origins-agree
+sealed prefix identical: 90 sealed; tail 90 3511772
+sealed prefix identical: 90 sealed; tail 90 3511772
+active candidate-3511772-00000000001d95b8da0ad690933b23eaaee608ad67558f3263826657fdd7e9e0-1791549964579610859 source_sha None
+errors/warnings since restart: 0
+membership age 0.9 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '5510bca22567'), 'transparent-pir-recent-02': ('serving', True, True, '5510bca22567'), 'transparent-pir-archive-03': ('serving', True, True, '5510bca22567')}
+### end 2026-10-09T12:46:37.045Z rc=0

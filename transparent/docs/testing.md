@@ -188,6 +188,14 @@ fields. Existing accepted headers still must agree. The default re-cut mode
 continues to require an advancing anchor; the explicit mode does not relax
 ledger or reorg checks.
 
+When the new schema's events record more than the previous fixture's, pass
+`--event-metadata`. Schema v11 appends transaction metadata to the 87-byte v10
+event, keeping those 87 bytes as a prefix, so every event's bytes change while
+what it records does not. The mode compares events by that legacy prefix and
+still compares UTXOs, spends, history and balance exactly. It refuses a previous
+fixture whose events already carry metadata, and a next event shorter than the
+legacy encoding.
+
 Three further conditions only a journal replay settles, which the re-cut tool
 prints before the run:
 `recent-birthday`'s birthday moves with the cutoff and the export refuses if any
@@ -202,6 +210,13 @@ repeat that.
 A re-cut fixture is pinned the same way as any other: its own tail entry is
 unsealed at export and is checked for continuity rather than equality, so the
 new fixture does not have to be frozen against a publication that stood still.
+
+A publication that rebuilds its own sealed history declares it in the map's
+`recuts` list. A map never re-cut omits the field; the fixture tooling reads an
+absent and an empty list as the same map with the same digest. A declared re-cut
+renumbers and rewrites sealed entries from its first changed height, so the
+runner reports drift for a fixture whose pinned entries it replaced: export a
+new fixture against the re-cut publication rather than relaxing the pin.
 
 ## Local conformance checks
 

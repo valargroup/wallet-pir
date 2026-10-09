@@ -1,0 +1,22 @@
+### start 2026-10-09T13:32:19.521Z
+### cmd:
+for h in $TD01 $R01; do curl -s http://$h:8095/v1/ready | python3 -c "import json,sys;r=json.load(sys.stdin);print(\"$h\",{k:r.get(k) for k in (\"ready\",\"mode\",\"warm_runtimes\",\"target_runtimes\",\"binary_sha256\")})"; done; curl -s 127.0.0.1:8099/status | python3 -c "import json,sys;s=json.load(sys.stdin);print({k:v for k,v in s.items() if not isinstance(v,(dict,list))})" | cut -c1-600; curl -s 127.0.0.1:8094/v1/status | python3 -c "import json,sys;print(json.load(sys.stdin)[\"node_height\"])"
+### output:
+10.142.0.6 {'ready': True, 'mode': None, 'warm_runtimes': 425, 'target_runtimes': 425, 'binary_sha256': '3ba0ab47d8d4c8a4d655b06c1c574a8d13cc3f8931e5f2d2329ede61e4f51483'}
+10.142.0.10 {'ready': True, 'mode': None, 'warm_runtimes': 1, 'target_runtimes': 1, 'binary_sha256': '3ba0ab47d8d4c8a4d655b06c1c574a8d13cc3f8931e5f2d2329ede61e4f51483'}
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/usr/lib/python3.12/json/__init__.py", line 293, in load
+    return loads(fp.read(),
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/__init__.py", line 346, in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 337, in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/json/decoder.py", line 355, in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+3511812
+### end 2026-10-09T13:32:19.701Z rc=0

@@ -151,7 +151,6 @@ fn publish(dir: &Path) -> ShardMap {
                 txids: 0,
                 excluded_scripts: built.excluded_scripts,
             },
-            txid_display: None,
             directory_choice: None,
         };
 
@@ -180,7 +179,6 @@ fn publish(dir: &Path) -> ShardMap {
             txids: 0,
             directory_segments: built.directory_segments(),
             page_segments: built.page_segments(),
-            txid_segments: None,
             manifest_digest: digest.clone(),
             revision: 0,
             sealed: manifest.sealed,
@@ -203,6 +201,7 @@ fn publish(dir: &Path) -> ShardMap {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.join("shards.json"),
@@ -270,8 +269,20 @@ fn revision_of(f: &Fixture, shard_id: u64) -> String {
     f.set.get(shard_id).unwrap().digest.clone()
 }
 
-/// Builds a client for one table and retrieves `row` from `shard_id`.
+/// Builds a client for one table and retrieves `row` from `shard_id` with the
+/// 49-bit query every deployed wallet sends.
 async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u8> {
+    retrieve_at(f, shard_id, table, row, false).await
+}
+
+/// [`retrieve`], with the 44-bit dithered query when `dithered`.
+async fn retrieve_at(
+    f: &Fixture,
+    shard_id: u64,
+    table: Table,
+    row: usize,
+    dithered: bool,
+) -> Vec<u8> {
     let (status, raw) = get(&f.state, "/v1/shards/init").await;
     assert_eq!(status, StatusCode::OK);
     let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -283,10 +294,12 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
     let scheme_key = match table {
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
-        Table::TxDirectory | Table::TxPages => unreachable!("history-only fixture"),
+        Table::TxDirectory => unreachable!("history-only fixture"),
     };
     let scheme: transparent_native::NativeScheme =
         serde_json::from_value(published[scheme_key].clone()).unwrap();
+    let dithered_scheme: transparent_native::NativeScheme =
+        serde_json::from_value(published[format!("{scheme_key}_dq44")].clone()).unwrap();
 
     let revision = revision_of(f, shard_id);
     let (status, raw) = get(
@@ -319,9 +332,19 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
         scheme, profile.scheme,
         "the served scheme must be the one a client re-derives"
     );
+    assert_eq!(
+        dithered_scheme, profile.dithered_scheme,
+        "so must the served dithered scheme"
+    );
     assert_eq!(public_params.len(), profile.scheme.public_bytes);
 
-    let (secret, upload) = profile.prepare(row).unwrap();
+    let (secret, upload) = if dithered {
+        profile.prepare_dithered(row).unwrap()
+    } else {
+        profile.prepare(row).unwrap()
+    };
+    let used = if dithered { &dithered_scheme } else { &scheme };
+    assert_eq!(upload.len(), used.request_bytes);
     let binding = query_binding(&revision, table.as_str());
     let mut body = binding.to_vec();
     body.extend(upload);
@@ -372,15 +395,83 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
     }
 }
 
-/// A full-length query body for the fixture's geometry, prefixed as `revision`
-/// and `table` require.
+/// The dithered 44-bit query answers the same rows as the 49-bit one, from
+/// the same server and the same published masks.
+#[tokio::test]
+async fn dithered_queries_retrieve_each_shards_published_rows() {
+    let f = fixture();
+    for shard_id in 0..SHARDS {
+        for (table, row) in [(Table::Directory, 11usize), (Table::Pages, 3)] {
+            let shard = f.set.get(shard_id).unwrap();
+            let published = shard.segment(table, 0).unwrap().load().unwrap();
+            let expected = raw_row(&published, table.row_bytes(&GEOMETRY) as usize, row);
+            assert_eq!(
+                retrieve_at(&f, shard_id, table, row, true).await,
+                expected,
+                "shard {shard_id} {} row {row}",
+                table.as_str()
+            );
+        }
+    }
+}
+
+/// A full-length 49-bit query body for the fixture's geometry, prefixed as
+/// `revision` and `table` require.
 fn padded_body(revision: &str, table: Table) -> Vec<u8> {
+    padded_body_of(
+        revision,
+        table,
+        transparent_native::request_len(table.rows(&GEOMETRY) as usize),
+    )
+}
+
+/// A query body of `request` bytes after the binding.
+fn padded_body_of(revision: &str, table: Table, request: usize) -> Vec<u8> {
     let mut body = query_binding(revision, table.as_str()).to_vec();
-    body.resize(
-        8 + transparent_native::request_len(table.rows(&GEOMETRY) as usize),
-        0,
-    );
+    body.resize(8 + request, 0);
     body
+}
+
+/// Exactly two lengths are queries: the 49-bit one and the 44-bit dithered
+/// one. A body a byte either side of either, or the other table geometry's
+/// dithered length, is refused from its declared length before any work.
+#[tokio::test]
+async fn only_the_two_query_lengths_are_accepted() {
+    let f = fixture();
+    let revision = revision_of(&f, 0);
+    let rows = Table::Directory.rows(&GEOMETRY) as usize;
+    let legacy = transparent_native::request_len(rows);
+    let dithered = transparent_native::dithered_request_len(rows);
+    let refused = [
+        dithered - 1,
+        dithered + 1,
+        legacy - 1,
+        transparent_native::dithered_request_len(2 * rows),
+        transparent_native::request_len_bits(rows, 43),
+    ];
+    for request in refused {
+        let (status, raw) = post(
+            &f.state,
+            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            padded_body_of(&revision, Table::Directory, request),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{request} bytes");
+        let text = String::from_utf8_lossy(&raw);
+        assert!(
+            text.contains(&format!("exactly {} or {} bytes", 8 + legacy, 8 + dithered)),
+            "{text}"
+        );
+    }
+    let metrics = f.state.metrics();
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.query_length_rejections),
+        refused.len() as u64
+    );
+    assert_eq!(
+        transparent_shard_server::metrics::Metrics::get(&metrics.cache_misses),
+        0
+    );
 }
 
 /// The binding in the query prefix is precisely so a query cannot be answered

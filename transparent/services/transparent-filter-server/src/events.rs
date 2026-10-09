@@ -392,13 +392,14 @@ impl EventStore {
         Ok(())
     }
 
-    /// Commit display facts before appending the checkpoint-referenced block.
+    /// Commit the block's display source records before appending the
+    /// checkpoint-referenced block.
     pub fn append_block_with_display(
         &mut self,
         height: u64,
         block_hash: BlockHash,
         events: &[(ScriptBytes, TransparentEvent)],
-        records: &[transparent_shard::txid::TransparentDisplayRecord],
+        records: &[transparent_shard::txid_v2x::TransparentDisplayRecordV2x],
     ) -> Result<(), EventStoreError> {
         if height != self.next_height() {
             return Err(EventStoreError::Invariant("display append height".into()));
@@ -412,21 +413,30 @@ impl EventStore {
         self.append_block(height, block_hash, &ordinary)
     }
 
+    /// The block's published entries, derived from its source records after
+    /// those are checked against the block's events.
     pub fn display_at(
         &self,
         height: u64,
-    ) -> Result<Vec<transparent_shard::txid::TransparentDisplayRecord>, EventStoreError> {
+    ) -> Result<Vec<transparent_shard::txid::DisplayRecord>, EventStoreError> {
         let block = self.block_at(height).ok_or_else(|| {
             EventStoreError::Invariant("display height outside checkpoint".into())
         })?;
-        let records = crate::display_journal::read(&self.dir, block.block_hash)?;
+        let sources = crate::display_journal::read_sources(&self.dir, block.block_hash)?;
         crate::display_journal::validate_events(
-            &records,
+            &sources,
             &self
                 .events_at(height)?
                 .ok_or_else(|| EventStoreError::Invariant("missing display event block".into()))?,
         )?;
-        Ok(records)
+        sources
+            .iter()
+            .map(|source| {
+                source
+                    .display_record()
+                    .map_err(|e| EventStoreError::Invariant(e.to_string()))
+            })
+            .collect()
     }
 
     /// Reads back one covered block's events, in the order they were appended.

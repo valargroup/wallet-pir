@@ -1,0 +1,10 @@
+transparent-pir-recent-02
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /usr/local/bin/transparent-shard-server
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /usr/local/bin/shard-control
+dea49c0c8a1b4b673d9af0526669e770532b7e4fac85ef3a5812d16cd021ca35  /etc/systemd/system/transparent-shard-server.service
+Mem:      8326942720  2057957376  1208729600     4263936  5386252288  6268985344
+/dev/vda1      165295407104 18428280832 146850349056  12% /
+MainPID=1316245
+NRestarts=0
+MemoryCurrent=1303605248
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /proc/1316245/exe

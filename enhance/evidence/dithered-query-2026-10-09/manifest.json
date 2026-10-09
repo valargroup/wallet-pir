@@ -1,0 +1,55 @@
+{
+ "run_id": "dithered-query-2026-10-09",
+ "utc_date": "2026-10-09",
+ "kind": "analytic correctness screen at both query widths (synthetic databases, no served snapshot)",
+ "source": {
+  "base_commit": "2d1b9abcf02b104c35180d8a4193208e83a483ae",
+  "change": "the commit adding this directory: Enhance and Status servers accept 44-bit dithered queries; --fill and --query-rounding in the native_certificate example",
+  "tool": "enhance/services/enhance-pir-server/examples/native_certificate.rs (feature native-reinspiring)",
+  "checker": "reinspiring/tools/security/certify_native.py",
+  "checker_source": "https://github.com/valargroup/ipir-sp commit d76e61a (PR #30), certify_native.py SHA-256 9a519715cfdccebdb12766ae7bed6a3b14863664c9f5847ebbc55374095bd6d7",
+  "native_library": "ipir-sp / reinspiring tag v0.1.0-rc.6 (1f2aec6), as pinned in Cargo.lock",
+  "toolchain": "rust 1.97.1 (rust-toolchain.toml)",
+  "build_profile": "release-fast"
+ },
+ "command": "enhance/evidence/dithered-query-2026-10-09/run.sh <ipir-sp d76e61a>/reinspiring/tools/security/certify_native.py",
+ "profile": "native two-mask, d=2048 q=2^54 p=2^16, ell=2 z=2^19 Gaussian, 29-bit rounded public masks, 22-bit response; query 49-bit nearest or 44-bit dithered",
+ "protocols": {
+  "enhance": "ironwood-enhance-pir-v9-native-two-mask-m29 (unchanged)",
+  "status": "status-pir-v3-native-two-mask-m29 (unchanged)"
+ },
+ "host": {
+  "cpu": "Apple M4 Max",
+  "ram_bytes": 137438953472,
+  "os": "macOS 26.2"
+ },
+ "inputs": {
+  "enhance": "shard 0 masks and the Enhance packing setup, rows in {4096, 8192, 16384, 32768} x 12,288 columns; fill random (splitmix64 seed 1) or max (0xffff); worst-case query term",
+  "status": "8,192 x 6,144 under the network and salt of generation 203 (../native-certificate-2026-09-26/status-manifest.json); fill random or max; worst-case query term"
+ },
+ "floor_bits": 128,
+ "results_bits": {
+  "enhance-shard0-16384-max-dithered": 214,
+  "enhance-shard0-16384-max-nearest": 226,
+  "enhance-shard0-16384-random-dithered": 211,
+  "enhance-shard0-16384-random-nearest": 223,
+  "enhance-shard0-32768-max-dithered": 172,
+  "enhance-shard0-32768-max-nearest": 163,
+  "enhance-shard0-32768-random-dithered": 166,
+  "enhance-shard0-32768-random-nearest": 158,
+  "enhance-shard0-4096-max-dithered": 263,
+  "enhance-shard0-4096-max-nearest": 274,
+  "enhance-shard0-4096-random-dithered": 263,
+  "enhance-shard0-4096-random-nearest": 274,
+  "enhance-shard0-8192-max-dithered": 246,
+  "enhance-shard0-8192-max-nearest": 265,
+  "enhance-shard0-8192-random-dithered": 240,
+  "enhance-shard0-8192-random-nearest": 258,
+  "status-gen203-max-dithered": 250,
+  "status-gen203-max-nearest": 270,
+  "status-gen203-random-dithered": 241,
+  "status-gen203-random-nearest": 259
+ },
+ "duration_seconds": 91,
+ "acceptance": "screen only: every shape meets 128 bits at both widths; per-snapshot certificates at both widths remain a deployment gate"
+}

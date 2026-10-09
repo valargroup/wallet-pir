@@ -90,7 +90,10 @@ pub(crate) fn database_server(
 
 /// The first-dimension scan shape for one table: full 16-bit plaintexts, one
 /// column per coefficient, and the native transport's 49-bit query and 22-bit
-/// response widths. The scan itself runs modulo the native `q` = 2^54.
+/// response widths. The scan itself runs modulo the native `q` = 2^54, on the
+/// selection already lifted back to `q`, so it is the same for a 44-bit
+/// dithered query; the 49 here only keeps the shape, and with it every runtime
+/// disk-cache key, what it was before dithered queries.
 pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
     let (_, mut params) = ipir_sp::params_for_simplepir_profile(
         rows,
@@ -213,18 +216,36 @@ impl SharedParams {
         })
     }
 
-    /// What `/v1/shards/init` publishes for this table.
+    /// What `/v1/shards/init` publishes for this table as its scheme: the
+    /// 49-bit nearest-rounded query. Also what keys the runtime disk cache.
     pub fn scheme(&self) -> &NativeScheme {
         &self.profile.scheme
     }
 
-    /// The exact length every query body must have: the 8-byte binding, the
-    /// `K_g` packing key and the 49-bit selection.
-    ///
-    /// Fixed, because a body whose size varied with the selection would leak it
-    /// through its length alone.
+    /// The 44-bit dithered scheme `/v1/shards/init` publishes beside it.
+    pub fn dithered_scheme(&self) -> &NativeScheme {
+        &self.profile.dithered_scheme
+    }
+
+    /// The length of a 49-bit query body: the 8-byte binding, the `K_g`
+    /// packing key and the 49-bit selection. The longer of the two accepted
+    /// lengths, so it is also the most a body may be.
     pub fn query_bytes(&self) -> usize {
         8 + self.profile.scheme.request_bytes
+    }
+
+    /// The length of a 44-bit dithered query body.
+    pub fn dithered_query_bytes(&self) -> usize {
+        8 + self.profile.dithered_scheme.request_bytes
+    }
+
+    /// Whether `len` is one of the two exact lengths a query body may have.
+    ///
+    /// Each is fixed, because a body whose size varied with the selection
+    /// would leak it through its length alone. The two say only which scheme
+    /// the wallet sends, which every query of that wallet shares.
+    pub fn accepts_query_bytes(&self, len: usize) -> bool {
+        len == self.query_bytes() || len == self.dithered_query_bytes()
     }
 
     /// Bytes one segment's answer carries: binding, epoch and body.
@@ -247,9 +268,9 @@ impl SharedParams {
         if body.get(..8) != Some(binding.as_slice()) {
             return Err("query does not name this revision and table".to_string());
         }
-        // A fixed length for every query: a body that varied with the selection
-        // would leak through its size alone.
-        if body.len() != self.query_bytes() {
+        // A fixed length per scheme: a body that varied with the selection
+        // would leak through its size alone. The length picks the width.
+        if !self.accepts_query_bytes(body.len()) {
             return Err("query has the wrong fixed length".to_string());
         }
         let (keys, query) = self.profile.parse(&body[8..])?;
@@ -304,6 +325,20 @@ fn used_blocks(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
         .rposition(|byte| *byte != 0)
         .map_or(0, |at| at / row_bytes);
     (last / native::D + 1).min(table_rows / native::D)
+}
+
+/// A uniformly random row among the leading rows that hold any nonzero
+/// byte, or row 0 of an empty table. Random per call, so a fault is not
+/// hidden behind a row the publisher could predict.
+fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
+    use std::hash::BuildHasher;
+    let used = rows
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(1, |at| at / row_bytes + 1)
+        .min(table_rows);
+    let random = std::collections::hash_map::RandomState::new().hash_one(rows.len());
+    (random % used as u64) as usize
 }
 
 /// One segment of one shard revision's table, prepared to answer queries.
@@ -486,6 +521,45 @@ impl TableRuntime {
         self.answer(binding, &shared.parse(binding, body)?)
     }
 
+    /// Checks a runtime this process did not build against the segment's
+    /// verified plaintext `rows`, end to end.
+    ///
+    /// The encoded database must equal `rows` coefficient for coefficient,
+    /// and a fresh client query for one sampled populated row must decode,
+    /// under the published masks, to that row. The first proves the database
+    /// is the segment's; the second that it answers under the preprocessing
+    /// it was loaded with, which a database built from other rows does not,
+    /// at any row. Together they cover what [`disk::DiskCache::load`] does not
+    /// check. Returns the row checked.
+    pub fn self_check(&self, shared: &SharedParams, rows: &[u8]) -> Result<usize, String> {
+        let profile = &shared.profile;
+        if rows.len() != profile.rows * profile.row_bytes {
+            return Err("self-check rows have the wrong length".into());
+        }
+        let padded = self.server.db_rows_padded();
+        let db = self.server.db();
+        for col in 0..profile.cols {
+            let column = &db[col * padded..col * padded + profile.rows];
+            if (0..profile.rows).any(|row| {
+                column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
+            }) {
+                return Err(format!("database column {col} differs from the segment"));
+            }
+        }
+        let row = sample_row(rows, profile.row_bytes, profile.rows);
+        let binding = *b"selfchck";
+        let (secret, upload) = profile.prepare(row)?;
+        let mut body = binding.to_vec();
+        body.extend(upload);
+        let answer = self.evaluate(shared, binding, &body)?;
+        let decoded = profile.decode(&secret, &self.public_params, &answer[16..])?;
+        let at = row * profile.row_bytes;
+        if decoded != rows[at..at + profile.row_bytes] {
+            return Err(format!("row {row} does not decode to the segment's row"));
+        }
+        Ok(row)
+    }
+
     /// Answers a query already parsed by [`SharedParams::parse`].
     pub fn answer(&self, binding: [u8; 8], query: &ParsedQuery) -> Result<Vec<u8>, String> {
         let intermediate = self
@@ -527,6 +601,23 @@ impl std::fmt::Display for CacheError {
             CacheError::Failed(error) => write!(f, "{error}"),
         }
     }
+}
+
+/// How [`RuntimeCache::get_from`] came by a runtime.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Produced {
+    /// Already built, or produced by a concurrent caller this one joined.
+    Joined,
+    /// Restored from this worker's disk cache.
+    Restored,
+    /// Built here, with no shipped runtime offered.
+    Built,
+    /// Loaded from a shipped file and self-checked; `check_micros` is the
+    /// self-check's own time.
+    Shipped { check_micros: u64 },
+    /// A shipped runtime was offered but was missing, rejected or failed its
+    /// self-check, so the runtime was restored or built here instead.
+    Fallback,
 }
 
 /// A borrowed runtime.
@@ -641,6 +732,27 @@ impl RuntimeCache {
         shared: Arc<SharedParams>,
         source: SegmentSource,
     ) -> Result<RuntimeHandle, CacheError> {
+        self.get_from(key, shared, source, None)
+            .await
+            .map(|(handle, _)| handle)
+    }
+
+    /// [`Self::get`], trying `shipped` first when the runtime has to be
+    /// produced, and saying how it was.
+    ///
+    /// A shipped runtime is loaded read-only under the restore path's slot
+    /// and memory reservation, then self-checked against the segment's
+    /// verified rows ([`TableRuntime::self_check`]). It is never saved to
+    /// this worker's disk cache. A missing, rejected or failing file is
+    /// counted as a fallback, and the runtime is restored or built as if none
+    /// had been offered.
+    pub async fn get_from(
+        &self,
+        key: RuntimeKey,
+        shared: Arc<SharedParams>,
+        source: SegmentSource,
+        shipped: Option<disk::ShippedRuntimes>,
+    ) -> Result<(RuntimeHandle, Produced), CacheError> {
         let need = shared.reserved_bytes();
         let (slot, fresh) = self.slot_for(key.clone(), need)?;
         if !fresh {
@@ -656,11 +768,12 @@ impl RuntimeCache {
         }
 
         let handle = RuntimeHandle { slot: slot.clone() };
+        let produced = Mutex::new(Produced::Joined);
         let built = slot
             .runtime
             .get_or_try_init(|| async {
                 let result = self
-                    .load_or_build(key.clone(), shared, source, slot.clone())
+                    .load_or_build(key.clone(), shared, source, slot.clone(), shipped)
                     .await;
                 match &result {
                     // The runtime exists and its size is fixed, so the
@@ -668,10 +781,13 @@ impl RuntimeCache {
                     // before any waiter is handed the runtime, and this
                     // closure holds the slot, so the entry cannot have been
                     // evicted meanwhile.
-                    Ok(runtime) => self.settle(&key, &slot, runtime.held_bytes()),
+                    Ok((runtime, how)) => {
+                        self.settle(&key, &slot, runtime.held_bytes());
+                        *produced.lock().expect("produced") = *how;
+                    }
                     Err(_) => Metrics::incr(&self.metrics.build_failures),
                 }
-                result
+                result.map(|(runtime, _)| runtime)
             })
             .await;
 
@@ -683,7 +799,8 @@ impl RuntimeCache {
             self.forget(&key, &slot);
             return built.map(|_| unreachable!("failed initialization"));
         }
-        Ok(handle)
+        let produced = *produced.lock().expect("produced");
+        Ok((handle, produced))
     }
 
     /// The runtime for `key` only if it is already built: never builds,
@@ -712,8 +829,28 @@ impl RuntimeCache {
         shared: Arc<SharedParams>,
         source: SegmentSource,
         pin: Arc<Slot>,
-    ) -> Result<Arc<TableRuntime>, CacheError> {
+        shipped: Option<disk::ShippedRuntimes>,
+    ) -> Result<(Arc<TableRuntime>, Produced), CacheError> {
         let attempt = std::time::Instant::now();
+        let fallback = match shipped {
+            None => false,
+            Some(shipped) => {
+                match self
+                    .load_shipped(&key, &shared, &source, &pin, shipped)
+                    .await?
+                {
+                    Ok((runtime, check_micros)) => {
+                        return Ok((Arc::new(runtime), Produced::Shipped { check_micros }))
+                    }
+                    Err(error) => {
+                        Metrics::incr(&self.metrics.shipped_fallbacks);
+                        tracing::warn!(key = ?key, %error, "shipped runtime refused; producing it here");
+                        true
+                    }
+                }
+            }
+        };
+        let produced = |local: Produced| if fallback { Produced::Fallback } else { local };
         if let Some(disk) = self.disk.clone() {
             let permit = self
                 .restore_slots
@@ -773,7 +910,7 @@ impl RuntimeCache {
                 .await
                 .map_err(|error| CacheError::Failed(error.to_string()))??;
             if let Some(runtime) = restored {
-                return Ok(Arc::new(runtime));
+                return Ok((Arc::new(runtime), produced(Produced::Restored)));
             }
         }
         let slot_started = std::time::Instant::now();
@@ -834,6 +971,81 @@ impl RuntimeCache {
                 });
             }
             Ok(runtime)
+        })
+        .await
+        .map_err(|error| CacheError::Failed(error.to_string()))?
+        .map(|runtime| (runtime, produced(Produced::Built)))
+    }
+
+    /// Loads and self-checks one shipped runtime. The outer error is the
+    /// segment's own fault, which fails the request as a build would; the
+    /// inner one refuses only the shipped file.
+    async fn load_shipped(
+        &self,
+        key: &RuntimeKey,
+        shared: &Arc<SharedParams>,
+        source: &SegmentSource,
+        pin: &Arc<Slot>,
+        shipped: disk::ShippedRuntimes,
+    ) -> Result<Result<(TableRuntime, u64), String>, CacheError> {
+        let attempt = std::time::Instant::now();
+        let permit = self
+            .restore_slots
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| CacheError::Failed("server is shutting down".into()))?;
+        tracing::debug!(key = ?key, seconds = attempt.elapsed().as_secs_f64(), stage = "shipped_slot", "runtime stage");
+        let memory = self
+            .work_memory
+            .reserve(shared.reserved_bytes().saturating_mul(2))
+            .ok_or_else(|| {
+                tracing::debug!(key = ?key, stage = "shipped_admission", "runtime admission denied");
+                CacheError::Overloaded
+            })?;
+        let (key, shared, source, pin) = (key.clone(), shared.clone(), source.clone(), pin.clone());
+        let metrics = self.metrics.clone();
+        tokio::task::spawn_blocking(move || {
+            let _memory = memory;
+            let _pin = pin;
+            let started = std::time::Instant::now();
+            let runtime = match shipped.load(&key, &shared, &source.sha256) {
+                Ok(runtime) => runtime,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return Ok(Err(format!(
+                        "no shipped runtime in {}",
+                        shipped.directory().display()
+                    )))
+                }
+                Err(error) => return Ok(Err(error.to_string())),
+            };
+            let loaded = started.elapsed();
+            // The restore slot bounds concurrent reads of runtime files; the
+            // self-check below is build-pool work under the memory reservation,
+            // so release the slot here and let the next shipped file load.
+            drop(permit);
+            // Verifies the segment as a restore does, and keeps its rows for
+            // the self-check.
+            let rows = source
+                .load()
+                .map_err(|error| CacheError::Failed(error.to_string()))?;
+            let check_started = std::time::Instant::now();
+            let checked = build_pool().install(|| runtime.self_check(&shared, &rows));
+            let check_micros = check_started.elapsed().as_micros() as u64;
+            Metrics::add(&metrics.shipped_check_micros, check_micros);
+            let row = match checked {
+                Ok(row) => row,
+                Err(error) => return Ok(Err(format!("self-check failed: {error}"))),
+            };
+            Metrics::incr(&metrics.shipped_loads);
+            tracing::info!(
+                key = ?key,
+                load_seconds = loaded.as_secs_f64(),
+                check_seconds = check_micros as f64 / 1e6,
+                row,
+                "loaded shipped runtime"
+            );
+            Ok(Ok((runtime, check_micros)))
         })
         .await
         .map_err(|error| CacheError::Failed(error.to_string()))?
@@ -1050,14 +1262,12 @@ mod tests {
             (&TXID_2K, 75_545_144, 41_990_712, MEASURED_TXID_2K_MIB),
             (&TXID_4K, 83_933_752, 50_379_320, MEASURED_TXID_4K_MIB),
         ] {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                let shared = SharedParams::build(geometry, table).unwrap();
-                assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
-                assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
-                assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
-                assert!(mib(held) <= measured.0, "{}", geometry.name);
-                assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
-            }
+            let shared = SharedParams::build(geometry, Table::TxDirectory).unwrap();
+            assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
+            assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
+            assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
+            assert!(mib(held) <= measured.0, "{}", geometry.name);
+            assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
         }
     }
 
@@ -1071,7 +1281,7 @@ mod tests {
         for (geometry, table) in [
             (&RECENT_8K, Table::Directory),
             (&TXID_2K, Table::TxDirectory),
-            (&transparent_shard::display::TXID_4K, Table::TxPages),
+            (&transparent_shard::display::TXID_4K, Table::TxDirectory),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
@@ -1232,9 +1442,7 @@ mod tests {
             }
         }
         for geometry in DISPLAY_PROFILES {
-            for table in [Table::TxDirectory, Table::TxPages] {
-                every.push(SharedParams::build(geometry, table).unwrap());
-            }
+            every.push(SharedParams::build(geometry, Table::TxDirectory).unwrap());
         }
         for shared in &every {
             let excess = shared.reserved_bytes() - shared.held_bytes();
@@ -1380,7 +1588,7 @@ mod tests {
             (&RECENT_8K, Table::Directory, 8_192),
             (&RECENT_8K, Table::Pages, 5_000),
             (&TXID_2K, Table::TxDirectory, 2_048),
-            (&TXID_2K, Table::TxPages, 700),
+            (&TXID_2K, Table::TxDirectory, 700),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
@@ -1454,9 +1662,9 @@ mod tests {
         assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
         for geometry in BATCHED_HINT_GEOMETRIES {
             let tables = if DISPLAY_PROFILES.contains(geometry) {
-                [Table::TxDirectory, Table::TxPages]
+                vec![Table::TxDirectory]
             } else {
-                [Table::Directory, Table::Pages]
+                vec![Table::Directory, Table::Pages]
             };
             for table in tables {
                 let shared = SharedParams::build(geometry, table).unwrap();
