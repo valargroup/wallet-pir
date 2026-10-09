@@ -281,6 +281,21 @@ async fn run(
     target: u64,
     limits: WorkLimits,
 ) -> (Result<SyncReport, SyncError>, BTreeMap<u64, u64>) {
+    run_on(hash_at, path, base, filters, map, scripts, target, limits).await
+}
+
+/// [`run`] with the wallet's chain given by `chain_hash`.
+#[allow(clippy::too_many_arguments)]
+async fn run_on(
+    chain_hash: fn(u64) -> transparent_filter::BlockHash,
+    path: &Path,
+    base: &str,
+    filters: impl FilterSource + Send + 'static,
+    map: &ShardMap,
+    scripts: StaticScripts,
+    target: u64,
+    limits: WorkLimits,
+) -> (Result<SyncReport, SyncError>, BTreeMap<u64, u64>) {
     let (path, base, map) = (path.to_owned(), base.to_owned(), map.clone());
     let queries = Arc::new(Mutex::new(BTreeMap::new()));
     let counted = queries.clone();
@@ -288,7 +303,7 @@ async fn run(
         let mut store = SqliteStore::open(path).unwrap();
         let chain = StaticChain {
             hashes: (FIRST - 1..=LONGER_TAIL)
-                .map(|height| (height, hash_at(height).to_display_hex()))
+                .map(|height| (height, chain_hash(height).to_display_hex()))
                 .collect(),
         };
         let mut transport = Counting {
@@ -309,7 +324,7 @@ async fn run(
             &limits,
             &Anchor {
                 height: target,
-                hash: hash_at(target).to_display_hex(),
+                hash: chain_hash(target).to_display_hex(),
             },
         )
     })
@@ -462,9 +477,10 @@ async fn a_declared_re_cut_keeps_history_and_redoes_unfinished_tail_work() {
 }
 
 /// Without the declaration the same map rewrites sealed history the wallet
-/// holds, under blocks its chain still accepts. That is refused, as before
-/// the declaration existed, with nothing rolled back or read; the declared
-/// map is then accepted by the same store.
+/// holds, over blocks its chain still accepts. Whatever the newest stored
+/// range (here a provisional tail), that is refused as a sealed rewrite, with
+/// nothing rolled back or read; the declared map is then accepted by the
+/// same store.
 #[tokio::test(flavor = "multi_thread")]
 async fn the_same_re_cut_undeclared_is_refused() {
     let events = events();
@@ -492,8 +508,16 @@ async fn the_same_re_cut_undeclared_is_refused() {
     )
     .await;
     match report {
-        Err(SyncError::MapDiverged(reason)) => {
-            assert!(reason.contains("declares no re-cut"), "{reason}")
+        Err(SyncError::SealedRewrite {
+            start_height,
+            revision_digest,
+        }) => {
+            assert_eq!(
+                start_height,
+                FIRST + SPAN,
+                "the lowest rewritten sealed shard"
+            );
+            assert_eq!(revision_digest, sets.before.shards[1].manifest_digest);
         }
         other => panic!("expected a refusal, got {:?}", other.map(|r| r.completion)),
     }
@@ -518,22 +542,19 @@ async fn the_same_re_cut_undeclared_is_refused() {
     compare(&report.ledger, &expected(&events, &[1, 2, 3], TARGET));
 }
 
-/// Unfinished pages under a sealed shard the re-cut merged away. The pages
-/// are dropped and read again under the wider shard; what that revision had
-/// already saved stays, since its last block is still on the wallet's chain,
-/// and nothing above it is rolled back or re-read: the renumbered sealed
-/// shard gets no private query at all.
-#[tokio::test(flavor = "multi_thread")]
-async fn unfinished_work_in_a_merged_shard_is_redone_under_the_wider_one() {
-    let events = events();
-    let sets = publications(&events);
-    let before_base = serve(sets.before_dir.path()).await;
-    let db = tempfile::tempdir().unwrap();
-    let path = db.path().join("wallet.sqlite");
+/// Syncs a store from the first publication until scripts 1 and 2 hold
+/// settled history and provisional tail coverage, and script 5 holds the
+/// inline events and unfinished pages of shard 2, its first matched shard,
+/// which the re-cut merges away. Returns what shard 2's revision saved.
+async fn held_with_merged_pages(
+    path: &Path,
+    base: &str,
+    sets: &Publications,
+) -> Vec<transparent_wallet::StoredEvent> {
     let filters = || PublishedFilters::load(sets.before_dir.path(), &sets.before);
     let (report, _) = run(
-        &path,
-        &before_base,
+        path,
+        base,
         filters(),
         &sets.before,
         wallet(&[1, 2]),
@@ -542,11 +563,9 @@ async fn unfinished_work_in_a_merged_shard_is_redone_under_the_wider_one() {
     )
     .await;
     complete(&report.unwrap());
-    // Script 5 joins; its walk stops in shard 2, its first matched shard,
-    // with its pages owed.
     let (report, _) = run(
-        &path,
-        &before_base,
+        path,
+        base,
         filters(),
         &sets.before,
         wallet(&[1, 2, 5]),
@@ -556,24 +575,61 @@ async fn unfinished_work_in_a_merged_shard_is_redone_under_the_wider_one() {
     .await;
     assert_ne!(report.unwrap().completion, Completion::Complete);
     let merged = sets.before.shards[2].manifest_digest.clone();
-    let saved = {
-        let store = SqliteStore::open(&path).unwrap();
-        let pending = store.pending().unwrap();
-        assert!(!pending.is_empty());
-        assert!(pending
-            .iter()
-            .all(|item| item.shard_id == 2 && item.revision_digest == merged));
-        store
-            .events()
-            .unwrap()
-            .into_iter()
-            .filter(|stored| stored.revision_digest == merged)
-            .collect::<Vec<_>>()
-    };
+    let store = SqliteStore::open(path).unwrap();
+    let pending = store.pending().unwrap();
+    assert!(!pending.is_empty());
+    assert!(pending
+        .iter()
+        .all(|item| item.shard_id == 2 && item.revision_digest == merged));
+    let saved: Vec<_> = store
+        .events()
+        .unwrap()
+        .into_iter()
+        .filter(|stored| stored.revision_digest == merged)
+        .collect();
     assert!(
         !saved.is_empty(),
         "the directory's inline events were saved"
     );
+    saved
+}
+
+/// The coverage a script holds below the tail: start, end and revision.
+fn held_below_tail(store: &SqliteStore, tag: u32) -> Vec<(u64, u64, String)> {
+    store
+        .coverage(script(tag).as_slice())
+        .unwrap()
+        .into_iter()
+        .filter(|range| range.end_height < TAIL)
+        .map(|range| (range.start_height, range.end_height, range.revision_digest))
+        .collect()
+}
+
+/// Unfinished pages under a sealed shard the re-cut merged away. The pages
+/// are dropped and read again under the wider shard; what that revision had
+/// already saved stays, since the target it was read for is still on the
+/// wallet's chain, and nothing above it is rolled back or re-read: the
+/// renumbered sealed shard gets no private query, and scripts 1 and 2 keep
+/// every revision they read below the tail.
+#[tokio::test(flavor = "multi_thread")]
+async fn unfinished_work_in_a_merged_shard_is_redone_under_the_wider_one() {
+    let events = events();
+    let sets = publications(&events);
+    let before_base = serve(sets.before_dir.path()).await;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("wallet.sqlite");
+    let saved = held_with_merged_pages(&path, &before_base, &sets).await;
+    let merged = sets.before.shards[2].manifest_digest.clone();
+    let kept: Vec<_> = sets.before.shards[..5]
+        .iter()
+        .map(|entry| {
+            (
+                entry.start_height,
+                entry.end_height,
+                entry.manifest_digest.clone(),
+            )
+        })
+        .collect();
 
     let base = serve(sets.after_dir.path()).await;
     let (report, queries) = run(
@@ -611,12 +667,142 @@ async fn unfinished_work_in_a_merged_shard_is_redone_under_the_wider_one() {
             "saved under the merged revision"
         );
     }
+    for tag in [1, 2] {
+        assert_eq!(
+            held_below_tail(&store, tag),
+            kept,
+            "script {tag} keeps the revisions it read"
+        );
+    }
     let five = store.coverage(script(5).as_slice()).unwrap();
     assert!(five.iter().any(|range| {
         range.start_height == FIRST + SPAN
             && range.end_height == TAIL - 1 - SPAN
             && range.revision_digest == sets.after.shards[1].manifest_digest
     }));
+}
+
+/// Kept events with no coverage over them yet: a budget that stops the sync
+/// before the wider shard is read leaves them in the store, with no
+/// unfinished work and the script's gap still open, and the balance is not
+/// reported as synced. The next sync reads the gap and reaches the
+/// traversal's ledger.
+#[tokio::test(flavor = "multi_thread")]
+async fn kept_events_wait_for_the_wider_shard_across_a_budget_stop() {
+    let events = events();
+    let sets = publications(&events);
+    let before_base = serve(sets.before_dir.path()).await;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("wallet.sqlite");
+    let saved = held_with_merged_pages(&path, &before_base, &sets).await;
+
+    let base = serve(sets.after_dir.path()).await;
+    let filters = || PublishedFilters::load(sets.after_dir.path(), &sets.after);
+    let (report, queries) = run(
+        &path,
+        &base,
+        filters(),
+        &sets.after,
+        wallet(&[1, 2, 5]),
+        TARGET,
+        budget(0),
+    )
+    .await;
+    let report = report.unwrap();
+    assert!(matches!(
+        report.completion,
+        Completion::Incomplete {
+            reason: IncompleteReason::QueryBudget,
+            pending: 0,
+        }
+    ));
+    assert!(
+        queries.is_empty(),
+        "stopped before the wider shard was read"
+    );
+    assert!(report.covered_through < TARGET);
+    {
+        let store = SqliteStore::open(&path).unwrap();
+        assert!(store.pending().unwrap().is_empty());
+        let events_now = store.events().unwrap();
+        for stored in &saved {
+            assert!(events_now.contains(stored));
+        }
+        let gap = FIRST + 2 * SPAN;
+        assert!(store
+            .coverage(script(5).as_slice())
+            .unwrap()
+            .iter()
+            .all(|range| !(range.start_height..=range.end_height).contains(&gap)));
+    }
+
+    let (report, _) = run(
+        &path,
+        &base,
+        filters(),
+        &sets.after,
+        wallet(&[1, 2, 5]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    compare(&report.ledger, &expected(&events, &[1, 2, 5], TARGET));
+}
+
+/// The rule that refuses an undeclared rewrite asks the wallet's chain about
+/// the block each changed sealed range rests on, so an honest reorg is not
+/// mistaken for one. Here the chain forks inside shard 2 under a store that
+/// holds settled history, a provisional tail and unfinished tail pages; the
+/// publisher republishes every shard from there; the wallet rolls back to
+/// the last block both branches share and reads the new branch.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_honest_reorg_of_republished_sealed_shards_rolls_back_rather_than_refusing() {
+    let events = events();
+    let sets = publications(&events);
+    let before_base = serve(sets.before_dir.path()).await;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("wallet.sqlite");
+    held_before_the_re_cut(&path, &before_base, &sets).await;
+
+    const FORK: u64 = FIRST + 2 * SPAN + 50;
+    fn forked(height: u64) -> transparent_filter::BlockHash {
+        hash_forked(FORK)(height)
+    }
+    // The new branch drops script 2's receive in shard 4 and pays script 1
+    // past the fork instead.
+    let mut branch: Vec<_> = events
+        .iter()
+        .filter(|(s, event)| !(*s == script(2) && event_height(event) == FIRST + 4 * SPAN + 7))
+        .cloned()
+        .collect();
+    branch.push((script(1), receive(FORK + 10, 4_242, 123)));
+    let branch_dir = tempfile::tempdir().unwrap();
+    let republished = publish_laid(branch_dir.path(), &branch, &before_layout(), vec![], forked);
+    assert_eq!(republished.shards[1], sets.before.shards[1]);
+    assert_ne!(republished.shards[2], sets.before.shards[2]);
+
+    let base = serve(branch_dir.path()).await;
+    let (report, _) = run_on(
+        forked,
+        &path,
+        &base,
+        PublishedFilters::load(branch_dir.path(), &republished),
+        &republished,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(
+        report.rolled_back_to,
+        Some(FIRST + 2 * SPAN - 1),
+        "rolled back to the last stored block both branches share"
+    );
+    compare(&report.ledger, &expected(&branch, &[1, 2, 3], TARGET));
 }
 
 /// A re-cut published while a sync reads the map before it: the first
