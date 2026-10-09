@@ -140,11 +140,19 @@ impl ZakuraClient {
     /// The `nodes` that report a tip, each with its tip, highest first and in `nodes`
     /// order among equal tips. A caller runs a whole pass on the first, so every read
     /// in it comes from one node, and the next pass ranks again. Fails, with the last
-    /// node's error, only when no node answers.
+    /// node's error, only when no node answers. The tips are read concurrently, so a
+    /// stalled node delays ranking by one timeout, not one per node.
     pub async fn ranked(nodes: &[ZakuraClient]) -> Result<Vec<(u64, ZakuraClient)>, ZakuraError> {
+        let tips: Vec<_> = nodes
+            .iter()
+            .map(|node| {
+                let node = node.clone();
+                tokio::spawn(async move { node.tip_height().await })
+            })
+            .collect();
         let (mut ranked, mut last) = (Vec::new(), None);
-        for node in nodes {
-            match node.tip_height().await {
+        for (node, tip) in nodes.iter().zip(tips) {
+            match tip.await.expect("tip read task") {
                 Ok(tip) => ranked.push((tip, node.clone())),
                 Err(error) => last = Some(error),
             }
