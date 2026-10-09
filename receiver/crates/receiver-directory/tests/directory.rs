@@ -198,41 +198,48 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     let (payout, refund) = (receiver(), other_receiver());
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
+    assert_eq!(store.started("near-payouts").unwrap(), None);
+    // A read that matched no completion.
+    let read = |store: &mut ProviderStore, cursor, read_at| {
+        store
+            .record("near-payouts", 60, &[], &[], cursor, read_at)
+            .unwrap()
+    };
     store
         .record(
             "near-payouts",
+            40,
             &[(payout, true, 100), (payout, true, 50)],
+            &[payout],
             100,
             300,
         )
         .unwrap();
     store
-        .record("near-refunds", &[(refund, false, 200)], 200, 300)
+        .record("near-refunds", 40, &[(refund, false, 200)], &[], 200, 300)
         .unwrap();
-    store.record("near-payouts", &[], 90, 250).unwrap();
+    read(&mut store, 90, 250);
     // A read behind the cursor advances neither the cursor nor the read time, even
     // one that began later.
-    store.record("near-payouts", &[], 90, 400).unwrap();
+    read(&mut store, 90, 400);
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(100));
     assert_eq!(store.read("near-payouts").unwrap(), Some(300));
     // One that reaches the cursor advances the read time, never back.
-    store.record("near-payouts", &[], 100, 350).unwrap();
-    store.record("near-payouts", &[], 100, 320).unwrap();
+    read(&mut store, 100, 350);
+    read(&mut store, 100, 320);
     assert_eq!(store.read("near-payouts").unwrap(), Some(350));
     // One that advances the cursor sets its own read time, even an earlier one.
-    store.record("near-payouts", &[], 110, 340).unwrap();
+    read(&mut store, 110, 340);
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
     assert_eq!(store.read("near-payouts").unwrap(), Some(340));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
-    // A feed's start is its first one.
-    assert_eq!(store.started("near-payouts").unwrap(), None);
-    store.start("near-payouts", 40).unwrap();
-    store.start("near-payouts", 60).unwrap();
+    // A feed's start is its first read's.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A completion keeps when it was first seen.
-    store.record_completions(&[payout], 400).unwrap();
-    store.record_completions(&[payout, refund], 500).unwrap();
+    // A completion keeps when a read first saw it.
+    store
+        .record("near-payouts", 60, &[], &[payout, refund], 110, 500)
+        .unwrap();
     assert_eq!(store.completed(0, 450).unwrap(), [payout]);
     assert_eq!(store.completed(450, 600).unwrap(), [refund]);
     // Reopening keeps everything.
@@ -240,6 +247,67 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
     assert_eq!(store.completed(0, 600).unwrap().len(), 2);
+}
+
+/// A read that fails partway, here on its completions, records nothing: neither its
+/// receivers, nor its cursor and read time, nor the feed's start.
+#[cfg(feature = "store")]
+#[test]
+fn a_failed_provider_read_records_nothing() {
+    use receiver_directory::store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("provider.sqlite");
+    let mut store = ProviderStore::open(&path).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER fail BEFORE INSERT ON completions
+             BEGIN SELECT RAISE(ABORT, 'forced'); END;",
+        )
+        .unwrap();
+    let payout = receiver();
+    assert!(store
+        .record(
+            "near-payouts",
+            40,
+            &[(payout, true, 100)],
+            &[payout],
+            100,
+            300
+        )
+        .is_err());
+    drop(store);
+    let store = ProviderStore::open(&path).unwrap();
+    assert_eq!(store.sets(0).unwrap(), (vec![], vec![]));
+    assert_eq!(store.cursor("near-payouts").unwrap(), None);
+    assert_eq!(store.read("near-payouts").unwrap(), None);
+    assert_eq!(store.started("near-payouts").unwrap(), None);
+    assert!(store.completed(0, i64::MAX).unwrap().is_empty());
+}
+
+/// Every query in one view sees the same state, even when a read commits between them.
+#[cfg(feature = "store")]
+#[test]
+fn a_provider_view_reads_one_state() {
+    use receiver_directory::store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("provider.sqlite");
+    let mut store = ProviderStore::open(&path).unwrap();
+    store
+        .record("near-payouts", 40, &[], &[], 100, 300)
+        .unwrap();
+    let mut writer = ProviderStore::open(&path).unwrap();
+    let reads = store
+        .view(|view| -> Result<_, receiver_directory::Error> {
+            let before = view.read("near-payouts")?;
+            writer
+                .record("near-payouts", 40, &[], &[], 200, 400)
+                .unwrap();
+            Ok((before, view.read("near-payouts")?))
+        })
+        .unwrap();
+    assert_eq!(reads, (Some(300), Some(300)));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(400));
 }
 
 /// Without the test fixtures' allowance, a table below [`MIN_ROWS`] is refused.
