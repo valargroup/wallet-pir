@@ -144,7 +144,9 @@ struct Fresh {
 }
 
 /// The txid display client. Holds caches only; every request goes through
-/// the transport passed to [`TxidDisplayClient::lookup`].
+/// the transport passed to [`TxidDisplayClient::lookup`]. It pins the chain
+/// (network and genesis hash) of the first map it accepts, so a wallet keeps
+/// one client per chain and origin.
 pub struct TxidDisplayClient {
     profiles: ProfileCache,
     placement_refresh_age: Duration,
@@ -1647,6 +1649,35 @@ mod tests {
             Err(TxidError::Protocol(ProtocolKind::Manifest))
         );
         assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+    }
+
+    #[test]
+    fn a_map_with_no_bucket_or_too_many_is_refused_before_any_query() {
+        let none = |m: &mut DisplayRecentMap| {
+            m.seal.n_recent = 0;
+            let recent = m.recent.as_mut().unwrap();
+            recent.n_buckets = 0;
+            recent.directory_segments.clear();
+        };
+        let excess = |m: &mut DisplayRecentMap| {
+            m.seal.n_recent = display::MAX_BUCKETS + 1;
+            let recent = m.recent.as_mut().unwrap();
+            recent.n_buckets = m.seal.n_recent;
+            recent.directory_segments = vec![1; m.seal.n_recent as usize];
+        };
+        for mutate in [none, excess] {
+            let mut hostile = recent_map(100, 200, "txid-2k");
+            mutate(&mut hostile);
+            let mut transport = Scripted::default();
+            transport
+                .replies
+                .extend([Ok(init_with(&["txid-2k"])), served(&hostile)]);
+            assert_eq!(
+                TxidDisplayClient::new().lookup(&mut transport, [1; 32], 150, &never),
+                Err(TxidError::Protocol(ProtocolKind::Map))
+            );
+            assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
+        }
     }
 
     #[test]

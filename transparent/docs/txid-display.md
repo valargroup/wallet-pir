@@ -342,7 +342,10 @@ reference it is tested against.
   - A map naming another network or genesis hash than the first map the
     client accepted is `Protocol(Map)`. The client keeps the map it holds:
     no publication changes its chain, so a mainnet wallet never follows a
-    testnet edge.
+    testnet edge. A client therefore serves one chain, and a wallet keeps one
+    client per chain and origin; Vizor keys its clients by origin.
+  - A map whose seal bucket counts, or any entry's bucket count, lie outside
+    1 to 64 is `Protocol(Map)`, before any bucket is computed.
   - When the map names a geometry init does not list, either document may be
     the older one during a swap: a later publication may add a geometry, or
     drop the one an older map names. The lookup fetches again whichever of
