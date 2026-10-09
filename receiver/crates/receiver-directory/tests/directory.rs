@@ -631,7 +631,8 @@ fn coinbase_payments_are_refused() {
 }
 
 /// A block whose payments a snapshot would refuse is not appended: here a receiver's
-/// later position in an earlier transaction, and one txid at two transaction indexes.
+/// later position in an earlier transaction, one txid at two transaction indexes, and
+/// a stored txid in a later block.
 #[cfg(feature = "store")]
 #[test]
 fn unsnapshottable_payments_are_refused() {
@@ -673,7 +674,24 @@ fn unsnapshottable_payments_are_refused() {
         assert_eq!(store.counts().unwrap(), (0, 0));
     }
     first.payment.tx_index = 1;
-    store.append(&block(vec![first, second])).unwrap();
+    store.append(&block(vec![first.clone(), second])).unwrap();
+    // A different Action index passes UNIQUE(txid, action) but not the stored location.
+    let mut payment = first.payment;
+    (payment.height, payment.block_hash) = (101, [7; 32]);
+    (payment.action_index, payment.position) = (1, 202);
+    let later = IndexedBlock {
+        height: 101,
+        hash: [7; 32],
+        parent: [3; 32],
+        start_position: 202,
+        end_position: 203,
+        coinbase_actions: 0,
+        commitments: vec![payment.cmx],
+        payments: vec![(other_receiver(), payment)],
+    };
+    assert!(matches!(store.append(&later), Err(Error::Malformed)));
+    assert_eq!(store.tip().unwrap().height, 100);
+    assert_eq!(store.counts().unwrap(), (2, 0));
 }
 
 /// A store's positions stay within the note commitment tree, so every tip it reaches

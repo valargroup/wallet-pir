@@ -439,7 +439,8 @@ async fn refresh(
         ) {
             Err(Error::Capacity) => {
                 return Err(format!(
-                    "{} commitments exceed --max-witness-commitments; no publication created",
+                    "witnesses for {} commitments exceed --max-witness-commitments or the \
+                     witness file's node limit; no publication created",
                     snapshot.manifest.end_position
                 )
                 .into())
