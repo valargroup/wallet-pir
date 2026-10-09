@@ -6,6 +6,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
+use zakura_chain::block::Hash;
 
 /// A failed node request.
 #[derive(Debug, thiserror::Error)]
@@ -139,17 +140,25 @@ impl ZakuraClient {
         })
     }
 
-    /// The `nodes` that report a tip, each with its tip, highest first and in `nodes`
-    /// order among equal tips. A caller runs a whole pass on the first, so every read
-    /// in it comes from one node, and the next pass ranks again. Fails, with the last
-    /// node's error, only when no node answers. The tips are read concurrently, so a
-    /// stalled node delays ranking by one timeout, not one per node.
-    pub async fn ranked(nodes: &[ZakuraClient]) -> Result<Vec<(u64, ZakuraClient)>, ZakuraError> {
+    /// The `nodes` whose genesis block is `genesis` (see [`Self::check_network`]), each
+    /// with its tip, highest first and in `nodes` order among equal tips. A caller runs
+    /// a whole pass on the first, so every read in it comes from one node, and the next
+    /// pass ranks again, rereading each genesis, since an endpoint can be repointed.
+    /// Fails, with the last node's error, only when no node qualifies. Every read is
+    /// concurrent, so a stalled node delays ranking by one timeout, not one per node.
+    pub async fn ranked(
+        nodes: &[ZakuraClient],
+        genesis: Hash,
+    ) -> Result<Vec<(u64, ZakuraClient)>, ZakuraError> {
         let tips: Vec<_> = nodes
             .iter()
             .map(|node| {
                 let node = node.clone();
-                tokio::spawn(async move { node.tip_height().await })
+                tokio::spawn(async move {
+                    let (_, tip) =
+                        tokio::try_join!(node.check_network(genesis), node.tip_height())?;
+                    Ok(tip)
+                })
             })
             .collect();
         let (mut ranked, mut last) = (Vec::new(), None);
@@ -165,6 +174,19 @@ impl ZakuraClient {
         // A stable sort keeps the configured order among equal tips.
         ranked.sort_by_key(|(tip, _)| std::cmp::Reverse(*tip));
         Ok(ranked)
+    }
+
+    /// Fails with [`ZakuraError::OtherNetwork`] unless the node's genesis block is
+    /// `genesis`, so a node on another network is never taken as evidence about this
+    /// one's chain.
+    pub async fn check_network(&self, genesis: Hash) -> Result<(), ZakuraError> {
+        let node = (self.block_hash(0).await?)
+            .parse::<Hash>()
+            .map_err(|e| ZakuraError::Block(e.to_string()))?;
+        match node == genesis {
+            true => Ok(()),
+            false => Err(ZakuraError::OtherNetwork),
+        }
     }
 
     /// The node's chain tip height.
@@ -207,13 +229,26 @@ impl ZakuraClient {
 mod tests {
     use super::*;
     use axum::{extract::State, routing::post, Json, Router};
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        atomic::{AtomicU8, Ordering},
+        Arc, Mutex,
+    };
 
-    /// A node at tip `tip`. Returns its URL.
-    async fn node(tip: u64) -> String {
+    /// A node at tip `tip` whose genesis block is `[genesis; 32]`, read on each
+    /// request. Returns its URL.
+    async fn node(tip: u64, genesis: Arc<AtomicU8>) -> String {
         let app = Router::new().route(
             "/",
-            post(move || async move { Json(json!({"result": tip, "error": null})) }),
+            post(move |Json(request): Json<serde_json::Value>| {
+                let genesis = genesis.load(Ordering::SeqCst);
+                async move {
+                    let result = match request["method"].as_str() {
+                        Some("getblockhash") => json!(Hash([genesis; 32]).to_string()),
+                        _ => json!(tip),
+                    };
+                    Json(json!({"result": result, "error": null}))
+                }
+            }),
         );
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
@@ -277,31 +312,43 @@ mod tests {
     }
 
     /// Nodes rank by tip, highest first and in configured order among equal tips,
-    /// leaving out a node that does not answer; with none answering ranking fails.
+    /// leaving out a node that does not answer or, checked again on every ranking, is
+    /// on another network, however high its tip; with none left ranking fails.
     #[tokio::test]
     async fn nodes_rank_by_tip() {
+        let ours = Hash([1; 32]);
         let client = |url: String| ZakuraClient::new(url, None).unwrap();
+        let on = |genesis: u8| Arc::new(AtomicU8::new(genesis));
         let down = client("http://127.0.0.1:1".into());
+        let other = client(node(200, on(2)).await);
+        let repointed = on(1);
         let nodes = [
             down.clone(),
-            client(node(100).await),
-            client(node(105).await),
-            client(node(105).await),
+            other.clone(),
+            client(node(100, on(1)).await),
+            client(node(105, on(1)).await),
+            client(node(105, on(1)).await),
+            client(node(150, repointed.clone()).await),
         ];
-        let ranked = ZakuraClient::ranked(&nodes).await.unwrap();
-        let order: Vec<_> = ranked
-            .iter()
-            .map(|(tip, node)| (*tip, node.url.clone()))
-            .collect();
-        let urls: Vec<_> = nodes[1..].iter().map(|node| node.url.clone()).collect();
-        assert_eq!(
-            order,
-            [
-                (105, urls[1].clone()),
-                (105, urls[2].clone()),
-                (100, urls[0].clone())
-            ]
-        );
-        assert!(ZakuraClient::ranked(&[down]).await.is_err());
+        let order = |ranked: Vec<(u64, ZakuraClient)>| -> Vec<_> {
+            ranked
+                .into_iter()
+                .map(|(tip, node)| (tip, node.url))
+                .collect()
+        };
+        let urls: Vec<_> = nodes.iter().map(|node| node.url.clone()).collect();
+        let ranked = ZakuraClient::ranked(&nodes, ours).await.unwrap();
+        let mut expected = vec![
+            (150, urls[5].clone()),
+            (105, urls[3].clone()),
+            (105, urls[4].clone()),
+            (100, urls[2].clone()),
+        ];
+        assert_eq!(order(ranked), expected);
+        repointed.store(2, Ordering::SeqCst);
+        expected.remove(0);
+        let ranked = ZakuraClient::ranked(&nodes, ours).await.unwrap();
+        assert_eq!(order(ranked), expected);
+        assert!(ZakuraClient::ranked(&[down, other], ours).await.is_err());
     }
 }
