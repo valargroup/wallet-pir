@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn provider_sets_reach_back_from_the_last_complete_read() {
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let (payouts, refunds) = (Feed::Payouts.name(), Feed::Refunds.name());
         // A feed that never finished a read publishes nothing.
         assert!(provider_sets(&store).unwrap().is_empty());
@@ -586,7 +586,7 @@ mod tests {
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let feed = Feed::Payouts;
         for route in ["fail", "large"] {
             let mut failing = Explorer::at(format!("{origin}/{route}"));
@@ -609,7 +609,7 @@ mod tests {
         let origin = format!("http://{}/", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("provider.sqlite");
+        let path = dir.path().join("providers.sqlite");
         // The seen set's declared start.
         let since_unix = |store: &ProviderStore| {
             let sets = provider_sets(store).unwrap();
@@ -676,7 +676,7 @@ mod tests {
             origin
         };
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let feed = Feed::Payouts.name();
         let nothing_recorded = |store: &ProviderStore| {
             store.cursor(feed).unwrap().is_none()
@@ -771,7 +771,7 @@ mod tests {
         };
         let asked = || served.asked.lock().unwrap().clone();
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let feed = Feed::Payouts;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -849,7 +849,7 @@ mod tests {
         let origin = format!("http://{}/", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let read = Explorer::at(origin)
             .sync(&mut store, Feed::Payouts, 1_000)
             .await
@@ -939,7 +939,7 @@ mod tests {
         let mut explorer = Explorer::at(format!("http://{}/", socket.local_addr().unwrap()));
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("provider.sqlite");
+        let path = dir.path().join("providers.sqlite");
         let mut store = ProviderStore::open(&path).unwrap();
         explorer
             .sync(&mut store, Feed::Payouts, 1_000)
@@ -1033,7 +1033,7 @@ mod tests {
     fn a_rewind_reports_a_found_payout_missing() {
         let dir = tempfile::tempdir().unwrap();
         let (provider_path, index_path) = (
-            dir.path().join("provider.sqlite"),
+            dir.path().join("providers.sqlite"),
             dir.path().join("directory.sqlite"),
         );
         let (mut index, block) = paid_index(&index_path);
@@ -1068,7 +1068,7 @@ mod tests {
     #[test]
     fn report_counts_completed_payouts_missing_from_the_index() {
         let dir = tempfile::tempdir().unwrap();
-        let mut provider = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut provider = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let (mut index, block) = paid_index(&dir.path().join("directory.sqlite"));
         index.append(&block).unwrap();
         let now = 1_000_000;
@@ -1110,7 +1110,7 @@ mod tests {
     #[test]
     fn completions_age_from_when_a_read_saw_them() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("provider.sqlite");
+        let path = dir.path().join("providers.sqlite");
         let (index, _) = paid_index(&dir.path().join("directory.sqlite"));
         let (began, seen) = (1_000_000, 1_000_000 + 2 * 60 * 60);
         let record = |read_at, seen_at| {
@@ -1157,7 +1157,7 @@ mod tests {
     async fn live_feed_records_recent_receivers() {
         let key = std::env::var("NEAR_INTENTS_EXPLORER").expect("partner key");
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
         let mut explorer = Explorer::new(key).unwrap();
         let since = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
