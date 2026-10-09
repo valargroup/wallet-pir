@@ -7,7 +7,8 @@ description = "Publicly recoverable Ironwood receiver directory and private look
 
 [features]
 store = ["dep:rusqlite"]
-# Test fixtures only: `snapshot::allow_small_tables`.
+# Test fixtures only: `snapshot::allow_small_tables` and
+# `snapshot::manifest_validations`.
 small-tables = []
 
 [dependencies]
