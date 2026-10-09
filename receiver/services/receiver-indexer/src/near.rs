@@ -33,9 +33,9 @@ const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
 /// about 5,500 swaps a day into ZEC (October 2026) that is six pages, 33 seconds at
 /// the explorer's rate limit, on each poll.
 const OVERLAP_SECS: i64 = 3600;
-/// Bound on a read from the cursor, about a month of swaps, so an explorer that
-/// ignores paging cannot loop forever. A first read, from `since`, is bounded only by
-/// the progress check.
+/// Bound on one read, about a month of swaps, so an explorer that ignores paging cannot
+/// loop forever. It bounds a first read too: one from a `since` too far back fails
+/// rather than record a feed that skipped unread history.
 const MAX_PAGES: usize = 500;
 /// The provider name in the directory's filter set labels.
 pub const PROVIDER: &str = "near-intents";
@@ -169,6 +169,10 @@ pub struct Explorer {
     endpoint: String,
     key: String,
     next_request: tokio::time::Instant,
+    /// [`REQUEST_INTERVAL`], except in tests.
+    interval: Duration,
+    /// [`MAX_PAGES`], except in tests.
+    max_pages: usize,
 }
 
 impl Explorer {
@@ -182,14 +186,18 @@ impl Explorer {
             endpoint: ENDPOINT.to_owned(),
             key,
             next_request: tokio::time::Instant::now(),
+            interval: REQUEST_INTERVAL,
+            max_pages: MAX_PAGES,
         })
     }
 
-    /// An explorer client that reads `endpoint` instead of NEAR's.
+    /// An explorer client that reads `endpoint` instead of NEAR's, without waiting
+    /// between requests.
     #[cfg(test)]
     fn at(endpoint: String) -> Self {
         Self {
             endpoint,
+            interval: Duration::ZERO,
             ..Self::new(String::new()).unwrap()
         }
     }
@@ -198,8 +206,8 @@ impl Explorer {
     /// each swap's Orchard receiver in `store`, with when the read began, and each
     /// completed payout with its reported transactions, all in one transaction (see
     /// [`ProviderStore::record`]). Times are capped at the read's start, so a record
-    /// dated in the future cannot hide later swaps. Returns how many receivers it
-    /// recorded.
+    /// dated in the future cannot hide later swaps. A read over [`MAX_PAGES`] pages
+    /// fails and records nothing. Returns how many receivers it recorded.
     pub async fn sync(
         &mut self,
         store: &mut ProviderStore,
@@ -216,8 +224,13 @@ impl Explorer {
         let mut completed = Vec::new();
         let mut after: Option<(String, Option<String>)> = None;
         for page in 0.. {
-            if cursor.is_some() && page == MAX_PAGES {
-                return Err("NEAR explorer read exceeded its page bound".into());
+            if page == self.max_pages {
+                return Err(match cursor {
+                    Some(_) => "NEAR explorer read exceeded its page bound".into(),
+                    None => "NEAR explorer first read exceeded its page bound; \
+                        start it later with --near-since"
+                        .into(),
+                });
             }
             let swaps = self.page(feed, after.as_ref()).await?;
             for swap in &swaps {
@@ -286,7 +299,7 @@ impl Explorer {
             .query(&query)
             .send()
             .await;
-        self.next_request = tokio::time::Instant::now() + REQUEST_INTERVAL;
+        self.next_request = tokio::time::Instant::now() + self.interval;
         let mut response = response?;
         let status = response.status();
         if !status.is_success() {
@@ -299,7 +312,12 @@ impl Explorer {
             }
             body.extend_from_slice(&chunk);
         }
-        Ok(serde_json::from_slice(&body)?)
+        let swaps: Vec<Swap> = serde_json::from_slice(&body)?;
+        // A longer page is not one this read asked for, so it cannot end the read.
+        if swaps.len() > PAGE {
+            return Err("NEAR explorer page exceeds the requested length".into());
+        }
+        Ok(swaps)
     }
 }
 
@@ -413,6 +431,82 @@ mod tests {
         let mut working = Explorer::at(format!("{origin}/ok"));
         working.sync(&mut store, feed, 2_000).await.unwrap();
         assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));
+    }
+
+    /// A read that reaches its page bound, first read included, or receives a page
+    /// longer than it asked for fails and records nothing; one that ends on its last
+    /// allowed page succeeds.
+    #[tokio::test]
+    async fn every_read_is_bounded_and_records_nothing_when_it_fails() {
+        use axum::{extract::State, routing::get, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        const SWAP: &str = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
+        // Serves `full` pages of `len` records, each record with a fresh paging token
+        // and a completed payout, then an empty page.
+        #[derive(Clone)]
+        struct Pages {
+            served: Arc<AtomicUsize>,
+            full: usize,
+            len: usize,
+        }
+        async fn page(State(feed): State<Pages>) -> String {
+            let page = feed.served.fetch_add(1, Ordering::SeqCst);
+            let len = if page < feed.full { feed.len } else { 0 };
+            let records: Vec<_> = (0..len)
+                .map(|i| {
+                    serde_json::json!({"recipient": SWAP, "createdAtTimestamp": 9_000_000 - page,
+                        "depositAddress": format!("{page}-{i}"), "status": "SUCCESS",
+                        "destinationChainTxHashes": [PAYOUT_TXID]})
+                })
+                .collect();
+            serde_json::Value::from(records).to_string()
+        }
+        let serve = |full, len| async move {
+            let app = Router::new().route("/", get(page)).with_state(Pages {
+                served: Arc::default(),
+                full,
+                len,
+            });
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}/", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            origin
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let feed = Feed::Payouts.name();
+        let nothing_recorded = |store: &ProviderStore| {
+            store.cursor(feed).unwrap().is_none()
+                && store.read(feed).unwrap().is_none()
+                && store.started(feed).unwrap().is_none()
+                && store.unmatched(i64::MAX).unwrap().is_empty()
+                && store.sets(0).unwrap() == (vec![], vec![])
+        };
+        // Full pages that never end, and a page one record too long.
+        for (full, len) in [(usize::MAX, PAGE), (1, PAGE + 1)] {
+            let mut explorer = Explorer::at(serve(full, len).await);
+            explorer.max_pages = 3;
+            assert!(explorer
+                .sync(&mut store, Feed::Payouts, 1_000)
+                .await
+                .is_err());
+            assert!(nothing_recorded(&store));
+        }
+        // The last allowed page ends the read.
+        let mut explorer = Explorer::at(serve(2, PAGE).await);
+        explorer.max_pages = 3;
+        assert_eq!(
+            explorer
+                .sync(&mut store, Feed::Payouts, 1_000)
+                .await
+                .unwrap(),
+            2 * PAGE
+        );
+        assert_eq!(store.started(feed).unwrap(), Some(1_000));
+        assert_eq!(store.unmatched(i64::MAX).unwrap().len(), 1);
     }
 
     /// A record missing its address is skipped, a future date is capped at the read's

@@ -172,8 +172,11 @@ completes within a day of its swap is seen complete (about six pages, 33 seconds
 at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
-record missing an address is skipped, dates are capped at the read's start, and a
-read that stops making progress fails, as does a page over 8 MiB. Health's `indexer`
+record missing an address is skipped and dates are capped at the read's start. A
+read that stops making progress, passes 500 pages, or gets a page over 8 MiB or
+longer than the 1,000 records it asked for fails and records nothing, so a first
+read from too far back fails rather than skip history. Each read commits in one
+transaction. Health's `indexer`
 report, computed from the index each publication is built from and activated with
 it, gives each feed's last read and how many
 payouts NEAR reported complete more than an hour earlier have no indexed payment to
