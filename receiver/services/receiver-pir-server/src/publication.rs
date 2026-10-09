@@ -173,11 +173,20 @@ impl Publications {
     }
 
     /// Install only if no revocation occurred since the caller began preparing and validating,
-    /// and no earlier revision is still in its grace (see [`Self::ready_at`]).
+    /// no earlier revision is still in its grace (see [`Self::ready_at`]), and the current
+    /// revision ends no higher: within one epoch the chain only extends, so a lower end
+    /// comes from a preparation that a newer publish overtook.
     /// The caller must verify the new canonical anchor and revoke before replacing forked coverage.
     pub fn publish(&self, publication: Publication, expected_epoch: u64) -> bool {
         let mut state = self.0.write().unwrap();
-        if state.epoch != expected_epoch || state.grace_until().is_some() {
+        let end = publication.manifest().end_height;
+        if state.epoch != expected_epoch
+            || state.grace_until().is_some()
+            || state
+                .current
+                .as_ref()
+                .is_some_and(|p| p.manifest().end_height > end)
+        {
             return false;
         }
         state.revoked.retain(|id| *id != publication.id);
@@ -284,6 +293,25 @@ mod tests {
         // A served anchor off the chain still revokes every session.
         assert!(publications.revoke_serving(epoch, (101, [3; 32])));
         assert_eq!(publications.serving(), (epoch + 1, vec![]));
+    }
+
+    /// A preparation overtaken by a newer publish cannot replace it, even once the
+    /// newer one's predecessor has left its grace.
+    #[test]
+    fn an_overtaken_preparation_is_not_published() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
+        (newer.end_height, newer.end_hash) = (102, [2; 32]);
+        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[], &[]).unwrap();
+        let newer = Publication::new(Server::new(snapshot).unwrap(), None).unwrap();
+        assert!(publications.publish(newer, 0));
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(!publications.publish(publication_at(3, 3), 0));
+        assert_eq!(publications.anchors(), [(102, [2; 32])]);
     }
 
     /// An anchor still in its grace revokes the current publication with it.
