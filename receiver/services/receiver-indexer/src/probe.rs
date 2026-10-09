@@ -207,15 +207,15 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         }
     }
     let origin = args.origin.trim_end_matches('/');
-    let init = format!("{origin}/v1/receiver/init");
-    let bytes = get(&http, &init, MAX_MANIFEST_BYTES).await?;
-    // A successful response that is not a valid manifest is wrong data, not an outage.
-    let manifest = serde_json::from_slice::<Manifest>(&bytes)
-        .map_err(|e| e.to_string())
-        .and_then(|m| m.validate().map(|()| m).map_err(|e| e.to_string()));
-    let manifest = match manifest {
+    let init = http.get(format!("{origin}/v1/receiver/init"));
+    let manifest = fetch(init, MAX_MANIFEST_BYTES, "manifest", |bytes| {
+        let manifest: Manifest = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
+        manifest.validate().map_err(|e| e.to_string())?;
+        Ok::<_, String>(manifest)
+    });
+    let manifest = match manifest.await? {
         Ok(manifest) => manifest,
-        Err(error) => return Ok(Some(("answer_mismatch", json!({"manifest": error})))),
+        Err(failure) => return Ok(Some(failure)),
     };
     let directory = &manifest.directory;
     // Another network's publication is wrong whatever the nodes or the fixture say.
@@ -252,12 +252,6 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     // fixture's payment or a later one.
     let id = hex::encode(manifest.id()?);
     let rows = directory.rows;
-    let public = get(
-        &http,
-        &format!("{origin}/v1/receiver/public/{id}"),
-        public_bytes(rows)?,
-    )
-    .await?;
     // Wallets require history from Ironwood activation, independently of what the
     // manifest claims.
     let accepted = AcceptedCoverage {
@@ -266,43 +260,40 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         height: directory.end_height,
         hash: directory.end_hash,
     };
-    let client = match Client::new(manifest.clone(), &public, accepted) {
+    // Served history that starts after activation is wrong for every wallet.
+    if let Err(receiver_pir::Error::Directory(receiver_directory::Error::Coverage)) =
+        accepted.check(directory)
+    {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"coverage": "starts after Ironwood activation"}),
+        )));
+    }
+    let public = http.get(format!("{origin}/v1/receiver/public/{id}"));
+    let client = fetch(public, public_bytes(rows)?, "public", |bytes| {
+        Client::new(manifest.clone(), bytes, accepted)
+    });
+    let client = match client.await? {
         Ok(client) => client,
-        // Served history that starts after activation is wrong for every wallet.
-        Err(receiver_pir::Error::Directory(receiver_directory::Error::Coverage)) => {
-            return Ok(Some((
-                "answer_mismatch",
-                json!({"coverage": "starts after Ironwood activation"}),
-            )))
-        }
-        // A served setup whose length or digest differs from the manifest's.
-        Err(receiver_pir::Error::Malformed) => {
-            return Ok(Some((
-                "answer_mismatch",
-                json!({"public": "differs from manifest"}),
-            )))
-        }
-        Err(error) => return Err(error.into()),
+        Err(failure) => return Ok(Some(failure)),
     };
     let mut queries = 0;
     let found = loop {
         let query = client.prepare(receiver, queries)?;
-        let response = http
+        let request = http
             .post(format!("{origin}/v1/receiver/query"))
-            .body(query.body().to_vec())
-            .send()
-            .await?;
-        let response = read_limited(response.error_for_status()?, response_bytes(rows)?).await?;
+            .body(query.body().to_vec());
+        let answer = fetch(request, response_bytes(rows)?, "lookup", |bytes| {
+            client.decode(query, bytes)
+        });
+        let answer = answer.await?;
         queries += 1;
-        let record = match client.decode(query, &response) {
+        let record = match answer {
             Ok(Some(record)) => record,
             Ok(None) => break None,
-            Err(error) => {
+            Err(failure) => {
                 *lookup = Some((queries, false));
-                return Ok(Some((
-                    "answer_mismatch",
-                    json!({"lookup": error.to_string()}),
-                )));
+                return Ok(Some(failure));
             }
         };
         if record.payment.position >= fixture.position || queries == record.total {
@@ -379,20 +370,20 @@ async fn await_feed_reads(
                 json!({"waited_secs": wait.as_secs(), "reads": reads, "last_error": error}),
             ));
         }
-        let health = tokio::time::timeout(remaining, get(http, health_url, MAX_HEALTH_BYTES));
-        match health.await {
-            Ok(Ok(body)) => match serde_json::from_slice::<Value>(&body) {
-                Ok(health) => {
-                    reads = health["near"]["reads"].clone();
-                    if [Feed::Payouts, Feed::Refunds]
-                        .iter()
-                        .all(|feed| reads[feed.name()].as_i64().is_some())
-                    {
-                        return None;
-                    }
+        let health = fetch(http.get(health_url), MAX_HEALTH_BYTES, "health", |bytes| {
+            serde_json::from_slice::<Value>(bytes)
+        });
+        match tokio::time::timeout(remaining, health).await {
+            Ok(Ok(Ok(health))) => {
+                reads = health["near"]["reads"].clone();
+                if [Feed::Payouts, Feed::Refunds]
+                    .iter()
+                    .all(|feed| reads[feed.name()].as_i64().is_some())
+                {
+                    return None;
                 }
-                Err(e) => error = Some(e.to_string()),
-            },
+            }
+            Ok(Ok(Err((_, detail)))) => error = Some(detail.to_string()),
             Ok(Err(e)) => error = Some(e.to_string()),
             Err(_) => error = Some("health did not answer before the deadline".to_owned()),
         }
@@ -511,16 +502,13 @@ async fn check_witnesses(
     payment: &Payment,
     root: Hash,
 ) -> Result<Option<Failure>> {
-    let url = format!("{origin}/v1/receiver/witness/{id}");
-    let bytes = get(http, &url, MAX_WITNESS_BYTES).await?;
-    let proof = match WitnessSnapshot::decode(&bytes, directory) {
+    let request = http.get(format!("{origin}/v1/receiver/witness/{id}"));
+    let proof = fetch(request, MAX_WITNESS_BYTES, "witnesses", |bytes| {
+        WitnessSnapshot::decode(bytes, directory)
+    });
+    let proof = match proof.await? {
         Ok(proof) => proof,
-        Err(error) => {
-            return Ok(Some((
-                "answer_mismatch",
-                json!({"witnesses": error.to_string(), "witness_bytes": bytes.len()}),
-            )))
-        }
+        Err(failure) => return Ok(Some(failure)),
     };
     let proved = u32::try_from(payment.position)
         .is_ok_and(|position| proof.path(position, payment.cmx).is_ok());
@@ -549,17 +537,19 @@ async fn check_filters(
     directory: &receiver_directory::snapshot::Manifest,
     receiver: &Receiver,
 ) -> Result<Option<Failure>> {
-    let url = format!("{origin}/v1/receiver/filters/{id}");
-    let bytes = get(http, &url, MAX_FILTERS_BYTES).await?;
-    let filters = Filters::decode(&bytes).ok().filter(|filters| {
-        Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
-            && directory.check_filters(filters).is_ok()
+    let request = http.get(format!("{origin}/v1/receiver/filters/{id}"));
+    let filters = fetch(request, MAX_FILTERS_BYTES, "filters", |bytes| {
+        let filters = Filters::decode(bytes).map_err(|e| e.to_string())?;
+        match Hash::from(Sha256::digest(bytes)) == directory.filters_sha256
+            && directory.check_filters(&filters).is_ok()
+        {
+            true => Ok(filters),
+            false => Err("differs from the manifest".to_owned()),
+        }
     });
-    let Some(filters) = filters else {
-        return Ok(Some((
-            "answer_mismatch",
-            json!({"filters_bytes": bytes.len()}),
-        )));
+    let filters = match filters.await? {
+        Ok(filters) => filters,
+        Err(failure) => return Ok(Some(failure)),
     };
     let paid = filters
         .get(PAID)
@@ -581,7 +571,13 @@ async fn indexer_report(
     health_url: &str,
     id: &str,
 ) -> Result<Option<Failure>> {
-    let health: Value = serde_json::from_slice(&get(http, health_url, MAX_HEALTH_BYTES).await?)?;
+    let health = fetch(http.get(health_url), MAX_HEALTH_BYTES, "health", |bytes| {
+        serde_json::from_slice::<Value>(bytes)
+    });
+    let health = match health.await? {
+        Ok(health) => health,
+        Err(failure) => return Ok(Some(failure)),
+    };
     let serving = health["serving"].as_str();
     if serving != Some(id) {
         return Ok(Some((
@@ -639,10 +635,27 @@ async fn oracle(
     ))
 }
 
-/// GETs `url`, reading at most `limit` bytes of a successful response's body.
-async fn get(http: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
-    let response = http.get(url).send().await?.error_for_status()?;
-    Ok(read_limited(response, limit).await?)
+/// Sends `request` for a served artifact and decodes its body. A failed request or a
+/// non-success status is an error; a successful body over `limit` bytes, or one
+/// `decode` refuses, is wrong served data: `answer_mismatch` naming `artifact`.
+async fn fetch<T, E: std::fmt::Display>(
+    request: reqwest::RequestBuilder,
+    limit: usize,
+    artifact: &str,
+    decode: impl FnOnce(&[u8]) -> std::result::Result<T, E>,
+) -> Result<std::result::Result<T, Failure>> {
+    let response = request.send().await?.error_for_status()?;
+    let error = match read_limited(response, limit).await {
+        Ok(body) => match decode(&body) {
+            Ok(value) => return Ok(Ok(value)),
+            Err(error) => error.to_string(),
+        },
+        Err(error @ crate::BodyError::Oversized(_)) => error.to_string(),
+        Err(error) => return Err(error.into()),
+    };
+    let mut detail = serde_json::Map::new();
+    detail.insert(artifact.into(), error.into());
+    Ok(Err(("answer_mismatch", detail.into())))
 }
 
 #[cfg(test)]
@@ -1124,8 +1137,8 @@ mod tests {
     }
 
     /// The witness file must bind to the probed publication, prove the fixture's
-    /// commitment at its position and have the node's root; a file the service cannot
-    /// send, or one over its bound, fails the probe too.
+    /// commitment at its position and have the node's root; one over its bound is an
+    /// answer mismatch too, and a file the service cannot send is an error.
     #[tokio::test]
     async fn the_witness_file_must_prove_the_fixture_under_the_nodes_root() {
         let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
@@ -1156,11 +1169,12 @@ mod tests {
             check(serve(200, proof.clone()).await, payment.clone()).await,
             Ok(None)
         );
-        for (status, bytes) in [(503, Vec::new()), (200, vec![0; MAX_WITNESS_BYTES + 1])] {
-            assert!(check(serve(status, bytes).await, payment.clone())
-                .await
-                .is_err());
-        }
+        assert!(check(serve(503, Vec::new()).await, payment.clone())
+            .await
+            .is_err());
+        let oversized = vec![0; MAX_WITNESS_BYTES + 1];
+        let detail = check(serve(200, oversized).await, payment.clone()).await;
+        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
         let truncated = proof[..proof.len() - 1].to_vec();
         let detail = check(serve(200, truncated).await, payment.clone()).await;
         assert!(detail.unwrap().unwrap()["witnesses"].is_string());
@@ -1199,10 +1213,11 @@ mod tests {
         }
     }
 
-    /// A successful public setup response of the wrong length or digest is an answer
-    /// mismatch; a failed one is not.
+    /// A successful public setup response of the wrong length or digest, or a query
+    /// answer that is undecodable or over its bound, is an answer mismatch; a failed
+    /// setup response is not.
     #[tokio::test]
-    async fn an_invalid_public_setup_is_an_answer_mismatch() {
+    async fn an_invalid_public_setup_or_query_answer_is_an_answer_mismatch() {
         use axum::http::StatusCode;
         let activation = crate::blocks::ironwood_activation();
         let end = u64::from(activation + 2);
@@ -1240,10 +1255,19 @@ mod tests {
         let mut flipped = real.clone();
         flipped[0] ^= 1;
         let short = real[..real.len() - 1].to_vec();
-        for (status, body, mismatch) in [
-            (StatusCode::OK, flipped, true),
-            (StatusCode::OK, short, true),
-            (StatusCode::INTERNAL_SERVER_ERROR, real, false),
+        let oversized = vec![0; response_bytes(receiver_pir::MIN_ROWS).unwrap() + 1];
+        // The failure's detail key, or `None` for an error.
+        for (status, body, answer, mismatch) in [
+            (StatusCode::OK, flipped, vec![], Some("public")),
+            (StatusCode::OK, short, vec![], Some("public")),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                real.clone(),
+                vec![],
+                None,
+            ),
+            (StatusCode::OK, real.clone(), b"x".to_vec(), Some("lookup")),
+            (StatusCode::OK, real.clone(), oversized, Some("lookup")),
         ] {
             let init = init.clone();
             let app = Router::new()
@@ -1251,7 +1275,11 @@ mod tests {
                     "/v1/receiver/init",
                     routing::get(move || async move { init }),
                 )
-                .route(&public, routing::get(move || async move { (status, body) }));
+                .route(&public, routing::get(move || async move { (status, body) }))
+                .route(
+                    "/v1/receiver/query",
+                    routing::post(move || async move { answer }),
+                );
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
             tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
@@ -1267,19 +1295,20 @@ mod tests {
                 &rpc,
                 "--no-auth",
             ]);
-            match probe(altered, &mut None).await {
-                Ok(Some(failure)) => {
-                    assert!(mismatch, "{status}");
-                    let detail = json!({"public": "differs from manifest"});
-                    assert_eq!(failure, ("answer_mismatch", detail));
+            match (probe(altered, &mut None).await, mismatch) {
+                (Ok(Some((category, detail))), Some(key)) => {
+                    assert_eq!(category, "answer_mismatch");
+                    assert!(detail[key].is_string(), "{detail}");
                 }
-                other => assert!(!mismatch && other.is_err(), "{status}"),
+                (result, None) => assert!(result.is_err()),
+                (result, _) => panic!("{status}: {result:?}"),
             }
         }
     }
 
-    /// A successful `init` response with malformed JSON or a manifest that fails
-    /// validation (protocol or geometry) is an answer mismatch; a failed one is not.
+    /// A successful `init` response with malformed JSON, over its bound, or with a
+    /// manifest that fails validation (protocol or geometry) is an answer mismatch; a
+    /// failed one is not.
     #[tokio::test]
     async fn an_invalid_served_manifest_is_an_answer_mismatch() {
         use axum::http::StatusCode;
@@ -1290,6 +1319,7 @@ mod tests {
         let json = |m: &Manifest| serde_json::to_string(m).unwrap();
         for (status, body, mismatch) in [
             (StatusCode::OK, "{".to_owned(), true),
+            (StatusCode::OK, " ".repeat(MAX_MANIFEST_BYTES + 1), true),
             (StatusCode::OK, json(&protocol), true),
             (StatusCode::OK, json(&geometry), true),
             (StatusCode::INTERNAL_SERVER_ERROR, json(&manifest(0)), false),
@@ -1337,8 +1367,8 @@ mod tests {
         origin
     }
 
-    /// A filter file is accepted only with the manifest's digest and with the fixture's
-    /// receiver in its paid set.
+    /// A filter file is accepted only within its bound, with the manifest's digest and
+    /// with the fixture's receiver in its paid set.
     #[tokio::test]
     async fn the_filter_file_must_match_its_manifest() {
         let build = |records: &[receiver_directory::Record]| {
@@ -1366,6 +1396,11 @@ mod tests {
         let origin = serve(altered).await;
         let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
+        let origin = serve(vec![0; MAX_FILTERS_BYTES + 1]).await;
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
+        let failure = check.await.unwrap().unwrap();
+        assert_eq!(failure.0, "answer_mismatch");
+        assert!(failure.1["filters"].is_string());
         // A self-consistent publication whose paid set omits the fixture's receiver.
         let empty = build(&[]);
         let origin = serve(empty.filters.clone()).await;
@@ -1494,7 +1529,7 @@ mod tests {
     }
 
     /// Health's report counts only for the probed publication, even after a rotation,
-    /// and bodies are bounded.
+    /// and a body over its bound is an answer mismatch.
     #[tokio::test]
     async fn the_report_is_bound_to_the_probed_publication() {
         let (probed, rotated) = (id(&manifest(1)), id(&manifest(2)));
@@ -1512,9 +1547,8 @@ mod tests {
         let current = report(json!({"serving": probed, "indexer": indexer(0)}));
         assert!(current.await.is_none());
         let origin = serve(Value::Null).await;
-        assert!(get(&http, &format!("{origin}/large"), MAX_HEALTH_BYTES)
-            .await
-            .is_err());
+        let failure = indexer_report(&http, &format!("{origin}/large"), &probed).await;
+        assert!(failure.unwrap().unwrap().1["health"].is_string());
         // The service rotated after the lookup, or health answers for another one.
         let failure = report(json!({"serving": rotated, "indexer": indexer(0)}))
             .await
