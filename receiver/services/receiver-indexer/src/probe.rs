@@ -254,6 +254,13 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
                 json!({"coverage": "starts after Ironwood activation"}),
             )))
         }
+        // A served setup whose length or digest differs from the manifest's.
+        Err(receiver_pir::Error::Malformed) => {
+            return Ok(Some((
+                "answer_mismatch",
+                json!({"public": "differs from manifest"}),
+            )))
+        }
         Err(error) => return Err(error.into()),
     };
     let mut queries = 0;
@@ -1128,6 +1135,85 @@ mod tests {
             protocol: receiver_pir::PROTOCOL.into(),
             directory,
             public_digest: [0; 32],
+        }
+    }
+
+    /// A successful public setup response of the wrong length or digest is an answer
+    /// mismatch; a failed one is not.
+    #[tokio::test]
+    async fn an_invalid_public_setup_is_an_answer_mismatch() {
+        use axum::http::StatusCode;
+        let activation = crate::blocks::ironwood_activation();
+        let end = u64::from(activation + 2);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
+        fixture["height"] = (activation + 1).into();
+        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
+        std::fs::write(&path, fixture.to_string()).unwrap();
+        let rpc = serve_node(Node { end, ..good(end) }).await;
+        let mut directory = anchored();
+        (directory.start_height, directory.end_height) = (activation, end as u32);
+        let args = publish(directory, &path, &rpc).await;
+        // The real publication's manifest and setup, served again with the setup altered.
+        let init = reqwest::get(format!("{}/v1/receiver/init", args.origin))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap();
+        let id = hex::encode(
+            serde_json::from_slice::<Manifest>(&init)
+                .unwrap()
+                .id()
+                .unwrap(),
+        );
+        let public = format!("/v1/receiver/public/{id}");
+        let real = reqwest::get(format!("{}{public}", args.origin))
+            .await
+            .unwrap()
+            .bytes()
+            .await
+            .unwrap()
+            .to_vec();
+        let mut flipped = real.clone();
+        flipped[0] ^= 1;
+        let short = real[..real.len() - 1].to_vec();
+        for (status, body, mismatch) in [
+            (StatusCode::OK, flipped, true),
+            (StatusCode::OK, short, true),
+            (StatusCode::INTERNAL_SERVER_ERROR, real, false),
+        ] {
+            let init = init.clone();
+            let app = Router::new()
+                .route(
+                    "/v1/receiver/init",
+                    routing::get(move || async move { init }),
+                )
+                .route(&public, routing::get(move || async move { (status, body) }));
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            let altered = Args::parse_from([
+                "probe",
+                "--origin",
+                &origin,
+                "--health-url",
+                &args.health_url,
+                "--fixture",
+                path.to_str().unwrap(),
+                "--rpc-url",
+                &rpc,
+                "--no-auth",
+            ]);
+            match probe(altered, &mut None).await {
+                Ok(Some(failure)) => {
+                    assert!(mismatch, "{status}");
+                    let detail = json!({"public": "differs from manifest"});
+                    assert_eq!(failure, ("answer_mismatch", detail));
+                }
+                other => assert!(!mismatch && other.is_err(), "{status}"),
+            }
         }
     }
 

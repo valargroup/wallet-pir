@@ -104,10 +104,12 @@ async fn main() -> Result<()> {
     if args.start_height < receiver_indexer::blocks::ironwood_activation() {
         return Err("start must be at or after Ironwood activation".into());
     }
-    if args.witnesses && args.start_height != receiver_indexer::blocks::ironwood_activation() {
-        return Err(
-            "witnesses need commitments from Ironwood activation; drop --start-height".into(),
-        );
+    // Witnesses need every commitment, and wallets refuse served coverage that starts
+    // later; a one-shot run without witnesses may.
+    if (args.witnesses || args.serve)
+        && args.start_height != receiver_indexer::blocks::ironwood_activation()
+    {
+        return Err("witnesses and serving need history from Ironwood activation".into());
     }
     let private = match args.bind.ip() {
         IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
