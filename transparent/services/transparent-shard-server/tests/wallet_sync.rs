@@ -357,6 +357,7 @@ fn publish_profiled(
             })
             .collect(),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.join("shards.json"),

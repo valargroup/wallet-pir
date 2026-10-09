@@ -408,6 +408,94 @@ work succeeds. Replacing a provisional revision replaces its covered range; reor
 rolls back to the accepted ancestor.
 
 Freeze the initial geometry cutoff. Aging may change worker ownership after verified
-copying, but it does not change shard geometry, ids or history. Re-cutting into wider archive
-geometry is a future epoch transition requiring explicit identity and coverage recovery; do
-not implement a rolling cutoff that silently rebuilds old shards.
+copying, but it does not change shard geometry, ids or history. Rebuilding sealed shards
+under other boundaries, such as merging sealed recent shards into wider archive shards, is
+allowed only as a declared re-cut; do not implement a rolling cutoff that silently rebuilds
+old shards.
+
+### Declared re-cuts
+
+A re-cut rebuilds sealed history from some height up under other boundaries. That changes
+the ids and digests of every shard from there up, the tail included, but not the chain, so a
+wallet that already covers those heights needs nothing new. The map says so in `recuts`
+(`transparent-filter` `wire.rs`): for each re-cut an epoch, the first changed height, and
+every entry the previous map published at or above it, exactly as published (id, geometry,
+range, terminal block, digest, revision, sealed), the old tail included. A map never re-cut
+omits the field and keeps its bytes and digest. `ShardMap::check_shape` refuses a
+declaration whose epochs do not rise, whose entries do not follow one another from the first
+changed height, that marks any entry but the last unsealed, names a digest the map still
+publishes or one declared twice, or names a geometry without seal parameters, and a map whose
+entry at a declared entry's geometry and start height does not carry a higher revision. The
+newest re-cut's first height must be a shard boundary of the map. Every declared digest and
+terminal block hash must be 64 lowercase hex digits, every declared height must fit in 32
+bits, and a map may declare at most 65,536 superseded entries across all its re-cuts
+(`MAX_SUPERSEDED`), far above any real publication, so a hostile map cannot make wallets
+store or scan an unbounded list. The checks themselves cannot overflow on hostile values.
+
+A wallet (`transparent-wallet` `sync.rs`) keeps its history across a declared re-cut:
+
+- Stored sealed coverage is looked up by the height it starts at, not by shard id. It stays
+  good while the map publishes that revision there, or declares exactly that revision
+  superseded: same digest, shard id and start height, sealed, ending on the same block. The
+  block a range ends on is its source anchor, which every store since SQLite schema 2 keeps;
+  a range without one (an older custom store) may have been cut short, so it matches a
+  declaration when it ends inside the declared range, or at its end on the declared block.
+  Nothing under a matched range is read again.
+- A sealed range the map neither still publishes nor declares superseded is judged by what
+  the wallet's chain says. The newest-first reorg scan runs first, on the chain alone, and
+  rolls back any reorg it shows; only ranges that rollback kept are judged, so a map cannot
+  hold back a reorg by also changing history below it. If the chain rejects the block the
+  range rests on, it is a reorg and is rolled back like any other. If the chain accepts that
+  block and also the block the map's sealed shard now covering the range's start ends on, at
+  or below the target, the publisher contradicts itself on the wallet's own chain: the sync
+  ends with `SyncError::SealedRewrite { start_height, revision_digest }` before anything else
+  is rolled back or read, whichever range the store holds newest, and retrying does not
+  resolve it while the publisher serves that history. In every other case the chain cannot
+  settle it yet, and the sync stops as for an unknown block (`chain-unknown`). Sealing is not
+  delayed for finality, so this covers a publisher that followed a shallow reorg through a
+  shard it had just sealed before the wallet's chain did: once the chain moves, the next sync
+  rolls it back as a reorg. A range cut short of its shard's end by a target or a rollback is
+  left to the ordinary chain checks, because a reorg above the cut changes the shard's digest
+  without touching what the range covers.
+- Unfinished page work under a revision the map no longer publishes is dropped and done
+  again under the shard now covering its heights. What that revision already saved stays
+  only when the map declares it sealed (under the same shard id) and the wallet's chain
+  still accepts the target block that item was read for, which the store keeps with it and
+  which every event it saved lies at or below. The declaration's own heights and blocks are
+  not relied on. Otherwise the store rolls back from the lowest height the revision saved an
+  event at, or from its declared start if that is lower, moved down to the start of the
+  shard now covering that height; a revision that saved nothing leaves nothing to roll
+  back. Events are kept once per outpoint, so reading a height again never counts one
+  twice. Kept events sit without coverage until the gap is read, so a sync stopped first
+  reports the range uncovered.
+- Provisional coverage from a tail the map no longer publishes is rolled back from its start
+  and read again from the new tail, as for any replaced tail.
+- A new coverage range replaces every range of the script it contains, whatever shard it
+  came from, so a wider shard starting at a covered height does not clash with the narrower
+  ones. A range strictly inside the one the script holds starting nearest at or below it
+  changes nothing. Both reference stores follow these rules, and the SQLite schema is
+  unchanged (version 4).
+- A map refreshed during a sync whose re-cut epoch differs from the one the sync started
+  from ends that sync with `MapDiverged`; so does one that moves the shard id the walk
+  resumes at to another start height. The next sync starts from the re-cut map.
+- Filters fetched ahead of a walk are dropped at the next prefetch or map fetch, since a
+  re-cut gives their shard ids to other ranges.
+
+What a re-cutting publisher must guarantee, and wallets rely on:
+
+- Entries below the first changed height are byte-identical. That height and the end of the
+  re-cut span are sealed boundaries of the previous map with unchanged terminal blocks, and
+  the new entries cover exactly the heights the replaced ones did.
+- Revisions are numbered per geometry and start height, not per shard id. A new entry at the
+  geometry and start height of any earlier entry, the tail included, takes a higher revision.
+  The tail keeps its start height and geometry.
+- Every changed entry is declared exactly as it was published. Declarations are kept
+  forever, in strictly increasing epochs, so a wallet offline across several re-cuts still
+  recognizes what it holds; a superseded digest is never published again; seal parameters
+  stay published for every geometry any declaration names.
+- Production is not re-cut until every client in use reads declarations. An older client
+  ignores the field and stalls or refuses on the re-cut map.
+
+No publisher builds re-cut maps yet; the continuous publisher writes an empty `recuts` and
+would have to carry every earlier declaration forward. See
+[remaining work](remaining-work.md).

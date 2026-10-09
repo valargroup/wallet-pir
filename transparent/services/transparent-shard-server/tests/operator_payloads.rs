@@ -270,6 +270,7 @@ fn publish(dir: &Path) -> ShardMap {
         start_height: FIRST,
         seal,
         shards: entries,
+        recuts: Vec::new(),
     };
     map.check_shape()
         .expect("the published map must be well formed");

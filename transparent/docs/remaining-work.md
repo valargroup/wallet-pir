@@ -735,6 +735,37 @@ None of these block the recovery beta, and none has an implementation decision.
   choice reveals a history-size class. It needs that privacy review, bulk geometry
   sizing and a view on six-week tails before it is built or dropped.
 
+## Declared re-cut of sealed recent shards
+
+The goal is to merge a run of sealed recent shards into fewer archive shards and switch
+routing to the new map with no downtime, while wallets keep everything they hold. The
+map's re-cut declaration, its shape checks and the reference wallet's handling are in
+place ([architecture](architecture.md#declared-re-cuts)); the wallet-libraries adapter and
+Vizor follow separately. What remains is the server side, and no production map is re-cut
+until all of it passes and every client in use reads declarations:
+
+- [ ] A publisher mode that builds the re-cut map from the current one: entries below the
+  first changed height hard-linked byte for byte, the span rebuilt in the archive geometry
+  with its end on an old sealed boundary, every later sealed shard and the tail renumbered
+  at a revision above the one each replaces at its geometry and start height, and a
+  declaration of every replaced entry exactly as published.
+- [ ] The continuous publisher carries every earlier declaration forward on each
+  republication, in rising epochs, and keeps seal parameters for every geometry any
+  declaration names. Today it writes an empty `recuts`
+  (`transparent/services/transparent-filter-server/src/publication.rs`); a republication
+  that dropped a declaration would strand wallets holding the revisions it named.
+- [ ] `shard-verify` checks a declaration against the previous map: identical prefix,
+  unchanged boundary terminal blocks, exact tiling, declared entries equal to what was
+  published, and the revision rule.
+- [ ] Prepare and verify the new archive shards on the archive owner and switch the router
+  at a publication boundary. A wallet that has synced the re-cut map refuses the earlier
+  one, so routing back after the switch stalls such wallets until the re-cut map is served
+  again.
+- [ ] Re-pin the regression fixtures, whose tool treats renumbering as drift.
+- [ ] Acceptance: a bench fleet re-cut under wallet load, with the reference wallet and the
+  adapter keeping their history (no private query for held heights, no rollback below the
+  replaced tail) and the router switch without failed requests.
+
 ## Earlier technical gates and deferred work
 
 Inventory/spot-check/cutoff (Gate 0), mixed census and publication (Gates 1–2),
@@ -756,7 +787,8 @@ The following remain separately scoped; they do not block this recovery beta:
   establish a baseline completion budget, repeat frozen finalists/seeds under
   equal limits and resolve recent-latency/total-byte gates before wider promotion.
 - [ ] Track aged recent-shaped shard growth and re-census before expansion.
-  Epoch re-cutting needs explicit lineage/cache/replay/migration/rollback design.
+  Moving aged recent shards into archive shards is the
+  [declared re-cut](#declared-re-cut-of-sealed-recent-shards) below.
 - [ ] Scope archive/router redundancy for general availability, mobile, sending
   and seed custody, existing-database migration, key reuse and stronger
   completeness/traffic-pattern guarantees as separate decisions.

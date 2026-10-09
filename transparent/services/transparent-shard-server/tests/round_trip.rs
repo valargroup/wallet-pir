@@ -201,6 +201,7 @@ fn publish(dir: &Path) -> ShardMap {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.join("shards.json"),

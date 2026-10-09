@@ -143,6 +143,8 @@ pub fn suite<S: WalletStore>(make: impl Fn() -> S) {
     a_commit_past_the_pending_bound_is_refused_whole(&make);
     required_from_is_never_raised_and_the_set_is_bound_once(&make);
     promotion_settles_a_provisional_revision_in_place(&make);
+    a_range_replaces_the_ranges_it_contains_whatever_their_shard(&make);
+    a_range_inside_one_already_held_changes_nothing(&make);
 }
 
 fn an_empty_store_reports_nothing<S: WalletStore>(make: &impl Fn() -> S) {
@@ -452,6 +454,126 @@ fn promotion_settles_a_provisional_revision_in_place<S: WalletStore>(make: &impl
         .iter()
         .all(|range| range.kind == CoverageKind::Settled));
     assert!(store.provisional().unwrap().is_empty());
+}
+
+/// A re-cut merges narrower shards into one under another shard id, so a
+/// script holding part of that range is covered again by a range starting
+/// where one it holds does. The new range replaces every range of the script
+/// it contains, whichever shard they came from, and leaves the rest, and the
+/// script's other coverage, as they were.
+fn a_range_replaces_the_ranges_it_contains_whatever_their_shard<S: WalletStore>(
+    make: &impl Fn() -> S,
+) {
+    let mut store = make();
+    store.bind_set(&identity()).unwrap();
+    for (shard, revision, range) in [
+        (0, "r0", (0, 99)),
+        (1, "r1", (100, 149)),
+        (2, "r2", (150, 199)),
+        (3, "r3", (200, 249)),
+    ] {
+        store
+            .commit_shard(commit(
+                shard,
+                revision,
+                true,
+                range,
+                vec![],
+                vec![script(1)],
+            ))
+            .unwrap();
+    }
+    store
+        .commit_shard(commit(1, "r1", true, (100, 149), vec![], vec![script(2)]))
+        .unwrap();
+    // Shards 1 and 2 re-cut into shard 1, covering both ranges; 3 renumbered.
+    store
+        .commit_shard(commit(1, "wide", true, (100, 199), vec![], vec![script(1)]))
+        .unwrap();
+    let ranges = store.coverage(&script(1)).unwrap();
+    let held: Vec<_> = ranges
+        .iter()
+        .map(|range| {
+            (
+                range.start_height,
+                range.end_height,
+                range.revision_digest.as_str(),
+            )
+        })
+        .collect();
+    assert_eq!(held, [(0, 99, "r0"), (100, 199, "wide"), (200, 249, "r3")]);
+    assert_eq!(
+        store.coverage(&script(2)).unwrap()[0].revision_digest,
+        "r1",
+        "another script's coverage is its own"
+    );
+    // At an existing start under another shard id: the primary key of a
+    // store keyed by script and start height must not refuse it.
+    store
+        .commit_shard(commit(
+            2,
+            "renumbered",
+            true,
+            (200, 249),
+            vec![],
+            vec![script(1)],
+        ))
+        .unwrap();
+    let ranges = store.coverage(&script(1)).unwrap();
+    assert_eq!(ranges.len(), 3);
+    assert_eq!(ranges[2].shard_id, 2);
+    assert_eq!(ranges[2].revision_digest, "renumbered");
+    // The same commit again changes nothing.
+    store
+        .commit_shard(commit(
+            2,
+            "renumbered",
+            true,
+            (200, 249),
+            vec![],
+            vec![script(1)],
+        ))
+        .unwrap();
+    assert_eq!(store.coverage(&script(1)).unwrap(), ranges);
+}
+
+/// A range strictly inside one the script already holds is covered already:
+/// committing it changes no coverage, whatever shard it names, so a store
+/// keyed by script and start height and one that is not give one answer.
+fn a_range_inside_one_already_held_changes_nothing<S: WalletStore>(make: &impl Fn() -> S) {
+    let mut store = make();
+    store.bind_set(&identity()).unwrap();
+    store
+        .commit_shard(commit(1, "wide", true, (100, 199), vec![], vec![script(1)]))
+        .unwrap();
+    let held = store.coverage(&script(1)).unwrap();
+    for (shard, revision, range) in [(5, "head", (100, 149)), (6, "rest", (150, 199))] {
+        store
+            .commit_shard(commit(
+                shard,
+                revision,
+                true,
+                range,
+                vec![],
+                vec![script(1)],
+            ))
+            .unwrap();
+        assert_eq!(store.coverage(&script(1)).unwrap(), held, "{revision}");
+    }
+    // Reaching past it is not inside it: the longer range replaces it.
+    store
+        .commit_shard(commit(
+            7,
+            "longer",
+            true,
+            (100, 249),
+            vec![],
+            vec![script(1)],
+        ))
+        .unwrap();
+    let ranges = store.coverage(&script(1)).unwrap();
+    assert_eq!(ranges.len(), 1);
+    assert_eq!(ranges[0].revision_digest, "longer");
 }
 
 fn a_retried_spend_cannot_change_its_script<S: WalletStore>(make: &impl Fn() -> S) {

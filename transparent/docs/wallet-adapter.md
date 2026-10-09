@@ -94,3 +94,28 @@ pending work and completion metadata. Changing shard schema and seal thresholds
 requires a separate publication lineage and consumer migration; a database
 schema migration does not authorize reuse of old shard identifiers. A lower target requires an
 explicit accepted-anchor rollback. See [testing](testing.md) for regression checks.
+
+A [declared re-cut](architecture.md#declared-re-cuts) keeps the lineage and changes no store
+schema. A store keeps coverage, events and setups under the revisions it read them from, and
+the sync finds them in the re-cut map by height and digest rather than by shard id. A custom
+store must give the same coverage answer as the reference stores: a committed range replaces
+every range of that script it contains, whatever shard id they carry; a range strictly inside
+the one the script holds starting nearest at or below it changes nothing; and a store keyed by
+script and start height must not refuse a range starting where one it replaces did. The
+conformance suite checks this, and a custom store should keep each range's source anchor,
+without which a range that ends inside a declared range is assumed to have been cut short.
+
+`SyncError::SealedRewrite { start_height, revision_digest }` means the map replaces sealed
+history the store holds with a shard whose end block the wallet's chain also accepts, at or
+below the target, while the chain still accepts the block the stored history rests on, and
+declares no re-cut of it. The publisher contradicts itself on the wallet's own chain, so
+retrying does not resolve it while it serves that history; an adapter reports the publication
+as changed. Nothing has been read, and nothing rolled back but a reorg the wallet's chain itself
+showed, which the sync rolls back before judging the map. A publisher that merely got ahead of the
+wallet's chain, for example by following a shallow reorg through a shard it had just sealed,
+gets `chain-unknown` instead, and the next sync after the chain moves rolls it back as a reorg.
+The store keeps no re-cut epoch, so a replica still serving a map from before a re-cut the store
+has followed produces `SealedRewrite` too: an adapter that records the epoch it last synced at,
+and treats a map with a lower one as behind before syncing, tells the two apart. A re-cut
+published during a sync ends that sync with `MapDiverged`, and the next sync starts from the
+re-cut map.

@@ -578,6 +578,7 @@ mod tests {
                 },
             )]),
             shards,
+            recuts: Vec::new(),
         }
     }
 
