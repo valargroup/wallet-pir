@@ -747,12 +747,39 @@ class ReceiverTests(Fleet):
             self.assertEqual(self.release(host, sha), self.staged(), host)
         # The check host only received the release; it runs no unit.
         self.assertEqual({op for _, op, _ in self.fake.mutations('coordinator')}, {'mkdir', 'upload', 'rename'})
-        # Its copy is checked too: a conflict there refuses even a no-op.
+        # Its copy is checked too: a conflict there refuses even a plain no-op,
+        # which stages nothing and runs no check.
         self.fake.put('coordinator', receiver_release(sha) + '/receiver-probe', b'an older probe')
         self.fake.log.clear()
+        for verify_noop in (False, True):
+            with self.subTest(verify_noop=verify_noop):
+                with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
+                    deployer.deploy(sha, self.receiver_binary, companions=self.companions, verify_noop=verify_noop)
+                self.assertEqual(self.fake.log, [])
+                self.assertEqual(Journal.load(self.state, 'receiver').id, journal.id)
+
+    def test_a_conflict_on_a_later_host_stages_nothing_anywhere(self):
+        """The check host holds bundle A; bundle B shares its server but not its probe."""
+        document = json.loads(self.inventory_path.read_text())
+        document['services']['receiver']['exact_check']['host'] = 'coordinator'
+        self.inventory_path.write_text(json.dumps(document))
+        self.inventory = descriptors.load_inventory(self.inventory_path)
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        for name, data in self.staged().items():
+            self.fake.put('coordinator', '%s/%s' % (receiver_release(sha), name), data)
+        other = self.dir / 'other-probe'
+        other.write_bytes(b'another probe')
+        bundle_b = {**self.companions, 'receiver-probe': Artifact(other, sha256(b'another probe'))}
+        # Stage directly, as `preflight --stage` does, with the server host first.
+        with self.fake.hold_lock(*LOCK) as lock:
+            deployer.lock = lock
+            with self.assertRaisesRegex(DeployError, 'nothing was staged:\n  coordinator: immutable release file'):
+                deployer.stage(['receiver-01', 'coordinator'], sha, self.receiver_binary, companions=bundle_b)
         with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
-            deployer.deploy(sha, self.receiver_binary, companions=self.companions, verify_noop=True)
+            deployer.deploy(sha, self.receiver_binary, companions=bundle_b)
         self.assertEqual(self.fake.log, [])
+        self.assertEqual(self.release('receiver-01', sha), {})
 
     def test_template_argument_change_takes_effect_and_rolls_back(self):
         sha = sha256(RECEIVER_NEW)
@@ -1019,6 +1046,25 @@ class CommandLineTests(Fleet):
         self.assertEqual(self.run_cli('deploy', 'receiver', '--archive', str(archive), '--sha', other), 1)
         self.assertTrue(any('receiver-probe holds different bytes' in line for line in self.lines), self.lines)
         self.assertEqual(self.fake.log, [])
+
+    def test_preflight_stage_uploads_nothing_when_a_later_host_conflicts(self):
+        """The check host holds bundle A; preflight --stage of bundle B (same server, other probe)."""
+        document = json.loads(self.inventory_path.read_text())
+        document['services']['receiver']['exact_check']['host'] = 'coordinator'
+        self.inventory_path.write_text(json.dumps(document))
+        self.inventory = descriptors.load_inventory(self.inventory_path)
+        self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        for name, data in (('receiver-directory', RECEIVER_NEW), ('receiver-probe', PROBE),
+                           ('probe-fixture.json', FIXTURE)):
+            self.fake.put('coordinator', '%s/%s' % (receiver_release(sha), name), data)
+        revision = '3' * 40
+        archive = self.receiver_bundle(revision, b'another probe')
+        self.assertEqual(self.run_cli('preflight', 'receiver', '--archive', str(archive), '--sha', revision,
+                                      '--stage'), 1)
+        self.assertTrue(any('nothing was staged' in line and 'coordinator' in line for line in self.lines), self.lines)
+        self.assertEqual([entry for entry in self.fake.log if entry[1] in ('mkdir', 'upload', 'rename')], [])
+        self.assertFalse(any(path.startswith(receiver_release(sha)) for path in self.fake.host('receiver-01').files))
 
 
 if __name__ == '__main__':

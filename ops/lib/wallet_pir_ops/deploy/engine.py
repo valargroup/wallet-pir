@@ -197,11 +197,10 @@ class Deployer:
                 problems.append('%s: historical ExecStart drop-ins would be retired into the transaction '
                                 'directory; pass --retire-historical to accept' % key)
         needed = self.release_hosts(plans, verify_noop)
-        # Conflicts are refused wherever the release exists, before any no-op.
-        for host in dict.fromkeys(needed + [p.target.host for p in plans]):
+        problems += self.release_conflicts(sha, files)
+        for host in needed:
             missing, conflicts = self.inspect_release(host, sha, files)
-            problems += conflicts
-            if host not in needed or conflicts or not missing:
+            if conflicts or not missing:
                 continue
             size = sum(os.path.getsize(path) for _, _, path, _ in missing if path)
             if any(path is None for _, _, path, _ in missing):
@@ -373,12 +372,26 @@ class Deployer:
         A no-op runs no check, so needs none unless `verify_noop` asks for the check anyway.
         """
         hosts = [plan.target.host for plan in plans if plan.action == 'restart']
-        if not hosts and not verify_noop:
-            return []
+        if hosts or verify_noop:
+            hosts.append(self.release_check_host())
+        return [host for host in dict.fromkeys(hosts) if host]
+
+    def release_check_host(self):
+        """The exact check's host when its argv runs `{release_dir}`, else None."""
         check = descriptors.exact_check(self.service, self.inventory)
         if check and any('{release_dir}' in argument for argument in check['argv']):
-            hosts.append(check['host'])
-        return list(dict.fromkeys(hosts))
+            return check['host']
+        return None
+
+    def release_conflicts(self, sha, files, hosts=()):
+        """Conflict messages for the release on `hosts`, every target host and the `{release_dir}` check host.
+
+        Checked whether or not anything is staged or checked, so a conflict is
+        refused before any upload and before a no-op.
+        """
+        everywhere = list(hosts) + [target.host for target in self.targets] + [self.release_check_host()]
+        return [conflict for host in dict.fromkeys(everywhere) if host
+                for conflict in self.inspect_release(host, sha, files)[1]]
 
     def inspect_release(self, host, sha, files):
         """`(missing files, conflict messages)` for the release directory on `host`.
@@ -415,11 +428,12 @@ class Deployer:
         """
         files = self.release_files(sha, binary, companions)
         path = self.service.release_binary(sha)
+        conflicts = self.release_conflicts(sha, files, hosts)
+        if conflicts:
+            raise DeployError('release conflicts; nothing was staged:\n  ' + '\n  '.join(conflicts))
         for host in hosts:
             self.lock.verify()
-            missing, conflicts = self.inspect_release(host, sha, files)
-            if conflicts:
-                raise DeployError('\n  '.join(conflicts))
+            missing, _ = self.inspect_release(host, sha, files)
             if any(local is None for _, _, local, _ in missing):
                 raise DeployError(self.unstaged(host, sha, missing))
             if missing:
