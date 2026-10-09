@@ -253,8 +253,8 @@ impl Explorer {
     /// each swap's Orchard receiver in `store`, with when the read began, and each
     /// completed payout with its reported transactions, all in one transaction (see
     /// [`ProviderStore::record`]). Times are capped at the read's start, so a record
-    /// dated in the future cannot hide later swaps. A read over [`MAX_PAGES`] pages
-    /// fails and records nothing. Returns how many receivers it recorded.
+    /// dated in the future cannot hide later swaps. A read past its page bound fails
+    /// and records nothing. Returns how many receivers it recorded.
     pub async fn sync(
         &mut self,
         store: &mut ProviderStore,
