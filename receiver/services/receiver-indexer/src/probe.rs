@@ -22,7 +22,7 @@ use crate::{
 use clap::Parser;
 use receiver_directory::{
     extract::Action,
-    filter::{Filters, MAX_FILTERS_BYTES},
+    filter::{Filters, MAX_FILTERS_BYTES, PAID},
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment, Receiver,
 };
@@ -299,7 +299,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             return Ok(Some(failure));
         }
     }
-    if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
+    if let Some(failure) = check_filters(&http, origin, &id, directory, &receiver).await? {
         return Ok(Some(failure));
     }
     // The node's checks hold for the whole lookup only if the terminal block is still
@@ -499,18 +499,36 @@ async fn check_witnesses(
 }
 
 /// Checks the session's filter file, which wallets test before any lookup: its digest
-/// must be the manifest's and it must decode to exactly the declared sets.
+/// must be the manifest's, it must decode to exactly the declared sets, and its paid
+/// set must hold `receiver`, the fixture's, or wallets would skip that lookup.
 async fn check_filters(
     http: &reqwest::Client,
     origin: &str,
     id: &str,
     directory: &receiver_directory::snapshot::Manifest,
+    receiver: &Receiver,
 ) -> Result<Option<Failure>> {
     let url = format!("{origin}/v1/receiver/filters/{id}");
     let bytes = get(http, &url, MAX_FILTERS_BYTES).await?;
-    let valid = Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
-        && Filters::decode(&bytes).is_ok_and(|filters| directory.check_filters(&filters).is_ok());
-    Ok((!valid).then(|| ("answer_mismatch", json!({"filters_bytes": bytes.len()}))))
+    let filters = Filters::decode(&bytes).ok().filter(|filters| {
+        Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
+            && directory.check_filters(filters).is_ok()
+    });
+    let Some(filters) = filters else {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"filters_bytes": bytes.len()}),
+        )));
+    };
+    let paid = filters
+        .get(PAID)
+        .is_some_and(|paid| paid.matches(&directory.salt, &[*receiver])[0]);
+    Ok((!paid).then(|| {
+        (
+            "answer_mismatch",
+            json!({"paid_filter": "omits the fixture"}),
+        )
+    }))
 }
 
 /// The indexer's payout check from health, which must report serving the probed
@@ -670,7 +688,7 @@ mod tests {
     }
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
-    /// anchor's height, `[anchor; 32]`, with the tree size after it. Genesis is
+    /// anchor's height `end`, `[anchor; 32]`, with the tree size after it. Genesis is
     /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
     /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
     /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
@@ -680,6 +698,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
+        end: u64,
         anchor: u8,
         fixture: u8,
         size: Option<u64>,
@@ -692,6 +711,7 @@ mod tests {
     fn good(tip: u64) -> Node {
         Node {
             tip,
+            end: u64::from(anchored().end_height),
             anchor: 3,
             fixture: 5,
             size: Some(300),
@@ -703,7 +723,7 @@ mod tests {
 
     /// Serves `node`. Returns its URL.
     async fn serve_node(node: Node) -> String {
-        let end = u64::from(anchored().end_height);
+        let end = node.end;
         let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new().route(
             "/",
@@ -884,6 +904,55 @@ mod tests {
         assert_eq!(decide(&[rootless, moved], false).await, Ok((end + 3, None)));
     }
 
+    /// Wallets require history from Ironwood activation, so a publication starting
+    /// after it fails before any lookup, though it holds the fixture and agrees with the
+    /// node; one starting at activation reaches the lookup.
+    #[tokio::test]
+    async fn a_publication_must_start_at_ironwood_activation() {
+        let activation = crate::blocks::ironwood_activation();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let mut fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
+        fixture["height"] = (activation + 1).into();
+        fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
+        std::fs::write(&path, fixture.to_string()).unwrap();
+        let node = Node {
+            end: u64::from(activation) + 2,
+            ..good(u64::from(activation) + 2)
+        };
+        let rpc = serve_node(node).await;
+        for (start, reaches_lookup) in [(activation + 1, false), (activation, true)] {
+            let mut directory = anchored();
+            (directory.start_height, directory.end_height) = (start, activation + 2);
+            let snapshot =
+                receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
+            let server = receiver_pir::server::Server::new(snapshot).unwrap();
+            let publications = receiver_pir_server::Publications::default();
+            let publication = receiver_pir_server::Publication::new(server, None).unwrap();
+            assert!(publications.publish(publication, 0));
+            let app = receiver_pir_server::router_with_publications(publications);
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            let args = Args::parse_from([
+                "probe",
+                "--origin",
+                &origin,
+                "--health-url",
+                &format!("{origin}/v1/receiver/health"),
+                "--fixture",
+                path.to_str().unwrap(),
+                "--rpc-url",
+                &rpc,
+                "--no-auth",
+            ]);
+            let mut lookup = None;
+            let result = probe(args, &mut lookup).await;
+            assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
+            assert_eq!(result.is_err(), !reaches_lookup, "{start}");
+        }
+    }
+
     /// The node's Ironwood root and the witness file's agree byte for byte: the pinned
     /// node's tree over the fixture refund's commitment gives, through
     /// `Root::bytes_in_display_order`, the root `WitnessSnapshot` builds, not its reverse.
@@ -1029,15 +1098,16 @@ mod tests {
         origin
     }
 
-    /// A filter file is accepted only with the manifest's digest.
+    /// A filter file is accepted only with the manifest's digest and with the fixture's
+    /// receiver in its paid set.
     #[tokio::test]
     async fn the_filter_file_must_match_its_manifest() {
-        let snapshot = receiver_directory::snapshot::Snapshot::build(
-            super::common::manifest(receiver_pir::MIN_ROWS),
-            &[],
-            &[],
-        )
-        .unwrap();
+        let build = |records: &[receiver_directory::Record]| {
+            let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+            receiver_directory::snapshot::Snapshot::build(manifest, records, &[]).unwrap()
+        };
+        let snapshot = build(&[super::common::record(0, 1)]);
+        let receiver = super::common::receiver();
         let serve = |bytes: Vec<u8>| async move {
             let app = Router::new().route(
                 "/v1/receiver/filters/x",
@@ -1050,13 +1120,21 @@ mod tests {
         };
         let http = reqwest::Client::new();
         let origin = serve(snapshot.filters.clone()).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert!(check.await.unwrap().is_none());
         let mut altered = snapshot.filters.clone();
         *altered.last_mut().unwrap() ^= 1;
         let origin = serve(altered).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
+        // A self-consistent publication whose paid set omits the fixture's receiver.
+        let empty = build(&[]);
+        let origin = serve(empty.filters.clone()).await;
+        let check = check_filters(&http, &origin, "x", &empty.manifest, &receiver);
+        assert_eq!(
+            check.await.unwrap().unwrap().1["paid_filter"],
+            "omits the fixture"
+        );
     }
 
     /// A health route that answers its `n`th request, from 0, with `answer(n)`. Returns
