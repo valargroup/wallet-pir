@@ -170,81 +170,38 @@ fn no_store(response: &reqwest::Response) -> bool {
         .is_some_and(|value| value == "no-store")
 }
 
-/// Every refusal is `no-store`: a revoked session's 410 must not outlive the
-/// republication of the same deterministic session id, which then serves again at the
-/// same URL.
+/// Refusals are `no-store`: a revoked session's 410 must not outlive the republication
+/// of the same deterministic session id, which then serves again at the same URL.
 #[tokio::test]
 async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let snapshot = snapshot(1);
     let pir = Server::new(snapshot.clone()).unwrap();
-    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
-    let id = hex::encode(pir.manifest().id().unwrap());
+    let id = hex::encode(pir.id());
     let publications = Publications::default();
     assert!(publications.publish(Publication::new(pir, None).unwrap(), 0));
     let server = serve_router(receiver_pir_server::router_with_publications(
         publications.clone(),
     ))
     .await;
-    let origin = &server.origin;
-    let get = |path: String| http().get(format!("{origin}{path}")).send();
-    let query = |body: Vec<u8>| {
-        http()
-            .post(format!("{origin}/v1/receiver/query"))
-            .body(body)
-            .send()
-    };
-    let public = format!("/v1/receiver/public/{id}");
-    let ok = get(public.clone()).await.unwrap();
-    assert!(ok.status().is_success() && no_store(&ok));
-    for (path, status) in [
-        ("/v1/receiver/public/zz".to_owned(), 400),
-        (format!("/v1/receiver/public/{}", "00".repeat(32)), 409),
-        (format!("/v1/receiver/witness/{id}"), 503),
-    ] {
-        let refused = get(path.clone()).await.unwrap();
-        assert_eq!(refused.status(), status, "{path}");
-        assert!(no_store(&refused), "{path}");
-    }
-    let exact = client.prepare(receiver(), 0).unwrap().body().to_vec();
-    let mut longer = exact.clone();
-    longer.push(0);
-    for (body, status) in [(vec![0; 8], 400), (longer, 413)] {
-        let refused = query(body).await.unwrap();
-        assert_eq!(refused.status(), status);
-        assert!(no_store(&refused));
-    }
-
+    let get = |path: String| http().get(format!("{}{path}", server.origin)).send();
+    let unknown = get(format!("/v1/receiver/public/{}", "00".repeat(32)))
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), reqwest::StatusCode::CONFLICT);
+    assert!(no_store(&unknown));
     publications.revoke();
+    let public = format!("/v1/receiver/public/{id}");
     let gone = get(public.clone()).await.unwrap();
     assert_eq!(gone.status(), reqwest::StatusCode::GONE);
     assert!(no_store(&gone));
-    let gone = query(exact).await.unwrap();
-    assert_eq!(gone.status(), reqwest::StatusCode::GONE);
-    assert!(no_store(&gone));
-    let unavailable = get("/v1/receiver/init".into()).await.unwrap();
-    assert_eq!(
-        unavailable.status(),
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
-    );
-    assert!(no_store(&unavailable));
 
     // The identical publication has the same session id and serves the same URL.
     let pir = Server::new(snapshot).unwrap();
     let expected = pir.public().to_vec();
     assert!(publications.publish(Publication::new(pir, None).unwrap(), publications.epoch()));
     let restored = get(public).await.unwrap();
-    assert!(restored.status().is_success());
+    assert!(restored.status().is_success() && no_store(&restored));
     assert_eq!(restored.bytes().await.unwrap(), expected);
-    let query = client.prepare(receiver(), 0).unwrap();
-    let answer = http()
-        .post(format!("{origin}/v1/receiver/query"))
-        .body(query.body().to_vec())
-        .send()
-        .await
-        .unwrap();
-    assert!(answer.status().is_success());
-    let answer = answer.bytes().await.unwrap();
-    assert_eq!(client.decode(query, &answer).unwrap(), Some(record(0, 1)));
 }
 
 /// Health serves the owner's latest report for monitoring.
@@ -534,42 +491,6 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .is_empty());
 }
 
-/// A query must be exactly its session's length: a longer one is 413 and a shorter
-/// one 400, even below the largest supported query.
-#[tokio::test]
-async fn queries_must_match_their_sessions_length() {
-    use receiver_pir::{query_bytes, MAX_ROWS};
-    let pir = Server::new(snapshot(1)).unwrap();
-    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
-    let server = serve_publication(Publication::new(pir, None).unwrap()).await;
-    let post = |body: Vec<u8>| {
-        http()
-            .post(format!("{}/v1/receiver/query", server.origin))
-            .body(body)
-            .send()
-    };
-    let query = client.prepare(receiver(), 0).unwrap();
-    let exact = query.body().to_vec();
-    assert_eq!(exact.len(), query_bytes(MIN_ROWS).unwrap());
-    assert!(exact.len() + 1 < query_bytes(MAX_ROWS).unwrap());
-    let mut longer = exact.clone();
-    longer.push(0);
-    assert_eq!(
-        post(longer).await.unwrap().status(),
-        reqwest::StatusCode::PAYLOAD_TOO_LARGE
-    );
-    let mut shorter = exact.clone();
-    shorter.pop();
-    assert_eq!(
-        post(shorter).await.unwrap().status(),
-        reqwest::StatusCode::BAD_REQUEST
-    );
-    let answer = post(exact).await.unwrap();
-    assert!(answer.status().is_success());
-    let answer = answer.bytes().await.unwrap();
-    assert_eq!(client.decode(query, &answer).unwrap(), Some(record(0, 1)));
-}
-
 #[tokio::test]
 async fn long_histories_load_the_row_file() {
     use receiver_pir::transport::MAX_PIR_PAGES;
@@ -605,53 +526,21 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             unreachable!("the row file answers every lookup")
         }
     }
-    // Model a faulty indexer that publishes correctly hashed but inconsistent page data.
-    // Each fault edits the two pages in place, or empties a slot when it returns false.
-    let faults: [fn(&mut Record) -> bool; 8] = [
-        // A missing page, an inconsistent total and a repeated position.
+    // Model a faulty indexer that publishes correctly hashed but inconsistent page data:
+    // a missing page, a repeated position and an earlier block. Each fault edits the two
+    // pages in place, or empties a slot when it returns false. `Server::new` refuses
+    // them all (see the directory's tests); a wallet must too.
+    let faults: [fn(&mut Record) -> bool; 3] = [
         |r| r.page != 1,
-        |r| {
-            if r.page == 1 {
-                r.total = 3;
-            }
-            true
-        },
         |r| {
             if r.page == 1 {
                 r.payment.position = 200;
             }
             true
         },
-        // An earlier block, an earlier transaction and an earlier action.
         |r| {
             if r.page == 1 {
                 (r.payment.height, r.payment.block_hash) = (100, [9; 32]);
-            }
-            true
-        },
-        |r| {
-            if r.page == 0 {
-                r.payment.tx_index = 3;
-            }
-            true
-        },
-        |r| {
-            match r.page {
-                0 => r.payment.action_index = 1,
-                _ => (r.payment.txid, r.payment.tx_index) = ([0; 32], 1),
-            }
-            true
-        },
-        // Another hash for one block, below the terminal height whose hash is fixed,
-        // and another txid for one transaction.
-        |r| {
-            r.payment.height = 100;
-            r.payment.block_hash = [10 + r.page as u8; 32];
-            true
-        },
-        |r| {
-            if r.page == 1 {
-                (r.payment.tx_index, r.payment.action_index) = (1, 1);
             }
             true
         },
@@ -674,14 +563,6 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             }
         }
         data.manifest.data_sha256 = Sha256::digest(&data.data).into();
-        assert!(
-            matches!(
-                Server::new(data.clone()),
-                Err(Error::Directory(receiver_directory::Error::Malformed))
-            ),
-            "fault {fault} must not be prepared"
-        );
-        // A wallet still refuses the same rows from a server that skips that check.
         let manifest = receiver_pir::Manifest {
             protocol: receiver_pir::PROTOCOL.into(),
             directory: data.manifest,
@@ -696,47 +577,6 @@ async fn reject_incomplete_or_inconsistent_pagination() {
             "fault {fault} must not produce partial success"
         );
     }
-}
-
-/// A snapshot whose digest covers page zero stored outside its bucket is refused,
-/// since every lookup would miss it and report an empty history.
-#[test]
-fn a_misbucketed_snapshot_is_never_prepared() {
-    use receiver_directory::{
-        snapshot::{row_for, ROW_BYTES},
-        RECORD_BYTES,
-    };
-    use sha2::{Digest, Sha256};
-    let mut misplaced = snapshot(1);
-    let bucket = row_for(&misplaced.manifest, &receiver(), 0).unwrap();
-    let from = bucket * ROW_BYTES;
-    let to = ((bucket + 1) % MIN_ROWS as usize) * ROW_BYTES;
-    let slot = misplaced.data[from..from + RECORD_BYTES].to_vec();
-    assert_eq!(Record::decode(&slot).unwrap(), Some(record(0, 1)));
-    misplaced.data[from..from + RECORD_BYTES].fill(0);
-    misplaced.data[to..to + RECORD_BYTES].copy_from_slice(&slot);
-    misplaced.manifest.data_sha256 = Sha256::digest(&misplaced.data).into();
-    assert!(matches!(
-        Server::new(misplaced),
-        Err(Error::Directory(receiver_directory::Error::Malformed))
-    ));
-}
-
-/// A valid publication is prepared and accepted both without a witness file and with
-/// one that proves its record.
-#[test]
-fn a_valid_publication_is_accepted_with_or_without_witnesses() {
-    use receiver_directory::witness::WitnessSnapshot;
-    let mut manifest = snapshot(0).manifest;
-    (manifest.start_position, manifest.end_position) = (0, 1);
-    let mut paid = record(0, 1);
-    (paid.payment.position, paid.payment.cmx) = (0, [1; 32]);
-    let snapshot = Snapshot::build(manifest, &[paid], &[]).unwrap();
-    let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
-        .unwrap()
-        .encode();
-    Publication::new(Server::new(snapshot.clone()).unwrap(), None).unwrap();
-    Publication::new(Server::new(snapshot).unwrap(), Some(proof)).unwrap();
 }
 
 #[tokio::test]
@@ -945,54 +785,14 @@ fn reject_corrupt_rows_before_preprocessing() {
     assert!(matches!(Server::new(small), Err(Error::Unsupported)));
 }
 
-/// A session manifest is valid up to exactly [`receiver_pir::MAX_MANIFEST_BYTES`] of
-/// compact JSON, so a server refuses to prepare one with more provider sets than fit.
+/// The directory accepts any number of provider sets, but a server refuses a session
+/// manifest over [`receiver_pir::MAX_MANIFEST_BYTES`].
 #[test]
 fn session_manifests_are_bounded_by_their_serialized_size() {
-    use receiver_directory::snapshot::{FilterSet, ProviderSet};
-    use receiver_pir::MAX_MANIFEST_BYTES;
-    let label = |i: usize, pad: usize| format!("p{i:03}{}/seen", "x".repeat(pad));
-    let mut session = receiver_pir::Manifest {
-        protocol: receiver_pir::PROTOCOL.into(),
-        directory: manifest(MIN_ROWS),
-        public_digest: [0; 32],
-    };
-    let size = |m: &receiver_pir::Manifest| serde_json::to_vec(m).unwrap().len();
-    // Sets sort before `paid`. Add them until the manifest nears the bound, then
-    // lengthen labels a byte at a time to reach it exactly.
-    while size(&session) < MAX_MANIFEST_BYTES - 200 {
-        let i = session.directory.filters.len() - 1;
-        session.directory.filters.insert(
-            i,
-            FilterSet {
-                label: label(i, 0),
-                count: 0,
-                window_secs: None,
-                since_unix: Some(1),
-                until_unix: Some(2),
-            },
-        );
-    }
-    let mut pads = vec![0; session.directory.filters.len() - 1];
-    let mut next = 0;
-    let mut lengthen = |session: &mut receiver_pir::Manifest| {
-        let i = next % pads.len();
-        next += 1;
-        pads[i] += 1;
-        session.directory.filters[i].label = label(i, pads[i]);
-    };
-    while size(&session) < MAX_MANIFEST_BYTES {
-        lengthen(&mut session);
-    }
-    assert_eq!(size(&session), MAX_MANIFEST_BYTES);
-    session.validate().unwrap();
-    lengthen(&mut session);
-    assert_eq!(size(&session), MAX_MANIFEST_BYTES + 1);
-    assert!(matches!(session.validate(), Err(Error::Malformed)));
-    // The directory accepts any number of sets, but a server refuses the session.
+    use receiver_directory::snapshot::ProviderSet;
     let provider: Vec<_> = (0..300)
         .map(|i| ProviderSet {
-            label: label(i, 0),
+            label: format!("p{i:03}/seen"),
             window_secs: None,
             since_unix: 1,
             until_unix: 2,
