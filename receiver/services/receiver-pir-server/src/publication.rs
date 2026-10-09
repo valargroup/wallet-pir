@@ -70,44 +70,48 @@ struct State {
 }
 
 impl State {
-    /// When the previous revision's grace ends, if it has not yet.
-    fn grace_until(&self) -> Option<Instant> {
+    /// The previous revision and the end of its grace, while that has not passed.
+    fn live_previous(&self) -> Option<&(Arc<Publication>, Instant)> {
         self.previous
             .as_ref()
-            .map(|(_, until)| *until)
-            .filter(|until| *until > Instant::now())
+            .filter(|(_, until)| *until > Instant::now())
     }
 
-    /// Whether the previous revision's grace has ended, so it can be dropped.
-    fn previous_expired(&self) -> bool {
-        self.previous.is_some() && self.grace_until().is_none()
+    /// When the previous revision's grace ends, if it has not yet.
+    fn grace_until(&self) -> Option<Instant> {
+        self.live_previous().map(|(_, until)| *until)
+    }
+
+    /// The revisions that accept new requests, current first.
+    fn live(&self) -> impl Iterator<Item = &Arc<Publication>> {
+        self.current
+            .iter()
+            .chain(self.live_previous().map(|(p, _)| p))
     }
 
     /// See [`Publications::anchors`].
     fn anchors(&self) -> Vec<(u32, Hash)> {
-        self.current
-            .iter()
-            .chain(
-                self.previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            )
+        self.live()
             .map(|p| (p.manifest().end_height, p.manifest().end_hash))
             .collect()
+    }
+
+    /// Answers `id` with 410 from now on, keeping the last eight such ids.
+    fn retire(&mut self, id: Hash) {
+        self.revoked.push_back(id);
+        if self.revoked.len() > 8 {
+            self.revoked.pop_front();
+        }
     }
 
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
-        if let Some(p) = self.current.take() {
-            self.revoked.push_back(p.id);
-        }
-        if let Some((p, _)) = self.previous.take() {
-            self.revoked.push_back(p.id);
-        }
-        while self.revoked.len() > 8 {
-            self.revoked.pop_front();
+        for p in [self.current.take(), self.previous.take().map(|(p, _)| p)]
+            .into_iter()
+            .flatten()
+        {
+            self.retire(p.id);
         }
     }
 }
@@ -118,14 +122,16 @@ pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
     /// Drops the previous revision once its grace has ended, freeing its rows and PIR
-    /// state; queries still running on it keep their own reference. Every read path
-    /// calls it, including the owner's periodic [`Self::anchors`] check, so an idle
-    /// service frees it within a poll.
+    /// state, and retires its id; queries still running on it keep their own reference.
+    /// Every read path calls it, including the owner's periodic [`Self::anchors`]
+    /// check, so an idle service frees it within a poll.
     fn expire(&self) {
-        if self.0.read().unwrap().previous_expired() {
+        let expired = |s: &State| s.previous.is_some() && s.live_previous().is_none();
+        if expired(&self.0.read().unwrap()) {
             let mut state = self.0.write().unwrap();
-            if state.previous_expired() {
-                state.previous = None;
+            if expired(&state) {
+                let (p, _) = state.previous.take().unwrap();
+                state.retire(p.id);
             }
         }
     }
@@ -189,7 +195,6 @@ impl Publications {
         {
             return false;
         }
-        state.revoked.retain(|id| *id != publication.id);
         state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
         true
@@ -216,24 +221,17 @@ impl Publications {
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
-    /// epoch. A revoked id is `GONE` and an unknown or expired one is `CONFLICT`.
+    /// epoch. A revoked or expired id that is not served again is `GONE`, and an unknown
+    /// one `CONFLICT`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.expire();
         let state = self.0.read().unwrap();
         if let Some(id) = id {
+            if let Some(p) = state.live().find(|p| p.id == id) {
+                return Ok((p.clone(), state.epoch));
+            }
             if state.revoked.contains(&id) {
                 return Err(StatusCode::GONE);
-            }
-            for p in state.current.iter().chain(
-                state
-                    .previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            ) {
-                if p.id == id {
-                    return Ok((p.clone(), state.epoch));
-                }
             }
             return Err(StatusCode::CONFLICT);
         }
@@ -326,7 +324,7 @@ mod tests {
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next
-    /// publication.
+    /// publication, and its id is then 410, unless the same id is still current.
     #[test]
     fn an_expired_previous_publication_is_dropped() {
         let publications = Publications::default();
@@ -344,8 +342,13 @@ mod tests {
         assert!(first.upgrade().is_none());
         assert!(matches!(
             publications.select(Some(id)),
-            Err(StatusCode::CONFLICT)
+            Err(StatusCode::GONE)
         ));
+        // An identical republication displaces its own id, whose expiry leaves it served.
+        let current = publications.0.read().unwrap().current.as_ref().unwrap().id;
+        assert!(publications.publish(publication(2), 0));
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(publications.select(Some(current)).is_ok());
     }
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the

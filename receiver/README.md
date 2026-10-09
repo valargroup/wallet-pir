@@ -116,15 +116,16 @@ the session ID.
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
-409, a revoked one 410, a query longer than its session's 413 and a shorter or
-otherwise malformed one 400; the length is checked before the query waits for
-evaluation. Every response on these routes, refusals included, is
+409, a revoked or expired one 410, a query longer than its session's 413 and a
+shorter or otherwise malformed one 400; the length is checked before the query
+waits for evaluation. Every response on these routes, refusals included, is
 `Cache-Control: no-store`, since a revoked session ID serves again if the same
 publication is republished. A query revoked while it is evaluated is 410; a
 response already being sent completes, and wallets revalidate their anchor.
-Queries are admitted with the primitives Enhance uses (`pir_control::admission`): two in
-flight per client, then a wait of up to 2 seconds for one of two evaluation
-slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
+Queries are admitted with the primitives Enhance uses
+(`pir_control::admission`): two in flight per client, then a wait of up to 2
+seconds for one of two evaluation slots. A client at its cap or a full server
+gets 429 with `Retry-After: 1`.
 
 `/v1/receiver/health` reports the process identity that
 [the serving contract](../docs/serving-contract.md) defines for every PIR server,
