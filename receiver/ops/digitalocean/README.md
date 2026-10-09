@@ -230,18 +230,45 @@ installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
 `/etc/pir-monitor/credentials/chain-rpc-cookie`, must exist before the monitor
 starts, or `pir-monitor` does not start: on a new monitor host, copy the cookie of
 the node the monitor reaches at `127.0.0.1:18232` there (owned by root, mode 0600),
-and copy it again and restart the monitor when that node rotates it. Add this entry
-to its
-`/etc/pir-monitor/service-probes.json`:
+and copy it again and restart the monitor when that node rotates it.
+
+The drop-in's `/etc/pir-monitor/service-probes.json` is a JSON array of
+`{service, command, timeout_seconds}` records, read once at start. A file that is
+not an array, or names a service twice, stops `pir-monitor` from starting. The
+receiver's record, as a whole file for a new monitor host that runs only this
+probe:
 
 ```json
-{"service": "receiver", "command": ["/opt/pir-monitor/receiver-probe", "--origin",
-  "https://receiver-pir.valargroup.dev", "--health-url",
-  "http://10.70.0.11:18380/v1/receiver/health", "--fixture",
-  "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
-  "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
-  "--rpc-url", "http://127.0.0.1:18232", "--cookie",
-  "/run/credentials/pir-monitor.service/chain-rpc-cookie"], "timeout_seconds": 30}
+[
+  {"service": "receiver", "command": ["/opt/pir-monitor/receiver-probe", "--origin",
+    "https://receiver-pir.valargroup.dev", "--health-url",
+    "http://10.70.0.11:18380/v1/receiver/health", "--fixture",
+    "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
+    "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
+    "--rpc-url", "http://127.0.0.1:18232", "--cookie",
+    "/run/credentials/pir-monitor.service/chain-rpc-cookie"], "timeout_seconds": 30}
+]
+```
+
+On a host that already has the file, such as the live monitor with its `status`
+and `transparent` records, merge instead of overwriting, after installing the probe
+and fixture as below. Its cloud-init installs no `jq`, so merge on the coordinator: save
+the array above as `receiver-probe.json`, then fetch the live file, replace any
+`receiver` record while keeping every other one, check the result, and rename it
+into place before the restart that reads it:
+
+```sh
+ssh <monitor> cat /etc/pir-monitor/service-probes.json >service-probes.json.live &&
+jq --slurpfile new receiver-probe.json '
+  if type == "array" then . else error("service-probes.json is not an array") end
+  | map(select(.service != "receiver")) + $new[0]' service-probes.json.live >service-probes.json.new &&
+jq -e 'type == "array"
+  and all(.[]; type == "object" and keys == ["command", "service", "timeout_seconds"])
+  and ([.[].service] | length == (unique | length))
+  and ([.[] | select(.service == "receiver")] | length == 1)' service-probes.json.new >/dev/null &&
+scp service-probes.json.new <monitor>:/etc/pir-monitor/service-probes.json.new &&
+ssh <monitor> 'cd /etc/pir-monitor && chmod 0644 service-probes.json.new &&
+  mv service-probes.json.new service-probes.json && systemctl restart pir-monitor'
 ```
 
 The fixture pins the public NEAR refund

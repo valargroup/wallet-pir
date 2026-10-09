@@ -10,7 +10,9 @@ negative cases run it against mutated copies. The unit is the template
 The example inventory's `exact_check` must probe this edge, listener, fixture and
 nodes from the receiver's own host before a deploy commits, running the probe and
 fixture the deploy stages from the same bundle. The Terraform firewall must admit
-the coordinator's SSH, which every locked operation needs.
+the coordinator's SSH, which every locked operation needs. The runbook's monitor
+probe config must be the array `pir-monitor` reads, and its merge must keep the
+monitor's other probes.
 """
 import copy
 import hashlib
@@ -20,6 +22,8 @@ import json
 from pathlib import Path
 import re
 import shlex
+import subprocess
+import tempfile
 import tomllib
 import unittest
 
@@ -193,6 +197,30 @@ def check_firewall(tf, monitor_tf):
     assert ssh_sources(tf, 'receiver_pir') == expected, ssh_sources(tf, 'receiver_pir')
 
 
+def fenced(text, language):
+    """The bodies of `text`'s fenced code blocks in `language`."""
+    return re.findall(r'^```%s\n(.*?)^```$' % language, text, re.S | re.M)
+
+
+def check_probe_config(configs, fixture):
+    """Check a `service-probes.json` holding only the receiver's record, as `pir-monitor` parses it."""
+    assert isinstance(configs, list) and len(configs) == 1, configs
+    (config,) = configs
+    assert sorted(config) == ['command', 'service', 'timeout_seconds'], sorted(config)
+    assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
+    argv = config['command']
+    assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
+    assert argv[argv.index('--fixture-sha256') + 1] == hashlib.sha256(fixture).hexdigest(), argv
+
+
+def monitor_merge(readme):
+    """The runbook's two `jq` programs for an existing monitor: `(merge, check)`."""
+    (block,) = [b for b in fenced(readme, 'sh') if '--slurpfile new receiver-probe.json' in b]
+    (merge,) = re.findall(r"jq --slurpfile new receiver-probe\.json '(.*?)' service-probes\.json\.live", block, re.S)
+    (check,) = re.findall(r"jq -e '(.*?)' service-probes\.json\.new", block, re.S)
+    return merge, check
+
+
 class ReceiverOpsContract(unittest.TestCase):
     def setUp(self):
         self.caddy = (DIR / 'Caddyfile').read_text()
@@ -295,6 +323,40 @@ class ReceiverOpsContract(unittest.TestCase):
             self.assertNotEqual(mutated, tf)
             with self.assertRaises(AssertionError):
                 check_firewall(mutated, monitor_tf)
+
+    def test_the_monitor_probe_config_is_an_array(self):
+        (block,) = [b for b in fenced((DIR / 'README.md').read_text(), 'json') if 'receiver-probe' in b]
+        configs = json.loads(block)
+        check_probe_config(configs, self.fixture)
+        for mutated in [configs[0], configs * 2, [dict(configs[0], extra=1)]]:
+            with self.assertRaises(AssertionError):
+                check_probe_config(mutated, self.fixture)
+
+    def test_the_monitor_probe_merge_keeps_one_receiver_and_the_other_probes(self):
+        readme = (DIR / 'README.md').read_text()
+        (block,) = [b for b in fenced(readme, 'json') if 'receiver-probe' in b]
+        entry = json.loads(block)
+        merge, check = monitor_merge(readme)
+        jq = lambda program, data, *args: subprocess.run(
+            ['jq', *args, program], input=json.dumps(data), capture_output=True, text=True)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        new = Path(directory.name) / 'receiver-probe.json'
+        new.write_text(block)
+        others = [{'service': name, 'command': ['/opt/pir-monitor/%s-probe' % name], 'timeout_seconds': 30}
+                  for name in ('status', 'transparent')]
+        stale = dict(entry[0], timeout_seconds=10)
+        for live, kept in [([], []), (others, others), (others[:1] + [stale] + others[1:], others),
+                           ([stale, stale], [])]:
+            run = jq(merge, live, '--slurpfile', 'new', str(new))
+            self.assertEqual(run.returncode, 0, run.stderr)
+            merged = json.loads(run.stdout)
+            self.assertEqual([c for c in merged if c['service'] != 'receiver'], kept)
+            self.assertEqual([c for c in merged if c['service'] == 'receiver'], entry)
+            self.assertEqual(jq(check, merged, '-e').returncode, 0, merged)
+        self.assertNotEqual(jq(merge, {'service': 'status'}, '--slurpfile', 'new', str(new)).returncode, 0)
+        for bad in [others + others, others + entry * 2, others + [dict(entry[0], extra=1)], {'0': entry[0]}]:
+            self.assertNotEqual(jq(check, bad, '-e').returncode, 0, bad)
 
     def test_cloud_init_must_create_the_units_account_and_keep_the_port_private(self):
         bind, _ = check_unit(self.unit)
