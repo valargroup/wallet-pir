@@ -1,10 +1,10 @@
-//! Admission primitives shared by the Enhance roles and Status: a bounded wait
-//! queue in front of execution permits, bounded body reception, and a
-//! per-client concurrency cap.
+//! Admission primitives shared by the Enhance roles, Status and Receiver: a
+//! bounded wait queue in front of execution permits, bounded body reception,
+//! and a per-client concurrency cap.
 //!
-//! Callers keep their own refusal responses. Enhance and Status answer
-//! overload with 429 and differ in messages, headers and telemetry; those
-//! mappings are wire behavior and stay at each call site.
+//! Callers keep their own refusal responses. Each answers overload with 429
+//! and differs in messages, headers and telemetry; those mappings are wire
+//! behavior and stay at each call site (see `docs/serving-contract.md`).
 
 use axum::body::{to_bytes, Body, Bytes};
 use axum::http::HeaderMap;
@@ -16,7 +16,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Why a [`Queue`] refused.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Refusal {
+pub enum Refusal {
     /// Every waiting slot is taken.
     Full,
     /// The wait deadline passed before a permit became free.
@@ -31,7 +31,7 @@ pub(crate) enum Refusal {
 /// waiting slot, and a waiting slot is held only while waiting. Without it,
 /// every request takes a waiting slot first, so a full queue refuses even if
 /// an execution permit happens to be free.
-pub(crate) struct Queue {
+pub struct Queue {
     executing: Arc<Semaphore>,
     waiting: Arc<Semaphore>,
     wait: Duration,
@@ -39,7 +39,8 @@ pub(crate) struct Queue {
 }
 
 impl Queue {
-    pub(crate) fn new(executing: usize, waiting: usize, wait: Duration, fast_path: bool) -> Self {
+    /// A queue with its own `executing` permits and `waiting` slots.
+    pub fn new(executing: usize, waiting: usize, wait: Duration, fast_path: bool) -> Self {
         Self::with_permits(
             Arc::new(Semaphore::new(executing)),
             Arc::new(Semaphore::new(waiting)),
@@ -50,7 +51,7 @@ impl Queue {
 
     /// A queue over existing semaphores, for callers that also report their
     /// available permits.
-    pub(crate) fn with_permits(
+    pub fn with_permits(
         executing: Arc<Semaphore>,
         waiting: Arc<Semaphore>,
         wait: Duration,
@@ -66,7 +67,7 @@ impl Queue {
 
     /// Waits for an execution permit. `on_wait` runs only when the request
     /// actually queues, and its guard is dropped when waiting ends.
-    pub(crate) async fn acquire<G>(
+    pub async fn acquire<G>(
         &self,
         on_wait: impl FnOnce() -> G,
     ) -> Result<OwnedSemaphorePermit, Refusal> {
@@ -88,20 +89,20 @@ impl Queue {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn executing_available(&self) -> usize {
+    /// Execution permits free now.
+    pub fn executing_available(&self) -> usize {
         self.executing.available_permits()
     }
 
-    #[cfg(test)]
-    pub(crate) fn waiting_available(&self) -> usize {
+    /// Waiting slots free now.
+    pub fn waiting_available(&self) -> usize {
         self.waiting.available_permits()
     }
 }
 
 /// Why a body could not be read.
 #[derive(Debug)]
-pub(crate) enum BodyError {
+pub enum BodyError {
     /// The deadline passed before the body completed.
     Timeout,
     /// The body exceeded the limit or the stream failed.
@@ -111,7 +112,7 @@ pub(crate) enum BodyError {
 impl BodyError {
     /// Whether the read stopped at the length limit rather than on a stream
     /// failure.
-    pub(crate) fn over_limit(&self) -> bool {
+    pub fn over_limit(&self) -> bool {
         matches!(self, BodyError::Read(e) if e.to_string().contains("length limit"))
     }
 }
@@ -126,11 +127,7 @@ impl std::fmt::Display for BodyError {
 }
 
 /// Reads at most `limit` bytes of `body` within `deadline`.
-pub(crate) async fn read_body(
-    body: Body,
-    limit: usize,
-    deadline: Duration,
-) -> Result<Bytes, BodyError> {
+pub async fn read_body(body: Body, limit: usize, deadline: Duration) -> Result<Bytes, BodyError> {
     tokio::time::timeout(deadline, to_bytes(body, limit))
         .await
         .map_err(|_| BodyError::Timeout)?
@@ -141,7 +138,7 @@ pub(crate) async fn read_body(
 /// address, else `X-Real-IP`, else the socket peer if known, else `unknown`.
 ///
 /// The proxy must overwrite these headers; they are trusted as sent.
-pub(crate) fn client_key(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
+pub fn client_key(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
     let header = |name: &str| {
         headers
             .get(name)
@@ -160,26 +157,28 @@ pub(crate) fn client_key(headers: &HeaderMap, peer: Option<IpAddr>) -> String {
 /// At most `cap` concurrent requests per client key. Entries are removed when
 /// their last slot drops, so the map is bounded by clients in flight.
 #[derive(Clone)]
-pub(crate) struct ClientSlots {
+pub struct ClientSlots {
     cap: usize,
     active: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 /// One admitted request for a client; releases on drop.
-pub(crate) struct ClientSlot {
+pub struct ClientSlot {
     active: Arc<Mutex<HashMap<String, usize>>>,
     key: String,
 }
 
 impl ClientSlots {
-    pub(crate) fn new(cap: usize) -> Self {
+    /// At most `cap` requests in flight per client.
+    pub fn new(cap: usize) -> Self {
         Self {
             cap,
             active: Arc::default(),
         }
     }
 
-    pub(crate) fn try_acquire(&self, key: &str) -> Option<ClientSlot> {
+    /// A slot for the client `key`, or `None` if it is at its cap.
+    pub fn try_acquire(&self, key: &str) -> Option<ClientSlot> {
         let mut active = self.active.lock().unwrap();
         let count = active.entry(key.to_owned()).or_insert(0);
         if *count >= self.cap {
@@ -195,8 +194,8 @@ impl ClientSlots {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn tracked(&self) -> usize {
+    /// Clients with a request in flight.
+    pub fn tracked(&self) -> usize {
         self.active.lock().unwrap().len()
     }
 }

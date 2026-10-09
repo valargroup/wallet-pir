@@ -10,3 +10,12 @@
   directory profile `ironwood-zero-ovk-receiver-v1`, whose revision hashes every
   field at fixed width and refuses unknown ones), and common `IWPROOF1` witness
   files, built from histories within a caller-set commitment limit.
+- Add encrypted receiver lookups (`ironwood-receiver-pir-v1-two-mask-m29`, the
+  shared `pir-native` profile) and a row-file mode chosen by remaining work, both
+  bound to one accepted publication over a host-supplied transport; a history
+  longer than 16 pages is read from the row file. An HTTP service serves each
+  validated publication's sessions, rows, witnesses and filters, plus health and
+  metrics for operators. A replaced publication serves its sessions for 60
+  seconds; any session not served is 410. Queries are admitted with Enhance's
+  shared primitives, and wallet-route responses, refusals included, are
+  `no-store`. A session manifest is at most 16 KiB.
