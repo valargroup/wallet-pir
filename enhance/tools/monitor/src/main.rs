@@ -39,6 +39,9 @@ struct View {
     delivery: DeliveryHealth,
     incidents: Vec<Incident>,
 }
+/// Where service incidents link unless `PIR_MONITOR_PUBLIC_STATUS_URL` overrides it; the
+/// public route of `enhance/ops/deploy/pir-monitor.Caddyfile`.
+const PUBLIC_STATUS_URL: &str = "https://monitor-pir.valargroup.dev/monitor-status";
 fn env(key: &str) -> Result<String> {
     std::env::var(key).with_context(|| format!("{key} is required"))
 }
@@ -78,6 +81,23 @@ fn condition(
         hold_seconds: hold,
         sample,
     }
+}
+/// Evaluates the service probes' conditions. They cover Status, Transparent and receiver, not
+/// one APM, so their incidents link to this monitor's public status at `status_url`.
+fn evaluate_services(
+    store: &mut Store,
+    probes: &std::collections::BTreeMap<String, service_probes::Probe>,
+    now: u64,
+    shadow: bool,
+    status_url: &str,
+) -> Result<()> {
+    store.evaluate(
+        &service_probes::conditions(probes, now),
+        now,
+        shadow,
+        "production",
+        status_url,
+    )
 }
 fn load_oracle(bytes: &[u8], checksum: &str) -> Result<Oracle> {
     anyhow::ensure!(
@@ -119,6 +139,10 @@ async fn main() -> Result<()> {
     anyhow::ensure!(mode == "shadow" || mode == "active", "invalid alert mode");
     let shadow = mode == "shadow";
     let listen = std::env::var("PIR_MONITOR_LISTEN").unwrap_or_else(|_| "127.0.0.1:3003".into());
+    let public_status = std::env::var("PIR_MONITOR_PUBLIC_STATUS_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| PUBLIC_STATUS_URL.into());
     let mut store = Store::open(&path)?;
     let mut service_store = Store::open(&path)?.with_family("service-quality");
     let service_mode =
@@ -328,12 +352,12 @@ async fn main() -> Result<()> {
             }
             let probe_snapshot = probes.read().await.clone();
             let result = (|| -> Result<_> {
-                service_store.evaluate(
-                    &service_probes::conditions(&probe_snapshot, now),
+                evaluate_services(
+                    &mut service_store,
+                    &probe_snapshot,
                     now,
                     service_mode != "active",
-                    "production",
-                    &format!("{origin}/apm/transparent/"),
+                    &public_status,
                 )?;
                 store.evaluate(
                     &checks,
@@ -389,5 +413,51 @@ mod tests {
         value["records"].as_array_mut().unwrap().push(r);
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(load_oracle(&bytes, &hex::encode(Sha256::digest(&bytes))).is_err());
+    }
+
+    #[test]
+    fn service_incidents_link_to_the_public_monitor_status() {
+        let caddy = include_str!("../../../ops/deploy/pir-monitor.Caddyfile");
+        let (host, path) = PUBLIC_STATUS_URL
+            .strip_prefix("https://")
+            .unwrap()
+            .split_once('/')
+            .unwrap();
+        assert!(caddy.starts_with(&format!("{host} {{")));
+        assert!(caddy.contains(&format!("handle /{path} {{")));
+        let services = ["receiver", "status", "transparent"];
+        let probes: std::collections::BTreeMap<_, _> = services
+            .iter()
+            .map(|service| {
+                let probe = service_probes::Probe {
+                    sampled_at: 100,
+                    consecutive_failures: 3,
+                    category: "request_failed".into(),
+                    ..Default::default()
+                };
+                (service.to_string(), probe)
+            })
+            .collect();
+        // The default and a `PIR_MONITOR_PUBLIC_STATUS_URL` override.
+        for url in [PUBLIC_STATUS_URL, "https://status.example/monitor-status"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("incidents.sqlite");
+            let mut store = Store::open(&path).unwrap().with_family("service-quality");
+            evaluate_services(&mut store, &probes, 100, false, url).unwrap();
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let bodies: Vec<String> = db
+                .prepare("SELECT body FROM outbox")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(bodies.len(), services.len());
+            for service in services {
+                let key = format!("service_canary_{service}_availability");
+                let body = bodies.iter().find(|body| body.contains(&key)).unwrap();
+                assert!(body.contains(&format!("<{url}|Dashboard>")), "{body}");
+            }
+        }
     }
 }

@@ -37,8 +37,10 @@ pub fn start() -> Result<Shared> {
     let mut names = std::collections::BTreeSet::new();
     for config in &configs {
         anyhow::ensure!(
-            matches!(config.service.as_str(), "status" | "transparent")
-                && names.insert(config.service.clone())
+            matches!(
+                config.service.as_str(),
+                "status" | "transparent" | "receiver"
+            ) && names.insert(config.service.clone())
                 && !config.command.is_empty()
                 && PathBuf::from(&config.command[0]).is_absolute()
                 && (1..=45).contains(&config.timeout_seconds),
