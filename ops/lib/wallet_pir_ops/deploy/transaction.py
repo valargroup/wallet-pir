@@ -5,9 +5,7 @@ One JSON file per transaction under the state directory (default
 it describes, plus a `latest-<service>.json` pointer. A host record's `phase`
 moves `pending -> backing-up -> installing -> restarting -> verifying ->
 verified`; from `installing` on the host is *touched* and a rollback restores
-it. Rollback moves a touched host through `restoring -> restored`. A
-verification, which restarts no host, records in `rollback_target` the
-transaction the pointer named before it (see `Journal.deployment`).
+it. Rollback moves a touched host through `restoring -> restored`.
 
 The journal holds everything a rollback needs (previous unit text, previous
 executable digest, readiness checks), so it works from this file alone even if
@@ -42,14 +40,14 @@ class Journal:
         self.data = data
 
     @classmethod
-    def create(cls, state_dir, service, sha, source, hosts, baseline, rollback_target=None):
+    def create(cls, state_dir, service, sha, source, hosts, baseline):
         state_dir = Path(state_dir)
         state_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
         identifier = new_id(service, sha)
         journal = cls(state_dir / (identifier + '.json'), {
             'id': identifier, 'service': service, 'binary_sha256': sha, 'source': source,
             'status': 'staging', 'created_unix': int(time.time()), 'hosts': hosts,
-            'baseline_before': baseline, 'rollback_target': rollback_target, 'events': [],
+            'baseline_before': baseline, 'events': [],
         })
         journal.save()
         durable.atomic_json(state_dir / ('latest-%s.json' % service), {'id': identifier}, mode=0o600)
@@ -71,16 +69,6 @@ class Journal:
             raise ValueError('transaction %s belongs to service %s' % (identifier, journal.data['service']))
         return journal
 
-    @classmethod
-    def deployment(cls, state_dir, service):
-        """The latest transaction, passing over finished verifications to the one
-        their `rollback_target` chain ends at; None without any."""
-        journal = cls.load(state_dir, service)
-        while (journal and journal.verification_only and journal.status in FINAL
-               and journal.data.get('rollback_target')):
-            journal = cls.load(state_dir, service, journal.data['rollback_target'])
-        return journal
-
     @property
     def id(self):
         return self.data['id']
@@ -92,11 +80,6 @@ class Journal:
     @property
     def status(self):
         return self.data['status']
-
-    @property
-    def verification_only(self):
-        """Whether the transaction restarts no host, so it changes none."""
-        return all(record['action'] != 'restart' for record in self.hosts)
 
     def save(self):
         durable.atomic_json(self.path, self.data, mode=0o600)

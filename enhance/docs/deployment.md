@@ -160,9 +160,7 @@ which is enough for a no-op check or an already staged release.
 - In `ssh.mode = "config"`, `ssh.config_file` names an SSH config whose aliases
   may jump through the coordinator to private addresses.
 - A unit whose running executable and effective configuration already match is
-  skipped, so deploying the running binary is a no-op. For a service with
-  `verify_unchanged` (the receiver) it still checks readiness and runs the
-  exact-answer command.
+  skipped, so deploying the running binary is a no-op.
 - Every host must accept the deploy identity before anything changes. Mutating
   commands hold `/run/lock/wallet-pir-production.lock` on the coordinator.
 - After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
@@ -174,8 +172,7 @@ which is enough for a no-op check or an already staged release.
   `/opt/enhance-pir/transactions/<id>/`. A failure restores the touched units in
   reverse order and checks that the previous executable is running again.
   `rollback` does the same for a committed or interrupted transaction, and is
-  safe to repeat. Without `--transaction` it passes over finished verifications
-  that restarted nothing and rolls back the deployment before them.
+  safe to repeat.
 
 The tool does not drain or pause public queries, so plan the query-route
 maintenance window as in the September 24 rollout.

@@ -7,7 +7,8 @@ checks pin the edge to the six wallet routes, the unit (the template
 NEAR key file the inventory names, cloud-init to the matching account and
 firewall rule, the inventory's `exact_check` to the deployed binary's probe on
 the receiver's host, the Terraform firewall to admitting the coordinator's SSH,
-and the runbook's monitor probe config to the array `pir-monitor` reads. Each
+the runbook's provisioning unit to the template with a bootstrap Description,
+and its monitor probe config to the array `pir-monitor` reads. Each
 check takes the file's text, so the negative cases run it on mutated copies.
 """
 import copy
@@ -137,7 +138,7 @@ def check_cloud_init(text, bind):
     assert ['ufw', '--force', 'enable'] in commands
 
 
-def check_exact_check(service, unit, caddy, descriptor):
+def check_exact_check(service, unit, caddy):
     """Check the receiver's deploy gate: the deployed binary's own probe, run on the server's host.
 
     The coordinator cannot reach the private health route. The probe and its
@@ -148,8 +149,6 @@ def check_exact_check(service, unit, caddy, descriptor):
     bind, _ = check_unit(unit)
     assert server['vars']['listen'] == bind, server
     assert check['host'] == server['host'], check['host']
-    # An unchanged deploy (a hand-provisioned host) still runs the check.
-    assert descriptor.get('verify_unchanged') is True, descriptor.get('verify_unchanged')
     argv = check['argv']
     assert argv[:2] == PROBE and not any('{' in word for word in argv[2:]), argv
     assert not any(word.startswith('--fixture') for word in argv), argv
@@ -191,8 +190,16 @@ def check_firewall(tf, monitor_tf):
 
 
 def fenced(text, language):
-    """The bodies of `text`'s fenced code blocks in `language`."""
-    return re.findall(r'^```%s\n(.*?)^```$' % language, text, re.S | re.M)
+    """The bodies of `text`'s fenced code blocks in `language`, list items' included."""
+    return re.findall(r'^ *```%s\n(.*?)^ *```$' % language, text, re.S | re.M)
+
+
+def bootstrap_unit(readme, template):
+    """The runbook's provisioning `sed` run on `template`."""
+    (block,) = [b for b in fenced(readme, 'sh') if '(bootstrap)' in b]
+    argv = shlex.split(block.replace('\\\n', ' '))
+    assert argv[0] == 'sed' and argv[-2:] == ['receiver-pir.service.in', '>/etc/systemd/system/receiver-pir.service'], argv
+    return subprocess.run(argv[:-2], input=template, capture_output=True, text=True, check=True).stdout
 
 
 def check_probe_config(configs):
@@ -240,12 +247,20 @@ class ReceiverOpsContract(unittest.TestCase):
         self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
         self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 
+    def test_provisioning_installs_the_template_with_a_bootstrap_description(self):
+        """So the first deploy of the provisioned binary restarts it and runs the exact check."""
+        bootstrap = systemd_sections(bootstrap_unit((DIR / 'README.md').read_text(), self.unit))
+        expected = systemd_sections(self.unit.replace('@RELEASE@', '/opt/receiver-pir/releases/<sha256>')
+                                    .replace('@NEAR_KEY@', '<id>'))
+        expected['Unit']['Description'] = [description + ' (bootstrap)' for description in expected['Unit']['Description']]
+        self.assertEqual(bootstrap, expected)
+
     def test_the_inventory_names_the_key_file_the_unit_requires(self):
         self.assertEqual(self.descriptor.get('template_vars'), ['NEAR_KEY'])
         self.assertIsInstance(self.service.get('template_vars', {}).get('NEAR_KEY'), str)
 
     def test_the_deploy_runs_the_probe_on_the_receiver_before_commit(self):
-        check_exact_check(self.service, self.unit, self.caddy, self.descriptor)
+        check_exact_check(self.service, self.unit, self.caddy)
         self.assertNotIn('--skip-exact-check', (DIR / 'README.md').read_text())
 
     def test_misdirected_or_unbounded_probe_fails(self):
@@ -264,7 +279,7 @@ class ReceiverOpsContract(unittest.TestCase):
         ]:
             self.assertNotEqual(service, self.service)
             with self.assertRaises(AssertionError):
-                check_exact_check(service, self.unit, self.caddy, self.descriptor)
+                check_exact_check(service, self.unit, self.caddy)
 
     def test_exposed_operator_routes_or_catch_all_proxy_fail(self):
         matcher = '/v1/receiver/filters/*'

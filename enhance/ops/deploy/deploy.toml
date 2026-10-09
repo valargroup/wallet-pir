@@ -29,9 +29,6 @@
 # present, must also equal it), the optional `ready` field test passes and the
 # optional `ready_url` answers 2xx, all within `ready_timeout` seconds. A role
 # is restarted whenever its binary or effective unit changes, and only then.
-#
-# With `verify_unchanged = true`, a deploy that restarts nothing still checks
-# readiness and runs the exact check under the lock.
 
 [services.enhance]
 root = "/opt/enhance-pir"
@@ -115,8 +112,6 @@ ready_timeout = 180
 root = "/opt/receiver-pir"
 binary = "receiver-directory"
 artifact_kinds = ["receiver-pir"]
-# A hand-provisioned release is qualified only by the exact check.
-verify_unchanged = true
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["server"]

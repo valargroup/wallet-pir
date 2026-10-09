@@ -7,6 +7,7 @@ import hashlib
 import http.server
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -204,29 +205,12 @@ class Fleet(unittest.TestCase):
         return deployer
 
     def provisioned_receiver(self):
-        """`(deployer, sha)` for a host provisioned by hand: the unit rendered for release `sha`, which holds only the binary."""
+        """`(deployer, sha)` for a host provisioned as the runbook says: release `sha` running the
+        template's unit with ` (bootstrap)` on its Description."""
         sha = sha256(RECEIVER_NEW)
         self.fake.put('receiver-01', receiver_release(sha) + '/receiver-directory', RECEIVER_NEW)
-        live = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY})
-        return self.receiver_fleet(live), sha
-
-    def fail_rollback(self, deployer, interrupted):
-        """Runs `deployer`'s default rollback with its first restart failing, or with
-        the runner dying there when `interrupted`. Returns the status it leaves."""
-        class Crash(BaseException):
-            pass
-
-        def fail(host, op, detail):
-            if op == 'systemctl' and detail[0] == 'restart':
-                if interrupted:
-                    raise Crash()
-                self.fake.failing_restart.add((host, detail[1]))
-        self.fake.observer = fail
-        with self.assertRaises(Crash if interrupted else DeployError):
-            deployer.rollback()
-        self.fake.observer = None
-        self.fake.failing_restart.clear()
-        return 'rolling-back' if interrupted else 'rollback-failed'
+        managed = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY})
+        return self.receiver_fleet(re.sub(r'(?m)^Description=.*$', r'\g<0> (bootstrap)', managed, count=1)), sha
 
     def restarts(self):
         return [(host, detail[1]) for host, op, detail in self.fake.log if op == 'systemctl' and detail[0] == 'restart']
@@ -551,10 +535,6 @@ class RollbackTests(Fleet):
         deployer.deploy(sha256(b'third build'), third)
         with self.assertRaisesRegex(DeployError, 'roll it back first'):
             deployer.rollback(first.id)
-        # A later verification leaves the deployment before it the one to roll back first.
-        deployer.deploy(sha256(b'third build'), verify_noop=True)
-        with self.assertRaisesRegex(DeployError, 'later transaction enhance-.* is committed'):
-            deployer.rollback(first.id)
 
 
 class StatusTests(Fleet):
@@ -668,90 +648,38 @@ class ReceiverTests(Fleet):
         for path in self.fake.unit_paths('receiver-01', 'receiver-pir.service'):
             self.assertEqual(self.fake.host('receiver-01').files[path], before[path])
 
-    def test_a_hand_provisioned_host_is_verified_without_restart(self):
-        """The unit already runs the release's binary; the deploy still runs the exact check under the lock."""
+    def test_the_first_deploy_restarts_a_bootstrap_unit_and_runs_the_check(self):
+        """The binary already runs, but the Description drift restarts it into the managed unit."""
         deployer, sha = self.provisioned_receiver()
-        unit = self.unit()
-        seen, run = [], self.fake.run
-
-        def observe(host, argv, timeout):
-            if argv == probe_argv(sha):
-                seen.append((host, LOCK in self.fake.held, Journal.load(self.state, 'receiver').status))
-            return run(host, argv, timeout)
-        self.fake.run = observe
-        plans, problems = deployer.assess(sha, self.receiver_binary)
-        self.assertEqual(([plan.action for plan in plans], problems), (['skip'], []))
-        journal = deployer.deploy(sha, self.receiver_binary)
-        self.assertEqual(journal.status, 'committed')
-        self.assertIn('verification without restart', [event['message'] for event in journal.data['events']])
-        self.assertIn('committed %s, verified without restart' % journal.id, self.lines)
-        self.assertEqual((self.fake.log, self.restarts(), self.unit()), ([], [], unit))
-        self.assertEqual(seen, [('receiver-01', True, 'verifying')])
-        self.assertEqual([record['phase'] for record in journal.hosts], ['pending'])
-        self.assertEqual(journal.touched(), [])
-        # No deployment precedes it, so the default rollback has nothing to restore.
-        with self.assertRaisesRegex(DeployError, 'nothing to roll back'):
-            deployer.rollback()
-        self.assertEqual(self.restarts(), [])
-
-    def test_default_rollback_restores_the_deployment_before_verifications(self):
-        """Passed, failed or repeated, a verification never becomes what `rollback` restores."""
-        sha = sha256(RECEIVER_NEW)
-        for codes in ([0], [1], [0, 1]):
-            with self.subTest(codes=codes):
-                self.setUp()
-                deployer = self.receiver_fleet()
-                deployment = deployer.deploy(sha, self.receiver_binary)
-                for code in codes:
-                    self.fake.exact_result = (code, 'exact check')
-                    try:
-                        deployer.deploy(sha, self.receiver_binary)
-                    except DeployError:
-                        self.assertEqual(code, 1)
-                self.fake.log.clear()
-                deployer.rollback()
-                self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
-                self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
-                self.assertEqual(Journal.load(self.state, 'receiver', deployment.id).status, 'rolled-back')
-
-    def test_an_unfinished_rollback_behind_a_verification_blocks_a_deploy(self):
-        sha = sha256(RECEIVER_NEW)
-        for interrupted in (False, True):
-            with self.subTest(interrupted=interrupted):
-                self.setUp()
-                deployer = self.receiver_fleet()
-                deployment = deployer.deploy(sha, self.receiver_binary)
-                deployer.deploy(sha, self.receiver_binary)
-                status = self.fail_rollback(deployer, interrupted)
-                third = self.dir / 'third'
-                third.write_bytes(b'receiver-directory third build')
-                with self.assertRaisesRegex(DeployError, '%s is %s; finish it' % (deployment.id, status)):
-                    deployer.deploy(sha256(third.read_bytes()), third)
-
-    def test_an_unchanged_target_that_is_not_ready_fails_its_verification(self):
-        deployer, sha = self.provisioned_receiver()
-        self.fake.unhealthy.add(('receiver-01', sha))
-        with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
+        plans, problems = deployer.assess(sha, self.receiver_binary, allow_drift=True)
+        self.assertEqual(([plan.action for plan in plans], problems), (['restart'], []))
+        (description,) = re.findall(r'(?m)^Description=(.*)$', RECEIVER_TEMPLATE.read_text())
+        self.assertEqual(plans[0].drift, ["Unit.Description: '%s (bootstrap)' -> '%s'" % (description, description)])
+        with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
             deployer.deploy(sha, self.receiver_binary)
-        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
-        self.assertNotIn(probe_argv(sha), [argv for _, argv in self.fake.runs])
-        self.assertEqual([op for _, op, _ in self.fake.log if op in ('write', 'systemctl')], [])
+        journal = deployer.deploy(sha, self.receiver_binary, allow_drift=True)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+        self.assertEqual(self.fake.runs[-1], ('receiver-01', probe_argv(sha)))
+        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(),
+                                                   {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY}))
+        # The managed unit again is a no-op: no transaction and no check.
+        self.fake.log.clear()
+        runs = len(self.fake.runs)
+        self.assertIsNone(deployer.deploy(sha, self.receiver_binary))
+        self.assertEqual((self.fake.log, len(self.fake.runs)), ([], runs))
+        self.assertEqual(Journal.load(self.state, 'receiver').id, journal.id)
 
-    def test_a_failed_verification_is_retried_in_full(self):
-        """A failed check changes nothing; the retry runs the check again."""
+    def test_a_bootstrap_unit_failing_its_check_is_restored(self):
         deployer, sha = self.provisioned_receiver()
+        bootstrap = self.unit()
         self.fake.exact_result = (1, '{"passed":false,"category":"answer_mismatch"}')
         with self.assertRaisesRegex(DeployError, 'exact-answer check failed'):
-            deployer.deploy(sha, self.receiver_binary)
-        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
-        self.assertEqual(self.fake.log, [])
-        self.fake.exact_result = (0, 'exact answers ok')
-        self.fake.log.clear()
-        journal = deployer.deploy(sha, self.receiver_binary)
-        self.assertEqual(journal.status, 'committed')
-        self.assertEqual(self.fake.log, [])
-        self.assertEqual([argv for _, argv in self.fake.runs].count(probe_argv(sha)), 2)
-        self.assertEqual(self.restarts(), [])
+            deployer.deploy(sha, self.receiver_binary, allow_drift=True)
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+        self.assertEqual(self.unit(), bootstrap)
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')] * 2)
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
 
     def test_template_argument_change_takes_effect_and_rolls_back(self):
         sha = sha256(RECEIVER_NEW)
@@ -948,7 +876,6 @@ class UnitTests(unittest.TestCase):
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
         self.assertEqual(descriptors.exact_check(SERVICES['receiver'], inventory)['host'], server.host)
-        self.assertEqual([name for name, service in SERVICES.items() if service.verify_unchanged], ['receiver'])
 
     def test_only_a_template_role_can_own_its_unit(self):
         self.assertTrue(SERVICES['receiver'].roles['server'].owns_unit)
@@ -1063,22 +990,6 @@ class CommandLineTests(Fleet):
                                       '--allow-unit-drift'), 1)
         self.assertIn(problem, self.lines)
         self.assertEqual(self.fake.log, [])
-
-    def test_plan_preflight_and_deploy_agree_on_verifying_a_provisioned_host(self):
-        """Nothing restarts, yet the deploy runs the exact check, and plan and preflight say so."""
-        _, sha = self.provisioned_receiver()
-        source = ['--binary', str(self.receiver_binary)]
-        verifies = 'deploy verifies without restart: checks readiness and exact answers'
-        for command in ('plan', 'preflight'):
-            self.assertEqual(self.run_cli(command, 'receiver', *source), 0, self.lines)
-            self.assertIn('server@receiver-01 receiver-pir.service: skip', self.lines)
-            self.assertIn(verifies, self.lines)
-        self.assertNotIn(probe_argv(sha), [argv for _, argv in self.fake.runs])
-        self.assertEqual(self.run_cli('deploy', 'receiver', *source), 0, self.lines)
-        self.assertEqual(Journal.load(self.state, 'receiver').status, 'committed')
-        self.assertEqual(self.fake.runs[-1], ('receiver-01', probe_argv(sha)))
-        self.assertEqual((self.fake.log, self.restarts()), ([], []))
-        self.assertTrue(any(line.endswith(', verified without restart') for line in self.lines), self.lines)
 
 
 if __name__ == '__main__':

@@ -410,14 +410,8 @@ class Deployer:
         if code:
             raise DeployError('exact-answer check failed (exit %d): %s' % (code, output[-1000:]))
 
-    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False,
-               verify_noop=False):
-        """Returns the committed journal, or None when every target already matches.
-
-        With `verify_noop`, or for a service with `verify_unchanged`, a deploy
-        that restarts nothing still checks every target's readiness and runs
-        the exact check in a journaled transaction under the lock.
-        """
+    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False, verify_noop=False):
+        """Returns the committed journal, or None when every target already matches."""
         check = descriptors.exact_check(self.service, self.inventory)
         if check is None and not skip_exact_check:
             raise DeployError('inventory has no %s.exact_check; configure one or pass --skip-exact-check '
@@ -441,29 +435,21 @@ class Deployer:
 
     def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
-        # A rollback behind a finished verification counts too.
-        unfinished = Journal.deployment(self.state_dir, self.service.name)
-        if unfinished is not None and unfinished.status not in FINAL:
+        if latest is not None and latest.status not in FINAL:
             raise DeployError('transaction %s is %s; finish it with rollback before deploying again'
-                              % (unfinished.id, unfinished.status))
+                              % (latest.id, latest.status))
         plans, problems = self.assess(sha, binary, allow_drift, retire_historical)
         self.describe(plans, sha)
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
         restart = [plan for plan in plans if plan.action == 'restart']
-        verify = verify_noop or self.service.verify_unchanged
-        if not restart and not verify:
+        if not restart and not verify_noop:
             self.out('no-op: every target already runs %s with the same effective unit' % sha)
             return None
         baseline = json.loads(self.baseline_path.read_text())
         journal = Journal.create(self.state_dir, self.service.name, sha, source,
-                                 [self.record(plan) for plan in plans], baseline,
-                                 rollback_target=latest.id if latest and not restart else None)
+                                 [self.record(plan) for plan in plans], baseline)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
-        if not restart:
-            journal.event('verification without restart')
-            self.out('verification without restart: every target already runs %s; checking readiness and exact '
-                     'answers' % sha)
         try:
             self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)
             journal.set_status('activating')
@@ -471,12 +457,10 @@ class Deployer:
                 if record['action'] == 'restart':
                     self.activate(journal, index, sha)
             # Later roles can disturb earlier ones (a restarted coordinator
-            # re-fences routers), so every changed target is checked again. A
-            # verification checks the unchanged ones too, without a phase, so
-            # a failure leaves them untouched.
+            # re-fences routers), so every changed target is checked again.
             journal.set_status('verifying')
             for record in journal.hosts:
-                if record['action'] == 'restart' or verify:
+                if record['action'] == 'restart':
                     self.wait_verified(record, sha)
             if check:
                 self.run_exact_check(check, journal, sha)
@@ -494,7 +478,7 @@ class Deployer:
                 journal.set_status('failed')
             raise
         self.refresh_baseline()
-        self.out('committed %s%s' % (journal.id, '' if restart else ', verified without restart'))
+        self.out('committed %s' % journal.id)
         return journal
 
     # -------------------------------------------------------------- rollback
@@ -546,23 +530,12 @@ class Deployer:
             raise DeployError('rollback incomplete; re-run rollback after fixing:\n  ' + '\n  '.join(failures))
 
     def rollback(self, identifier=None, force=False):
-        """Rolls back transaction `identifier`, by default `Journal.deployment`.
-
-        An unfinished verification is rolled back itself, which only finishes
-        it. An earlier deployment is rolled back only once that latest
-        deployment failed or was rolled back; a later verification does not
-        count.
-        """
-        newest = Journal.deployment(self.state_dir, self.service.name)
-        journal = newest if identifier is None else Journal.load(self.state_dir, self.service.name, identifier)
+        journal = Journal.load(self.state_dir, self.service.name, identifier)
         if journal is None:
             raise DeployError('no %s transaction is recorded in %s' % (self.service.name, self.state_dir))
-        if identifier is None and journal.verification_only and journal.status in FINAL:
-            raise DeployError('nothing to roll back: %s only verified a running release and no earlier %s '
-                              'deployment is recorded; name one with --transaction' % (journal.id, self.service.name))
-        if (not journal.verification_only and newest.id != journal.id
-                and newest.status not in ('failed', 'rolled-back')):
-            raise DeployError('later transaction %s is %s; roll it back first' % (newest.id, newest.status))
+        latest = Journal.load(self.state_dir, self.service.name)
+        if latest.id != journal.id and latest.status not in ('failed', 'rolled-back'):
+            raise DeployError('later transaction %s is %s; roll it back first' % (latest.id, latest.status))
         if journal.status == 'rolled-back':
             self.out('%s is already rolled back' % journal.id)
             return journal

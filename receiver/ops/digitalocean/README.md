@@ -100,9 +100,14 @@ encrypted query over the public origin and checks the filter file and private
 health. Its chain checks use the fleet nodes the service reads, so it gates the
 deploy but is not an independent oracle; the monitor's probe is. A failed check,
 one still running at its 480-second `timeout`, or `rollback` restores the previous
-unit file and binary. A deploy whose binary and unit already run restarts nothing
-but still checks readiness and runs the check (`verify_unchanged` in
-`deploy.toml`). Report `status receiver` and the rollback command after each deploy.
+unit file and binary. Report `status receiver` and the rollback command after each
+deploy.
+
+A deploy whose binary and effective unit already run is a no-op: it commits no
+transaction and runs no check, so it is not a fresh qualification. A change to
+only the inventory's `exact_check` deploys nothing either: run its `argv` by hand
+on the Droplet, with `{release_dir}` replaced by the running release directory,
+and confirm it prints `"passed":true`.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
 reviewed commit and deploy from that checkout. `plan` prints each changed setting
@@ -199,8 +204,16 @@ before its baseline is captured.
    its `sha256sum`, the tool's release layout.
 3. Check the nodes' private RPC URLs and the `--bind` address (the Droplet's private
    IPv4) in `receiver-pir.service.in`, and the same address in `Caddyfile`. Install
-   the `Caddyfile` in `/etc/caddy`, and the unit rendered as the tool renders it:
-   `sed -e 's|@RELEASE@|/opt/receiver-pir/releases/<sha256>|' -e 's|@NEAR_KEY@|<id>|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service`.
+   the `Caddyfile` in `/etc/caddy`, and the unit rendered as the tool renders it
+   except for a ` (bootstrap)` suffix on its `Description`, so that the first
+   deploy of this same binary restarts it and runs the exact check instead of
+   being a no-op:
+
+   ```sh
+   sed -e 's|@RELEASE@|/opt/receiver-pir/releases/<sha256>|' -e 's|@NEAR_KEY@|<id>|' \
+     -e 's|^Description=.*|& (bootstrap)|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service
+   ```
+
    `--near-since` sets where a new provider database's first read starts; keep it
    at the feed's original start.
 4. Install the NEAR Intents explorer partner key, which the recent and seen filters
@@ -209,9 +222,15 @@ before its baseline is captured.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
+6. Capture the baseline (step 4 [before the first tool deploy](#release-and-deploy))
+   with the bootstrap unit running.
+7. Deploy that bundle. `plan` must show one `restart` and exactly one `drift` line,
+   `Unit.Description`, from the bootstrap description to the template's; anything
+   else, a no-op included, means the unit differs from step 3, so fix it first.
+   Deploy with `--allow-unit-drift`.
 
-The host is not qualified until a deploy of that bundle commits, after the steps
-[before the first tool deploy](#release-and-deploy).
+The host is qualified only once that deploy commits its transaction with a passing
+exact check, as `status receiver` shows.
 
 After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool writes only

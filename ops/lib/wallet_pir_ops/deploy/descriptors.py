@@ -61,8 +61,6 @@ class Service:
     self_check: tuple = ('--help',)
     min_free_bytes: int = 1 << 30
     template_vars: tuple = ()
-    # A deploy that restarts nothing still runs a verification (see `Deployer.deploy`).
-    verify_unchanged: bool = False
 
     def release_dir(self, sha):
         return '%s/releases/%s' % (self.root, sha)
@@ -127,12 +125,9 @@ def load_descriptors(path):
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
         require(PLAIN_NAME.match(raw.get('binary', '')), '%s: binary must be a plain file name' % name)
-        verify_unchanged = raw.get('verify_unchanged', False)
-        require(isinstance(verify_unchanged, bool), '%s: verify_unchanged is a boolean' % name)
         services[name] = Service(name, raw['root'], raw['binary'], order, roles,
                                  tuple(raw.get('artifact_kinds', ())), tuple(raw.get('self_check', ('--help',))),
-                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())),
-                                 verify_unchanged)
+                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())))
     return services
 
 
