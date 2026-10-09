@@ -28,6 +28,7 @@
   "not_retained": [
     "the full client and service commit IDs and their refs (only 7-character prefixes from pre-rewrite development branches were recorded)",
     "the opt-in integration test that ran, which no longer exists in the tree",
-    "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run"
+    "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run",
+    "the full publication and session manifests, the PIR request and response, the Enhance response and the integration test's output, so the encrypted lookup and the authenticated-output claims cannot be rechecked"
   ]
 }
