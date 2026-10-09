@@ -378,9 +378,10 @@ impl ProviderStore {
     /// a refund address, each with its swap's creation time; the completed payouts it
     /// saw, each a payout receiver and the transaction (protocol byte order) that paid
     /// it, so each payment can be checked against the index; and `since`, where the
-    /// feed's first read began. A receiver keeps its latest time, a payout when a read
-    /// first saw it complete (a receiver reused across swaps has one payout per
-    /// transaction), and the feed its first start. The cursor and read time move as one
+    /// feed's first read began. A receiver keeps its latest time, a payout the earliest
+    /// start of any read that saw it complete, whatever order they commit in (a
+    /// receiver reused across swaps has one payout per transaction), and the feed its
+    /// first start. The cursor and read time move as one
     /// pair: a read that advances the cursor also sets the read time, one that reaches
     /// the same cursor can only advance the read time, and one behind the cursor
     /// changes neither, so a stale read cannot make the feed look fresher.
@@ -429,7 +430,8 @@ impl ProviderStore {
         }
         for (receiver, txid) in completions {
             tx.execute(
-                "INSERT OR IGNORE INTO payouts VALUES (?1,?2,?3)",
+                "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
+                 DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
                 params![receiver.as_bytes(), txid.as_slice(), read_at],
             )?;
         }
