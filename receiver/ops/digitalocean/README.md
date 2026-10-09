@@ -130,6 +130,9 @@ Before the first tool deploy, once:
    [below](#installing-or-rotating-the-near-key).
 4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
+5. Just before that deploy, under the lock, stop `receiver-pir` and delete
+   `/srv/receiver-pir/index/provider.sqlite*`: the older schema's completions are not
+   migrated, and the deploy's restart rebuilds it from `--near-since`.
 
 The live Droplet still runs the unit installed by hand, which starts
 `/opt/receiver-pir/current/receiver-directory`, reads the key from the optional
