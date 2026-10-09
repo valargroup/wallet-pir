@@ -7,7 +7,8 @@ use receiver_directory::{
 };
 use std::collections::BTreeSet;
 
-fn manifest(len: usize) -> Manifest {
+/// A manifest ending at `len` commitments that promises `records` records.
+fn manifest(len: usize, records: usize) -> Manifest {
     Manifest {
         profile: PROFILE.into(),
         genesis: [1; 32],
@@ -19,7 +20,7 @@ fn manifest(len: usize) -> Manifest {
         end_position: len as u64,
         rows: MIN_ROWS,
         salt: [3; 32],
-        records: 0,
+        records: records as u64,
         data_sha256: [0; 32],
         filters: vec![receiver_directory::snapshot::FilterSet {
             label: receiver_directory::filter::PAID.into(),
@@ -42,7 +43,7 @@ fn leaves(len: usize) -> Vec<Hash> {
 }
 /// A reused cache must match a fresh build, whose root must match an independent tree.
 fn compare(cache: &mut WitnessCache, cmxs: &[Hash], positions: BTreeSet<u32>) {
-    let manifest = manifest(cmxs.len());
+    let manifest = manifest(cmxs.len(), positions.len());
     let full = WitnessSnapshot::build(&manifest, cmxs, &positions).unwrap();
     let cached = cache.build(&manifest, cmxs, &positions).unwrap();
     assert_eq!(cached.encode(), full.encode());
@@ -82,7 +83,7 @@ fn positions_and_manifest_are_never_cached() {
     compare(&mut cache, &cmxs, [0].into_iter().collect());
     compare(&mut cache, &cmxs, [1, 19, 30].into_iter().collect());
     compare(&mut cache, &cmxs, BTreeSet::new());
-    let mut m = manifest(cmxs.len());
+    let mut m = manifest(cmxs.len(), 1);
     m.end_hash[0] ^= 1;
     m.end_height += 1;
     assert_eq!(
@@ -103,12 +104,90 @@ fn rejected_inputs_do_not_poison_later_builds() {
     let mut malformed = cmxs.clone();
     malformed[8] = [255; 32];
     assert!(cache
-        .build(&manifest(17), &malformed, &BTreeSet::new())
+        .build(&manifest(17, 0), &malformed, &BTreeSet::new())
         .is_err());
     assert!(cache
-        .build(&manifest(17), &cmxs, &[17].into_iter().collect())
+        .build(&manifest(17, 1), &cmxs, &[17].into_iter().collect())
         .is_err());
-    assert!(cache.build(&manifest(18), &cmxs, &BTreeSet::new()).is_err());
-    assert!(cache.build(&manifest(0), &[], &BTreeSet::new()).is_err());
+    assert!(cache
+        .build(&manifest(18, 0), &cmxs, &BTreeSet::new())
+        .is_err());
+    assert!(cache.build(&manifest(0, 0), &[], &BTreeSet::new()).is_err());
     compare(&mut cache, &cmxs[..9], [0, 8].into_iter().collect());
+}
+#[test]
+fn positions_must_cover_exactly_the_manifest_records() {
+    let cmxs = leaves(17);
+    let two: BTreeSet<u32> = [0, 16].into_iter().collect();
+    let mut cache = WitnessCache::default();
+    compare(&mut cache, &cmxs[..9], [0, 8].into_iter().collect());
+    // An omitted position and an extra one, through the cached and fresh entrypoints.
+    for (records, positions) in [(3, &two), (1, &two)] {
+        assert!(matches!(
+            cache.build(&manifest(17, records), &cmxs, positions),
+            Err(receiver_directory::Error::Coverage)
+        ));
+        assert!(matches!(
+            WitnessSnapshot::build(&manifest(17, records), &cmxs, positions),
+            Err(receiver_directory::Error::Coverage)
+        ));
+    }
+    // The rejections left the primed cache usable.
+    compare(&mut cache, &cmxs, two);
+}
+#[test]
+fn shared_path_checks_match_individual_path_calls() {
+    use receiver_directory::Error;
+    /// The first failing [`WitnessSnapshot::path`] call, as a comparable string.
+    fn individually(proof: &WitnessSnapshot, leaves: &[(u32, Hash)]) -> String {
+        format!(
+            "{:?}",
+            leaves
+                .iter()
+                .try_for_each(|(p, cmx)| proof.path(*p, *cmx).map(|_| ()))
+        )
+    }
+    let cmxs = leaves(70);
+    let positions: BTreeSet<u32> = [0, 1, 2, 9, 33, 34, 35, 64, 69].into_iter().collect();
+    let manifest = manifest(cmxs.len(), positions.len());
+    let encoded = WitnessSnapshot::build(&manifest, &cmxs, &positions)
+        .unwrap()
+        .encode();
+    // The same file with its first level-0 node replaced by another valid hash, which
+    // breaks only the paths that use it.
+    let mut swapped = encoded.clone();
+    swapped.copy_within(152 + 37 + 5..152 + 2 * 37, 152 + 5);
+    let at = |p: u32| (p, cmxs[p as usize]);
+    let all: Vec<_> = positions.iter().map(|p| at(*p)).collect();
+    let mut wrong = all.clone();
+    wrong[3].1 = cmxs[10];
+    let mut invalid = all.clone();
+    invalid[4].1 = [255; 32];
+    let cases: Vec<Vec<(u32, Hash)>> = vec![
+        all.clone(),
+        all.iter().rev().copied().collect(),
+        [all.clone(), all.clone()].concat(),
+        // A verified position seen again with another commitment.
+        vec![at(33), (33, cmxs[34])],
+        wrong,
+        invalid,
+        // Missing a sibling, then outside the tree.
+        vec![at(0), at(5)],
+        vec![at(0), (70, cmxs[0])],
+        vec![],
+    ];
+    for bytes in [&encoded, &swapped] {
+        let proof = WitnessSnapshot::decode(bytes, &manifest).unwrap();
+        for leaves in &cases {
+            assert_eq!(
+                format!("{:?}", proof.check_paths(leaves.iter().copied())),
+                individually(&proof, leaves),
+                "{leaves:?}"
+            );
+        }
+    }
+    let proof = WitnessSnapshot::decode(&encoded, &manifest).unwrap();
+    proof.check_paths(all.clone()).unwrap();
+    let proof = WitnessSnapshot::decode(&swapped, &manifest).unwrap();
+    assert!(matches!(proof.check_paths(all), Err(Error::Malformed)));
 }

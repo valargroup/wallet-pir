@@ -375,11 +375,11 @@ impl ProviderStore {
     /// a refund address, each with its swap's creation time; payout receivers whose
     /// swaps it saw complete, so their payments can be checked against the index; and
     /// `since`, where the feed's first read began. A receiver keeps its latest time, a
-    /// completion when a read first saw it, and the feed its first start. The cursor
-    /// and read time move as one pair: a read that advances the cursor also sets the
-    /// read time, one that reaches the same cursor can only advance the read time, and
-    /// one behind the cursor changes neither, so a stale read cannot make the feed look
-    /// fresher.
+    /// completion the earliest start of any read that saw it, whatever order they
+    /// commit in, and the feed its first start. The cursor and read time move as one
+    /// pair: a read that advances the cursor also sets the read time, one that reaches
+    /// the same cursor can only advance the read time, and one behind the cursor
+    /// changes neither, so a stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -425,7 +425,8 @@ impl ProviderStore {
         }
         for receiver in completions {
             tx.execute(
-                "INSERT OR IGNORE INTO completions VALUES (?1,?2)",
+                "INSERT INTO completions VALUES (?1,?2) ON CONFLICT(receiver)
+                 DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
                 params![receiver.as_bytes(), read_at],
             )?;
         }
