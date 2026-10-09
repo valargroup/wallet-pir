@@ -11,7 +11,11 @@ outputs.
 witnesses and, with the `store` feature, the indexer's SQLite store.
 `receiver-pir` holds the PIR client and the wallet `Transport` interface, plus
 the evaluator with the `server` feature. `receiver-pir-server` serves
-publications over HTTP.
+publications over HTTP. `receiver-indexer` builds them from a Zakura node; its
+binary is `receiver-directory`. The service shares process identity and
+admission (`pir-control`), metrics (`pir-observability`) and the PIR profile
+(`pir-native`) with the other services, and carries its own small node client
+until a shared one exists.
 
 ## Records and publications
 
@@ -88,7 +92,7 @@ index, hash) follow, with every sibling of each payment position. It is capped
 at 64 MiB. A server publishes a file only once it has checked a path to that
 root for every record in the rows. Building the file reads every commitment
 since the empty tree, so the store refuses a history longer than the caller's
-commitment limit before reading it.
+limit, the indexer's `--max-witness-commitments`, before reading it.
 
 ## Protocol
 
@@ -145,6 +149,54 @@ zero means no indexed payment in that publication, not an unused address. Missin
 or inconsistent pages and transport failures are errors, never absence or a
 cleartext fallback.
 
+## Running the indexer and server
+
+```sh
+cargo build --locked --release -p receiver-indexer --bin receiver-directory
+receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
+  --cookie /path/to/.cookie --serve --witnesses --min-rows 8192
+```
+
+`receiver-directory --help` and the `Args` documentation in
+`services/receiver-indexer/src/main.rs` describe every flag. The indexer requires
+mainnet and indexes from Ironwood activation to `--depth` (default 2) blocks below
+the tip of the freshest mainnet `--rpc-url` node, which runs the whole pass; the
+next poll checks each node's genesis and ranks them again. `--no-auth` replaces
+`--cookie`, which is read on every request. Each batch of raw blocks is checked
+against the saved parent, heights, merkle roots, Action positions, terminal hash and
+tree size before it is stored. A restart or reorg rewinds to the last saved
+canonical block; a reorg below the start height needs a rebuild in a new directory.
+
+Without `--serve`, one run writes its publication's files under `publications/` and
+prints a summary. With `--serve`, it polls every `--poll-seconds`, prepares each
+canonical tip in memory and serves on `--bind`, a loopback or private address
+behind a TLS proxy. A paused tip is republished when its provider sets or report
+change. A guard revokes every session once a node shows a served anchor is off its
+chain. A replaced revision stays available for 60 seconds, and the next one waits
+for that. Logs go to standard error, filtered by `RUST_LOG`.
+
+With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
+explorer into `provider.sqlite` and publishes the `near-intents` recent and seen
+sets; without one, publications carry no provider sets. Health's `indexer` report,
+activated with each publication, gives each feed's last read and `payouts_missing`,
+completed NEAR payouts with no indexed payment: the signal that the index missed
+one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
+to an Orchard receiver first seen in the last day that NEAR reported without a
+parsable transaction. Payouts to other recipients are not checked.
+`services/receiver-indexer/src/near.rs` documents the feed and the report.
+
+`receiver-directory probe --origin <url> --health-url <private health URL>
+--rpc-url <node> --no-auth [--witnesses]`, or `receiver-probe` with the same
+arguments on the monitor host, is a `pir-monitor` service probe with an embedded
+mainnet fixture. It checks the served anchor against independent nodes, looks up a
+pinned historical payment over live encrypted PIR, checks the filter file and, with
+`--witnesses` (set as for the indexer), the witness file against the node's
+Ironwood root, then the feed's freshness and the payout report. `answer_mismatch`
+marks wrong served data, a correctness incident; `oracle_invalid` a fixture that
+fails its pin; anything else is an availability failure. `--max-lag` (default 12)
+must cover the indexer's `--depth` plus about ten blocks.
+`services/receiver-indexer/src/probe.rs` documents every check.
+
 ## Wallet use
 
 `receiver_pir::transport::DirectoryClient` runs over a host `Transport` that
@@ -170,6 +222,8 @@ mainnet refund, records, publications, store restart and rollback, and witnesses
 against an independent tree. `cargo test -p receiver-pir-server` runs encrypted
 round trips at every geometry and the HTTP service. `cargo test -p receiver-pir
 --features server --test golden` pins the protocol's seeds, framing and row
-placement against digests from a request built outside `Client`. Recovery follows
+placement against digests from a request built outside `Client`. `cargo test -p
+receiver-indexer` covers indexing with synthetic blocks, serving from memory and
+the probe's encrypted lookup. Recovery follows
 `zcash/zips@afa086bd976e316612a5c06fb139429958d07d84`, NU6.3 proposal, section
 4.19.3 (`decryptovk`).
