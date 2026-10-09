@@ -1,18 +1,21 @@
 //! A `pir-monitor` service probe for the receiver directory. It checks the served
-//! publication against independent nodes, looks up a pinned historical payment over live
-//! encrypted PIR, as Transparent's canary checks one query against a pinned row, checks
-//! the filter file against the manifest, then checks the NEAR feed's freshness and the indexer's payout check, which health reports
-//! on the private network. One node at a time checks the chain facts, freshest first
-//! (see [`oracle`]). It prints one JSON line: `passed`, on failure a `category` and
-//! `detail`, and the lookup as `phase: "live_encrypted_probe"` with `queries` and
-//! `correct`. `answer_mismatch` marks served data that is wrong, which the monitor treats
-//! as a correctness incident; `oracle_invalid` a fixture that fails its pin; anything
-//! else, such as `oracle_unavailable` when no node that reached the publication can
-//! complete the chain checks, is an availability failure. Every response body is bounded before it is buffered.
+//! publication against independent nodes, one at a time and freshest first (see
+//! [`oracle`]), looks up a pinned historical payment over live encrypted PIR, as
+//! Transparent's canary checks one query against a pinned row, checks the witness file
+//! (with `--witnesses`) and the filter file against the manifest, then checks the NEAR
+//! feed's freshness and the indexer's payout check, which health reports on the private
+//! network. It prints one JSON line: `passed`, on failure a `category` and `detail`,
+//! and the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
+//! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
+//! correctness incident; `oracle_invalid` a fixture that fails its pin; anything else,
+//! such as `oracle_unavailable` when no node that reached the publication can complete
+//! the chain checks, is an availability failure. Every response body is bounded before
+//! it is buffered.
 use clap::Parser;
 use receiver_directory::{
     extract::Action,
     filter::{Filters, MAX_FILTERS_BYTES},
+    witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment,
 };
 use receiver_indexer::zakura::{ZakuraClient, ZakuraError};
@@ -62,6 +65,12 @@ struct Args {
     /// a rotation's 60-second grace: the default 12 suits the default depth of 2.
     #[arg(long, default_value_t = 12)]
     max_lag: u64,
+    /// The service serves witness files, as the indexer does with `--witnesses`: each
+    /// run then checks the session's file against the nodes' Ironwood root. The probe
+    /// cannot infer this from the service, which would answer a lost file as one never
+    /// configured, so the deployment states it.
+    #[arg(long)]
+    witnesses: bool,
 }
 
 /// A failed check's category and detail.
@@ -162,6 +171,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         args.cookie.as_deref(),
         directory,
         fixture.height,
+        args.witnesses,
     );
     let (verified, tip) = match oracle.await? {
         Ok(found) => found,
@@ -244,6 +254,12 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             json!({"lookup": found.map(|p| (p.height, p.position)), "queries": queries}),
         )));
     }
+    if let (Some(root), Some(payment)) = (verified.root, &found) {
+        let check = check_witnesses(&http, origin, &id, directory, payment, root);
+        if let Some(failure) = check.await? {
+            return Ok(Some(failure));
+        }
+    }
     if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
         return Ok(Some(failure));
     }
@@ -311,13 +327,15 @@ fn check_lag(
     })
 }
 
-/// The fixture's canonical block as one node gave it, which the lookup's answer is
-/// checked against.
+/// What one node gave for checking the served data against.
 struct Verified {
     /// The node's block hash at the fixture's height.
     fixture_hash: Hash,
     /// That block, read by its hash and checked against its merkle root.
     fixture_block: zakura_chain::block::Block,
+    /// The Ironwood root after the publication's terminal block, when witness files
+    /// are checked.
+    root: Option<Hash>,
 }
 
 /// The outcome of [`verify`] on one node.
@@ -331,12 +349,14 @@ enum Verdict {
 }
 
 /// Checks the publication against one node: the anchor ([`check_anchor`]), then the
-/// fixture's canonical block at `fixture_height`. Its reads come from one chain: the
+/// fixture's canonical block at `fixture_height` and, with `witnesses`, the Ironwood
+/// root after the terminal block, read by its hash. Its reads come from one chain: the
 /// terminal block must still be the node's after the last of them.
 async fn verify(
     rpc: &ZakuraClient,
     directory: &receiver_directory::snapshot::Manifest,
     fixture_height: u32,
+    witnesses: bool,
 ) -> Verdict {
     let checks = async {
         if let Some(failure) = check_anchor(rpc, directory).await? {
@@ -344,6 +364,14 @@ async fn verify(
         }
         let fixture_hash = parse_hash(&rpc.block_hash(u64::from(fixture_height)).await?)?;
         let fixture_block = rpc.receiver_block(fixture_hash).await?;
+        let root = if witnesses {
+            Some(
+                rpc.ironwood_root(directory.end_hash, directory.end_height)
+                    .await?,
+            )
+        } else {
+            None
+        };
         let end = parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)?;
         if end != directory.end_hash {
             return Err(ZakuraError::Block("chain changed during the checks".into()));
@@ -351,6 +379,7 @@ async fn verify(
         Ok(Ok(Verified {
             fixture_hash,
             fixture_block,
+            root,
         }))
     };
     match checks.await {
@@ -374,6 +403,47 @@ fn check_tx_index(
         .position(|tx| tx.hash().0 == *txid)
         .ok_or(("oracle_invalid", json!({"fixture": "not in its block"})))?;
     Ok(u32::try_from(index).is_ok_and(|index| index == payment.tx_index))
+}
+
+/// Checks the session's common witness file, which wallets prove their payments with:
+/// it must bind to the publication, prove `payment`, the fixture's as served, at its
+/// position, and have `root`, the node's Ironwood root after the terminal block, so a
+/// self-consistent file over another tree fails too. A file the service cannot send
+/// is an error.
+async fn check_witnesses(
+    http: &reqwest::Client,
+    origin: &str,
+    id: &str,
+    directory: &receiver_directory::snapshot::Manifest,
+    payment: &Payment,
+    root: Hash,
+) -> Result<Option<Failure>> {
+    let url = format!("{origin}/v1/receiver/witness/{id}");
+    let bytes = get(http, &url, MAX_WITNESS_BYTES).await?;
+    let proof = match WitnessSnapshot::decode(&bytes, directory) {
+        Ok(proof) => proof,
+        Err(error) => {
+            return Ok(Some((
+                "answer_mismatch",
+                json!({"witnesses": error.to_string(), "witness_bytes": bytes.len()}),
+            )))
+        }
+    };
+    let proved = u32::try_from(payment.position)
+        .is_ok_and(|position| proof.path(position, payment.cmx).is_ok());
+    if !proved {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"witness_path": payment.position}),
+        )));
+    }
+    if proof.root() != root {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"witness_root": hex::encode(proof.root()), "node_root": hex::encode(root)}),
+        )));
+    }
+    Ok(None)
 }
 
 /// Checks the session's filter file, which wallets test before any lookup: its digest
@@ -434,6 +504,7 @@ async fn oracle(
     cookie: Option<&std::path::Path>,
     directory: &receiver_directory::snapshot::Manifest,
     fixture_height: u32,
+    witnesses: bool,
 ) -> Result<std::result::Result<(Verified, u64), Failure>> {
     let height = u64::from(directory.end_height);
     let (mut tips, mut reached, mut top) = (Vec::<Value>::new(), Vec::new(), 0);
@@ -457,7 +528,7 @@ async fn oracle(
     reached.sort_by_key(|(_, _, tip)| std::cmp::Reverse(*tip));
     let mut attempts = Vec::new();
     for (node, rpc, _) in &reached {
-        match verify(rpc, directory, fixture_height).await {
+        match verify(rpc, directory, fixture_height, witnesses).await {
             Verdict::Verified(verified) => return Ok(Ok((verified, top))),
             Verdict::Failed(failure) => return Ok(Err(failure)),
             Verdict::Unavailable(error) => {
@@ -653,7 +724,8 @@ mod tests {
     /// anchor is [`fixture_block`]. `fails` names the reads it refuses: every
     /// `getblockhash` but genesis, or the raw `getblock`. With `moved`, the anchor's
     /// height holds `[9; 32]` after the boundary's two reads, as when the chain changes
-    /// during the checks.
+    /// during the checks. Its `z_gettreestate` gives `root`, or no root for `None`, and
+    /// names another block when `fails` is `"treestate block"`.
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
@@ -661,6 +733,7 @@ mod tests {
         size: Option<u64>,
         fails: &'static str,
         moved: bool,
+        root: Option<Hash>,
     }
 
     /// A node at tip `tip` that agrees with [`anchored`].
@@ -671,6 +744,7 @@ mod tests {
             size: Some(300),
             fails: "",
             moved: false,
+            root: Some([7; 32]),
         }
     }
 
@@ -716,6 +790,17 @@ mod tests {
                             None => json!({"trees": {}}),
                         },
                         ("getblock", _) => json!(raw),
+                        ("z_gettreestate", _) => {
+                            let hash = match node.fails {
+                                "treestate block" => json!(display(9)),
+                                _ => params[0].clone(),
+                            };
+                            let commitments = match node.root {
+                                Some(root) => json!({"finalRoot": hex::encode(root)}),
+                                None => json!({}),
+                            };
+                            json!({"hash": hash, "height": end, "ironwood": {"commitments": commitments}})
+                        }
                         _ => panic!("unexpected {request}"),
                     };
                     Json(json!({"result": result, "error": null}))
@@ -728,20 +813,24 @@ mod tests {
         url
     }
 
-    /// What [`oracle`] decides over `nodes`, listed in this order: the highest tip once
-    /// a node verifies the fixture's block, or the failure.
-    async fn decide(nodes: &[Node]) -> std::result::Result<u64, Failure> {
+    /// What [`oracle`] decides over `nodes`, listed in this order, reading roots with
+    /// `witnesses`: the highest tip and the root once a node verifies the fixture's
+    /// block, or the failure.
+    async fn decide(
+        nodes: &[Node],
+        witnesses: bool,
+    ) -> std::result::Result<(u64, Option<Hash>), Failure> {
         let mut urls = Vec::new();
         for node in nodes {
             urls.push(serve_node(*node).await);
         }
         let directory = anchored();
         let fixture_height = directory.end_height - 1;
-        let (verified, top) = oracle(&urls, None, &directory, fixture_height)
+        let (verified, top) = oracle(&urls, None, &directory, fixture_height, witnesses)
             .await
             .unwrap()?;
         assert_eq!(verified.fixture_hash, fixture_block().0.hash().0);
-        Ok(top)
+        Ok((top, verified.root))
     }
 
     /// A node that cannot complete the checks hands over to the next that reached the
@@ -776,18 +865,18 @@ mod tests {
                 ..good(end + 20)
             },
         ];
-        let top = decide(&nodes).await.unwrap();
+        let (top, _) = decide(&nodes, false).await.unwrap();
         assert_eq!(top, end + 50);
         assert_eq!(
             check_lag(top, &anchored(), 12).unwrap().0,
             "stale_publication"
         );
         // With every node that reached the publication failing, each attempt is listed.
-        let (category, detail) = decide(&nodes[2..]).await.unwrap_err();
+        let (category, detail) = decide(&nodes[2..], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert_eq!(detail["attempts"].as_array().unwrap().len(), 4);
         assert_eq!(detail["nodes"].as_array().unwrap().len(), 4);
-        let (category, detail) = decide(&[behind]).await.unwrap_err();
+        let (category, detail) = decide(&[behind], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert!(detail["attempts"].as_array().unwrap().is_empty());
     }
@@ -807,12 +896,159 @@ mod tests {
             ..good(end + 2)
         };
         for first in [off_chain, short] {
-            let (category, _) = decide(&[good(end + 1), first]).await.unwrap_err();
+            let (category, _) = decide(&[good(end + 1), first], false).await.unwrap_err();
             assert_eq!(category, "answer_mismatch");
-            let (category, _) = decide(&[first, good(end + 2)]).await.unwrap_err();
+            let (category, _) = decide(&[first, good(end + 2)], false).await.unwrap_err();
             assert_eq!(category, "answer_mismatch");
-            assert_eq!(decide(&[good(end + 2), first]).await, Ok(end + 2));
+            assert_eq!(
+                decide(&[good(end + 2), first], false).await,
+                Ok((end + 2, None))
+            );
         }
+    }
+
+    /// With witness files checked, the root comes from the first node that gives one for
+    /// the terminal block: a node without root data, or whose tree state names another
+    /// block as when the chain moves during the read, hands over to the next, and with
+    /// none giving it the probe is unavailable, never passing. Without witness files,
+    /// no root is read.
+    #[tokio::test]
+    async fn the_root_comes_from_a_node_that_has_it() {
+        let end = u64::from(anchored().end_height);
+        let rootless = Node {
+            root: None,
+            ..good(end + 3)
+        };
+        let moved = Node {
+            fails: "treestate block",
+            ..good(end + 2)
+        };
+        let other = Node {
+            root: Some([8; 32]),
+            ..good(end + 1)
+        };
+        assert_eq!(
+            decide(&[rootless, moved, other], true).await,
+            Ok((end + 3, Some([8; 32])))
+        );
+        let (category, detail) = decide(&[rootless, moved], true).await.unwrap_err();
+        assert_eq!(category, "oracle_unavailable");
+        assert_eq!(detail["attempts"].as_array().unwrap().len(), 2);
+        assert_eq!(decide(&[rootless, moved], false).await, Ok((end + 3, None)));
+    }
+
+    /// The node's Ironwood root and the witness file's agree byte for byte: the pinned
+    /// node's tree over the fixture refund's commitment gives, through
+    /// `Root::bytes_in_display_order`, the root `WitnessSnapshot` builds, not its reverse.
+    #[test]
+    fn the_node_and_the_witness_file_encode_roots_alike() {
+        use zakura_chain::serialization::ZcashDeserialize;
+        let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
+        let refund =
+            zakura_chain::transaction::Transaction::zcash_deserialize(raw.unwrap().as_slice())
+                .unwrap();
+        let cmx = refund.ironwood_actions().next().unwrap().cm_x;
+        let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
+        tree.append(cmx).unwrap();
+        let node_root = tree.root().bytes_in_display_order();
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        (manifest.start_position, manifest.end_position) = (0, 1);
+        let positions = Default::default();
+        let file = WitnessSnapshot::build(&manifest, &[cmx.into()], &positions).unwrap();
+        assert_eq!(file.root(), node_root);
+        let mut reversed = node_root;
+        reversed.reverse();
+        assert_ne!(file.root(), reversed);
+    }
+
+    /// A publication with records at positions 0 and 5 of `tree`, the witness file for
+    /// it built from `served`, and the payment at position 5.
+    fn witnessed(
+        tree: &[Hash],
+        served: &[Hash],
+    ) -> (receiver_directory::snapshot::Manifest, Vec<u8>, Payment) {
+        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.start_position = 0;
+        manifest.end_position = tree.len() as u64;
+        let records: Vec<_> = [0u8, 5]
+            .into_iter()
+            .enumerate()
+            .map(|(page, position)| {
+                let mut record = super::common::record(page as u32, 2);
+                record.payment.position = position.into();
+                record.payment.cmx = tree[usize::from(position)];
+                record
+            })
+            .collect();
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(manifest, &records, &[]).unwrap();
+        let positions = [0, 5].into_iter().collect();
+        let proof = WitnessSnapshot::build(&snapshot.manifest, served, &positions).unwrap();
+        (
+            snapshot.manifest,
+            proof.encode(),
+            records[1].payment.clone(),
+        )
+    }
+
+    /// The witness file must bind to the probed publication, prove the fixture's
+    /// commitment at its position and have the node's root; a file the service cannot
+    /// send, or one over its bound, fails the probe too.
+    #[tokio::test]
+    async fn the_witness_file_must_prove_the_fixture_under_the_nodes_root() {
+        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
+        let (directory, proof, payment) = witnessed(&tree, &tree);
+        let root = WitnessSnapshot::decode(&proof, &directory).unwrap().root();
+        let serve = |status: u16, bytes: Vec<u8>| async move {
+            let status = axum::http::StatusCode::from_u16(status).unwrap();
+            let app = Router::new().route(
+                "/v1/receiver/witness/x",
+                routing::get(move || async move { (status, bytes) }),
+            );
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            origin
+        };
+        let http = reqwest::Client::new();
+        let check = |origin: String, payment: Payment| {
+            let (http, directory) = (http.clone(), directory.clone());
+            async move {
+                check_witnesses(&http, &origin, "x", &directory, &payment, root)
+                    .await
+                    .map(|failure| failure.map(|f| f.1))
+                    .map_err(|e| e.to_string())
+            }
+        };
+        assert_eq!(
+            check(serve(200, proof.clone()).await, payment.clone()).await,
+            Ok(None)
+        );
+        for (status, bytes) in [(503, Vec::new()), (200, vec![0; MAX_WITNESS_BYTES + 1])] {
+            assert!(check(serve(status, bytes).await, payment.clone())
+                .await
+                .is_err());
+        }
+        let truncated = proof[..proof.len() - 1].to_vec();
+        let detail = check(serve(200, truncated).await, payment.clone()).await;
+        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
+        // Another revision's file, for the same tree under another salt.
+        let mut other = directory.clone();
+        other.salt[0] ^= 1;
+        let stale = WitnessSnapshot::build(&other, &tree, &[0, 5].into_iter().collect());
+        let detail = check(serve(200, stale.unwrap().encode()).await, payment.clone()).await;
+        assert!(detail.unwrap().unwrap()["witnesses"].is_string());
+        let mut wrong = payment.clone();
+        wrong.cmx = [9; 32];
+        let detail = check(serve(200, proof.clone()).await, wrong).await;
+        assert_eq!(detail.unwrap().unwrap()["witness_path"], 5);
+        // A file over another tree that still holds the payment proves it, but under a
+        // root the node does not have.
+        let mut forged = tree.clone();
+        forged[2] = [20; 32];
+        let (_, forged, _) = witnessed(&tree, &forged);
+        let detail = check(serve(200, forged).await, payment).await;
+        assert_eq!(detail.unwrap().unwrap()["node_root"], hex::encode(root));
     }
 
     /// The served payment must carry its transaction's index in the oracle's block,

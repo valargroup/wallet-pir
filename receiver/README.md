@@ -212,7 +212,8 @@ transaction is not checked. A matched payout is not checked again until a reorg
 rewinds the index, which first forgets every match.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
---fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
+--fixture-sha256 <hex> --rpc-url <node> --no-auth [--witnesses]` is a `pir-monitor`
+service probe.
 Its chain checks run on one `--rpc-url` node at a time among those that have
 reached the publication, highest tip first and in the given order among equal
 tips. A node that cannot complete them, from an RPC failure, an undecodable
@@ -230,15 +231,21 @@ merkle root. A fixture that fails its pin, or whose transaction is not in that
 block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
-A run moves about 140 KB from the service, of which the filter file was about 37 KB
-in October 2026, and the fixture's block from the node.
+With `--witnesses`, which a deployment must pass when its indexer runs with
+`--witnesses` since the service answers a lost witness file as one never
+configured, it also downloads the session's witness file. That file must bind to
+the publication and prove the fixture's commitment at its position under the
+Ironwood root the node gives after the terminal block (`z_gettreestate`, read by
+that block's hash). A run moves about 140 KB from the service, of which the filter
+file was about 37 KB in October 2026, plus the witness file with `--witnesses`,
+bounded at 64 MiB, and the fixture's block from the node.
 It fails as `answer_mismatch` when the served anchor is off the node's chain or
 claims a tree size other than the node's after that block (read by its hash), the
-lookup misses or misreports the payment, the filter file is wrong or a completed
-payout is missing from the index. The probe fails otherwise when the publication
-trails the highest tip any node reports, whichever node checked it, by more than
-`--max-lag` blocks (default 12) or the recent set is older than wallets trust (15
-minutes). The lag bound must
+lookup misses or misreports the payment, the witness or filter file is wrong or a
+completed payout is missing from the index. The probe fails otherwise when the
+publication trails the highest tip any node reports, whichever node checked it, by
+more than `--max-lag` blocks (default 12) or the recent set is older than wallets
+trust (15 minutes). The lag bound must
 cover the indexer's `--depth` plus its publication delay (a poll and PIR
 preparation) and a rotation's 60-second grace, so about ten blocks more than the
 depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout

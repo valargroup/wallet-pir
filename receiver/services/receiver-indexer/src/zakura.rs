@@ -30,6 +30,8 @@ pub enum ZakuraError {
     Block(String),
     #[error("Ironwood tree size is unavailable at height {0}")]
     MissingTreeSize(u64),
+    #[error("Ironwood tree root is unavailable at height {0}")]
+    MissingTreeRoot(u64),
     #[error("no node has reached height {0}")]
     Behind(u64),
     #[error("RPC response is larger than {0} bytes")]
@@ -43,6 +45,9 @@ pub enum ZakuraError {
 const RPC_OVERHEAD_BYTES: usize = 64 * 1024;
 /// The largest `getblockcount` or `getblockhash` response: a number or one hash.
 const SCALAR_RESPONSE_BYTES: usize = 4096;
+/// The largest `z_gettreestate` response: three serialized frontiers of at most 33
+/// nodes each, hex-encoded, are a few kilobytes.
+pub(crate) const TREESTATE_RESPONSE_BYTES: usize = RPC_OVERHEAD_BYTES;
 /// The largest raw (verbosity 0) `getblock` response: a maximum-size block in hex.
 pub(crate) const RAW_BLOCK_RESPONSE_BYTES: usize =
     2 * zakura_chain::block::MAX_BLOCK_BYTES as usize + RPC_OVERHEAD_BYTES;
@@ -126,6 +131,30 @@ pub(crate) struct BlockTrees {
 #[derive(Deserialize)]
 pub(crate) struct TreeSize {
     pub(crate) size: u64,
+}
+
+/// The block and Ironwood tree state from a `z_gettreestate` response.
+#[derive(Deserialize)]
+pub(crate) struct Treestate {
+    /// Displayed (reversed) hex, as `getblockhash` gives it.
+    pub(crate) hash: String,
+    pub(crate) height: u64,
+    /// Older nodes omit it.
+    #[serde(default)]
+    pub(crate) ironwood: Option<PoolTreestate>,
+}
+
+/// One pool's tree state.
+#[derive(Deserialize)]
+pub(crate) struct PoolTreestate {
+    pub(crate) commitments: Commitments,
+}
+
+/// A tree's root, absent when the node has no state for it.
+#[derive(Deserialize)]
+pub(crate) struct Commitments {
+    #[serde(rename = "finalRoot")]
+    pub(crate) final_root: Option<String>,
 }
 
 impl ZakuraClient {
