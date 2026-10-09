@@ -1,8 +1,12 @@
 # Receiver publication cache
 
 Measured September 28, 2026 on an Apple M3 Ultra. Implementation is
-`8bfb120c211d2674fbf0a49f4d8455a0f54e6790`, with current main integrated at
-`5337a43`. Rust 1.98.0, `release-fast`. This is local validation, not a deployment.
+`8bfb120c211d2674fbf0a49f4d8455a0f54e6790`, the direct child of the merge
+`2f99300debde3d65a0c0d263a5129042eddf12ab` of main at
+`5337a43c619039a39c35b54d9251a5131ebb93ba` into the baseline
+`207053dc02453d43ebfd3ba60c758f99f848c509`; all four resolve in this repository.
+Rust 1.98.0 and `release-fast` are as reported; the exact builds and commands
+measured were not recorded. This is local validation, not a deployment.
 The run metadata is in [`manifest.json`](manifest.json). `SHA256SUMS.original`
 is the capture's checksum manifest, from before this note's navigation edits;
 `SHA256SUMS` hashes the current files.

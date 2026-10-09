@@ -2,11 +2,13 @@
   "run_id": "receiver-pir-2026-09-26",
   "observed": "2026-09-26T22:39:36Z",
   "source": {
-    "client": "f12f779",
-    "service": "5921064",
+    "client": "f12f7794f80836d76480f31e318985f67260a9f0",
+    "service": "5921064016b79e10fa9757e10363bfd8f0e56b9c",
+    "client_cargo_lock_blob": "f6757eb9975758031ee4355d5f8c9e2b4fb22e07",
+    "service_cargo_lock_blob": "1400b1da3e38be5384c002d3e2b45233a0e59952",
     "ipir_sp": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
     "ipir_sp_repository": "https://github.com/valargroup/ipir-sp.git",
-    "note": "client and service are 7-character prefixes recorded at the time from pre-rewrite development branches; they may not resolve. results.json records ipir_sp only as the prefix 1f2aec65; the full revision and repository come from this repository's retained Cargo.lock, which resolves ipir-sp 0.1.0-rc.6 to that revision. The protocol measured (q48) was replaced by this stack's pir-native protocol."
+    "note": "results.json records client and service as the prefixes f12f779 and 5921064, which resolve uniquely here to these commits, reachable only from pre-rewrite development branches such as origin/adam/near-swap-complete-20260929; the service is the client's direct child. Both commits' Cargo.lock files resolve ipir-sp 0.1.0-rc.6 to ipir_sp, which results.json records only as 1f2aec65. These are source configuration: nothing records that the tested builds were clean checkouts of them. The protocol measured (q48) was replaced by this stack's pir-native protocol."
   },
   "protocol": "ironwood-receiver-pir-v1-q48",
   "toolchain": {
@@ -49,7 +51,9 @@
   "qualification": "development evidence, not release qualification",
   "not_retained": [
     "the Rust toolchain and Cargo build profile of the receiver test and of the isolated Enhance service",
-    "the full client and service commit IDs and their refs (only 7-character prefixes from pre-rewrite development branches were recorded)",
+    "whether the client and service builds were clean checkouts of the recorded commits (only 7-character prefixes were recorded at the time)",
+    "the resolved dependencies actually built for the client and the service; their commits' Cargo.lock files declare only what a build would use",
+    "the exact commands executed; the README's command is the documented form",
     "the opt-in integration test that ran, which no longer exists in the tree",
     "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run",
     "the full publication and session manifests, the PIR request and response, the Enhance response and the integration test's output, so the encrypted lookup and the authenticated-output claims cannot be rechecked",

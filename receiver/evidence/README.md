@@ -5,7 +5,10 @@ Each run directory holds a results note (`README.md`), a machine-readable
 inside it. These are pre-deployment development runs, not release qualification:
 they describe the source and protocol they record, which later changes replaced, and
 each manifest's `not_retained` lists the inputs that were not kept, so those claims
-cannot be re-verified.
+cannot be re-verified. Manifests keep three kinds of fact apart: what the run
+observed and retained; source configuration that git still shows (revisions,
+toolchain pins, lockfiles), which declares what a build would use, not what built
+the run; and what was not recorded.
 
 - [Mainnet smoke test](mainnet-smoke-2026-09-26/README.md): a bounded mainnet
   range holding the known NEAR refund; its reported RPC cross-check and rerun were
