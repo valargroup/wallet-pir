@@ -162,12 +162,12 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 `receiver-directory --help` and the `Args` documentation in
 `services/receiver-indexer/src/main.rs` describe every flag. The indexer requires
 mainnet and indexes from Ironwood activation to `--depth` (default 2) blocks below
-the tip of the freshest `--rpc-url` node, which runs the whole pass; the next poll
-ranks the nodes again. `--no-auth` replaces `--cookie`, which is read on every
-request. Each batch of raw blocks is checked against the saved parent, heights,
-merkle roots, Action positions, terminal hash and tree size before it is stored. A
-restart or reorg rewinds to the last saved canonical block; a reorg below the start
-height needs a rebuild in a new directory.
+the tip of the freshest mainnet `--rpc-url` node, which runs the whole pass; the
+next poll checks each node's genesis and ranks them again. `--no-auth` replaces
+`--cookie`, which is read on every request. Each batch of raw blocks is checked
+against the saved parent, heights, merkle roots, Action positions, terminal hash and
+tree size before it is stored. A restart or reorg rewinds to the last saved
+canonical block; a reorg below the start height needs a rebuild in a new directory.
 
 Without `--serve`, one run writes its publication's files under `publications/` and
 prints a summary. With `--serve`, it polls every `--poll-seconds`, prepares each

@@ -322,9 +322,8 @@ async fn check_anchor(
     rpc: &ZakuraClient,
     directory: &receiver_directory::snapshot::Manifest,
 ) -> std::result::Result<Option<Failure>, ZakuraError> {
-    if parse_hash(&rpc.block_hash(0).await?)? != directory.genesis {
-        return Err(ZakuraError::OtherNetwork);
-    }
+    rpc.check_network(zakura_chain::block::Hash(directory.genesis))
+        .await?;
     let height = directory.end_height;
     let boundary = rpc.receiver_boundary(height).await?;
     if boundary.hash != directory.end_hash {
@@ -523,10 +522,10 @@ async fn indexer_report(
 /// time in [`ZakuraClient::ranked`] order. The first node to complete the checks
 /// decides, and the first valid evidence against the publication is final rather than
 /// retried on a friendlier node; only a node that could not complete them hands over
-/// to the next. Returns the node that verified and its result, with the highest tip
-/// any node not on another network reported, from which lag is measured whichever
-/// node verified. With no node completing the checks it is `oracle_unavailable`, with
-/// each attempt's tip and error.
+/// to the next. Nodes on another network are left out of the ranking. Returns the node
+/// that verified and its result, with the highest tip any ranked node reported, from
+/// which lag is measured whichever node verified. With no node completing the checks
+/// it is `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
     nodes: &[ZakuraClient],
     directory: &receiver_directory::snapshot::Manifest,
@@ -535,18 +534,15 @@ async fn oracle(
 ) -> std::result::Result<(ZakuraClient, Option<Hash>, u64), Failure> {
     let height = u64::from(directory.end_height);
     let unavailable = |detail: Value| ("oracle_unavailable", detail);
-    let ranked = ZakuraClient::ranked(nodes)
+    let genesis = zakura_chain::block::Hash(directory.genesis);
+    let ranked = ZakuraClient::ranked(nodes, genesis)
         .await
         .map_err(|error| unavailable(json!({"end_height": height, "error": error.to_string()})))?;
-    // Ranked highest first, so the first tip kept is the highest.
-    let (mut top, mut attempts) = (None, Vec::new());
+    let top = ranked[0].0;
+    let mut attempts = Vec::new();
     for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
-        let verdict = verify(rpc, directory, pinned, witnesses).await;
-        if !matches!(verdict, Verdict::Unavailable(ZakuraError::OtherNetwork)) {
-            top.get_or_insert(*tip);
-        }
-        match verdict {
-            Verdict::Verified(root) => return Ok((rpc.clone(), root, top.unwrap())),
+        match verify(rpc, directory, pinned, witnesses).await {
+            Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
             Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
                 attempts.push(json!({"node_tip": tip, "error": error.to_string()}))
@@ -554,7 +550,7 @@ async fn oracle(
         }
     }
     Err(unavailable(
-        json!({"end_height": height, "node_tip": ranked[0].0, "attempts": attempts}),
+        json!({"end_height": height, "node_tip": top, "attempts": attempts}),
     ))
 }
 
@@ -809,8 +805,8 @@ mod tests {
         assert!(detail["attempts"].as_array().unwrap().is_empty());
     }
 
-    /// A node on another network, however high its tip, hands over to the next without
-    /// counting against the publication or setting the lag.
+    /// A node on another network, however high its tip, is left out without counting
+    /// against the publication or setting the lag.
     #[tokio::test]
     async fn a_node_on_another_network_is_skipped() {
         let end = u64::from(anchored().end_height);
@@ -822,7 +818,7 @@ mod tests {
         assert_eq!(decide(&[other, good(end)], false).await, Ok((end, None)));
         let (category, detail) = decide(&[other], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
-        assert_eq!(detail["attempts"].as_array().unwrap().len(), 1);
+        assert_eq!(detail["error"], "node is on another network");
     }
 
     /// Valid evidence against the publication, or against the fixture's pinned block,
