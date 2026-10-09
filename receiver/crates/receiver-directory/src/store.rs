@@ -358,17 +358,23 @@ impl ProviderStore {
         Ok(Self { db })
     }
 
-    /// Records a complete read of `feed` that began at `read_at`: receivers from swaps
-    /// it created up to `cursor`, its new position, where `true` marks a payout address
-    /// and `false` a refund address, each with its swap's creation time. A receiver
-    /// keeps its latest time. The cursor and read time move as one pair: a read that
-    /// advances the cursor also sets the read time, one that reaches the same cursor
-    /// can only advance the read time, and one behind the cursor changes neither, so a
-    /// stale read cannot make the feed look fresher.
+    /// Records one complete read of `feed` that began at `read_at`, in one transaction,
+    /// so a failed or interrupted read records nothing: receivers from swaps it created
+    /// up to `cursor`, its new position, where `true` marks a payout address and `false`
+    /// a refund address, each with its swap's creation time; payout receivers whose
+    /// swaps it saw complete, so their payments can be checked against the index; and
+    /// `since`, where the feed's first read began. A receiver keeps its latest time, a
+    /// completion when a read first saw it, and the feed its first start. The cursor
+    /// and read time move as one pair: a read that advances the cursor also sets the
+    /// read time, one that reaches the same cursor can only advance the read time, and
+    /// one behind the cursor changes neither, so a stale read cannot make the feed look
+    /// fresher.
     pub fn record(
         &mut self,
         feed: &str,
+        since: i64,
         receivers: &[(Receiver, bool, i64)],
+        completions: &[Receiver],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
@@ -406,27 +412,30 @@ impl ProviderStore {
             )?;
             tx.execute(read_sql, params![feed, read_at])?;
         }
+        for receiver in completions {
+            tx.execute(
+                "INSERT OR IGNORE INTO completions VALUES (?1,?2)",
+                params![receiver.as_bytes(), read_at],
+            )?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO starts VALUES (?1,?2)",
+            params![feed, since],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Records payout receivers whose swaps the provider reports complete, each with
-    /// when a read first saw it complete, so their payments can be checked against
-    /// the index.
-    pub fn record_completions(
-        &mut self,
-        receivers: &[Receiver],
-        seen_at: i64,
-    ) -> Result<(), Error> {
-        let tx = self.db.transaction()?;
-        for receiver in receivers {
-            tx.execute(
-                "INSERT OR IGNORE INTO completions VALUES (?1,?2)",
-                params![receiver.as_bytes(), seen_at],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+    /// Runs `read` in one read transaction, so every query it makes sees the same
+    /// committed state even while a feed records.
+    pub fn view<T, E: From<Error>>(
+        &self,
+        read: impl FnOnce(&Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let tx = self.db.unchecked_transaction().map_err(Error::from)?;
+        let value = read(self)?;
+        tx.commit().map_err(Error::from)?;
+        Ok(value)
     }
 
     /// Payout receivers first seen complete from `from` through `until`.
@@ -437,15 +446,6 @@ impl ProviderStore {
         let rows = query.query_map([from, until], |r| r.get::<_, Vec<u8>>(0))?;
         rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
             .collect()
-    }
-
-    /// Records that `feed` reads swaps created from `since` on, unless it already started.
-    pub fn start(&mut self, feed: &str, since: i64) -> Result<(), Error> {
-        self.db.execute(
-            "INSERT OR IGNORE INTO starts VALUES (?1,?2)",
-            params![feed, since],
-        )?;
-        Ok(())
     }
 
     /// The creation time from which `feed` first read swaps, if it ever started.
