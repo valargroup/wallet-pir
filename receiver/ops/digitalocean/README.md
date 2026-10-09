@@ -89,7 +89,8 @@ The tool installs the binary as
 `/opt/receiver-pir/releases/<sha256>/receiver-directory`, with the bundle's
 `receiver-probe` and `probe-fixture.json` beside it, each checked against the
 bundle's `SHA256SUMS`, runs its `--help` there, and writes `/etc/systemd/system/receiver-pir.service` from the template with
-`@RELEASE@` set to that directory. After the restart it requires the running
+`@RELEASE@` set to that directory and `@NEAR_KEY@` to the inventory's key id (see
+[the NEAR key](#installing-or-rotating-the-near-key)). After the restart it requires the running
 executable's digest and a health answer from
 `http://10.70.0.11:18380/v1/receiver/health` whose `serving` is set, within 300
 seconds: health answers at once, but `serving` stays null until the first
@@ -116,30 +117,79 @@ are those of any deploy, and a commit refreshes the baseline.
 
 Before the first tool deploy, once:
 
-1. Add the Droplet to the coordinator's real inventory as in
+1. Install the key the Droplet runs with as a versioned key file, `<id>` such as
+   the date, from Infisical as [below](#installing-or-rotating-the-near-key), or
+   from the Droplet's own `near.env` through the coordinator, which neither prints
+   nor stores it:
+   `ssh <droplet> sed -n 's/^NEAR_INTENTS_EXPLORER=//p' /etc/receiver-pir/near.env | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.sh install <droplet> <id>`.
+2. Add the Droplet to the coordinator's real inventory as in
    [`deploy-inventory.example.json`](../../../enhance/ops/deploy/deploy-inventory.example.json):
-   a host with its SSH address, `services.receiver.roles.server` on it with
+   a host with its SSH address, `services.receiver.template_vars.NEAR_KEY` set to
+   `<id>`, `services.receiver.roles.server` on the host with
    `vars.listen` set to the `--bind` address, `10.70.0.11:18380`, and
    `services.receiver.exact_check` on the same host, as there. Add its host key
    to the inventory's pinned `known_hosts` and update `known_hosts_sha256`.
-2. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
+3. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
    for root on the Droplet.
-3. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
+4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
 
 The live Droplet still runs the unit installed by hand, which starts
-`/opt/receiver-pir/current/receiver-directory` and has no drop-ins. The first
-deploy adopts it: the tool replaces the unit at `/etc/systemd/system`, the only
-fragment path a template role accepts, and keeps the old text in the transaction
-for rollback. Only the binary path should differ, so its `plan` should show a
-`write` of the unit and no `drift` lines. A drift line means the live unit differs
-from the template; reconcile the template in a reviewed commit rather than accept
-it unread. A drop-in that does not set `ExecStart` would stay and still apply; one
-that does is refused, except an `ExecStart`-only managed drop-in from an earlier
-`exec-drop-in` deploy, which `--retire-historical` moves into the transaction
-directory. That first transaction's rollback returns to `current`, so leave
-`current` alone. Deploying the binary that already runs is a no-op that leaves the
-hand-installed unit in place until the template changes.
+`/opt/receiver-pir/current/receiver-directory`, reads the key from the optional
+`/etc/receiver-pir/near.env` and has no drop-ins. The first deploy adopts it: the
+tool replaces the unit at `/etc/systemd/system`, the only fragment path a template
+role accepts, and keeps the old text in the transaction for rollback. Besides the
+binary path only the key file should differ, so `plan` and `preflight` should show
+a `write` of the unit and one `drift` line, `Service.EnvironmentFile`, from
+`-/etc/receiver-pir/near.env` to the versioned file; review it and deploy with
+`--allow-unit-drift`, even for the binary that already runs. Any other drift line
+means the live unit differs from the template; reconcile the template in a reviewed
+commit rather than accept it unread. The role owns its whole unit (`owns_unit` in
+`deploy.toml`), so a drop-in beside it is refused, except an `ExecStart`-only
+managed drop-in from an earlier `exec-drop-in` deploy, which `--retire-historical`
+moves into the transaction directory. That first transaction's rollback returns to
+the hand-installed unit, so leave `current` and `near.env` alone.
+
+### Installing or rotating the NEAR key
+
+The unit reads the NEAR Intents explorer partner key, as `NEAR_INTENTS_EXPLORER`,
+from `/etc/receiver-pir/near-<id>.env`, where `<id>` is the inventory's
+`services.receiver.template_vars.NEAR_KEY`, and does not start without that file.
+A key change installs a new file and deploys a unit that names it, on the
+coordinator:
+
+1. Install the key under a new id, such as the date, with
+   [`near-key.sh`](near-key.sh), under the lock and with only the key on stdin,
+   here from Infisical:
+
+   ```sh
+   infisical run --projectId=<project> --env=prod --path=/valargroup --silent -- sh -c \
+     'printf %s "$NEAR_INTENTS_EXPLORER" | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.sh install <droplet> 2026-10-09'
+   ```
+
+   It writes `near-2026-10-09.env`, owned by root with mode 0600, and changes
+   nothing else; the service reads it only once a deploy names it. An id already
+   installed with the same key is a no-op, and one with another key is refused.
+   Key files are never edited or deleted: they are a few bytes each, and rolling
+   back through several transactions needs the older ones. The legacy `near.env`
+   stays too.
+2. Set `services.receiver.template_vars.NEAR_KEY` to the new id in the
+   coordinator's inventory.
+3. Deploy the running release again from its bundle (the receiver needs
+   `--archive` for its companions) with the reviewed drift. `plan` should show one
+   `drift` line, `Service.EnvironmentFile`, from the old key file to the new one:
+
+   ```sh
+   ops/scripts/wallet-pir-deploy.py plan receiver --archive receiver-pir.tar.gz --sha <rev>
+   ops/scripts/wallet-pir-deploy.py deploy receiver --archive receiver-pir.tar.gz --sha <rev> --allow-unit-drift
+   ```
+
+The exact check's `--await-feed-reads` passes only once the restarted process has
+read both feeds, so with the new key. On a failure the tool rolls back to the
+previous unit, which names the previous key file. Rollback restores the unit, not
+the inventory, so then set `NEAR_KEY` back to the previous id. A rolled-back
+receiver passed readiness again, which does not show that the explorer still
+accepts the previous key: check on the Droplet that health's `near.reads` fill in.
 
 ### Deploy probe
 
@@ -169,26 +219,28 @@ deploy inventory, so no deploy can reach it.
 3. Check the nodes' private RPC URLs and the `--bind` address (the Droplet's private
    IPv4) in `receiver-pir.service.in`, and the same address in `Caddyfile`. Install
    the `Caddyfile` in `/etc/caddy`, and the unit rendered as the tool renders it:
-   `sed 's|@RELEASE@|/opt/receiver-pir/releases/<sha256>|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service`.
+   `sed -e 's|@RELEASE@|/opt/receiver-pir/releases/<sha256>|' -e 's|@NEAR_KEY@|<id>|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service`.
    `--near-since` sets where a new provider database's first read starts; keep it
    at the feed's original start.
-4. For the recent and seen filters, put the NEAR Intents explorer partner key in
-   `/etc/receiver-pir/near.env` as `NEAR_INTENTS_EXPLORER=<key>`, owned by root with
-   mode 0600. Without it the service publishes no provider sets.
+4. Install the NEAR Intents explorer partner key, which the recent and seen filters
+   need, as key file `<id>` with `near-key.sh`, as in
+   [Installing or rotating the NEAR key](#installing-or-rotating-the-near-key).
+   Without it the service does not start.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
 
 After provisioning, every change to the Droplet holds the production lock. Unit
-changes are deploys, as above. The tool cannot change the `Caddyfile` or `near.env`:
-it writes only unit files and has no command that runs other work under its lock.
-Make those changes under the same lock, held for the whole change with `flock -n`
-on the coordinator, as `ops/scripts/wallet-pir-terraform.sh` holds it. `flock -n`
-fails at once while a deploy, rollback or Terraform run holds the lock; then wait
-and run it again, never without the lock. Neither change touches the unit or the
-binary, so the baseline stays valid. Copy the new file to the Droplet first, which
-changes nothing, then run the change as root on the coordinator, where `<droplet>`
-is SSH to root on the Droplet with an identity it accepts:
+changes, a NEAR key change included, are deploys, as above. The tool cannot change
+the `Caddyfile`: it writes only unit files and has no command that runs other work
+under its lock. Change it under the same lock, held with `flock -n` on the
+coordinator, as `ops/scripts/wallet-pir-terraform.sh` and `near-key.sh` above hold
+it. `flock -n` fails at once while a deploy, rollback or Terraform run holds the
+lock; then wait and run it again, never without the lock. The change touches
+neither the unit nor the binary, so the baseline stays valid. Copy the new file to
+the Droplet first, which changes nothing, then run the change as root on the
+coordinator, where `<droplet>` is SSH to root on the Droplet with an identity it
+accepts:
 
 ```sh
 # Caddyfile, reviewed in this directory first.
@@ -198,16 +250,13 @@ caddy validate --adapter caddyfile --config /root/Caddyfile.new
 install -m 0644 /root/Caddyfile.new /etc/caddy/Caddyfile
 systemctl reload caddy
 EOF
-
-# near.env, which the service reads only at start; the restart interrupts serving.
-flock -n /run/lock/wallet-pir-production.lock ssh <droplet> sh -s <<'EOF'
-set -eu
-install -m 0600 -o root -g root /root/near.env.new /etc/receiver-pir/near.env
-rm /root/near.env.new
-systemctl restart receiver-pir
-timeout 300 sh -c 'until curl -fsS http://10.70.0.11:18380/v1/receiver/health | grep -q "\"serving\":\""; do sleep 5; done'
-EOF
 ```
+
+This is not atomic: if SSH drops, `flock` releases the lock while the remote steps
+may still run, and a reload that fails after `install` leaves the file on disk
+differing from the configuration Caddy runs. After any failure, check under the
+lock that `/etc/caddy/Caddyfile` is the reviewed file, then run the procedure
+again; the journal (`journalctl -u caddy`) shows whether a reload applied.
 
 The service publishes from memory and writes no publication files; the index keeps
 only `directory.sqlite` and `provider.sqlite`. A `publications/` directory left by
