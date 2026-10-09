@@ -12,7 +12,9 @@
 #                 replaced by /opt/<svc>/releases/<sha256>/<binary>. The unit and
 #                 its other drop-ins are untouched.
 #   template      Render the whole unit from its .service.in (@RELEASE@ is the
-#                 release directory) into /etc/systemd/system/<unit>.
+#                 release directory, and each name in the service's
+#                 `template_vars` comes from the inventory) into
+#                 /etc/systemd/system/<unit>.
 #
 # Drop-ins that set ExecStart are refused unless they match
 # `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
@@ -118,6 +120,8 @@ companions = [{ name = "receiver-probe", mode = 0o755 }, { name = "probe-fixture
 self_check = ["--help"]
 min_free_bytes = 1073741824
 order = ["server"]
+# The id of the installed NEAR key file, /etc/receiver-pir/near-<id>.env.
+template_vars = ["NEAR_KEY"]
 
 [services.receiver.roles.server]
 unit = "receiver-pir.service"

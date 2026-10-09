@@ -3,8 +3,9 @@
 Caddy syntax validation accepts a catch-all proxy, which would put the
 receiver's operator routes (`/v1/receiver/health`, `/metrics`) on the public
 edge. These checks pin the edge to the six wallet routes, the service to a
-private listener with its hardening, and cloud-init to the matching account,
-directories and firewall rule. Each check takes the file's text, so the
+private listener with its hardening and its NEAR key to the required file the
+inventory names, and cloud-init to the matching account, directories and
+firewall rule. Each check takes the file's text, so the
 negative cases run it against mutated copies. The unit is the template
 `wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
 The example inventory's `exact_check` must probe this edge, listener, fixture and
@@ -40,6 +41,8 @@ PROBE_FIXTURE = '{release_dir}/probe-fixture.json'
 COMPANIONS = [{'name': 'receiver-probe', 'mode': 0o755}, {'name': 'probe-fixture.json', 'mode': 0o644}]
 USER = 'receiver-pir'
 STATE = '/srv/receiver-pir'
+# The only key source: required, and named by the inventory's NEAR_KEY id.
+NEAR_KEY_FILE = '/etc/receiver-pir/near-@NEAR_KEY@.env'
 HARDENING = {'NoNewPrivileges': 'true', 'ProtectSystem': 'strict', 'ProtectHome': 'true',
              'PrivateTmp': 'true', 'ReadWritePaths': STATE, 'Restart': 'on-failure'}
 
@@ -106,6 +109,8 @@ def check_unit(text):
     for key, value in HARDENING.items():
         assert single.get(key) == value, (key, service.get(key))
     assert int(single.get('RestartSec', '0')) > 0, single.get('RestartSec')
+    assert service.get('EnvironmentFile') == [NEAR_KEY_FILE], service.get('EnvironmentFile')
+    assert 'NEAR_INTENTS_EXPLORER' not in ' '.join(service.get('Environment', [])), service.get('Environment')
     argv = shlex.split(single['ExecStart'])
     assert argv[0] == '@RELEASE@/receiver-directory', argv[0]
     assert '--serve' in argv, argv
@@ -243,6 +248,10 @@ class ReceiverOpsContract(unittest.TestCase):
         self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
         self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 
+    def test_the_inventory_names_the_key_file_the_unit_requires(self):
+        self.assertEqual(self.descriptor.get('template_vars'), ['NEAR_KEY'])
+        self.assertIsInstance(self.service.get('template_vars', {}).get('NEAR_KEY'), str)
+
     def test_the_deploy_runs_the_probe_on_the_receiver_before_commit(self):
         check_exact_check(self.service, self.unit, self.caddy, self.fixture, self.descriptor)
         self.assertNotIn('--skip-exact-check', (DIR / 'README.md').read_text())
@@ -309,6 +318,10 @@ class ReceiverOpsContract(unittest.TestCase):
             self.unit.replace('Restart=on-failure', 'Restart=no'),
             self.unit.replace('User=receiver-pir', 'User=root'),
             self.unit.replace('@RELEASE@/receiver-directory', '/opt/receiver-pir/current/receiver-directory'),
+            self.unit.replace('=' + NEAR_KEY_FILE, '=-' + NEAR_KEY_FILE),
+            self.unit.replace(NEAR_KEY_FILE, '/etc/receiver-pir/near.env'),
+            self.unit.replace(NEAR_KEY_FILE, NEAR_KEY_FILE + '\nEnvironmentFile=-/etc/receiver-pir/near.env'),
+            self.unit.replace('Environment=RUST_LOG=info', 'Environment=RUST_LOG=info NEAR_INTENTS_EXPLORER=x'),
         ]:
             self.assertNotEqual(mutated, self.unit)
             with self.assertRaises(AssertionError):
