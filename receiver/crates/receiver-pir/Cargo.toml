@@ -1,0 +1,28 @@
+[package]
+name = "receiver-pir"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Private lookups for immutable Ironwood receiver publications"
+
+[features]
+# The evaluator, which scans the rows with ipir-sp as Transparent's workers do.
+server = ["dep:ipir-sp"]
+
+[dependencies]
+hex = "0.4"
+receiver-directory = { path = "../receiver-directory" }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", optional = true }
+pir-native = { path = "../../../shared/pir-native" }
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+
+[dev-dependencies]
+rand_chacha = "0.3"
+
+[[test]]
+name = "golden"
+required-features = ["server"]

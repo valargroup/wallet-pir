@@ -12,7 +12,8 @@
     "pir-monitor"
   ],
   "receiver": [
-    "receiver-directory"
+    "receiver-directory",
+    "receiver-pir"
   ],
   "transparent": [
     "transparent-native",

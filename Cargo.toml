@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "receiver/crates/receiver-directory",
+    "receiver/crates/receiver-pir",
     "shared/pir-observability",
     "shared/pir-native",
     "shared/pir-control",
