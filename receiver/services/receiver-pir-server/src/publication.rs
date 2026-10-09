@@ -1,6 +1,10 @@
 //! Immutable prepared publications and atomic, reorg-fenced serving state.
 use axum::{body::Bytes, http::StatusCode};
-use receiver_directory::{snapshot::Manifest, Hash};
+use receiver_directory::{
+    snapshot::{Manifest, ROW_BYTES, SLOTS},
+    witness::WitnessSnapshot,
+    Hash, Record, RECORD_BYTES,
+};
 use receiver_pir::server::Server;
 use std::{
     collections::VecDeque,
@@ -17,12 +21,28 @@ pub struct Publication {
 
 impl Publication {
     /// Prepare a complete immutable revision. The caller must separately accept its chain anchor.
+    /// A witness file must bind to the publication and hold a path to its root for every
+    /// record in the rows, which must hold exactly the manifest's records.
     pub fn new(server: Server, witnesses: Option<Vec<u8>>) -> Result<Self, receiver_pir::Error> {
         if let Some(proof) = &witnesses {
-            receiver_directory::witness::WitnessSnapshot::decode(
-                proof,
-                &server.manifest().directory,
-            )?;
+            let manifest = &server.manifest().directory;
+            let proof = WitnessSnapshot::decode(proof, manifest)?;
+            let rows = server.rows();
+            let mut leaves = Vec::new();
+            for row in rows.as_chunks::<ROW_BYTES>().0 {
+                // Bytes after the last slot are row padding, not a record.
+                for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
+                    if let Some(record) = Record::decode(slot)? {
+                        let position = u32::try_from(record.payment.position)
+                            .map_err(|_| receiver_directory::Error::Coverage)?;
+                        leaves.push((position, record.payment.cmx));
+                    }
+                }
+            }
+            if leaves.len() as u64 != manifest.records {
+                return Err(receiver_directory::Error::Coverage.into());
+            }
+            proof.check_paths(leaves)?;
         }
         Ok(Self {
             id: server.manifest().id()?,
@@ -293,6 +313,68 @@ mod tests {
         assert!(matches!(
             publications.select(Some(id)),
             Err(StatusCode::CONFLICT)
+        ));
+    }
+
+    /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the
+    /// witness file built from `tree` for those positions.
+    fn witnessed(tree: &[Hash]) -> (receiver_directory::snapshot::Snapshot, Vec<u8>) {
+        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
+        manifest.start_position = 0;
+        manifest.end_position = 8;
+        let records: Vec<_> = [0u8, 5]
+            .into_iter()
+            .enumerate()
+            .map(|(page, position)| {
+                let mut record = crate::common::record(page as u32, 2);
+                record.payment.position = position.into();
+                record.payment.cmx = [position + 1; 32];
+                record
+            })
+            .collect();
+        let snapshot =
+            receiver_directory::snapshot::Snapshot::build(manifest, &records, &[]).unwrap();
+        let positions = [0, 5].into_iter().collect();
+        let proof = WitnessSnapshot::build(&snapshot.manifest, tree, &positions)
+            .unwrap()
+            .encode();
+        (snapshot, proof)
+    }
+
+    /// A file that binds to the publication but lacks a sibling a record needs, or
+    /// whose tree holds another commitment at a record's position, is refused.
+    #[test]
+    fn witnesses_must_prove_every_served_record() {
+        use receiver_directory::Error::{Coverage, Malformed};
+        use receiver_pir::Error::Directory;
+        let tree: Vec<Hash> = (1..=8).map(|i| [i; 32]).collect();
+        let publish =
+            |snapshot, proof| Publication::new(Server::new(snapshot).unwrap(), Some(proof));
+        let (snapshot, proof) = witnessed(&tree);
+        publish(snapshot.clone(), proof.clone()).unwrap();
+        // Drop position 5's level-0 sibling, (0, 4), which position 0 does not use, and
+        // correct the node count, without going through the builder.
+        let mut incomplete = proof;
+        let node = incomplete[152..]
+            .chunks_exact(37)
+            .position(|n| n[0] == 0 && n[1..5] == 4u32.to_le_bytes())
+            .unwrap();
+        incomplete.drain(152 + node * 37..152 + (node + 1) * 37);
+        let count = u32::from_le_bytes(incomplete[148..152].try_into().unwrap()) - 1;
+        incomplete[148..152].copy_from_slice(&count.to_le_bytes());
+        let decoded = WitnessSnapshot::decode(&incomplete, &snapshot.manifest).unwrap();
+        decoded.path(0, tree[0]).unwrap();
+        assert!(decoded.path(5, tree[5]).is_err());
+        assert!(matches!(
+            publish(snapshot, incomplete),
+            Err(Directory(Coverage))
+        ));
+        let mut other = tree;
+        other[5] = [9; 32];
+        let (snapshot, proof) = witnessed(&other);
+        assert!(matches!(
+            publish(snapshot, proof),
+            Err(Directory(Malformed))
         ));
     }
 }

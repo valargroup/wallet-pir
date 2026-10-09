@@ -635,7 +635,11 @@ async fn common_witness_file_uses_the_same_publication() {
     let mut manifest = snapshot(0).manifest;
     manifest.start_position = 0;
     manifest.end_position = 1;
-    let snapshot = Snapshot::build(manifest, &[], &[]).unwrap();
+    // One served record at position 0, so the file must prove its commitment.
+    let mut paid = record(0, 1);
+    paid.payment.position = 0;
+    paid.payment.cmx = [1; 32];
+    let snapshot = Snapshot::build(manifest, &[paid], &[]).unwrap();
     let proof = WitnessSnapshot::build(&snapshot.manifest, &[[1; 32]], &[0].into_iter().collect())
         .unwrap()
         .encode();

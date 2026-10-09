@@ -16,7 +16,8 @@
   lookup reads a history longer than 16 pages from the row file, so many payments
   to one receiver cannot fail a lookup. An HTTP service serves each publication's
   sessions, rows, witnesses and filters, with process identity and the indexer's
-  latest report at `/v1/receiver/health` and the shared HTTP metrics. A replaced
+  latest report at `/v1/receiver/health` and the shared HTTP metrics, and refuses
+  a witness file without a path for every served record. A replaced
   publication keeps serving its sessions for 60 seconds, and the next replacement
   waits for that to end; a revocation aborts session files still being sent.
   Queries are admitted with Enhance's shared primitives:
