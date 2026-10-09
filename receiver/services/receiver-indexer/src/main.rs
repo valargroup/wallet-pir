@@ -393,7 +393,8 @@ async fn refresh(
     // A publication's filters and report come from one capture of the provider store,
     // so a feed read committing meanwhile cannot make them describe different states.
     // The report describes the reconciled index the publication is built from.
-    let anchor_time = rpc.block_time(tip.hash).await?;
+    // A block dated ahead of the wall clock must not end a payout's grace early.
+    let anchor_time = rpc.block_time(tip.hash).await?.min(unix_now());
     let capture = receiver_indexer::near::capture(&provider_store, anchor_time)?;
     let inputs = receiver_indexer::near::digest(&capture.sets);
     let (report, matched) = capture.report(&store)?;
@@ -817,6 +818,27 @@ mod tests {
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
         assert!(paused.publications.ready_at().is_some());
+    }
+
+    /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_future_block_time_reports_no_payout_missing_early() {
+        let mut paused = Paused::new(|_| {}).await;
+        let (payout, now) = (super::common::receiver(), unix_now());
+        paused
+            .provider()
+            .record(
+                "near-payouts",
+                Some(now - 100),
+                &[],
+                &[(payout, [7; 32])],
+                now - 50,
+                now - 10,
+            )
+            .unwrap();
+        *paused.time.lock().unwrap() = now + 2 * 3600;
+        paused.refresh().await.unwrap();
+        assert_eq!(paused.get("health").await["indexer"]["payouts_missing"], 0);
     }
 
     /// A stored tip above the requested depth, as after a restart with a larger

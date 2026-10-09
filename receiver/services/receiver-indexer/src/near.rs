@@ -43,8 +43,8 @@ pub const PROVIDER: &str = "near-intents";
 /// How far back the recent set reaches from the feeds' last complete read.
 pub const RECENT_SECS: i64 = 24 * 60 * 60;
 /// How long before a publication's terminal block's time a read must first have seen
-/// a payout complete for the report to check its payment. The chain's clock, not the
-/// wall clock, measures it, so payouts stay pending, not missing, while the chain
+/// a payout complete for the report to check its payment. The chain's clock, capped at
+/// the wall clock, measures it, so payouts stay pending, not missing, while the chain
 /// pauses or behind `--depth`.
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 
