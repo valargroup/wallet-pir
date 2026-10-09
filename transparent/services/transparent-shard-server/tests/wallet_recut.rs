@@ -805,6 +805,102 @@ async fn an_honest_reorg_of_republished_sealed_shards_rolls_back_rather_than_ref
     compare(&report.ledger, &expected(&branch, &[1, 2, 3], TARGET));
 }
 
+/// Sealing is not delayed for finality, so a publisher can follow a shallow
+/// reorg through a shard it has just sealed before the wallet's chain does.
+/// Until the chain moves, the republished shard ends on a block the chain
+/// rejects: the sync stops as for an unknown block, with nothing rolled back
+/// or read, and is not refused as a sealed rewrite. Once the chain follows,
+/// the same map is an ordinary reorg.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_shallow_reorg_the_publisher_followed_first_waits_for_the_chain() {
+    let events = events();
+    let sets = publications(&events);
+    let before_base = serve(sets.before_dir.path()).await;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("wallet.sqlite");
+    let (report, _) = run(
+        &path,
+        &before_base,
+        PublishedFilters::load(sets.before_dir.path(), &sets.before),
+        &sets.before,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    complete(&report.unwrap());
+
+    // The fork is inside shard 4, the newest sealed shard; the tail, now
+    // longer and at a higher revision, covers the wallet's target.
+    const FORK: u64 = FIRST + 4 * SPAN + 150;
+    fn forked(height: u64) -> transparent_filter::BlockHash {
+        hash_forked(FORK)(height)
+    }
+    let mut branch = events.clone();
+    branch.push((script(1), receive(FORK + 10, 4_343, 321)));
+    let mut layout = before_layout();
+    layout[5] = Laid {
+        start: TAIL,
+        end: LONGER_TAIL,
+        geometry: &RECENT_4K,
+        sealed: false,
+        revision: 1,
+    };
+    let branch_dir = tempfile::tempdir().unwrap();
+    let republished = publish_laid(branch_dir.path(), &branch, &layout, vec![], forked);
+    assert_eq!(republished.shards[3], sets.before.shards[3]);
+    assert_ne!(republished.shards[4], sets.before.shards[4]);
+    let base = serve(branch_dir.path()).await;
+    let commits = SqliteStore::open(&path).unwrap().last_commit().unwrap();
+
+    // The wallet's chain has not seen the reorg.
+    let (report, queries) = run(
+        &path,
+        &base,
+        PublishedFilters::load(branch_dir.path(), &republished),
+        &republished,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    let report = report.expect("not refused as a sealed rewrite");
+    assert_eq!(
+        report.completion,
+        Completion::Incomplete {
+            reason: IncompleteReason::ChainUnknown { height: TAIL - 1 },
+            pending: 0,
+        }
+    );
+    assert!(queries.is_empty());
+    assert_eq!(
+        SqliteStore::open(&path).unwrap().last_commit().unwrap(),
+        commits,
+        "nothing rolled back or read"
+    );
+
+    // The wallet's chain follows the reorg.
+    let (report, _) = run_on(
+        forked,
+        &path,
+        &base,
+        PublishedFilters::load(branch_dir.path(), &republished),
+        &republished,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    let report = report.unwrap();
+    complete(&report);
+    assert_eq!(
+        report.rolled_back_to,
+        Some(FIRST + 4 * SPAN - 1),
+        "rolled back to the last stored block both branches share"
+    );
+    compare(&report.ledger, &expected(&branch, &[1, 2, 3], TARGET));
+}
+
 /// A re-cut published while a sync reads the map before it: the first
 /// revision the service no longer holds sends the wallet to the map, which
 /// declares a re-cut the sync did not start from. That sync ends diverged;

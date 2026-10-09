@@ -147,14 +147,22 @@ pub enum SyncError {
         "the refreshed shard map is not a continuation of the one this sync started from: {0}"
     )]
     MapDiverged(String),
-    /// The map rewrites sealed history the store holds, over a block the
-    /// wallet's chain still accepts, and declares no re-cut of it.
+    /// The map contradicts sealed history the store holds on the wallet's own
+    /// chain, and declares no re-cut of it.
     ///
     /// Sealed content is immutable. A sealed range described differently is a
-    /// reorg when the chain has moved, and is rolled back as one; when the
-    /// chain still holds the block the range rests on, nothing explains the
-    /// change but the publisher. Refused before anything is rolled back or
-    /// read. Distinct from [`MapDiverged`](Self::MapDiverged), which a re-cut
+    /// reorg when the chain has moved, and is rolled back as one. This is the
+    /// other case: the chain accepts the block the stored range rests on and
+    /// also the block the map's sealed shard now covering its start ends on,
+    /// at or below the target. Both are on the chain the wallet follows, so
+    /// nothing explains the change but the publisher, and retrying does not
+    /// resolve it while the publisher serves this history. When the chain
+    /// does not yet accept the replacement's end block, as when the publisher
+    /// followed a shallow reorg through a shard it had just sealed before the
+    /// wallet's chain did, the sync stops with
+    /// [`IncompleteReason::ChainUnknown`] instead and becomes an ordinary reorg
+    /// once the chain moves. Refused before anything is rolled back or read.
+    /// Distinct from [`MapDiverged`](Self::MapDiverged), which a re-cut
     /// published mid-sync also produces and which the next sync resolves.
     ///
     /// A replica still serving a map from before a re-cut the store has
@@ -162,8 +170,8 @@ pub enum SyncError {
     /// re-cut epoch: an embedding that records the epoch it last synced at
     /// can tell the two apart before calling the sync.
     #[error(
-        "the map rewrites the sealed shard the store holds from height {start_height} (revision \
-         {revision_digest}) over blocks the wallet's chain still accepts, and declares no re-cut \
+        "the map replaces the sealed shard the store holds from height {start_height} (revision \
+         {revision_digest}) with another the wallet's chain also accepts, and declares no re-cut \
          of it"
     )]
     SealedRewrite {
@@ -645,31 +653,32 @@ pub fn sync_into<S: WalletStore>(
         }
     }
     // Sealed content is immutable, so a sealed range the map now describes
-    // differently, without declaring a re-cut of it, is judged by the block
-    // it rests on. One the wallet's chain rejects is a reorg, which the scan
-    // below rolls back as any other. One it still accepts is a publisher
-    // rewriting history the chain did not change, refused before anything is
-    // rolled back or read. One it cannot place stops the sync as an unknown
-    // block does.
-    if let Some(range) = rewritten
-        .iter()
-        .filter(|range| {
-            chain.is_accepted(range.end_height, &range.terminal_block_hash) == Acceptance::Accepted
-        })
-        .min_by_key(|range| range.start_height)
-    {
+    // differently, without declaring a re-cut of it, is judged by what the
+    // wallet's chain says; see `judge_rewrite`. A reorg is left to the scan
+    // below. A contradiction on the wallet's own chain is refused before
+    // anything is rolled back or read. Anything the chain cannot settle yet
+    // stops the sync as an unknown block does, without the scan.
+    let mut contradiction: Option<&CoverageRange> = None;
+    let mut unplaced: Option<u64> = None;
+    for range in &rewritten {
+        match judge_rewrite(map, range, target_anchor, chain) {
+            Rewrite::Reorg => {}
+            Rewrite::Contradiction => {
+                if contradiction.is_none_or(|held| held.start_height > range.start_height) {
+                    contradiction = Some(range);
+                }
+            }
+            Rewrite::Unsettled(height) => {
+                unplaced = Some(unplaced.map_or(height, |held| held.max(height)));
+            }
+        }
+    }
+    if let Some(range) = contradiction {
         return Err(SyncError::SealedRewrite {
             start_height: range.start_height,
             revision_digest: range.revision_digest.clone(),
         });
     }
-    let unplaced = rewritten
-        .iter()
-        .filter(|range| {
-            chain.is_accepted(range.end_height, &range.terminal_block_hash) == Acceptance::Unknown
-        })
-        .map(|range| range.end_height)
-        .max();
     let mut ancestor: Option<u64> = None;
     let mut unknown: Option<u64> = unplaced;
     if unplaced.is_none() {
@@ -1170,10 +1179,10 @@ pub fn sync_into<S: WalletStore>(
 ///
 /// The block a range ends on is its source anchor, the published endpoint,
 /// when the store kept one, which every store since schema 2 does. A range
-/// without one matches a declaration only if its covered endpoint is the
-/// declared one. A range cut short of its shard's end by a target or a
-/// rollback is left to the chain checks, as is anything the map's sealed
-/// shards do not cover.
+/// without one matches a declaration when it ends inside the declared range,
+/// or at its end on the declared block. A range with an endpoint but cut
+/// short of its shard's end by a target or a rollback is left to the chain
+/// checks, as is anything the map's sealed shards do not cover.
 fn vouches_for(
     map: &ShardMap,
     declared: &BTreeMap<&str, &transparent_filter::SupersededShard>,
@@ -1200,19 +1209,79 @@ fn vouches_for(
     {
         return true;
     }
-    let (end, terminal) = match &range.source_anchor {
-        Some(source) => (source.height, source.hash.as_str()),
-        None => (range.end_height, range.terminal_block_hash.as_str()),
-    };
     declared
         .get(range.revision_digest.as_str())
         .is_some_and(|declared| {
+            let ends_as_declared = match &range.source_anchor {
+                Some(source) => {
+                    declared.end_height == source.height
+                        && declared.terminal_block_hash == source.hash
+                }
+                // Without a recorded endpoint a range may have been cut short
+                // of its shard by a target or a rollback, as one with an
+                // endpoint is above: inside the declared range it matches,
+                // and at the declared end it must rest on the declared block.
+                None => {
+                    range.end_height < declared.end_height
+                        || (range.end_height == declared.end_height
+                            && range.terminal_block_hash == declared.terminal_block_hash)
+                }
+            };
             declared.sealed
                 && declared.shard_id == range.shard_id
                 && declared.start_height == range.start_height
-                && declared.end_height == end
-                && declared.terminal_block_hash == terminal
+                && ends_as_declared
         })
+}
+
+/// What a settled range the map no longer vouches for means.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Rewrite {
+    /// The wallet's chain rejects the block the range rests on: a reorg,
+    /// rolled back like any other.
+    Reorg,
+    /// The wallet's chain accepts both the block the range rests on and the
+    /// one the shard now covering its start ends on: the publisher
+    /// contradicts itself on the chain the wallet follows. Retrying does not
+    /// change that while it serves this history.
+    Contradiction,
+    /// The chain cannot settle it yet; the height is the block it would need
+    /// to confirm. A publisher that followed a shallow reorg across a shard it
+    /// had just sealed, before the wallet's chain did, looks like this, and
+    /// becomes an ordinary reorg once the chain moves.
+    Unsettled(u64),
+}
+
+/// Judges a settled range `vouches_for` refused, by what the wallet's chain
+/// says about the block it rests on and about the block the map's shard now
+/// covering its start ends on.
+///
+/// Sealing is not delayed for finality, so a publisher can follow a reorg
+/// through a just-sealed shard before the wallet's chain does. Only when the
+/// chain accepts the replacement's end too, at or below the target, is the
+/// change the publisher's alone.
+fn judge_rewrite(
+    map: &ShardMap,
+    range: &CoverageRange,
+    target: &Anchor,
+    chain: &impl ChainView,
+) -> Rewrite {
+    match chain.is_accepted(range.end_height, &range.terminal_block_hash) {
+        Acceptance::Rejected => Rewrite::Reorg,
+        Acceptance::Unknown => Rewrite::Unsettled(range.end_height),
+        Acceptance::Accepted => match map.shard_for_height(range.start_height) {
+            Some(entry)
+                if entry.sealed
+                    && entry.end_height <= target.height
+                    && chain.is_accepted(entry.end_height, &entry.terminal_block_hash)
+                        == Acceptance::Accepted =>
+            {
+                Rewrite::Contradiction
+            }
+            Some(entry) => Rewrite::Unsettled(entry.end_height),
+            None => Rewrite::Unsettled(range.end_height),
+        },
+    }
 }
 
 /// What becomes of unfinished page work under a revision the map no longer
@@ -2851,11 +2920,107 @@ mod tests {
         legacy.source_anchor = None;
         assert!(vouches(&declared, &legacy));
         legacy.terminal_block_hash = "ee".repeat(32);
-        assert!(!vouches(&declared, &legacy));
+        assert!(
+            !vouches(&declared, &legacy),
+            "at the declared end, another block"
+        );
+        // Cut short by a target, it rests on a block inside the range.
+        legacy.end_height -= 10;
+        assert!(vouches(&declared, &legacy));
+        legacy.end_height += 11;
+        assert!(!vouches(&declared, &legacy), "past the declared end");
         let mut legacy_published = held(&before.shards[0]);
         legacy_published.source_anchor = None;
         legacy_published.terminal_block_hash = "ee".repeat(32);
         assert!(vouches(&declared, &legacy_published));
+    }
+
+    /// A sealed range the map no longer vouches for is a contradiction only
+    /// when the wallet's chain accepts both the block it rests on and the
+    /// block the replacement ends on, at or below the target. A publisher
+    /// that followed a shallow reorg through a just-sealed shard before the
+    /// wallet's chain did is unsettled, not refused, and becomes a reorg once
+    /// the chain moves.
+    #[test]
+    fn a_rewrite_is_refused_only_when_both_blocks_are_on_the_wallets_chain() {
+        let stored = entry(1, 200, 249, true);
+        let held = CoverageRange {
+            script: vec![1],
+            start_height: 200,
+            end_height: 249,
+            kind: CoverageKind::Settled,
+            shard_id: 1,
+            revision_digest: stored.manifest_digest.clone(),
+            terminal_block_hash: stored.terminal_block_hash.clone(),
+            source_anchor: Some(Anchor {
+                height: 249,
+                hash: stored.terminal_block_hash.clone(),
+            }),
+        };
+        let mut replacement = stored.clone();
+        replacement.manifest_digest = "aa".repeat(32);
+        replacement.terminal_block_hash = "bb".repeat(32);
+        let republished = map(vec![entry(0, 100, 199, true), replacement.clone()]);
+        let target = Anchor {
+            height: 260,
+            hash: "cc".repeat(32),
+        };
+        let chain = |at_249: &str| StaticChain {
+            hashes: [(249, at_249.to_string()), (260, target.hash.clone())].into(),
+        };
+        // The wallet's chain still holds the old block: the publisher is
+        // ahead of it through a reorg, or wrong; either way, not yet.
+        assert_eq!(
+            judge_rewrite(
+                &republished,
+                &held,
+                &target,
+                &chain(&stored.terminal_block_hash)
+            ),
+            Rewrite::Unsettled(249)
+        );
+        // Once the chain moves to the publisher's branch, it is a reorg.
+        assert_eq!(
+            judge_rewrite(&republished, &held, &target, &chain(&"bb".repeat(32))),
+            Rewrite::Reorg
+        );
+        assert_eq!(
+            judge_rewrite(&republished, &held, &target, &StaticChain::default()),
+            Rewrite::Unsettled(249)
+        );
+        // Both blocks on the wallet's chain, at different heights: an
+        // undeclared re-cut or a rewrite, and the publisher's alone.
+        let mut wider = replacement.clone();
+        wider.end_height = 259;
+        wider.terminal_block_hash = "dd".repeat(32);
+        let recut = map(vec![entry(0, 100, 199, true), wider.clone()]);
+        let both = StaticChain {
+            hashes: [
+                (249, stored.terminal_block_hash.clone()),
+                (259, "dd".repeat(32)),
+                (260, target.hash.clone()),
+            ]
+            .into(),
+        };
+        assert_eq!(
+            judge_rewrite(&recut, &held, &target, &both),
+            Rewrite::Contradiction
+        );
+        // Not when the replacement ends past the target or is unsealed.
+        let early = Anchor {
+            height: 255,
+            hash: "ee".repeat(32),
+        };
+        assert_eq!(
+            judge_rewrite(&recut, &held, &early, &both),
+            Rewrite::Unsettled(259)
+        );
+        let mut unsealed = recut.clone();
+        unsealed.shards[1].sealed = false;
+        assert_eq!(
+            judge_rewrite(&unsealed, &held, &target, &both),
+            Rewrite::Unsettled(259)
+        );
     }
 
     /// Unfinished pages under a revision the map no longer publishes keep
