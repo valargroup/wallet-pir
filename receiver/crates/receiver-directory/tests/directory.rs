@@ -851,6 +851,64 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     assert!(store.witnesses(&wrong, &mut cache).is_err());
 }
 
+/// Indexed blocks before the first commitment publish a header-only proof file
+/// against the empty tree's root, and the same cache follows a commitment and a
+/// rewind back.
+#[cfg(feature = "store")]
+#[test]
+fn store_proofs_cover_empty_indexed_blocks() {
+    allow_small_tables();
+    use incrementalmerkletree::Hashable;
+    use orchard::tree::MerkleHashOrchard;
+    use receiver_directory::{
+        store::{Config, IndexedBlock, Store},
+        witness::WitnessCache,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let mut block = IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 0,
+        end_position: 0,
+        coinbase_actions: 0,
+        payments: Vec::new(),
+        commitments: Vec::new(),
+    };
+    store.append(&block).unwrap();
+    (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
+    store.append(&block).unwrap();
+    let empty = store.snapshot(8, &[]).unwrap().manifest;
+    assert_eq!((empty.records, empty.end_position), (0, 0));
+    let mut cache = WitnessCache::default();
+    let proof = store.witnesses(&empty, &mut cache).unwrap().encode();
+    assert_eq!(proof.len(), 152);
+    assert_eq!(
+        &proof[116..148],
+        MerkleHashOrchard::empty_root(32.into()).to_bytes()
+    );
+    (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
+    (block.end_position, block.commitments) = (1, vec![[1; 32]]);
+    store.append(&block).unwrap();
+    let one = store.snapshot(8, &[]).unwrap().manifest;
+    assert_eq!(
+        store.witnesses(&one, &mut cache).unwrap().encode(),
+        store
+            .witnesses(&one, &mut WitnessCache::default())
+            .unwrap()
+            .encode()
+    );
+    store.rewind(101, [4; 32]).unwrap();
+    assert_eq!(store.witnesses(&empty, &mut cache).unwrap().encode(), proof);
+}
+
 /// A history with more payments than the table has slots fails with
 /// [`Error::Capacity`] before any record is loaded, and builds at a larger size.
 #[cfg(feature = "store")]
