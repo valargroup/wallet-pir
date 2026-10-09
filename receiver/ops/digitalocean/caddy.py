@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Replaces the receiver Droplet's Caddyfile, verifies it, and restores the predecessor on failure.
 
+The deploy tool writes only unit files, so this is a locked helper by design, as
+Transparent's router Caddy changes are.
+
 Run it on the coordinator under the production lock, with the deploy inventory
 named by WALLET_PIR_DEPLOY_INVENTORY, whose pinned SSH reaches the Droplet:
 
