@@ -17,9 +17,11 @@ A 285-byte record holds version (1 byte), receiver (43), page (4), total pages
 (4), Action index (4), note position (8), Action input nullifier (32), note
 commitment (32), ephemeral key (32) and ciphertext prefix (52). Integers are
 little endian and hashes use protocol byte order. The Action input nullifier is
-decryption context, not the received note's spend nullifier. A receiver's
-payments are ordered by note position, one per page from zero, and every page
-repeats the total.
+decryption context, not the received note's spend nullifier. Encoding and
+decoding refuse a note commitment or Action input nullifier that is not a
+canonical field element, or an ephemeral key that is not a valid Ironwood
+ephemeral public key. A receiver's payments are ordered by note position, one per
+page from zero, and every page repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications

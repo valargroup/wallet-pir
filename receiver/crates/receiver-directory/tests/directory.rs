@@ -1103,6 +1103,43 @@ fn receivers_agree_on_blocks_and_transactions() {
     }
 }
 
+/// A note commitment, Action nullifier or ephemeral key that is not a canonical
+/// encoding is refused by encoding, decoding, a build and a supplied publication.
+#[test]
+fn records_refuse_noncanonical_fields() {
+    allow_small_tables();
+    let a = action();
+    let mut real = record(0, 1);
+    (
+        real.payment.action_nullifier,
+        real.payment.cmx,
+        real.payment.ephemeral_key,
+    ) = (a.nullifier, a.cmx, a.ephemeral_key);
+    assert_eq!(Record::decode(&real.encode().unwrap()).unwrap(), Some(real));
+    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
+    let valid = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    // The Action nullifier, note commitment and ephemeral key, by byte offset.
+    for offset in [137, 169, 201] {
+        let mut r = record(0, 1);
+        let p = &mut r.payment;
+        *match offset {
+            137 => &mut p.action_nullifier,
+            169 => &mut p.cmx,
+            _ => &mut p.ephemeral_key,
+        } = [255; 32];
+        assert!(matches!(r.encode(), Err(Error::Malformed)));
+        assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
+        let mut bytes = record(0, 1).encode().unwrap();
+        bytes[offset..offset + 32].fill(255);
+        assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
+        let mut s = valid.clone();
+        let slot = slot_of(&s, &record(0, 1));
+        s.data[slot + offset..slot + offset + 32].fill(255);
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
+}
+
 /// A supplied publication is checked as a whole: digests, placement, count, pages,
 /// uniqueness, padding, coverage and the paid set, each edit rehashed so the digests
 /// alone cannot catch it.
