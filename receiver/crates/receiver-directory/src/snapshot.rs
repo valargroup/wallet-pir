@@ -401,13 +401,12 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 }
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
-/// total, each continuing the last as [`check_next`] requires, no two records share
-/// an output or note position, and all agree on their [`Locations`].
+/// total, each continuing the last as [`check_next`] requires, all agree on their
+/// [`Locations`], and, across receivers, note positions are distinct and follow chain
+/// order by height, transaction index and action index.
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
-    use std::collections::BTreeSet;
     let mut previous: Option<PageMeta> = None;
-    let mut outputs = BTreeSet::new();
-    let mut positions = BTreeSet::new();
+    let mut positions = BTreeMap::new();
     let mut locations = Locations::default();
     for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
@@ -424,14 +423,14 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
             }
         }
         previous = Some(record);
-        if !outputs.insert((record.txid, record.action_index))
-            || !positions.insert(record.position)
-            || !locations.add(&record)
-        {
+        let output = (record.height, record.tx_index, record.action_index);
+        if positions.insert(record.position, output).is_some() || !locations.add(&record) {
             return Err(Error::Malformed);
         }
     }
-    if previous.is_some_and(|r| r.page + 1 != r.total) {
+    if previous.is_some_and(|r| r.page + 1 != r.total)
+        || !positions.values().is_sorted_by(|a, b| a < b)
+    {
         return Err(Error::Malformed);
     }
     Ok(())
