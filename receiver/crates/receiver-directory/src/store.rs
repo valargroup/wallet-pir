@@ -351,29 +351,21 @@ impl ProviderStore {
             CREATE TABLE IF NOT EXISTS receivers (receiver BLOB NOT NULL CHECK(length(receiver)=43),
                 payout INTEGER NOT NULL CHECK(payout IN (0,1)), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS cursors (feed TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS starts (feed TEXT PRIMARY KEY, started_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS reads (feed TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
+                cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS completions (receiver BLOB PRIMARY KEY CHECK(length(receiver)=43),
                 seen_at INTEGER NOT NULL) WITHOUT ROWID;",
         )?;
         Ok(Self { db })
     }
 
-    /// Records one complete read of `feed` that began at `read_at`, in one transaction,
-    /// so a failed or interrupted read records nothing: receivers from swaps it created
-    /// up to `cursor`, its new position, where `true` marks a payout address and `false`
-    /// a refund address, each with its swap's creation time; payout receivers whose
-    /// swaps it saw complete, so their payments can be checked against the index; and
-    /// `initial_since`, where the read began reading if it began without a cursor. A
-    /// receiver keeps its latest time and a completion the earliest start of any read
-    /// that saw it, whatever order they commit in. Only an initial read sets the feed's
-    /// start, or lowers it to its own, so racing initial reads keep the earliest; a read
-    /// that followed the cursor passes `None` and never moves it, since it read back
-    /// only to the cursor and covers no earlier history. The cursor and read time move
-    /// as one pair: a read that advances the cursor also sets the read time, one that
-    /// reaches the same cursor can only advance the read time, and one behind the
-    /// cursor changes neither, so a stale read cannot make the feed look fresher.
+    /// Records one complete read of `feed` that began at `read_at`, atomically: the
+    /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
+    /// each with its swap's creation time; the payout receivers whose swaps it saw
+    /// complete; and, for the feed's first read, `initial_since`, where it began. A
+    /// receiver keeps its latest time and a completion its earliest. The cursor and read
+    /// time move as one pair and never backwards, so a stale read cannot make the feed
+    /// look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -391,44 +383,17 @@ impl ProviderStore {
                 params![receiver.as_bytes(), payout, seen_at],
             )?;
         }
-        let stored: Option<i64> = tx
-            .query_row(
-                "SELECT created_at FROM cursors WHERE feed=?1",
-                [feed],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let read_sql = match stored {
-            Some(stored) if cursor < stored => None,
-            Some(stored) if cursor == stored => Some(
-                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
-            ),
-            _ => Some(
-                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET read_at=excluded.read_at",
-            ),
-        };
-        if let Some(read_sql) = read_sql {
-            tx.execute(
-                "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET created_at=excluded.created_at",
-                params![feed, cursor],
-            )?;
-            tx.execute(read_sql, params![feed, read_at])?;
-        }
+        tx.execute(
+            "INSERT INTO feeds VALUES (?1,?2,?3,?4) ON CONFLICT(feed)
+             DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
+             WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
+            params![feed, initial_since, cursor, read_at],
+        )?;
         for receiver in completions {
             tx.execute(
                 "INSERT INTO completions VALUES (?1,?2) ON CONFLICT(receiver)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
                 params![receiver.as_bytes(), read_at],
-            )?;
-        }
-        if let Some(since) = initial_since {
-            tx.execute(
-                "INSERT INTO starts VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET started_at=MIN(started_at,excluded.started_at)",
-                params![feed, since],
             )?;
         }
         tx.commit()?;
@@ -459,34 +424,30 @@ impl ProviderStore {
 
     /// The creation time from which `feed` first read swaps, if it ever started.
     pub fn started(&self, feed: &str) -> Result<Option<i64>, Error> {
-        Ok(self
-            .db
-            .query_row("SELECT started_at FROM starts WHERE feed=?1", [feed], |r| {
-                r.get(0)
-            })
-            .optional()?)
+        self.feed(feed, "started_at")
     }
 
     /// When the last complete read of `feed` began, if one finished.
     pub fn read(&self, feed: &str) -> Result<Option<i64>, Error> {
-        Ok(self
-            .db
-            .query_row("SELECT read_at FROM reads WHERE feed=?1", [feed], |r| {
-                r.get(0)
-            })
-            .optional()?)
+        self.feed(feed, "read_at")
     }
 
     /// The creation time of the newest swap recorded from `feed`.
     pub fn cursor(&self, feed: &str) -> Result<Option<i64>, Error> {
+        self.feed(feed, "cursor")
+    }
+
+    /// `feed`'s `column`, or `None` when the feed or the value is absent.
+    fn feed(&self, feed: &str, column: &str) -> Result<Option<i64>, Error> {
         Ok(self
             .db
             .query_row(
-                "SELECT created_at FROM cursors WHERE feed=?1",
+                &format!("SELECT {column} FROM feeds WHERE feed=?1"),
                 [feed],
                 |r| r.get(0),
             )
-            .optional()?)
+            .optional()?
+            .flatten())
     }
 
     /// The receivers seen at or after `since`, payout or refund, and every payout

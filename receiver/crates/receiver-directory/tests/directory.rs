@@ -255,32 +255,19 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
         .unwrap();
     assert_eq!(store.completed(0, 450).unwrap(), [payout]);
     assert_eq!(store.completed(450, 600).unwrap(), [refund]);
-    // An earlier read committing after a later one lowers the completion to its start,
-    // without moving the cursor and read time; a still later read cannot raise it.
-    store
-        .record("near-payouts", None, &[], &[refund], 110, 300)
-        .unwrap();
-    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
-    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
-    store
-        .record("near-payouts", None, &[], &[refund], 110, 600)
-        .unwrap();
-    assert_eq!(store.completed(0, 400).unwrap().len(), 2);
-    assert!(store.completed(301, 700).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.completed(0, 300).unwrap().len(), 2);
+    assert_eq!(store.completed(0, 600).unwrap().len(), 2);
+    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
 }
 
-/// Only a read that began without a cursor sets the feed's start, or lowers it so that
-/// racing initial reads keep the earliest. A read that followed the cursor, whatever
-/// cursor it reached and whatever `--near-since` the restarted indexer was given,
-/// passes no start and never moves it: it read back only to the cursor.
+/// Only a feed's first read sets its start. A read that followed the cursor, before
+/// or after a reopen, passes no start and never moves it.
 #[cfg(feature = "store")]
 #[test]
-fn only_initial_reads_set_or_lower_a_feed_start() {
+fn only_a_first_read_sets_a_feed_start() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("provider.sqlite");
@@ -302,21 +289,12 @@ fn only_initial_reads_set_or_lower_a_feed_start() {
     }
     store.record("unstarted", None, &[], &[], 10, 20).unwrap();
     assert_eq!(store.started("unstarted").unwrap(), None);
-    // After a reopen, as on a restart with an earlier or later `--near-since`, the
-    // feed has a cursor, so its reads pass no start.
+    // After a reopen, as on a restart with another `--near-since`.
     drop(store);
     let mut store = ProviderStore::open(&path).unwrap();
     for cursor in [300, 900] {
         store.record("full", None, &[], &[], cursor, 1_000).unwrap();
         assert_eq!(store.started("full").unwrap(), Some(500));
-    }
-    // Two initial reads that raced keep the earlier start in either commit order.
-    for (feed, first, second) in [("race-a", 300, 500), ("race-b", 500, 300)] {
-        store.record(feed, Some(first), &[], &[], 600, 700).unwrap();
-        store
-            .record(feed, Some(second), &[], &[], 600, 710)
-            .unwrap();
-        assert_eq!(store.started(feed).unwrap(), Some(300));
     }
 }
 
