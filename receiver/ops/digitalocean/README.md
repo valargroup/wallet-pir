@@ -297,9 +297,10 @@ its receiver as decoded independently from NEAR's refund address (see
 probe refuses a recovery that does not reproduce it. It alerts when the served
 anchor leaves the chain, the lookup misses or misreports the pinned payment, the
 filter file is wrong or a completed NEAR payout is missing from the index
-(correctness), when the fixture fails its pin (oracle), and after three failed
-probes when the publication or the recent set goes stale or a request fails
-(availability).
+(correctness, `answer_mismatch`), when the built-in fixture is malformed, recovers
+another receiver, is off the node's chain or outside the publication
+(`oracle_invalid`), and after three failed probes when the publication or the
+recent set goes stale or a request fails (availability).
 
 `pir-monitor` is not a deploy-tool service, so install `receiver-probe` on the
 monitor host from the bundle, checked against its `SHA256SUMS` on the coordinator
