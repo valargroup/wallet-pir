@@ -169,7 +169,8 @@ impl Publications {
     /// revision ends no higher: within one epoch the chain only extends, so a lower end
     /// comes from a preparation that a newer publish overtook. A publication with the
     /// current session's ID replaces it in place, keeping the epoch and any predecessor's
-    /// grace.
+    /// grace. It expects one serial publisher (the indexer awaits each publish), so
+    /// equal-height preparations need no further ordering.
     /// The caller must verify the new canonical anchor and revoke before replacing forked coverage.
     pub fn publish(&self, publication: Publication, expected_epoch: u64) -> bool {
         let mut state = self.0.write().unwrap();

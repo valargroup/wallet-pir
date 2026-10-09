@@ -237,7 +237,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         publication.server.respond(&body)
     })
     .await;
-    // A revocation during evaluation is 410.
+    // A revocation during evaluation is 410; after it, wallets revalidate their anchor.
     if s.publications.epoch() != epoch {
         return StatusCode::GONE.into_response();
     }

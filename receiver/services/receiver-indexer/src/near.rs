@@ -32,7 +32,8 @@ const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
 /// How far back a read starts before the cursor, for swaps the explorer lists late. A
 /// payout read also rescans successful swaps back [`RECENT_SECS`] before the cursor, so
-/// it sees a payout complete up to a day after its swap was created.
+/// it sees a payout complete up to a day after its swap was created. Swaps are refunded
+/// at their deadline, so later completions are out of scope.
 const OVERLAP_SECS: i64 = 3600;
 /// Bound on one read, about a month of swaps, so an explorer that ignores paging cannot
 /// loop forever. It bounds a first read too: one from a `since` too far back fails

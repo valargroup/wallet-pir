@@ -193,6 +193,7 @@ def rust_checks(selected, *, features='', test='', test_target='', offline=False
         name = package['name']
         if name not in selected:
             continue
+        # Lib and bin tests unless a target is named; full CI runs integration tests with each group's features (full_packages.py).
         targets = [t for t in package['targets'] if t.get('test', True) and any(k in ('lib', 'bin') for k in t['kind'])]
         if test_target and not any(t['name'] == test_target and 'test' in t['kind'] for t in package['targets']):
             raise ValueError(f'{name}: unknown integration target: {test_target}')
