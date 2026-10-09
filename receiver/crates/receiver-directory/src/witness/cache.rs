@@ -14,7 +14,9 @@ pub struct WitnessCache {
 impl WitnessCache {
     /// Compare the complete canonical commitment prefix before reusing any tree nodes.
     /// Appends, shorter histories and replacement forks all recompute the affected suffix.
-    /// Publication fencing and independent chain-root validation remain the caller's job.
+    /// `positions` must hold one position per manifest record, though a matching count
+    /// cannot prove they are the right ones. Publication fencing and independent
+    /// chain-root validation remain the caller's job.
     pub fn build(
         &mut self,
         manifest: &Manifest,
@@ -37,6 +39,7 @@ impl WitnessCache {
         if manifest.start_position != 0
             || manifest.end_position != commitments.len() as u64
             || commitments.is_empty()
+            || positions.len() as u64 != manifest.records
             || positions
                 .iter()
                 .any(|p| u64::from(*p) >= manifest.end_position)
@@ -129,7 +132,7 @@ mod tests {
             end_position: 64,
             rows: MIN_ROWS,
             salt: [3; 32],
-            records: 0,
+            records: 2,
             data_sha256: [0; 32],
             filters: vec![FilterSet {
                 label: crate::filter::PAID.into(),

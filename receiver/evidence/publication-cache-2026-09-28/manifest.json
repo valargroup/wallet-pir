@@ -38,6 +38,7 @@
   "historical": true,
   "qualification": "development evidence, not release qualification",
   "not_retained": [
+    "the UTC time of the run: results.json and serve.log record only the date, so trials that day cannot be placed against node or host state or told apart",
     "the 42.9 MB source SQLite database (only its path and SHA-256 are in results.json), so the commitments, payment positions and cache state cannot be reconstructed",
     "the exact command lines (see invocations)",
     "the source revision (see source.note)",
