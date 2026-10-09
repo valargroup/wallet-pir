@@ -1,5 +1,5 @@
 mod common;
-use common::{action, manifest, receiver, record};
+use common::{action, manifest, receiver, record, RECEIVER_HEX};
 use receiver_directory::{
     snapshot::{
         allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
@@ -14,7 +14,12 @@ fn row<'a>(s: &'a Snapshot, r: &Receiver, page: u32) -> &'a [u8] {
 
 #[test]
 fn public_refund_requires_authenticated_recovery() {
-    assert!(action().recover_receiver().unwrap().is_some());
+    // Recovery must yield exactly the independently decoded receiver.
+    let recovered = action().recover_receiver().unwrap().unwrap();
+    assert_eq!(
+        recovered.as_bytes().as_slice(),
+        hex::decode(RECEIVER_HEX).unwrap()
+    );
     let mut a = action();
     a.out_ciphertext[0] ^= 1;
     assert!(a.recover_receiver().unwrap().is_none());
@@ -204,13 +209,13 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     // A read that matched no completion.
     let read = |store: &mut ProviderStore, cursor, read_at| {
         store
-            .record("near-payouts", 60, &[], &[], cursor, read_at)
+            .record("near-payouts", None, &[], &[], cursor, read_at)
             .unwrap()
     };
     store
         .record(
             "near-payouts",
-            40,
+            Some(40),
             &[(payout, true, 100), (payout, true, 50)],
             &[payout],
             100,
@@ -218,7 +223,14 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
         )
         .unwrap();
     store
-        .record("near-refunds", 40, &[(refund, false, 200)], &[], 200, 300)
+        .record(
+            "near-refunds",
+            Some(40),
+            &[(refund, false, 200)],
+            &[],
+            200,
+            300,
+        )
         .unwrap();
     read(&mut store, 90, 250);
     // A read behind the cursor advances neither the cursor nor the read time, even
@@ -236,26 +248,23 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.read("near-payouts").unwrap(), Some(340));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
-    // A feed's start is the earliest any read recorded, whichever commits first.
+    // The feed's start is its initial read's; see the test below.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    store.record("late-feed", 500, &[], &[], 10, 600).unwrap();
-    store.record("late-feed", 300, &[], &[], 10, 610).unwrap();
-    assert_eq!(store.started("late-feed").unwrap(), Some(300));
     // A completion keeps the earliest read that saw it.
     store
-        .record("near-payouts", 60, &[], &[payout, refund], 110, 500)
+        .record("near-payouts", None, &[], &[payout, refund], 110, 500)
         .unwrap();
     assert_eq!(store.completed(0, 450).unwrap(), [payout]);
     assert_eq!(store.completed(450, 600).unwrap(), [refund]);
     // An earlier read committing after a later one lowers the completion to its start,
     // without moving the cursor and read time; a still later read cannot raise it.
     store
-        .record("near-payouts", 60, &[], &[refund], 110, 300)
+        .record("near-payouts", None, &[], &[refund], 110, 300)
         .unwrap();
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
     assert_eq!(store.read("near-payouts").unwrap(), Some(500));
     store
-        .record("near-payouts", 60, &[], &[refund], 110, 600)
+        .record("near-payouts", None, &[], &[refund], 110, 600)
         .unwrap();
     assert_eq!(store.completed(0, 400).unwrap().len(), 2);
     assert!(store.completed(301, 700).unwrap().is_empty());
@@ -264,6 +273,52 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
     assert_eq!(store.completed(0, 300).unwrap().len(), 2);
+}
+
+/// Only a read that began without a cursor sets the feed's start, or lowers it so that
+/// racing initial reads keep the earliest. A read that followed the cursor, whatever
+/// cursor it reached and whatever `--near-since` the restarted indexer was given,
+/// passes no start and never moves it: it read back only to the cursor.
+#[cfg(feature = "store")]
+#[test]
+fn only_initial_reads_set_or_lower_a_feed_start() {
+    use receiver_directory::store::ProviderStore;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("provider.sqlite");
+    let mut store = ProviderStore::open(&path).unwrap();
+    // Initial reads, empty and nonempty, start their feeds.
+    store
+        .record("empty", Some(500), &[], &[], 500, 600)
+        .unwrap();
+    store
+        .record("full", Some(500), &[(receiver(), true, 550)], &[], 550, 600)
+        .unwrap();
+    assert_eq!(store.started("empty").unwrap(), Some(500));
+    assert_eq!(store.started("full").unwrap(), Some(500));
+    // Reads behind, at and past the cursor leave the start alone, and a cursor-based
+    // read never creates one.
+    for cursor in [540, 550, 560] {
+        store.record("full", None, &[], &[], cursor, 700).unwrap();
+        assert_eq!(store.started("full").unwrap(), Some(500));
+    }
+    store.record("unstarted", None, &[], &[], 10, 20).unwrap();
+    assert_eq!(store.started("unstarted").unwrap(), None);
+    // After a reopen, as on a restart with an earlier or later `--near-since`, the
+    // feed has a cursor, so its reads pass no start.
+    drop(store);
+    let mut store = ProviderStore::open(&path).unwrap();
+    for cursor in [300, 900] {
+        store.record("full", None, &[], &[], cursor, 1_000).unwrap();
+        assert_eq!(store.started("full").unwrap(), Some(500));
+    }
+    // Two initial reads that raced keep the earlier start in either commit order.
+    for (feed, first, second) in [("race-a", 300, 500), ("race-b", 500, 300)] {
+        store.record(feed, Some(first), &[], &[], 600, 700).unwrap();
+        store
+            .record(feed, Some(second), &[], &[], 600, 710)
+            .unwrap();
+        assert_eq!(store.started(feed).unwrap(), Some(300));
+    }
 }
 
 /// A read that fails partway, here on its completions, records nothing: neither its
@@ -286,7 +341,7 @@ fn a_failed_provider_read_records_nothing() {
     assert!(store
         .record(
             "near-payouts",
-            40,
+            Some(40),
             &[(payout, true, 100)],
             &[payout],
             100,
@@ -311,14 +366,14 @@ fn a_provider_view_reads_one_state() {
     let path = dir.path().join("provider.sqlite");
     let mut store = ProviderStore::open(&path).unwrap();
     store
-        .record("near-payouts", 40, &[], &[], 100, 300)
+        .record("near-payouts", Some(40), &[], &[], 100, 300)
         .unwrap();
     let mut writer = ProviderStore::open(&path).unwrap();
     let reads = store
         .view(|view| -> Result<_, receiver_directory::Error> {
             let before = view.read("near-payouts")?;
             writer
-                .record("near-payouts", 40, &[], &[], 200, 400)
+                .record("near-payouts", None, &[], &[], 200, 400)
                 .unwrap();
             Ok((before, view.read("near-payouts")?))
         })
@@ -794,6 +849,64 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let mut wrong = replacement.manifest;
     wrong.end_position -= 1;
     assert!(store.witnesses(&wrong, &mut cache).is_err());
+}
+
+/// Indexed blocks before the first commitment publish a header-only proof file
+/// against the empty tree's root, and the same cache follows a commitment and a
+/// rewind back.
+#[cfg(feature = "store")]
+#[test]
+fn store_proofs_cover_empty_indexed_blocks() {
+    allow_small_tables();
+    use incrementalmerkletree::Hashable;
+    use orchard::tree::MerkleHashOrchard;
+    use receiver_directory::{
+        store::{Config, IndexedBlock, Store},
+        witness::WitnessCache,
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 0,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let mut block = IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 0,
+        end_position: 0,
+        coinbase_actions: 0,
+        payments: Vec::new(),
+        commitments: Vec::new(),
+    };
+    store.append(&block).unwrap();
+    (block.height, block.hash, block.parent) = (101, [4; 32], [3; 32]);
+    store.append(&block).unwrap();
+    let empty = store.snapshot(8, &[]).unwrap().manifest;
+    assert_eq!((empty.records, empty.end_position), (0, 0));
+    let mut cache = WitnessCache::default();
+    let proof = store.witnesses(&empty, &mut cache).unwrap().encode();
+    assert_eq!(proof.len(), 152);
+    assert_eq!(
+        &proof[116..148],
+        MerkleHashOrchard::empty_root(32.into()).to_bytes()
+    );
+    (block.height, block.hash, block.parent) = (102, [5; 32], [4; 32]);
+    (block.end_position, block.commitments) = (1, vec![[1; 32]]);
+    store.append(&block).unwrap();
+    let one = store.snapshot(8, &[]).unwrap().manifest;
+    assert_eq!(
+        store.witnesses(&one, &mut cache).unwrap().encode(),
+        store
+            .witnesses(&one, &mut WitnessCache::default())
+            .unwrap()
+            .encode()
+    );
+    store.rewind(101, [4; 32]).unwrap();
+    assert_eq!(store.witnesses(&empty, &mut cache).unwrap().encode(), proof);
 }
 
 /// A history with more payments than the table has slots fails with
