@@ -7,8 +7,8 @@ on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
 proxies only the wallet routes (`init`, `public`, `query`, `rows`, `witness` and
 `filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
-the edge, as Transparent keeps its operator routes: the PIR monitor reads them over
-the private network. The public-chain index lives in `/srv/receiver-pir/index` and
+the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
+health over the private network. Nothing collects `/metrics` yet. The public-chain index lives in `/srv/receiver-pir/index` and
 holds no wallet data. No Enhance service runs on this Droplet.
 
 ## Infrastructure
@@ -98,7 +98,12 @@ Transparent canary do, not the fleet nodes the service reads, so they are an
 independent oracle. The cookie and the probe config come from the monitor's host
 drop-in, [`pir-monitor-service-quality.conf`](../../../enhance/ops/deploy/pir-monitor-service-quality.conf),
 installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
-(the live monitor already has it). Add this entry to its
+(the live monitor already has it). Its `LoadCredential` source,
+`/etc/pir-monitor/credentials/chain-rpc-cookie`, must exist before the monitor
+starts, or `pir-monitor` does not start: on a new monitor host, copy the cookie of
+the node the monitor reaches at `127.0.0.1:18232` there (owned by root, mode 0600),
+and copy it again and restart the monitor when that node rotates it. Add this entry
+to its
 `/etc/pir-monitor/service-probes.json`:
 
 ```json
