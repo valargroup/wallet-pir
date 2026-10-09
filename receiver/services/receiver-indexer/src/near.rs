@@ -11,6 +11,7 @@ use receiver_directory::{
     Receiver,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use zcash_address::{
     unified::{self, Container},
@@ -48,8 +49,13 @@ const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 /// and `near-intents/seen` once the payout feed has. A feed that never completed a read
 /// contributes no set, so wallets do not mistake its absence for an empty set. Each set
 /// declares when its feeds started and when their last complete read began, the point
-/// from which the recent window reaches back.
+/// from which the recent window reaches back. They are read from one state of `store`.
 pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
+    store.view(sets_in)
+}
+
+/// See [`provider_sets`].
+fn sets_in(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
     // A feed's start and the beginning of its last complete read.
     let span = |feed: Feed| -> Result<Option<(i64, i64)>> {
         let span = store.started(feed.name())?.zip(store.read(feed.name())?);
@@ -83,6 +89,30 @@ pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
     Ok(sets)
 }
 
+/// A digest of every field of `sets` and their receivers in any order, so a
+/// publication built from them can tell whether newer sets differ.
+pub fn digest(sets: &[ProviderSet]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(b"receiver-indexer/provider-sets\0");
+    h.update((sets.len() as u64).to_le_bytes());
+    for set in sets {
+        h.update((set.label.len() as u64).to_le_bytes());
+        h.update(set.label.as_bytes());
+        h.update(set.window_secs.map_or([0; 9], |w| {
+            let mut field = [1; 9];
+            field[1..].copy_from_slice(&w.to_le_bytes());
+            field
+        }));
+        h.update(set.since_unix.to_le_bytes());
+        h.update(set.until_unix.to_le_bytes());
+        let mut receivers: Vec<_> = set.receivers.iter().map(Receiver::as_bytes).collect();
+        receivers.sort_unstable();
+        h.update((receivers.len() as u64).to_le_bytes());
+        receivers.into_iter().for_each(|r| h.update(r));
+    }
+    h.finalize().into()
+}
+
 /// The feed's health for monitoring: when each feed's last complete read began, and how
 /// many payouts first seen complete more than an hour before `now`, however long ago,
 /// still have no payment to their receiver in the transaction NEAR reported in `index`.
@@ -90,7 +120,13 @@ pub fn provider_sets(store: &ProviderStore) -> Result<Vec<ProviderSet>> {
 /// that stays missing stays in the count. A missing payout means the indexer missed
 /// it, or NEAR paid it without the zero OVK, which a seed restore cannot find.
 pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
-    let unmatched = provider.unmatched(now - COMPLETION_GRACE_SECS)?;
+    let (unmatched, feeds) = provider.view(|provider| -> Result<_> {
+        let mut feeds = serde_json::Map::new();
+        for feed in [Feed::Payouts, Feed::Refunds] {
+            feeds.insert(feed.name().into(), provider.read(feed.name())?.into());
+        }
+        Ok((provider.unmatched(now - COMPLETION_GRACE_SECS)?, feeds))
+    })?;
     let mut matched = Vec::new();
     for payout in &unmatched {
         if index.paid_in(&payout.0, &payout.1)? {
@@ -99,10 +135,6 @@ pub fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<s
     }
     provider.match_payouts(&matched)?;
     let missing = unmatched.len() - matched.len();
-    let mut feeds = serde_json::Map::new();
-    for feed in [Feed::Payouts, Feed::Refunds] {
-        feeds.insert(feed.name().into(), provider.read(feed.name())?.into());
-    }
     Ok(serde_json::json!({
         "feeds": feeds,
         "payouts_checked": unmatched.len(),

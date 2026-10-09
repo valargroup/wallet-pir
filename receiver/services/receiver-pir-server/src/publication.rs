@@ -11,7 +11,9 @@ use std::{
 /// One revision prepared for serving, with its optional common witness file and the
 /// owner's report on the index it was built from.
 pub struct Publication {
-    pub(crate) server: Server,
+    /// Shared with the same revision under a replaced report; see
+    /// [`Publications::replace_report`].
+    pub(crate) server: Arc<Server>,
     pub(crate) witnesses: Option<Bytes>,
     pub(crate) id: Hash,
     pub(crate) report: Option<serde_json::Value>,
@@ -28,7 +30,7 @@ impl Publication {
         }
         Ok(Self {
             id: server.manifest().id()?,
-            server,
+            server: Arc::new(server),
             witnesses: witnesses.map(Into::into),
             report: None,
         })
@@ -44,6 +46,11 @@ impl Publication {
     /// The directory manifest this publication serves.
     pub fn manifest(&self) -> &Manifest {
         &self.server.manifest().directory
+    }
+
+    /// The session ID, which names this publication in every route.
+    pub fn id(&self) -> Hash {
+        self.id
     }
 }
 
@@ -160,6 +167,28 @@ impl Publications {
         true
     }
 
+    /// Replaces the owner's report on the current publication `id`, if no revocation
+    /// occurred since `expected_epoch`, for a report that changed while the
+    /// publication did not. The prepared revision, its sessions and the previous
+    /// revision's grace are unchanged. Returns whether it replaced the report.
+    pub fn replace_report(&self, id: Hash, report: serde_json::Value, expected_epoch: u64) -> bool {
+        let mut state = self.0.write().unwrap();
+        let Some(current) = state.current.as_ref().filter(|p| p.id == id) else {
+            return false;
+        };
+        if state.epoch != expected_epoch {
+            return false;
+        }
+        let replaced = Publication {
+            server: current.server.clone(),
+            witnesses: current.witnesses.clone(),
+            id,
+            report: Some(report),
+        };
+        state.current = Some(Arc::new(replaced));
+        true
+    }
+
     /// Conservatively invalidate all sessions, including CPU work that started before the reorg.
     pub fn revoke(&self) {
         self.0.write().unwrap().revoke();
@@ -273,6 +302,30 @@ mod tests {
         assert!(publications.publish(publication_at(2, 2), 0));
         assert!(publications.revoke_serving(epoch, (101, [1; 32])));
         assert!(publications.anchors().is_empty());
+    }
+
+    /// A replaced report keeps the current revision, its sessions and the previous
+    /// revision's grace, and needs the current ID and epoch.
+    #[test]
+    fn only_the_current_publication_takes_a_new_report() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        let previous = publications.select(None).unwrap().0.id;
+        assert!(publications.publish(publication(2), 0));
+        let (current, _) = publications.select(None).unwrap();
+        let report = serde_json::json!({"payouts_missing": 1});
+        assert!(!publications.replace_report(previous, report.clone(), 0));
+        assert!(!publications.replace_report(current.id, report.clone(), 1));
+        let grace = publications.ready_at();
+        assert!(publications.replace_report(current.id, report.clone(), 0));
+        let (replaced, epoch) = publications.select(None).unwrap();
+        assert_eq!((replaced.id, epoch), (current.id, 0));
+        assert!(Arc::ptr_eq(&replaced.server, &current.server));
+        assert_eq!(replaced.report, Some(report));
+        assert!(publications.select(Some(previous)).is_ok());
+        assert_eq!(publications.ready_at(), grace);
+        publications.revoke();
+        assert!(!publications.replace_report(current.id, serde_json::Value::Null, 1));
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next

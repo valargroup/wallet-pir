@@ -25,7 +25,8 @@
   session manifest is at most 16 KiB.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, keeps publishing and
-  serving each canonical tip from memory while revoking orphaned sessions, and
+  serving each canonical tip from memory while revoking orphaned sessions,
+  republishes a paused tip when its provider sets change, and
   feeds the `near-intents` filter sets from the NEAR Intents explorer when given a
   partner key. It checks each block against its header's merkle root, fails over
   between nodes, publishes a few blocks below the tip, revokes only on a proven

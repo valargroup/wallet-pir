@@ -154,15 +154,18 @@ Without `--serve`, one run writes `<revision>.rows`, `<revision>.filters`,
 `<revision>.json` and, with `--witnesses`, `<revision>.witness` under
 `publications/` and prints a summary, writing nothing if the manifest would exceed
 16 KiB. Witnesses need commitments from position zero, so the index must start at
-Ironwood activation. With `--serve`, the process
-polls every `--poll-seconds` (default 10), prepares each new canonical tip in
-memory, writing no publication files, and serves on `--bind` (default
-`127.0.0.1:18380`), a loopback, private IPv4 or unique-local IPv6 address behind a
-TLS proxy. A separate guard rechecks served anchors and revokes every session
-once a node shows one is off its chain, unless a revocation or rotation stopped
-serving that anchor during the check; a failed check keeps serving. A recovery epoch fences work that
-began before a revocation. The previous revision stays available for 60 seconds,
-and the next one waits for that to end. Logs go to standard error through
+Ironwood activation. With `--serve`, the process polls every `--poll-seconds`
+(default 10), prepares each new canonical tip in memory, writing no publication
+files, and serves on `--bind` (default `127.0.0.1:18380`), a loopback, private IPv4
+or unique-local IPv6 address behind a TLS proxy. While no block arrives, it
+republishes the same tip when the provider sets change, and when only health's
+report changes, such as a payout passing its grace, it replaces that report on the
+current publication, keeping its sessions. A separate guard rechecks served anchors
+and revokes every session once a node shows one is off its chain, unless a
+revocation or rotation stopped serving that anchor during the check; a failed
+check keeps serving. A recovery epoch fences work that began before a revocation.
+The previous revision stays available for 60 seconds, and the next one waits for
+that to end. Logs go to standard error through
 `tracing`, filtered by `RUST_LOG` (default `info`).
 
 The swap provider sets come from the NEAR Intents explorer. While serving with a
