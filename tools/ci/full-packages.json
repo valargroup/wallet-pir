@@ -11,6 +11,9 @@
     "pir-apm",
     "pir-monitor"
   ],
+  "receiver": [
+    "receiver-directory"
+  ],
   "transparent": [
     "transparent-native",
     "transparent-events",

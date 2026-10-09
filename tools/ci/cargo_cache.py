@@ -57,6 +57,7 @@ SCOPES = {
     ('full-test', 'transparent'): ('release-fast', 'transparent-filter/cli'),
     ('full-test', 'enhance'): ('release-fast', 'enhance-pir/cli; native-reinspiring; cuda checks'),
     ('full-test', 'shared'): ('dev,release-fast', 'clippy all-features; default'),
+    ('full-test', 'receiver'): ('dev,release-fast', 'clippy all-features; receiver-directory/store'),
     ('release', 'q48'): ('release', 'enhance-pir/cli'),
     ('release-native', 'native'): ('release', 'enhance-pir/cli,native-reinspiring'),
     ('native-cuda', 'cuda'): ('release', 'enhance-pir/cli,native-reinspiring,cuda'),

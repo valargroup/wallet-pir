@@ -15,8 +15,8 @@ from stage import run
 def inventory(packages=None, groups=None):
     packages = workspace_packages() if packages is None else packages
     groups = json.loads((ROOT / 'tools/ci/full-packages.json').read_text()) if groups is None else groups
-    if set(groups) != {'shared', 'enhance', 'transparent'}:
-        raise ValueError('full package groups must be shared, enhance and transparent')
+    if set(groups) != {'shared', 'enhance', 'transparent', 'receiver'}:
+        raise ValueError('full package groups must be shared, enhance, transparent and receiver')
     names = [name for group in groups.values() for name in group]
     if len(names) != len(set(names)):
         raise ValueError('full coverage contains duplicate packages')
@@ -39,7 +39,8 @@ def commands(group, groups, lint=False, compile_only=False):
     result = [[*runner, '--locked', '--profile', 'release-fast',
                *[arg for name in ordinary for arg in ('-p', name)],
                *(['--features', 'enhance-pir/cli'] if group == 'enhance' else
-                 ['--features', 'transparent-filter/cli'] if group == 'transparent' else [])]]
+                 ['--features', 'transparent-filter/cli'] if group == 'transparent' else
+                 ['--features', 'receiver-directory/store'] if group == 'receiver' else [])]]
     if 'enhance-pir-server' in names:
         result.append(['python3', 'tools/ci/enhance_tests.py', '--tier', 'full',
                        *(['--compile-only'] if compile_only else [])])
@@ -48,7 +49,7 @@ def commands(group, groups, lint=False, compile_only=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--group', choices=['shared', 'enhance', 'transparent'])
+    parser.add_argument('--group', choices=['shared', 'enhance', 'transparent', 'receiver'])
     parser.add_argument('--lint', action='store_true')
     parser.add_argument('--compile-only', action='store_true')
     args = parser.parse_args()
