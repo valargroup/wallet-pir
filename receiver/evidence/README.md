@@ -3,15 +3,16 @@
 Each run directory holds a results note (`README.md`), a machine-readable
 `manifest.json` and a `SHA256SUMS` over its files; run `shasum -a 256 -c SHA256SUMS`
 inside it. Apart from the deployment record, these are pre-deployment development
-runs. They describe the source and protocol they record, which later changes
-replaced, so each note says what is historical.
+runs, not release qualification: they describe the source and protocol they record,
+which later changes replaced, and each manifest's `not_retained` lists the inputs
+that were not kept, so those claims cannot be re-verified.
 
 - [Mainnet smoke test](mainnet-smoke-2026-09-26/README.md): a bounded mainnet
   range holding the known NEAR refund; its reported RPC cross-check and rerun were
   not retained.
 - [Batched backfill](batched-backfill-2026-09-26/README.md): concurrent batched
-  block reads 13.8 times faster than sequential ones, with byte-identical
-  publications.
+  block reads 13.8 times faster than sequential ones under the test profile, with
+  publications reported byte-identical (not retained).
 - [Receiver to Enhance integration](receiver-pir-2026-09-26/README.md): an
   encrypted lookup of the full publication recovered the refund, then an Enhance
   query authenticated its output (q48 protocol).

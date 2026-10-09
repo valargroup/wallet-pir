@@ -4,7 +4,8 @@
   "source": {
     "client": "f12f779",
     "service": "5921064",
-    "ipir_sp": "1f2aec65"
+    "ipir_sp": "1f2aec65",
+    "note": "7-character prefixes recorded at the time from pre-rewrite development branches; they may not resolve. The protocol measured (q48) was replaced by this stack's pir-native protocol."
   },
   "protocol": "ironwood-receiver-pir-v1-q48",
   "network": "mainnet",
@@ -22,5 +23,11 @@
     "no wallet state",
     "one integration query, not a benchmark"
   ],
-  "historical": true
+  "historical": true,
+  "qualification": "development evidence, not release qualification",
+  "not_retained": [
+    "the full client and service commit IDs and their refs (only 7-character prefixes from pre-rewrite development branches were recorded)",
+    "the opt-in integration test that ran, which no longer exists in the tree",
+    "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run"
+  ]
 }
