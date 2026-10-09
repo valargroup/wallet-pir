@@ -43,8 +43,8 @@ struct Args {
     /// 7 GiB `MemoryMax`, and leaves years of growth at about 7,600 a day.
     #[arg(long, default_value_t = 1 << 24)]
     max_witness_commitments: u64,
-    /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the one with
-    /// the highest tip (see [`ZakuraClient::ranked`]).
+    /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the mainnet
+    /// one with the highest tip (see [`ZakuraClient::ranked`]).
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -121,10 +121,9 @@ async fn main() -> Result<()> {
         .iter()
         .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let genesis: Hash = freshest(&nodes).await?.1.block_hash(0).await?.parse()?;
-    if genesis != Network::Mainnet.genesis_hash() {
-        return Err("this indexer currently requires mainnet".into());
-    }
+    // This indexer currently requires mainnet; fail now if no node is on it.
+    let genesis = Network::Mainnet.genesis_hash();
+    freshest(&nodes, genesis).await?;
     let mut witness_cache = WitnessCache::default();
     let mut active = None;
     if !args.serve {
@@ -157,7 +156,7 @@ async fn main() -> Result<()> {
     let guard = tokio::spawn(async move {
         loop {
             let checked = async {
-                let (tip, rpc) = freshest(&guard_nodes).await?;
+                let (tip, rpc) = freshest(&guard_nodes, genesis).await?;
                 check_serving(&guard_publications, &rpc, tip).await
             };
             if let Err(error) = checked.await {
@@ -229,10 +228,10 @@ async fn shutdown() {
     }
 }
 
-/// The node with the highest tip, which runs a whole pass, and its tip (see
-/// [`ZakuraClient::ranked`]).
-async fn freshest(nodes: &[ZakuraClient]) -> Result<(u64, ZakuraClient)> {
-    Ok(ZakuraClient::ranked(nodes).await?.swap_remove(0))
+/// The node on `genesis`'s network with the highest tip, which runs a whole pass, and
+/// its tip (see [`ZakuraClient::ranked`]).
+async fn freshest(nodes: &[ZakuraClient], genesis: Hash) -> Result<(u64, ZakuraClient)> {
+    Ok(ZakuraClient::ranked(nodes, genesis).await?.swap_remove(0))
 }
 
 /// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
@@ -265,11 +264,11 @@ struct Active {
 }
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
-/// `nodes`, which serves the whole pass, rewinding past a reorg, then publishes a
-/// directory with fresh NEAR filters and report. While serving, `active` stays while
-/// it is served at an unmoved tip and was built from the same provider sets and
-/// report, which time alone can change; otherwise a new one is built once the previous
-/// revision's grace ends.
+/// `nodes` on `genesis`'s network, which serves the whole pass, rewinding past a
+/// reorg, then publishes a directory with fresh NEAR filters and report. While
+/// serving, `active` stays while it is served at an unmoved tip and was built from the
+/// same provider sets and report, which time alone can change; otherwise a new one is
+/// built once the previous revision's grace ends.
 async fn refresh(
     args: &Args,
     nodes: &[ZakuraClient],
@@ -279,7 +278,7 @@ async fn refresh(
     witness_cache: &mut WitnessCache,
 ) -> Result<()> {
     let refresh_started = std::time::Instant::now();
-    let (node_tip, node) = freshest(nodes).await?;
+    let (node_tip, node) = freshest(nodes, genesis).await?;
     let rpc = &node;
     if let Some(serving) = serving {
         check_serving(serving, rpc, node_tip).await?;
@@ -694,10 +693,11 @@ mod tests {
                 ..Node::default()
             };
             *node.tip.lock().unwrap() = height;
-            node.hashes
-                .lock()
-                .unwrap()
-                .extend([(height - 1, [2; 32]), (height, [3; 32])]);
+            node.hashes.lock().unwrap().extend([
+                (0, Network::Mainnet.genesis_hash().0),
+                (height - 1, [2; 32]),
+                (height, [3; 32]),
+            ]);
             *node.time.lock().unwrap() = NOW;
             let (hashes, time) = (node.hashes.clone(), node.time.clone());
             let rpc = serve_node(node).await;
@@ -810,6 +810,37 @@ mod tests {
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
         assert_eq!(reported["serving"], first["serving"]);
         assert!(paused.publications.ready_at().is_none());
+    }
+
+    /// A node on another network with a higher tip is left out of a refresh, so its
+    /// chain cannot revoke the served publication.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_on_another_network_cannot_revoke_sessions() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh().await.unwrap();
+        let anchors = paused.publications.anchors();
+        let height = u64::from(receiver_indexer::blocks::ironwood_activation());
+        let other = Node::default();
+        *other.tip.lock().unwrap() = height + 10;
+        other
+            .hashes
+            .lock()
+            .unwrap()
+            .extend((0..=height + 10).map(|h| (h, [9; 32])));
+        let nodes = [serve_node(other).await, paused.rpc.clone()];
+        let genesis = Network::Mainnet.genesis_hash();
+        let publications = Some(&paused.publications);
+        refresh(
+            &paused.args,
+            &nodes,
+            genesis,
+            publications,
+            &mut paused.active,
+            &mut paused.cache,
+        )
+        .await
+        .unwrap();
+        assert_eq!(paused.publications.anchors(), anchors);
     }
 
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.

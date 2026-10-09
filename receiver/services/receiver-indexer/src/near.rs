@@ -54,16 +54,25 @@ pub const RECENT_SECS: i64 = 24 * 60 * 60;
 /// the wall clock, measures it, so payouts stay pending, not missing, while the chain
 /// pauses or behind `--depth`.
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
-/// A completed payout that NEAR reported without a parsable transaction is recorded
-/// under this many zero bytes, which no transaction hash starts with, then a digest of
-/// its swap's length-prefixed deposit address and optional memo, the explorer's
-/// identity for a swap, so one row per swap. [`Capture::report`] counts these
-/// (`payouts_uncheckable`) while first seen within [`RECENT_SECS`].
+/// A completed payout that NEAR reported without a usable recipient or a parsable
+/// transaction is recorded under [`uncheckable_receiver`] and this many zero bytes,
+/// which no transaction hash starts with, then a digest of its swap's length-prefixed
+/// deposit address and optional memo, the explorer's identity for a swap, so one row
+/// per swap. [`Capture::report`] counts these (`payouts_uncheckable`) while first seen
+/// within [`RECENT_SECS`].
 const UNCHECKABLE_ZEROS: usize = 16;
 
 /// Whether `txid` is the record of an uncheckable payout; see [`UNCHECKABLE_ZEROS`].
 fn uncheckable(txid: &receiver_directory::Hash) -> bool {
     txid[..UNCHECKABLE_ZEROS] == [0; UNCHECKABLE_ZEROS]
+}
+
+/// The receiver of every uncheckable payout record: a fixed valid address (zero
+/// diversifier, transmission key with x-coordinate 1) that never enters a filter set.
+fn uncheckable_receiver() -> Receiver {
+    let mut bytes = [0; 43];
+    bytes[11] = 1;
+    Receiver::from_bytes(bytes).expect("a valid address")
 }
 
 /// The NEAR filter sets: `near-intents/recent` once both feeds have completed a read,
@@ -186,8 +195,9 @@ impl Capture {
     /// [`ProviderStore::forget_matches`]), and one that stays missing stays in the count.
     /// A missing payout means the indexer missed it, or NEAR paid it without the zero
     /// OVK, which a seed restore cannot find. Payouts NEAR reported complete without a
-    /// parsable transaction cannot be looked up; `payouts_uncheckable` counts those
-    /// first seen in the same span but within the last day, so it clears on its own.
+    /// usable recipient or a parsable transaction cannot be looked up;
+    /// `payouts_uncheckable` counts those first seen in the same span but within the
+    /// last day, so it clears on its own.
     pub fn report(
         &self,
         index: &Store,
@@ -302,8 +312,7 @@ fn unix_now() -> i64 {
 }
 
 /// One explorer record, reduced to what the feed reads. Only the paging fields are
-/// required, so a record missing an address or status is skipped rather than failing
-/// the read.
+/// required, so a record missing an address or status does not fail the read.
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Swap {
@@ -401,11 +410,14 @@ impl Explorer {
                     Feed::Payouts => &swap.recipient,
                     Feed::Refunds => &swap.refund_to,
                 };
-                if let Some(receiver) = address.as_deref().and_then(orchard_receiver) {
+                let receiver = address.as_deref().and_then(orchard_receiver);
+                if let Some(receiver) = receiver {
                     found.push((receiver, feed == Feed::Payouts, created));
-                    if feed == Feed::Payouts && swap.status.as_deref() == Some("SUCCESS") {
-                        let txids = swap.destination_chain_tx_hashes.iter().flatten();
-                        let before = completed.len();
+                }
+                if feed == Feed::Payouts && swap.status.as_deref() == Some("SUCCESS") {
+                    let txids = swap.destination_chain_tx_hashes.iter().flatten();
+                    let before = completed.len();
+                    if let Some(receiver) = receiver {
                         completed.extend(
                             txids
                                 .filter_map(|hash| {
@@ -413,20 +425,20 @@ impl Explorer {
                                 })
                                 .map(|txid| (receiver, txid.0)),
                         );
-                        if completed.len() == before {
-                            let address = swap.deposit_address.as_bytes();
-                            let memo = swap.deposit_memo.as_deref();
-                            let digest = Sha256::new()
-                                .chain_update((address.len() as u64).to_le_bytes())
-                                .chain_update(address)
-                                .chain_update([u8::from(memo.is_some())])
-                                .chain_update(memo.unwrap_or_default())
-                                .finalize();
-                            let mut txid = [0; 32];
-                            txid[UNCHECKABLE_ZEROS..]
-                                .copy_from_slice(&digest[..32 - UNCHECKABLE_ZEROS]);
-                            completed.push((receiver, txid));
-                        }
+                    }
+                    if completed.len() == before {
+                        let address = swap.deposit_address.as_bytes();
+                        let memo = swap.deposit_memo.as_deref();
+                        let digest = Sha256::new()
+                            .chain_update((address.len() as u64).to_le_bytes())
+                            .chain_update(address)
+                            .chain_update([u8::from(memo.is_some())])
+                            .chain_update(memo.unwrap_or_default())
+                            .finalize();
+                        let mut txid = [0; 32];
+                        txid[UNCHECKABLE_ZEROS..]
+                            .copy_from_slice(&digest[..32 - UNCHECKABLE_ZEROS]);
+                        completed.push((uncheckable_receiver(), txid));
                     }
                 }
             }
@@ -832,17 +844,41 @@ mod tests {
         assert_eq!(completed[0].1[1], 0x7e);
     }
 
-    /// Uncheckable payouts from one deposit address are told apart by their memos, and a
-    /// reread derives the same records, keeping when each was first seen.
+    /// A completed payout without a parsable transaction, or whose recipient is
+    /// missing, malformed, for another network or without an Orchard receiver, is one
+    /// uncheckable record per swap, told apart by memo, under a receiver that enters no
+    /// filter set. A reread after reopening derives the same records, keeping when each
+    /// was first seen, and the report counts them for a day after their grace.
     #[tokio::test]
     async fn uncheckable_payouts_are_one_record_per_swap() {
         use axum::{routing::get, Router};
+        use zcash_address::unified::Encoding;
         let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
-        let record = |memo: Option<&str>| {
-            serde_json::json!({"recipient": swap, "createdAtTimestamp": 9_999_999_999i64,
-                "depositAddress": "a", "depositMemo": memo, "status": "SUCCESS"})
-        };
-        let page = serde_json::json!([record(None), record(Some("m"))]).to_string();
+        let orchard = orchard_receiver(swap).unwrap();
+        let testnet =
+            unified::Address::try_from_items(vec![unified::Receiver::Orchard(*orchard.as_bytes())])
+                .unwrap()
+                .encode(&NetworkType::Test);
+        let record =
+            |recipient: Option<&str>, address: &str, memo: Option<&str>, txids: &[&str]| {
+                serde_json::json!({"recipient": recipient, "createdAtTimestamp": 9_999_999_999i64,
+                "depositAddress": address, "depositMemo": memo, "status": "SUCCESS",
+                "destinationChainTxHashes": txids})
+            };
+        let page = serde_json::json!([
+            record(Some(swap), "a", None, &[]),
+            record(Some(swap), "a", Some("m"), &["not hex"]),
+            record(None, "b", None, &[PAYOUT_TXID]),
+            record(Some("not an address"), "c", None, &[PAYOUT_TXID]),
+            record(Some(&testnet), "d", None, &[PAYOUT_TXID]),
+            record(
+                Some("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua"),
+                "e",
+                None,
+                &[PAYOUT_TXID]
+            ),
+        ])
+        .to_string();
         let app = Router::new().route(
             "/",
             get(move || {
@@ -854,7 +890,8 @@ mod tests {
         let mut explorer = Explorer::at(format!("http://{}/", socket.local_addr().unwrap()));
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let path = dir.path().join("provider.sqlite");
+        let mut store = ProviderStore::open(&path).unwrap();
         explorer
             .sync(&mut store, Feed::Payouts, 1_000)
             .await
@@ -864,15 +901,23 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         let first = store.unmatched(first_seen).unwrap();
-        assert_eq!(first.len(), 2);
-        assert!(first.iter().all(|p| uncheckable(&p.1)));
+        assert_eq!(first.len(), 6);
+        assert!(first
+            .iter()
+            .all(|p| p.0 == uncheckable_receiver() && uncheckable(&p.1)));
+        assert_eq!(store.sets(0).unwrap(), (vec![orchard], vec![orchard]));
         tokio::time::sleep(Duration::from_millis(1100)).await;
+        drop(store);
+        let mut store = ProviderStore::open(&path).unwrap();
         explorer
             .sync(&mut store, Feed::Payouts, 1_000)
             .await
             .unwrap();
         assert_eq!(store.unmatched(i64::MAX).unwrap(), first);
         assert_eq!(store.unmatched(first_seen).unwrap(), first);
+        let counted = |anchor_time| capture(&store, anchor_time).unwrap().uncheckable;
+        assert_eq!(counted(first_seen + COMPLETION_GRACE_SECS), 6);
+        assert_eq!(counted(first_seen + RECENT_SECS + 1), 0);
     }
 
     /// [`Capture::report`] for the current state of `provider` on a terminal block with
