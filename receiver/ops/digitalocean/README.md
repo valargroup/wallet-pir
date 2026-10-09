@@ -237,9 +237,12 @@ deadline); it takes effect once the monitor runs a build from this commit with t
 reinstalled drop-in. `/monitor-status` reports each target under `metrics`: collection health
 (`stale` after 180 seconds without a successful scrape, and the last failure
 `category`), per-endpoint request, status-class, cancellation and incomplete-response
-increases with p50/p99 latency bucket bounds over the retained hour, and the
-per-minute samples, with `reset` marking a restart. Status classes are as counted:
-`4xx` includes 429 overload but is not overload. It adds no alert rules.
+increases with p50/p99 latency bucket bounds, and the per-minute samples, with
+`reset` marking a restart. All of these cover only samples whose whole interval
+lies in the last hour; `window_seconds` is the span they cover, shorter after a
+start or an outage, since a sample spanning the hour's start is dropped, not
+split. Status classes are as counted: `4xx` includes 429 overload but is not
+overload. It adds no alert rules.
 
 `pir-monitor` is not a deploy-tool service, so `receiver-probe` and its fixture are
 installed on the monitor host as above.

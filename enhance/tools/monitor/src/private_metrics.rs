@@ -2,8 +2,11 @@
 //!
 //! `PIR_MONITOR_METRICS_TARGETS` is a JSON list of `{service, url}` with plain-HTTP URLs on
 //! private or loopback IPv4 addresses; unset, nothing is scraped. Each target is read once a
-//! minute, with the body capped at 256 KiB and the whole scrape at 5 seconds. Only the last
-//! hour of samples is retained, in memory. A new process or a decreased counter is a reset:
+//! minute, with the body capped at 256 KiB and the whole scrape at 5 seconds. Each sample is
+//! the increase between two successful scrapes, kept in memory only while its whole interval
+//! lies in the last hour: one straddling that boundary, as after a long outage, is dropped,
+//! never split, so the reported `window_seconds` can be shorter than an hour. A new process or
+//! a decreased counter is a reset:
 //! that sample counts the new process's totals, never a negative increase. Status classes are
 //! reported as the server counts them; `4xx` includes, but is not, 429 overload.
 use anyhow::Result;
@@ -24,8 +27,11 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BYTES: usize = 256 * 1024;
 const MAX_ENDPOINTS: usize = 32;
 const MAX_TARGETS: usize = 8;
-/// One hour of one-minute samples.
-const HISTORY: usize = 60;
+/// The retained window: a sample counts only while it began at most this long ago.
+const WINDOW_SECONDS: u64 = 3600;
+/// A memory bound on retained samples, twice the window's one-minute scrapes, so it does not
+/// bind at the collection interval.
+const MAX_SAMPLES: usize = 120;
 /// Three missed collections.
 const STALE_SECONDS: u64 = 180;
 const BUCKETS: usize = BOUNDS.len() + 1;
@@ -208,6 +214,13 @@ struct Sample {
     endpoints: BTreeMap<String, Counters>,
 }
 
+impl Sample {
+    /// Whether the whole interval lies in the `WINDOW_SECONDS` ending at `now`.
+    fn within(&self, now: u64) -> bool {
+        self.at - self.seconds >= now.saturating_sub(WINDOW_SECONDS)
+    }
+}
+
 /// One target's collection state and retained samples.
 #[derive(Default)]
 pub struct State {
@@ -222,9 +235,12 @@ pub struct State {
 }
 
 impl State {
-    /// Records one scrape attempt at `at`, rotating out the oldest sample past `HISTORY`.
+    /// Records one scrape attempt at `at`, first dropping samples that left the window. A
+    /// success always becomes the baseline for the next sample, even when its own sample
+    /// straddles the window's start and is dropped.
     fn record(&mut self, at: u64, result: Result<Reading, &'static str>) {
         self.sampled_at = at;
+        self.samples.retain(|s| s.within(at));
         let reading = match result {
             Ok(reading) => reading,
             Err(category) => {
@@ -240,24 +256,29 @@ impl State {
         self.succeeded_at = at;
         if let Some((earlier_at, earlier)) = &self.last {
             let (reset, endpoints) = delta(earlier, &reading);
-            if self.samples.len() == HISTORY {
-                self.samples.pop_front();
-            }
-            self.samples.push_back(Sample {
+            let sample = Sample {
                 at,
                 seconds: at.saturating_sub(*earlier_at),
                 reset,
                 endpoints,
-            });
+            };
+            if sample.within(at) {
+                if self.samples.len() == MAX_SAMPLES {
+                    self.samples.pop_front();
+                }
+                self.samples.push_back(sample);
+            }
         }
         self.last = Some((at, reading));
     }
 
     /// The bounded `/monitor-status` view; `stale` once no scrape succeeded for `STALE_SECONDS`.
+    /// Every total covers the same samples, those still within the window at `now`, so an idle
+    /// collector reports none once they expire.
     fn summary(&self, now: u64) -> Summary {
+        let samples: Vec<&Sample> = self.samples.iter().filter(|s| s.within(now)).collect();
         let mut endpoints = BTreeMap::<String, Counters>::new();
-        let history = self
-            .samples
+        let history = samples
             .iter()
             .map(|s| {
                 let mut all = Counters::default();
@@ -282,8 +303,8 @@ impl State {
             successes: self.successes,
             failures: self.failures,
             consecutive_failures: self.consecutive_failures,
-            window_seconds: self.samples.iter().map(|s| s.seconds).sum(),
-            resets: self.samples.iter().filter(|s| s.reset).count() as u64,
+            window_seconds: samples.iter().map(|s| s.seconds).sum(),
+            resets: samples.iter().filter(|s| s.reset).count() as u64,
             endpoints: endpoints
                 .into_iter()
                 .map(|(endpoint, mut c)| {
@@ -595,8 +616,173 @@ mod tests {
         );
     }
 
+    /// A rendered body with `fast` requests in the first latency bucket and `slow` in the
+    /// one-second bucket, all answered 2xx.
+    fn timed(start: u64, fast: u64, slow: u64) -> String {
+        let mut text = format!(
+            "pir_http_observation_version 1\npir_http_process_start_time_seconds {start}\n\
+             pir_http_arrivals_total{{endpoint=\"receiver_init\"}} {all}\n\
+             pir_http_responses_total{{endpoint=\"receiver_init\",code=\"2xx\"}} {all}\n",
+            all = fast + slow
+        );
+        for bound in BOUNDS.iter().map(f64::to_string).chain(["+Inf".into()]) {
+            let count = if bound.parse().unwrap_or(f64::INFINITY) < 1. {
+                fast
+            } else {
+                fast + slow
+            };
+            text += &format!(
+                "pir_http_duration_seconds_bucket{{endpoint=\"receiver_init\",le=\"{bound}\"}} {count}\n"
+            );
+        }
+        text
+    }
+
+    /// Asserts that the summary's totals, history and `window_seconds` cover the same
+    /// contiguous samples, and returns `(window_seconds, arrivals, p99 bound)`.
+    fn covered(summary: &Summary) -> (u64, u64, Option<String>) {
+        let history = &summary.history;
+        for pair in history.windows(2) {
+            assert_eq!(pair[1].at - pair[1].seconds, pair[0].at, "contiguous");
+        }
+        assert_eq!(
+            summary.window_seconds,
+            history.iter().map(|p| p.seconds).sum::<u64>()
+        );
+        assert_eq!(
+            summary.resets,
+            history.iter().filter(|p| p.reset).count() as u64
+        );
+        let init = summary.endpoints.get("receiver_init");
+        let arrivals = init.map_or(0, |t| t.arrivals);
+        assert_eq!(
+            arrivals,
+            history.iter().map(|p| p.totals.arrivals).sum::<u64>()
+        );
+        assert_eq!(
+            init.map_or(0, |t| t.responses["2xx"]),
+            history
+                .iter()
+                .map(|p| p.totals.responses["2xx"])
+                .sum::<u64>()
+        );
+        (
+            summary.window_seconds,
+            arrivals,
+            init.and_then(|t| t.duration_p99_le.clone()),
+        )
+    }
+
     #[test]
-    fn failed_collection_turns_stale_and_history_rotates() {
+    fn a_long_outage_is_dropped_and_its_reading_is_the_next_baseline() {
+        let mut state = State::default();
+        state.record(0, parse(&timed(1, 0, 0)));
+        state.record(60, parse(&timed(1, 5, 0)));
+        for at in (120..3_700).step_by(60) {
+            state.record(at, Err("unavailable"));
+        }
+        // Failed scrapes alone prune the expired sample.
+        assert!(state.samples.is_empty());
+        // The recovery spans the whole outage, longer than the window, so it is dropped.
+        state.record(3_760, parse(&timed(1, 5, 50)));
+        assert!(state.samples.is_empty());
+        let summary = state.summary(3_760);
+        assert!(!summary.stale && summary.endpoints.is_empty());
+        assert_eq!(covered(&summary), (0, 0, None));
+        // The next sample counts from the recovery reading, never the outage's slow traffic.
+        state.record(3_820, parse(&timed(1, 8, 50)));
+        assert_eq!(
+            covered(&state.summary(3_820)),
+            (60, 3, Some("0.001".into()))
+        );
+    }
+
+    #[test]
+    fn a_recovery_spanning_the_cutoff_counts_only_while_wholly_inside() {
+        let mut state = State::default();
+        let mut fast = 0;
+        for at in (0..=600).step_by(60) {
+            state.record(at, parse(&timed(1, fast, 0)));
+            fast += 1;
+        }
+        // A 30-minute outage, then slow traffic in the recovery sample from 600 to 2,400.
+        state.record(2_400, parse(&timed(1, fast, 30)));
+        for at in (2_460..=4_200).step_by(60) {
+            fast += 1;
+            state.record(at, parse(&timed(1, fast, 30)));
+        }
+        let recovered = 30 + 1 + (4_200 - 2_400) / 60;
+        // Its start is exactly the cutoff: retained, with everything after it.
+        let summary = state.summary(4_200);
+        assert_eq!(summary.history[0].at, 2_400);
+        assert_eq!(covered(&summary), (3_600, recovered, Some("1".into())));
+        // One second later it straddles the cutoff and leaves totals, quantiles and history.
+        let summary = state.summary(4_201);
+        assert_eq!(summary.history[0].at, 2_460);
+        assert_eq!(
+            covered(&summary),
+            (1_800, recovered - 31, Some("0.001".into()))
+        );
+    }
+
+    #[test]
+    fn samples_expire_without_new_scrapes() {
+        let mut state = State::default();
+        for (at, count) in [(100, 1), (160, 4), (220, 9)] {
+            state.record(at, parse(&rendered(1, count)));
+        }
+        assert_eq!(covered(&state.summary(3_760)), (60, 5, None));
+        let idle = state.summary(3_821);
+        assert!(idle.stale && idle.endpoints.is_empty());
+        assert_eq!(covered(&idle), (0, 0, None));
+    }
+
+    #[test]
+    fn window_boundaries_are_inclusive() {
+        let mut state = State::default();
+        state.record(0, parse(&rendered(1, 0)));
+        // A sample exactly one window long is kept; one second longer is not.
+        state.record(3_600, parse(&rendered(1, 2)));
+        assert_eq!(covered(&state.summary(3_600)), (3_600, 2, None));
+        assert_eq!(covered(&state.summary(3_601)), (0, 0, None));
+        state.record(7_201, parse(&rendered(1, 3)));
+        assert!(state.samples.is_empty());
+        // A failure at the boundary keeps the sample from 7,201 to 7,261; one after it prunes it.
+        state.record(7_261, parse(&rendered(1, 4)));
+        state.record(10_801, Err("deadline"));
+        assert_eq!(state.samples.len(), 1);
+        state.record(10_802, Err("deadline"));
+        assert!(state.samples.is_empty());
+    }
+
+    #[test]
+    fn expired_resets_leave_the_count() {
+        let mut state = State::default();
+        for (at, start, count) in [(0, 1, 10), (60, 1, 15), (120, 2, 3), (180, 2, 4)] {
+            state.record(at, parse(&rendered(start, count)));
+        }
+        let summary = state.summary(3_660);
+        assert_eq!((summary.resets, covered(&summary)), (1, (120, 4, None)));
+        let summary = state.summary(3_720);
+        assert_eq!((summary.resets, covered(&summary)), (0, (60, 1, None)));
+    }
+
+    #[test]
+    fn retained_samples_stay_bounded_at_any_scrape_rate() {
+        let mut state = State::default();
+        for i in 0..=400 {
+            state.record(i * 10, parse(&rendered(1, i)));
+        }
+        let summary = state.summary(4_000);
+        assert_eq!(summary.history.len(), MAX_SAMPLES);
+        assert_eq!(
+            covered(&summary),
+            (MAX_SAMPLES as u64 * 10, MAX_SAMPLES as u64, None)
+        );
+    }
+
+    #[test]
+    fn failed_collection_turns_stale_and_history_keeps_the_last_hour() {
         let mut state = State::default();
         assert!(state.summary(100).stale);
         state.record(100, parse(&rendered(1, 0)));
@@ -615,14 +801,14 @@ mod tests {
             ),
             (3, "deadline", 100)
         );
-        for i in 1..=HISTORY as u64 + 5 {
+        for i in 1..=65 {
             state.record(280 + i * 60, parse(&rendered(1, i)));
         }
-        let summary = state.summary(280 + (HISTORY as u64 + 5) * 60);
+        let summary = state.summary(280 + 65 * 60);
         assert!(!summary.stale);
-        assert_eq!(summary.history.len(), HISTORY);
+        assert_eq!(summary.history.len(), 60);
         assert_eq!(summary.history[0].at, 280 + 6 * 60);
-        assert_eq!(summary.window_seconds, HISTORY as u64 * 60);
+        assert_eq!(covered(&summary), (WINDOW_SECONDS, 60, None));
     }
 
     #[test]
