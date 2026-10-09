@@ -2,10 +2,9 @@
 
 Captured 2026-10-08 at 23:18:07 UTC ([`captured_at.txt`](captured_at.txt)) from
 the DigitalOcean and Cloudflare APIs, the public origin and the Droplet itself.
-It records what was live, not a qualification run. The capture commands were not
-retained; each file below says what it holds. `SHA256SUMS.original` is the
-capture's own checksum file, and `SHA256SUMS` hashes every file here, including
-this note and [`manifest.json`](manifest.json).
+It records what was live, not a qualification run. Only the files in `SHA256SUMS`
+were retained; [`manifest.json`](manifest.json) names the deployed release commit.
+`SHA256SUMS.original` is the capture's own checksum file.
 
 - [`droplet.json`](droplet.json): Droplet 604069093, `receiver-pir-poc-01`, in
   `nyc3` with size slug `s-4vcpu-8gb-amd`, created 2026-09-27, public IPv4
