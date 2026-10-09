@@ -214,9 +214,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         public_bytes(rows)?,
     )
     .await?;
+    // Wallets require history from Ironwood activation, independently of what the
+    // manifest claims.
     let accepted = AcceptedCoverage {
         genesis: directory.genesis,
-        required_start: directory.start_height,
+        required_start: crate::blocks::ironwood_activation(),
         height: directory.end_height,
         hash: directory.end_hash,
     };
