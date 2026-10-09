@@ -15,6 +15,13 @@ const HEADER: usize = 152;
 const NODE: usize = 37;
 /// Bound allocations before parsing an untrusted common snapshot.
 pub const MAX_WITNESS_BYTES: usize = 64 * 1024 * 1024;
+/// Most commitments a witness build accepts, 2^22. It bounds the builder's memory, at
+/// worst about 200 bytes per commitment, and is not a protocol limit: `IWPROOF1` and
+/// the depth-32 tree are unchanged. Mainnet held about 711,000 commitments in October
+/// 2026, growing about 7,600 a day, so it leaves about 460 days. A longer history
+/// fails with [`Error::Capacity`] before its commitments are read, so the indexer
+/// stops publishing fresh witnesses and goes stale instead of being killed for memory.
+pub const MAX_WITNESS_COMMITMENTS: u64 = 1 << 22;
 const MAGIC: &[u8; 8] = b"IWPROOF1";
 
 /// Sibling nodes for every payment position in one publication, bound to its revision.

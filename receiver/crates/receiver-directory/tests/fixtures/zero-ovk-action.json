@@ -3,6 +3,7 @@
   "txid": "2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653",
   "height": 3496114,
   "action_index": 0,
+  "receiver": "42cd776949bba6f2164b347ebdbf9c225028ed0f5b6eaa3a402f3322c6aadfbde6288d167dbcaed0fdf01e",
   "action": {
     "cv": "c1cf0fb965db687eea89b78d2cd6740dd216953e2de55505a4f505decbaf8b0b",
     "nullifier": "73f4bc1f9530ae640c73a238993b3f7cf1fa241f186ea98819673ee8824df931",

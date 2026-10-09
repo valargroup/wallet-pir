@@ -22,20 +22,13 @@ pub struct Server {
 }
 
 impl Server {
-    /// Verify the entire publication before preparing its PIR data. No chain trust is
-    /// implied. Preparation follows Transparent's: the public hint is the query masks
-    /// times the rows, and each block's two-mask packing is preprocessed from it.
+    /// Verify the entire publication with [`Snapshot::validate`] before preparing its
+    /// PIR data. No chain trust is implied. Preparation follows Transparent's: the
+    /// public hint is the query masks times the rows, and each block's two-mask
+    /// packing is preprocessed from it.
     pub fn new(snapshot: Snapshot) -> Result<Self, Error> {
-        snapshot.manifest.validate()?;
+        snapshot.validate()?;
         let profile = profile(snapshot.manifest.rows)?;
-        if snapshot.data.len() != snapshot.manifest.rows as usize * ROW_BYTES
-            || Hash::from(Sha256::digest(&snapshot.data)) != snapshot.manifest.data_sha256
-            || Hash::from(Sha256::digest(&snapshot.filters)) != snapshot.manifest.filters_sha256
-        {
-            return Err(Error::Malformed);
-        }
-        let filters = receiver_directory::filter::Filters::decode(&snapshot.filters)?;
-        snapshot.manifest.check_filters(&filters)?;
         // The scan shape: full 16-bit plaintexts, one column per coefficient, and the
         // native profile's query and response widths.
         let (_, mut params) = ipir_sp::params_for_simplepir_profile(

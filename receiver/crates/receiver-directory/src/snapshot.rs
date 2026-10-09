@@ -284,32 +284,8 @@ impl Snapshot {
         let mut counts = vec![0; manifest.rows as usize];
         let mut sorted: Vec<_> = records.iter().collect();
         sorted.sort_by_key(|r| (r.receiver, r.page));
-        let mut previous: Option<&Record> = None;
-        let mut outputs = std::collections::BTreeSet::new();
-        let mut positions = std::collections::BTreeSet::new();
+        check_pages(&sorted)?;
         for record in sorted {
-            // Every advertised page must exist in this revision, in chain order.
-            match previous {
-                Some(p) if p.receiver == record.receiver => {
-                    if record.total != p.total
-                        || record.page != p.page + 1
-                        || record.payment.position <= p.payment.position
-                    {
-                        return Err(Error::Malformed);
-                    }
-                }
-                p => {
-                    if record.page != 0 || p.is_some_and(|r| r.page + 1 != r.total) {
-                        return Err(Error::Malformed);
-                    }
-                }
-            }
-            previous = Some(record);
-            if !outputs.insert((record.payment.txid, record.payment.action_index))
-                || !positions.insert(record.payment.position)
-            {
-                return Err(Error::Malformed);
-            }
             validate_location(&manifest, record)?;
             let row = row_for(&manifest, &record.receiver, record.page)?;
             if counts[row] == SLOTS {
@@ -318,9 +294,6 @@ impl Snapshot {
             let offset = row * ROW_BYTES + counts[row] * RECORD_BYTES;
             data[offset..offset + RECORD_BYTES].copy_from_slice(&record.encode()?);
             counts[row] += 1;
-        }
-        if previous.is_some_and(|r| r.page + 1 != r.total) {
-            return Err(Error::Malformed);
         }
         manifest.data_sha256 = Sha256::digest(&data).into();
         let filters = filters.encode()?;
@@ -331,6 +304,83 @@ impl Snapshot {
             filters,
         })
     }
+
+    /// Checks a supplied publication as [`Self::build`] would have made it, before it
+    /// is prepared or served: the manifest, the row and filter sizes and digests, the
+    /// declared filter sets, and a paid set of exactly the records' receivers; every
+    /// slot and row padding as [`lookup_row`] checks them, so each record sits in its
+    /// own bucket; exactly the manifest's record count; and every receiver's pages, as
+    /// [`Self::build`] requires them. No chain trust is implied. Records are collected
+    /// only up to the manifest's count, itself within the table's slots.
+    pub fn validate(&self) -> Result<(), Error> {
+        let m = &self.manifest;
+        m.validate()?;
+        if self.data.len() != m.rows as usize * ROW_BYTES
+            || Hash::from(Sha256::digest(&self.data)) != m.data_sha256
+            || Hash::from(Sha256::digest(&self.filters)) != m.filters_sha256
+        {
+            return Err(Error::Malformed);
+        }
+        let filters = Filters::decode(&self.filters)?;
+        m.check_filters(&filters)?;
+        let mut records = Vec::new();
+        for (row, bytes) in self.data.as_chunks::<ROW_BYTES>().0.iter().enumerate() {
+            for record in row_records(m, row, bytes)? {
+                if records.len() as u64 == m.records {
+                    return Err(Error::Malformed);
+                }
+                records.push(record);
+            }
+        }
+        if records.len() as u64 != m.records {
+            return Err(Error::Malformed);
+        }
+        let mut sorted: Vec<_> = records.iter().collect();
+        sorted.sort_by_key(|r| (r.receiver, r.page));
+        check_pages(&sorted)?;
+        let paid = sorted.iter().filter(|r| r.page == 0).map(|r| &r.receiver);
+        if filters.get(filter::PAID) != Some(&Filter::build(&m.salt, paid)) {
+            return Err(Error::Malformed);
+        }
+        Ok(())
+    }
+}
+
+/// Checks records sorted by receiver and page: every receiver has pages zero to its
+/// total in chain order, all repeating that total, and no two records share an output
+/// or note position.
+fn check_pages(sorted: &[&Record]) -> Result<(), Error> {
+    let mut previous: Option<&Record> = None;
+    let mut outputs = std::collections::BTreeSet::new();
+    let mut positions = std::collections::BTreeSet::new();
+    for record in sorted.iter().copied() {
+        // Every advertised page must exist in this revision, in chain order.
+        match previous {
+            Some(p) if p.receiver == record.receiver => {
+                if record.total != p.total
+                    || record.page != p.page + 1
+                    || record.payment.position <= p.payment.position
+                {
+                    return Err(Error::Malformed);
+                }
+            }
+            p => {
+                if record.page != 0 || p.is_some_and(|r| r.page + 1 != r.total) {
+                    return Err(Error::Malformed);
+                }
+            }
+        }
+        previous = Some(record);
+        if !outputs.insert((record.payment.txid, record.payment.action_index))
+            || !positions.insert(record.payment.position)
+        {
+            return Err(Error::Malformed);
+        }
+    }
+    if previous.is_some_and(|r| r.page + 1 != r.total) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
 }
 
 /// Rejects a record whose payment lies outside the manifest's blocks or positions, or
@@ -357,32 +407,42 @@ pub fn lookup_row(
     page: u32,
     bytes: &[u8],
 ) -> Result<Option<Record>, Error> {
-    let wanted_row = row_for(m, receiver, page)?;
-    if bytes.len() != ROW_BYTES || bytes[SLOTS * RECORD_BYTES..].iter().any(|b| *b != 0) {
-        return Err(Error::Malformed);
-    }
     let mut found = None;
-    for slot in bytes[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
-        if let Some(record) = Record::decode(slot)? {
-            validate_location(m, &record)?;
-            // A receiver cannot have more pages than the publication has records.
-            if u64::from(record.total) > m.records
-                || row_for(m, &record.receiver, record.page)? != wanted_row
-            {
+    for record in row_records(m, row_for(m, receiver, page)?, bytes)? {
+        if &record.receiver == receiver && record.page == page {
+            if found.is_some() {
                 return Err(Error::Malformed);
             }
-            if &record.receiver == receiver && record.page == page {
-                if found.is_some() {
-                    return Err(Error::Malformed);
-                }
-                found = Some(record);
-            }
+            found = Some(record);
         }
     }
     if page != 0 && found.is_none() {
         return Err(Error::MissingPage);
     }
     Ok(found)
+}
+
+/// Decodes the records in row `row` of `m`'s table, checking the row's length and zero
+/// padding, and that each record lies within `m`'s coverage, has no more pages than
+/// `m` has records, and belongs in this row.
+fn row_records(m: &Manifest, row: usize, bytes: &[u8]) -> Result<Vec<Record>, Error> {
+    if bytes.len() != ROW_BYTES || bytes[SLOTS * RECORD_BYTES..].iter().any(|b| *b != 0) {
+        return Err(Error::Malformed);
+    }
+    let mut records = Vec::new();
+    for slot in bytes[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
+        if let Some(record) = Record::decode(slot)? {
+            validate_location(m, &record)?;
+            // A receiver cannot have more pages than the publication has records.
+            if u64::from(record.total) > m.records
+                || row_for(m, &record.receiver, record.page)? != row
+            {
+                return Err(Error::Malformed);
+            }
+            records.push(record);
+        }
+    }
+    Ok(records)
 }
 
 /// Hashes `value` with its length, so adjacent strings cannot run together.
