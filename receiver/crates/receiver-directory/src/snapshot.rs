@@ -318,7 +318,7 @@ impl Snapshot {
         let mut counts = vec![0; manifest.rows as usize];
         let mut sorted: Vec<_> = records.iter().collect();
         sorted.sort_by_key(|r| (r.receiver, r.page));
-        check_pages(&sorted)?;
+        check_pages(sorted.iter().map(|&r| PageMeta::from(r)))?;
         for record in sorted {
             validate_location(&manifest, record)?;
             let row = placement.row(&record.receiver, record.page);
@@ -344,8 +344,9 @@ impl Snapshot {
     /// declared filter sets, and a paid set of exactly the records' receivers; every
     /// slot and row padding as [`lookup_row`] checks them, so each record sits in its
     /// own bucket; exactly the manifest's record count; and every receiver's pages, as
-    /// [`Self::build`] requires them. No chain trust is implied. Records are collected
-    /// only up to the manifest's count, itself within the table's slots.
+    /// [`Self::build`] requires them. No chain trust is implied. Only each record's
+    /// page fields are kept, and only up to the manifest's count, itself within the
+    /// table's slots.
     pub fn validate(&self) -> Result<(), Error> {
         let m = &self.manifest;
         let placement = Placement::new(m)?;
@@ -357,22 +358,21 @@ impl Snapshot {
         }
         let filters = Filters::decode(&self.filters)?;
         m.check_filters(&filters)?;
-        let mut records = Vec::new();
+        let mut pages = Vec::new();
         for (row, bytes) in self.data.as_chunks::<ROW_BYTES>().0.iter().enumerate() {
             for record in row_records(m, &placement, row, bytes)? {
-                if records.len() as u64 == m.records {
+                if pages.len() as u64 == m.records {
                     return Err(Error::Malformed);
                 }
-                records.push(record);
+                pages.push(PageMeta::from(&record));
             }
         }
-        if records.len() as u64 != m.records {
+        if pages.len() as u64 != m.records {
             return Err(Error::Malformed);
         }
-        let mut sorted: Vec<_> = records.iter().collect();
-        sorted.sort_by_key(|r| (r.receiver, r.page));
-        check_pages(&sorted)?;
-        let paid = sorted.iter().filter(|r| r.page == 0).map(|r| &r.receiver);
+        pages.sort_unstable_by_key(|p| (p.receiver, p.page));
+        check_pages(pages.iter().copied())?;
+        let paid = pages.iter().filter(|p| p.page == 0).map(|p| &p.receiver);
         if filters.get(filter::PAID) != Some(&Filter::build(&m.salt, paid)) {
             return Err(Error::Malformed);
         }
@@ -380,20 +380,46 @@ impl Snapshot {
     }
 }
 
+/// The fields of a [`Record`] that [`check_pages`] reads, so validating a publication
+/// need not hold its records whole.
+#[derive(Clone, Copy)]
+struct PageMeta {
+    receiver: Receiver,
+    page: u32,
+    total: u32,
+    position: u64,
+    txid: Hash,
+    action_index: u32,
+}
+
+impl From<&Record> for PageMeta {
+    /// Projects `r` onto the fields page checks read.
+    fn from(r: &Record) -> Self {
+        Self {
+            receiver: r.receiver,
+            page: r.page,
+            total: r.total,
+            position: r.payment.position,
+            txid: r.payment.txid,
+            action_index: r.payment.action_index,
+        }
+    }
+}
+
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
 /// total in chain order, all repeating that total, and no two records share an output
 /// or note position.
-fn check_pages(sorted: &[&Record]) -> Result<(), Error> {
-    let mut previous: Option<&Record> = None;
+fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
+    let mut previous: Option<PageMeta> = None;
     let mut outputs = std::collections::BTreeSet::new();
     let mut positions = std::collections::BTreeSet::new();
-    for record in sorted.iter().copied() {
+    for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
         match previous {
             Some(p) if p.receiver == record.receiver => {
                 if record.total != p.total
                     || record.page != p.page + 1
-                    || record.payment.position <= p.payment.position
+                    || record.position <= p.position
                 {
                     return Err(Error::Malformed);
                 }
@@ -405,8 +431,7 @@ fn check_pages(sorted: &[&Record]) -> Result<(), Error> {
             }
         }
         previous = Some(record);
-        if !outputs.insert((record.payment.txid, record.payment.action_index))
-            || !positions.insert(record.payment.position)
+        if !outputs.insert((record.txid, record.action_index)) || !positions.insert(record.position)
         {
             return Err(Error::Malformed);
         }

@@ -1273,3 +1273,29 @@ fn placement_validates_the_manifest_once_per_call() {
         }
     }
 }
+
+/// A populated table of [`MAX_ROWS`] rows, about two records per row, validates from
+/// its own bytes once its source records are gone.
+#[test]
+fn a_populated_largest_table_validates() {
+    let n = 16;
+    let pages = 2 * MAX_ROWS / n;
+    let mut m = manifest(MAX_ROWS);
+    m.end_position = 200 + u64::from(n * pages);
+    let records = spread(&receivers(n), pages);
+    let s = Snapshot::build(m, &records, &[]).unwrap();
+    drop(records);
+    assert_eq!(s.manifest.records, u64::from(2 * MAX_ROWS));
+    let fullest = s
+        .data
+        .chunks(ROW_BYTES)
+        .map(|row| {
+            row.chunks(RECORD_BYTES)
+                .filter(|slot| slot.len() == RECORD_BYTES && slot.iter().any(|b| *b != 0))
+                .count()
+        })
+        .max()
+        .unwrap();
+    assert!(fullest < SLOTS, "{fullest} records share a row");
+    s.validate().unwrap();
+}
