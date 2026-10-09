@@ -3,19 +3,20 @@
 //! client fetches of the split map cold, warm and after a 409, raw and
 //! gzipped, against the full map it no longer reads.
 //!
-//! The map is synthetic with the live map's entry shape. The init document
-//! names no geometry, so every lookup stops as `Unsupported` right after
-//! placement: the transcript is the map traffic, plus init, which a lookup
-//! that did not fetch it fetches once more first. Map bytes exclude init.
+//! The map is synthetic with the live map's entry shape. Every manifest
+//! request is answered 503, so each lookup stops right after placement: the
+//! transcript is the map traffic, plus init and that one manifest request,
+//! which map bytes exclude.
 
 use flate2::{write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
 use std::io::Write;
+use transparent_native::NativeScheme;
 use transparent_shard::display::{
     DisplayMap, DisplayMapEntry, DisplaySealParams, SplitMap, DISPLAY_SCHEMA, INDEX_CHUNK_SHARDS,
 };
 use transparent_txid_client::{
-    Route, TransportError, TxidDisplayClient, TxidLookup, TxidReply, TxidRequest, TxidTransport,
+    Route, TransportError, TxidDisplayClient, TxidError, TxidReply, TxidRequest, TxidTransport,
 };
 
 /// The first display height of the live publication.
@@ -76,8 +77,46 @@ fn gzip(bytes: &[u8]) -> usize {
     encoder.finish().unwrap().len()
 }
 
+/// Init listing `txid-2k`. Its parameters are placeholders: no lookup gets
+/// as far as comparing them.
+fn init() -> Vec<u8> {
+    let scheme = NativeScheme {
+        profile: String::new(),
+        d: 0,
+        q_bits: 0,
+        p_bits: 0,
+        gadget_bits: 0,
+        ell: 0,
+        secret: String::new(),
+        mask_bits: 0,
+        query_bits: 0,
+        response_bits: 0,
+        rows: 0,
+        row_bytes: 0,
+        cols: 0,
+        native_encoding: String::new(),
+        query_mask_seed: String::new(),
+        packing_setup_id: String::new(),
+        request_bytes: 0,
+        public_bytes: 0,
+        response_bytes: 0,
+    };
+    serde_json::json!({
+        "schema": DISPLAY_SCHEMA,
+        "codec": transparent_shard::txid::CODEC,
+        "bucket_domain": std::str::from_utf8(transparent_shard::display::BUCKET_DOMAIN).unwrap(),
+        "native_schema": transparent_shard::manifest::SCHEMA,
+        "geometries": [{
+            "name": "txid-2k",
+            "txdirectory": {"rows": 0, "row_bytes": 0, "scheme": scheme, "setup_seed": 0},
+        }],
+    })
+    .to_string()
+    .into_bytes()
+}
+
 /// Serves init, the recent map and chunks of one split, logging each reply's
-/// raw and gzipped body length.
+/// raw and gzipped body length, and answers every manifest request 503.
 struct Server {
     split: SplitMap,
     log: Vec<(Route, usize, usize)>,
@@ -85,21 +124,9 @@ struct Server {
 
 impl TxidTransport for Server {
     fn send(&mut self, request: TxidRequest) -> Result<TxidReply, TransportError> {
+        let mut status = 200;
         let (body, map_sha256) = match request.route {
-            Route::Init => (
-                serde_json::json!({
-                    "schema": DISPLAY_SCHEMA,
-                    "codec": transparent_shard::txid::CODEC,
-                    "bucket_domain": std::str::from_utf8(
-                        transparent_shard::display::BUCKET_DOMAIN
-                    ).unwrap(),
-                    "native_schema": transparent_shard::manifest::SCHEMA,
-                    "geometries": [],
-                })
-                .to_string()
-                .into_bytes(),
-                None,
-            ),
+            Route::Init => (init(), None),
             Route::Map => (
                 self.split.recent_bytes.clone(),
                 Some(self.split.recent_sha256.clone()),
@@ -114,11 +141,15 @@ impl TxidTransport for Server {
                     .expect("a chunk the map names");
                 (chunk.bytes.clone(), None)
             }
+            Route::Manifest => {
+                status = 503;
+                (Vec::new(), None)
+            }
             route => panic!("{route:?} is past placement"),
         };
         self.log.push((request.route, body.len(), gzip(&body)));
         Ok(TxidReply {
-            status: 200,
+            status,
             retry_after: None,
             map_sha256,
             body,
@@ -126,10 +157,10 @@ impl TxidTransport for Server {
     }
 }
 
-/// Raw and gzipped map bytes of a transcript: every route but init.
+/// Raw and gzipped map bytes of a transcript: the map and chunk routes.
 fn map_bytes(log: &[(Route, usize, usize)]) -> (usize, usize) {
     log.iter()
-        .filter(|(route, _, _)| *route != Route::Init)
+        .filter(|(route, _, _)| matches!(route, Route::Map | Route::MapChunk))
         .fold((0, 0), |(raw, gz), (_, r, g)| (raw + r, gz + g))
 }
 
@@ -154,10 +185,10 @@ fn measure(archives: u64) -> Measured {
         log: Vec::new(),
     };
     let never = || false;
-    let unsupported = |client: &mut TxidDisplayClient, server: &mut Server, height: u64| {
+    let stopped = |client: &mut TxidDisplayClient, server: &mut Server, height: u64| {
         assert_eq!(
             client.lookup(server, [7; 32], height, &never),
-            Ok(TxidLookup::Unsupported)
+            Err(TxidError::Unavailable { retry_after: None })
         );
         std::mem::take(&mut server.log)
     };
@@ -165,15 +196,18 @@ fn measure(archives: u64) -> Measured {
 
     // Cold, at the oldest archive: init, the recent map, the oldest chunk.
     let mut client = TxidDisplayClient::new();
-    let log = unsupported(&mut client, &mut server, oldest);
-    assert_eq!(routes(&log), [Route::Init, Route::Map, Route::MapChunk]);
+    let log = stopped(&mut client, &mut server, oldest);
+    assert_eq!(
+        routes(&log),
+        [Route::Init, Route::Map, Route::MapChunk, Route::Manifest]
+    );
     assert!(log[2].1 <= server.split.chunks[0].bytes.len());
     let cold_archive = map_bytes(&log);
     let chunk = (log[2].1, log[2].2);
 
     // Warm: another height of the same chunk sends no map request.
-    let log = unsupported(&mut client, &mut server, oldest + BLOCKS * 3);
-    assert_eq!(routes(&log), [Route::Init]);
+    let log = stopped(&mut client, &mut server, oldest + BLOCKS * 3);
+    assert_eq!(routes(&log), [Route::Manifest]);
     let warm = map_bytes(&log);
 
     // A block moves the recent revision; a 409 refetches the recent map and
@@ -185,15 +219,15 @@ fn measure(archives: u64) -> Measured {
     recent.manifest_digest = hex_of("manifest-next", archives);
     server.split = next.split().unwrap();
     client.invalidate_map();
-    let log = unsupported(&mut client, &mut server, oldest);
-    assert_eq!(routes(&log), [Route::Map, Route::Init]);
+    let log = stopped(&mut client, &mut server, oldest);
+    assert_eq!(routes(&log), [Route::Map, Route::Manifest]);
     let after_409 = map_bytes(&log);
 
     // Cold, at the recent shard: no chunk at all.
     let mut client = TxidDisplayClient::new();
     let tip = START + archives * BLOCKS + 5;
-    let log = unsupported(&mut client, &mut server, tip);
-    assert_eq!(routes(&log), [Route::Init, Route::Map]);
+    let log = stopped(&mut client, &mut server, tip);
+    assert_eq!(routes(&log), [Route::Init, Route::Map, Route::Manifest]);
     let cold_recent = map_bytes(&log);
 
     Measured {

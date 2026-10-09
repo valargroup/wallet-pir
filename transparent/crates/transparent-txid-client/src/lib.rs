@@ -22,8 +22,10 @@
 //!
 //! The client follows a fresh publication (a re-cut or re-layout, with new
 //! shard ids and digests) through the same map: a 409 or a placement from a
-//! stale map fetches it again, a geometry init lacks fetches init again, and
-//! each new map keeps only the manifests and setups of revisions it names.
+//! stale map fetches it again, a geometry init lacks fetches init and the map
+//! again, and each new map keeps only the manifests and setups of revisions
+//! it names. A map of another chain (network or genesis hash) is refused.
+//! A lookup sends at most 2 map, 3 init and 4 query requests.
 //!
 //! Any validation failure is [`TxidError::Protocol`], never
 //! [`TxidLookup::Absent`].
@@ -217,10 +219,11 @@ pub struct Provenance {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Placement {
     /// Before the first height the publication serves, by a map the lookup
-    /// fetched or one younger than [`PLACEMENT_REFRESH_AGE`].
+    /// fetched or one younger than the client's placement refresh age
+    /// ([`PLACEMENT_REFRESH_AGE`] unless a test sets another).
     Below,
     /// After the last height the publication covers, by a map the lookup
-    /// fetched or one younger than [`PLACEMENT_REFRESH_AGE`].
+    /// fetched or one younger than the client's placement refresh age.
     Above,
 }
 
@@ -236,8 +239,8 @@ pub enum TxidLookup {
     /// No shard covers the height; nothing was queried.
     PlacementUnknown(Placement),
     /// The server publishes a schema, codec or geometry this client does not
-    /// know, or a geometry its init does not list even after init was fetched
-    /// again; nothing was queried.
+    /// know, or the map names a geometry init does not list although this
+    /// lookup fetched both; nothing was queried.
     Unsupported,
 }
 
@@ -246,8 +249,10 @@ pub enum TxidLookup {
 pub enum ProtocolKind {
     /// The init document does not parse.
     Init,
-    /// The recent map or an index chunk does not parse or is malformed, or
-    /// a chunk is not the one the recent map names.
+    /// The recent map or an index chunk does not parse or is malformed, a
+    /// chunk is not the one the recent map names, or the recent map names
+    /// another network or genesis hash than the first one the client
+    /// accepted.
     Map,
     /// The recent map or an index chunk is not in its canonical encoding.
     MapCanonical,
@@ -279,7 +284,9 @@ pub enum TxidError {
     Unavailable {
         retry_after: Option<Duration>,
     },
-    /// The revision stayed unserved after one map refresh and retry (409).
+    /// The revision stayed unserved after one map refresh and retry (409),
+    /// or the retry would have named the txid's bucket under another bucket
+    /// count than the lookup already named.
     Stale,
     /// The server refused the request (400, 408, 411, 421 or another 4xx).
     /// Not retried.

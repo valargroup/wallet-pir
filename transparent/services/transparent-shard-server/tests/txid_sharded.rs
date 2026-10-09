@@ -562,12 +562,14 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
         (1, &b1.digest)
     );
     // Below the old start, in the txid-4k archive: init, cached from the old
-    // publication, lacks the geometry and is fetched once more.
+    // publication, lacks the geometry, so it and the map, which this lookup
+    // had not fetched, are fetched once more.
     let (provenance, log) = held.found(&older[CLASSES], 60);
     assert_eq!(
         routes(&log),
         [
             Route::Init,
+            Route::Map,
             Route::Manifest,
             Route::Setup,
             Route::Query,
@@ -623,6 +625,83 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
         let (provenance, _) = wallet.found(record, height);
         assert_eq!(provenance.manifest_digest, shard.digest);
     }
+}
+
+/// With two buckets, two txids in different buckets send the same requests
+/// in the same order, of the same sizes and with the same statuses: cold,
+/// warm, in either order, and through a 409 retry. Paths differ only in the
+/// bucket's table label, the leakage the design accepts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_transcript_depends_on_the_bucket_label_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let archived = records(50, &[]);
+    let mut a = spec(0, 100, 199, true, "");
+    a.n_buckets = 2;
+    let a0 = write_shard(root.path(), &a, &archived);
+    let mut r = spec(1, 200, 260, false, &a0.digest);
+    r.n_buckets = 2;
+    let r0 = write_shard(root.path(), &r, &records(60, &[]));
+    let (dir, map_sha256) =
+        synth::write_candidate(root.path(), &params(2), &[a0, r0], "n2").unwrap();
+    let archive = Worker::new(root.path(), WorkerRole::ArchiveOwner, config(), Vec::new());
+    let recent = Worker::new(root.path(), WorkerRole::RecentReplica, config(), Vec::new());
+    assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 2);
+    assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 2);
+    let app = Router::new().fallback(edge).with_state(Edge {
+        archive: archive.live.router(),
+        recent: recent.live.router(),
+        faults: Faults::default(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let in_bucket = |bucket: u32| {
+        archived
+            .iter()
+            .find(|r| display::bucket(&Tag::of(&r.txid), 2) == bucket)
+            .unwrap()
+    };
+    let (zero, one) = (in_bucket(0), in_bucket(1));
+    // What an observer of the transport sees, with the bucket label blanked.
+    let seen = |log: &[Sent]| {
+        let paths: Vec<String> = log
+            .iter()
+            .map(|s| {
+                s.path
+                    .replace("directory-0", "directory-b")
+                    .replace("directory-1", "directory-b")
+            })
+            .collect();
+        (shape(log), paths)
+    };
+    // Each wallet: a cold lookup, the other bucket, then both warm.
+    let mut transcripts = Vec::new();
+    for (first, second) in [(zero, one), (one, zero)] {
+        let mut wallet = Wallet::at(&url);
+        let mut lookups = Vec::new();
+        for record in [first, second, first, second] {
+            let (_, log) = wallet.found(record, 150);
+            assert_eq!(posts(&log), 2);
+            lookups.push(seen(&log));
+        }
+        // A 409 on the first query: one map refresh, then the same retry.
+        let mut queries = 0;
+        wallet.http.intercept = Some(Box::new(move |request| {
+            queries += usize::from(request.route == Route::Query);
+            (request.route == Route::Query && queries == 1).then(|| TxidReply {
+                status: 409,
+                body: br#"{"error":"stale"}"#.to_vec(),
+                ..TxidReply::default()
+            })
+        }));
+        let (_, log) = wallet.found(first, 150);
+        assert_eq!(stale_retries(&log), 1);
+        lookups.push(seen(&log));
+        transcripts.push(lookups);
+    }
+    assert_eq!(transcripts[0], transcripts[1]);
+    server.abort();
 }
 
 /// Status, headers and body of one GET through the edge.

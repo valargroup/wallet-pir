@@ -469,6 +469,131 @@ fn stale_409_refresh_retry_once_then_stale() {
     );
 }
 
+/// The most one lookup sends, all in one transcript: a cached init lacking
+/// the geometry and a cached map refetch init and the map; each map fetched
+/// changes the seal parameters, so init follows it; and a 409 on the second
+/// query retries once. Two map, three init and four query requests.
+#[test]
+fn a_lookup_sends_at_most_two_maps_three_inits_and_four_queries() {
+    let _serial = serial();
+    let env = env();
+    let record = &env.world.a0_records[CLASSES];
+    let mut http = env.http();
+    let (mut inits, mut maps) = (0u64, 0u64);
+    http.tamper = Some(Box::new(move |request, reply| match request.route {
+        Route::Init => {
+            inits += 1;
+            if inits == 1 {
+                let mut init: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+                init["geometries"] = serde_json::json!([]);
+                reply.body = init.to_string().into_bytes();
+            }
+        }
+        Route::Map => {
+            maps += 1;
+            if maps > 1 {
+                let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
+                map.seal.reorg_margin += maps;
+                reply.body = map.to_bytes();
+                reply.map_sha256 = Some(map.sha256());
+            }
+        }
+        _ => {}
+    }));
+    let mut queries = 0;
+    http.intercept = Some(Box::new(move |request| {
+        queries += usize::from(request.route == Route::Query);
+        (request.route == Route::Query && queries == 2).then(stale)
+    }));
+    let mut client = env.client();
+    // Fetched together, an init without the geometry and the map are final.
+    assert_eq!(
+        client
+            .lookup(&mut http, record.txid.0, 150, &never)
+            .unwrap(),
+        TxidLookup::Unsupported
+    );
+    assert_eq!(
+        routes(&http.take_log()),
+        [Route::Init, Route::Map, Route::MapChunk]
+    );
+    found(
+        client
+            .lookup(&mut http, record.txid.0, 150, &never)
+            .unwrap(),
+        record,
+    );
+    let log = http.take_log();
+    assert_eq!(
+        routes(&log),
+        [
+            Route::Init,
+            Route::Map,
+            Route::Init,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query,
+            Route::Map,
+            Route::Init,
+            Route::Query,
+            Route::Query
+        ]
+    );
+    let count = |route| log.iter().filter(|s| s.route == route).count();
+    assert_eq!(
+        (count(Route::Map), count(Route::Init), count(Route::Query)),
+        (2, 3, 4)
+    );
+}
+
+/// A retry never names the txid's bucket under a second bucket count: that
+/// would give the server the tag modulo both. The lookup is `Stale` instead.
+#[test]
+fn a_retry_under_another_bucket_count_is_stale() {
+    let _serial = serial();
+    let env = env();
+    let record = &env.world.r0_records[CLASSES];
+    let mut http = env.http();
+    let mut maps = 0;
+    http.tamper = Some(Box::new(move |request, reply| {
+        if request.route == Route::Map {
+            maps += 1;
+            if maps > 1 {
+                let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
+                map.seal.n_recent = 2;
+                let recent = map.recent.as_mut().unwrap();
+                recent.n_buckets = 2;
+                recent.directory_segments = vec![1, 1];
+                reply.body = map.to_bytes();
+                reply.map_sha256 = Some(map.sha256());
+            }
+        }
+    }));
+    let mut first = true;
+    http.intercept = Some(Box::new(move |request| {
+        (request.route == Route::Query && std::mem::take(&mut first)).then(stale)
+    }));
+    assert_eq!(
+        env.client().lookup(&mut http, record.txid.0, 230, &never),
+        Err(TxidError::Stale)
+    );
+    let log = http.take_log();
+    assert_eq!(
+        routes(&log),
+        [
+            Route::Init,
+            Route::Map,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Map,
+            Route::Init
+        ]
+    );
+    assert_eq!(posts(&log), 1);
+}
+
 #[test]
 fn overloaded_503_retry_after_no_internal_retry() {
     let _serial = serial();

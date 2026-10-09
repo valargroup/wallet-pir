@@ -3419,15 +3419,18 @@ follows the swap without downtime, as
   the old revision is resident. After that it gets a 409, refreshes the map and
   retries once on the new lineage.
 - A height under the old start is `PlacementUnknown(Below)` from a cached map
-  only while that map is less than 30 s old. An older map is fetched again
-  first, as for a height above the tip.
+  only while that map is less than 30 s old by the wall clock. An older map is
+  fetched again first, as for a height above the tip.
 - Native profiles and setup seeds are per geometry and do not change. Setups
   are per revision, so the new revisions' are fetched on first use.
 - The first map of the new lineage drops the old lineage's cached manifests
   and setups.
 - A registered geometry the cached init does not list, such as variant B's
-  `txid-4k`, costs one init request. A geometry the client does not know, such
-  as variant C's, still needs a client release.
+  `txid-4k`, costs one init request once the serving init lists it, plus a map
+  request when the lookup had not fetched the map. A geometry the client does
+  not know, such as variant C's, still needs a client release.
+- The new lineage must keep the network and genesis hash: the client refuses
+  a map that changes them.
 - A split-map client from before these rules also follows the 409. But it
   answers `Below` from its cached map until something else refreshes it, and
   returns `Unsupported` for a geometry its cached init lacks until the wallet

@@ -316,33 +316,61 @@ reference it is tested against.
   - The client caches native profiles, init, the recent map, index chunks by
     digest, manifests and setups. `refresh_map(transport, cancel)` fetches and
     validates only the recent map.
+  - With the `testing` feature, `with_placement_refresh_age` and
+    `cached_revisions` let tests make a map stale and inspect the cache.
+    Wallets do not enable it.
 - **Transcript.** Requests are sent one at a time:
   1. init, the recent map, and the index chunk covering an archive height;
   2. the manifest and the bucket's setups, when not cached;
   3. exactly two row queries, even when the rows coincide.
 
-  `Absent` sends the same two queries. Placement and support results send no
-  query. `cancel` is polled before every request.
+  Under the placement and cache rules below, init or the map can be fetched
+  again after the map or a chunk, for example `Map, MapChunk, Init, Manifest,
+  Setup, Query, Query`. A lookup sends at most 2 map, 3 init and 4 query
+  requests. `Absent` sends the same two queries. Placement and support
+  results send no query. `cancel` is polled before every request.
 - **Placement.** A height below the map's start or above its tip is
-  `PlacementUnknown(Below | Above)` straight from a map the lookup fetched
-  or one less than 30 s old. A lookup holding an older map fetches it once
-  more and places the height again on the new map.
+  `PlacementUnknown(Below | Above)` straight from a map the lookup fetched,
+  or one less than 30 s old by the wall clock. A lookup holding an older map
+  fetches it once more and places the height again on the new map. The wall
+  clock is used because a monotonic clock stops while a phone sleeps; a clock
+  that went back counts as old.
 - **Caches.**
-  - Init is fetched on first use. It is fetched again when a fetched map's
-    schema, network, genesis hash or seal parameters differ from the last
-    map's. A lookup that finds the map naming a geometry init does not list
-    fetches init once more, unless it fetched init itself, and then returns
-    `Unsupported` if the geometry is still missing. An init naming an
-    unknown schema or codec stays cached.
+  - Init is fetched on first use.
+  - A map whose schema or seal parameters differ from the last map's is a new
+    publication of the same chain, and init is fetched again.
+  - A map naming another network or genesis hash than the first map the
+    client accepted is `Protocol(Map)`. The client keeps the map it holds:
+    no publication changes its chain, so a mainnet wallet never follows a
+    testnet edge.
+  - When the map names a geometry init does not list, either document may be
+    the older one during a swap: a later publication may add a geometry, or
+    drop the one an older map names. The lookup fetches again whichever of
+    init and the map it has not fetched yet, then tries once more. It returns
+    `Unsupported` only when it fetched both and the geometry is still missing.
+  - An init naming an unknown schema or codec stays cached, and lookups return
+    `Unsupported` without a request, until `refresh_map` or a new client.
   - Each new recent map keeps the index chunks it names. It keeps the
     manifests and setups of the revisions it names through its recent entry
     or a kept chunk, and drops the rest: superseded recent revisions, the
     archives of a chunk that a seal or a window drop replaced, and all of a
     replaced publication, whatever shard ids it reused. A dropped archive's
     manifest and setups are fetched again on its next lookup.
+  - A seal that adds an archive to the newest chunk replaces that chunk, so
+    it drops the cached manifest and setup of every archive in it. At about
+    64 seals a year, each such archive costs about 21 KB raw when it is next
+    looked up.
+  - A cached manifest is reused only when the map entry naming its digest
+    still describes it field for field.
 - **Errors.**
   - A 409 refetches the recent map (but no cached index chunk), retries the
     whole lookup once, then returns `Stale`.
+  - A retry that would name the txid's bucket under another bucket count
+    than this lookup already named returns `Stale` with no further request.
+    Two counts would tell the server the tag's hash modulo both.
+  - The map refresh a stale placement waits on fails like any request:
+    `Unavailable`, `Transport`, `Refused`, `Protocol` or `Cancelled` rather
+    than `PlacementUnknown`.
   - A 503 returns `Unavailable { retry_after }`, as do 429 and other 5xx; the
     client does not retry.
   - A 400, 408, 411, 421 or other 4xx returns `Refused(status)` without a
@@ -378,9 +406,18 @@ A wallet still holding the old map follows the swap:
 3. A height below the old start is placed `Below` from the old map only
    while that map is less than 30 s old (see Placement above). A retry once
    the map is older fetches the new map first.
-4. A geometry the old init did not list costs one init request.
+4. A geometry the old init did not list costs one init request, plus a map
+   request when the lookup had not fetched the map, once the serving init
+   lists it. A cached map naming a geometry the new publication dropped is
+   fetched again the same way.
 5. The first map of the new lineage drops every cached manifest and setup of
    the old one.
+6. A wallet whose cached init is unsupported gets `Unsupported` with no
+   request, so it sees no 409 and no new map, until it calls `refresh_map`
+   or replaces the client.
+
+The swap must keep the network and genesis hash: a client refuses a map that
+changes them.
 
 `shard_id`, `revision` and `manifest_digest` in a lookup's provenance name the
 lineage that answered. Wallets should keep them as provenance only: a later
