@@ -1,7 +1,9 @@
 mod common;
 use common::{action, manifest, receiver, record};
 use receiver_directory::{
-    snapshot::{allow_small_tables, lookup_row, row_for, Snapshot, MIN_ROWS, ROW_BYTES},
+    snapshot::{
+        allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
+    },
     Error, Receiver, Record, RECORD_BYTES,
 };
 
@@ -392,6 +394,40 @@ fn overflow_and_bad_padding_fail_closed() {
     let mut b = row(&s, &r, 0).to_vec();
     b[ROW_BYTES - 1] = 1;
     assert!(lookup_row(&s.manifest, &r, 0, &b).is_err());
+}
+
+/// More records than slots is a capacity failure, found before placement; a bad row
+/// count stays malformed.
+#[test]
+fn records_beyond_the_slots_are_a_capacity_failure() {
+    allow_small_tables();
+    let records = |n: u32| (0..n).map(|p| record(p, n)).collect::<Vec<_>>();
+    let full = Snapshot::build(manifest(1), &records(SLOTS as u32), &[]).unwrap();
+    assert_eq!(full.manifest.records, SLOTS as u64);
+    assert!(matches!(
+        Snapshot::build(manifest(1), &records(SLOTS as u32 + 1), &[]),
+        Err(Error::Capacity)
+    ));
+    for rows in [0, 3, MAX_ROWS * 2] {
+        assert!(matches!(
+            Snapshot::build(manifest(rows), &records(SLOTS as u32 + 1), &[]),
+            Err(Error::Malformed)
+        ));
+    }
+    // A supplied manifest claiming more records than slots is malformed, not a
+    // capacity failure.
+    let mut claimed = full.manifest.clone();
+    claimed.records += 1;
+    assert!(matches!(claimed.validate(), Err(Error::Malformed)));
+    assert!(matches!(
+        claimed.accept([1; 32], 100, 101, [3; 32]),
+        Err(Error::Malformed)
+    ));
+    let r = receiver();
+    assert!(matches!(
+        lookup_row(&claimed, &r, 0, row(&full, &r, 0)),
+        Err(Error::Malformed)
+    ));
 }
 
 #[cfg(feature = "store")]
