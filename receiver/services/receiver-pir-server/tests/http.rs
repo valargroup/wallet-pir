@@ -331,7 +331,7 @@ fn http() -> reqwest::Client {
         .unwrap()
 }
 
-/// A wallet transport over reqwest. It maps 410 to [`Error::Revision`].
+/// A test transport over reqwest; wallets bring their own. It maps 410 to [`Error::Revision`].
 struct Http(reqwest::Client);
 
 impl Transport for Http {
