@@ -187,10 +187,12 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let origin = args.origin.trim_end_matches('/');
     let manifest = fetch_manifest(&http, origin).await?;
     let directory = &manifest.directory;
-    if directory.start_height > fixture.height || directory.end_height < fixture.height {
+    // A start after the fixture is truncated history, which the activation check below
+    // classifies.
+    if directory.end_height < fixture.height {
         return Ok(Some((
             "oracle_invalid",
-            json!({"fixture": "outside coverage"}),
+            json!({"fixture": "after coverage"}),
         )));
     }
     let nodes = args
@@ -645,8 +647,8 @@ mod tests {
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
     /// anchor's height `end`, `[anchor; 32]`, with the tree size after it. Genesis is
-    /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
-    /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
+    /// `[1; 32]`, as [`super::common::manifest`] declares, and every other block below
+    /// the anchor, the fixture's among them, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
     /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
     /// height holds `[9; 32]` after the boundary's first read, as when the chain changes
     /// during the checks. Its `z_gettreestate` gives `root`, or no root for `None`, and
@@ -704,7 +706,7 @@ mod tests {
                                 node.anchor
                             }))
                         }
-                        ("getblockhash", Some(height)) if height == end - 1 => {
+                        ("getblockhash", Some(height)) if height < end => {
                             json!(display(node.fixture))
                         }
                         ("getblock", _) => match node.size {
@@ -861,8 +863,9 @@ mod tests {
     }
 
     /// Wallets require history from Ironwood activation, so a publication starting
-    /// after it is an answer mismatch before any lookup, though it holds the fixture and
-    /// agrees with the node; one starting at activation reaches the lookup.
+    /// after it is an answer mismatch before any lookup, though it agrees with the node,
+    /// whether or not it still holds the fixture; one starting at activation reaches the
+    /// lookup.
     #[tokio::test]
     async fn a_publication_must_start_at_ironwood_activation() {
         let activation = crate::blocks::ironwood_activation();
@@ -872,14 +875,19 @@ mod tests {
         fixture["height"] = (activation + 1).into();
         fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
         std::fs::write(&path, fixture.to_string()).unwrap();
-        let node = Node {
-            end: u64::from(activation) + 2,
-            ..good(u64::from(activation) + 2)
-        };
-        let rpc = serve_node(node).await;
-        for (start, reaches_lookup) in [(activation + 1, false), (activation, true)] {
+        for (start, end, reaches_lookup) in [
+            (activation + 1, activation + 2, false),
+            (activation + 2, activation + 3, false),
+            (activation, activation + 2, true),
+        ] {
+            let end_node = u64::from(end);
+            let rpc = serve_node(Node {
+                end: end_node,
+                ..good(end_node)
+            })
+            .await;
             let mut directory = anchored();
-            (directory.start_height, directory.end_height) = (start, activation + 2);
+            (directory.start_height, directory.end_height) = (start, end);
             let snapshot =
                 receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
             let server = receiver_pir::server::Server::new(snapshot).unwrap();
