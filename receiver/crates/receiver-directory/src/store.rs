@@ -135,8 +135,9 @@ impl Store {
 
     /// Reject gaps, changed parents, coinbase payments, malformed records and payments
     /// a snapshot would refuse before advancing coverage: each must continue its
-    /// receiver's last stored payment as [`snapshot::check_next`] requires, and the
-    /// block's payments must agree on their block hash and transaction locations.
+    /// receiver's last stored payment as [`snapshot::check_next`] requires, the block's
+    /// payments must agree on their block hash and transaction locations, and a txid
+    /// already stored must keep its height and transaction index.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -201,6 +202,19 @@ impl Store {
             };
             if !locations.add(&(&record).into()) {
                 return Err(Error::Malformed);
+            }
+            let stored: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT record FROM payments WHERE txid=?1 LIMIT 1",
+                    [p.txid.as_slice()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(stored) = stored {
+                let stored = Record::decode(&stored)?.ok_or(Error::Malformed)?.payment;
+                if (stored.height, stored.tx_index) != (p.height, p.tx_index) {
+                    return Err(Error::Malformed);
+                }
             }
             let last: Option<Vec<u8>> = tx
                 .query_row(
