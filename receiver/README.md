@@ -46,7 +46,8 @@ does not know is refused.
 `Snapshot::validate` checks a supplied publication whole, before a server prepares
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
-bucket, the exact record count, and every receiver's pages and unique outputs and
+bucket, the exact record count, every receiver's pages, each continuing the last
+in chain order as `snapshot::check_next` requires, and unique outputs and
 positions. A record stored outside its bucket would otherwise make lookups of that
 receiver find nothing.
 
@@ -259,8 +260,8 @@ cover the indexer's `--depth` plus its publication delay (a poll and PIR
 preparation) and a rotation's 60-second grace, so about ten blocks more than the
 depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout
 check from health, which only the private network reaches, and accepts it only
-when health reports serving the probed publication or the one the origin serves
-after a rotation. Every response body is bounded by the protocol's sizes before it
+when health reports serving the probed publication: after a rotation it is
+`report_unavailable` until the next run. Every response body is bounded by the protocol's sizes before it
 is read. The key is never logged. Without a key, publications carry no provider sets.
 
 ## Wallet use

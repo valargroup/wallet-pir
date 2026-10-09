@@ -809,7 +809,57 @@ async fn reject_incomplete_or_inconsistent_pagination() {
         }
     }
     // Model a faulty indexer that publishes correctly hashed but inconsistent page data.
-    for fault in 0..3 {
+    // Each fault edits the two pages in place, or empties a slot when it returns false.
+    let faults: [fn(&mut Record) -> bool; 8] = [
+        // A missing page, an inconsistent total and a repeated position.
+        |r| r.page != 1,
+        |r| {
+            if r.page == 1 {
+                r.total = 3;
+            }
+            true
+        },
+        |r| {
+            if r.page == 1 {
+                r.payment.position = 200;
+            }
+            true
+        },
+        // An earlier block, an earlier transaction and an earlier action.
+        |r| {
+            if r.page == 1 {
+                (r.payment.height, r.payment.block_hash) = (100, [9; 32]);
+            }
+            true
+        },
+        |r| {
+            if r.page == 0 {
+                r.payment.tx_index = 3;
+            }
+            true
+        },
+        |r| {
+            match r.page {
+                0 => r.payment.action_index = 1,
+                _ => (r.payment.txid, r.payment.tx_index) = ([0; 32], 1),
+            }
+            true
+        },
+        // Another hash for one block, below the terminal height whose hash is fixed,
+        // and another txid for one transaction.
+        |r| {
+            r.payment.height = 100;
+            r.payment.block_hash = [10 + r.page as u8; 32];
+            true
+        },
+        |r| {
+            if r.page == 1 {
+                (r.payment.tx_index, r.payment.action_index) = (1, 1);
+            }
+            true
+        },
+    ];
+    for (fault, edit) in faults.into_iter().enumerate() {
         let mut data = snapshot(2);
         for row in data.data.as_chunks_mut::<ROW_BYTES>().0.iter_mut() {
             for slot in row[..SLOTS * RECORD_BYTES]
@@ -818,16 +868,10 @@ async fn reject_incomplete_or_inconsistent_pagination() {
                 .iter_mut()
             {
                 if let Some(mut r) = Record::decode(slot).unwrap() {
-                    if r.page == 1 {
-                        match fault {
-                            0 => {
-                                slot.fill(0);
-                                continue;
-                            }
-                            1 => r.total = 3,
-                            _ => r.payment.position = 200,
-                        }
+                    if edit(&mut r) {
                         slot.copy_from_slice(&r.encode().unwrap());
+                    } else {
+                        slot.fill(0);
                     }
                 }
             }

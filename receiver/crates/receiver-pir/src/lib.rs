@@ -164,19 +164,9 @@ pub fn response_bytes(rows: u32) -> Result<usize, Error> {
     Ok(HEADER_BYTES + pir_native::response_len(COLS))
 }
 
-/// Reject inconsistent continuation pages before exposing a complete history to a wallet.
+/// Reject inconsistent continuation pages before exposing a complete history to a
+/// wallet, by the rule publications are built and validated with
+/// ([`snapshot::check_next`]).
 fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
-    let a = &previous.payment;
-    let b = &next.payment;
-    if next.receiver != previous.receiver
-        || next.page != previous.page + 1
-        || next.total != previous.total
-        || b.position <= a.position
-        || (b.height, b.tx_index, b.action_index) <= (a.height, a.tx_index, a.action_index)
-        || (b.height == a.height && b.block_hash != a.block_hash)
-        || (b.height == a.height && b.tx_index == a.tx_index && b.txid != a.txid)
-    {
-        return Err(Error::Malformed);
-    }
-    Ok(())
+    snapshot::check_next(previous, next).map_err(|_| Error::Malformed)
 }
