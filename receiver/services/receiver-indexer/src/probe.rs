@@ -1,7 +1,7 @@
 //! A `pir-monitor` service probe for the receiver directory. It checks the served
 //! publication against independent nodes, looks up a pinned historical payment over live
-//! encrypted PIR, as Transparent's canary checks one query against a pinned row, then
-//! checks the NEAR feed's freshness and the indexer's payout check, which health reports
+//! encrypted PIR, as Transparent's canary checks one query against a pinned row, checks
+//! the filter file against the manifest, then checks the NEAR feed's freshness and the indexer's payout check, which health reports
 //! on the private network. It prints one JSON line: `passed`, on failure a `category` and
 //! `detail`, and the lookup as `phase: "live_encrypted_probe"` with `queries` and
 //! `correct`. `answer_mismatch` marks served data that is wrong, which the monitor treats
@@ -9,7 +9,11 @@
 //! else, such as `oracle_unavailable` when no node has reached the publication, is an
 //! availability failure. Every response body is bounded before it is buffered.
 use clap::Parser;
-use receiver_directory::{extract::Action, Hash, Payment};
+use receiver_directory::{
+    extract::Action,
+    filter::{Filters, MAX_FILTERS_BYTES},
+    Hash, Payment,
+};
 use receiver_indexer::zakura::ZakuraClient;
 use receiver_pir::{
     public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
@@ -243,6 +247,9 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             json!({"lookup": found.map(|p| (p.height, p.position)), "queries": queries}),
         )));
     }
+    if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
+        return Ok(Some(failure));
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
@@ -255,6 +262,21 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
     }
     indexer_report(&http, origin, &args.health_url, &id).await
+}
+
+/// Checks the session's filter file, which wallets test before any lookup: its digest
+/// must be the manifest's and it must decode to exactly the declared sets.
+async fn check_filters(
+    http: &reqwest::Client,
+    origin: &str,
+    id: &str,
+    directory: &receiver_directory::snapshot::Manifest,
+) -> Result<Option<Failure>> {
+    let url = format!("{origin}/v1/receiver/filters/{id}");
+    let bytes = get(http, &url, MAX_FILTERS_BYTES).await?;
+    let valid = Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
+        && Filters::decode(&bytes).is_ok_and(|filters| directory.check_filters(&filters).is_ok());
+    Ok((!valid).then(|| ("answer_mismatch", json!({"filters_bytes": bytes.len()}))))
 }
 
 /// The indexer's payout check from health, which must report serving the probed
@@ -388,6 +410,36 @@ mod tests {
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         origin
+    }
+
+    /// A filter file is accepted only with the manifest's digest.
+    #[tokio::test]
+    async fn the_filter_file_must_match_its_manifest() {
+        let snapshot = receiver_directory::snapshot::Snapshot::build(
+            super::common::manifest(receiver_pir::MIN_ROWS),
+            &[],
+            &[],
+        )
+        .unwrap();
+        let serve = |bytes: Vec<u8>| async move {
+            let app = Router::new().route(
+                "/v1/receiver/filters/x",
+                routing::get(move || async move { bytes }),
+            );
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            origin
+        };
+        let http = reqwest::Client::new();
+        let origin = serve(snapshot.filters.clone()).await;
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        assert!(check.await.unwrap().is_none());
+        let mut altered = snapshot.filters.clone();
+        *altered.last_mut().unwrap() ^= 1;
+        let origin = serve(altered).await;
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
     }
 
     /// Health's report counts only for the probed publication, or the one the origin

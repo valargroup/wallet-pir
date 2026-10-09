@@ -189,10 +189,12 @@ zero-OVK Action with its txid, height, Action index and note position, the probe
 recovers its receiver, and the answer must hold that payment at that position and
 height with the fixture's fields and the node's block hash. A fixture that fails
 its pin is `oracle_invalid`. The lookup is reported as `phase:
-"live_encrypted_probe"` with `queries` and `correct`; a run moves about 100 KB. It
-fails as `answer_mismatch` when the served anchor is off the node's chain, the
-lookup misses or misreports the payment or a completed payout is missing from the
-index, and otherwise when the publication trails the node by more than 12 blocks
+"live_encrypted_probe"` with `queries` and `correct`. It also downloads the
+session's filter file, which must match the manifest's digest and declared sets.
+A run moves about 140 KB, of which the filter file was about 37 KB in October 2026.
+It fails as `answer_mismatch` when the served anchor is off the node's chain, the
+lookup misses or misreports the payment, the filter file is wrong or a completed
+payout is missing from the index, and otherwise when the publication trails the node by more than 12 blocks
 or the recent set is older than wallets trust (15 minutes). It reads the payout
 check from health, which only the private network reaches, and accepts it only
 when health reports serving the probed publication or the one the origin serves
