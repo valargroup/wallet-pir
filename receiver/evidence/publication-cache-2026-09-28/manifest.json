@@ -9,6 +9,11 @@
     "rust": "1.98.0",
     "profile": "release-fast"
   },
+  "invocations": {
+    "witness_refresh": "the receiver-directory example at the implementation revision, run with --features store on an isolated copy of results.json's source_input database as `<copy> --isolated-copy`, its only accepted arguments; the exact command line (cargo flags and copy path) was not retained",
+    "daemon": "receiver-directory --serve at the implementation revision with witnesses, 8192 rows, zero confirmations and the default 10-second poll, listening on 127.0.0.1:18482 (serve.log); the exact command line was not retained",
+    "rpc_proxy_and_timing_harness": "not retained: no source or command for the loopback tip proxy or the HTTP availability timer exists in any recorded revision"
+  },
   "host": "Apple M3 Ultra (local)",
   "network": "mainnet",
   "range": [
@@ -18,6 +23,8 @@
   "commitments": 623845,
   "records": 20916,
   "rows": 8192,
+  "row_bytes": 4096,
+  "publication_bytes": 33554432,
   "raw": [
     "results.json",
     "serve.log",

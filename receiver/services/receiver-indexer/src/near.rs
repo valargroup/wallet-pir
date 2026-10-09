@@ -23,6 +23,8 @@ const ENDPOINT: &str = "https://explorer.near-intents.org/api/v0/transactions";
 /// status API's `KNOWN_DEPOSIT_TX` is not one: the explorer rejects the request.
 const STATUSES: &str = "FAILED,INCOMPLETE_DEPOSIT,PENDING_DEPOSIT,PROCESSING,REFUNDED,SUCCESS";
 const PAGE: usize = 1000;
+/// Bound on one page's body: a record is about 1 KB, so eight times a full page.
+const MAX_PAGE_BYTES: usize = 8 * 1024 * 1024;
 /// The explorer's per-partner rate limit, with margin.
 const REQUEST_INTERVAL: Duration = Duration::from_millis(5_500);
 /// How far back a refund read starts before the cursor, for swaps the explorer lists
@@ -285,12 +287,19 @@ impl Explorer {
             .send()
             .await;
         self.next_request = tokio::time::Instant::now() + REQUEST_INTERVAL;
-        let response = response?;
+        let mut response = response?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!("NEAR explorer returned HTTP {status}").into());
         }
-        Ok(response.json().await?)
+        let mut body = Vec::new();
+        while let Some(chunk) = response.chunk().await? {
+            if body.len() + chunk.len() > MAX_PAGE_BYTES {
+                return Err("NEAR explorer page exceeds its size bound".into());
+            }
+            body.extend_from_slice(&chunk);
+        }
+        Ok(serde_json::from_slice(&body)?)
     }
 }
 
@@ -377,13 +386,18 @@ mod tests {
         assert_eq!(sets[1].receivers.len(), 2);
     }
 
-    /// A failed first read records no start, so a restart that begins later cannot
-    /// leave the feed claiming coverage it never read.
+    /// A failed first read, including one over the page bound, records no start, so a
+    /// restart that begins later cannot leave the feed claiming coverage it never read.
     #[tokio::test]
     async fn a_feed_starts_only_once_a_read_completes() {
         use axum::{http::StatusCode, routing::get, Router};
         let app = Router::new()
             .route("/fail", get(|| async { (StatusCode::BAD_GATEWAY, "") }))
+            // Valid JSON, but over the page bound.
+            .route(
+                "/large",
+                get(|| async { format!("[{}]", " ".repeat(MAX_PAGE_BYTES)) }),
+            )
             .route("/ok", get(|| async { "[]" }));
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -391,9 +405,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
         let feed = Feed::Payouts;
-        let mut failing = Explorer::at(format!("{origin}/fail"));
-        assert!(failing.sync(&mut store, feed, 1_000).await.is_err());
-        assert_eq!(store.started(feed.name()).unwrap(), None);
+        for route in ["fail", "large"] {
+            let mut failing = Explorer::at(format!("{origin}/{route}"));
+            assert!(failing.sync(&mut store, feed, 1_000).await.is_err());
+            assert_eq!(store.started(feed.name()).unwrap(), None);
+        }
         let mut working = Explorer::at(format!("{origin}/ok"));
         working.sync(&mut store, feed, 2_000).await.unwrap();
         assert_eq!(store.started(feed.name()).unwrap(), Some(2_000));

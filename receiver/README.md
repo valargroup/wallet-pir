@@ -128,15 +128,17 @@ cleartext fallback.
 ## Running the indexer and server
 
 ```sh
-cargo build --locked --profile release-fast -p receiver-indexer --bin receiver-directory
+cargo build --locked --release -p receiver-indexer --bin receiver-directory
 receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1:8232 \
   --cookie /path/to/.cookie --serve --witnesses --min-rows 8192
 ```
 
 `--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
-authentication. Repeat `--rpc-url` for fallback nodes, tried in order. The indexer
-requires mainnet and covers Ironwood activation through `--depth` (default 2)
-blocks below the node's tip, or a test range from `--start-height` to
+authentication. Repeat `--rpc-url` for more nodes: the highest tip among them sets
+the target, and a block hash comes from the first node that has reached its
+height, so a lagging node cannot hide a reorg. Other calls fall back in order.
+The indexer requires mainnet and covers Ironwood activation through `--depth`
+(default 2) blocks below the node's tip, or a test range from `--start-height` to
 `--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch
 is checked against the saved parent, heights, each header's merkle root, Action
 positions, terminal hash and tree size before it is stored. A restart rewinds to
@@ -150,7 +152,8 @@ Without `--serve`, one run writes `<revision>.rows`, `<revision>.filters`,
 zero, so the index must start at Ironwood activation. With `--serve`, the process
 polls every `--poll-seconds` (default 10), prepares each new canonical tip in
 memory, writing no publication files, and serves on `--bind` (default
-`127.0.0.1:18380`), a loopback or private address behind a TLS proxy. A separate
+`127.0.0.1:18380`), a loopback, private IPv4 or unique-local IPv6 address behind a
+TLS proxy. A separate
 guard rechecks served anchors and revokes every session once a node shows one is
 off its chain; a failed check keeps serving. A recovery epoch fences work that
 began before a revocation. The previous revision stays available for 60 seconds,
@@ -169,8 +172,9 @@ at the explorer's rate limit, at October 2026 volume). Each publication declares
 when the feeds' last complete read began, and its recent set holds the day before
 that, so a stalled feed shows as a stale set rather than an incomplete one. A
 record missing an address is skipped, dates are capped at the read's start, and a
-read that stops making progress fails. Health's `indexer` report, computed from the
-index each publication is built from, gives each feed's last read and how many
+read that stops making progress fails, as does a page over 8 MiB. Health's `indexer`
+report, computed from the index each publication is built from and activated with
+it, gives each feed's last read and how many
 payouts NEAR reported complete more than an hour earlier have no indexed payment to
 their receiver in the transaction NEAR reported, the signal that the index missed
 one or NEAR stopped paying with the zero OVK. A payout without a reported
@@ -186,10 +190,12 @@ zero-OVK Action with its txid, height, Action index and note position, the probe
 recovers its receiver, and the answer must hold that payment at that position and
 height with the fixture's fields and the node's block hash. A fixture that fails
 its pin is `oracle_invalid`. The lookup is reported as `phase:
-"live_encrypted_probe"` with `queries` and `correct`; a run moves about 100 KB. It
-fails as `answer_mismatch` when the served anchor is off the node's chain, the
-lookup misses or misreports the payment or a completed payout is missing from the
-index, and otherwise when the publication trails the node by more than 12 blocks
+"live_encrypted_probe"` with `queries` and `correct`. It also downloads the
+session's filter file, which must match the manifest's digest and declared sets.
+A run moves about 140 KB, of which the filter file was about 37 KB in October 2026.
+It fails as `answer_mismatch` when the served anchor is off the node's chain, the
+lookup misses or misreports the payment, the filter file is wrong or a completed
+payout is missing from the index, and otherwise when the publication trails the node by more than 12 blocks
 or the recent set is older than wallets trust (15 minutes). It reads the payout
 check from health, which only the private network reaches, and accepts it only
 when health reports serving the probed publication or the one the origin serves
