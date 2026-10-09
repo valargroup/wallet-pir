@@ -39,6 +39,7 @@
   below the tip, revokes only on a proven fork, reports completed NEAR payouts
   missing from the index and logs with `tracing`. Its `receiver-probe` binary is a
   `pir-monitor` service probe that runs one live encrypted lookup of a pinned
-  payment, checked against the fixture and the node's block, checking chain facts
+  payment, checked against the fixture and the node's block, for the fixture's
+  independently decoded receiver, which recovery must reproduce, checking chain facts
   on one node at a time, highest tip first, and with `--witnesses` checks the
   witness file against the node's Ironwood root.

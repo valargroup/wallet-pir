@@ -363,6 +363,17 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         probe(&fixture, Some(&"0".repeat(64)))["category"],
         "oracle_invalid"
     );
+    // The fixture carries its receiver's independent decoding; a pin that recovery
+    // does not reproduce is refused before any lookup.
+    let mut repinned = fixture.clone();
+    repinned["receiver"] = {
+        use orchard::keys::{FullViewingKey, Scope, SpendingKey};
+        let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
+        hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes()).into()
+    };
+    let result = probe(&repinned, None);
+    assert_eq!(result["category"], "oracle_invalid", "{result}");
+    assert!(result["phase"].is_null(), "{result}");
     let mut moved = fixture.clone();
     moved["position"] = (payment.position + 1).into();
     let result = probe(&moved, None);

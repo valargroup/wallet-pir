@@ -230,12 +230,14 @@ completing them, it fails as `oracle_unavailable`, listing each attempt, rather
 than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
-zero-OVK Action with its txid, height, Action index and note position, the probe
-recovers its receiver, and the answer must hold that payment at that position and
-height with the fixture's fields, the node's block hash and the index of the
-fixture's transaction in the node's block, read by hash and checked against its
-merkle root. A fixture that fails its pin, or whose transaction is not in that
-block, is `oracle_invalid`. The lookup is reported as `phase:
+zero-OVK Action with its txid, height, Action index, note position and the
+receiver it pays, decoded independently of recovery. Before any request the probe
+requires recovery to reproduce that receiver, which it then looks up, so a
+recovery regression shared with the indexer cannot pass. The answer must hold that
+payment at that position and height with the fixture's fields, the node's block
+hash and the index of the fixture's transaction in the node's block, read by hash
+and checked against its merkle root. A fixture that fails its SHA-256 or receiver
+pin, or whose transaction is not in that block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
 With `--witnesses`, which a deployment must pass when its indexer runs with
