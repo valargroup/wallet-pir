@@ -390,6 +390,9 @@ struct PageMeta {
     position: u64,
     txid: Hash,
     action_index: u32,
+    height: u32,
+    tx_index: u32,
+    block_hash: Hash,
 }
 
 impl From<&Record> for PageMeta {
@@ -402,13 +405,42 @@ impl From<&Record> for PageMeta {
             position: r.payment.position,
             txid: r.payment.txid,
             action_index: r.payment.action_index,
+            height: r.payment.height,
+            tx_index: r.payment.tx_index,
+            block_hash: r.payment.block_hash,
         }
     }
 }
 
+impl PageMeta {
+    /// Whether `next` can follow `self`; see [`check_next`].
+    fn continues(&self, next: &Self) -> bool {
+        let same_block = next.height == self.height;
+        next.receiver == self.receiver
+            && self.page.checked_add(1) == Some(next.page)
+            && next.total == self.total
+            && next.position > self.position
+            && (next.height, next.tx_index, next.action_index)
+                > (self.height, self.tx_index, self.action_index)
+            && (!same_block || next.block_hash == self.block_hash)
+            && (!same_block || next.tx_index != self.tx_index || next.txid == self.txid)
+    }
+}
+
+/// Checks that `next` can follow `previous` as the same receiver's next page: the
+/// same receiver and total, the next page number, a later note position, a later
+/// output by height, transaction index and action index, the same block hash at the
+/// same height, and the same txid in the same transaction.
+pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
+    if !PageMeta::from(previous).continues(&PageMeta::from(next)) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
+
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
-/// total in chain order, all repeating that total, and no two records share an output
-/// or note position.
+/// total, each continuing the last as [`check_next`] requires, and no two records
+/// share an output or note position.
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
     let mut previous: Option<PageMeta> = None;
     let mut outputs = std::collections::BTreeSet::new();
@@ -417,10 +449,7 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
         // Every advertised page must exist in this revision, in chain order.
         match previous {
             Some(p) if p.receiver == record.receiver => {
-                if record.total != p.total
-                    || record.page != p.page + 1
-                    || record.position <= p.position
-                {
+                if !p.continues(&record) {
                     return Err(Error::Malformed);
                 }
             }

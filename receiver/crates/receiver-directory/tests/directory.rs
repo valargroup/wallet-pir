@@ -1299,3 +1299,89 @@ fn a_populated_largest_table_validates() {
     assert!(fullest < SLOTS, "{fullest} records share a row");
     s.validate().unwrap();
 }
+
+/// Each page continues the last as [`check_next`] requires, in a build and in a
+/// supplied publication, each of whose edits is rehashed.
+#[test]
+fn pages_continue_in_chain_order() {
+    allow_small_tables();
+    use receiver_directory::{snapshot::check_next, Payment};
+    let mut m = manifest(8);
+    m.start_height = 98;
+    // Below the terminal height, whose hash a record must match anyway, so a
+    // disagreement within a block is caught by the continuation alone.
+    let mut first = record(0, 2);
+    first.payment.height = 100;
+    first.payment.block_hash = [10; 32];
+    (
+        first.payment.txid,
+        first.payment.tx_index,
+        first.payment.action_index,
+    ) = ([1; 32], 2, 1);
+    first.payment.position = 200;
+    let next = |edit: fn(&mut Payment)| {
+        let mut r = record(1, 2);
+        r.payment = first.payment.clone();
+        r.payment.position = 201;
+        edit(&mut r.payment);
+        r
+    };
+    let within_tx = next(|p| p.action_index = 2);
+    let valid = Snapshot::build(m.clone(), &[first.clone(), within_tx.clone()], &[]).unwrap();
+    valid.validate().unwrap();
+
+    let continuing: [fn(&mut Payment); 3] = [
+        |p| p.action_index = 2,
+        |p| (p.txid, p.tx_index, p.action_index) = ([2; 32], 3, 0),
+        |p| {
+            (p.height, p.block_hash, p.txid, p.tx_index, p.action_index) =
+                (101, [3; 32], [2; 32], 1, 0)
+        },
+    ];
+    for edit in continuing {
+        let r = next(edit);
+        check_next(&first, &r).unwrap();
+        Snapshot::build(m.clone(), &[first.clone(), r], &[])
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    let broken: [fn(&mut Payment); 5] = [
+        // An earlier action in the same transaction.
+        |p| p.action_index = 0,
+        // An earlier transaction in the same block.
+        |p| (p.txid, p.tx_index, p.action_index) = ([2; 32], 1, 5),
+        // An earlier block.
+        |p| (p.height, p.block_hash, p.txid) = (99, [9; 32], [2; 32]),
+        // Another hash for the same block.
+        |p| (p.block_hash, p.txid, p.tx_index) = ([11; 32], [2; 32], 3),
+        // Another txid for the same transaction.
+        |p| (p.txid, p.action_index) = ([2; 32], 2),
+    ];
+    for edit in broken {
+        let r = next(edit);
+        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
+        assert!(matches!(
+            Snapshot::build(m.clone(), &[first.clone(), r.clone()], &[]),
+            Err(Error::Malformed)
+        ));
+        let mut s = valid.clone();
+        let offset = slot_of(&s, &within_tx);
+        put(&mut s, offset, Some(&r));
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
+
+    // The page, total and position conditions hold for the predicate too.
+    let mut other = within_tx.clone();
+    other.receiver = other_receiver();
+    let mut skipped = within_tx.clone();
+    (skipped.page, skipped.total) = (2, 3);
+    let mut wider = within_tx.clone();
+    wider.total = 3;
+    let earlier = next(|p| (p.position, p.action_index) = (199, 2));
+    for r in [other, skipped, wider, earlier] {
+        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
+    }
+}
