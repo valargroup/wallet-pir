@@ -38,8 +38,8 @@
   below the tip, revokes only on a proven fork, reports completed NEAR payouts
   missing from the index and when the running process last read each NEAR feed,
   and logs with `tracing`. Its `receiver-probe` binary is a `pir-monitor` service
-  probe that runs one live encrypted lookup checked against the session's row file,
-  checking chain facts on one node at a time, highest tip first; with `--witnesses`
-  it checks the witness file against the node's Ironwood root, and a deploy runs it
-  with `--await-feed-reads` to wait for the restarted process to read both NEAR
-  feeds.
+  probe that runs one live encrypted lookup of a pinned payment, checked against the
+  fixture and the node's block, checking chain facts on one node at a time, highest
+  tip first; with `--witnesses` it checks the witness file against the node's
+  Ironwood root, and a deploy runs it with `--await-feed-reads` to wait for the
+  restarted process to read both NEAR feeds.
