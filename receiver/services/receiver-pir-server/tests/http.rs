@@ -162,6 +162,94 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .unwrap()
         .is_empty());
 }
+/// A revocation aborts a session file still being sent, so a wallet in file mode
+/// fails instead of installing it, while a file sent across an ordinary rotation
+/// completes.
+#[tokio::test]
+async fn a_revocation_aborts_files_in_flight() {
+    /// Reads the row file a chunk at a time, revoking after the first chunk once the
+    /// server has filled the connection's buffers and paused.
+    struct Revoking {
+        http: Http,
+        publications: Publications,
+        received: AtomicUsize,
+    }
+    impl Transport for Revoking {
+        async fn get(&self, url: &str, limit: usize) -> Result<Vec<u8>, Error> {
+            if !url.contains("/rows/") {
+                return Transport::get(&self.http, url, limit).await;
+            }
+            let failed = |e: reqwest::Error| Error::Transport(e.to_string());
+            let mut response = self.http.0.get(url).send().await.map_err(failed)?;
+            assert!(response.status().is_success());
+            let mut body = Vec::new();
+            body.extend(response.chunk().await.map_err(failed)?.unwrap());
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            self.publications.revoke();
+            let read = async {
+                while let Some(chunk) = response.chunk().await? {
+                    body.extend(chunk);
+                }
+                Ok(())
+            };
+            let result = read.await.map_err(failed);
+            self.received.store(body.len(), Ordering::Relaxed);
+            result.map(|()| body)
+        }
+        async fn post(&self, url: &str, body: Vec<u8>, limit: usize) -> Result<Vec<u8>, Error> {
+            Transport::post(&self.http, url, body, limit).await
+        }
+    }
+    let length = MIN_ROWS as usize * receiver_directory::snapshot::ROW_BYTES;
+    let publications = Publications::default();
+    assert!(publications.publish(
+        Publication::new(Server::new(snapshot(2)).unwrap(), None).unwrap(),
+        0
+    ));
+    let server = serve_router(receiver_pir_server::router_with_publications(
+        publications.clone(),
+    ))
+    .await;
+    let manifest = DirectoryClient::fetch_manifest(&server.origin, &Http(http()))
+        .await
+        .unwrap();
+    let rows = format!(
+        "{}/v1/receiver/rows/{}",
+        server.origin,
+        hex::encode(manifest.id().unwrap())
+    );
+    // A file in progress when its publication is displaced still completes.
+    let mut response = http().get(&rows).send().await.unwrap();
+    assert_eq!(response.content_length(), Some(length as u64));
+    let mut received = response.chunk().await.unwrap().unwrap().len();
+    let mut next = snapshot(2);
+    next.manifest.end_height = 102;
+    next.manifest.end_hash = [9; 32];
+    assert!(publications.publish(
+        Publication::new(Server::new(next).unwrap(), None).unwrap(),
+        0
+    ));
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        received += chunk.len();
+    }
+    assert_eq!(received, length);
+    // Revoking mid-transfer cuts the file short, and the wallet does not install it.
+    let host = Revoking {
+        http: Http(http()),
+        publications: publications.clone(),
+        received: AtomicUsize::new(0),
+    };
+    let result =
+        DirectoryClient::connect_manifest(&server.origin, &host, accepted(), manifest, 10_000)
+            .await;
+    assert!(matches!(result, Err(Error::Transport(_))));
+    let received = host.received.load(Ordering::Relaxed);
+    assert!(
+        received > 0 && received < length,
+        "received {received} of {length}"
+    );
+}
+
 /// Health serves each publication's own report with its ID.
 #[tokio::test]
 async fn health_serves_the_owners_report() {
@@ -461,6 +549,42 @@ async fn retrieve_complete_history_and_enforce_limits_over_http() {
         .await
         .unwrap()
         .is_empty());
+}
+
+/// A query must be exactly its session's length: a longer one is 413 and a shorter
+/// one 400, even below the largest supported query.
+#[tokio::test]
+async fn queries_must_match_their_sessions_length() {
+    use receiver_pir::{query_bytes, MAX_ROWS};
+    let pir = Server::new(snapshot(1)).unwrap();
+    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
+    let server = serve_publication(Publication::new(pir, None).unwrap()).await;
+    let post = |body: Vec<u8>| {
+        http()
+            .post(format!("{}/v1/receiver/query", server.origin))
+            .body(body)
+            .send()
+    };
+    let query = client.prepare(receiver(), 0).unwrap();
+    let exact = query.body().to_vec();
+    assert_eq!(exact.len(), query_bytes(MIN_ROWS).unwrap());
+    assert!(exact.len() + 1 < query_bytes(MAX_ROWS).unwrap());
+    let mut longer = exact.clone();
+    longer.push(0);
+    assert_eq!(
+        post(longer).await.unwrap().status(),
+        reqwest::StatusCode::PAYLOAD_TOO_LARGE
+    );
+    let mut shorter = exact.clone();
+    shorter.pop();
+    assert_eq!(
+        post(shorter).await.unwrap().status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    let answer = post(exact).await.unwrap();
+    assert!(answer.status().is_success());
+    let answer = answer.bytes().await.unwrap();
+    assert_eq!(client.decode(query, &answer).unwrap(), Some(record(0, 1)));
 }
 
 #[tokio::test]

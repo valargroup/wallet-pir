@@ -33,7 +33,10 @@ hash of the salt, the receiver's tag and the page selects a row. Publications
 start at 8192 rows, and a manifest with fewer is refused. A crowded bucket retries up to 16 salts derived from the
 terminal hash, the first being the hash itself, and only then doubles the table,
 up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
-records. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
+records. So do more records than the table has slots, caught before placement; a
+supplied manifest claiming more records than its slots is malformed. The store
+counts at most one payment past the slots, in the snapshot's read transaction,
+before loading any record. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
 inclusive block coverage, boundary hashes, tree positions, geometry, salt, record
 count, the filter sets and the SHA-256 of the rows and of the filter file. The
 immutable revision is a domain-separated SHA-256 of every field at fixed width, as
@@ -104,7 +107,11 @@ the session ID.
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
-409, a revoked one 410, an oversized query 413 and a malformed one 400. Queries
+409, a revoked one 410, a query longer than its session's 413 and a shorter or
+otherwise malformed one 400; the length is checked before the query waits for
+evaluation. A
+revocation also aborts a session file still being sent: its status and length are
+already out, so the client sees a truncated body rather than 410. Queries
 are admitted with the primitives Enhance uses (`pir_control::admission`): two in
 flight per client, then a wait of up to 2 seconds for one of two evaluation
 slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
@@ -141,6 +148,10 @@ with it if it changed, so a node restart that rotates the cookie needs no indexe
 restart. Repeat `--rpc-url` for more nodes: the highest tip among them sets
 the target, and a block hash comes from the first node that has reached its
 height, so a lagging node cannot hide a reorg. Other calls fall back in order.
+Each response is read only up to a bound for its method: 4 KiB for a tip or a
+hash and, from the 2 MB maximum block, about 4.1 MB for a raw block's hex and
+4.8 MB for a verbose block's transaction IDs. A larger response is an error, so
+the call moves on to the next node.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
 (default 2) blocks below the node's tip, or a test range from `--start-height` to
 `--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch

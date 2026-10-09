@@ -1,5 +1,7 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
-use crate::zakura::{VerboseBlock, ZakuraClient, ZakuraError};
+use crate::zakura::{
+    VerboseBlock, ZakuraClient, ZakuraError, RAW_BLOCK_RESPONSE_BYTES, VERBOSE_BLOCK_RESPONSE_BYTES,
+};
 use receiver_directory::{
     extract::Action,
     store::{Checkpoint, IndexedBlock},
@@ -36,7 +38,13 @@ impl ZakuraClient {
         let position = if height < ironwood_activation() {
             0
         } else {
-            let result: VerboseBlock = self.call("getblock", json!([displayed, 1])).await?;
+            let result: VerboseBlock = self
+                .call(
+                    "getblock",
+                    json!([displayed, 1]),
+                    VERBOSE_BLOCK_RESPONSE_BYTES,
+                )
+                .await?;
             result
                 .trees
                 .ironwood
@@ -149,7 +157,9 @@ impl ZakuraClient {
     /// The block `id` names, a height or a displayed hash, decoded from the node's raw
     /// `getblock` bytes.
     async fn raw_block(&self, id: String) -> Result<Block, ZakuraError> {
-        let raw: String = self.call("getblock", json!([id, 0])).await?;
+        let raw: String = self
+            .call("getblock", json!([id, 0]), RAW_BLOCK_RESPONSE_BYTES)
+            .await?;
         let bytes = hex::decode(raw)?;
         let mut input = bytes.as_slice();
         let block =

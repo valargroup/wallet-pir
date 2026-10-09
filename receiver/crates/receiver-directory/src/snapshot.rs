@@ -38,6 +38,15 @@ fn min_rows() -> u32 {
     MIN_ROWS
 }
 
+/// The record slots in a table of `rows` rows. A row count that is not a power of two
+/// from [`MIN_ROWS`] to [`MAX_ROWS`] is [`Error::Malformed`].
+pub(crate) fn capacity(rows: u32) -> Result<u64, Error> {
+    if !rows.is_power_of_two() || rows < min_rows() || rows > MAX_ROWS {
+        return Err(Error::Malformed);
+    }
+    Ok(u64::from(rows) * SLOTS as u64)
+}
+
 /// Coverage includes empty blocks and excludes coinbase recipients, not their note positions.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -120,10 +129,7 @@ impl Manifest {
             || self.start_position > self.end_position
             // A depth-32 note commitment tree holds at most 2^32 leaves.
             || self.end_position > 1 << 32
-            || !self.rows.is_power_of_two()
-            || self.rows < min_rows()
-            || self.rows > MAX_ROWS
-            || self.records > u64::from(self.rows) * SLOTS as u64
+            || !capacity(self.rows).is_ok_and(|slots| self.records <= slots)
         {
             return Err(Error::Malformed);
         }
@@ -234,8 +240,8 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
-    /// Bucket overflow fails the whole candidate with [`Error::Capacity`]. It never
-    /// drops records or coverage. A filter file over [`filter::MAX_FILTERS_BYTES`] is
+    /// More records than the table has slots, or bucket overflow, fails the whole
+    /// candidate with [`Error::Capacity`]. It never drops records or coverage. A filter file over [`filter::MAX_FILTERS_BYTES`] is
     /// [`Error::Malformed`]. The paid filter holds the records' receivers; `provider`
     /// sets come from the publisher's swap provider feeds (see [`crate::filter`]).
     pub fn build(
@@ -244,6 +250,9 @@ impl Snapshot {
         provider: &[ProviderSet],
     ) -> Result<Self, Error> {
         manifest.records = records.len() as u64;
+        if manifest.records > capacity(manifest.rows)? {
+            return Err(Error::Capacity);
+        }
         let filters = Filters::new(
             Filter::build(&manifest.salt, records.iter().map(|r| &r.receiver)),
             provider.iter().map(|set| {

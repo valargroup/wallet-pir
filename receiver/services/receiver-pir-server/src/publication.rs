@@ -240,10 +240,6 @@ impl Publications {
 }
 
 #[cfg(test)]
-#[path = "../../../crates/receiver-directory/tests/common/mod.rs"]
-mod common;
-
-#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -255,7 +251,7 @@ mod tests {
     /// An empty prepared publication whose salt starts with `salt`, ending at a block
     /// hash of `hash` bytes.
     fn publication_at(salt: u8, hash: u8) -> Publication {
-        let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let mut manifest = crate::common::manifest(receiver_pir::MIN_ROWS);
         manifest.salt[0] = salt;
         manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
