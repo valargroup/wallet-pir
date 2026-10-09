@@ -1,5 +1,5 @@
 mod common;
-use common::{action, manifest, receiver, record};
+use common::{action, manifest, receiver, record, RECEIVER_HEX};
 use receiver_directory::{
     snapshot::{
         allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
@@ -14,7 +14,12 @@ fn row<'a>(s: &'a Snapshot, r: &Receiver, page: u32) -> &'a [u8] {
 
 #[test]
 fn public_refund_requires_authenticated_recovery() {
-    assert!(action().recover_receiver().unwrap().is_some());
+    // Recovery must yield exactly the independently decoded receiver.
+    let recovered = action().recover_receiver().unwrap().unwrap();
+    assert_eq!(
+        recovered.as_bytes().as_slice(),
+        hex::decode(RECEIVER_HEX).unwrap()
+    );
     let mut a = action();
     a.out_ciphertext[0] ^= 1;
     assert!(a.recover_receiver().unwrap().is_none());
