@@ -54,8 +54,8 @@ struct Args {
     /// publishing from memory. Without it, one run writes its publication's files.
     #[arg(long, conflicts_with = "end_height")]
     serve: bool,
-    /// The service's listener: loopback, or a private address that only the TLS proxy
-    /// and monitoring hosts on the private network can reach.
+    /// The service's listener: loopback, or a private IPv4 or unique-local IPv6 address
+    /// that only the TLS proxy and monitoring hosts on the private network can reach.
     #[arg(long, default_value = "127.0.0.1:18380")]
     bind: SocketAddr,
     #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..))]
@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
     }
     let private = match args.bind.ip() {
         IpAddr::V4(ip) => ip.is_loopback() || ip.is_private(),
-        IpAddr::V6(ip) => ip.is_loopback(),
+        IpAddr::V6(ip) => ip.is_loopback() || ip.is_unique_local(),
     };
     if args.serve && !private {
         return Err("continuous serving requires a loopback or private bind".into());
@@ -394,13 +394,10 @@ async fn refresh(
         serving.revoke();
         return Err("chain changed during PIR preparation; retrying".into());
     }
-    // The report describes the reconciled index this publication was built from.
-    serving.set_report(receiver_indexer::near::report(
-        &provider_store,
-        &store,
-        unix_now(),
-    )?);
-    if !serving.publish(publication, epoch.unwrap()) {
+    // The report describes the reconciled index this publication was built from, and
+    // activates with it.
+    let report = receiver_indexer::near::report(&provider_store, &store, unix_now())?;
+    if !serving.publish(publication.with_report(report), epoch.unwrap()) {
         return Err("publication invalidated during preparation; retrying".into());
     }
     log_stage("activate", started);

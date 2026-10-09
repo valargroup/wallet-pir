@@ -123,18 +123,15 @@ pub fn router_with_publications(publications: Publications) -> Router {
 
 /// The process identity and the revision being served, for deploys and monitoring.
 async fn health(State(s): State<Service>) -> Response {
-    let serving = s
-        .publications
-        .select(None)
-        .ok()
-        .map(|(p, _)| hex::encode(p.id));
+    // The ID and report come from one publication, so they always match.
+    let current = s.publications.select(None).ok().map(|(p, _)| p);
     (
         [(header::CACHE_CONTROL, "no-store")],
         Json(serde_json::json!({
             "identity": pir_control::Identity::process(),
-            "serving": serving,
+            "serving": current.as_ref().map(|p| hex::encode(p.id)),
             "epoch": s.publications.epoch(),
-            "indexer": s.publications.report(),
+            "indexer": current.and_then(|p| p.report.clone()),
         })),
     )
         .into_response()
