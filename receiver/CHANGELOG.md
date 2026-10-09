@@ -18,10 +18,12 @@
   sessions, rows, witnesses and filters, with process identity and the indexer's
   latest report at `/v1/receiver/health` and the shared HTTP metrics. A replaced
   publication keeps serving its sessions for 60 seconds, and the next replacement
-  waits for that to end. Queries are admitted with Enhance's shared primitives:
+  waits for that to end; a revocation aborts session files still being sent.
+  Queries are admitted with Enhance's shared primitives:
   each client may have two in flight, and a query waits up to 2 seconds for one of
   two evaluation slots after its upload completes; refusals are 429 with
-  `Retry-After: 1`. Session IDs hash the session manifest at fixed width, and a
+  `Retry-After: 1`. A query longer than its session's is 413 and a shorter one
+  400, refused before it waits for a slot. Session IDs hash the session manifest at fixed width, and a
   session manifest is at most 16 KiB.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, keeps publishing and
