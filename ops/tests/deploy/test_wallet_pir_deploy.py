@@ -1,4 +1,4 @@
-"""The transactional Enhance and Status deploy CLI against an in-memory fleet.
+"""The transactional Enhance, Status and Receiver deploy CLI against an in-memory fleet.
 
 Uses the repository's own descriptors and unit templates; only hosts are fake.
 """
@@ -57,11 +57,15 @@ NETWORK = 'ab' * 32
 STATUS_OLD = b'status-pir built from c5a6486'
 STATUS_NEW = b'status-pir built from a later revision'
 STATUS_LEGACY = '/opt/wallet-pir/releases/c5a6486/native'
+RECEIVER_UNIT = ROOT / 'receiver/ops/digitalocean/receiver-pir.service'
+RECEIVER_OLD = b'receiver-directory built from c7f6d296'
+RECEIVER_NEW = b'receiver-directory built from a later revision'
+RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
 
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
     'ssh': {'mode': 'config'},
-    'hosts': {name: {} for name in ('coordinator', 'worker-01', 'worker-02', 'router-01', 'status-01')},
+    'hosts': {name: {} for name in ('coordinator', 'worker-01', 'worker-02', 'router-01', 'status-01', 'receiver-01')},
     'services': {
         'enhance': {
             'roles': {
@@ -79,6 +83,7 @@ INVENTORY = {
                       'controller': [{'host': 'coordinator'}]},
             'exact_check': {'host': 'coordinator', 'argv': ['/usr/local/bin/exact', '{release_dir}']},
         },
+        'receiver': {'roles': {'server': [{'host': 'receiver-01', 'vars': {'listen': '10.0.0.11:18380'}}]}},
     },
 }
 
@@ -120,6 +125,8 @@ class Fleet(unittest.TestCase):
         self.binary.write_bytes(NEW)
         self.status_binary = self.dir / 'status-pir'
         self.status_binary.write_bytes(STATUS_NEW)
+        self.receiver_binary = self.dir / 'receiver-directory'
+        self.receiver_binary.write_bytes(RECEIVER_NEW)
 
     def deployer(self, name='enhance', only=None):
         deployer = Deployer(SERVICES[name], self.inventory, self.fake, self.state, out=self.lines.append,
@@ -541,6 +548,49 @@ class StatusTests(Fleet):
         self.assertEqual(problems, [])
 
 
+class ReceiverTests(Fleet):
+    def receiver_fleet(self):
+        """The repository unit as first installed, starting the binary through `current`."""
+        self.fake.install('receiver-01', 'receiver-pir.service', RECEIVER_UNIT.read_text(), (),
+                          {RECEIVER_CURRENT: RECEIVER_OLD})
+        # Identity is nested, and `serving` stays null until the first publication.
+        self.fake.health_shapes[('receiver-01', 'receiver-pir.service')] = lambda ready, exe: {
+            'identity': {'binary_sha256': exe}, 'serving': 'cd' * 32 if ready else None, 'epoch': 0}
+        deployer = self.deployer('receiver')
+        deployer.capture_baseline()
+        self.fake.log.clear()
+        return deployer
+
+    def test_deploy_swaps_only_the_binary_and_rollback_returns_to_current(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        before = dict(self.fake.host('receiver-01').files)
+        journal = deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
+        tail = units.split_exec(units.exec_start(units.effective([RECEIVER_UNIT.read_text()])))[2]
+        self.assertIn('--bind 10.70.0.11:18380', tail)
+        managed = self.fake.read('receiver-01', dropin('receiver-pir.service', units.MANAGED_DROP_IN))
+        self.assertIn('ExecStart=/opt/receiver-pir/releases/%s/receiver-directory %s\n' % (sha, tail), managed)
+        self.assertEqual(self.fake.read('receiver-01', RECEIVER_CURRENT), RECEIVER_OLD.decode())
+        self.fake.log.clear()
+        deployer.rollback()
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+        for path in self.fake.unit_paths('receiver-01', 'receiver-pir.service'):
+            self.assertEqual(self.fake.host('receiver-01').files[path], before[path])
+
+    def test_a_server_that_never_publishes_is_rolled_back(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        self.fake.unhealthy.add(('receiver-01', sha))
+        with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
+            deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+
+
 class UnitTests(unittest.TestCase):
     def test_effective_configuration_follows_systemd_merging(self):
         config = units.effective([
@@ -578,6 +628,9 @@ class UnitTests(unittest.TestCase):
             self.assertEqual(len(keys), len(set(keys)))
         self.assertEqual(SERVICES['enhance'].order, ('worker', 'packing-router', 'query-ingress', 'coordinator'))
         self.assertEqual(SERVICES['status'].order, ('worker', 'router', 'controller'))
+        self.assertEqual(SERVICES['receiver'].order, ('server',))
+        self.assertEqual(SERVICES['receiver'].artifact_kinds, ('receiver-pir',))
+        self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
 
 
 class LocalExecutor(SSHExecutor):

@@ -47,6 +47,7 @@ class FakeFleet(Executor):
         self.unhealthy = set()        # (host, exe sha256) whose health is never ready
         self.failing_restart = set()  # (host, unit) that fail to start
         self.identity_override = {}   # (host, unit) -> binary_sha256 the health reports
+        self.health_shapes = {}       # (host, unit) -> f(ready, exe sha256) giving its own health body
         self.self_check_fails = set()
         self.exact_result = (0, 'exact answers ok')
         self.endpoints = {}
@@ -194,7 +195,8 @@ class FakeFleet(Executor):
         if state['active'] != 'active':
             return 0, 'connection refused'
         ready = (host, state['exe']) not in self.unhealthy
-        body = {'ready': ready, 'published': [7] if ready else []}
+        shape = self.health_shapes.get((host, unit))
+        body = shape(ready, state['exe']) if shape else {'ready': ready, 'published': [7] if ready else []}
         if (host, unit) in self.identity_override:
             body['binary_sha256'] = self.identity_override[(host, unit)]
         return 200, json.dumps(body)

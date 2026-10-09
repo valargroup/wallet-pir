@@ -12,7 +12,8 @@
     "worker-01": {"address": "192.0.2.15"},
     "worker-02": {"address": "192.0.2.16"},
     "router-01": {"address": "192.0.2.14"},
-    "status-01": {"address": "192.0.2.17"}
+    "status-01": {"address": "192.0.2.17"},
+    "receiver-01": {"address": "192.0.2.18"}
   },
   "services": {
     "enhance": {
@@ -47,6 +48,11 @@
                  "--query-origin", "http://127.0.0.1:8492", "--cookie", "/root/.cache/zakura/.cookie",
                  "--seconds", "60", "--report-dir", "/root/wallet-pir-deploy-{transaction}-status-probe"],
         "timeout": 900
+      }
+    },
+    "receiver": {
+      "roles": {
+        "server": [{"host": "receiver-01", "vars": {"listen": "192.0.2.18:18380"}}]
       }
     }
   }

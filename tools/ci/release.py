@@ -30,8 +30,9 @@ BINARIES = {
     # Status roles and controller, from the native target like
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],
-    # The receiver directory's indexer and server, and its pir-monitor probe;
-    # receiver/ops/digitalocean/README.md installs them.
+    # The receiver directory's indexer and server, which
+    # ops/scripts/wallet-pir-deploy.py deploys, and its pir-monitor probe;
+    # receiver/ops/digitalocean/README.md installs the probe.
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {

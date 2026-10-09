@@ -21,7 +21,7 @@ DESCRIPTORS = ROOT / 'enhance/ops/deploy/deploy.toml'
 SHA256 = re.compile('^[0-9a-f]{64}$')
 
 USAGE = """\
-Transactional deploys of Enhance PIR and Status PIR over SSH.
+Transactional deploys of Enhance, Status and Receiver PIR over SSH.
 Transparent schema recipes run on the pinned coordinator under the same lock.
 
   plan SERVICE (--binary F | --archive F --sha REV | --sha256 H)
