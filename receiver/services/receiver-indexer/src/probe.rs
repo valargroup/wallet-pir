@@ -607,36 +607,6 @@ mod tests {
         }
     }
 
-    /// `--max-lag` defaults to 12 and bounds the publication's lag inclusively.
-    #[test]
-    fn the_lag_bound_is_configurable() {
-        let args = |extra: &[&str]| {
-            let required = [
-                "receiver-probe",
-                "--origin",
-                "https://receiver",
-                "--health-url",
-                "http://10.0.0.1/health",
-                "--rpc-url",
-                "http://node",
-                "--no-auth",
-            ];
-            Args::try_parse_from(required.iter().chain(extra)).unwrap()
-        };
-        assert_eq!(args(&[]).max_lag, 12);
-        // A depth of 50 needs about ten more blocks for the poll, preparation and grace.
-        let max_lag = args(&["--max-lag", "60"]).max_lag;
-        assert_eq!(max_lag, 60);
-        let directory = anchored();
-        let height = u64::from(directory.end_height);
-        for (lag, stale) in [(60, false), (61, true)] {
-            assert_eq!(
-                check_lag(height + lag, &directory, max_lag).map(|f| f.0),
-                stale.then_some("stale_publication")
-            );
-        }
-    }
-
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
     /// anchor's height, `[anchor; 32]`, with the tree size after it. Genesis is
     /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the

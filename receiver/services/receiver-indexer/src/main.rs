@@ -764,20 +764,6 @@ mod tests {
         fn provider(&self) -> ProviderStore {
             ProviderStore::open(self.dir.path().join("provider.sqlite")).unwrap()
         }
-
-        /// The served filter set labeled `near-intents/{name}`'s end, and the served
-        /// report's read time of `feed`.
-        async fn until_and_read(&self, name: &str, feed: &str) -> (Value, Value) {
-            let manifest = self.get("init").await;
-            let filters = manifest["directory"]["filters"].as_array().unwrap();
-            let label = format!("near-intents/{name}");
-            let set = filters.iter().find(|set| set["label"] == label).unwrap();
-            let health = self.get("health").await;
-            (
-                set["until_unix"].clone(),
-                health["indexer"]["feeds"][feed].clone(),
-            )
-        }
     }
 
     /// A refresh with nothing new keeps the publication, and a changed report
@@ -839,7 +825,9 @@ mod tests {
         })
         .await;
         paused.refresh().await.unwrap();
-        let (until, read) = paused.until_and_read("seen", "near-payouts").await;
+        // The seen set, the only one with only the payout feed read.
+        let until = paused.get("init").await["directory"]["filters"][0]["until_unix"].clone();
+        let read = paused.get("health").await["indexer"]["feeds"]["near-payouts"].clone();
         assert_eq!(read, until);
         // Reads committed after the capture, during preparation.
         let latest = paused.provider().read("near-payouts").unwrap().unwrap();

@@ -30,17 +30,8 @@
   `no-store`. Session IDs hash the session manifest at fixed width, and a
   session manifest is at most 16 KiB.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
-  mainnet with batch anchor checks and reorg rollback, keeps publishing and
-  serving each canonical tip from memory while revoking orphaned sessions,
-  republishes a paused tip when its provider sets or report change, and
-  feeds the `near-intents` filter sets from the NEAR Intents explorer when given a
-  partner key. It checks each block against its header's merkle root, fails over
-  between nodes, bounds each node response, publishes a few blocks
-  below the tip, revokes only on a proven fork, reports completed NEAR payouts
-  missing from the index and logs with `tracing`. `receiver-directory probe`, also
-  built as `receiver-probe`, is a `pir-monitor` service probe with an embedded
-  mainnet fixture that runs one live encrypted lookup of a pinned
-  payment, checked against the fixture's pinned fields, for the fixture's
-  independently decoded receiver, which recovery must reproduce, checking chain facts
-  on one node at a time, highest tip first, and with `--witnesses` checks the
-  witness file against the node's Ironwood root.
+  mainnet with batch anchor checks and reorg rollback, serves each canonical tip
+  from memory while revoking orphaned sessions, feeds the `near-intents` filter
+  sets from the NEAR Intents explorer and reports completed NEAR payouts missing
+  from the index. `receiver-directory probe`, also built as `receiver-probe`, is a
+  `pir-monitor` service probe that looks up a pinned payment over live encrypted PIR.
