@@ -230,7 +230,8 @@ tips. A node that cannot complete them, from an RPC failure, an undecodable
 answer, missing tree data or a chain that changes during its reads, hands over to
 the next, but valid evidence against the publication is final. With no node
 completing them, it fails as `oracle_unavailable`, listing each attempt, rather
-than skipping them.
+than skipping them. Once the lookup and file checks end, the terminal block must
+still be the checking node's.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, block hash, transaction and Action

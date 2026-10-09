@@ -197,7 +197,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let pinned = (fixture.height, block_hash);
-    let (root, tip) = match oracle(&nodes, directory, pinned, args.witnesses).await {
+    let (rpc, root, tip) = match oracle(&nodes, directory, pinned, args.witnesses).await {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
@@ -280,6 +280,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
         return Ok(Some(failure));
     }
+    // The node's checks hold for the whole lookup only if the terminal block is still
+    // its own.
+    if parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)? != directory.end_hash {
+        return Err("chain changed during the probe".into());
+    }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
@@ -358,8 +363,8 @@ enum Verdict {
 /// Checks the publication against one node: the anchor ([`check_anchor`]), then the
 /// fixture's `pinned` height and block hash, which must be the node's (a fixture off
 /// the chain is invalid), and, with `witnesses`, the Ironwood root after the terminal
-/// block, read by its hash. Its reads come from one chain: the terminal block must
-/// still be the node's after the last of them.
+/// block, read by its hash. Reads by hash or of deep history need no recheck; the
+/// probe rechecks the terminal block once its lookup ends.
 async fn verify(
     rpc: &ZakuraClient,
     directory: &receiver_directory::snapshot::Manifest,
@@ -381,10 +386,6 @@ async fn verify(
         } else {
             None
         };
-        let end = parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)?;
-        if end != directory.end_hash {
-            return Err(ZakuraError::Block("chain changed during the checks".into()));
-        }
         Ok(Ok(root))
     };
     match checks.await {
@@ -480,15 +481,15 @@ async fn indexer_report(
 /// time in [`ZakuraClient::ranked`] order. The first node to complete the checks
 /// decides, and the first valid evidence against the publication is final rather than
 /// retried on a friendlier node; only a node that could not complete them hands over
-/// to the next. Returns the result with the highest tip any node reported, from which
-/// lag is measured whichever node verified. With no node completing the checks it is
-/// `oracle_unavailable`, with each attempt's tip and error.
+/// to the next. Returns the node that verified and its result, with the highest tip
+/// any node reported, from which lag is measured whichever node verified. With no node
+/// completing the checks it is `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
     nodes: &[ZakuraClient],
     directory: &receiver_directory::snapshot::Manifest,
     pinned: (u32, Hash),
     witnesses: bool,
-) -> std::result::Result<(Option<Hash>, u64), Failure> {
+) -> std::result::Result<(ZakuraClient, Option<Hash>, u64), Failure> {
     let height = u64::from(directory.end_height);
     let unavailable = |detail: Value| ("oracle_unavailable", detail);
     let ranked = ZakuraClient::ranked(nodes)
@@ -498,7 +499,7 @@ async fn oracle(
     let mut attempts = Vec::new();
     for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
         match verify(rpc, directory, pinned, witnesses).await {
-            Verdict::Verified(root) => return Ok((root, top)),
+            Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
             Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
                 attempts.push(json!({"node_tip": tip, "error": error.to_string()}))
@@ -641,7 +642,7 @@ mod tests {
     /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
     /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
     /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
-    /// height holds `[9; 32]` after the boundary's two reads, as when the chain changes
+    /// height holds `[9; 32]` after the boundary's first read, as when the chain changes
     /// during the checks. Its `z_gettreestate` gives `root`, or no root for `None`, and
     /// names another block when `fails` is `"treestate block"`.
     #[derive(Clone, Copy)]
@@ -689,7 +690,7 @@ mod tests {
                         ("getblockhash", Some(0)) => json!(display(1)),
                         ("getblockhash", Some(height)) if height == end => {
                             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            json!(display(if node.moved && read >= 2 {
+                            json!(display(if node.moved && read >= 1 {
                                 9
                             } else {
                                 node.anchor
@@ -738,7 +739,7 @@ mod tests {
         }
         let directory = anchored();
         let pinned = (directory.end_height - 1, [5; 32]);
-        let (root, top) = oracle(&clients, &directory, pinned, witnesses).await?;
+        let (_, root, top) = oracle(&clients, &directory, pinned, witnesses).await?;
         Ok((top, root))
     }
 
