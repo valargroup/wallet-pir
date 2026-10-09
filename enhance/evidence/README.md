@@ -49,6 +49,11 @@ release and must not be read as current source paths.
   v9 Enhance and native Status v3 in production: no incorrect answers over six hours
   (0.03% Enhance 502s, root-caused); not formal qualification.
 
+- [Dithered 44-bit query screen](dithered-query-2026-10-09/README.md) —
+  synthetic Enhance (4,096–32,768 rows) and Status shapes certify 166 bits or
+  more at 44-bit dithered and 158 or more at 49-bit nearest; servers accept both
+  widths; no served snapshot certified.
+
 - [Native two-mask correctness certificates](native-certificate-2026-09-26/README.md) —
   conditional per-snapshot bounds of 2^-158 (Enhance, worst-case query) and
   2^-262 or better (Status); no runtime certification or independent review.

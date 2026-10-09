@@ -106,6 +106,15 @@ The deterministic public setup seed and the literal domain
 match the wallet. Schema, protocol, parameter identities, and content hashes
 separate the new records and artifacts. The setup domain remains unchanged in v7; the new wire header is `EPQ7`.
 
+A `native-reinspiring` build's query body is the header, a 27,648-byte packing
+key and the selection. Servers accept the selection at 49 bits rounded to nearest
+(`rows * 49 / 8` bytes), which the in-repo client sends, or at 44 bits with
+dithered rounding (`rows * 44 / 8` bytes), and tell them apart by the body's exact
+length; any other length is refused. The width is not part of the header, the
+session or the parameter identity, so v9 clients are unaffected. Dithered
+rounding needs its own per-snapshot correctness certificate; see the
+[dithered query screen](../evidence/dithered-query-2026-10-09/README.md).
+
 The authoritative wire types and validation are in
 [the protocol module](../crates/enhance-pir/src/protocol.rs); record encoding is in
 [record.rs](../crates/enhance-pir/src/record.rs).

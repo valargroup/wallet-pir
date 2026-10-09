@@ -194,7 +194,8 @@ geometry.
   bucket, which is a separate table. N is a manifest parameter.
 - **Publication.** A separate map (`txid-shards.json`), content-pure sealed
   manifests with absolute shard ids, and a recent revision lineage.
-  - The `txid-2k` geometry (2,048 rows × 4,096 B, 40,200 B per query upload)
+  - The `txid-2k` geometry (2,048 rows × 4,096 B, 38,920 B per dithered
+    query upload, or 40,200 B at the 49 bits every server also accepts)
     lives in a display-only registry.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay

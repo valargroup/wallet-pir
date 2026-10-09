@@ -295,15 +295,33 @@ table, so one query is answered by every segment of every shard of that geometry
 `/v1/shards/init` publishes each table's `NativeScheme` identity (bit widths, parameter
 encoding, mask seed, setup id and sizes); the wallet re-derives it and refuses any
 difference. Each segment publishes its own 14,848 bytes of rounded masks. A query is an
-8-byte revision binding, the 27,648-byte key and a 49-bit selection (`rows * 49 / 8` bytes):
-77,832 bytes at 8,192 rows and 228,360 at 32,768. Each segment answers with the binding, an
-8-byte mask epoch and a 5,632-byte body. The server parses a query once, scans each segment
-modulo 2^54 and packs against that segment's preprocessing.
+8-byte revision binding, the 27,648-byte key and a selection at one of two widths:
 
-Correctness certificates for this mode are snapshot-specific. The shard server's
-`native_certificate` example exports the `certify_native.py` report for a segment; see the
-[correctness screen](../evidence/native-certificate-2026-09-28/README.md) for the
-shape-level results and the 65,536-row limit.
+- 44 bits with dithered rounding (`rows * 44 / 8` bytes): 72,712 bytes at 8,192 rows and
+  207,880 at 32,768. The client rounds each coefficient up with probability equal to the
+  fraction it drops, using fresh coins, so the rounding errors are independent and zero
+  mean. Init publishes this scheme beside the other as `directory_scheme_dq44`,
+  `pages_scheme_dq44` and, for display tables, `scheme_dq44` (profile
+  `reinspiring-two-mask-m29-dq44-v1`).
+- 49 bits rounded to nearest (`rows * 49 / 8` bytes): 77,832 and 228,360 bytes. This is the
+  `*_scheme` every wallet built before dithering reads and sends.
+
+The setup, masks and responses are the same for both, so one runtime answers either. The
+server accepts exactly these two lengths, picks the width from the length, and refuses any
+other before reading the body; the body limit is the 49-bit length. A wallet sends 44 bits
+when init carries the dithered scheme and it reproduces locally, and 49 bits otherwise, so
+an older wallet, or a newer one against an older server, is unaffected. Each segment
+answers with the binding, an 8-byte mask epoch and a 5,632-byte body. The server parses a
+query once, scans each segment modulo 2^54 and packs against that segment's preprocessing.
+The runtime disk cache stays keyed by the 49-bit scheme, so existing caches still apply.
+
+Correctness certificates for this mode are snapshot-specific, and a snapshot served at both
+widths needs a certificate for each. The shard server's `native_certificate` example exports
+the `certify_native.py` report for a segment, with `--query-rounding dithered` for the 44-bit
+query; see the [correctness screen](../evidence/native-certificate-2026-09-28/README.md) for
+the 49-bit shape results and the 65,536-row limit, and the
+[dithered query screen](../evidence/dithered-query-2026-10-09/README.md) for both widths at
+every geometry.
 
 ## The wallet's walk
 

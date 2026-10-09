@@ -114,6 +114,22 @@ the last two were found during the redeploy.
   that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
   Add an explicit, logged override, or bring up a temporary third replica for each roll.
 
+## Dithered 44-bit queries (source only, 2026-10-09)
+
+Servers in source accept a 49-bit or a 44-bit dithered selection, by exact length, and
+`init` advertises the dithered schemes (`*_scheme_dq44`, display `scheme_dq44`). Wallets
+and txid clients built from this source send 44 bits whenever a service advertises a
+scheme they reproduce, so deploying these servers moves current clients to 44 bits with
+no further switch; older clients keep sending 49
+([architecture](architecture.md#pir-scheme)). Nothing is deployed.
+
+- [ ] Before deploying them, certify every served segment at both widths: 49-bit nearest,
+  as today, and 44-bit dithered (`native_certificate --query-rounding dithered`), at the
+  unchanged floors `{archive-wide-pages: 83, otherwise: 128}`. The `native-certificates`
+  gate and its certifier pin must move to ipir-sp `d76e61a`'s `certify_native.py`, which
+  reads dithered reports; the [screen](../evidence/dithered-query-2026-10-09/README.md)
+  has the shape-level margins.
+
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
 Attempt 7 failed the candidate cache reader, then the locked wrapper completed

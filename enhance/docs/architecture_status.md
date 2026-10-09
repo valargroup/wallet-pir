@@ -131,7 +131,10 @@ two-limb Gaussian) through ipir-sp's two-mask output. Its query masks and
 packing setup come from separate `status-pir/v3/native-setup` and
 `status-pir/v3/native-packing` domains, and queries use the `SPN1` magic. Per
 query, the client uploads a 27,648-byte packing key and a 50,176-byte selection
-and receives 16,896 response bytes. The session's public material is 44,544
+and receives 16,896 response bytes. Servers also accept the selection at 44
+dithered bits (45,056 bytes) in the same envelope, telling the two apart by the
+body's exact length; the in-repo client keeps sending 49 bits, and the
+protocol, magic and manifest are unchanged. The session's public material is 44,544
 bytes: two 29-bit rounded masks per column.
 Hints use exact products modulo 2^54, so sparse incremental updates still apply.
 The independent wallet library implements only q48. The native profile is
