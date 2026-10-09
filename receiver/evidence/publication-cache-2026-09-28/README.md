@@ -54,7 +54,7 @@ controlled tip advance. Processing through activation took **2.367 seconds**.
 Witness preparation was 104.680 milliseconds. Ingestion, directory construction,
 file writes, PIR preparation and activation timings are in `serve.log`.
 The served proof matched the full-build reference hash above, and both row files
-matched their manifest SHA-256. No daemon restart was needed for the update.
+matched their manifest SHA-256 (as observed; those outputs were not retained). No daemon restart was needed for the update.
 
 This includes local polling and RPC round trips. It is not actual block-arrival
 latency on the deployed server, nor wallet retry or end-to-end restore time.
