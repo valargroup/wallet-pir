@@ -27,6 +27,9 @@ use zakura_chain::{block::Hash, parameters::Network};
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// The provider database's file in `--data-dir`; see [`ProviderStore::open`].
+const PROVIDERS: &str = "providers.sqlite";
+
 #[derive(Parser)]
 struct Args {
     #[arg(long)]
@@ -171,7 +174,7 @@ async fn main() -> Result<()> {
         .ok()
         .filter(|k| !k.is_empty())
     {
-        let path = args.data_dir.join("provider.sqlite");
+        let path = args.data_dir.join(PROVIDERS);
         let since = args
             .near_since
             .unwrap_or_else(|| unix_now() - receiver_indexer::near::RECENT_SECS);
@@ -297,7 +300,7 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
+    let provider_store = ProviderStore::open(args.data_dir.join(PROVIDERS))?;
     let node_tip = u32::try_from(node_tip)?;
     let requested = args
         .end_height
@@ -698,7 +701,7 @@ mod tests {
         async fn new(on_hash: impl Fn(&mut ProviderStore) + Send + Sync + 'static) -> Self {
             let height = u64::from(receiver_indexer::blocks::ironwood_activation());
             let dir = tempfile::tempdir().unwrap();
-            let provider = dir.path().join("provider.sqlite");
+            let provider = dir.path().join(PROVIDERS);
             let node = Node {
                 hook: Some(Arc::new(move || {
                     on_hash(&mut ProviderStore::open(&provider).unwrap())
@@ -784,7 +787,7 @@ mod tests {
 
         /// The provider store.
         fn provider(&self) -> ProviderStore {
-            ProviderStore::open(self.dir.path().join("provider.sqlite")).unwrap()
+            ProviderStore::open(self.dir.path().join(PROVIDERS)).unwrap()
         }
     }
 

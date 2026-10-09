@@ -200,7 +200,7 @@ fn publications_commit_to_their_filters() {
 fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
-    let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    let mut store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
     let (payout, refund) = (receiver(), other_receiver());
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
@@ -286,7 +286,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert!(store.payouts(299).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
-    let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+    let store = ProviderStore::open(dir.path().join("providers.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
     assert_eq!(store.payouts(400).unwrap(), both);
     assert_eq!(store.read("near-payouts").unwrap(), Some(700));
@@ -299,7 +299,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
 fn only_a_first_read_sets_a_feed_start() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("provider.sqlite");
+    let path = dir.path().join("providers.sqlite");
     let mut store = ProviderStore::open(&path).unwrap();
     // Initial reads, empty and nonempty, start their feeds.
     store
@@ -334,7 +334,7 @@ fn only_a_first_read_sets_a_feed_start() {
 fn a_failed_provider_read_records_nothing() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("provider.sqlite");
+    let path = dir.path().join("providers.sqlite");
     let mut store = ProviderStore::open(&path).unwrap();
     rusqlite::Connection::open(&path)
         .unwrap()
@@ -369,7 +369,7 @@ fn a_failed_provider_read_records_nothing() {
 fn a_provider_view_reads_one_state() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("provider.sqlite");
+    let path = dir.path().join("providers.sqlite");
     let mut store = ProviderStore::open(&path).unwrap();
     store
         .record("near-payouts", Some(40), &[], &[], 100, 300)

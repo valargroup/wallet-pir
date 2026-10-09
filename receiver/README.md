@@ -177,7 +177,7 @@ chain. A replaced revision stays available for 60 seconds, and the next one wait
 for that. Logs go to standard error, filtered by `RUST_LOG`. See [the DigitalOcean deployment](ops/digitalocean/README.md).
 
 With a partner key in `NEAR_INTENTS_EXPLORER`, the server reads the NEAR Intents
-explorer into `provider.sqlite` and publishes the `near-intents` recent and seen
+explorer into `providers.sqlite` and publishes the `near-intents` recent and seen
 sets; without one, publications carry no provider sets. Health's `indexer` report,
 activated with each publication, gives each feed's last read and `payouts_missing`,
 completed NEAR payouts with no indexed payment: the signal that the index missed
