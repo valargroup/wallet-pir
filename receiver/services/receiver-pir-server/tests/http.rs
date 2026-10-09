@@ -125,19 +125,6 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
             .status(),
         reqwest::StatusCode::GONE
     );
-    assert_eq!(
-        http()
-            .get(format!(
-                "{}/v1/receiver/public/{}",
-                server.origin,
-                "00".repeat(32)
-            ))
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        reqwest::StatusCode::CONFLICT
-    );
     assert!(matches!(old.witnesses().await, Err(Error::Revision)));
     assert!(matches!(
         new.lookup(receiver(), anchor).await,
@@ -170,8 +157,9 @@ fn no_store(response: &reqwest::Response) -> bool {
         .is_some_and(|value| value == "no-store")
 }
 
-/// Refusals are `no-store`: a revoked session's 410 must not outlive the republication
-/// of the same deterministic session id, which then serves again at the same URL.
+/// Every session not served now is 410, however many were retired since, and refusals
+/// are `no-store`: a revoked session's 410 must not outlive the republication of the
+/// same deterministic session id, which then serves again at the same URL.
 #[tokio::test]
 async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let snapshot = snapshot(1);
@@ -187,9 +175,17 @@ async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
     let unknown = get(format!("/v1/receiver/public/{}", "00".repeat(32)))
         .await
         .unwrap();
-    assert_eq!(unknown.status(), reqwest::StatusCode::CONFLICT);
+    assert_eq!(unknown.status(), reqwest::StatusCode::GONE);
     assert!(no_store(&unknown));
     publications.revoke();
+    // More retirements than the server ever remembered.
+    for salt in 0..9 {
+        let mut m = manifest(MIN_ROWS);
+        m.salt[0] = salt;
+        let other = Server::new(Snapshot::build(m, &[], &[]).unwrap()).unwrap();
+        assert!(publications.publish(Publication::new(other, None).unwrap(), publications.epoch()));
+        publications.revoke();
+    }
     let public = format!("/v1/receiver/public/{id}");
     let gone = get(public.clone()).await.unwrap();
     assert_eq!(gone.status(), reqwest::StatusCode::GONE);

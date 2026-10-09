@@ -7,7 +7,6 @@ use receiver_directory::{
 };
 use receiver_pir::server::Server;
 use std::{
-    collections::VecDeque,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -60,7 +59,6 @@ struct State {
     epoch: u64,
     current: Option<Arc<Publication>>,
     previous: Option<(Arc<Publication>, Instant)>,
-    revoked: VecDeque<Hash>,
     report: Option<serde_json::Value>,
 }
 
@@ -92,32 +90,17 @@ impl State {
     }
 
     /// Drops the previous revision once its grace has ended, freeing its rows and PIR
-    /// state, and retires its id; queries still running on it keep their own reference.
+    /// state; queries still running on it keep their own reference.
     fn expire(&mut self) {
         if self.live_previous().is_none() {
-            if let Some((p, _)) = self.previous.take() {
-                self.retire(p.id);
-            }
-        }
-    }
-
-    /// Answers `id` with 410 from now on, keeping the last eight such ids.
-    fn retire(&mut self, id: Hash) {
-        self.revoked.push_back(id);
-        if self.revoked.len() > 8 {
-            self.revoked.pop_front();
+            self.previous = None;
         }
     }
 
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
-        for p in [self.current.take(), self.previous.take().map(|(p, _)| p)]
-            .into_iter()
-            .flatten()
-        {
-            self.retire(p.id);
-        }
+        (self.current, self.previous) = (None, None);
     }
 }
 
@@ -223,19 +206,15 @@ impl Publications {
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
-    /// epoch. A revoked or expired id that is not served again is `GONE`, and an unknown
-    /// one `CONFLICT`.
+    /// epoch. An id not served now, whether unknown, revoked or expired, is `GONE`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.expire();
         let state = self.0.read().unwrap();
         if let Some(id) = id {
-            if let Some(p) = state.live().find(|p| p.id == id) {
-                return Ok((p.clone(), state.epoch));
-            }
-            if state.revoked.contains(&id) {
-                return Err(StatusCode::GONE);
-            }
-            return Err(StatusCode::CONFLICT);
+            return match state.live().find(|p| p.id == id) {
+                Some(p) => Ok((p.clone(), state.epoch)),
+                None => Err(StatusCode::GONE),
+            };
         }
         state
             .current
@@ -351,25 +330,6 @@ mod tests {
         assert!(publications.publish(publication(2), 0));
         publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
         assert!(publications.select(Some(current)).is_ok());
-    }
-
-    /// A publish that displaces an expired previous revision no read has expired yet
-    /// still retires its id, so it is 410, not 409.
-    #[test]
-    fn a_publish_retires_an_expired_previous_publication() {
-        let publications = Publications::default();
-        assert!(publications.publish(publication(1), 0));
-        let id = publications.0.read().unwrap().current.as_ref().unwrap().id;
-        assert!(publications.publish(publication(2), 0));
-        let ended = Instant::now()
-            .checked_sub(Duration::from_millis(1))
-            .unwrap();
-        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
-        assert!(publications.publish(publication(3), 0));
-        assert!(matches!(
-            publications.select(Some(id)),
-            Err(StatusCode::GONE)
-        ));
     }
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the

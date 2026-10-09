@@ -127,9 +127,9 @@ fn router(service: Service) -> Router {
 }
 
 /// Marks every error response `no-store`, leaving its status, other headers and body
-/// as they are. Caches may keep a 410 heuristically, but a revoked session id is
-/// deterministic and can be published again, so no refusal may outlive the state that
-/// produced it.
+/// as they are. Caches may keep a 410 heuristically, but session ids are deterministic
+/// and an unserved one can be published again, so no refusal may outlive the state
+/// that produced it.
 async fn no_store_errors(mut response: Response) -> Response {
     let status = response.status();
     if status.is_client_error() || status.is_server_error() {
@@ -242,7 +242,7 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
     }
     match result {
         Ok(Ok(body)) => binary(body),
-        Ok(Err(Error::Revision)) => StatusCode::CONFLICT.into_response(),
+        Ok(Err(Error::Revision)) => StatusCode::GONE.into_response(),
         Ok(Err(Error::Malformed)) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
