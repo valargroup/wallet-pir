@@ -112,8 +112,42 @@ fn rejected_inputs_do_not_poison_later_builds() {
     assert!(cache
         .build(&manifest(18, 0), &cmxs, &BTreeSet::new())
         .is_err());
-    assert!(cache.build(&manifest(0, 0), &[], &BTreeSet::new()).is_err());
     compare(&mut cache, &cmxs[..9], [0, 8].into_iter().collect());
+}
+/// A publication before the first commitment proves against the empty tree's root
+/// with no nodes, and the cache moves into and out of it.
+#[test]
+fn an_empty_tree_binds_the_empty_root() {
+    let mut cache = WitnessCache::default();
+    // A fresh build, checked against the independent tree, then a round trip.
+    compare(&mut cache, &[], BTreeSet::new());
+    let m = manifest(0, 0);
+    let empty = WitnessSnapshot::build(&m, &[], &BTreeSet::new()).unwrap();
+    let encoded = empty.encode();
+    assert_eq!(encoded.len(), 152);
+    assert_eq!(
+        WitnessSnapshot::decode(&encoded, &m).unwrap().encode(),
+        encoded
+    );
+    // Nonempty, empty and nonempty again through one cache.
+    let cmxs = leaves(9);
+    compare(&mut cache, &cmxs, [0, 8].into_iter().collect());
+    compare(&mut cache, &[], BTreeSet::new());
+    compare(&mut cache, &cmxs, [0, 8].into_iter().collect());
+    // Zero records in a nonempty tree still bind that tree's root.
+    compare(&mut cache, &cmxs, BTreeSet::new());
+    let unpaid = cache.build(&manifest(9, 0), &cmxs, &BTreeSet::new());
+    assert_ne!(unpaid.unwrap().root(), empty.root());
+    // Coverage inconsistent with its commitments is refused, leaving the cache usable.
+    let cases: [(Manifest, &[Hash], BTreeSet<u32>); 3] = [
+        (manifest(0, 1), &[], [0].into_iter().collect()),
+        (manifest(1, 0), &[], BTreeSet::new()),
+        (manifest(0, 0), &cmxs[..1], BTreeSet::new()),
+    ];
+    for (m, cmxs, positions) in cases {
+        assert!(cache.build(&m, cmxs, &positions).is_err());
+    }
+    compare(&mut cache, &[], BTreeSet::new());
 }
 #[test]
 fn positions_must_cover_exactly_the_manifest_records() {
