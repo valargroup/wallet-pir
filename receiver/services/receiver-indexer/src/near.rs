@@ -47,9 +47,16 @@ pub const RECENT_SECS: i64 = 24 * 60 * 60;
 /// the wall clock, measures it, so payouts stay pending, not missing, while the chain
 /// pauses or behind `--depth`.
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
-/// The transaction recorded for a completed payout that NEAR reported without a
-/// parsable one, so the report counts it as uncheckable (`payouts_uncheckable`).
-const UNCHECKABLE: receiver_directory::Hash = [0; 32];
+/// A completed payout that NEAR reported without a parsable transaction is recorded
+/// under this many zero bytes, which no transaction hash starts with, then a digest of
+/// its swap's deposit address, one row per swap. [`Capture::report`] counts these
+/// (`payouts_uncheckable`) while first seen within [`RECENT_SECS`].
+const UNCHECKABLE_ZEROS: usize = 16;
+
+/// Whether `txid` is the record of an uncheckable payout; see [`UNCHECKABLE_ZEROS`].
+fn uncheckable(txid: &receiver_directory::Hash) -> bool {
+    txid[..UNCHECKABLE_ZEROS] == [0; UNCHECKABLE_ZEROS]
+}
 
 /// The NEAR filter sets: `near-intents/recent` once both feeds have completed a read,
 /// and `near-intents/seen` once the payout feed has. A feed that never completed a read
@@ -129,6 +136,8 @@ pub struct Capture {
     /// Payouts first seen complete more than [`COMPLETION_GRACE_SECS`] before the
     /// terminal block's time that no check has matched yet.
     unmatched: Vec<(Receiver, receiver_directory::Hash)>,
+    /// Uncheckable payouts first seen in that span but within [`RECENT_SECS`].
+    uncheckable: usize,
 }
 
 /// Reads [`provider_sets`] and the inputs of a report on a publication whose terminal
@@ -139,10 +148,20 @@ pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
         for feed in [Feed::Payouts, Feed::Refunds] {
             feeds.insert(feed.name().into(), store.read(feed.name())?.into());
         }
+        // Uncheckable payouts are never matched, so those first seen by the earlier
+        // bound are a subset of those seen by the later one.
+        let count = |until| -> Result<usize> {
+            let unmatched = store.unmatched(until)?;
+            Ok(unmatched.iter().filter(|p| uncheckable(&p.1)).count())
+        };
+        let mut unmatched = store.unmatched(anchor_time - COMPLETION_GRACE_SECS)?;
+        unmatched.retain(|p| !uncheckable(&p.1));
         Ok(Capture {
             sets: sets_in(store)?,
             feeds,
-            unmatched: store.unmatched(anchor_time - COMPLETION_GRACE_SECS)?,
+            unmatched,
+            uncheckable: count(anchor_time - COMPLETION_GRACE_SECS)?
+                - count(anchor_time - RECENT_SECS)?,
         })
     })
 }
@@ -159,27 +178,23 @@ impl Capture {
     /// [`ProviderStore::forget_matches`]), and one that stays missing stays in the count.
     /// A missing payout means the indexer missed it, or NEAR paid it without the zero
     /// OVK, which a seed restore cannot find. Payouts NEAR reported complete without a
-    /// parsable transaction are not looked up but counted in `payouts_uncheckable`.
+    /// parsable transaction cannot be looked up; `payouts_uncheckable` counts those
+    /// first seen in the same span but within the last day, so it clears on its own.
     pub fn report(
         &self,
         index: &Store,
     ) -> Result<(serde_json::Value, Vec<(Receiver, receiver_directory::Hash)>)> {
-        let checked: Vec<_> = self
-            .unmatched
-            .iter()
-            .filter(|p| p.1 != UNCHECKABLE)
-            .collect();
         let mut matched = Vec::new();
-        for payout in &checked {
+        for payout in &self.unmatched {
             if index.paid_in(&payout.0, &payout.1)? {
-                matched.push(**payout);
+                matched.push(*payout);
             }
         }
         let report = serde_json::json!({
             "feeds": self.feeds,
-            "payouts_checked": checked.len(),
-            "payouts_missing": checked.len() - matched.len(),
-            "payouts_uncheckable": self.unmatched.len() - checked.len(),
+            "payouts_checked": self.unmatched.len(),
+            "payouts_missing": self.unmatched.len() - matched.len(),
+            "payouts_uncheckable": self.uncheckable,
         });
         Ok((report, matched))
     }
@@ -335,7 +350,11 @@ impl Explorer {
                                 .map(|txid| (receiver, txid.0)),
                         );
                         if completed.len() == before {
-                            completed.push((receiver, UNCHECKABLE));
+                            let digest = Sha256::digest(swap.deposit_address.as_bytes());
+                            let mut txid = [0; 32];
+                            txid[UNCHECKABLE_ZEROS..]
+                                .copy_from_slice(&digest[..32 - UNCHECKABLE_ZEROS]);
+                            completed.push((receiver, txid));
                         }
                     }
                 }
@@ -622,8 +641,8 @@ mod tests {
     }
 
     /// A record missing its address is skipped, a future date is capped at the read's
-    /// start, and a completed payout is recorded, as [`UNCHECKABLE`] without a parsable
-    /// transaction.
+    /// start, and a completed payout is recorded, without a parsable transaction as
+    /// uncheckable, one row per swap.
     #[tokio::test]
     async fn a_read_skips_bad_records_caps_future_dates_and_notes_completions() {
         use axum::{routing::get, Router};
@@ -635,6 +654,8 @@ mod tests {
             {"recipient": null, "createdAtTimestamp": 2_000, "depositAddress": "b"},
             {"recipient": swap, "createdAtTimestamp": 3_000, "depositAddress": "c",
              "status": "SUCCESS", "destinationChainTxHashes": ["not hex"]},
+            {"recipient": swap, "createdAtTimestamp": 3_000, "depositAddress": "d",
+             "status": "SUCCESS"},
         ])
         .to_string();
         let app = Router::new().route(
@@ -653,16 +674,16 @@ mod tests {
             .sync(&mut store, Feed::Payouts, 1_000)
             .await
             .unwrap();
-        assert_eq!(read, 2);
+        assert_eq!(read, 3);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
         assert!(store.cursor(Feed::Payouts.name()).unwrap().unwrap() <= now);
         let mut completed = store.unmatched(now + 60).unwrap();
-        completed.sort_by_key(|p| p.1);
-        assert_eq!(completed.len(), 2);
-        assert_eq!(completed.remove(0).1, UNCHECKABLE);
+        completed.retain(|p| !uncheckable(&p.1));
+        assert_eq!(completed.len(), 1);
+        assert_eq!(store.unmatched(now + 60).unwrap().len(), 3);
         // The explorer's displayed hex is reversed into protocol byte order.
         assert_eq!(completed[0].1[0], 0x7f);
         assert_eq!(completed[0].1[31], 0x7f);
@@ -774,7 +795,7 @@ mod tests {
     /// A payout first seen complete more than an hour before the terminal block's time
     /// with no indexed payment in its transaction is reported missing, even to a
     /// receiver paid before; a newer one is pending, not checked yet. An uncheckable
-    /// payout is counted apart.
+    /// payout is counted apart while first seen within the last day.
     #[test]
     fn report_counts_completed_payouts_missing_from_the_index() {
         let dir = tempfile::tempdir().unwrap();
@@ -786,7 +807,7 @@ mod tests {
         let payouts = [
             (receiver(1), [7; 32]),
             (receiver(1), [8; 32]),
-            (receiver(2), UNCHECKABLE),
+            (receiver(2), [0; 32]),
         ];
         provider
             .record(
@@ -814,6 +835,7 @@ mod tests {
         let report = report(&mut provider, &index, now + 24 * 60 * 60).unwrap();
         assert_eq!(report["payouts_checked"], 2);
         assert_eq!(report["payouts_missing"], 2);
+        assert_eq!(report["payouts_uncheckable"], 0);
         assert_eq!(report["feeds"]["near-payouts"], now - 30);
         assert!(report["feeds"]["near-refunds"].is_null());
     }

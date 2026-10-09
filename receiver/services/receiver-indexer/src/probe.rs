@@ -10,7 +10,9 @@
 //! which the monitor treats as a correctness incident; `oracle_invalid` a fixture that
 //! fails its pin, including an Action whose recovered receiver differs from the
 //! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
-//! reached the publication can complete the chain checks, is an availability failure.
+//! reached the publication can complete the chain checks, or `payouts_uncheckable` when
+//! the indexer's report counts a recent completed payout that NEAR gave no usable
+//! transaction for, is an availability failure.
 //! Every response body is bounded before it is buffered.
 use crate::{
     read_limited,
@@ -471,7 +473,8 @@ async fn check_filters(
 
 /// The indexer's payout check from health, which must report serving the probed
 /// publication `id`. Otherwise the report may describe another publication, such as
-/// one rotated in since the lookup, or another service.
+/// one rotated in since the lookup, or another service. A missing payout outranks an
+/// uncheckable one.
 async fn indexer_report(
     http: &reqwest::Client,
     health_url: &str,
@@ -485,10 +488,15 @@ async fn indexer_report(
             json!({"probed": id, "health_serving": serving}),
         )));
     }
-    match health["indexer"]["payouts_missing"].as_u64() {
-        None => Ok(Some(("report_unavailable", Value::Null))),
-        Some(0) => Ok(None),
-        Some(missing) => Ok(Some((
+    let count = |field: &str| health["indexer"][field].as_u64();
+    match (count("payouts_missing"), count("payouts_uncheckable")) {
+        (None, _) | (_, None) => Ok(Some(("report_unavailable", Value::Null))),
+        (Some(0), Some(0)) => Ok(None),
+        (Some(0), Some(uncheckable)) => Ok(Some((
+            "payouts_uncheckable",
+            json!({"payouts_uncheckable": uncheckable}),
+        ))),
+        (Some(missing), _) => Ok(Some((
             "answer_mismatch",
             json!({"payouts_missing": missing}),
         ))),
@@ -1090,7 +1098,7 @@ mod tests {
                     .unwrap()
             }
         };
-        let indexer = |missing: u64| json!({"payouts_missing": missing});
+        let indexer = |missing: u64| json!({"payouts_missing": missing, "payouts_uncheckable": 0});
         let current = report(json!({"serving": probed, "indexer": indexer(0)}));
         assert!(current.await.is_none());
         let origin = serve(Value::Null).await;
@@ -1115,6 +1123,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
+        // A recent payout the report could not check is an availability failure.
+        let uncheckable = json!({"payouts_missing": 0, "payouts_uncheckable": 1});
+        let failure = report(json!({"serving": probed, "indexer": uncheckable}))
+            .await
+            .unwrap();
+        assert_eq!(
+            failure,
+            ("payouts_uncheckable", json!({"payouts_uncheckable": 1}))
+        );
     }
 
     /// The fixture's pinned receiver is checked against recovery before any request:
