@@ -169,7 +169,8 @@ listing the transaction IDs of a maximum-size block needs; a larger response is
 an error.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
 (default 2) blocks below the node's tip, or a test range from `--start-height` to
-`--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch
+`--end-height`. A stored tip above the depth, as after a restart with a larger
+`--depth`, is published until the chain passes it. Raw blocks arrive concurrently in batches of up to 64. Each batch
 is checked against the saved parent, heights, each header's merkle root, Action
 positions, terminal hash and tree size before it is stored. A restart rewinds to
 the last saved canonical block, and a node behind the index is waited for rather

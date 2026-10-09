@@ -50,7 +50,9 @@ struct Args {
     #[arg(long)]
     end_height: Option<u32>,
     /// Blocks below the node's tip to publish at, so a short reorg never revokes
-    /// sessions. Wallets accept publications up to 100 blocks behind.
+    /// sessions. Wallets accept publications up to 100 blocks behind. A stored tip
+    /// above that, as after a restart with a larger depth, is published as it is until
+    /// the chain passes it: it is canonical, and the depth applies to new blocks.
     #[arg(long, default_value_t = 2, value_parser = clap::value_parser!(u32).range(0..=50))]
     depth: u32,
     /// Continuously reconcile the canonical chain and atomically rotate the service,
@@ -302,10 +304,10 @@ async fn refresh(
     )?;
     let mut provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
     let node_tip = u32::try_from(node_tip)?;
-    let end = args
+    let requested = args
         .end_height
         .unwrap_or(node_tip.saturating_sub(args.depth));
-    if end < args.start_height || end > node_tip {
+    if requested > node_tip {
         return Err("requested range is outside the available chain".into());
     }
     let mut tip = store.tip()?;
@@ -332,6 +334,14 @@ async fn refresh(
         // failure between the two databases' writes then only rechecks payouts.
         provider_store.forget_matches()?;
         store.rewind(tip.height, tip.hash)?;
+    }
+    // See `Args::depth`; an explicit `--end-height` is kept.
+    let end = match args.end_height {
+        Some(_) => requested,
+        None => requested.max(tip.height),
+    };
+    if end < args.start_height {
+        return Err("requested range is outside the available chain".into());
     }
     if end < tip.height {
         return Err("end height precedes stored tip".into());
@@ -796,6 +806,17 @@ mod tests {
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
         assert!(paused.publications.ready_at().is_some());
+    }
+
+    /// A stored tip above the requested depth, as after a restart with a larger
+    /// `--depth`, is published rather than waited past.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_larger_depth_publishes_the_stored_tip() {
+        let mut paused = Paused::new(|_| {}).await;
+        paused.args.depth = 5;
+        paused.refresh(NOW).await.unwrap();
+        let height = receiver_indexer::blocks::ironwood_activation();
+        assert_eq!(paused.get("init").await["directory"]["end_height"], height);
     }
 
     /// A feed read committed while a publication is prepared changes neither its
