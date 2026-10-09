@@ -158,7 +158,7 @@ async fn main() -> Result<()> {
         loop {
             let checked = async {
                 let (tip, rpc) = freshest(&guard_nodes, genesis).await?;
-                check_serving(&guard_publications, &rpc, tip).await
+                check_serving(&guard_publications, &rpc, genesis, tip).await
             };
             if let Err(error) = checked.await {
                 warn!(%error, "canonical validation deferred; still serving");
@@ -251,15 +251,23 @@ async fn freshest(nodes: &[ZakuraClient], genesis: Hash) -> Result<(u64, ZakuraC
 
 /// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
 /// its chain, unless a revocation or rotation stopped serving that anchor during the
-/// check (see [`Publications::revoke_serving`]). A failed request or a node behind an
-/// anchor proves nothing, so sessions keep serving.
-async fn check_serving(publications: &Publications, rpc: &ZakuraClient, tip: u64) -> Result<()> {
+/// check (see [`Publications::revoke_serving`]). A failed request, a node behind an
+/// anchor or one no longer on `genesis`'s network proves nothing, so sessions keep
+/// serving.
+async fn check_serving(
+    publications: &Publications,
+    rpc: &ZakuraClient,
+    genesis: Hash,
+    tip: u64,
+) -> Result<()> {
     let (epoch, anchors) = publications.serving();
     if anchors.is_empty() {
         return Ok(());
     }
     for (height, hash) in anchors {
         if u64::from(height) <= tip && !is_canonical(rpc, height, hash).await? {
+            // Ranking read the genesis earlier, and an endpoint can be repointed.
+            rpc.check_network(genesis).await?;
             if publications.revoke_serving(epoch, (height, hash)) {
                 warn!(height, "revoked noncanonical receiver sessions");
             }
@@ -297,7 +305,7 @@ async fn refresh(
     let (node_tip, node) = freshest(nodes, genesis).await?;
     let rpc = &node;
     if let Some(serving) = serving {
-        check_serving(serving, rpc, node_tip).await?;
+        check_serving(serving, rpc, genesis, node_tip).await?;
     }
     let boundary = rpc.receiver_boundary(args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
@@ -665,27 +673,40 @@ mod tests {
             gate: Some(gate.clone()),
             ..Node::default()
         };
+        let mainnet = Network::Mainnet.genesis_hash();
         *node.tip.lock().unwrap() = 200;
-        node.hashes.lock().unwrap().insert(101, [2; 32]);
+        node.hashes
+            .lock()
+            .unwrap()
+            .extend([(0, mainnet.0), (101, [2; 32])]);
         let rpc = serve_node(node.clone()).await;
         let publications = Publications::default();
         assert!(publications.publish(publication(1), 0));
         let check = tokio::spawn({
             let (publications, rpc) = (publications.clone(), rpc.clone());
-            async move { check_serving(&publications, &rpc, 200).await.unwrap() }
+            async move {
+                check_serving(&publications, &rpc, mainnet, 200)
+                    .await
+                    .unwrap()
+            }
         });
         // While the check of A waits for the node, a rewind revokes A and B is published.
         node.asked.notified().await;
         publications.revoke();
         assert!(publications.publish(publication(2), 1));
-        gate.add_permits(1);
+        // A's hash, then the genesis that confirms the node's network.
+        gate.add_permits(2);
         check.await.unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         gate.add_permits(10);
-        check_serving(&publications, &rpc, 200).await.unwrap();
+        check_serving(&publications, &rpc, mainnet, 200)
+            .await
+            .unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         node.hashes.lock().unwrap().insert(101, [3; 32]);
-        check_serving(&publications, &rpc, 200).await.unwrap();
+        check_serving(&publications, &rpc, mainnet, 200)
+            .await
+            .unwrap();
         assert!(publications.anchors().is_empty());
     }
 
@@ -888,6 +909,27 @@ mod tests {
             let serving = !paused.publications.anchors().is_empty();
             assert_eq!(serving, repoint.is_none());
             assert_eq!(paused.active.is_some(), repoint.is_none());
+        }
+    }
+
+    /// A node that leaves mainnet, or stops giving its genesis, after ranking cannot
+    /// revoke the served publication with its other chain; one still on mainnet does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_repointed_after_ranking_cannot_revoke_sessions() {
+        let mainnet = Network::Mainnet.genesis_hash();
+        let height = u64::from(receiver_indexer::blocks::ironwood_activation());
+        for repoint in [Some(Some([9; 32])), Some(None), None] {
+            let mut paused = Paused::new(|_| {}).await;
+            paused.refresh().await.unwrap();
+            // The node now answers from a chain without the served anchor.
+            paused.node.hashes.lock().unwrap().insert(height, [8; 32]);
+            *paused.node.repoint.lock().unwrap() = repoint;
+            let nodes = std::slice::from_ref(&paused.rpc);
+            let (tip, rpc) = freshest(nodes, mainnet).await.unwrap();
+            let checked = check_serving(&paused.publications, &rpc, mainnet, tip).await;
+            assert_eq!(checked.is_ok(), repoint.is_none());
+            let serving = !paused.publications.anchors().is_empty();
+            assert_eq!(serving, repoint.is_some());
         }
     }
 
