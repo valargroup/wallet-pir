@@ -130,9 +130,13 @@ Before the first tool deploy, once:
    [below](#installing-or-rotating-the-near-key).
 4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
-5. Just before that deploy, under the lock, stop `receiver-pir` and delete
-   `/srv/receiver-pir/index/provider.sqlite*`: the older schema's completions are not
-   migrated, and the deploy's restart rebuilds it from `--near-since`.
+5. Just before that deploy, under the lock, delete
+   `/srv/receiver-pir/index/provider.sqlite*` without stopping `receiver-pir`: the
+   older schema's completions are not migrated, the running process keeps its open
+   file until the deploy restarts it (the tool refuses an inactive unit), and the new
+   process rebuilds it from `--near-since`. That rebuild reads every swap since then
+   (about 15 minutes for ten days at October 2026 volume), so for this deploy raise the
+   inventory's `--await-feed-reads` to 1800 and the exact check's `timeout` to 2100.
 
 The live Droplet still runs the unit installed by hand, which starts
 `/opt/receiver-pir/current/receiver-directory`, reads the key from the optional
