@@ -251,9 +251,9 @@ impl Store {
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
-    /// overflowed at `rows`, or the history has more payments than `rows` has slots, which
-    /// is found before any record is loaded. `provider` holds the swap provider filter
-    /// sets (see [`ProviderStore::sets`]).
+    /// overflowed at `rows`, or the history has more payments than `rows` has slots,
+    /// found without loading more records than that. `provider` holds the swap provider
+    /// filter sets (see [`ProviderStore::sets`]).
     pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
@@ -261,20 +261,14 @@ impl Store {
         if anchor.height < self.config.start_height {
             return Err(Error::Coverage);
         }
-        // Counting stops one past capacity, so an oversized history is not scanned.
-        let stored: u64 = tx.query_row(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM payments LIMIT ?1)",
-            [capacity + 1],
-            |r| r.get(0),
-        )?;
-        if stored > capacity {
-            return Err(Error::Capacity);
-        }
         let mut records = Vec::new();
         {
             let mut query = tx.prepare("SELECT record FROM payments ORDER BY receiver,position")?;
             let mut result = query.query([])?;
             while let Some(row) = result.next()? {
+                if records.len() as u64 == capacity {
+                    return Err(Error::Capacity);
+                }
                 let bytes: Vec<u8> = row.get(0)?;
                 records.push(Record::decode(&bytes)?.ok_or(Error::Malformed)?);
             }

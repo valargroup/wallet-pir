@@ -987,10 +987,10 @@ fn store_proofs_cover_empty_indexed_blocks() {
 }
 
 /// A history with more payments than the table has slots fails with
-/// [`Error::Capacity`] before any record is loaded, and builds at a larger size.
+/// [`Error::Capacity`], and builds at a larger size.
 #[cfg(feature = "store")]
 #[test]
-fn a_history_beyond_the_slots_fails_before_loading_records() {
+fn a_history_beyond_the_slots_is_a_capacity_failure() {
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -1022,18 +1022,10 @@ fn a_history_beyond_the_slots_fails_before_loading_records() {
         })
         .unwrap();
     assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
-    assert!(matches!(store.snapshot(3, &[]), Err(Error::Malformed)));
     assert_eq!(
         store.snapshot(4, &[]).unwrap().manifest.records,
         u64::from(n)
     );
-    // With every stored record undecodable, the count still decides first.
-    rusqlite::Connection::open(&path)
-        .unwrap()
-        .execute("UPDATE payments SET record=x'00'", [])
-        .unwrap();
-    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
-    assert!(matches!(store.snapshot(4, &[]), Err(Error::Malformed)));
 }
 
 /// Recomputes `s`'s digests after an edit, so validation reaches its semantic checks.

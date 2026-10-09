@@ -29,9 +29,8 @@ start at 8192 rows, the fewest that PIR clients and servers accept. A crowded
 bucket retries up to 16 salts derived from the terminal hash, the first being
 the hash itself, and only then doubles the table, up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
 records. So do more records than the table has slots, caught before placement; a
-supplied manifest claiming more records than its slots is malformed. The store
-counts at most one payment past the slots, in the snapshot's read transaction,
-before loading any record. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
+supplied manifest claiming more records than its slots is malformed. The
+manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
 inclusive block coverage, boundary hashes, tree positions, geometry, salt, record
 count, the filter sets and the SHA-256 of the rows and of the filter file. The
 immutable revision is a domain-separated SHA-256 of every field at fixed width, as
