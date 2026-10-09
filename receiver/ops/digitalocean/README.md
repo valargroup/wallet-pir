@@ -61,8 +61,8 @@ rule. It may also add the Droplet to the project. Do not apply a plan that destr
 ## Release and deploy
 
 CI full on `main` builds `receiver-directory` and `receiver-probe` for `x86-64-v3`
-and publishes them, with this directory's unit template, `Caddyfile`,
-`cloud-init.yaml` and `probe-fixture.json`, as the `receiver-pir-<sha>` artifact
+and publishes them, with this directory's unit template, `Caddyfile` and
+`cloud-init.yaml`, as the `receiver-pir-<sha>` artifact
 holding `receiver-pir.tar.gz` (`tools/ci/release.py`). To build outside CI, use `--locked`,
 `-p receiver-indexer`, `--release` and `RUSTFLAGS='-C target-cpu=x86-64-v3'`; from
 an arm64 host, cross-compile with `--target x86_64-unknown-linux-gnu` in
@@ -288,11 +288,9 @@ journal through `tracing`; `RUST_LOG` in the unit sets the level.
 
 ## Monitoring
 
-The PIR monitor runs `receiver-probe` (from the same release) every minute as the
-`receiver` service probe, from its host on the same private network, with the
-release's `probe-fixture.json` installed beside it as
-`receiver-probe-fixture.json`. `pir-monitor` accepts the `receiver` service only
-from this commit on and is not in a release bundle: build it with
+The PIR monitor runs `receiver-probe` (from the same release, its fixture built
+in) every minute as the `receiver` service probe, from its host on the same
+private network. `pir-monitor` is not in a release bundle: build it with
 `enhance/ops/scripts/build-observability.sh`, as for its other probes. The chain
 checks use the monitor host's own node and cookie, as the Status probe and the
 Transparent canary do, not the fleet nodes the service reads, so they are an
@@ -317,9 +315,7 @@ probe:
 [
   {"service": "receiver", "command": ["/opt/pir-monitor/receiver-probe", "--origin",
     "https://receiver-pir.valargroup.dev", "--health-url",
-    "http://10.70.0.11:18380/v1/receiver/health", "--fixture",
-    "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
-    "ef0459fc10f60664ba3d41576a6108fe9f64bace3ecf724e17b04d86f593cbcf",
+    "http://10.70.0.11:18380/v1/receiver/health",
     "--rpc-url", "http://127.0.0.1:18232", "--cookie",
     "/run/credentials/pir-monitor.service/chain-rpc-cookie", "--witnesses"],
    "timeout_seconds": 30}
@@ -328,7 +324,7 @@ probe:
 
 On a host that already has the file, such as the live monitor with its `status`
 and `transparent` records, merge instead of overwriting, after installing the probe
-and fixture as below. Its cloud-init installs no `jq`, so merge on the coordinator: save
+as below. Its cloud-init installs no `jq`, so merge on the coordinator: save
 the array above as `receiver-probe.json`, then fetch the live file, replace any
 `receiver` record while keeping every other one, check the result, and rename it
 into place before the restart that reads it:
@@ -363,8 +359,8 @@ the filter file is wrong or a completed NEAR payout is missing from the index
 fixture fails its pin (oracle), and after three failed probes when the publication
 or the recent set goes stale or a request fails (availability).
 
-`pir-monitor` is not a deploy-tool service, so install `receiver-probe` and its
-fixture on the monitor host from the bundle. On the coordinator, `release.py
+`pir-monitor` is not a deploy-tool service, so install `receiver-probe` on the
+monitor host from the bundle. On the coordinator, `release.py
 extract` checks every file against the bundle's `SHA256SUMS`; copy the result to
 the monitor host and install it there, checking the digests again:
 
@@ -376,9 +372,7 @@ set -eu
 cd /root/receiver-pir-tools.new
 sha256sum -c SHA256SUMS
 install -D -m 0755 -o root -g root receiver-probe /opt/pir-monitor/receiver-probe
-install -m 0644 -o root -g root probe-fixture.json /opt/pir-monitor/receiver-probe-fixture.json
 cmp receiver-probe /opt/pir-monitor/receiver-probe
-cmp probe-fixture.json /opt/pir-monitor/receiver-probe-fixture.json
 cd /
 rm -r /root/receiver-pir-tools.new
 EOF

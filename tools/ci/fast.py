@@ -59,20 +59,15 @@ def route(path):
     """Return helper targets/full groups, or None for an unknown path."""
     if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
         return {'check-docs', 'check-tools'}, {'ops'}
-    if path in {'receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md'}:
-        # tools/tests pins the probe fixture to the README's monitor config, and
-        # ops/tests to the deploy inventory's exact check.
-        return {'check-docs', 'check-tools', 'check-ops-shared'}, {'ops'}
     if path == 'enhance/ops/deploy/deploy-inventory.example.json':
-        # ops/tests pins the receiver's exact check, fixture pin included.
+        # ops/tests pins the receiver's exact check.
         return {'check-ops-enhance', 'check-ops-deploy', 'check-ops-contracts', 'check-ops-shared'}, {'ops'}
+    if path.startswith('receiver/ops/'):
+        # ops/tests pins the receiver's edge, unit, cloud-init and runbook monitor
+        # config and tests its helpers, and the deploy tests install its unit.
+        return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')):
         return {'check-docs'}, {'ops'}
-    if path.startswith('receiver/ops/'):
-        # ops/tests pins the receiver's edge, unit and cloud-init contract and
-        # tests its key installer and Caddyfile helper, and the deploy tests
-        # install its unit.
-        return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
     if path.startswith('ops/infra/digitalocean/enhance-v4/'):

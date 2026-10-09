@@ -31,10 +31,8 @@ BINARIES = {
     # `enhance-pir-native`; ops/scripts/wallet-pir-deploy.py renders its units.
     'status-pir': ['status-pir'],
     # The receiver directory's indexer and server, which
-    # ops/scripts/wallet-pir-deploy.py deploys, and its probe, which pir-monitor
-    # and the deploy's exact check run. The deploy stages the probe and
-    # probe-fixture.json in the release directory; receiver/ops/digitalocean/
-    # README.md installs them for pir-monitor.
+    # ops/scripts/wallet-pir-deploy.py deploys and whose `probe` is the deploy's
+    # exact check, and the standalone probe pir-monitor runs.
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {
@@ -53,7 +51,7 @@ FILES = {
     'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
                    'enhance/ops/deploy/status-controller-qualification.service.in'],
     'receiver-pir': ['receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/Caddyfile',
-                     'receiver/ops/digitalocean/cloud-init.yaml', 'receiver/ops/digitalocean/probe-fixture.json'],
+                     'receiver/ops/digitalocean/cloud-init.yaml'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']
 # Kinds built with their own features and target directory, so only assembled

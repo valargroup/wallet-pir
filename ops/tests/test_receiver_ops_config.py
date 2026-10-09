@@ -16,7 +16,6 @@ probe config must be the array `pir-monitor` reads, and its merge must keep the
 monitor's other probes.
 """
 import copy
-import hashlib
 import ipaddress
 import json
 from pathlib import Path
@@ -201,7 +200,7 @@ def fenced(text, language):
     return re.findall(r'^```%s\n(.*?)^```$' % language, text, re.S | re.M)
 
 
-def check_probe_config(configs, fixture):
+def check_probe_config(configs):
     """Check a `service-probes.json` holding only the receiver's record, as `pir-monitor` parses it."""
     assert isinstance(configs, list) and len(configs) == 1, configs
     (config,) = configs
@@ -209,7 +208,8 @@ def check_probe_config(configs, fixture):
     assert config['service'] == 'receiver' and 1 <= config['timeout_seconds'] <= 45, config
     argv = config['command']
     assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
-    assert argv[argv.index('--fixture-sha256') + 1] == hashlib.sha256(fixture).hexdigest(), argv
+    # The probe's fixture is built in.
+    assert not any(word.startswith('--fixture') for word in argv), argv
     # The service serves witness files (see check_exact_check), so the monitor checks them too.
     assert '--witnesses' in argv, argv
 
@@ -228,7 +228,6 @@ class ReceiverOpsContract(unittest.TestCase):
         self.unit = (DIR / 'receiver-pir.service.in').read_text()
         self.cloud = (DIR / 'cloud-init.yaml').read_text()
         self.service = json.loads(INVENTORY.read_text())['services']['receiver']
-        self.fixture = (DIR / 'probe-fixture.json').read_bytes()
         with open(DEPLOY, 'rb') as handle:
             self.descriptor = tomllib.load(handle)['services']['receiver']
 
@@ -328,10 +327,10 @@ class ReceiverOpsContract(unittest.TestCase):
     def test_the_monitor_probe_config_is_an_array(self):
         (block,) = [b for b in fenced((DIR / 'README.md').read_text(), 'json') if 'receiver-probe' in b]
         configs = json.loads(block)
-        check_probe_config(configs, self.fixture)
+        check_probe_config(configs)
         for mutated in [configs[0], configs * 2, [dict(configs[0], extra=1)]]:
             with self.assertRaises(AssertionError):
-                check_probe_config(mutated, self.fixture)
+                check_probe_config(mutated)
 
     def test_the_monitor_probe_merge_keeps_one_receiver_and_the_other_probes(self):
         readme = (DIR / 'README.md').read_text()

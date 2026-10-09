@@ -85,23 +85,14 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result['groups'], ['receiver'])
         self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
 
-    def test_receiver_probe_pin_changes_run_both_pin_checks(self):
-        # The README's monitor config pin is checked in tools/tests, the deploy
-        # inventory's exact-check pin in ops/tests.
-        for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md',
-                     'enhance/ops/deploy/deploy-inventory.example.json']:
-            helpers = fast.plan(self.packages, [path])['helpers']
-            self.assertIn('check-ops-shared', helpers, path)
-        for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md']:
-            self.assertIn('check-tools', fast.plan(self.packages, [path])['helpers'], path)
-
     def test_receiver_ops_config_changes_run_their_contract_suite(self):
         makefile = (ROOT / 'Makefile').read_text()
         self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s ops/tests -p 'test_*.py'", makefile)
         self.assertTrue((ROOT / 'ops/tests/test_receiver_ops_config.py').is_file())
         self.assertTrue((ROOT / 'ops/tests/test_receiver_caddy.py').is_file())
         for path in ['receiver/ops/digitalocean/Caddyfile', 'receiver/ops/digitalocean/cloud-init.yaml',
-                     'receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/caddy.py']:
+                     'receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/caddy.py',
+                     'receiver/ops/digitalocean/README.md']:
             result = fast.plan(self.packages, [path])
             self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
             self.assertEqual(result['packages'], [], path)
@@ -279,14 +270,6 @@ class IntegrityTests(unittest.TestCase):
             self.assertIn('name: %s-${{ github.sha }}' % kind, job)
             self.assertIn('path: release-bundles/%s.tar.gz' % kind, job)
         self.assertIn('cargo build --locked --release', build)
-
-    def test_receiver_probe_fixture_matches_its_pin(self):
-        import hashlib, re
-        fixture = (ROOT / 'receiver/ops/digitalocean/probe-fixture.json').read_bytes()
-        readme = (ROOT / 'receiver/ops/digitalocean/README.md').read_text()
-        pin = re.search(r'"--fixture-sha256",\s*"([0-9a-f]{64})"', readme).group(1)
-        self.assertEqual(hashlib.sha256(fixture).hexdigest(), pin)
-        self.assertIn('receiver/ops/digitalocean/probe-fixture.json', load('release').FILES['receiver-pir'])
 
     def test_release_native_does_not_use_checkout_local_target(self):
         workflow = (ROOT / '.github/workflows/ci-full.yml').read_text()
