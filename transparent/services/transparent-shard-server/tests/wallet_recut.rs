@@ -901,6 +901,107 @@ async fn a_shallow_reorg_the_publisher_followed_first_waits_for_the_chain() {
     compare(&report.ledger, &expected(&branch, &[1, 2, 3], TARGET));
 }
 
+/// A map cannot hold back a reorg the wallet's own chain shows. The chain
+/// reorganises inside the tail, orphaning receives the store holds; the map
+/// follows it but also changes the sealed shard below the fork, undeclared,
+/// to end on a block the chain rejects, which the wallet cannot settle. The
+/// reorg is still rolled back first, on the chain alone, and the orphaned
+/// events are gone before the sync stops on the unsettled shard.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hostile_change_below_a_reorg_cannot_hold_the_rollback_back() {
+    let events = events();
+    let sets = publications(&events);
+    let before_base = serve(sets.before_dir.path()).await;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("wallet.sqlite");
+    let (report, _) = run(
+        &path,
+        &before_base,
+        PublishedFilters::load(sets.before_dir.path(), &sets.before),
+        &sets.before,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    complete(&report.unwrap());
+
+    // The fork is inside the tail; the new branch drops script 3's receives
+    // at and past it.
+    const FORK: u64 = TAIL + 50;
+    fn forked(height: u64) -> transparent_filter::BlockHash {
+        hash_forked(FORK)(height)
+    }
+    // The publisher's chain agrees with it except at the last sealed
+    // shard's end, where it names a block the wallet's chain rejects.
+    fn hostile(height: u64) -> transparent_filter::BlockHash {
+        if height == TAIL - 1 {
+            transparent_filter::BlockHash::from_internal_bytes([0xee; 32])
+        } else {
+            forked(height)
+        }
+    }
+    let branch: Vec<_> = events
+        .iter()
+        .filter(|(s, event)| !(*s == script(3) && event_height(event) >= FORK))
+        .cloned()
+        .collect();
+    assert!(
+        branch.len() < events.len(),
+        "the reorg orphans held receives"
+    );
+    let mut layout = before_layout();
+    layout[5] = Laid {
+        start: TAIL,
+        end: LONGER_TAIL,
+        geometry: &RECENT_4K,
+        sealed: false,
+        revision: 1,
+    };
+    let hostile_dir = tempfile::tempdir().unwrap();
+    let map = publish_laid(hostile_dir.path(), &branch, &layout, vec![], hostile);
+    assert_eq!(map.shards[3], sets.before.shards[3]);
+    assert_ne!(
+        map.shards[4], sets.before.shards[4],
+        "changed below the fork"
+    );
+    let base = serve(hostile_dir.path()).await;
+
+    let (report, queries) = run_on(
+        forked,
+        &path,
+        &base,
+        PublishedFilters::load(hostile_dir.path(), &map),
+        &map,
+        wallet(&[1, 2, 3]),
+        TARGET,
+        WorkLimits::UNLIMITED,
+    )
+    .await;
+    let report = report.unwrap();
+    assert_eq!(
+        report.rolled_back_to,
+        Some(TAIL - 1),
+        "rolled back to the last stored block the chain still accepts"
+    );
+    assert_eq!(
+        report.completion,
+        Completion::Incomplete {
+            reason: IncompleteReason::ChainUnknown { height: TAIL - 1 },
+            pending: 0,
+        },
+        "then stopped on the shard the chain cannot settle"
+    );
+    assert!(queries.is_empty());
+    compare(&report.ledger, &expected(&events, &[1, 2, 3], TAIL - 1));
+    let store = SqliteStore::open(&path).unwrap();
+    assert!(store
+        .events()
+        .unwrap()
+        .iter()
+        .all(|stored| event_height(&stored.event) < TAIL));
+}
+
 /// A re-cut published while a sync reads the map before it: the first
 /// revision the service no longer holds sends the wallet to the map, which
 /// declares a re-cut the sync did not start from. That sync ends diverged;

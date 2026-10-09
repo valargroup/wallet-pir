@@ -161,9 +161,11 @@ pub enum SyncError {
     /// followed a shallow reorg through a shard it had just sealed before the
     /// wallet's chain did, the sync stops with
     /// [`IncompleteReason::ChainUnknown`] instead and becomes an ordinary reorg
-    /// once the chain moves. Refused before anything is rolled back or read.
-    /// Distinct from [`MapDiverged`](Self::MapDiverged), which a re-cut
-    /// published mid-sync also produces and which the next sync resolves.
+    /// once the chain moves. Refused before anything is read, and after
+    /// rolling back only a reorg the wallet's chain itself shows, which runs
+    /// first so that no map can hold it back. Distinct from
+    /// [`MapDiverged`](Self::MapDiverged), which a re-cut published mid-sync
+    /// also produces and which the next sync resolves.
     ///
     /// A replica still serving a map from before a re-cut the store has
     /// already followed looks the same from here, since the store keeps no
@@ -652,15 +654,63 @@ pub fn sync_into<S: WalletStore>(
             }
         }
     }
+    let mut ancestor: Option<u64> = None;
+    let mut unknown: Option<u64> = None;
+    for (height, hash) in rests_on.iter().rev() {
+        match chain.is_accepted(*height, hash) {
+            Acceptance::Rejected => {
+                // Roll back to the highest accepted block below this one.
+                let mut below = map.start_height.saturating_sub(1);
+                for (candidate, candidate_hash) in rests_on.range(..height).rev() {
+                    if chain.is_accepted(*candidate, candidate_hash) == Acceptance::Accepted {
+                        below = *candidate;
+                        break;
+                    }
+                }
+                ancestor = Some(below);
+                break;
+            }
+            Acceptance::Accepted => break,
+            Acceptance::Unknown => {
+                unknown = Some(*height);
+            }
+        }
+    }
+    if let Some(height) = ancestor {
+        store.rollback_above(&accepted_at(chain, map, height)?, "reorg")?;
+        rolled_back_to = Some(height);
+    } else if let Some(height) = unknown {
+        if !rests_on.is_empty() {
+            // Nothing could be confirmed. Reading on would either accept a
+            // branch the wallet has not seen or roll back on a guess.
+            return chain_unknown(
+                store,
+                map,
+                target_anchor,
+                charges,
+                height,
+                rolled_back_to,
+                replaced_revisions,
+                first_commit,
+            );
+        }
+    }
+
     // Sealed content is immutable, so a sealed range the map now describes
     // differently, without declaring a re-cut of it, is judged by what the
-    // wallet's chain says; see `judge_rewrite`. A reorg is left to the scan
-    // below. A contradiction on the wallet's own chain is refused before
-    // anything is rolled back or read. Anything the chain cannot settle yet
-    // stops the sync as an unknown block does, without the scan.
+    // wallet's chain says; see `judge_rewrite`. Only after the scan above,
+    // which depends on the chain alone, has rolled back any reorg the chain
+    // shows, and only for the ranges that rollback kept: a map cannot hold
+    // back a reorg by changing history below it. A contradiction on the
+    // wallet's own chain is refused before anything else is rolled back or
+    // read; anything the chain cannot settle yet stops the sync as an
+    // unknown block does.
     let mut contradiction: Option<&CoverageRange> = None;
     let mut unplaced: Option<u64> = None;
-    for range in &rewritten {
+    for range in rewritten
+        .iter()
+        .filter(|range| ancestor.is_none_or(|kept| range.end_height <= kept))
+    {
         match judge_rewrite(map, range, target_anchor, chain) {
             Rewrite::Reorg => {}
             Rewrite::Contradiction => {
@@ -679,58 +729,17 @@ pub fn sync_into<S: WalletStore>(
             revision_digest: range.revision_digest.clone(),
         });
     }
-    let mut ancestor: Option<u64> = None;
-    let mut unknown: Option<u64> = unplaced;
-    if unplaced.is_none() {
-        for (height, hash) in rests_on.iter().rev() {
-            match chain.is_accepted(*height, hash) {
-                Acceptance::Rejected => {
-                    // Roll back to the highest accepted block below this one.
-                    let mut below = map.start_height.saturating_sub(1);
-                    for (candidate, candidate_hash) in rests_on.range(..height).rev() {
-                        if chain.is_accepted(*candidate, candidate_hash) == Acceptance::Accepted {
-                            below = *candidate;
-                            break;
-                        }
-                    }
-                    ancestor = Some(below);
-                    break;
-                }
-                Acceptance::Accepted => break,
-                Acceptance::Unknown => {
-                    unknown = Some(*height);
-                }
-            }
-        }
-    }
-    if let Some(height) = ancestor {
-        store.rollback_above(&accepted_at(chain, map, height)?, "reorg")?;
-        rolled_back_to = Some(height);
-    } else if let Some(height) = unknown {
-        if ancestor.is_none() && !rests_on.is_empty() {
-            // Nothing could be confirmed. Reading on would either accept a
-            // branch the wallet has not seen or roll back on a guess.
-            let ledger = store.ledger()?;
-            let (covered, settled) = coverage_summary(store, map, target_anchor.height)?;
-            return Ok(SyncReport {
-                ledger,
-                charges,
-                matched_shards: Vec::new(),
-                unproductive_matches: 0,
-                covered_through: covered,
-                settled_through: settled,
-                provisional: provisional_of(store, map)?,
-                map_refreshes: 0,
-                completion: Completion::Incomplete {
-                    reason: IncompleteReason::ChainUnknown { height },
-                    pending: store.pending()?.len(),
-                },
-                rolled_back_to,
-                replaced_revisions,
-                scripts_added: 0,
-                commits: store.last_commit()? - first_commit,
-            });
-        }
+    if let Some(height) = unplaced {
+        return chain_unknown(
+            store,
+            map,
+            target_anchor,
+            charges,
+            height,
+            rolled_back_to,
+            replaced_revisions,
+            first_commit,
+        );
     }
 
     // Provisional reconciliation. A tail revision the map has moved past is
@@ -1279,6 +1288,9 @@ fn judge_rewrite(
                 Rewrite::Contradiction
             }
             Some(entry) => Rewrite::Unsettled(entry.end_height),
+            // `vouches_for` refuses only ranges a sealed shard covers, so
+            // this and the unsealed case above are not reached; both would
+            // be the publisher ahead of or apart from the chain, not settled.
             None => Rewrite::Unsettled(range.end_height),
         },
     }
@@ -2660,6 +2672,40 @@ fn accepted_at(chain: &impl ChainView, map: &ShardMap, height: u64) -> Result<An
             "wallet has no accepted rollback hash at {height}"
         ))),
     }
+}
+
+/// The report of a sync stopped because the wallet's chain cannot confirm a
+/// block at `height`: whatever was already rolled back, and nothing read.
+#[allow(clippy::too_many_arguments)]
+fn chain_unknown<S: WalletStore>(
+    store: &S,
+    map: &ShardMap,
+    target_anchor: &Anchor,
+    charges: ByteCharges,
+    height: u64,
+    rolled_back_to: Option<u64>,
+    replaced_revisions: Vec<String>,
+    first_commit: u64,
+) -> Result<SyncReport, SyncError> {
+    let (covered, settled) = coverage_summary(store, map, target_anchor.height)?;
+    Ok(SyncReport {
+        ledger: store.ledger()?,
+        charges,
+        matched_shards: Vec::new(),
+        unproductive_matches: 0,
+        covered_through: covered,
+        settled_through: settled,
+        provisional: provisional_of(store, map)?,
+        map_refreshes: 0,
+        completion: Completion::Incomplete {
+            reason: IncompleteReason::ChainUnknown { height },
+            pending: store.pending()?.len(),
+        },
+        rolled_back_to,
+        replaced_revisions,
+        scripts_added: 0,
+        commits: store.last_commit()? - first_commit,
+    })
 }
 
 fn incomplete_at<S: WalletStore>(

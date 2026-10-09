@@ -110,7 +110,8 @@ history the store holds with a shard whose end block the wallet's chain also acc
 below the target, while the chain still accepts the block the stored history rests on, and
 declares no re-cut of it. The publisher contradicts itself on the wallet's own chain, so
 retrying does not resolve it while it serves that history; an adapter reports the publication
-as changed. Nothing has been rolled back or read. A publisher that merely got ahead of the
+as changed. Nothing has been read, and nothing rolled back but a reorg the wallet's chain itself
+showed, which the sync rolls back before judging the map. A publisher that merely got ahead of the
 wallet's chain, for example by following a shallow reorg through a shard it had just sealed,
 gets `chain-unknown` instead, and the next sync after the chain moves rolls it back as a reorg.
 The store keeps no re-cut epoch, so a replica still serving a map from before a re-cut the store

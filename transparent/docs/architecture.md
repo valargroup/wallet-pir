@@ -442,20 +442,21 @@ A wallet (`transparent-wallet` `sync.rs`) keeps its history across a declared re
   declaration when it ends inside the declared range, or at its end on the declared block.
   Nothing under a matched range is read again.
 - A sealed range the map neither still publishes nor declares superseded is judged by what
-  the wallet's chain says. If the chain rejects the block the range rests on, it is a reorg
-  and is rolled back like any other. If the chain accepts that block and also the block the
-  map's sealed shard now covering the range's start ends on, at or below the target, the
-  publisher contradicts itself on the wallet's own chain: the sync ends with
-  `SyncError::SealedRewrite { start_height, revision_digest }` before anything is rolled back
-  or read, whichever range the store holds newest, and retrying does not resolve it while the
-  publisher serves that history. In every other case the chain cannot settle it yet, and the
-  sync stops as for an unknown block (`chain-unknown`). Sealing is not delayed for finality,
-  so this covers a publisher that followed a shallow reorg through a shard it had just sealed
-  before the wallet's chain did: once the chain moves, the next sync rolls it back as a reorg.
-  While any such range is unsettled, the sync stops without running the newest-first reorg
-  scan at all. A range cut short of its shard's end by a target or a rollback is left to the
-  ordinary chain checks, because a reorg above the cut changes the shard's digest without
-  touching what the range covers.
+  the wallet's chain says. The newest-first reorg scan runs first, on the chain alone, and
+  rolls back any reorg it shows; only ranges that rollback kept are judged, so a map cannot
+  hold back a reorg by also changing history below it. If the chain rejects the block the
+  range rests on, it is a reorg and is rolled back like any other. If the chain accepts that
+  block and also the block the map's sealed shard now covering the range's start ends on, at
+  or below the target, the publisher contradicts itself on the wallet's own chain: the sync
+  ends with `SyncError::SealedRewrite { start_height, revision_digest }` before anything else
+  is rolled back or read, whichever range the store holds newest, and retrying does not
+  resolve it while the publisher serves that history. In every other case the chain cannot
+  settle it yet, and the sync stops as for an unknown block (`chain-unknown`). Sealing is not
+  delayed for finality, so this covers a publisher that followed a shallow reorg through a
+  shard it had just sealed before the wallet's chain did: once the chain moves, the next sync
+  rolls it back as a reorg. A range cut short of its shard's end by a target or a rollback is
+  left to the ordinary chain checks, because a reorg above the cut changes the shard's digest
+  without touching what the range covers.
 - Unfinished page work under a revision the map no longer publishes is dropped and done
   again under the shard now covering its heights. What that revision already saved stays
   only when the map declares it sealed (under the same shard id) and the wallet's chain
