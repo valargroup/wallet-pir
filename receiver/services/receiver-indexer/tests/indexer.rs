@@ -392,6 +392,10 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
         peak: Arc<AtomicUsize>,
     }
     async fn handler(State(s): State<BatchRpc>, Json(r): Json<Value>) -> Json<Value> {
+        // Block hash lookups first check the tip; those checks are not counted calls.
+        if r["method"] == "getblockcount" {
+            return Json(json!({"result": 3496114 + s.blocks.len(), "error": null}));
+        }
         let call = s.calls.fetch_add(1, Ordering::SeqCst) + 1;
         let terminal = s.blocks.last().unwrap().hash().to_string();
         let result = match r["method"].as_str().unwrap() {
@@ -558,6 +562,29 @@ fn cli_refuses_witnesses_after_activation_before_contacting_the_node() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("witnesses need commitments"));
+}
+
+/// A unique-local IPv6 bind is private: it passes the bind check and reaches the node.
+#[test]
+fn cli_accepts_a_unique_local_ipv6_bind() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
+        .args([
+            "--data-dir",
+            dir.path().to_str().unwrap(),
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--no-auth",
+            "--serve",
+            "--bind",
+            "[fd00::1]:18380",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("loopback or private bind"), "{stderr}");
+    assert!(stderr.contains("Connection refused"), "{stderr}");
 }
 
 /// Serving binds loopback or a private address, never a public one.

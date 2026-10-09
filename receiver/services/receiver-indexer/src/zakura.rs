@@ -27,6 +27,8 @@ pub enum ZakuraError {
     Block(String),
     #[error("Ironwood tree size is unavailable at height {0}")]
     MissingTreeSize(u64),
+    #[error("no node has reached height {0}")]
+    Behind(u64),
 }
 
 /// Nodes' JSON-RPC endpoints, tried in order, and their credentials, if they require
@@ -108,14 +110,36 @@ impl ZakuraClient {
         })
     }
 
-    /// The node's chain tip height.
+    /// The highest chain tip among the nodes that answer, so a lagging first node
+    /// cannot hide blocks a later one has.
     pub async fn tip_height(&self) -> Result<u64, ZakuraError> {
-        self.call("getblockcount", json!([])).await
+        let (mut best, mut last) = (None, None);
+        for url in &self.rpc_urls {
+            match self.call_at::<u64>(url, "getblockcount", &json!([])).await {
+                Ok(tip) => best = best.max(Some(tip)),
+                Err(error) => last = Some(error),
+            }
+        }
+        best.ok_or_else(|| last.expect("at least one node RPC endpoint"))
     }
 
-    /// The hash of the node's block at `height`, in RPC display order.
+    /// The hash of the block at `height`, in RPC display order, from the first node
+    /// whose tip has reached it.
     pub async fn block_hash(&self, height: u64) -> Result<String, ZakuraError> {
-        self.call("getblockhash", json!([height])).await
+        let mut last = ZakuraError::Behind(height);
+        for url in &self.rpc_urls {
+            match self.call_at::<u64>(url, "getblockcount", &json!([])).await {
+                Ok(tip) if tip >= height => {
+                    match self.call_at(url, "getblockhash", &json!([height])).await {
+                        Ok(hash) => return Ok(hash),
+                        Err(error) => last = error,
+                    }
+                }
+                Ok(_) => last = ZakuraError::Behind(height),
+                Err(error) => last = error,
+            }
+        }
+        Err(last)
     }
 
     /// One JSON-RPC call to the first node that answers it. Callers validate answers
@@ -159,5 +183,54 @@ impl ZakuraClient {
             return Err(ZakuraError::Rpc(error.code, error.message));
         }
         response.result.ok_or(ZakuraError::MissingResult)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::State, routing::post, Json, Router};
+    use serde_json::Value;
+
+    /// A node at tip `tip` whose block hashes are `fill` repeated, refusing heights
+    /// above its tip as nodes do. Returns its URL.
+    async fn node(tip: u64, fill: &'static str) -> String {
+        async fn handler(
+            State((tip, fill)): State<(u64, &'static str)>,
+            Json(request): Json<Value>,
+        ) -> Json<Value> {
+            Json(match request["method"].as_str().unwrap() {
+                "getblockcount" => json!({"result": tip, "error": null}),
+                _ if request["params"][0].as_u64().unwrap() > tip => {
+                    json!({"result": null, "error": {"code": -8, "message": "out of range"}})
+                }
+                _ => json!({"result": fill.repeat(64), "error": null}),
+            })
+        }
+        let app = Router::new()
+            .route("/", post(handler))
+            .with_state((tip, fill));
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        url
+    }
+
+    /// A lagging first node hides neither the later node's tip nor its blocks.
+    #[tokio::test]
+    async fn a_lagging_first_node_defers_to_one_that_reached_the_height() {
+        let rpc = ZakuraClient::unauthenticated(vec![
+            "http://127.0.0.1:1".into(),
+            node(100, "a").await,
+            node(105, "b").await,
+        ])
+        .unwrap();
+        assert_eq!(rpc.tip_height().await.unwrap(), 105);
+        assert_eq!(rpc.block_hash(103).await.unwrap(), "b".repeat(64));
+        assert_eq!(rpc.block_hash(50).await.unwrap(), "a".repeat(64));
+        assert!(matches!(
+            rpc.block_hash(106).await,
+            Err(ZakuraError::Behind(106))
+        ));
     }
 }

@@ -118,6 +118,8 @@ impl Manifest {
             || !self.filters.iter().any(|set| set.label == filter::PAID)
             || self.start_height > self.end_height
             || self.start_position > self.end_position
+            // A depth-32 note commitment tree holds at most 2^32 leaves.
+            || self.end_position > 1 << 32
             || !self.rows.is_power_of_two()
             || self.rows < min_rows()
             || self.rows > MAX_ROWS
@@ -348,7 +350,10 @@ pub fn lookup_row(
     for slot in bytes[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
         if let Some(record) = Record::decode(slot)? {
             validate_location(m, &record)?;
-            if row_for(m, &record.receiver, record.page)? != wanted_row {
+            // A receiver cannot have more pages than the publication has records.
+            if u64::from(record.total) > m.records
+                || row_for(m, &record.receiver, record.page)? != wanted_row
+            {
                 return Err(Error::Malformed);
             }
             if &record.receiver == receiver && record.page == page {

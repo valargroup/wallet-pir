@@ -162,10 +162,16 @@ async fn rotate_canonical_sessions_and_revoke_orphaned_work() {
         .unwrap()
         .is_empty());
 }
-/// Health serves the owner's latest report for monitoring.
+/// Health serves each publication's own report with its ID.
 #[tokio::test]
 async fn health_serves_the_owners_report() {
     let publications = Publications::default();
+    assert!(publications.publish(
+        Publication::new(Server::new(snapshot(0)).unwrap(), None)
+            .unwrap()
+            .with_report(serde_json::json!({"missing_payouts": 0})),
+        0
+    ));
     let server = serve_router(receiver_pir_server::router_with_publications(
         publications.clone(),
     ))
@@ -180,9 +186,21 @@ async fn health_serves_the_owners_report() {
             .await
             .unwrap()
     };
-    assert!(health().await["indexer"].is_null());
-    publications.set_report(serde_json::json!({"missing_payouts": 0}));
     assert_eq!(health().await["indexer"]["missing_payouts"], 0);
+    let mut next = snapshot(1);
+    next.manifest.end_height = 102;
+    next.manifest.end_hash = [9; 32];
+    let server_next = Server::new(next).unwrap();
+    let id = hex::encode(server_next.manifest().id().unwrap());
+    assert!(publications.publish(
+        Publication::new(server_next, None)
+            .unwrap()
+            .with_report(serde_json::json!({"missing_payouts": 3})),
+        0
+    ));
+    let health = health().await;
+    assert_eq!(health["serving"], id.as_str());
+    assert_eq!(health["indexer"]["missing_payouts"], 3);
 }
 /// A displaced revision keeps its full grace: the next rotation waits for it, so two
 /// quick rotations cannot strand a session that began on the older one.
