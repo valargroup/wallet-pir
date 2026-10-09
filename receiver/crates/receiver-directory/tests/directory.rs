@@ -1171,3 +1171,217 @@ fn supplied_publications_are_validated_record_by_record() {
         s.filters = Filters::new(paid, []).unwrap().encode().unwrap();
     });
 }
+
+/// `n` distinct valid receivers.
+fn receivers(n: u32) -> Vec<Receiver> {
+    let sk = orchard::keys::SpendingKey::from_bytes([5; 32]).unwrap();
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    (0..n)
+        .map(|i| {
+            let address = fvk.address_at(i, orchard::keys::Scope::External);
+            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+        })
+        .collect()
+}
+
+/// `pages` payments to each of `receivers`, interleaved in [`manifest`]'s last block,
+/// one transaction each, at successive positions from 200.
+fn spread(receivers: &[Receiver], pages: u32) -> Vec<Record> {
+    let n = receivers.len() as u32;
+    (0..pages)
+        .flat_map(|page| {
+            receivers.iter().enumerate().map(move |(i, receiver)| {
+                let index = page * n + i as u32;
+                let mut r = record(0, pages);
+                (r.receiver, r.page) = (*receiver, page);
+                r.payment.txid = [0; 32];
+                r.payment.txid[..4].copy_from_slice(&index.to_le_bytes());
+                r.payment.tx_index = index + 1;
+                r.payment.position = 200 + u64::from(index);
+                r
+            })
+        })
+        .collect()
+}
+
+/// Rows match an independent computation of the bucket hash, pinned here.
+#[test]
+fn rows_are_pinned() {
+    let m = manifest(MIN_ROWS);
+    let rows: Vec<_> = (0..4)
+        .map(|p| row_for(&m, &receiver(), p).unwrap())
+        .collect();
+    assert_eq!(rows, [3472, 2600, 4604, 7755]);
+}
+
+/// Building, validating and looking up a publication each validate its manifest once,
+/// however many records and filter sets it has, and a malformed manifest is still
+/// refused by every public entrypoint.
+#[test]
+fn placement_validates_the_manifest_once_per_call() {
+    allow_small_tables();
+    use receiver_directory::snapshot::{manifest_validations, ProviderSet};
+    let records = spread(&receivers(4), 20);
+    let sets: Vec<_> = (0..8)
+        .flat_map(|i| {
+            ["recent", "seen"].map(|kind| ProviderSet {
+                label: format!("p{i}/{kind}"),
+                window_secs: (kind == "recent").then_some(86_400),
+                since_unix: 1_000,
+                until_unix: 90_000,
+                receivers: receivers(2),
+            })
+        })
+        .collect();
+    /// `f`'s result and how many manifest validations it ran.
+    fn counted<T>(f: impl FnOnce() -> T) -> (T, u64) {
+        let before = manifest_validations();
+        let value = f();
+        (value, manifest_validations() - before)
+    }
+    let (s, count) = counted(|| Snapshot::build(manifest(64), &records, &sets).unwrap());
+    assert_eq!((s.manifest.filters.len(), count), (17, 1));
+    assert_eq!(counted(|| s.validate().unwrap()), ((), 1));
+    for r in &records {
+        let bytes = row(&s, &r.receiver, r.page);
+        let found = counted(|| lookup_row(&s.manifest, &r.receiver, r.page, bytes).unwrap());
+        assert_eq!(found, (Some(r.clone()), 1));
+    }
+
+    let r = receiver();
+    let bytes = row(&s, &r, 0);
+    let mut bad_profile = s.manifest.clone();
+    bad_profile.profile.push('x');
+    let mut bad_rows = s.manifest.clone();
+    bad_rows.rows = 3;
+    let mut unordered = s.manifest.clone();
+    unordered.filters.swap(0, 1);
+    for bad in [bad_profile, bad_rows, unordered] {
+        assert!(matches!(row_for(&bad, &r, 0), Err(Error::Malformed)));
+        assert!(matches!(
+            lookup_row(&bad, &r, 0, bytes),
+            Err(Error::Malformed)
+        ));
+        let supplied = Snapshot {
+            manifest: bad.clone(),
+            ..s.clone()
+        };
+        assert!(matches!(supplied.validate(), Err(Error::Malformed)));
+        // A build replaces the declared sets, so only the others reach it.
+        if bad.filters == s.manifest.filters {
+            assert!(Snapshot::build(bad, &records, &sets).is_err());
+        }
+    }
+}
+
+/// A populated table of [`MAX_ROWS`] rows, about two records per row, validates from
+/// its own bytes once its source records are gone.
+#[test]
+fn a_populated_largest_table_validates() {
+    let n = 16;
+    let pages = 2 * MAX_ROWS / n;
+    let mut m = manifest(MAX_ROWS);
+    m.end_position = 200 + u64::from(n * pages);
+    let records = spread(&receivers(n), pages);
+    let s = Snapshot::build(m, &records, &[]).unwrap();
+    drop(records);
+    assert_eq!(s.manifest.records, u64::from(2 * MAX_ROWS));
+    let fullest = s
+        .data
+        .chunks(ROW_BYTES)
+        .map(|row| {
+            row.chunks(RECORD_BYTES)
+                .filter(|slot| slot.len() == RECORD_BYTES && slot.iter().any(|b| *b != 0))
+                .count()
+        })
+        .max()
+        .unwrap();
+    assert!(fullest < SLOTS, "{fullest} records share a row");
+    s.validate().unwrap();
+}
+
+/// Each page continues the last as [`check_next`] requires, in a build and in a
+/// supplied publication, each of whose edits is rehashed.
+#[test]
+fn pages_continue_in_chain_order() {
+    allow_small_tables();
+    use receiver_directory::{snapshot::check_next, Payment};
+    let mut m = manifest(8);
+    m.start_height = 98;
+    // Below the terminal height, whose hash a record must match anyway, so a
+    // disagreement within a block is caught by the continuation alone.
+    let mut first = record(0, 2);
+    first.payment.height = 100;
+    first.payment.block_hash = [10; 32];
+    (
+        first.payment.txid,
+        first.payment.tx_index,
+        first.payment.action_index,
+    ) = ([1; 32], 2, 1);
+    first.payment.position = 200;
+    let next = |edit: fn(&mut Payment)| {
+        let mut r = record(1, 2);
+        r.payment = first.payment.clone();
+        r.payment.position = 201;
+        edit(&mut r.payment);
+        r
+    };
+    let within_tx = next(|p| p.action_index = 2);
+    let valid = Snapshot::build(m.clone(), &[first.clone(), within_tx.clone()], &[]).unwrap();
+    valid.validate().unwrap();
+
+    let continuing: [fn(&mut Payment); 3] = [
+        |p| p.action_index = 2,
+        |p| (p.txid, p.tx_index, p.action_index) = ([2; 32], 3, 0),
+        |p| {
+            (p.height, p.block_hash, p.txid, p.tx_index, p.action_index) =
+                (101, [3; 32], [2; 32], 1, 0)
+        },
+    ];
+    for edit in continuing {
+        let r = next(edit);
+        check_next(&first, &r).unwrap();
+        Snapshot::build(m.clone(), &[first.clone(), r], &[])
+            .unwrap()
+            .validate()
+            .unwrap();
+    }
+
+    let broken: [fn(&mut Payment); 5] = [
+        // An earlier action in the same transaction.
+        |p| p.action_index = 0,
+        // An earlier transaction in the same block.
+        |p| (p.txid, p.tx_index, p.action_index) = ([2; 32], 1, 5),
+        // An earlier block.
+        |p| (p.height, p.block_hash, p.txid) = (99, [9; 32], [2; 32]),
+        // Another hash for the same block.
+        |p| (p.block_hash, p.txid, p.tx_index) = ([11; 32], [2; 32], 3),
+        // Another txid for the same transaction.
+        |p| (p.txid, p.action_index) = ([2; 32], 2),
+    ];
+    for edit in broken {
+        let r = next(edit);
+        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
+        assert!(matches!(
+            Snapshot::build(m.clone(), &[first.clone(), r.clone()], &[]),
+            Err(Error::Malformed)
+        ));
+        let mut s = valid.clone();
+        let offset = slot_of(&s, &within_tx);
+        put(&mut s, offset, Some(&r));
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
+
+    // The page, total and position conditions hold for the predicate too.
+    let mut other = within_tx.clone();
+    other.receiver = other_receiver();
+    let mut skipped = within_tx.clone();
+    (skipped.page, skipped.total) = (2, 3);
+    let mut wider = within_tx.clone();
+    wider.total = 3;
+    let earlier = next(|p| (p.position, p.action_index) = (199, 2));
+    for r in [other, skipped, wider, earlier] {
+        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
+    }
+}
