@@ -31,7 +31,7 @@
   republishes a paused tip when its provider sets change, and
   feeds the `near-intents` filter sets from the NEAR Intents explorer when given a
   partner key. It checks each block against its header's merkle root, fails over
-  between nodes, publishes a few blocks below the tip, revokes only on a proven
-  fork, reports completed NEAR payouts missing from the index and logs with
-  `tracing`. Its `receiver-probe` binary is a `pir-monitor` service probe that
+  between nodes, bounds each node response by its method, publishes a few blocks
+  below the tip, revokes only on a proven fork, reports completed NEAR payouts
+  missing from the index and logs with `tracing`. Its `receiver-probe` binary is a `pir-monitor` service probe that
   runs one live encrypted lookup checked against the session's row file.
