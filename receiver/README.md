@@ -136,7 +136,9 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 ```
 
 `--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
-authentication. Repeat `--rpc-url` for more nodes: the highest tip among them sets
+authentication. A request a node rejects rereads the cookie and is retried once
+with it if it changed, so a node restart that rotates the cookie needs no indexer
+restart. Repeat `--rpc-url` for more nodes: the highest tip among them sets
 the target, and a block hash comes from the first node that has reached its
 height, so a lagging node cannot hide a reorg. Other calls fall back in order.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
