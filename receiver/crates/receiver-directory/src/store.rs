@@ -135,10 +135,10 @@ impl Store {
 
     /// Reject gaps, changed parents, coinbase payments, malformed records and payments
     /// a snapshot would refuse before advancing coverage: the block's payments must
-    /// follow chain order by position, transaction index and action index, each must
-    /// continue its receiver's last stored payment as [`snapshot::check_next`] requires,
-    /// they must agree on their block hash and transaction locations, and a txid
-    /// already stored must keep its height and transaction index.
+    /// follow chain order by position, transaction index and action index and agree on
+    /// their block hash and transaction locations, and a txid already stored must keep
+    /// its height and transaction index. Heights and position ranges order the blocks,
+    /// so each receiver's pages continue as [`snapshot::check_next`] requires.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -190,7 +190,6 @@ impl Store {
                     .commitments
                     .get((p.position - block.start_position) as usize)
                     != Some(&p.cmx)
-                // Heights and position ranges already order the blocks.
                 || previous_output.is_some_and(|(position, output)| {
                     p.position <= position || (p.tx_index, p.action_index) <= output
                 })
@@ -198,10 +197,11 @@ impl Store {
                 return Err(Error::Malformed);
             }
             previous_output = Some((p.position, (p.tx_index, p.action_index)));
-            let mut record = Record {
+            // Stored as a lone page; a snapshot numbers the pages.
+            let record = Record {
                 receiver: *receiver,
-                page: 1,
-                total: 2,
+                page: 0,
+                total: 1,
                 payment: p.clone(),
             };
             if !locations.add(&(&record).into()) {
@@ -220,20 +220,6 @@ impl Store {
                     return Err(Error::Malformed);
                 }
             }
-            let last: Option<Vec<u8>> = tx
-                .query_row(
-                    "SELECT record FROM payments WHERE receiver=?1 ORDER BY position DESC LIMIT 1",
-                    [receiver.as_bytes()],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(last) = last {
-                // Stored as a lone page; compare as the page before this one.
-                let mut last = Record::decode(&last)?.ok_or(Error::Malformed)?;
-                last.total = 2;
-                snapshot::check_next(&last, &record)?;
-            }
-            (record.page, record.total) = (0, 1);
             let record = record.encode()?;
             tx.execute(
                 "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",

@@ -202,11 +202,11 @@ must cover the indexer's `--depth` plus about ten blocks.
 
 `receiver_pir::transport::DirectoryClient` runs over a host `Transport` that
 applies the wallet's route policy, cancellation and timeouts. A transport
-enforces response limits while streaming, rejects redirects and maps 409 and 410
-to `Error::Revision`. A wallet calls `fetch_manifest`, accepts the manifest's
-end block against its own chain and calls `fetch_filters`, which checks the
-filter file against the manifest. It tests its receivers with `Filter::matches`
-and calls `connect_manifest` with the remaining lookup count only if any need a
+enforces response limits while streaming, rejects redirects and maps 410 to
+`Error::Revision`. A wallet calls `fetch_manifest`, accepts the manifest's end
+block against its own chain and calls `fetch_filters`, which checks the filter
+file against the manifest. It tests its receivers with `Filter::matches` and
+calls `connect_manifest` with the remaining lookup count only if any need a
 lookup. Small jobs use PIR. Larger ones (about 400 lookups at 8192 rows)
 download the row file once and check its digest. `use_file_for_work` switches
 when new work arrives. `witnesses` fetches the common witness file, and `lookup`

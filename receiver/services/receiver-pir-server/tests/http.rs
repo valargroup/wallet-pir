@@ -349,7 +349,7 @@ fn http() -> reqwest::Client {
         .unwrap()
 }
 
-/// A wallet transport over reqwest. It maps 409 and 410 to [`Error::Revision`].
+/// A wallet transport over reqwest. It maps 410 to [`Error::Revision`].
 struct Http(reqwest::Client);
 
 impl Transport for Http {
@@ -366,7 +366,7 @@ async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>,
     let failed = |e: reqwest::Error| Error::Transport(e.to_string());
     let response = request.send().await.map_err(failed)?;
     match response.status() {
-        reqwest::StatusCode::CONFLICT | reqwest::StatusCode::GONE => return Err(Error::Revision),
+        reqwest::StatusCode::GONE => return Err(Error::Revision),
         status if !status.is_success() => return Err(Error::Transport(status.to_string())),
         _ => {}
     }
