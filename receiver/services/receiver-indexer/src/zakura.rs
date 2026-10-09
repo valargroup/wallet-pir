@@ -32,6 +32,8 @@ pub enum ZakuraError {
     Body(#[from] crate::BodyError),
     #[error("invalid RPC response: {0}")]
     Decode(serde_json::Error),
+    #[error("node is on another network")]
+    OtherNetwork,
 }
 
 /// Bound on every node RPC response. The largest the indexer reads is a verbose

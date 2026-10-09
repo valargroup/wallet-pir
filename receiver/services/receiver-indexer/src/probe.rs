@@ -209,10 +209,12 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let origin = args.origin.trim_end_matches('/');
     let manifest = fetch_manifest(&http, origin).await?;
     let directory = &manifest.directory;
-    if directory.start_height > fixture.height || directory.end_height < fixture.height {
+    // A start after the fixture is truncated history, which the activation check below
+    // classifies.
+    if directory.end_height < fixture.height {
         return Ok(Some((
             "oracle_invalid",
-            json!({"fixture": "outside coverage"}),
+            json!({"fixture": "after coverage"}),
         )));
     }
     let nodes = args
@@ -373,18 +375,21 @@ async fn await_feed_reads(
     }
 }
 
-/// Checks the publication's anchor against `rpc`: its hash and genesis, and the tree
-/// size after it (read by that hash, see [`ZakuraClient::receiver_boundary`]), which is
-/// the coverage the manifest claims. A read that fails or a chain that changes during
-/// it is an error, which proves nothing against the publication.
+/// Checks the publication's anchor against `rpc`: its hash and the tree size after it
+/// (read by that hash, see [`ZakuraClient::receiver_boundary`]), which is the coverage
+/// the manifest claims. A read that fails, a chain that changes during it, or a node
+/// whose genesis is not the publication's ([`ZakuraError::OtherNetwork`]) is an error,
+/// which proves nothing against the publication.
 async fn check_anchor(
     rpc: &ZakuraClient,
     directory: &receiver_directory::snapshot::Manifest,
 ) -> std::result::Result<Option<Failure>, ZakuraError> {
+    if parse_hash(&rpc.block_hash(0).await?)? != directory.genesis {
+        return Err(ZakuraError::OtherNetwork);
+    }
     let height = directory.end_height;
     let boundary = rpc.receiver_boundary(height).await?;
-    let genesis = parse_hash(&rpc.block_hash(0).await?)?;
-    if boundary.hash != directory.end_hash || genesis != directory.genesis {
+    if boundary.hash != directory.end_hash {
         return Ok(Some((
             "answer_mismatch",
             json!({"anchor_off_chain": height}),
@@ -430,7 +435,8 @@ enum Verdict {
     Verified(Option<Hash>),
     /// Valid evidence against the publication or the fixture. It is final.
     Failed(Failure),
-    /// The node could not complete the checks, so the next one tries.
+    /// The node could not complete the checks, or is on another network, so the next
+    /// one tries.
     Unavailable(ZakuraError),
 }
 
@@ -580,8 +586,9 @@ async fn indexer_report(
 /// decides, and the first valid evidence against the publication is final rather than
 /// retried on a friendlier node; only a node that could not complete them hands over
 /// to the next. Returns the node that verified and its result, with the highest tip
-/// any node reported, from which lag is measured whichever node verified. With no node
-/// completing the checks it is `oracle_unavailable`, with each attempt's tip and error.
+/// any node not on another network reported, from which lag is measured whichever
+/// node verified. With no node completing the checks it is `oracle_unavailable`, with
+/// each attempt's tip and error.
 async fn oracle(
     nodes: &[ZakuraClient],
     directory: &receiver_directory::snapshot::Manifest,
@@ -593,11 +600,15 @@ async fn oracle(
     let ranked = ZakuraClient::ranked(nodes)
         .await
         .map_err(|error| unavailable(json!({"end_height": height, "error": error.to_string()})))?;
-    let top = ranked[0].0;
-    let mut attempts = Vec::new();
+    // Ranked highest first, so the first tip kept is the highest.
+    let (mut top, mut attempts) = (None, Vec::new());
     for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
-        match verify(rpc, directory, pinned, witnesses).await {
-            Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
+        let verdict = verify(rpc, directory, pinned, witnesses).await;
+        if !matches!(verdict, Verdict::Unavailable(ZakuraError::OtherNetwork)) {
+            top.get_or_insert(*tip);
+        }
+        match verdict {
+            Verdict::Verified(root) => return Ok((rpc.clone(), root, top.unwrap())),
             Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
                 attempts.push(json!({"node_tip": tip, "error": error.to_string()}))
@@ -605,7 +616,7 @@ async fn oracle(
         }
     }
     Err(unavailable(
-        json!({"end_height": height, "node_tip": top, "attempts": attempts}),
+        json!({"end_height": height, "node_tip": ranked[0].0, "attempts": attempts}),
     ))
 }
 
@@ -707,8 +718,8 @@ mod tests {
 
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
     /// anchor's height `end`, `[anchor; 32]`, with the tree size after it. Genesis is
-    /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
-    /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
+    /// `[genesis; 32]`, and every other block below
+    /// the anchor, the fixture's among them, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
     /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
     /// height holds `[9; 32]` after the boundary's first read, as when the chain changes
     /// during the checks. Its `z_gettreestate` gives `root`, or no root for `None`, and
@@ -716,6 +727,7 @@ mod tests {
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
+        genesis: u8,
         end: u64,
         anchor: u8,
         fixture: u8,
@@ -725,10 +737,12 @@ mod tests {
         root: Option<Hash>,
     }
 
-    /// A node at tip `tip` that agrees with [`anchored`].
+    /// A node at tip `tip` that agrees with [`anchored`], whose genesis is `[1; 32]`, as
+    /// [`super::common::manifest`] declares.
     fn good(tip: u64) -> Node {
         Node {
             tip,
+            genesis: 1,
             end: u64::from(anchored().end_height),
             anchor: 3,
             fixture: 5,
@@ -757,7 +771,7 @@ mod tests {
                     }
                     let result = match (method, params[0].as_u64()) {
                         ("getblockcount", _) => json!(node.tip),
-                        ("getblockhash", Some(0)) => json!(display(1)),
+                        ("getblockhash", Some(0)) => json!(display(node.genesis)),
                         ("getblockhash", Some(height)) if height == end => {
                             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             json!(display(if node.moved && read >= 1 {
@@ -766,7 +780,7 @@ mod tests {
                                 node.anchor
                             }))
                         }
-                        ("getblockhash", Some(height)) if height == end - 1 => {
+                        ("getblockhash", Some(height)) if height < end => {
                             json!(display(node.fixture))
                         }
                         ("getblock", _) => match node.size {
@@ -857,6 +871,22 @@ mod tests {
         assert!(detail["attempts"].as_array().unwrap().is_empty());
     }
 
+    /// A node on another network, however high its tip, hands over to the next without
+    /// counting against the publication or setting the lag.
+    #[tokio::test]
+    async fn a_node_on_another_network_is_skipped() {
+        let end = u64::from(anchored().end_height);
+        let other = Node {
+            genesis: 2,
+            anchor: 4,
+            ..good(end + 100)
+        };
+        assert_eq!(decide(&[other, good(end)], false).await, Ok((end, None)));
+        let (category, detail) = decide(&[other], false).await.unwrap_err();
+        assert_eq!(category, "oracle_unavailable");
+        assert_eq!(detail["attempts"].as_array().unwrap().len(), 1);
+    }
+
     /// Valid evidence against the publication, or against the fixture's pinned block,
     /// from the first node to complete the checks is final, even when a later node
     /// would agree with it, and equal tips keep their configured order.
@@ -923,8 +953,9 @@ mod tests {
     }
 
     /// Wallets require history from Ironwood activation, so a publication starting
-    /// after it is an answer mismatch before any lookup, though it holds the fixture and
-    /// agrees with the node; one starting at activation reaches the lookup.
+    /// after it is an answer mismatch before any lookup, though it agrees with the node,
+    /// whether or not it still holds the fixture; one starting at activation reaches the
+    /// lookup.
     #[tokio::test]
     async fn a_publication_must_start_at_ironwood_activation() {
         let activation = crate::blocks::ironwood_activation();
@@ -934,14 +965,19 @@ mod tests {
         fixture["height"] = (activation + 1).into();
         fixture["block_hash"] = zakura_chain::block::Hash([5; 32]).to_string().into();
         std::fs::write(&path, fixture.to_string()).unwrap();
-        let node = Node {
-            end: u64::from(activation) + 2,
-            ..good(u64::from(activation) + 2)
-        };
-        let rpc = serve_node(node).await;
-        for (start, reaches_lookup) in [(activation + 1, false), (activation, true)] {
+        for (start, end, reaches_lookup) in [
+            (activation + 1, activation + 2, false),
+            (activation + 2, activation + 3, false),
+            (activation, activation + 2, true),
+        ] {
+            let end_node = u64::from(end);
+            let rpc = serve_node(Node {
+                end: end_node,
+                ..good(end_node)
+            })
+            .await;
             let mut directory = anchored();
-            (directory.start_height, directory.end_height) = (start, activation + 2);
+            (directory.start_height, directory.end_height) = (start, end);
             let snapshot =
                 receiver_directory::snapshot::Snapshot::build(directory, &[], &[]).unwrap();
             let server = receiver_pir::server::Server::new(snapshot).unwrap();

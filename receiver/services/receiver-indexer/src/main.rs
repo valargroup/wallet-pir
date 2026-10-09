@@ -802,13 +802,14 @@ mod tests {
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("health").await, first);
         assert!(paused.publications.ready_at().is_none());
-        // A terminal block past the payout's grace: the same directory is republished
-        // with the new report.
+        // A terminal block past the payout's grace: the same session is republished in
+        // place with the new report.
         *paused.time.lock().unwrap() = NOW - 10 + 3600;
         paused.refresh().await.unwrap();
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
-        assert!(paused.publications.ready_at().is_some());
+        assert_eq!(reported["serving"], first["serving"]);
+        assert!(paused.publications.ready_at().is_none());
     }
 
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
