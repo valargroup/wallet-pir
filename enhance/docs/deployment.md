@@ -174,7 +174,8 @@ which is enough for a no-op check or an already staged release.
   `/opt/enhance-pir/transactions/<id>/`. A failure restores the touched units in
   reverse order and checks that the previous executable is running again.
   `rollback` does the same for a committed or interrupted transaction, and is
-  safe to repeat.
+  safe to repeat. Without `--transaction` it passes over finished verifications
+  that restarted nothing and rolls back the deployment before them.
 
 The tool does not drain or pause public queries, so plan the query-route
 maintenance window as in the September 24 rollout.

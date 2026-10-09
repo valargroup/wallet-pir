@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_wallet_pir_deploy import Fleet, OLD_SHA, NEW_SHA, ENHANCE, ROOT, SERVICES
 from wallet_pir_ops.deploy import descriptors
+from wallet_pir_ops.deploy.engine import DeployError
 from wallet_pir_ops.deploy.remote import SSHExecutor
 
 
@@ -82,6 +83,22 @@ class CudaFleet(Fleet):
         self.assertEqual(result.status, 'committed')
         self.assertEqual(self.restarts(), [])
         self.assertEqual(len(self.fake.runs), 1)
+        with self.assertRaisesRegex(DeployError, 'nothing to roll back'):
+            runner.rollback()
+
+    def test_default_rollback_restores_the_deployment_before_a_verification(self):
+        for code in (0, 1):
+            with self.subTest(code=code):
+                self.setUp()
+                runner = self.enhance_fleet()
+                runner.deploy(NEW_SHA, self.binary, retire_historical=True)
+                self.fake.exact_result = (code, 'exact check')
+                try:
+                    runner.deploy(NEW_SHA, verify_noop=True)
+                except DeployError:
+                    self.assertEqual(code, 1)
+                runner.rollback()
+                self.assertTrue(all(self.running(host, unit) == OLD_SHA for host, unit in ENHANCE))
 
     def test_nested_health_and_strict_scalar_types(self):
         runner = self.enhance_fleet()

@@ -455,7 +455,8 @@ class Deployer:
             return None
         baseline = json.loads(self.baseline_path.read_text())
         journal = Journal.create(self.state_dir, self.service.name, sha, source,
-                                 [self.record(plan) for plan in plans], baseline)
+                                 [self.record(plan) for plan in plans], baseline,
+                                 rollback_target=latest.id if latest and not restart else None)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
         if not restart:
             journal.event('verification without restart')
@@ -543,12 +544,27 @@ class Deployer:
             raise DeployError('rollback incomplete; re-run rollback after fixing:\n  ' + '\n  '.join(failures))
 
     def rollback(self, identifier=None, force=False):
-        journal = Journal.load(self.state_dir, self.service.name, identifier)
+        """Rolls back transaction `identifier`, by default the latest deployment.
+
+        Finished verifications changed nothing, so the default follows their
+        `rollback_target` chain to the deployment before them; an unfinished one
+        is rolled back itself, which only finishes it. An earlier deployment is
+        rolled back only once that latest deployment failed or was rolled back;
+        a later verification does not count.
+        """
+        newest = Journal.load(self.state_dir, self.service.name)
+        while (newest and newest.verification_only and newest.status in FINAL
+               and newest.data.get('rollback_target')):
+            newest = Journal.load(self.state_dir, self.service.name, newest.data['rollback_target'])
+        journal = newest if identifier is None else Journal.load(self.state_dir, self.service.name, identifier)
         if journal is None:
             raise DeployError('no %s transaction is recorded in %s' % (self.service.name, self.state_dir))
-        latest = Journal.load(self.state_dir, self.service.name)
-        if latest.id != journal.id and latest.status not in ('failed', 'rolled-back'):
-            raise DeployError('later transaction %s is %s; roll it back first' % (latest.id, latest.status))
+        if identifier is None and journal.verification_only and journal.status in FINAL:
+            raise DeployError('nothing to roll back: %s only verified a running release and no earlier %s '
+                              'deployment is recorded; name one with --transaction' % (journal.id, self.service.name))
+        if (not journal.verification_only and newest.id != journal.id
+                and newest.status not in ('failed', 'rolled-back')):
+            raise DeployError('later transaction %s is %s; roll it back first' % (newest.id, newest.status))
         if journal.status == 'rolled-back':
             self.out('%s is already rolled back' % journal.id)
             return journal

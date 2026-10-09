@@ -34,7 +34,8 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       service with verify_unchanged in deploy.toml (receiver), a deploy that
       restarts nothing still checks readiness and runs the exact check.
   rollback SERVICE [--transaction ID] [--force]
-      Restores the touched targets of the latest (or named) transaction.
+      Restores the touched targets of the latest deployment (or the named
+      transaction), passing over verifications that restarted nothing.
   status SERVICE
   capture-baseline SERVICE [--output FILE]
 

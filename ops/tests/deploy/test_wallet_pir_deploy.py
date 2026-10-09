@@ -533,6 +533,10 @@ class RollbackTests(Fleet):
         deployer.deploy(sha256(b'third build'), third)
         with self.assertRaisesRegex(DeployError, 'roll it back first'):
             deployer.rollback(first.id)
+        # A later verification leaves the deployment before it the one to roll back first.
+        deployer.deploy(sha256(b'third build'), verify_noop=True)
+        with self.assertRaisesRegex(DeployError, 'later transaction enhance-.* is committed'):
+            deployer.rollback(first.id)
 
 
 class StatusTests(Fleet):
@@ -667,6 +671,30 @@ class ReceiverTests(Fleet):
         self.assertEqual(seen, [('receiver-01', True, 'verifying')])
         self.assertEqual([record['phase'] for record in journal.hosts], ['pending'])
         self.assertEqual(journal.touched(), [])
+        # No deployment precedes it, so the default rollback has nothing to restore.
+        with self.assertRaisesRegex(DeployError, 'nothing to roll back'):
+            deployer.rollback()
+        self.assertEqual(self.restarts(), [])
+
+    def test_default_rollback_restores_the_deployment_before_verifications(self):
+        """Passed, failed or repeated, a verification never becomes what `rollback` restores."""
+        sha = sha256(RECEIVER_NEW)
+        for codes in ([0], [1], [0, 1]):
+            with self.subTest(codes=codes):
+                self.setUp()
+                deployer = self.receiver_fleet()
+                deployment = deployer.deploy(sha, self.receiver_binary)
+                for code in codes:
+                    self.fake.exact_result = (code, 'exact check')
+                    try:
+                        deployer.deploy(sha, self.receiver_binary)
+                    except DeployError:
+                        self.assertEqual(code, 1)
+                self.fake.log.clear()
+                deployer.rollback()
+                self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+                self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+                self.assertEqual(Journal.load(self.state, 'receiver', deployment.id).status, 'rolled-back')
 
     def test_an_unchanged_target_that_is_not_ready_fails_its_verification(self):
         deployer, sha = self.provisioned_receiver()
