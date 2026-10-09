@@ -315,7 +315,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     if recent.is_none_or(|until| until < now - MAX_RECENT_AGE_SECS) {
         return Ok(Some(("stale_feed", json!({"recent_until": recent}))));
     }
-    indexer_report(&http, origin, &args.health_url, &id).await
+    indexer_report(&http, &args.health_url, &id).await
 }
 
 /// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
@@ -543,24 +543,20 @@ async fn check_filters(
 }
 
 /// The indexer's payout check from health, which must report serving the probed
-/// publication `id`, or the one the origin serves now if it rotated since: otherwise
-/// the private health URL and the public origin are not the same service.
+/// publication `id`. Otherwise the report may describe another publication, such as
+/// one rotated in since the lookup, or another service.
 async fn indexer_report(
     http: &reqwest::Client,
-    origin: &str,
     health_url: &str,
     id: &str,
 ) -> Result<Option<Failure>> {
     let health: Value = serde_json::from_slice(&get(http, health_url, MAX_HEALTH_BYTES).await?)?;
     let serving = health["serving"].as_str();
     if serving != Some(id) {
-        let current = hex::encode(fetch_manifest(http, origin).await?.id()?);
-        if serving != Some(current.as_str()) {
-            return Ok(Some((
-                "report_unavailable",
-                json!({"probed": id, "health_serving": serving}),
-            )));
-        }
+        return Ok(Some((
+            "report_unavailable",
+            json!({"probed": id, "health_serving": serving}),
+        )));
     }
     match health["indexer"]["payouts_missing"].as_u64() {
         None => Ok(Some(("report_unavailable", Value::Null))),
@@ -1146,6 +1142,11 @@ mod tests {
         assert_eq!(missing.unwrap_err().0, "oracle_invalid");
     }
 
+    /// The hex ID of `m`, as health reports it.
+    fn id(m: &Manifest) -> String {
+        hex::encode(m.id().unwrap())
+    }
+
     /// A session manifest whose directory salt starts with `salt`.
     fn manifest(salt: u8) -> Manifest {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
@@ -1157,20 +1158,11 @@ mod tests {
         }
     }
 
-    /// A service whose origin serves `current` and whose health reports `serving`, and
-    /// a route with a body over the health bound. Returns its origin.
-    async fn serve(current: Manifest, serving: String) -> String {
+    /// A service whose health answers `health`, and a route with a body over the
+    /// health bound. Returns its origin.
+    async fn serve(health: Value) -> String {
         let app = Router::new()
-            .route(
-                "/v1/receiver/init",
-                routing::get(move || async move { Json(current) }),
-            )
-            .route(
-                "/health",
-                routing::get(move || async move {
-                    Json(json!({"serving": serving, "indexer": {"payouts_missing": 0}}))
-                }),
-            )
+            .route("/health", routing::get(move || async move { Json(health) }))
             .route(
                 "/large",
                 routing::get(|| async { vec![b' '; MAX_HEALTH_BYTES + 1] }),
@@ -1337,32 +1329,46 @@ mod tests {
         assert!(argv(&["--await-feed-reads", "0"]).is_err());
     }
 
-    /// Health's report counts only for the probed publication, or the one the origin
-    /// serves after a rotation, and bodies are bounded.
+    /// Health's report counts only for the probed publication, even after a rotation,
+    /// and bodies are bounded.
     #[tokio::test]
     async fn the_report_is_bound_to_the_probed_publication() {
-        let (probed, rotated) = (manifest(1), manifest(2));
-        let id = |m: &Manifest| hex::encode(m.id().unwrap());
+        let (probed, rotated) = (id(&manifest(1)), id(&manifest(2)));
         let http = reqwest::Client::new();
-        let report = |origin: String| {
-            let (http, id) = (http.clone(), id(&probed));
+        let report = |health: Value| {
+            let (http, probed) = (http.clone(), probed.clone());
             async move {
-                indexer_report(&http, &origin, &format!("{origin}/health"), &id)
+                let origin = serve(health).await;
+                indexer_report(&http, &format!("{origin}/health"), &probed)
                     .await
                     .unwrap()
             }
         };
-        let origin = serve(probed.clone(), id(&probed)).await;
-        assert!(report(origin.clone()).await.is_none());
+        let indexer = |missing: u64| json!({"payouts_missing": missing});
+        let current = report(json!({"serving": probed, "indexer": indexer(0)}));
+        assert!(current.await.is_none());
+        let origin = serve(Value::Null).await;
         assert!(get(&http, &format!("{origin}/large"), MAX_HEALTH_BYTES)
             .await
             .is_err());
-        // The service rotated after the lookup.
-        let origin = serve(rotated.clone(), id(&rotated)).await;
-        assert!(report(origin).await.is_none());
-        // Health answers for a publication the origin does not serve.
-        let origin = serve(probed.clone(), id(&rotated)).await;
-        assert_eq!(report(origin).await.unwrap().0, "report_unavailable");
+        // The service rotated after the lookup, or health answers for another one.
+        let failure = report(json!({"serving": rotated, "indexer": indexer(0)}))
+            .await
+            .unwrap();
+        assert_eq!(
+            failure,
+            (
+                "report_unavailable",
+                json!({"probed": probed, "health_serving": rotated})
+            )
+        );
+        // The probed publication's report is missing, or counts a missing payout.
+        let failure = report(json!({"serving": probed})).await.unwrap();
+        assert_eq!(failure, ("report_unavailable", Value::Null));
+        let failure = report(json!({"serving": probed, "indexer": indexer(2)}))
+            .await
+            .unwrap();
+        assert_eq!(failure, ("answer_mismatch", json!({"payouts_missing": 2})));
     }
 
     /// The fixture's pinned receiver is checked against recovery before any request:

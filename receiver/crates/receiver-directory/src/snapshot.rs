@@ -23,6 +23,7 @@ pub const TREE_SIZE: u64 = 1 << 32;
 #[cfg(feature = "small-tables")]
 thread_local! {
     static SMALL_TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static VALIDATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// For test fixtures only: lets manifests validated on this thread have fewer than
@@ -30,6 +31,13 @@ thread_local! {
 #[cfg(feature = "small-tables")]
 pub fn allow_small_tables() {
     SMALL_TABLES.set(true);
+}
+
+/// For test fixtures only: how many times [`Manifest::validate`] has run on this
+/// thread.
+#[cfg(feature = "small-tables")]
+pub fn manifest_validations() -> u64 {
+    VALIDATIONS.get()
 }
 
 /// The smallest row count [`Manifest::validate`] accepts on this thread.
@@ -108,6 +116,8 @@ impl Manifest {
     /// Check the profile, coverage order and geometry bounds, [`MIN_ROWS`] to
     /// [`MAX_ROWS`] rows.
     pub fn validate(&self) -> Result<(), Error> {
+        #[cfg(feature = "small-tables")]
+        VALIDATIONS.set(VALIDATIONS.get() + 1);
         let labels_ordered = self
             .filters
             .windows(2)
@@ -224,14 +234,38 @@ fn receiver_tag(genesis: &Hash, receiver: &Receiver) -> Hash {
 
 /// This row number must be selected inside PIR, never in a public HTTP route.
 pub fn row_for(manifest: &Manifest, receiver: &Receiver, page: u32) -> Result<usize, Error> {
-    manifest.validate()?;
-    let mut h = Sha256::new();
-    h.update(b"ironwood-receiver/v1/bucket\0");
-    h.update(manifest.salt);
-    h.update(receiver_tag(&manifest.genesis, receiver));
-    h.update(page.to_le_bytes());
-    let digest = h.finalize();
-    Ok((u32::from_le_bytes(digest[..4].try_into().unwrap()) & (manifest.rows - 1)) as usize)
+    Ok(Placement::new(manifest)?.row(receiver, page))
+}
+
+/// Row placement in one validated manifest's table, so callers placing many records
+/// validate the manifest once.
+struct Placement {
+    genesis: Hash,
+    salt: Hash,
+    mask: u32,
+}
+
+impl Placement {
+    /// Validates `m` and keeps what placement reads from it.
+    fn new(m: &Manifest) -> Result<Self, Error> {
+        m.validate()?;
+        Ok(Self {
+            genesis: m.genesis,
+            salt: m.salt,
+            mask: m.rows - 1,
+        })
+    }
+
+    /// The row holding `receiver`'s page `page`; see [`row_for`].
+    fn row(&self, receiver: &Receiver, page: u32) -> usize {
+        let mut h = Sha256::new();
+        h.update(b"ironwood-receiver/v1/bucket\0");
+        h.update(self.salt);
+        h.update(receiver_tag(&self.genesis, receiver));
+        h.update(page.to_le_bytes());
+        let digest = h.finalize();
+        (u32::from_le_bytes(digest[..4].try_into().unwrap()) & self.mask) as usize
+    }
 }
 
 /// A manifest and the row data and filters it commits to.
@@ -279,15 +313,15 @@ impl Snapshot {
                 }
             })
             .collect();
-        manifest.validate()?;
+        let placement = Placement::new(&manifest)?;
         let mut data = vec![0; manifest.rows as usize * ROW_BYTES];
         let mut counts = vec![0; manifest.rows as usize];
         let mut sorted: Vec<_> = records.iter().collect();
         sorted.sort_by_key(|r| (r.receiver, r.page));
-        check_pages(&sorted)?;
+        check_pages(sorted.iter().map(|&r| PageMeta::from(r)))?;
         for record in sorted {
             validate_location(&manifest, record)?;
-            let row = row_for(&manifest, &record.receiver, record.page)?;
+            let row = placement.row(&record.receiver, record.page);
             if counts[row] == SLOTS {
                 return Err(Error::Capacity);
             }
@@ -310,11 +344,12 @@ impl Snapshot {
     /// declared filter sets, and a paid set of exactly the records' receivers; every
     /// slot and row padding as [`lookup_row`] checks them, so each record sits in its
     /// own bucket; exactly the manifest's record count; and every receiver's pages, as
-    /// [`Self::build`] requires them. No chain trust is implied. Records are collected
-    /// only up to the manifest's count, itself within the table's slots.
+    /// [`Self::build`] requires them. No chain trust is implied. Only each record's
+    /// page fields are kept, and only up to the manifest's count, itself within the
+    /// table's slots.
     pub fn validate(&self) -> Result<(), Error> {
         let m = &self.manifest;
-        m.validate()?;
+        let placement = Placement::new(m)?;
         if self.data.len() != m.rows as usize * ROW_BYTES
             || Hash::from(Sha256::digest(&self.data)) != m.data_sha256
             || Hash::from(Sha256::digest(&self.filters)) != m.filters_sha256
@@ -323,22 +358,21 @@ impl Snapshot {
         }
         let filters = Filters::decode(&self.filters)?;
         m.check_filters(&filters)?;
-        let mut records = Vec::new();
+        let mut pages = Vec::new();
         for (row, bytes) in self.data.as_chunks::<ROW_BYTES>().0.iter().enumerate() {
-            for record in row_records(m, row, bytes)? {
-                if records.len() as u64 == m.records {
+            for record in row_records(m, &placement, row, bytes)? {
+                if pages.len() as u64 == m.records {
                     return Err(Error::Malformed);
                 }
-                records.push(record);
+                pages.push(PageMeta::from(&record));
             }
         }
-        if records.len() as u64 != m.records {
+        if pages.len() as u64 != m.records {
             return Err(Error::Malformed);
         }
-        let mut sorted: Vec<_> = records.iter().collect();
-        sorted.sort_by_key(|r| (r.receiver, r.page));
-        check_pages(&sorted)?;
-        let paid = sorted.iter().filter(|r| r.page == 0).map(|r| &r.receiver);
+        pages.sort_unstable_by_key(|p| (p.receiver, p.page));
+        check_pages(pages.iter().copied())?;
+        let paid = pages.iter().filter(|p| p.page == 0).map(|p| &p.receiver);
         if filters.get(filter::PAID) != Some(&Filter::build(&m.salt, paid)) {
             return Err(Error::Malformed);
         }
@@ -346,21 +380,76 @@ impl Snapshot {
     }
 }
 
+/// The fields of a [`Record`] that [`check_pages`] reads, so validating a publication
+/// need not hold its records whole.
+#[derive(Clone, Copy)]
+struct PageMeta {
+    receiver: Receiver,
+    page: u32,
+    total: u32,
+    position: u64,
+    txid: Hash,
+    action_index: u32,
+    height: u32,
+    tx_index: u32,
+    block_hash: Hash,
+}
+
+impl From<&Record> for PageMeta {
+    /// Projects `r` onto the fields page checks read.
+    fn from(r: &Record) -> Self {
+        Self {
+            receiver: r.receiver,
+            page: r.page,
+            total: r.total,
+            position: r.payment.position,
+            txid: r.payment.txid,
+            action_index: r.payment.action_index,
+            height: r.payment.height,
+            tx_index: r.payment.tx_index,
+            block_hash: r.payment.block_hash,
+        }
+    }
+}
+
+impl PageMeta {
+    /// Whether `next` can follow `self`; see [`check_next`].
+    fn continues(&self, next: &Self) -> bool {
+        let same_block = next.height == self.height;
+        next.receiver == self.receiver
+            && self.page.checked_add(1) == Some(next.page)
+            && next.total == self.total
+            && next.position > self.position
+            && (next.height, next.tx_index, next.action_index)
+                > (self.height, self.tx_index, self.action_index)
+            && (!same_block || next.block_hash == self.block_hash)
+            && (!same_block || next.tx_index != self.tx_index || next.txid == self.txid)
+    }
+}
+
+/// Checks that `next` can follow `previous` as the same receiver's next page: the
+/// same receiver and total, the next page number, a later note position, a later
+/// output by height, transaction index and action index, the same block hash at the
+/// same height, and the same txid in the same transaction.
+pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
+    if !PageMeta::from(previous).continues(&PageMeta::from(next)) {
+        return Err(Error::Malformed);
+    }
+    Ok(())
+}
+
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
-/// total in chain order, all repeating that total, and no two records share an output
-/// or note position.
-fn check_pages(sorted: &[&Record]) -> Result<(), Error> {
-    let mut previous: Option<&Record> = None;
+/// total, each continuing the last as [`check_next`] requires, and no two records
+/// share an output or note position.
+fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
+    let mut previous: Option<PageMeta> = None;
     let mut outputs = std::collections::BTreeSet::new();
     let mut positions = std::collections::BTreeSet::new();
-    for record in sorted.iter().copied() {
+    for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
         match previous {
             Some(p) if p.receiver == record.receiver => {
-                if record.total != p.total
-                    || record.page != p.page + 1
-                    || record.payment.position <= p.payment.position
-                {
+                if !p.continues(&record) {
                     return Err(Error::Malformed);
                 }
             }
@@ -371,8 +460,7 @@ fn check_pages(sorted: &[&Record]) -> Result<(), Error> {
             }
         }
         previous = Some(record);
-        if !outputs.insert((record.payment.txid, record.payment.action_index))
-            || !positions.insert(record.payment.position)
+        if !outputs.insert((record.txid, record.action_index)) || !positions.insert(record.position)
         {
             return Err(Error::Malformed);
         }
@@ -407,8 +495,9 @@ pub fn lookup_row(
     page: u32,
     bytes: &[u8],
 ) -> Result<Option<Record>, Error> {
+    let placement = Placement::new(m)?;
     let mut found = None;
-    for record in row_records(m, row_for(m, receiver, page)?, bytes)? {
+    for record in row_records(m, &placement, placement.row(receiver, page), bytes)? {
         if &record.receiver == receiver && record.page == page {
             if found.is_some() {
                 return Err(Error::Malformed);
@@ -424,8 +513,13 @@ pub fn lookup_row(
 
 /// Decodes the records in row `row` of `m`'s table, checking the row's length and zero
 /// padding, and that each record lies within `m`'s coverage, has no more pages than
-/// `m` has records, and belongs in this row.
-fn row_records(m: &Manifest, row: usize, bytes: &[u8]) -> Result<Vec<Record>, Error> {
+/// `m` has records, and belongs in this row by `placement`, made from `m`.
+fn row_records(
+    m: &Manifest,
+    placement: &Placement,
+    row: usize,
+    bytes: &[u8],
+) -> Result<Vec<Record>, Error> {
     if bytes.len() != ROW_BYTES || bytes[SLOTS * RECORD_BYTES..].iter().any(|b| *b != 0) {
         return Err(Error::Malformed);
     }
@@ -435,7 +529,7 @@ fn row_records(m: &Manifest, row: usize, bytes: &[u8]) -> Result<Vec<Record>, Er
             validate_location(m, &record)?;
             // A receiver cannot have more pages than the publication has records.
             if u64::from(record.total) > m.records
-                || row_for(m, &record.receiver, record.page)? != row
+                || placement.row(&record.receiver, record.page) != row
             {
                 return Err(Error::Malformed);
             }
