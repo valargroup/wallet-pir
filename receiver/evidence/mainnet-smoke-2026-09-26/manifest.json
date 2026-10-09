@@ -26,5 +26,12 @@
     "bounded indexing test",
     "no PIR transport or wallet insertion"
   ],
-  "historical": true
+  "historical": true,
+  "qualification": "development evidence, not release qualification",
+  "not_retained": [
+    "the exact source revision (see source.note)",
+    "the verbose RPC block response behind the block-position check",
+    "the publication files and the independently recomputed row digest",
+    "the rerun's output"
+  ]
 }

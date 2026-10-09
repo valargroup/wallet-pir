@@ -3,7 +3,8 @@
   "observed": "2026-09-28",
   "source": {
     "implementation": "8bfb120c211d2674fbf0a49f4d8455a0f54e6790",
-    "main_integrated": "5337a43"
+    "main_integrated": "5337a43",
+    "note": "implementation is a full commit ID from a pre-rewrite development branch that no retained repository or ref contains, so this source is unavailable"
   },
   "toolchain": {
     "rust": "1.98.0",
@@ -14,7 +15,7 @@
     "daemon": "receiver-directory --serve at the implementation revision with witnesses, 8192 rows, zero confirmations and the default 10-second poll, listening on 127.0.0.1:18482 (serve.log); the exact command line was not retained",
     "rpc_proxy_and_timing_harness": "not retained: no source or command for the loopback tip proxy or the HTTP availability timer exists in any recorded revision"
   },
-  "host": "Apple M3 Ultra (local)",
+  "host": "Apple M3 Ultra (local); RAM, storage medium and OS version were not recorded",
   "network": "mainnet",
   "range": [
     3428143,
@@ -38,6 +39,9 @@
   "qualification": "development evidence, not release qualification",
   "not_retained": [
     "the 42.9 MB source SQLite database (only its path and SHA-256 are in results.json), so the commitments, payment positions and cache state cannot be reconstructed",
-    "the exact command lines (see invocations)"
+    "the exact command lines (see invocations)",
+    "the source revision (see source.note)",
+    "the host's RAM, storage medium and OS version",
+    "the two publications' row files and manifests and the served witness proof, so the row-file and proof-equality checks cannot be recomputed"
   ]
 }

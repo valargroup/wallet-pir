@@ -123,19 +123,23 @@ impl ZakuraClient {
         best.ok_or_else(|| last.expect("at least one node RPC endpoint"))
     }
 
-    /// The hash of the block at `height`, in RPC display order, from the first node
-    /// whose tip has reached it.
+    /// The hash of the block at `height`, in RPC display order, from the node with the
+    /// highest tip that has reached it (the next highest if that call fails), so a node
+    /// on a stale fork just behind the tip cannot pin the chain the directory follows.
     pub async fn block_hash(&self, height: u64) -> Result<String, ZakuraError> {
         let mut last = ZakuraError::Behind(height);
-        for url in &self.rpc_urls {
+        let mut reached = Vec::new();
+        for (order, url) in self.rpc_urls.iter().enumerate() {
             match self.call_at::<u64>(url, "getblockcount", &json!([])).await {
-                Ok(tip) if tip >= height => {
-                    match self.call_at(url, "getblockhash", &json!([height])).await {
-                        Ok(hash) => return Ok(hash),
-                        Err(error) => last = error,
-                    }
-                }
+                Ok(tip) if tip >= height => reached.push((std::cmp::Reverse(tip), order, url)),
                 Ok(_) => last = ZakuraError::Behind(height),
+                Err(error) => last = error,
+            }
+        }
+        reached.sort();
+        for (_, _, url) in reached {
+            match self.call_at(url, "getblockhash", &json!([height])).await {
+                Ok(hash) => return Ok(hash),
                 Err(error) => last = error,
             }
         }
@@ -216,9 +220,9 @@ mod tests {
         url
     }
 
-    /// A lagging first node hides neither the later node's tip nor its blocks.
+    /// A lagging first node hides neither the freshest node's tip nor its blocks.
     #[tokio::test]
-    async fn a_lagging_first_node_defers_to_one_that_reached_the_height() {
+    async fn a_lagging_first_node_defers_to_the_freshest_node() {
         let rpc = ZakuraClient::unauthenticated(vec![
             "http://127.0.0.1:1".into(),
             node(100, "a").await,
@@ -227,7 +231,9 @@ mod tests {
         .unwrap();
         assert_eq!(rpc.tip_height().await.unwrap(), 105);
         assert_eq!(rpc.block_hash(103).await.unwrap(), "b".repeat(64));
-        assert_eq!(rpc.block_hash(50).await.unwrap(), "a".repeat(64));
+        // A node that reached the height but trails the freshest one, as a node on a
+        // stale fork would, does not answer for it.
+        assert_eq!(rpc.block_hash(50).await.unwrap(), "b".repeat(64));
         assert!(matches!(
             rpc.block_hash(106).await,
             Err(ZakuraError::Behind(106))
