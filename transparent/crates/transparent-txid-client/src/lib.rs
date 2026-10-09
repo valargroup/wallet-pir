@@ -20,12 +20,17 @@
 //! recent map, refetched after every 409, and immutable index chunks of 32
 //! archives, cached by digest. The full `/v1/txid/shards` listing is not read.
 //!
+//! The client follows a fresh publication (a re-cut or re-layout, with new
+//! shard ids and digests) through the same map: a 409 or a placement from a
+//! stale map fetches it again, a geometry init lacks fetches init again, and
+//! each new map keeps only the manifests and setups of revisions it names.
+//!
 //! Any validation failure is [`TxidError::Protocol`], never
 //! [`TxidLookup::Absent`].
 
 mod client;
 
-pub use client::{ProfileCache, TxidDisplayClient};
+pub use client::{ProfileCache, TxidDisplayClient, PLACEMENT_REFRESH_AGE};
 pub use transparent_shard::txid::{
     flags, Address, AddressKind, DisplayEntry, EntryOutput, Tag, OUTPUT_SLOTS,
 };
@@ -211,10 +216,11 @@ pub struct Provenance {
 /// Where a mined height lies relative to the published shards.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Placement {
-    /// Before the first height the publication serves.
+    /// Before the first height the publication serves, by a map the lookup
+    /// fetched or one younger than [`PLACEMENT_REFRESH_AGE`].
     Below,
-    /// After the last height the publication covers, even after a map
-    /// refresh.
+    /// After the last height the publication covers, by a map the lookup
+    /// fetched or one younger than [`PLACEMENT_REFRESH_AGE`].
     Above,
 }
 
@@ -230,7 +236,8 @@ pub enum TxidLookup {
     /// No shard covers the height; nothing was queried.
     PlacementUnknown(Placement),
     /// The server publishes a schema, codec or geometry this client does not
-    /// know; nothing was queried.
+    /// know, or a geometry its init does not list even after init was fetched
+    /// again; nothing was queried.
     Unsupported,
 }
 

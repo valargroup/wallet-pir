@@ -5,7 +5,8 @@
 //!
 //! The map is synthetic with the live map's entry shape. The init document
 //! names no geometry, so every lookup stops as `Unsupported` right after
-//! placement: the transcript is exactly the map traffic.
+//! placement: the transcript is the map traffic, plus init, which a lookup
+//! that did not fetch it fetches once more first. Map bytes exclude init.
 
 use flate2::{write::GzEncoder, Compression};
 use sha2::{Digest, Sha256};
@@ -170,13 +171,13 @@ fn measure(archives: u64) -> Measured {
     let cold_archive = map_bytes(&log);
     let chunk = (log[2].1, log[2].2);
 
-    // Warm: another height of the same chunk sends nothing.
+    // Warm: another height of the same chunk sends no map request.
     let log = unsupported(&mut client, &mut server, oldest + BLOCKS * 3);
-    assert!(log.is_empty());
+    assert_eq!(routes(&log), [Route::Init]);
     let warm = map_bytes(&log);
 
     // A block moves the recent revision; a 409 refetches the recent map and
-    // nothing else, because the chunk is cached by digest.
+    // no chunk, because the chunk is cached by digest.
     let mut next = full.clone();
     let recent = next.shards.last_mut().unwrap();
     recent.end_height += 1;
@@ -185,7 +186,7 @@ fn measure(archives: u64) -> Measured {
     server.split = next.split().unwrap();
     client.invalidate_map();
     let log = unsupported(&mut client, &mut server, oldest);
-    assert_eq!(routes(&log), [Route::Map]);
+    assert_eq!(routes(&log), [Route::Map, Route::Init]);
     let after_409 = map_bytes(&log);
 
     // Cold, at the recent shard: no chunk at all.

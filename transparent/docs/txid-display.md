@@ -322,8 +322,24 @@ reference it is tested against.
   3. exactly two row queries, even when the rows coincide.
 
   `Absent` sends the same two queries. Placement and support results send no
-  query. A height above a map older than 30 s refetches the recent map once
-  before `Above`. `cancel` is polled before every request.
+  query. `cancel` is polled before every request.
+- **Placement.** A height below the map's start or above its tip is
+  `PlacementUnknown(Below | Above)` straight from a map the lookup fetched
+  or one less than 30 s old. A lookup holding an older map fetches it once
+  more and places the height again on the new map.
+- **Caches.**
+  - Init is fetched on first use. It is fetched again when a fetched map's
+    schema, network, genesis hash or seal parameters differ from the last
+    map's. A lookup that finds the map naming a geometry init does not list
+    fetches init once more, unless it fetched init itself, and then returns
+    `Unsupported` if the geometry is still missing. An init naming an
+    unknown schema or codec stays cached.
+  - Each new recent map keeps the index chunks it names. It keeps the
+    manifests and setups of the revisions it names through its recent entry
+    or a kept chunk, and drops the rest: superseded recent revisions, the
+    archives of a chunk that a seal or a window drop replaced, and all of a
+    replaced publication, whatever shard ids it reused. A dropped archive's
+    manifest and setups are fetched again on its next lookup.
 - **Errors.**
   - A 409 refetches the recent map (but no cached index chunk), retries the
     whole lookup once, then returns `Stale`.
@@ -337,6 +353,43 @@ reference it is tested against.
     noncanonical row, an undecodable entry, or the same tag in two distinct
     rows.
   - Transport failures return `Transport`.
+
+### A fresh publication
+
+A display re-cut or re-layout cannot extend the live map: the controller halts
+on a changed sealed entry. It is published as a fresh lineage instead, built
+from its own root:
+- its start may be lower;
+- shard ids restart at 0, and every digest is new;
+- shards may use another registered geometry, such as `txid-4k`.
+
+Network, genesis hash and seal parameters stay the same, because a worker
+refuses a candidate that changes them. Each worker prepares the new candidate
+beside its live publication and swaps at activation, so it never stops
+answering.
+
+A wallet still holding the old map follows the swap:
+
+1. Its requests for old revisions and index chunks are answered from the
+   worker's retired snapshot while the old runtimes are resident.
+2. After the next prepare or an eviction drops those runtimes, an old
+   revision gets a 409. The client fetches the new map and retries the lookup
+   once on the new lineage.
+3. A height below the old start is placed `Below` from the old map only
+   while that map is less than 30 s old (see Placement above). A retry once
+   the map is older fetches the new map first.
+4. A geometry the old init did not list costs one init request.
+5. The first map of the new lineage drops every cached manifest and setup of
+   the old one.
+
+`shard_id`, `revision` and `manifest_digest` in a lookup's provenance name the
+lineage that answered. Wallets should keep them as provenance only: a later
+lookup is placed by height on the current map, never by a stored shard id.
+
+Not built: neither the map nor init carries a lineage field. A field added to
+the recent map would change its canonical bytes, which today's clients check,
+so they would refuse it; digest-keyed caches make one unnecessary. Seal
+parameters stay one set per publication, not per height range.
 
 ## Sizing and routing qualification
 

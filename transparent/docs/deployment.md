@@ -3409,12 +3409,29 @@ floor rises above 3,407,001, around mid-December 2026.
 
 ### Effect on clients
 
-`transparent-txid-client` returns `PlacementUnknown(Below)` for a height under
-its cached map's `start_height`. At cutover:
+At cutover the map's start drops to 1, shard ids restart at 0, and every
+digest changes. Each worker prepares the new lineage beside the live one and
+swaps at activation, so the service keeps answering. `transparent-txid-client`
+follows the swap without downtime, as
+[txid display](txid-display.md#a-fresh-publication) describes:
 
-- The map's start drops to 1, and every shard id names a new range and digest.
-- An in-flight lookup gets the existing 409, refreshes the map and retries once.
-- Native setups are per geometry and do not change.
+- A lookup on the old map is answered from the worker's retired snapshot while
+  the old revision is resident. After that it gets a 409, refreshes the map and
+  retries once on the new lineage.
+- A height under the old start is `PlacementUnknown(Below)` from a cached map
+  only while that map is less than 30 s old. An older map is fetched again
+  first, as for a height above the tip.
+- Native profiles and setup seeds are per geometry and do not change. Setups
+  are per revision, so the new revisions' are fetched on first use.
+- The first map of the new lineage drops the old lineage's cached manifests
+  and setups.
+- A registered geometry the cached init does not list, such as variant B's
+  `txid-4k`, costs one init request. A geometry the client does not know, such
+  as variant C's, still needs a client release.
+- A split-map client from before these rules also follows the 409. But it
+  answers `Below` from its cached map until something else refreshes it, and
+  returns `Unsupported` for a geometry its cached init lacks until the wallet
+  replaces the client.
 - A wallet row recorded as below coverage becomes eligible only once the wallet
   retries it. The brief says rows are re-armed when the map digest changes.
   That logic is in wallet-libraries and is not verified here. The digest also
