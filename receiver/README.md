@@ -164,9 +164,9 @@ authentication. Every request reads the cookie, so a node restart that rotates i
 needs no indexer restart. Repeat `--rpc-url` for more nodes: each pass, and each check of the
 served anchors, runs on the node with the highest tip, so all its reads come from
 one chain; a pass that fails is retried at the next poll, which ranks the nodes
-again. Each response is read only up to a bound for its method: 4 KiB for a tip or a
-hash and, from the 2 MB maximum block, about 4.1 MB for a raw block's hex and
-4.8 MB for a verbose block's transaction IDs. A larger response is an error.
+again. Each response is read up to one bound, about 4.8 MB, which a verbose block
+listing the transaction IDs of a maximum-size block needs; a larger response is
+an error.
 The indexer requires mainnet and covers Ironwood activation through `--depth`
 (default 2) blocks below the node's tip, or a test range from `--start-height` to
 `--end-height`. Raw blocks arrive concurrently in batches of up to 64. Each batch

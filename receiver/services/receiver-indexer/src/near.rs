@@ -385,18 +385,12 @@ impl Explorer {
             .send()
             .await;
         self.next_request = tokio::time::Instant::now() + self.interval;
-        let mut response = response?;
+        let response = response?;
         let status = response.status();
         if !status.is_success() {
             return Err(format!("NEAR explorer returned HTTP {status}").into());
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if body.len() + chunk.len() > MAX_PAGE_BYTES {
-                return Err("NEAR explorer page exceeds its size bound".into());
-            }
-            body.extend_from_slice(&chunk);
-        }
+        let body = crate::read_limited(response, MAX_PAGE_BYTES).await?;
         let swaps: Vec<Swap> = serde_json::from_slice(&body)?;
         // A longer page is not one this read asked for, so it cannot end the read.
         if swaps.len() > PAGE {

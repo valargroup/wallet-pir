@@ -1,8 +1,5 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
-use crate::zakura::{
-    Treestate, VerboseBlock, ZakuraClient, ZakuraError, RAW_BLOCK_RESPONSE_BYTES,
-    TREESTATE_RESPONSE_BYTES, VERBOSE_BLOCK_RESPONSE_BYTES,
-};
+use crate::zakura::{Treestate, VerboseBlock, ZakuraClient, ZakuraError};
 use receiver_directory::{
     extract::Action,
     store::{Checkpoint, IndexedBlock},
@@ -39,13 +36,7 @@ impl ZakuraClient {
         let position = if height < ironwood_activation() {
             0
         } else {
-            let result: VerboseBlock = self
-                .call(
-                    "getblock",
-                    json!([displayed, 1]),
-                    VERBOSE_BLOCK_RESPONSE_BYTES,
-                )
-                .await?;
+            let result: VerboseBlock = self.call("getblock", json!([displayed, 1])).await?;
             result
                 .trees
                 .ironwood
@@ -75,13 +66,7 @@ impl ZakuraClient {
         height: u32,
     ) -> Result<[u8; 32], ZakuraError> {
         let displayed = zakura_chain::block::Hash(hash).to_string();
-        let state: Treestate = self
-            .call(
-                "z_gettreestate",
-                json!([displayed]),
-                TREESTATE_RESPONSE_BYTES,
-            )
-            .await?;
+        let state: Treestate = self.call("z_gettreestate", json!([displayed])).await?;
         let named = state
             .hash
             .parse::<zakura_chain::block::Hash>()
@@ -195,9 +180,7 @@ impl ZakuraClient {
     /// The block `id` names, a height or a displayed hash, decoded from the node's raw
     /// `getblock` bytes.
     async fn raw_block(&self, id: String) -> Result<Block, ZakuraError> {
-        let raw: String = self
-            .call("getblock", json!([id, 0]), RAW_BLOCK_RESPONSE_BYTES)
-            .await?;
+        let raw: String = self.call("getblock", json!([id, 0])).await?;
         let bytes = hex::decode(raw)?;
         let mut input = bytes.as_slice();
         let block =

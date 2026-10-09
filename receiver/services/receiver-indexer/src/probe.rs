@@ -19,7 +19,10 @@ use receiver_directory::{
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment, Receiver,
 };
-use receiver_indexer::zakura::{ZakuraClient, ZakuraError};
+use receiver_indexer::{
+    read_limited,
+    zakura::{ZakuraClient, ZakuraError},
+};
 use receiver_pir::{
     public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
     MAX_MANIFEST_BYTES,
@@ -220,7 +223,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             .body(query.body().to_vec())
             .send()
             .await?;
-        let response = read_limited(response, response_bytes(rows)?).await?;
+        let response = read_limited(response.error_for_status()?, response_bytes(rows)?).await?;
         queries += 1;
         let record = match client.decode(query, &response) {
             Ok(Some(record)) => record,
@@ -549,28 +552,10 @@ async fn fetch_manifest(http: &reqwest::Client, origin: &str) -> Result<Manifest
     Ok(manifest)
 }
 
-/// GETs `url`, reading at most `limit` bytes of its body.
+/// GETs `url`, reading at most `limit` bytes of a successful response's body.
 async fn get(http: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
-    read_limited(http.get(url).send().await?, limit).await
-}
-
-/// A successful response's body, refused as soon as it exceeds `limit` bytes.
-async fn read_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
-    let mut response = response.error_for_status()?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("response exceeds its bound".into());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > limit {
-            return Err("response exceeds its bound".into());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    let response = http.get(url).send().await?.error_for_status()?;
+    Ok(read_limited(response, limit).await?)
 }
 
 #[cfg(test)]

@@ -28,31 +28,25 @@ pub enum ZakuraError {
     MissingTreeSize(u64),
     #[error("Ironwood tree root is unavailable at height {0}")]
     MissingTreeRoot(u64),
-    #[error("RPC response is larger than {0} bytes")]
-    Oversized(usize),
+    #[error("RPC response: {0}")]
+    Body(#[from] crate::BodyError),
     #[error("invalid RPC response: {0}")]
     Decode(serde_json::Error),
 }
 
-/// Bytes allowed for the JSON-RPC envelope and a block's fixed fields around its
-/// variable part.
-const RPC_OVERHEAD_BYTES: usize = 64 * 1024;
-/// The largest `getblockcount` or `getblockhash` response: a number or one hash.
-const SCALAR_RESPONSE_BYTES: usize = 4096;
-/// The largest `z_gettreestate` response: three serialized frontiers of at most 33
-/// nodes each, hex-encoded, are a few kilobytes.
-pub(crate) const TREESTATE_RESPONSE_BYTES: usize = RPC_OVERHEAD_BYTES;
-/// The largest raw (verbosity 0) `getblock` response: a maximum-size block in hex.
-pub(crate) const RAW_BLOCK_RESPONSE_BYTES: usize =
-    2 * zakura_chain::block::MAX_BLOCK_BYTES as usize + RPC_OVERHEAD_BYTES;
-/// The largest verbose (verbosity 1) `getblock` response. It lists one quoted
-/// transaction ID per transaction, allowed 128 bytes with separators and whitespace,
-/// for as many of the smallest transactions as fit in a maximum-size block.
-pub(crate) const VERBOSE_BLOCK_RESPONSE_BYTES: usize = (zakura_chain::block::MAX_BLOCK_BYTES
+/// Bound on every node RPC response. The largest the indexer reads is a verbose
+/// (verbosity 1) `getblock`, which lists one quoted transaction ID per transaction,
+/// allowed 128 bytes with separators and whitespace, for as many of the smallest
+/// transactions as fit in a maximum-size block (about 4.7 MB), plus 64 KiB for the
+/// envelope and the block's other fields. That exceeds a maximum-size raw block's hex
+/// (4 MB), as the assertion below keeps.
+const RPC_RESPONSE_BYTES: usize = (zakura_chain::block::MAX_BLOCK_BYTES
     / zakura_chain::transaction::MIN_TRANSPARENT_TX_SIZE)
     as usize
     * 128
-    + RPC_OVERHEAD_BYTES;
+    + 64 * 1024;
+const _: () =
+    assert!(RPC_RESPONSE_BYTES > 2 * zakura_chain::block::MAX_BLOCK_BYTES as usize + 64 * 1024);
 
 /// One node's JSON-RPC endpoint and the path of its `user:password` cookie file, if
 /// it requires one.
@@ -165,25 +159,21 @@ impl ZakuraClient {
 
     /// The node's chain tip height.
     pub async fn tip_height(&self) -> Result<u64, ZakuraError> {
-        self.call("getblockcount", json!([]), SCALAR_RESPONSE_BYTES)
-            .await
+        self.call("getblockcount", json!([])).await
     }
 
     /// The hash of the node's block at `height`, in RPC display order.
     pub async fn block_hash(&self, height: u64) -> Result<String, ZakuraError> {
-        self.call("getblockhash", json!([height]), SCALAR_RESPONSE_BYTES)
-            .await
+        self.call("getblockhash", json!([height])).await
     }
 
     /// One JSON-RPC call to the node, with the cookie file's current credentials if it
-    /// has one. A response body over `limit` bytes is
-    /// [`ZakuraError::Oversized`], refused before it is buffered past the limit; the
-    /// client's timeout covers reading it.
+    /// has one. Its response is read up to [`RPC_RESPONSE_BYTES`] within the client's
+    /// timeout.
     pub(crate) async fn call<T: DeserializeOwned>(
         &self,
         method: &str,
         params: serde_json::Value,
-        limit: usize,
     ) -> Result<T, ZakuraError> {
         let body =
             json!({"jsonrpc": "1.0", "id": "receiver-indexer", "method": method, "params": params});
@@ -192,20 +182,8 @@ impl ZakuraClient {
             let (username, password) = read_cookie(path)?;
             request = request.basic_auth(username, Some(password));
         }
-        let mut response = request.json(&body).send().await?.error_for_status()?;
-        if response
-            .content_length()
-            .is_some_and(|length| length > limit as u64)
-        {
-            return Err(ZakuraError::Oversized(limit));
-        }
-        let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            if body.len() + chunk.len() > limit {
-                return Err(ZakuraError::Oversized(limit));
-            }
-            body.extend_from_slice(&chunk);
-        }
+        let response = request.json(&body).send().await?.error_for_status()?;
+        let body = crate::read_limited(response, RPC_RESPONSE_BYTES).await?;
         let response: RpcResponse<T> =
             serde_json::from_slice(&body).map_err(ZakuraError::Decode)?;
         if let Some(error) = response.error {
@@ -286,116 +264,6 @@ mod tests {
         ));
         rotate("user:c");
         assert_eq!(rpc.tip_height().await.unwrap(), 7);
-    }
-
-    /// A node that answers every request with `chunks`, declaring `declared` as the
-    /// body's length, or sending it chunked without a length for `None`. Returns its
-    /// URL.
-    async fn raw_node(chunks: Vec<Vec<u8>>, declared: Option<usize>) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move {
-            loop {
-                let (mut stream, _) = socket.accept().await.unwrap();
-                // Read the whole request, so closing the connection cannot reset it.
-                let mut request = Vec::new();
-                let mut buffer = [0; 4096];
-                let end = loop {
-                    let n = stream.read(&mut buffer).await.unwrap();
-                    request.extend_from_slice(&buffer[..n]);
-                    if let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") {
-                        break end + 4;
-                    }
-                };
-                let head = String::from_utf8_lossy(&request[..end]).to_lowercase();
-                let length: usize = head
-                    .lines()
-                    .find_map(|line| line.strip_prefix("content-length:"))
-                    .unwrap()
-                    .trim()
-                    .parse()
-                    .unwrap();
-                while request.len() < end + length {
-                    let n = stream.read(&mut buffer).await.unwrap();
-                    request.extend_from_slice(&buffer[..n]);
-                }
-                let framing = match declared {
-                    Some(length) => format!("Content-Length: {length}"),
-                    None => "Transfer-Encoding: chunked".into(),
-                };
-                let mut response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{framing}\r\n\
-                     Connection: close\r\n\r\n"
-                )
-                .into_bytes();
-                for chunk in &chunks {
-                    if declared.is_none() {
-                        response.extend(format!("{:x}\r\n", chunk.len()).into_bytes());
-                    }
-                    response.extend(chunk);
-                    if declared.is_none() {
-                        response.extend(b"\r\n");
-                    }
-                }
-                if declared.is_none() {
-                    response.extend(b"0\r\n\r\n");
-                }
-                // The client may close first once it has seen enough.
-                let _ = stream.write_all(&response).await;
-            }
-        });
-        url
-    }
-
-    /// `json` padded with trailing whitespace to `length` bytes.
-    fn padded(json: &str, length: usize) -> Vec<u8> {
-        let mut body = json.as_bytes().to_vec();
-        body.resize(length, b' ');
-        body
-    }
-
-    /// A response over its method's limit is refused whether it declares its length or
-    /// not, one at the limit is accepted, and a bounded body that is not a response is
-    /// a decoding error.
-    #[tokio::test]
-    async fn responses_are_bounded_per_call() {
-        let limit = SCALAR_RESPONSE_BYTES;
-        let tip = r#"{"result": 7, "error": null}"#;
-        let call = |url: String| async move {
-            ZakuraClient::new(url, None)
-                .unwrap()
-                .call::<u64>("getblockcount", json!([]), limit)
-                .await
-        };
-        let exact = padded(tip, limit);
-        assert_eq!(
-            call(raw_node(vec![exact.clone()], Some(limit)).await)
-                .await
-                .unwrap(),
-            7
-        );
-        let half = exact[..limit / 2].to_vec();
-        let rest = exact[limit / 2..].to_vec();
-        assert_eq!(
-            call(raw_node(vec![half.clone(), rest], None).await)
-                .await
-                .unwrap(),
-            7
-        );
-        // A declared length over the limit is refused before the body is read.
-        let declared = raw_node(vec![], Some(1 << 30)).await;
-        assert!(matches!(
-            call(declared).await,
-            Err(ZakuraError::Oversized(l)) if l == limit
-        ));
-        let chunked = raw_node(vec![half.clone(), half.clone(), b" ".to_vec()], None).await;
-        assert!(matches!(
-            call(chunked).await,
-            Err(ZakuraError::Oversized(l)) if l == limit
-        ));
-        let malformed = raw_node(vec![b"{\"result\": 7".to_vec()], Some(12)).await;
-        assert!(matches!(call(malformed).await, Err(ZakuraError::Decode(_))));
     }
 
     /// Nodes rank by tip, highest first and in configured order among equal tips,
