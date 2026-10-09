@@ -439,12 +439,16 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 }
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
-/// total, each continuing the last as [`check_next`] requires, and no two records
-/// share an output or note position.
+/// total, each continuing the last as [`check_next`] requires, no two records share
+/// an output or note position, and no two, of any receivers, disagree on the hash of
+/// a height or the txid at a height and transaction index.
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
+    use std::collections::{BTreeMap, BTreeSet};
     let mut previous: Option<PageMeta> = None;
-    let mut outputs = std::collections::BTreeSet::new();
-    let mut positions = std::collections::BTreeSet::new();
+    let mut outputs = BTreeSet::new();
+    let mut positions = BTreeSet::new();
+    let mut blocks = BTreeMap::new();
+    let mut txids = BTreeMap::new();
     for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
         match previous {
@@ -460,7 +464,13 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
             }
         }
         previous = Some(record);
-        if !outputs.insert((record.txid, record.action_index)) || !positions.insert(record.position)
+        if !outputs.insert((record.txid, record.action_index))
+            || !positions.insert(record.position)
+            || *blocks.entry(record.height).or_insert(record.block_hash) != record.block_hash
+            || *txids
+                .entry((record.height, record.tx_index))
+                .or_insert(record.txid)
+                != record.txid
         {
             return Err(Error::Malformed);
         }

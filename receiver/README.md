@@ -40,9 +40,10 @@ does not know is refused.
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
-in chain order as `snapshot::check_next` requires, and unique outputs and
-positions. A record stored outside its bucket would otherwise make lookups of that
-receiver find nothing.
+in chain order as `snapshot::check_next` requires, unique outputs and positions,
+and, across receivers, one block hash per height and one txid per transaction
+index at a height. A record stored outside its bucket would otherwise make
+lookups of that receiver find nothing.
 
 ## Filters
 
