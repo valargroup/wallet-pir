@@ -16,9 +16,9 @@
   longer than 16 pages is read from the row file. An HTTP service serves each
   validated publication's sessions, rows, witnesses and filters, plus health and
   metrics for operators. A replaced publication serves its sessions for 60
-  seconds. Queries are admitted with Enhance's shared primitives, and wallet-route
-  responses, refusals included, are `no-store`. A session manifest is at most
-  16 KiB.
+  seconds; any session not served is 410. Queries are admitted with Enhance's
+  shared primitives, and wallet-route responses, refusals included, are
+  `no-store`. A session manifest is at most 16 KiB.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, serves each canonical tip
   from memory while revoking orphaned sessions, feeds the `near-intents` filter

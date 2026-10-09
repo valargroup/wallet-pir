@@ -631,8 +631,9 @@ fn coinbase_payments_are_refused() {
 }
 
 /// A block whose payments a snapshot would refuse is not appended: here a receiver's
-/// later position in an earlier transaction, one txid at two transaction indexes, and
-/// a stored txid in a later block.
+/// later position in an earlier transaction, one txid at two transaction indexes,
+/// another receiver's later position in an earlier transaction or Action, and a
+/// stored txid in a later block.
 #[cfg(feature = "store")]
 #[test]
 fn unsnapshottable_payments_are_refused() {
@@ -662,15 +663,20 @@ fn unsnapshottable_payments_are_refused() {
             .collect(),
     };
     let (mut first, second) = (record(0, 2), record(1, 2));
-    first.payment.tx_index = 3;
+    (first.payment.tx_index, first.payment.action_index) = (3, 1);
     let mut relocated = second.clone();
     relocated.receiver = other_receiver();
-    (relocated.payment.txid, relocated.payment.action_index) = (first.payment.txid, 1);
-    for bad in [second.clone(), relocated] {
+    (relocated.payment.txid, relocated.payment.tx_index) = (first.payment.txid, 4);
+    let mut earlier_tx = second.clone();
+    earlier_tx.receiver = other_receiver();
+    let mut earlier_action = earlier_tx.clone();
+    (earlier_action.payment.txid, earlier_action.payment.tx_index) = (first.payment.txid, 3);
+    for bad in [second.clone(), relocated, earlier_tx, earlier_action] {
         assert!(matches!(
             store.append(&block(vec![first.clone(), bad])),
             Err(Error::Malformed)
         ));
+        assert_eq!(store.tip().unwrap().height, 99);
         assert_eq!(store.counts().unwrap(), (0, 0));
     }
     first.payment.tx_index = 1;
@@ -678,7 +684,7 @@ fn unsnapshottable_payments_are_refused() {
     // A different Action index passes UNIQUE(txid, action) but not the stored location.
     let mut payment = first.payment;
     (payment.height, payment.block_hash) = (101, [7; 32]);
-    (payment.action_index, payment.position) = (1, 202);
+    (payment.action_index, payment.position) = (2, 202);
     let later = IndexedBlock {
         height: 101,
         hash: [7; 32],
@@ -1102,11 +1108,13 @@ fn receivers_agree_on_blocks_and_transactions() {
     m.start_height = 98;
     let mut rs = receivers(3);
     rs.sort();
-    let at = |i: usize, height, block_hash, txid, action_index| {
+    // Positions follow chain order.
+    let at = |i: usize, height: u32, block_hash, txid, action_index: u32| {
         let mut r = record(0, 1);
         r.receiver = rs[i];
         (r.payment.height, r.payment.block_hash, r.payment.txid) = (height, block_hash, txid);
-        (r.payment.action_index, r.payment.position) = (action_index, 200 + i as u64);
+        r.payment.action_index = action_index;
+        r.payment.position = 200 + 2 * u64::from(height - 100) + u64::from(action_index);
         r
     };
     // The outer receivers share one transaction below the terminal height.
@@ -1140,6 +1148,46 @@ fn receivers_agree_on_blocks_and_transactions() {
     put(&mut s, offset, Some(&conflicts[0]));
     rehash(&mut s);
     assert!(matches!(s.validate(), Err(Error::Malformed)));
+}
+
+/// Note positions follow chain order across receivers: a build and a supplied
+/// publication refuse another receiver's later position in an earlier transaction, or
+/// in an earlier Action of the same transaction.
+#[test]
+fn receivers_follow_chain_order() {
+    let m = manifest(8);
+    let rs = receivers(2);
+    let mut first = record(0, 1);
+    first.receiver = rs[0];
+    (
+        first.payment.txid,
+        first.payment.tx_index,
+        first.payment.action_index,
+    ) = ([3; 32], 3, 1);
+    let mut second = record(0, 1);
+    second.receiver = rs[1];
+    (
+        second.payment.txid,
+        second.payment.tx_index,
+        second.payment.position,
+    ) = ([4; 32], 4, 201);
+    let valid = Snapshot::build(m.clone(), &[first.clone(), second.clone()], &[]).unwrap();
+    valid.validate().unwrap();
+    let mut earlier_tx = second.clone();
+    (earlier_tx.payment.txid, earlier_tx.payment.tx_index) = ([2; 32], 2);
+    let mut earlier_action = second.clone();
+    (earlier_action.payment.txid, earlier_action.payment.tx_index) = ([3; 32], 3);
+    for reversed in [earlier_tx, earlier_action] {
+        assert!(matches!(
+            Snapshot::build(m.clone(), &[first.clone(), reversed.clone()], &[]),
+            Err(Error::Malformed)
+        ));
+        let mut s = valid.clone();
+        let offset = slot_of(&s, &second);
+        put(&mut s, offset, Some(&reversed));
+        rehash(&mut s);
+        assert!(matches!(s.validate(), Err(Error::Malformed)));
+    }
 }
 
 /// A note commitment, Action nullifier or ephemeral key that is not a canonical
