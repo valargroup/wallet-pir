@@ -1171,3 +1171,105 @@ fn supplied_publications_are_validated_record_by_record() {
         s.filters = Filters::new(paid, []).unwrap().encode().unwrap();
     });
 }
+
+/// `n` distinct valid receivers.
+fn receivers(n: u32) -> Vec<Receiver> {
+    let sk = orchard::keys::SpendingKey::from_bytes([5; 32]).unwrap();
+    let fvk = orchard::keys::FullViewingKey::from(&sk);
+    (0..n)
+        .map(|i| {
+            let address = fvk.address_at(i, orchard::keys::Scope::External);
+            Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
+        })
+        .collect()
+}
+
+/// `pages` payments to each of `receivers`, interleaved in [`manifest`]'s last block,
+/// one transaction each, at successive positions from 200.
+fn spread(receivers: &[Receiver], pages: u32) -> Vec<Record> {
+    let n = receivers.len() as u32;
+    (0..pages)
+        .flat_map(|page| {
+            receivers.iter().enumerate().map(move |(i, receiver)| {
+                let index = page * n + i as u32;
+                let mut r = record(0, pages);
+                (r.receiver, r.page) = (*receiver, page);
+                r.payment.txid = [0; 32];
+                r.payment.txid[..4].copy_from_slice(&index.to_le_bytes());
+                r.payment.tx_index = index + 1;
+                r.payment.position = 200 + u64::from(index);
+                r
+            })
+        })
+        .collect()
+}
+
+/// Rows match an independent computation of the bucket hash, pinned here.
+#[test]
+fn rows_are_pinned() {
+    let m = manifest(MIN_ROWS);
+    let rows: Vec<_> = (0..4)
+        .map(|p| row_for(&m, &receiver(), p).unwrap())
+        .collect();
+    assert_eq!(rows, [3472, 2600, 4604, 7755]);
+}
+
+/// Building, validating and looking up a publication each validate its manifest once,
+/// however many records and filter sets it has, and a malformed manifest is still
+/// refused by every public entrypoint.
+#[test]
+fn placement_validates_the_manifest_once_per_call() {
+    allow_small_tables();
+    use receiver_directory::snapshot::{manifest_validations, ProviderSet};
+    let records = spread(&receivers(4), 20);
+    let sets: Vec<_> = (0..8)
+        .flat_map(|i| {
+            ["recent", "seen"].map(|kind| ProviderSet {
+                label: format!("p{i}/{kind}"),
+                window_secs: (kind == "recent").then_some(86_400),
+                since_unix: 1_000,
+                until_unix: 90_000,
+                receivers: receivers(2),
+            })
+        })
+        .collect();
+    /// `f`'s result and how many manifest validations it ran.
+    fn counted<T>(f: impl FnOnce() -> T) -> (T, u64) {
+        let before = manifest_validations();
+        let value = f();
+        (value, manifest_validations() - before)
+    }
+    let (s, count) = counted(|| Snapshot::build(manifest(64), &records, &sets).unwrap());
+    assert_eq!((s.manifest.filters.len(), count), (17, 1));
+    assert_eq!(counted(|| s.validate().unwrap()), ((), 1));
+    for r in &records {
+        let bytes = row(&s, &r.receiver, r.page);
+        let found = counted(|| lookup_row(&s.manifest, &r.receiver, r.page, bytes).unwrap());
+        assert_eq!(found, (Some(r.clone()), 1));
+    }
+
+    let r = receiver();
+    let bytes = row(&s, &r, 0);
+    let mut bad_profile = s.manifest.clone();
+    bad_profile.profile.push('x');
+    let mut bad_rows = s.manifest.clone();
+    bad_rows.rows = 3;
+    let mut unordered = s.manifest.clone();
+    unordered.filters.swap(0, 1);
+    for bad in [bad_profile, bad_rows, unordered] {
+        assert!(matches!(row_for(&bad, &r, 0), Err(Error::Malformed)));
+        assert!(matches!(
+            lookup_row(&bad, &r, 0, bytes),
+            Err(Error::Malformed)
+        ));
+        let supplied = Snapshot {
+            manifest: bad.clone(),
+            ..s.clone()
+        };
+        assert!(matches!(supplied.validate(), Err(Error::Malformed)));
+        // A build replaces the declared sets, so only the others reach it.
+        if bad.filters == s.manifest.filters {
+            assert!(Snapshot::build(bad, &records, &sets).is_err());
+        }
+    }
+}
