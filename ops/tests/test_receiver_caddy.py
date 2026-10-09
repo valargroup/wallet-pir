@@ -184,13 +184,13 @@ class ReceiverCaddy(unittest.TestCase):
         self.assertIn('https://receiver-pir.valargroup.dev/metrics answered 200, not 404', run.stderr)
         self.assert_restored(run)
 
-    def test_a_failed_restoration_is_reported(self):
-        # The predecessor cannot be reloaded.
+    def test_a_failed_restoration_is_an_unknown_outcome(self):
+        # The predecessor cannot be reloaded, so Caddy may still run the candidate.
         original = LIVE + '# stub: reload fails\n'
         self.live.write_text(original)
         run = self.apply(LIVE + '# stub: probe fails\n')
-        self.assertEqual(run.returncode, 1, run.stderr)
-        self.assertIn('restoration failed', run.stderr)
+        self.assertEqual(run.returncode, 75, run.stderr)
+        self.assertIn('outcome unknown on receiver-01: restoring', run.stderr)
         (backup,) = self.backups()
         self.assertIn(backup.name, run.stderr)
         self.assertEqual((backup.read_text(), self.live.read_text()), (original, original))

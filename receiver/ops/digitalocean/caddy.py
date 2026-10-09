@@ -13,7 +13,8 @@ without `--await-feed-reads` since nothing restarts, and `/v1/receiver/health`
 and `/metrics` answering exactly 404 at the public origin. On failure it puts
 the backup back, reloads and verifies again. Exit status: 0 applied and
 verified, 1 not applied (see the message), 75 outcome unknown: an SSH step
-timed out or lost its connection, and the remote step may still have run.
+timed out or lost its connection, and the remote step may still have run, or
+restoring the predecessor failed, so Caddy may still run the candidate.
 """
 import json
 import os
@@ -84,7 +85,7 @@ reply(code == 0, "reload failed: " + output if code else "")
 
 
 class Unknown(Exception):
-    """A remote step timed out, lost its connection or gave no reply."""
+    """A remote step timed out, lost its connection or gave no reply, or a restoration failed."""
 
 
 class Droplet:
@@ -149,9 +150,7 @@ def apply(droplet, candidate):
     reply = droplet.call({'op': 'restore', 'backup': backup})
     failures = [reply['output']] if not reply['ok'] else droplet.verify()
     if failures:
-        print('caddy.py: restoration failed: %s; restore %s by hand under the lock'
-              % ('; '.join(failures), backup), file=sys.stderr)
-        return 1
+        raise Unknown('restoring %s failed: %s' % (backup, '; '.join(failures)))
     print('caddy.py: restored and verified the predecessor; the candidate is not live', file=sys.stderr)
     return 1
 
