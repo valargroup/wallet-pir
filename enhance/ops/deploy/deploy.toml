@@ -12,13 +12,17 @@
 #                 replaced by /opt/<svc>/releases/<sha256>/<binary>. The unit and
 #                 its other drop-ins are untouched.
 #   template      Render the whole unit from its .service.in (@RELEASE@ is the
-#                 release directory) into /etc/systemd/system/<unit>.
+#                 release directory, and each name in the service's
+#                 `template_vars` comes from the inventory) into
+#                 /etc/systemd/system/<unit>.
 #
 # Drop-ins that set ExecStart are refused unless they match
 # `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
 # into the transaction directory (with --retire-historical); one that also sets
 # other directives stays in place, and the managed drop-in, which sorts after
-# it, overrides its ExecStart.
+# it, overrides its ExecStart. Other drop-ins stay and still apply, except on a
+# template role with `owns_unit = true`, where any drop-in that would stay is
+# refused, so the rendered unit is the whole configuration.
 #
 # Readiness after a restart: the unit is active, sha256(/proc/<MainPID>/exe)
 # equals the release, `health` answers 200 (a `binary_sha256` field, if
@@ -103,3 +107,24 @@ mode = "exec-drop-in"
 template = "status-controller-qualification.service.in"
 health = "http://127.0.0.1:8480/internal/health"
 ready_timeout = 180
+
+[services.receiver]
+root = "/opt/receiver-pir"
+binary = "receiver-directory"
+artifact_kinds = ["receiver-pir"]
+self_check = ["--help"]
+min_free_bytes = 1073741824
+order = ["server"]
+# The id of the installed NEAR key file, /etc/receiver-pir/near-<id>.env.
+template_vars = ["NEAR_KEY"]
+
+[services.receiver.roles.server]
+unit = "receiver-pir.service"
+mode = "template"
+template = "../../../receiver/ops/digitalocean/receiver-pir.service.in"
+# The unit names the NEAR key file, so a drop-in must not supply another key.
+owns_unit = true
+health = "http://{listen}/v1/receiver/health"
+# Health answers at once; `serving` stays null until the first publication.
+ready = { field = "serving", nonempty = true }
+ready_timeout = 300

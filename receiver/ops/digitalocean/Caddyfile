@@ -1,0 +1,20 @@
+receiver-pir.valargroup.dev {
+	# The service refuses a query that is not exactly its fixed length, and caps the
+	# upload before that; this is the outer bound.
+	request_body {
+		max_size 2MB
+	}
+
+	# Only the wallet-facing routes. `/v1/receiver/health` and `/metrics` are
+	# deliberately not here, as Transparent keeps its operator routes off the edge:
+	# health reports the indexer's NEAR feed and payout check. The PIR monitor reads
+	# health over the private network, where the firewall opens 18380 to it alone.
+	@wallet path /v1/receiver/init /v1/receiver/query /v1/receiver/public/* /v1/receiver/rows/* /v1/receiver/witness/* /v1/receiver/filters/*
+	handle @wallet {
+		reverse_proxy 10.70.0.11:18380
+	}
+
+	handle {
+		respond 404
+	}
+}
