@@ -350,7 +350,8 @@ pub struct ProviderStore {
 }
 
 impl ProviderStore {
-    /// Opens or creates the provider database.
+    /// Opens or creates the provider database. Earlier development schemas are not
+    /// migrated: delete such a file and the feeds rebuild it from `--near-since`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
