@@ -230,6 +230,7 @@ fn write_map_geometry(
             revision,
             sealed: false,
         }],
+        recuts: Vec::new(),
     };
     // `page_rows` is reporting only, but the loader cross-checks everything the
     // manifest and the map both carry, so it must agree.

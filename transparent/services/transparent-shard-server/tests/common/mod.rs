@@ -320,6 +320,7 @@ pub fn publish_with(
             })
             .collect(),
         shards: entries,
+        recuts: Vec::new(),
     };
     map.check_shape().expect("a well-formed map");
     std::fs::write(

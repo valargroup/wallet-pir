@@ -160,9 +160,68 @@ pub struct ShardMap {
     pub seal: BTreeMap<String, SealParameters>,
     /// Ascending by `shard_id`, gapless, starting at zero.
     pub shards: Vec<ShardMapEntry>,
+    /// Every re-cut this publication has made, oldest first.
+    ///
+    /// A re-cut rebuilds sealed history from some height up under other
+    /// boundaries, typically merging sealed recent shards into a wider archive
+    /// geometry. That renumbers every later shard and changes its digest, but
+    /// not the chain, so a wallet that already covered those heights keeps
+    /// what it holds. The declaration is what lets it tell an announced re-cut
+    /// from a publisher silently rewriting sealed content. Declarations are
+    /// never dropped, so a wallet offline across several re-cuts still
+    /// recognizes the revisions it holds. Absent from a map that was never
+    /// re-cut, which keeps such a map's bytes and digest unchanged.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recuts: Vec<Recut>,
+}
+
+/// One re-cut of a publication.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct Recut {
+    /// Strictly increasing across a map's re-cuts, from one.
+    pub epoch: u32,
+    /// First height whose shards changed. Below it the map is unchanged.
+    pub from_height: u64,
+    /// Every entry the map published at or above `from_height` before this
+    /// re-cut, ascending, exactly as it was published: the re-cut shards, the
+    /// sealed shards renumbered above them, and the tail.
+    pub superseded: Vec<SupersededShard>,
+}
+
+/// A map entry a re-cut replaced, as the earlier map published it.
+///
+/// Only the fields a wallet holds about a revision it read: enough to match
+/// its stored coverage, events and unfinished page work to the declaration
+/// without trusting anything the current map says about them.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SupersededShard {
+    /// The id it had. Manifests bind the id, so this only cross-checks the
+    /// digest against what a wallet stored with it.
+    pub shard_id: u64,
+    pub geometry: String,
+    pub start_height: u64,
+    pub end_height: u64,
+    pub terminal_block_hash: String,
+    pub manifest_digest: String,
+    pub revision: u32,
+    /// False only for the tail the re-cut replaced.
+    pub sealed: bool,
 }
 
 impl ShardMap {
+    /// The revision a declared re-cut superseded under `digest`, if any.
+    pub fn superseded(&self, digest: &str) -> Option<&SupersededShard> {
+        self.recuts
+            .iter()
+            .flat_map(|recut| &recut.superseded)
+            .find(|shard| shard.manifest_digest == digest)
+    }
+
+    /// The newest re-cut's epoch; zero for a map never re-cut.
+    pub fn recut_epoch(&self) -> u32 {
+        self.recuts.last().map_or(0, |recut| recut.epoch)
+    }
+
     /// The shard covering `height`, if the map covers it.
     ///
     /// Binary search rather than arithmetic: with content-sealed boundaries
@@ -259,6 +318,300 @@ impl ShardMap {
                 }
             }
         }
+        self.check_recuts()
+    }
+
+    /// Checks the re-cut declarations against each other and against the map.
+    ///
+    /// What a wallet relies on when it keeps history across a re-cut: that the
+    /// revisions it holds are named exactly once, that none of them is still
+    /// published, and that every shard the re-cut renumbered took a revision
+    /// above the one it replaced, so a revision only ever rises within a
+    /// geometry and start height.
+    fn check_recuts(&self) -> Result<(), String> {
+        let mut epoch = 0u32;
+        let mut digests = std::collections::BTreeSet::new();
+        let published: std::collections::BTreeSet<&str> = self
+            .shards
+            .iter()
+            .map(|shard| shard.manifest_digest.as_str())
+            .collect();
+        for recut in &self.recuts {
+            if recut.epoch <= epoch {
+                return Err(format!(
+                    "re-cut epoch {} does not rise above {epoch}",
+                    recut.epoch
+                ));
+            }
+            epoch = recut.epoch;
+            let Some(first) = recut.superseded.first() else {
+                return Err(format!("re-cut {} supersedes nothing", recut.epoch));
+            };
+            if first.start_height != recut.from_height {
+                return Err(format!(
+                    "re-cut {} starts at {} but supersedes from {}",
+                    recut.epoch, recut.from_height, first.start_height
+                ));
+            }
+            let last = recut.superseded.len() - 1;
+            for (index, shard) in recut.superseded.iter().enumerate() {
+                if shard.end_height < shard.start_height {
+                    return Err(format!(
+                        "re-cut {} supersedes a shard ending before it starts",
+                        recut.epoch
+                    ));
+                }
+                if let Some(previous) = index.checked_sub(1).map(|i| &recut.superseded[i]) {
+                    if shard.start_height != previous.end_height + 1
+                        || shard.shard_id != previous.shard_id + 1
+                    {
+                        return Err(format!(
+                            "re-cut {} supersedes shards that do not follow one another",
+                            recut.epoch
+                        ));
+                    }
+                }
+                // Only the last entry of the earlier map can have been its tail.
+                if !shard.sealed && index != last {
+                    return Err(format!(
+                        "re-cut {} supersedes unsealed shard {} before its last",
+                        recut.epoch, shard.shard_id
+                    ));
+                }
+                if shard.manifest_digest.len() != 64 {
+                    return Err(format!(
+                        "re-cut {} supersedes shard {} without a manifest digest",
+                        recut.epoch, shard.shard_id
+                    ));
+                }
+                if published.contains(shard.manifest_digest.as_str()) {
+                    return Err(format!(
+                        "re-cut {} supersedes {} but the map still publishes it",
+                        recut.epoch, shard.manifest_digest
+                    ));
+                }
+                if !digests.insert(shard.manifest_digest.as_str()) {
+                    return Err(format!("{} is superseded twice", shard.manifest_digest));
+                }
+                if !self.seal.contains_key(&shard.geometry) {
+                    return Err(format!(
+                        "re-cut {} supersedes a {} shard but the map publishes no seal \
+                         parameters for it",
+                        recut.epoch, shard.geometry
+                    ));
+                }
+                let successor = self.shards.iter().find(|entry| {
+                    entry.geometry == shard.geometry && entry.start_height == shard.start_height
+                });
+                if successor.is_some_and(|entry| entry.revision <= shard.revision) {
+                    return Err(format!(
+                        "shard at {} keeps its geometry across re-cut {} without a higher \
+                         revision",
+                        shard.start_height, recut.epoch
+                    ));
+                }
+            }
+        }
+        // Only the newest re-cut is still a boundary of the current map; a later
+        // re-cut may have merged across an older one's starting height.
+        if let Some(recut) = self.recuts.last() {
+            if !self
+                .shards
+                .iter()
+                .any(|shard| shard.start_height == recut.from_height)
+            {
+                return Err(format!(
+                    "re-cut {} starts at {}, which is no shard boundary of this map",
+                    recut.epoch, recut.from_height
+                ));
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn digest(tag: u64) -> String {
+        format!("{tag:064x}")
+    }
+
+    fn hash(height: u64) -> String {
+        format!("{:064x}", height + 1)
+    }
+
+    fn entry(
+        id: u64,
+        geometry: &str,
+        start: u64,
+        end: u64,
+        revision: u32,
+        sealed: bool,
+    ) -> ShardMapEntry {
+        ShardMapEntry {
+            shard_id: id,
+            geometry: geometry.into(),
+            start_height: start,
+            end_height: end,
+            parent_block_hash: hash(start - 1),
+            terminal_block_hash: hash(end),
+            filter_hash: digest(0),
+            scripts: 1,
+            page_rows: 1,
+            txids: 1,
+            directory_segments: 1,
+            page_segments: 1,
+            // Distinct for every field a revision differs in.
+            manifest_digest: digest(
+                (u64::from(geometry == "wide") << 60)
+                    | (id << 40)
+                    | (start << 24)
+                    | (end << 8)
+                    | u64::from(revision),
+            ),
+            revision,
+            sealed,
+        }
+    }
+
+    fn superseded(entry: &ShardMapEntry) -> SupersededShard {
+        SupersededShard {
+            shard_id: entry.shard_id,
+            geometry: entry.geometry.clone(),
+            start_height: entry.start_height,
+            end_height: entry.end_height,
+            terminal_block_hash: entry.terminal_block_hash.clone(),
+            manifest_digest: entry.manifest_digest.clone(),
+            revision: entry.revision,
+            sealed: entry.sealed,
+        }
+    }
+
+    fn map(shards: Vec<ShardMapEntry>, recuts: Vec<Recut>) -> ShardMap {
+        let seal = SealParameters {
+            max_scripts: 10,
+            max_page_rows: 10,
+            max_txids: 0,
+        };
+        ShardMap {
+            genesis_hash: hash(0),
+            network: "main".into(),
+            profile: "zcash-transparent-range-v2".into(),
+            range_envelope_version: 1,
+            start_height: 1,
+            seal: [("narrow".to_string(), seal), ("wide".to_string(), seal)].into(),
+            shards,
+            recuts,
+        }
+    }
+
+    /// Before: 0 [1,10], 1 [11,20], 2 [21,30], 3 [31,40], tail 4 [41,45].
+    /// After re-cutting 1–2 into one wide shard: 0, wide 1 [11,30], 2 [31,40]
+    /// and tail 3 [41,46], each renumbered entry at a higher revision.
+    fn before_and_after() -> (Vec<ShardMapEntry>, ShardMap) {
+        let before = vec![
+            entry(0, "narrow", 1, 10, 0, true),
+            entry(1, "narrow", 11, 20, 0, true),
+            entry(2, "narrow", 21, 30, 0, true),
+            entry(3, "narrow", 31, 40, 0, true),
+            entry(4, "narrow", 41, 45, 7, false),
+        ];
+        let recut = Recut {
+            epoch: 1,
+            from_height: 11,
+            superseded: before[1..].iter().map(superseded).collect(),
+        };
+        let after = map(
+            vec![
+                before[0].clone(),
+                entry(1, "wide", 11, 30, 0, true),
+                entry(2, "narrow", 31, 40, 1, true),
+                entry(3, "narrow", 41, 46, 8, false),
+            ],
+            vec![recut],
+        );
+        (before, after)
+    }
+
+    #[test]
+    fn a_map_never_re_cut_keeps_its_bytes() {
+        let (before, _) = before_and_after();
+        let plain = map(before, Vec::new());
+        let bytes = serde_json::to_string(&plain).unwrap();
+        assert!(!bytes.contains("recuts"), "{bytes}");
+        let parsed: ShardMap = serde_json::from_str(&bytes).unwrap();
+        assert_eq!(parsed, plain);
+        assert_eq!(parsed.recut_epoch(), 0);
+    }
+
+    #[test]
+    fn a_declared_re_cut_is_well_formed() {
+        let (before, after) = before_and_after();
+        after.check_shape().unwrap();
+        assert_eq!(after.recut_epoch(), 1);
+        assert_eq!(
+            after
+                .superseded(&before[4].manifest_digest)
+                .map(|s| s.sealed),
+            Some(false)
+        );
+        assert!(after.superseded(&before[0].manifest_digest).is_none());
+    }
+
+    #[test]
+    fn a_declaration_that_does_not_hold_is_refused() {
+        let (before, after) = before_and_after();
+        let refused = |change: &dyn Fn(&mut ShardMap), expect: &str| {
+            let mut map = after.clone();
+            change(&mut map);
+            let error = map.check_shape().unwrap_err();
+            assert!(error.contains(expect), "{expect}: {error}");
+        };
+        refused(&|m| m.recuts[0].epoch = 0, "does not rise");
+        refused(&|m| m.recuts[0].from_height = 12, "supersedes from");
+        refused(&|m| m.recuts[0].superseded.clear(), "supersedes nothing");
+        refused(
+            &|m| {
+                m.recuts[0].superseded.remove(1);
+            },
+            "do not follow",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[0].sealed = false,
+            "before its last",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[0].manifest_digest = m.shards[1].manifest_digest.clone(),
+            "still publishes",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[2].geometry = "other".into(),
+            "no seal",
+        );
+        refused(&|m| m.shards[2].revision = 0, "without a higher revision");
+        refused(&|m| m.shards[3].revision = 7, "without a higher revision");
+        refused(
+            &|m| {
+                let mut again = m.recuts[0].clone();
+                again.epoch = 2;
+                again.from_height = 12;
+                again.superseded = vec![superseded(&before[1])];
+                again.superseded[0].start_height = 12;
+                m.recuts.push(again);
+            },
+            "superseded twice",
+        );
+        refused(
+            &|m| {
+                m.recuts.push(Recut {
+                    epoch: 2,
+                    from_height: 35,
+                    superseded: vec![superseded(&entry(9, "narrow", 35, 40, 0, true))],
+                });
+            },
+            "no shard boundary",
+        );
     }
 }

@@ -71,6 +71,7 @@ fn publish(dir: &Path, corrupt: bool) {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.join("shards.json"),

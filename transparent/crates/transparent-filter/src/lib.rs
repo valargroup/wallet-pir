@@ -57,6 +57,6 @@ pub use transport::{
 };
 pub use validate::{validate_filter, validate_range_filter, FilterLimits, ValidatedFilter};
 pub use wire::{
-    ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo, SealParameters,
-    ShardMap, ShardMapEntry,
+    ChainEntry, FilterDigestEntry, FilterServiceHealth, FilterServiceInfo, Recut, SealParameters,
+    ShardMap, ShardMapEntry, SupersededShard,
 };

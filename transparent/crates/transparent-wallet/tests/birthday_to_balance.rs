@@ -233,6 +233,7 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     let map_bytes = serde_json::to_vec(&map).unwrap().len() as u64;
     Published {

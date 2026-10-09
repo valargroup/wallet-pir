@@ -2456,6 +2456,7 @@ mod tests {
             start_height: 100,
             seal,
             shards,
+            recuts: Vec::new(),
         }
     }
 

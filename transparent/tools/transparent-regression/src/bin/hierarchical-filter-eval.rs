@@ -717,6 +717,7 @@ mod seed_tests {
             )]
             .into(),
             shards: vec![child],
+            recuts: Vec::new(),
         };
         let map_path = dir.path().join("map.json");
         write_json(&map_path, &map).unwrap();

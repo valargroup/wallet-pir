@@ -223,6 +223,7 @@ fn publish(dir: &Path) -> ShardMap {
         start_height: FIRST,
         seal,
         shards: entries,
+        recuts: Vec::new(),
     };
     map.check_shape().unwrap();
     std::fs::write(
@@ -653,6 +654,7 @@ fn retention_by_bytes_keeps_newest_first_and_reports_the_rest_prunable() {
             },
         )]),
         shards: entries,
+        recuts: Vec::new(),
     };
     std::fs::write(
         dir.path().join("shards.json"),

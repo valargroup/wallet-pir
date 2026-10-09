@@ -831,6 +831,7 @@ mod tests {
                 },
             )]),
             shards: entries,
+            recuts: Vec::new(),
         };
         (map, records, chain)
     }

@@ -683,6 +683,11 @@ pub fn publish(
             })
             .collect(),
         shards: entries,
+        // This publisher never re-cuts. A re-cutting one must carry every
+        // earlier declaration forward, with seal parameters for each geometry
+        // it names, or wallets holding superseded revisions stop recognizing
+        // them.
+        recuts: Vec::new(),
     };
     if !reorg && previous_dir != &cli.output && previous_dir.exists() {
         link_superseded_tails(previous_dir, &cli.output, &map.shards, store)?;
