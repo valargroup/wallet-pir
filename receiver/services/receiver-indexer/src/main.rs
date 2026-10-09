@@ -86,6 +86,10 @@ struct Args {
     near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
     near_poll_seconds: u64,
+    /// The partner key `NEAR_INTENTS_EXPLORER` holds, if any. Without one, publications
+    /// carry no provider sets, whatever an earlier run left in `providers.sqlite`.
+    #[arg(skip)]
+    near_key: Option<String>,
 }
 
 #[tokio::main]
@@ -102,7 +106,10 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    let args = Args::parse();
+    let mut args = Args::parse();
+    args.near_key = std::env::var("NEAR_INTENTS_EXPLORER")
+        .ok()
+        .filter(|k| !k.is_empty());
     receiver_pir::validate_rows(args.min_rows)?;
     if args.start_height < receiver_indexer::blocks::ironwood_activation() {
         return Err("start must be at or after Ironwood activation".into());
@@ -162,7 +169,7 @@ async fn main() -> Result<()> {
         loop {
             let checked = async {
                 let (tip, rpc) = freshest(&guard_nodes, genesis).await?;
-                check_serving(&guard_publications, &rpc, tip).await
+                check_serving(&guard_publications, &rpc, genesis, tip).await
             };
             if let Err(error) = checked.await {
                 warn!(%error, "canonical validation deferred; still serving");
@@ -170,10 +177,7 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
         }
     });
-    if let Some(key) = std::env::var("NEAR_INTENTS_EXPLORER")
-        .ok()
-        .filter(|k| !k.is_empty())
-    {
+    if let Some(key) = args.near_key.clone() {
         let path = args.data_dir.join(PROVIDERS);
         let since = args
             .near_since
@@ -241,15 +245,23 @@ async fn freshest(nodes: &[ZakuraClient], genesis: Hash) -> Result<(u64, ZakuraC
 
 /// Revokes every session once `rpc`, a node at tip `tip`, shows a served anchor is off
 /// its chain, unless a revocation or rotation stopped serving that anchor during the
-/// check (see [`Publications::revoke_serving`]). A failed request or a node behind an
-/// anchor proves nothing, so sessions keep serving.
-async fn check_serving(publications: &Publications, rpc: &ZakuraClient, tip: u64) -> Result<()> {
+/// check (see [`Publications::revoke_serving`]). A failed request, a node behind an
+/// anchor or one no longer on `genesis`'s network proves nothing, so sessions keep
+/// serving.
+async fn check_serving(
+    publications: &Publications,
+    rpc: &ZakuraClient,
+    genesis: Hash,
+    tip: u64,
+) -> Result<()> {
     let (epoch, anchors) = publications.serving();
     if anchors.is_empty() {
         return Ok(());
     }
     for (height, hash) in anchors {
         if u64::from(height) <= tip && !is_canonical(rpc, height, hash).await? {
+            // Ranking read the genesis earlier, and an endpoint can be repointed.
+            rpc.check_network(genesis).await?;
             if publications.revoke_serving(epoch, (height, hash)) {
                 warn!(height, "revoked noncanonical receiver sessions");
             }
@@ -287,7 +299,7 @@ async fn refresh(
     let (node_tip, node) = freshest(nodes, genesis).await?;
     let rpc = &node;
     if let Some(serving) = serving {
-        check_serving(serving, rpc, node_tip).await?;
+        check_serving(serving, rpc, genesis, node_tip).await?;
     }
     let boundary = rpc.receiver_boundary(args.start_height - 1).await?;
     std::fs::create_dir_all(&args.data_dir)?;
@@ -300,7 +312,11 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let provider_store = ProviderStore::open(args.data_dir.join(PROVIDERS))?;
+    // An empty in-memory store without a key; see `Args::near_key`.
+    let provider_store = match args.near_key {
+        Some(_) => ProviderStore::open(args.data_dir.join(PROVIDERS))?,
+        None => ProviderStore::open(":memory:")?,
+    };
     let node_tip = u32::try_from(node_tip)?;
     let requested = args
         .end_height
@@ -655,27 +671,40 @@ mod tests {
             gate: Some(gate.clone()),
             ..Node::default()
         };
+        let mainnet = Network::Mainnet.genesis_hash();
         *node.tip.lock().unwrap() = 200;
-        node.hashes.lock().unwrap().insert(101, [2; 32]);
+        node.hashes
+            .lock()
+            .unwrap()
+            .extend([(0, mainnet.0), (101, [2; 32])]);
         let rpc = serve_node(node.clone()).await;
         let publications = Publications::default();
         assert!(publications.publish(publication(1), 0));
         let check = tokio::spawn({
             let (publications, rpc) = (publications.clone(), rpc.clone());
-            async move { check_serving(&publications, &rpc, 200).await.unwrap() }
+            async move {
+                check_serving(&publications, &rpc, mainnet, 200)
+                    .await
+                    .unwrap()
+            }
         });
         // While the check of A waits for the node, a rewind revokes A and B is published.
         node.asked.notified().await;
         publications.revoke();
         assert!(publications.publish(publication(2), 1));
-        gate.add_permits(1);
+        // A's hash, then the genesis that confirms the node's network.
+        gate.add_permits(2);
         check.await.unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         gate.add_permits(10);
-        check_serving(&publications, &rpc, 200).await.unwrap();
+        check_serving(&publications, &rpc, mainnet, 200)
+            .await
+            .unwrap();
         assert_eq!(publications.anchors(), [(101, [2; 32])]);
         node.hashes.lock().unwrap().insert(101, [3; 32]);
-        check_serving(&publications, &rpc, 200).await.unwrap();
+        check_serving(&publications, &rpc, mainnet, 200)
+            .await
+            .unwrap();
         assert!(publications.anchors().is_empty());
     }
 
@@ -738,7 +767,7 @@ mod tests {
                     commitments: Vec::new(),
                 })
                 .unwrap();
-            let args = Args::parse_from([
+            let mut args = Args::parse_from([
                 "receiver-directory",
                 "--data-dir",
                 dir.path().to_str().unwrap(),
@@ -749,6 +778,7 @@ mod tests {
                 "0",
                 "--serve",
             ]);
+            args.near_key = Some("key".into());
             let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -879,6 +909,55 @@ mod tests {
             assert_eq!(serving, repoint.is_none());
             assert_eq!(paused.active.is_some(), repoint.is_none());
         }
+    }
+
+    /// A node that leaves mainnet, or stops giving its genesis, after ranking cannot
+    /// revoke the served publication with its other chain; one still on mainnet does.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_repointed_after_ranking_cannot_revoke_sessions() {
+        let mainnet = Network::Mainnet.genesis_hash();
+        let height = u64::from(receiver_indexer::blocks::ironwood_activation());
+        for repoint in [Some(Some([9; 32])), Some(None), None] {
+            let mut paused = Paused::new(|_| {}).await;
+            paused.refresh().await.unwrap();
+            // The node now answers from a chain without the served anchor.
+            paused.node.hashes.lock().unwrap().insert(height, [8; 32]);
+            *paused.node.repoint.lock().unwrap() = repoint;
+            let nodes = std::slice::from_ref(&paused.rpc);
+            let (tip, rpc) = freshest(nodes, mainnet).await.unwrap();
+            let checked = check_serving(&paused.publications, &rpc, mainnet, tip).await;
+            assert_eq!(checked.is_ok(), repoint.is_none());
+            let serving = !paused.publications.anchors().is_empty();
+            assert_eq!(serving, repoint.is_some());
+        }
+    }
+
+    /// Without a key, a refresh publishes no provider sets and reports no feed, though
+    /// `providers.sqlite` holds completed reads of both feeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn without_a_key_no_provider_sets_are_published() {
+        let mut paused = Paused::new(|_| {}).await;
+        for feed in [
+            receiver_indexer::near::Feed::Payouts,
+            receiver_indexer::near::Feed::Refunds,
+        ] {
+            let mut provider = paused.provider();
+            provider
+                .record(feed.name(), Some(NOW - 100), &[], &[], NOW - 50, NOW - 10)
+                .unwrap();
+        }
+        paused.args.near_key = None;
+        paused.refresh().await.unwrap();
+        let filters = paused.get("init").await["directory"]["filters"].clone();
+        let labels: Vec<_> = filters
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["label"].clone())
+            .collect();
+        assert_eq!(labels, [receiver_directory::filter::PAID]);
+        let feeds = paused.get("health").await["indexer"]["feeds"].clone();
+        assert_eq!(feeds, json!({"near-payouts": null, "near-refunds": null}));
     }
 
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
