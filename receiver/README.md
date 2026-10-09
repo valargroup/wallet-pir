@@ -103,7 +103,9 @@ the session ID.
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
-409, a revoked one 410, an oversized query 413 and a malformed one 400. Queries
+409, a revoked one 410, an oversized query 413 and a malformed one 400. A
+revocation also aborts a session file still being sent: its status and length are
+already out, so the client sees a truncated body rather than 410. Queries
 are admitted with the primitives Enhance uses (`pir_control::admission`): two in
 flight per client, then a wait of up to 2 seconds for one of two evaluation
 slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.

@@ -1,16 +1,23 @@
 //! Receiver PIR serving with immutable publications and atomic session revocation.
 pub mod publication;
 use axum::{
+    body::{Body, Bytes},
     extract::{Path, Request, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
+use http_body::{Body as HttpBody, Frame, SizeHint};
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queue};
 pub use publication::{Publication, Publications};
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
-use std::{sync::Arc, time::Duration};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 /// Queries evaluated at once.
 const EVALUATING: usize = 2;
@@ -23,6 +30,8 @@ const WAIT: Duration = Duration::from_secs(2);
 const PER_CLIENT: usize = 2;
 /// How long a query's upload may take.
 const UPLOAD: Duration = Duration::from_secs(15);
+/// Bytes of a file response sent between checks for a revocation.
+const CHUNK: usize = 64 * 1024;
 
 #[derive(Clone)]
 struct Service {
@@ -50,7 +59,7 @@ const ENDPOINTS: [&str; 7] = [
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` reports the
 /// process identity of `docs/serving-contract.md` and the owner's report, and `/metrics`
 /// the shared HTTP observations; both are for operators, and a deployment's edge proxies
-/// only the wallet routes.
+/// only the wallet routes. A revocation aborts the session files still being sent.
 pub fn router_with_publications(publications: Publications) -> Router {
     let metrics = pir_observability::HttpMetrics::default();
     metrics.initialize(&ENDPOINTS);
@@ -147,23 +156,62 @@ enum Material {
     Filters,
 }
 
-/// Serves one file of the publication whose hex id is `id`.
+/// Serves one file of the publication whose hex id is `id`, as a [`FencedBody`].
 fn material(s: &Service, id: &str, material: Material) -> Response {
     let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let p = match s.publications.select(Some(id)) {
-        Ok((p, _)) => p,
+    let (p, epoch) = match s.publications.select(Some(id)) {
+        Ok(selected) => selected,
         Err(status) => return status.into_response(),
     };
-    match material {
-        Material::Public => binary(p.server.public().to_vec()),
-        Material::Rows => binary(axum::body::Bytes::from_owner(p.server.rows())),
-        Material::Filters => binary(axum::body::Bytes::from_owner(p.server.filters())),
+    let bytes = match material {
+        Material::Public => Bytes::copy_from_slice(p.server.public()),
+        Material::Rows => Bytes::from_owner(p.server.rows()),
+        Material::Filters => Bytes::from_owner(p.server.filters()),
         Material::Witness => match &p.witnesses {
-            Some(bytes) => binary(bytes.clone()),
-            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            Some(bytes) => bytes.clone(),
+            None => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         },
+    };
+    binary(Body::new(FencedBody {
+        bytes,
+        publications: s.publications.clone(),
+        epoch,
+    }))
+}
+
+/// A file response sent in [`CHUNK`]-byte frames that fails, aborting the transfer,
+/// once a revocation advances the epoch past the one its session was selected in.
+/// The status and length are already sent, so the client sees a truncated body; bytes
+/// already sent cannot be recalled, which is why wallets still check their anchor.
+struct FencedBody {
+    bytes: Bytes,
+    publications: Publications,
+    epoch: u64,
+}
+
+impl HttpBody for FencedBody {
+    type Data = Bytes;
+    type Error = std::io::Error;
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        _: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
+        if self.bytes.is_empty() {
+            return Poll::Ready(None);
+        }
+        if self.publications.epoch() != self.epoch {
+            return Poll::Ready(Some(Err(std::io::Error::other("publication revoked"))));
+        }
+        let n = self.bytes.len().min(CHUNK);
+        Poll::Ready(Some(Ok(Frame::data(self.bytes.split_to(n)))))
+    }
+    fn is_end_stream(&self) -> bool {
+        self.bytes.is_empty()
+    }
+    fn size_hint(&self) -> SizeHint {
+        SizeHint::with_exact(self.bytes.len() as u64)
     }
 }
 
