@@ -65,8 +65,9 @@ def route(path):
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('receiver/ops/'):
-        # Receiver deployment files have no helper suite of their own.
-        return {'check-docs'}, {'ops'}
+        # ops/tests pins the receiver's edge, unit and cloud-init contract, and
+        # the deploy tests install its unit.
+        return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
     if path.startswith('ops/infra/digitalocean/enhance-v4/'):

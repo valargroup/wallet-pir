@@ -8,7 +8,10 @@ public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` 
 proxies only the wallet routes (`init`, `public`, `query`, `rows`, `witness` and
 `filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
 the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
-health over the private network. Nothing collects `/metrics` yet. The public-chain index lives in `/srv/receiver-pir/index` and
+health over the private network. Nothing collects `/metrics` yet.
+[`ops/tests/test_receiver_ops_config.py`](../../../ops/tests/test_receiver_ops_config.py)
+pins this edge, the unit's private listener and hardening, and cloud-init's account,
+directories and firewall rule. The public-chain index lives in `/srv/receiver-pir/index` and
 holds no wallet data. No Enhance service runs on this Droplet.
 
 ## Infrastructure

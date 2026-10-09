@@ -89,6 +89,16 @@ class PlannerTests(unittest.TestCase):
         for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md']:
             self.assertIn('check-tools', fast.plan(self.packages, [path])['helpers'], path)
 
+    def test_receiver_ops_config_changes_run_their_contract_suite(self):
+        makefile = (ROOT / 'Makefile').read_text()
+        self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s ops/tests -p 'test_*.py'", makefile)
+        self.assertTrue((ROOT / 'ops/tests/test_receiver_ops_config.py').is_file())
+        for path in ['receiver/ops/digitalocean/Caddyfile', 'receiver/ops/digitalocean/cloud-init.yaml',
+                     'receiver/ops/digitalocean/receiver-pir.service']:
+            result = fast.plan(self.packages, [path])
+            self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
+            self.assertEqual(result['packages'], [], path)
+
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
         result = fast.plan(self.packages, ['shared/pir-control/src/lib.rs'])
         self.assertTrue({'shared', 'enhance', 'transparent', 'receiver'} <= set(result['groups']))
