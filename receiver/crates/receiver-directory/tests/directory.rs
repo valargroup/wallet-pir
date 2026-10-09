@@ -236,13 +236,16 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     store
         .record_completions(&[(payout, [1; 32]), (payout, [2; 32])], 500)
         .unwrap();
-    assert_eq!(store.completed(0, 450).unwrap(), [(payout, [1; 32])]);
-    assert_eq!(store.completed(450, 600).unwrap(), [(payout, [2; 32])]);
+    assert_eq!(store.unmatched(450).unwrap(), [(payout, [1; 32])]);
+    assert_eq!(store.unmatched(600).unwrap().len(), 2);
+    // A matched payout is skipped from then on, however long it stays recorded.
+    store.match_payouts(&[(payout, [1; 32])]).unwrap();
+    assert_eq!(store.unmatched(600).unwrap(), [(payout, [2; 32])]);
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.completed(0, 600).unwrap().len(), 2);
+    assert_eq!(store.unmatched(600).unwrap(), [(payout, [2; 32])]);
 }
 
 /// Without the test fixtures' allowance, a table below [`MIN_ROWS`] is refused.

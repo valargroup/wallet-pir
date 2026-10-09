@@ -247,7 +247,7 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
+    let mut provider_store = ProviderStore::open(args.data_dir.join("provider.sqlite"))?;
     let node_tip = u32::try_from(rpc.tip_height().await?)?;
     let end = args
         .end_height
@@ -396,7 +396,7 @@ async fn refresh(
     }
     // The report describes the reconciled index this publication was built from, and
     // activates with it.
-    let report = receiver_indexer::near::report(&provider_store, &store, unix_now())?;
+    let report = receiver_indexer::near::report(&mut provider_store, &store, unix_now())?;
     if !serving.publish(publication.with_report(report), epoch.unwrap()) {
         return Err("publication invalidated during preparation; retrying".into());
     }
