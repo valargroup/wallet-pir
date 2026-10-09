@@ -87,9 +87,8 @@ ops/scripts/wallet-pir-deploy.py rollback receiver [--transaction ID]
 ```
 
 The tool installs the binary as
-`/opt/receiver-pir/releases/<sha256>/receiver-directory`, with the bundle's
-`receiver-probe` and `probe-fixture.json` beside it, each checked against the
-bundle's `SHA256SUMS`, runs its `--help` there, and writes `/etc/systemd/system/receiver-pir.service` from the template with
+`/opt/receiver-pir/releases/<sha256>/receiver-directory`, runs its `--help`
+there, and writes `/etc/systemd/system/receiver-pir.service` from the template with
 `@RELEASE@` set to that directory and `@NEAR_KEY@` to the inventory's key id (see
 [the NEAR key](#installing-or-rotating-the-near-key)). After the restart it requires the running
 executable's digest and a health answer from
@@ -107,9 +106,8 @@ that. The check first waits up to 300 seconds (`--await-feed-reads`) for the
 restarted process to complete a read of both NEAR feeds, which proves the key file
 the unit names. A failed check, or one still running at its 480-second `timeout`,
 fails the deploy. A failure, or `rollback`, restores the previous unit file and binary.
-A deploy whose binary and unit already run restarts nothing but is still a locked,
-journaled verification without restart: it stages any release file a host lacks,
-checks readiness and runs the `exact_check`.
+A deploy whose binary and unit already run restarts nothing but still checks
+readiness and runs the `exact_check` (`verify_unchanged` in `deploy.toml`).
 Report `status receiver` and the rollback command after each deploy.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
@@ -181,8 +179,7 @@ coordinator:
    stays too.
 2. Set `services.receiver.template_vars.NEAR_KEY` to the new id in the
    coordinator's inventory.
-3. Deploy the running release again from its bundle (the receiver needs
-   `--archive` for its companions) with the reviewed drift. `plan` should show one
+3. Deploy the running release again with the reviewed drift. `plan` should show one
    `drift` line, `Service.EnvironmentFile`, from the old key file to the new one:
 
    ```sh
@@ -199,14 +196,9 @@ accepts the previous key: check on the Droplet that health's `near.reads` fill i
 
 ### Deploy probe
 
-The inventory's `exact_check` runs `{release_dir}/receiver-probe` with
-`{release_dir}/probe-fixture.json`: the probe and fixture the deploy staged in the
-release directory from the bundle it deploys, so nothing is installed for it by
-hand. A new fixture also needs its digest in the check's `--fixture-sha256`. The
-release directory is named by the server binary's digest alone, so a bundle with
-the same `receiver-directory` but another probe or fixture is refused, before any
-change, wherever that release is already staged; it is never reused or
-overwritten. After `preflight --stage`, run the check's `argv` once by hand on the
+The inventory's `exact_check` runs `{release_dir}/receiver-directory probe`, the
+probe built into the deployed binary with its pinned fixture, so nothing is
+installed for it by hand. After `preflight --stage`, run the check's `argv` once by hand on the
 Droplet, with `{release_dir}` replaced by the staged release directory, and confirm
 it prints `"passed":true`, which also shows that the Droplet reaches the public
 origin and both nodes.
@@ -238,8 +230,8 @@ deploy inventory, so no deploy can reach it.
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
 
 The host is not qualified until a deploy of that bundle commits, after the steps
-[before the first tool deploy](#release-and-deploy). It restarts nothing, but
-stages the probe and fixture and runs the exact check.
+[before the first tool deploy](#release-and-deploy). It restarts nothing but
+runs the exact check.
 
 After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool writes only

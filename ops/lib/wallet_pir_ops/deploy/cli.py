@@ -12,7 +12,7 @@ import sys
 import tempfile
 
 from . import descriptors
-from .engine import Artifact, Deployer, DeployError, file_sha256
+from .engine import Deployer, DeployError, file_sha256
 from .remote import LockHeld, RemoteError, SSHExecutor
 from .transaction import default_state_dir
 
@@ -30,9 +30,9 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
       Read-only unless --stage: identity on every host, baseline, drift,
       disk space and, where the release is staged, its self-check.
   deploy SERVICE (...same...) [--allow-unit-drift] [--retire-historical]
-      Holds the production lock; changes only targets that differ. A service
-      with companions in deploy.toml (receiver) needs --archive, and a deploy
-      of it that restarts nothing still stages and runs the exact check.
+      Holds the production lock; changes only targets that differ. For a
+      service with verify_unchanged in deploy.toml (receiver), a deploy that
+      restarts nothing still checks readiness and runs the exact check.
   rollback SERVICE [--transaction ID] [--force]
       Restores the touched targets of the latest (or named) transaction.
   status SERVICE
@@ -111,24 +111,17 @@ def load_release():
 
 
 def target_binary(args, service, state_dir):
-    """`(sha256, local binary or None, companions, source record)` from exactly one of the source flags.
-
-    `companions` maps each descriptor companion to its `Artifact` from the same
-    verified bundle, so a service with companions needs --archive.
-    """
+    """`(sha256, local binary or None, source record)` from exactly one of the source flags."""
     chosen = [flag for flag in ('binary', 'archive', 'sha256') if getattr(args, flag)]
     if len(chosen) != 1:
         raise DeployError('give exactly one of --binary, --archive (with --sha) or --sha256')
-    if service.companions and not args.archive:
-        raise DeployError('%s stages %s from its release bundle; give --archive with --sha'
-                          % (service.name, [companion.name for companion in service.companions]))
     if args.binary:
         path = Path(args.binary).resolve()
-        return file_sha256(path), path, {}, {'binary': str(path)}
+        return file_sha256(path), path, {'binary': str(path)}
     if args.sha256:
         if not SHA256.match(args.sha256):
             raise DeployError('--sha256 must be 64 lowercase hex digits')
-        return args.sha256, None, {}, {'sha256': args.sha256}
+        return args.sha256, None, {'sha256': args.sha256}
     if not args.sha:
         raise DeployError('--archive requires --sha, the full source revision')
     kind = args.kind or (service.artifact_kinds[0] if service.artifact_kinds else None)
@@ -139,16 +132,8 @@ def target_binary(args, service, state_dir):
     destination = Path(tempfile.mkdtemp(prefix='%s-%s-' % (kind, args.sha[:12]), dir=work)) / 'bundle'
     # Verifies the revision, the checksum inventory and every file's digest.
     load_release().extract(Path(args.archive), destination, args.sha, kind)
-    companions = {}
-    for companion in service.companions:
-        local = destination / companion.name
-        if not local.is_file():
-            raise DeployError('the %s bundle has no %s' % (kind, companion.name))
-        companions[companion.name] = Artifact(local, file_sha256(local))
     path = destination / service.binary
-    return file_sha256(path), path, companions, {
-        'archive': str(Path(args.archive).resolve()), 'revision': args.sha, 'kind': kind,
-        'companions': {name: artifact.sha256 for name, artifact in companions.items()}}
+    return file_sha256(path), path, {'archive': str(Path(args.archive).resolve()), 'revision': args.sha, 'kind': kind}
 
 
 def parser():
@@ -639,11 +624,10 @@ def main(argv=None, executor=None, out=print, **options):
         elif args.command == 'rollback':
             deployer.rollback(args.transaction, args.force)
         elif args.command == 'deploy':
-            sha, binary, companions, source = target_binary(args, service, args.state_dir)
-            deployer.deploy(sha, binary, source, args.allow_unit_drift, args.retire_historical, args.skip_exact_check,
-                            companions=companions)
+            sha, binary, source = target_binary(args, service, args.state_dir)
+            deployer.deploy(sha, binary, source, args.allow_unit_drift, args.retire_historical, args.skip_exact_check)
         else:
-            sha, binary, companions, _ = target_binary(args, service, args.state_dir)
+            sha, binary, _ = target_binary(args, service, args.state_dir)
             deployer.check_identities([inventory.lock.get('host')])
             if args.command == 'preflight' and args.stage:
                 with deployer.lock_factory() as held:
@@ -651,15 +635,16 @@ def main(argv=None, executor=None, out=print, **options):
                     try:
                         deployer.schema_fence()
                         plans, _ = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                                   require_baseline=False, companions=companions)
-                        deployer.stage(deployer.release_hosts(plans), sha, binary, companions=companions)
+                                                   require_baseline=False)
+                        deployer.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')),
+                                       sha, binary)
                     finally:
                         deployer.lock = None
             plans, problems = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                              require_baseline=args.command == 'preflight', companions=companions)
+                                              require_baseline=args.command == 'preflight')
             deployer.describe(plans, sha)
             if args.command == 'preflight':
-                for host in deployer.release_hosts(plans):
+                for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
                     path = service.release_binary(sha)
                     if executor.sha256(host, path) != sha:
                         out('%s: release not staged yet; deploy uploads it' % host)
@@ -675,8 +660,8 @@ def main(argv=None, executor=None, out=print, **options):
                 return 1
             restarts = sum(p.action == 'restart' for p in plans)
             out('%d target(s) to restart, %d unchanged' % (restarts, sum(p.action == 'skip' for p in plans)))
-            if not restarts and deployer.verifies():
-                out('deploy verifies without restart: stages missing release files, checks readiness and exact answers')
+            if not restarts and service.verify_unchanged:
+                out('deploy verifies without restart: checks readiness and exact answers')
     except subprocess.TimeoutExpired:
         out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
         return 75 if args.command.startswith('schema-') else 1

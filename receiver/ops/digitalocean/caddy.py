@@ -118,7 +118,7 @@ def latest_backup():
 
 
 def resolve():
-    """Replies the running server's digest once its release holds the binary and companions."""
+    """Replies the running server's digest once its release holds the binary."""
     unit = request["unit"]
     code, output = run(["systemctl", "show", "-p", "ActiveState", "-p", "MainPID", unit], 30)
     properties = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
@@ -130,9 +130,6 @@ def resolve():
     binary = os.path.join(release, request["binary"])
     if running is None or digest(binary) != running:
         reply("refused", reason="%s does not hash to the running executable's %s" % (binary, running))
-    missing = [name for name in request["companions"] if not os.path.isfile(os.path.join(release, name))]
-    if missing:
-        reply("refused", reason="%s lacks %s" % (release, ", ".join(missing)))
     if not os.path.isfile(LIVE):
         reply("refused", reason=LIVE + " is not a file")
     reply("ok", digest=running)
@@ -353,8 +350,7 @@ def apply(inventory_path, candidate_path):
     say('host %s (%s)' % (droplet.host, droplet.destination))
     try:
         reply = droplet.call({'op': 'resolve', 'unit': droplet.unit, 'root': droplet.service.root,
-                              'binary': droplet.service.binary,
-                              'companions': [c.name for c in droplet.service.companions]}, RESOLVE_SECONDS)
+                              'binary': droplet.service.binary}, RESOLVE_SECONDS)
     except Unknown as error:
         reply = {'reason': str(error)}
     if reply.get('status') != 'ok':

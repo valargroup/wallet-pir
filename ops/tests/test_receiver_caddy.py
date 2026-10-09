@@ -26,8 +26,6 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / 'receiver/ops/digitalocean/caddy.py'
 EXAMPLE = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
 LIVE = (ROOT / 'receiver/ops/digitalocean/Caddyfile').read_text()
-BINARY = b'receiver-directory build\n'
-DIGEST = hashlib.sha256(BINARY).hexdigest()
 PID = '4242'
 
 STUB_SSH = textwrap.dedent('''\
@@ -95,7 +93,7 @@ STUBS = {
     ''',
 }
 PROBE = '''\
-    """Logs its argv; fails while the running file has `# stub: probe fails`."""
+    """`receiver-directory`: logs its argv; fails while the running file has `# stub: probe fails`."""
     import json, os, sys
     with open(os.environ['STUB_PROBE_LOG'], 'a') as log:
         log.write(json.dumps(sys.argv[1:]) + '\\n')
@@ -103,6 +101,8 @@ PROBE = '''\
         sys.exit('lookup missed the pinned payment')
     print('{"passed":true}')
 '''
+BINARY = ('#!%s\n%s' % (sys.executable, textwrap.dedent(PROBE))).encode()
+DIGEST = hashlib.sha256(BINARY).hexdigest()
 
 
 def load_helper():
@@ -137,8 +137,7 @@ class ReceiverCaddy(unittest.TestCase):
         self.release = self.root / 'opt/receiver-pir/releases' / DIGEST
         self.release.mkdir(parents=True)
         (self.release / 'receiver-directory').write_bytes(BINARY)
-        script(self.release / 'receiver-probe', PROBE)
-        (self.release / 'probe-fixture.json').write_text('{}')
+        (self.release / 'receiver-directory').chmod(0o755)
         bin_dir = self.dir / 'bin'
         bin_dir.mkdir()
         (bin_dir / 'ssh').write_text(STUB_SSH.format(python=sys.executable))
@@ -357,8 +356,6 @@ class ReceiverCaddy(unittest.TestCase):
         cases = {
             'inactive': lambda: None,
             'digest': lambda: (self.release / 'receiver-directory').write_bytes(b'another build\n'),
-            'probe': lambda: (self.release / 'receiver-probe').unlink(),
-            'fixture': lambda: (self.release / 'probe-fixture.json').unlink(),
         }
         for case, mutate in cases.items():
             with self.subTest(case=case):
