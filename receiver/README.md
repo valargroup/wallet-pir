@@ -111,9 +111,13 @@ the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
 409, a revoked one 410, a query longer than its session's 413 and a shorter or
 otherwise malformed one 400; the length is checked before the query waits for
-evaluation. A
-revocation also aborts a session file still being sent: its status and length are
-already out, so the client sees a truncated body rather than 410. Queries
+evaluation. Every response on these routes, refusals included, is
+`Cache-Control: no-store`, since a revoked session ID serves again if the same
+publication is republished. A
+revocation also stops a session file or query answer still being sent, checked
+before each 64 KiB frame: its status and length are already out, so the client
+sees a truncated body rather than 410. Bytes already handed to the connection
+cannot be recalled, which is why wallets still check their anchor. Queries
 are admitted with the primitives Enhance uses (`pir_control::admission`): two in
 flight per client, then a wait of up to 2 seconds for one of two evaluation
 slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
@@ -208,9 +212,15 @@ transaction is not checked. A matched payout is not checked again until a reorg
 rewinds the index, which first forgets every match.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
---fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.
-Its chain checks use the first `--rpc-url` node that has reached the publication;
-with none, it fails as `oracle_unavailable` rather than skipping them.
+--fixture-sha256 <hex> --rpc-url <node> --no-auth [--witnesses]` is a `pir-monitor`
+service probe.
+Its chain checks run on one `--rpc-url` node at a time among those that have
+reached the publication, highest tip first and in the given order among equal
+tips. A node that cannot complete them, from an RPC failure, an undecodable
+answer, missing tree data or a chain that changes during its reads, hands over to
+the next, but valid evidence against the publication is final. With no node
+completing them, it fails as `oracle_unavailable`, listing each attempt, rather
+than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
 zero-OVK Action with its txid, height, Action index and note position, the probe
@@ -221,15 +231,21 @@ merkle root. A fixture that fails its pin, or whose transaction is not in that
 block, is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
-A run moves about 140 KB from the service, of which the filter file was about 37 KB
-in October 2026, and the fixture's block from the node.
+With `--witnesses`, which a deployment must pass when its indexer runs with
+`--witnesses` since the service answers a lost witness file as one never
+configured, it also downloads the session's witness file. That file must bind to
+the publication and prove the fixture's commitment at its position under the
+Ironwood root the node gives after the terminal block (`z_gettreestate`, read by
+that block's hash). A run moves about 140 KB from the service, of which the filter
+file was about 37 KB in October 2026, plus the witness file with `--witnesses`,
+bounded at 64 MiB, and the fixture's block from the node.
 It fails as `answer_mismatch` when the served anchor is off the node's chain or
 claims a tree size other than the node's after that block (read by its hash), the
-lookup misses or misreports the payment, the filter file is wrong or a completed
-payout is missing from the index. A node that cannot give the tree size, or whose
-chain changes while it is read, is `oracle_unavailable`. The probe fails otherwise
-when the publication trails the node by more than `--max-lag` blocks (default 12)
-or the recent set is older than wallets trust (15 minutes). The lag bound must
+lookup misses or misreports the payment, the witness or filter file is wrong or a
+completed payout is missing from the index. The probe fails otherwise when the
+publication trails the highest tip any node reports, whichever node checked it, by
+more than `--max-lag` blocks (default 12) or the recent set is older than wallets
+trust (15 minutes). The lag bound must
 cover the indexer's `--depth` plus its publication delay (a poll and PIR
 preparation) and a rotation's 60-second grace, so about ten blocks more than the
 depth: 12 for the default depth of 2, and about 60 for a depth of 50. It reads the payout

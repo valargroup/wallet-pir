@@ -16,6 +16,9 @@ pub const SLOTS: usize = ROW_BYTES / RECORD_BYTES;
 pub const MIN_ROWS: u32 = 8192;
 /// Largest supported row count.
 pub const MAX_ROWS: u32 = 65536;
+/// Leaves in a full depth-32 note commitment tree, the largest valid note position
+/// end. The last leaf's position is one less.
+pub const TREE_SIZE: u64 = 1 << 32;
 
 #[cfg(feature = "small-tables")]
 thread_local! {
@@ -127,8 +130,7 @@ impl Manifest {
             || !self.filters.iter().any(|set| set.label == filter::PAID)
             || self.start_height > self.end_height
             || self.start_position > self.end_position
-            // A depth-32 note commitment tree holds at most 2^32 leaves.
-            || self.end_position > 1 << 32
+            || self.end_position > TREE_SIZE
             // Each record has its own note position in the covered span.
             || self.records > self.end_position - self.start_position
             || !capacity(self.rows).is_ok_and(|slots| self.records <= slots)

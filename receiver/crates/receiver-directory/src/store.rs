@@ -1,6 +1,6 @@
 //! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
-    snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE},
+    snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
     Error, Hash, Payment, Receiver, Record,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -48,8 +48,9 @@ pub struct Store {
 
 impl Store {
     /// A database is permanently bound to its network and starting chain boundary.
+    /// Positions stay within [`TREE_SIZE`], so any stored tip can be published.
     pub fn open(path: impl AsRef<Path>, config: Config) -> Result<Self, Error> {
-        if config.start_height == 0 || config.start_position > i64::MAX as u64 {
+        if config.start_height == 0 || config.start_position > TREE_SIZE {
             return Err(Error::Malformed);
         }
         let mut db = Connection::open(path)?;
@@ -149,7 +150,7 @@ impl Store {
             || block.commitments.len() as u64
                 != block.end_position.saturating_sub(block.start_position)
             || block.end_position < block.start_position
-            || block.end_position > i64::MAX as u64
+            || block.end_position > TREE_SIZE
             || block.coinbase_actions > block.end_position - block.start_position
             || block.payments.len() as u64
                 > block.end_position - block.start_position - block.coinbase_actions

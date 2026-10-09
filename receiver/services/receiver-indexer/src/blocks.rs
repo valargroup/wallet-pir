@@ -1,6 +1,7 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
 use crate::zakura::{
-    VerboseBlock, ZakuraClient, ZakuraError, RAW_BLOCK_RESPONSE_BYTES, VERBOSE_BLOCK_RESPONSE_BYTES,
+    Treestate, VerboseBlock, ZakuraClient, ZakuraError, RAW_BLOCK_RESPONSE_BYTES,
+    TREESTATE_RESPONSE_BYTES, VERBOSE_BLOCK_RESPONSE_BYTES,
 };
 use receiver_directory::{
     extract::Action,
@@ -61,6 +62,43 @@ impl ZakuraClient {
             hash,
             position,
         })
+    }
+
+    /// The Ironwood note commitment tree root after the block `hash` (protocol byte
+    /// order) at `height`, from `z_gettreestate` read by that hash. The answer must name
+    /// that block and height, and its root must be a canonical field element. The root
+    /// is in the encoding the witness file and `MerkleHashOrchard::to_bytes` use: unlike
+    /// Sapling's, the node does not reverse it (`Root::bytes_in_display_order`).
+    pub async fn ironwood_root(
+        &self,
+        hash: [u8; 32],
+        height: u32,
+    ) -> Result<[u8; 32], ZakuraError> {
+        let displayed = zakura_chain::block::Hash(hash).to_string();
+        let state: Treestate = self
+            .call(
+                "z_gettreestate",
+                json!([displayed]),
+                TREESTATE_RESPONSE_BYTES,
+            )
+            .await?;
+        let named = state
+            .hash
+            .parse::<zakura_chain::block::Hash>()
+            .map_err(|e| ZakuraError::Block(e.to_string()))?;
+        if named.0 != hash || state.height != u64::from(height) {
+            return Err(ZakuraError::Block("tree state is for another block".into()));
+        }
+        let root = state
+            .ironwood
+            .and_then(|pool| pool.commitments.final_root)
+            .ok_or(ZakuraError::MissingTreeRoot(u64::from(height)))?;
+        let root: [u8; 32] = hex::decode(root)?
+            .try_into()
+            .map_err(|_| ZakuraError::Block("Ironwood root is not 32 bytes".into()))?;
+        zakura_chain::orchard::tree::Root::try_from(root)
+            .map_err(|e| ZakuraError::Block(e.to_string()))?;
+        Ok(root)
     }
 
     /// Fetch a bounded range concurrently, then validate its complete chain before returning it.
@@ -265,8 +303,88 @@ fn action_count(block: &Block) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use axum::{routing::post, Json, Router};
+    use serde_json::Value;
+
     #[test]
     fn ironwood_activates_where_enhance_expects() {
         assert_eq!(super::ironwood_activation(), 3_428_143);
+    }
+
+    /// A node whose every `z_gettreestate` answer is `answer`. Returns a client.
+    async fn treestate_node(answer: Value) -> ZakuraClient {
+        let app = Router::new().route(
+            "/",
+            post(move |Json(_): Json<Value>| {
+                let answer = answer.clone();
+                async move { Json(json!({"result": answer, "error": null})) }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        ZakuraClient::unauthenticated(vec![url]).unwrap()
+    }
+
+    /// The root is the bytes the node gives, unreversed: the pinned node encodes its
+    /// tree's root with `Root::bytes_in_display_order`, which for Ironwood, unlike
+    /// Sapling, is the canonical encoding (see the probe's witness test for the match
+    /// with the witness file). An answer for another block or height, a root that is
+    /// not a canonical field element or no root at all is refused.
+    #[tokio::test]
+    async fn the_ironwood_root_is_read_as_the_node_encodes_it() {
+        let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
+        let refund =
+            zakura_chain::transaction::Transaction::zcash_deserialize(raw.unwrap().as_slice())
+                .unwrap();
+        let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
+        tree.append(refund.ironwood_actions().next().unwrap().cm_x)
+            .unwrap();
+        let node_root = tree.root().bytes_in_display_order();
+        let mut reversed = node_root;
+        reversed.reverse();
+        assert_ne!(reversed, node_root);
+        let (height, hash) = (3_500_000, [3; 32]);
+        let displayed = zakura_chain::block::Hash(hash).to_string();
+        let answer = |hash: &str, height: u32, ironwood: Value| {
+            json!({"hash": hash, "height": height, "sapling": {"commitments": {}},
+                "orchard": {"commitments": {}}, "ironwood": ironwood})
+        };
+        let root = |bytes: [u8; 32]| json!({"commitments": {"finalRoot": hex::encode(bytes)}});
+        let read = |answer: Value| async move {
+            treestate_node(answer)
+                .await
+                .ironwood_root(hash, height)
+                .await
+        };
+        assert_eq!(
+            read(answer(&displayed, height, root(node_root)))
+                .await
+                .unwrap(),
+            node_root
+        );
+        let other = zakura_chain::block::Hash([4; 32]).to_string();
+        for refused in [
+            answer(&other, height, root(node_root)),
+            answer(&displayed, height + 1, root(node_root)),
+            answer(&displayed, height, root([0xff; 32])),
+            answer(
+                &displayed,
+                height,
+                json!({"commitments": {"finalRoot": "00"}}),
+            ),
+        ] {
+            assert!(matches!(read(refused).await, Err(ZakuraError::Block(_))));
+        }
+        for missing in [
+            answer(&displayed, height, json!({"commitments": {}})),
+            json!({"hash": displayed, "height": height}),
+        ] {
+            assert!(matches!(
+                read(missing).await,
+                Err(ZakuraError::MissingTreeRoot(h)) if h == u64::from(height)
+            ));
+        }
     }
 }
