@@ -25,11 +25,10 @@ response sizes. Like the other byte counts, it excludes manifest, HTTP/TLS,
 Enhance, witness and spentness traffic. The manifest's `derived` entry classifies
 it by path.
 
-This record is historical. It measured the `ironwood-receiver-pir-v1-q48` protocol,
-since replaced by `ironwood-receiver-pir-v1-two-mask-m29`, whose request at 8192
-rows is 77,876 bytes rather than 135,220. The `profile` in `results.json` is that
-q48 protocol, not a Cargo profile. The opt-in test below existed at the recorded
-commits but is not part of the current tree.
+This record is historical. It measured the `ironwood-receiver-pir-v1-q48`
+protocol, since replaced by the [current protocol](../../README.md#protocol). The
+`profile` in `results.json` is that q48 protocol, not a Cargo profile. The opt-in
+test below existed at the recorded commits but is not part of the current tree.
 
 This validates private retrieval and public-output authentication. It does not
 validate wallet ownership, received-note nullifier tracking, witness construction,

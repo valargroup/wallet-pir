@@ -31,7 +31,6 @@
     "local validation, not a deployment",
     "cold-cache figures vary with host load"
   ],
-  "historical": true,
   "qualification": "development evidence, not release qualification",
   "not_retained": "everything outside SHA256SUMS, including the source database, publications, served proof and exact commands"
 }

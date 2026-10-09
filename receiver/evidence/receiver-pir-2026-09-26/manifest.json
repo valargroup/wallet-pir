@@ -19,26 +19,13 @@
   "raw": [
     "results.json"
   ],
-  "derived": [
-    {
-      "file": "results.json",
-      "json_pointer": "/lookup_payload_bytes/fifty_single_page_lookups_including_setup",
-      "classification": "derived",
-      "formula": "public_setup + 50 * (request + response) = 14336 + 50 * (135220 + 5172) = 7033936",
-      "assumptions": [
-        "one public setup shared by every lookup",
-        "fifty single-page lookups",
-        "each lookup's request and response at the historical q48 sizes at 8192 rows, as measured by this run's one query"
-      ],
-      "excludes": "manifest, HTTP/TLS, Enhance, witness and spentness traffic, as for every receiver byte count in results.json",
-      "note": "A projection from one query's payload sizes, not traffic observed from fifty lookups."
-    }
-  ],
+  "derived": {
+    "results.json#/lookup_payload_bytes/fifty_single_page_lookups_including_setup": "14336 + 50*(135220+5172), projection from one query"
+  },
   "limits": [
     "no wallet state",
     "one integration query, not a benchmark"
   ],
-  "historical": true,
   "qualification": "development evidence, not release qualification",
   "not_retained": "everything outside SHA256SUMS, including the publication, PIR and Enhance exchanges, the anchor checks' RPC responses and test output"
 }
