@@ -12,7 +12,8 @@ pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
 pub const ROW_BYTES: usize = 4096;
 /// Records per row.
 pub const SLOTS: usize = ROW_BYTES / RECORD_BYTES;
-/// Smallest row count a wallet accepts. Publications start here and double.
+/// Smallest supported row count, which the PIR client, server and indexer enforce.
+/// Publications start here and double.
 pub const MIN_ROWS: u32 = 8192;
 /// Largest supported row count.
 pub const MAX_ROWS: u32 = 65536;
@@ -20,39 +21,10 @@ pub const MAX_ROWS: u32 = 65536;
 /// end. The last leaf's position is one less.
 pub const TREE_SIZE: u64 = 1 << 32;
 
-#[cfg(feature = "small-tables")]
-thread_local! {
-    static SMALL_TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static VALIDATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// For test fixtures only: lets manifests validated on this thread have fewer than
-/// [`MIN_ROWS`] rows, so bucket placement and overflow can be tested on tiny tables.
-#[cfg(feature = "small-tables")]
-pub fn allow_small_tables() {
-    SMALL_TABLES.set(true);
-}
-
-/// For test fixtures only: how many times [`Manifest::validate`] has run on this
-/// thread.
-#[cfg(feature = "small-tables")]
-pub fn manifest_validations() -> u64 {
-    VALIDATIONS.get()
-}
-
-/// The smallest row count [`Manifest::validate`] accepts on this thread.
-fn min_rows() -> u32 {
-    #[cfg(feature = "small-tables")]
-    if SMALL_TABLES.get() {
-        return 1;
-    }
-    MIN_ROWS
-}
-
 /// The record slots in a table of `rows` rows. A row count that is not a power of two
-/// from [`MIN_ROWS`] to [`MAX_ROWS`] is [`Error::Malformed`].
+/// up to [`MAX_ROWS`] is [`Error::Malformed`].
 pub(crate) fn capacity(rows: u32) -> Result<u64, Error> {
-    if !rows.is_power_of_two() || rows < min_rows() || rows > MAX_ROWS {
+    if !rows.is_power_of_two() || rows > MAX_ROWS {
         return Err(Error::Malformed);
     }
     Ok(u64::from(rows) * SLOTS as u64)
@@ -113,11 +85,9 @@ pub struct ProviderSet {
 }
 
 impl Manifest {
-    /// Check the profile, coverage order and geometry bounds, [`MIN_ROWS`] to
-    /// [`MAX_ROWS`] rows.
+    /// Check the profile, coverage order and geometry bounds, at most [`MAX_ROWS`]
+    /// rows.
     pub fn validate(&self) -> Result<(), Error> {
-        #[cfg(feature = "small-tables")]
-        VALIDATIONS.set(VALIDATIONS.get() + 1);
         let labels_ordered = self
             .filters
             .windows(2)

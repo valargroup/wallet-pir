@@ -1,9 +1,7 @@
 mod common;
 use common::{action, manifest, receiver, record, RECEIVER_HEX};
 use receiver_directory::{
-    snapshot::{
-        allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
-    },
+    snapshot::{lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS},
     Error, Receiver, Record, RECORD_BYTES,
 };
 
@@ -53,7 +51,6 @@ fn wire_layout_and_strict_empty_slots() {
 /// binds every field, including each set's optional ones.
 #[test]
 fn manifests_refuse_unknown_fields_and_bind_every_field() {
-    allow_small_tables();
     use receiver_directory::snapshot::Manifest;
     let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
     let json = serde_json::to_value(&s.manifest).unwrap();
@@ -72,7 +69,6 @@ fn manifests_refuse_unknown_fields_and_bind_every_field() {
 
 #[test]
 fn pages_share_one_revision_and_build_order_is_stable() {
-    allow_small_tables();
     let records = [record(0, 2), record(1, 2)];
     let s = Snapshot::build(manifest(8), &records, &[]).unwrap();
     let reversed =
@@ -127,7 +123,6 @@ fn other_receiver() -> Receiver {
 
 #[test]
 fn publications_commit_to_their_filters() {
-    allow_small_tables();
     use receiver_directory::{
         filter::{Filters, PAID},
         snapshot::ProviderSet,
@@ -386,20 +381,8 @@ fn a_provider_view_reads_one_state() {
     assert_eq!(store.read("near-payouts").unwrap(), Some(400));
 }
 
-/// Without the test fixtures' allowance, a table below [`MIN_ROWS`] is refused.
-#[test]
-fn publications_below_the_minimum_rows_are_refused() {
-    let small = manifest(MIN_ROWS / 2);
-    assert!(small.validate().is_err());
-    assert!(small.accept([1; 32], 100, 101, [3; 32]).is_err());
-    assert!(Snapshot::build(small, &[record(0, 1)], &[]).is_err());
-    let s = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)], &[]).unwrap();
-    s.manifest.accept([1; 32], 100, 101, [3; 32]).unwrap();
-}
-
 #[test]
 fn coverage_anchor_and_position_are_required() {
-    allow_small_tables();
     let m = manifest(8);
     m.accept([1; 32], 100, 101, [3; 32]).unwrap();
     for (network, start, height, hash) in [
@@ -439,7 +422,6 @@ fn records_fit_the_covered_positions() {
 /// malformed.
 #[test]
 fn a_total_beyond_the_record_count_is_malformed() {
-    allow_small_tables();
     let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
     let r = receiver();
     let mut b = row(&s, &r, 0).to_vec();
@@ -469,7 +451,6 @@ fn coverage_ends_within_the_tree() {
 
 #[test]
 fn overflow_and_bad_padding_fail_closed() {
-    allow_small_tables();
     let records: Vec<_> = (0..50).map(|p| record(p, 50)).collect();
     let mut m = manifest(4);
     let overflow = (0..100).any(|i| {
@@ -491,7 +472,6 @@ fn overflow_and_bad_padding_fail_closed() {
 /// count stays malformed.
 #[test]
 fn records_beyond_the_slots_are_a_capacity_failure() {
-    allow_small_tables();
     let records = |n: u32| (0..n).map(|p| record(p, n)).collect::<Vec<_>>();
     let full = Snapshot::build(manifest(1), &records(SLOTS as u32), &[]).unwrap();
     assert_eq!(full.manifest.records, SLOTS as u64);
@@ -524,7 +504,6 @@ fn records_beyond_the_slots_are_a_capacity_failure() {
 #[cfg(feature = "store")]
 #[test]
 fn durable_coverage_atomic_failure_and_reorg() {
-    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -648,7 +627,6 @@ fn coinbase_payments_are_refused() {
 #[cfg(feature = "store")]
 #[test]
 fn store_positions_end_within_the_tree() {
-    allow_small_tables();
     use receiver_directory::{
         snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
@@ -721,7 +699,6 @@ fn store_positions_end_within_the_tree() {
 #[cfg(feature = "store")]
 #[test]
 fn crowded_buckets_retry_the_salt_before_growing() {
-    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -783,7 +760,6 @@ fn crowded_buckets_retry_the_salt_before_growing() {
 
 #[test]
 fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
-    allow_small_tables();
     use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
     use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
     use receiver_directory::witness::WitnessSnapshot;
@@ -842,7 +818,6 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
 #[cfg(feature = "store")]
 #[test]
 fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
-    allow_small_tables();
     use receiver_directory::{
         snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
@@ -947,7 +922,6 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
 #[cfg(feature = "store")]
 #[test]
 fn store_proofs_cover_empty_indexed_blocks() {
-    allow_small_tables();
     use incrementalmerkletree::Hashable;
     use orchard::tree::MerkleHashOrchard;
     use receiver_directory::{
@@ -1017,7 +991,6 @@ fn store_proofs_cover_empty_indexed_blocks() {
 #[cfg(feature = "store")]
 #[test]
 fn a_history_beyond_the_slots_fails_before_loading_records() {
-    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -1090,7 +1063,6 @@ fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
 /// another receiver's record sorts between them.
 #[test]
 fn receivers_agree_on_blocks_and_transactions() {
-    allow_small_tables();
     let mut m = manifest(8);
     m.start_height = 98;
     let mut rs = receivers(3);
@@ -1138,7 +1110,6 @@ fn receivers_agree_on_blocks_and_transactions() {
 /// encoding is refused by encoding, decoding, a build and a supplied publication.
 #[test]
 fn records_refuse_noncanonical_fields() {
-    allow_small_tables();
     let a = action();
     let mut real = record(0, 1);
     (
@@ -1176,7 +1147,6 @@ fn records_refuse_noncanonical_fields() {
 /// alone cannot catch it.
 #[test]
 fn supplied_publications_are_validated_record_by_record() {
-    allow_small_tables();
     let (a0, a1) = (record(0, 2), record(1, 2));
     let mut b = record(0, 1);
     b.receiver = other_receiver();
@@ -1323,66 +1293,6 @@ fn rows_are_pinned() {
     assert_eq!(rows, [3472, 2600, 4604, 7755]);
 }
 
-/// Building, validating and looking up a publication each validate its manifest once,
-/// however many records and filter sets it has, and a malformed manifest is still
-/// refused by every public entrypoint.
-#[test]
-fn placement_validates_the_manifest_once_per_call() {
-    allow_small_tables();
-    use receiver_directory::snapshot::{manifest_validations, ProviderSet};
-    let records = spread(&receivers(4), 20);
-    let sets: Vec<_> = (0..8)
-        .flat_map(|i| {
-            ["recent", "seen"].map(|kind| ProviderSet {
-                label: format!("p{i}/{kind}"),
-                window_secs: (kind == "recent").then_some(86_400),
-                since_unix: 1_000,
-                until_unix: 90_000,
-                receivers: receivers(2),
-            })
-        })
-        .collect();
-    /// `f`'s result and how many manifest validations it ran.
-    fn counted<T>(f: impl FnOnce() -> T) -> (T, u64) {
-        let before = manifest_validations();
-        let value = f();
-        (value, manifest_validations() - before)
-    }
-    let (s, count) = counted(|| Snapshot::build(manifest(64), &records, &sets).unwrap());
-    assert_eq!((s.manifest.filters.len(), count), (17, 1));
-    assert_eq!(counted(|| s.validate().unwrap()), ((), 1));
-    for r in &records {
-        let bytes = row(&s, &r.receiver, r.page);
-        let found = counted(|| lookup_row(&s.manifest, &r.receiver, r.page, bytes).unwrap());
-        assert_eq!(found, (Some(r.clone()), 1));
-    }
-
-    let r = receiver();
-    let bytes = row(&s, &r, 0);
-    let mut bad_profile = s.manifest.clone();
-    bad_profile.profile.push('x');
-    let mut bad_rows = s.manifest.clone();
-    bad_rows.rows = 3;
-    let mut unordered = s.manifest.clone();
-    unordered.filters.swap(0, 1);
-    for bad in [bad_profile, bad_rows, unordered] {
-        assert!(matches!(row_for(&bad, &r, 0), Err(Error::Malformed)));
-        assert!(matches!(
-            lookup_row(&bad, &r, 0, bytes),
-            Err(Error::Malformed)
-        ));
-        let supplied = Snapshot {
-            manifest: bad.clone(),
-            ..s.clone()
-        };
-        assert!(matches!(supplied.validate(), Err(Error::Malformed)));
-        // A build replaces the declared sets, so only the others reach it.
-        if bad.filters == s.manifest.filters {
-            assert!(Snapshot::build(bad, &records, &sets).is_err());
-        }
-    }
-}
-
 /// A populated table of [`MAX_ROWS`] rows, about two records per row, validates from
 /// its own bytes once its source records are gone.
 #[test]
@@ -1413,7 +1323,6 @@ fn a_populated_largest_table_validates() {
 /// supplied publication, each of whose edits is rehashed.
 #[test]
 fn pages_continue_in_chain_order() {
-    allow_small_tables();
     use receiver_directory::{snapshot::check_next, Payment};
     let mut m = manifest(8);
     m.start_height = 98;

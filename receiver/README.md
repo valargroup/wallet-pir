@@ -25,9 +25,9 @@ page from zero, and every page repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
-start at 8192 rows, and a manifest with fewer is refused. A crowded bucket retries up to 16 salts derived from the
-terminal hash, the first being the hash itself, and only then doubles the table,
-up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
+start at 8192 rows, the fewest that PIR clients and servers accept. A crowded
+bucket retries up to 16 salts derived from the terminal hash, the first being
+the hash itself, and only then doubles the table, up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
 records. So do more records than the table has slots, caught before placement; a
 supplied manifest claiming more records than its slots is malformed. The store
 counts at most one payment past the slots, in the snapshot's read transaction,
