@@ -9,7 +9,8 @@
   },
   "toolchain": {
     "rust": "1.98.0",
-    "profile": "release-fast"
+    "profile": "release-fast",
+    "provenance": "reported, not independently verified"
   },
   "host": "Apple M3 Ultra (local)",
   "network": "mainnet",
