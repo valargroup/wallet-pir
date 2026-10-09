@@ -19,7 +19,7 @@ use crate::{
 use clap::Parser;
 use receiver_directory::{
     extract::Action,
-    filter::{Filters, MAX_FILTERS_BYTES},
+    filter::{Filters, MAX_FILTERS_BYTES, PAID},
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment, Receiver,
 };
@@ -277,7 +277,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             return Ok(Some(failure));
         }
     }
-    if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
+    if let Some(failure) = check_filters(&http, origin, &id, directory, &receiver).await? {
         return Ok(Some(failure));
     }
     // The node's checks hold for the whole lookup only if the terminal block is still
@@ -437,18 +437,36 @@ async fn check_witnesses(
 }
 
 /// Checks the session's filter file, which wallets test before any lookup: its digest
-/// must be the manifest's and it must decode to exactly the declared sets.
+/// must be the manifest's, it must decode to exactly the declared sets, and its paid
+/// set must hold `receiver`, the fixture's, or wallets would skip that lookup.
 async fn check_filters(
     http: &reqwest::Client,
     origin: &str,
     id: &str,
     directory: &receiver_directory::snapshot::Manifest,
+    receiver: &Receiver,
 ) -> Result<Option<Failure>> {
     let url = format!("{origin}/v1/receiver/filters/{id}");
     let bytes = get(http, &url, MAX_FILTERS_BYTES).await?;
-    let valid = Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
-        && Filters::decode(&bytes).is_ok_and(|filters| directory.check_filters(&filters).is_ok());
-    Ok((!valid).then(|| ("answer_mismatch", json!({"filters_bytes": bytes.len()}))))
+    let filters = Filters::decode(&bytes).ok().filter(|filters| {
+        Hash::from(Sha256::digest(&bytes)) == directory.filters_sha256
+            && directory.check_filters(filters).is_ok()
+    });
+    let Some(filters) = filters else {
+        return Ok(Some((
+            "answer_mismatch",
+            json!({"filters_bytes": bytes.len()}),
+        )));
+    };
+    let paid = filters
+        .get(PAID)
+        .is_some_and(|paid| paid.matches(&directory.salt, &[*receiver])[0]);
+    Ok((!paid).then(|| {
+        (
+            "answer_mismatch",
+            json!({"paid_filter": "omits the fixture"}),
+        )
+    }))
 }
 
 /// The indexer's payout check from health, which must report serving the probed
@@ -967,15 +985,16 @@ mod tests {
         origin
     }
 
-    /// A filter file is accepted only with the manifest's digest.
+    /// A filter file is accepted only with the manifest's digest and with the fixture's
+    /// receiver in its paid set.
     #[tokio::test]
     async fn the_filter_file_must_match_its_manifest() {
-        let snapshot = receiver_directory::snapshot::Snapshot::build(
-            super::common::manifest(receiver_pir::MIN_ROWS),
-            &[],
-            &[],
-        )
-        .unwrap();
+        let build = |records: &[receiver_directory::Record]| {
+            let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+            receiver_directory::snapshot::Snapshot::build(manifest, records, &[]).unwrap()
+        };
+        let snapshot = build(&[super::common::record(0, 1)]);
+        let receiver = super::common::receiver();
         let serve = |bytes: Vec<u8>| async move {
             let app = Router::new().route(
                 "/v1/receiver/filters/x",
@@ -988,13 +1007,21 @@ mod tests {
         };
         let http = reqwest::Client::new();
         let origin = serve(snapshot.filters.clone()).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert!(check.await.unwrap().is_none());
         let mut altered = snapshot.filters.clone();
         *altered.last_mut().unwrap() ^= 1;
         let origin = serve(altered).await;
-        let check = check_filters(&http, &origin, "x", &snapshot.manifest);
+        let check = check_filters(&http, &origin, "x", &snapshot.manifest, &receiver);
         assert_eq!(check.await.unwrap().unwrap().0, "answer_mismatch");
+        // A self-consistent publication whose paid set omits the fixture's receiver.
+        let empty = build(&[]);
+        let origin = serve(empty.filters.clone()).await;
+        let check = check_filters(&http, &origin, "x", &empty.manifest, &receiver);
+        assert_eq!(
+            check.await.unwrap().unwrap().1["paid_filter"],
+            "omits the fixture"
+        );
     }
 
     /// Health's report counts only for the probed publication, even after a rotation,
