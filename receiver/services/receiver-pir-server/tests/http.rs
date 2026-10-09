@@ -250,6 +250,103 @@ async fn a_revocation_aborts_files_in_flight() {
     );
 }
 
+/// Posts `body` to `url` and runs `during` while the test middleware of
+/// [`a_revocation_stops_query_answers_not_yet_sent`] holds the successful response
+/// between the handler's return and its body, then returns the complete answer the
+/// client received, or its failure.
+async fn held_query(
+    url: &str,
+    body: Vec<u8>,
+    held: &(tokio::sync::Barrier, tokio::sync::Barrier),
+    during: impl FnOnce(),
+) -> reqwest::Result<Vec<u8>> {
+    let url = url.to_owned();
+    let answer = tokio::spawn(async move {
+        let response = http().post(url).body(body).send().await?;
+        Ok(response.error_for_status()?.bytes().await?.to_vec())
+    });
+    held.0.wait().await;
+    during();
+    held.1.wait().await;
+    answer.await.unwrap()
+}
+
+/// A revocation after the query handler's own epoch check, but before the answer's
+/// body is sent, still withholds the answer, even when the same publication is
+/// republished meanwhile; an ordinary rotation does not.
+#[tokio::test]
+async fn a_revocation_stops_query_answers_not_yet_sent() {
+    let held = std::sync::Arc::new((tokio::sync::Barrier::new(2), tokio::sync::Barrier::new(2)));
+    let hold = {
+        let held = held.clone();
+        axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| {
+                let held = held.clone();
+                async move {
+                    let query = request.uri().path() == "/v1/receiver/query";
+                    let response = next.run(request).await;
+                    if query && response.status().is_success() {
+                        held.0.wait().await;
+                        held.1.wait().await;
+                    }
+                    response
+                }
+            },
+        )
+    };
+    let snapshot = snapshot(1);
+    let pir = Server::new(snapshot.clone()).unwrap();
+    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
+    let publications = Publications::default();
+    assert!(publications.publish(Publication::new(pir, None).unwrap(), 0));
+    let server = serve_router(
+        receiver_pir_server::router_with_publications(publications.clone()).layer(hold),
+    )
+    .await;
+    let url = format!("{}/v1/receiver/query", server.origin);
+    let republish = || {
+        let publication = Publication::new(Server::new(snapshot.clone()).unwrap(), None);
+        assert!(publications.publish(publication.unwrap(), publications.epoch()));
+    };
+
+    // A rotation keeps the epoch, so the displaced session's answer is delivered.
+    let query = client.prepare(receiver(), 0).unwrap();
+    let answer = held_query(&url, query.body().to_vec(), &held, || {
+        let mut next = snapshot_rows(1, MIN_ROWS);
+        next.manifest.end_height = 102;
+        next.manifest.end_hash = [9; 32];
+        let next = Publication::new(Server::new(next).unwrap(), None).unwrap();
+        assert!(publications.publish(next, 0));
+    })
+    .await;
+    assert_eq!(
+        client.decode(query, &answer.unwrap()).unwrap(),
+        Some(record(0, 1))
+    );
+
+    let query = client.prepare(receiver(), 0).unwrap();
+    let answer = held_query(&url, query.body().to_vec(), &held, || publications.revoke()).await;
+    assert!(answer.is_err());
+
+    // Republishing the same session id does not rescue an answer selected before.
+    republish();
+    let query = client.prepare(receiver(), 0).unwrap();
+    let answer = held_query(&url, query.body().to_vec(), &held, || {
+        publications.revoke();
+        republish();
+    })
+    .await;
+    assert!(answer.is_err());
+
+    // A query selected in the republished session's epoch is answered.
+    let query = client.prepare(receiver(), 0).unwrap();
+    let answer = held_query(&url, query.body().to_vec(), &held, || {}).await;
+    assert_eq!(
+        client.decode(query, &answer.unwrap()).unwrap(),
+        Some(record(0, 1))
+    );
+}
+
 /// Whether `response` forbids caching it.
 fn no_store(response: &reqwest::Response) -> bool {
     response

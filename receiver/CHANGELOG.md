@@ -19,7 +19,8 @@
   latest report at `/v1/receiver/health` and the shared HTTP metrics, and refuses
   a witness file without a path for every served record. A replaced
   publication keeps serving its sessions for 60 seconds, and the next replacement
-  waits for that to end; a revocation aborts session files still being sent.
+  waits for that to end; a revocation stops session files and query answers
+  still being sent at their next frame.
   Queries are admitted with Enhance's shared primitives:
   each client may have two in flight, and a query waits up to 2 seconds for one of
   two evaluation slots after its upload completes; refusals are 429 with
