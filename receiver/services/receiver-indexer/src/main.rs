@@ -778,7 +778,7 @@ mod tests {
         provider
             .record(
                 "near-payouts",
-                NOW - 100,
+                Some(NOW - 100),
                 &[(payout, true, NOW - 50)],
                 &[],
                 NOW - 50,
@@ -798,7 +798,7 @@ mod tests {
         provider
             .record(
                 "near-payouts",
-                NOW - 100,
+                None,
                 &[],
                 &[(payout, [7; 32])],
                 NOW - 50,
@@ -825,7 +825,7 @@ mod tests {
             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let feed = receiver_indexer::near::Feed::Payouts.name();
             provider
-                .record(feed, NOW - 100, &[], &[], NOW - 50, read)
+                .record(feed, Some(NOW - 100), &[], &[], NOW - 50, read)
                 .unwrap();
         })
         .await;
@@ -848,13 +848,20 @@ mod tests {
             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let feed = receiver_indexer::near::Feed::Refunds.name();
             provider
-                .record(feed, NOW - 100, &[], &[], NOW - 50, read)
+                .record(feed, Some(NOW - 100), &[], &[], NOW - 50, read)
                 .unwrap();
         })
         .await;
         paused
             .provider()
-            .record("near-payouts", NOW - 100, &[], &[], NOW - 50, NOW - 20)
+            .record(
+                "near-payouts",
+                Some(NOW - 100),
+                &[],
+                &[],
+                NOW - 50,
+                NOW - 20,
+            )
             .unwrap();
         paused.refresh(NOW).await;
         let first = paused.get("health").await;
