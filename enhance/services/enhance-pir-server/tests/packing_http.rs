@@ -59,6 +59,72 @@ fn record(n: u64) -> Vec<u8> {
     bytes
 }
 
+/// The in-repo client's envelope carrying a 44-bit dithered selection, which
+/// that client never sends, is answered over the whole public path and decodes
+/// to the published records; a body a byte off that length is refused.
+#[cfg(feature = "native-reinspiring")]
+async fn dithered_queries_take_the_public_path(
+    client: &mut EnhancePirClient,
+    http: &reqwest::Client,
+    public: &str,
+    records: u64,
+) {
+    use base64::Engine as _;
+    use enhance_pir::{native as n, protocol::HEADER_BYTES};
+    let manifest = client.manifest().clone();
+    let session = client.session(0).await.unwrap();
+    let served: enhance_pir::protocol::ShardSession = http
+        .get(format!(
+            "{public}/v1/enhance/session/{}",
+            hex::encode(manifest.session_id(0).unwrap())
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let masks = base64::engine::general_purpose::STANDARD
+        .decode(&served.public_params_base64)
+        .unwrap();
+    let rows = served.params.db_rows;
+    for position in [0, 33, records - 1] {
+        let (query, slot) = session.prepare_position(position).unwrap();
+        let (secret, payload) =
+            pir_native::prepare_dithered(&n::packing_setup(), &n::query_masks(0), rows, {
+                (position / 33) as usize
+            })
+            .unwrap();
+        let mut body = query.body()[..HEADER_BYTES].to_vec();
+        body.extend(payload);
+        assert_eq!(body.len() + rows * 5 / 8, query.body().len());
+        let response = http
+            .post(format!("{public}/v1/enhance/query"))
+            .body(body.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let response = response.bytes().await.unwrap();
+        assert_eq!(response[..HEADER_BYTES], body[..HEADER_BYTES]);
+        let row = n::decode(&secret, &masks, &response[HEADER_BYTES..]).unwrap();
+        assert_eq!(
+            &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
+            record(position)
+        );
+        if position == 0 {
+            body.push(0);
+            let refused = http
+                .post(format!("{public}/v1/enhance/query"))
+                .body(body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(refused.status(), axum::http::StatusCode::BAD_REQUEST);
+        }
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
     let root = tempfile::tempdir().unwrap();
@@ -236,6 +302,8 @@ async fn extracted_path_preserves_wallet_answers_and_pool_replication() {
     }
     assert!(counts[..2].iter().all(|c| c.load(Ordering::SeqCst) > 0));
     let http = reqwest::Client::new();
+    #[cfg(feature = "native-reinspiring")]
+    dithered_queries_take_the_public_path(&mut client, &http, &public, records).await;
     let health: serde_json::Value = http
         .get(format!("{packing_control}/internal/health"))
         .send()
