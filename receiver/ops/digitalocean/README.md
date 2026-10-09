@@ -300,8 +300,8 @@ filter file is wrong or a completed NEAR payout is missing from the index
 (correctness, `answer_mismatch`), when the built-in fixture is malformed, recovers
 another receiver, is off the node's chain or outside the publication
 (`oracle_invalid`), and after three failed probes when the publication or the
-recent set goes stale, a recent completed payout has no usable transaction
-(`payouts_uncheckable`) or a request fails (availability).
+recent set goes stale, a recent completed payout has no usable recipient or
+transaction (`payouts_uncheckable`) or a request fails (availability).
 
 `pir-monitor` is not a deploy-tool service, so install `receiver-probe` on the
 monitor host from the bundle, checked against its `SHA256SUMS` on the coordinator
