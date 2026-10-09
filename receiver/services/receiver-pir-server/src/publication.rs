@@ -155,9 +155,13 @@ impl Publications {
         self.0.write().unwrap().report = Some(report);
     }
 
-    /// See [`Self::set_report`].
-    pub(crate) fn report(&self) -> Option<serde_json::Value> {
-        self.0.read().unwrap().report.clone()
+    /// The current session's id, the recovery epoch and the [`Self::set_report`]
+    /// report, read together so health never pairs one state's session with another's
+    /// epoch.
+    pub(crate) fn health(&self) -> (Option<Hash>, u64, Option<serde_json::Value>) {
+        let state = self.0.read().unwrap();
+        let serving = state.current.as_ref().map(|p| p.id);
+        (serving, state.epoch, state.report.clone())
     }
 
     /// When the next revision may activate, if the previous one is still in its grace.

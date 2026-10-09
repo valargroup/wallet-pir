@@ -146,18 +146,14 @@ async fn no_store_errors(mut response: Response) -> Response {
 
 /// The process identity and the revision being served, for deploys and monitoring.
 async fn health(State(s): State<Service>) -> Response {
-    let serving = s
-        .publications
-        .select(None)
-        .ok()
-        .map(|(p, _)| hex::encode(p.id));
+    let (serving, epoch, report) = s.publications.health();
     (
         [(header::CACHE_CONTROL, "no-store")],
         Json(serde_json::json!({
             "identity": pir_control::Identity::process(),
-            "serving": serving,
-            "epoch": s.publications.epoch(),
-            "indexer": s.publications.report(),
+            "serving": serving.map(hex::encode),
+            "epoch": epoch,
+            "indexer": report,
         })),
     )
         .into_response()
