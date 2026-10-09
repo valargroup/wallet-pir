@@ -104,7 +104,7 @@ the session ID.
 | `GET /v1/receiver/rows/:session` | Complete row file |
 | `GET /v1/receiver/witness/:session` | Common witness file |
 | `GET /v1/receiver/filters/:session` | Filter file |
-| `GET /v1/receiver/health` | Process identity, the served session and the indexer's report (operators only) |
+| `GET /v1/receiver/health` | Process identity, the served session, the indexer's report and this process's NEAR reads (operators only) |
 
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
@@ -206,6 +206,12 @@ their receiver in the transaction NEAR reported, the signal that the index misse
 one or NEAR stopped paying with the zero OVK. A payout without a reported
 transaction is not checked. A matched payout is not checked again until a reorg
 rewinds the index, which first forgets every match.
+
+Health's `near.reads` shows what this process itself has read: for `near-payouts`
+and `near-refunds`, when the last read it completed began, in Unix seconds, or
+null until it completes one, so both stay null without a key. Unlike the report's
+`feeds`, it never comes from `provider.sqlite`, so it shows that the running
+process's key works.
 
 `receiver-probe --origin <url> --health-url <private health URL> --fixture <file>
 --fixture-sha256 <hex> --rpc-url <node> --no-auth` is a `pir-monitor` service probe.

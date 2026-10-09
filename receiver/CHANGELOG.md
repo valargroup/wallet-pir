@@ -34,5 +34,6 @@
   partner key. It checks each block against its header's merkle root, fails over
   between nodes, bounds each node response by its method, publishes a few blocks
   below the tip, revokes only on a proven fork, reports completed NEAR payouts
-  missing from the index and logs with `tracing`. Its `receiver-probe` binary is a `pir-monitor` service probe that
+  missing from the index and when the running process last read each NEAR feed,
+  and logs with `tracing`. Its `receiver-probe` binary is a `pir-monitor` service probe that
   runs one live encrypted lookup checked against the session's row file.

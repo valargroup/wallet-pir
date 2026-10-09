@@ -290,6 +290,41 @@ async fn health_serves_the_owners_report() {
     assert_eq!(health["serving"], id.as_str());
     assert_eq!(health["indexer"]["missing_payouts"], 3);
 }
+/// Health adds the owner's process-local fields, read on each request, without letting
+/// them replace its own.
+#[tokio::test]
+async fn health_reports_the_owners_fields_beside_its_own() {
+    let reads = std::sync::Arc::new(AtomicUsize::new(0));
+    let fields: receiver_pir_server::HealthFields = {
+        let reads = reads.clone();
+        std::sync::Arc::new(move || {
+            let value = serde_json::json!({"reads": reads.load(Ordering::SeqCst), "serving": "x"});
+            value.as_object().unwrap().clone()
+        })
+    };
+    let server = serve_router(receiver_pir_server::router_with_health(
+        Publications::default(),
+        fields,
+    ))
+    .await;
+    let health = || async {
+        http()
+            .get(format!("{}/v1/receiver/health", server.origin))
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()
+    };
+    let first = health().await;
+    assert_eq!(
+        (&first["reads"], &first["serving"]),
+        (&0.into(), &serde_json::Value::Null)
+    );
+    reads.store(2, Ordering::SeqCst);
+    assert_eq!(health().await["reads"], 2);
+}
 /// A displaced revision keeps its full grace: the next rotation waits for it, so two
 /// quick rotations cannot strand a session that began on the older one.
 #[test]

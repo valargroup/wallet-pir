@@ -36,12 +36,16 @@ const UPLOAD: Duration = Duration::from_secs(15);
 /// Bytes of a file response sent between checks for a revocation.
 const CHUNK: usize = 64 * 1024;
 
+/// Process-local fields an owner adds to `/v1/receiver/health`, read on each request.
+pub type HealthFields = Arc<dyn Fn() -> serde_json::Map<String, serde_json::Value> + Send + Sync>;
+
 #[derive(Clone)]
 struct Service {
     publications: Publications,
     queue: Arc<Queue>,
     clients: ClientSlots,
     metrics: pir_observability::HttpMetrics,
+    health_fields: HealthFields,
 }
 
 /// The receiver categories `pir_observability` reports.
@@ -64,11 +68,18 @@ const ENDPOINTS: [&str; 7] = [
 /// the shared HTTP observations; both are for operators, and a deployment's edge proxies
 /// only the wallet routes. A revocation aborts the session files still being sent.
 pub fn router_with_publications(publications: Publications) -> Router {
+    router_with_health(publications, Arc::new(serde_json::Map::new))
+}
+
+/// [`router_with_publications`], with health also reporting `fields`. Health's own
+/// fields (`identity`, `serving`, `epoch`, `indexer`) take precedence over theirs.
+pub fn router_with_health(publications: Publications, fields: HealthFields) -> Router {
     router(Service {
         publications,
         queue: Arc::new(Queue::new(EVALUATING, WAITING, WAIT, true)),
         clients: ClientSlots::new(PER_CLIENT),
         metrics: pir_observability::HttpMetrics::default(),
+        health_fields: fields,
     })
 }
 
@@ -141,14 +152,25 @@ fn router(service: Service) -> Router {
 async fn health(State(s): State<Service>) -> Response {
     // The ID and report come from one publication, so they always match.
     let current = s.publications.select(None).ok().map(|(p, _)| p);
+    let mut body = (s.health_fields)();
+    body.extend([
+        (
+            "identity".into(),
+            serde_json::json!(pir_control::Identity::process()),
+        ),
+        (
+            "serving".into(),
+            current.as_ref().map(|p| hex::encode(p.id)).into(),
+        ),
+        ("epoch".into(), s.publications.epoch().into()),
+        (
+            "indexer".into(),
+            current.and_then(|p| p.report.clone()).into(),
+        ),
+    ]);
     (
         [(header::CACHE_CONTROL, "no-store")],
-        Json(serde_json::json!({
-            "identity": pir_control::Identity::process(),
-            "serving": current.as_ref().map(|p| hex::encode(p.id)),
-            "epoch": s.publications.epoch(),
-            "indexer": current.and_then(|p| p.report.clone()),
-        })),
+        Json(serde_json::Value::Object(body)),
     )
         .into_response()
 }
@@ -315,6 +337,7 @@ mod tests {
             queue,
             clients: ClientSlots::new(PER_CLIENT),
             metrics: pir_observability::HttpMetrics::default(),
+            health_fields: Arc::new(serde_json::Map::new),
         });
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/v1/receiver/query", socket.local_addr().unwrap());
