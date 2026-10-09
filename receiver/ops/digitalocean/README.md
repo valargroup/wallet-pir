@@ -120,8 +120,8 @@ Before the first tool deploy, once:
 1. Install the key the Droplet runs with as a versioned key file, `<id>` such as
    the date, from Infisical as [below](#installing-or-rotating-the-near-key), or
    from the Droplet's own `near.env` through the coordinator, which neither prints
-   nor stores it:
-   `ssh <droplet> sed -n 's/^NEAR_INTENTS_EXPLORER=//p' /etc/receiver-pir/near.env | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.sh install <droplet> <id>`.
+   nor stores it (`sed` passes the line with its newline):
+   `ssh <droplet> sed -n 's/^NEAR_INTENTS_EXPLORER=//p' /etc/receiver-pir/near.env | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.py install <droplet> <id>`.
 2. Add the Droplet to the coordinator's real inventory as in
    [`deploy-inventory.example.json`](../../../enhance/ops/deploy/deploy-inventory.example.json):
    a host with its SSH address, `services.receiver.template_vars.NEAR_KEY` set to
@@ -159,16 +159,18 @@ A key change installs a new file and deploys a unit that names it, on the
 coordinator:
 
 1. Install the key under a new id, such as the date, with
-   [`near-key.sh`](near-key.sh), under the lock and with only the key on stdin,
-   here from Infisical:
+   [`near-key.py`](near-key.py), under the lock and with only the key on stdin as
+   one line ending in a newline, here from Infisical:
 
    ```sh
    infisical run --projectId=<project> --env=prod --path=/valargroup --silent -- sh -c \
-     'printf %s "$NEAR_INTENTS_EXPLORER" | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.sh install <droplet> 2026-10-09'
+     'printf "%s\n" "$NEAR_INTENTS_EXPLORER" | flock -n /run/lock/wallet-pir-production.lock receiver/ops/digitalocean/near-key.py install <droplet> 2026-10-09'
    ```
 
    It writes `near-2026-10-09.env`, owned by root with mode 0600, and changes
-   nothing else; the service reads it only once a deploy names it. An id already
+   nothing else; the service reads it only once a deploy names it. Input without
+   its final newline is refused as possibly truncated, and stdin must end within
+   30 seconds, so a stalled producer cannot hold the lock. An id already
    installed with the same key is a no-op, and one with another key is refused.
    Key files are never edited or deleted: they are a few bytes each, and rolling
    back through several transactions needs the older ones. The legacy `near.env`
@@ -223,7 +225,7 @@ deploy inventory, so no deploy can reach it.
    `--near-since` sets where a new provider database's first read starts; keep it
    at the feed's original start.
 4. Install the NEAR Intents explorer partner key, which the recent and seen filters
-   need, as key file `<id>` with `near-key.sh`, as in
+   need, as key file `<id>` with `near-key.py`, as in
    [Installing or rotating the NEAR key](#installing-or-rotating-the-near-key).
    Without it the service does not start.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
@@ -234,7 +236,7 @@ After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool cannot change
 the `Caddyfile`: it writes only unit files and has no command that runs other work
 under its lock. Change it under the same lock, held with `flock -n` on the
-coordinator, as `ops/scripts/wallet-pir-terraform.sh` and `near-key.sh` above hold
+coordinator, as `ops/scripts/wallet-pir-terraform.sh` and `near-key.py` above hold
 it. `flock -n` fails at once while a deploy, rollback or Terraform run holds the
 lock; then wait and run it again, never without the lock. The change touches
 neither the unit nor the binary, so the baseline stays valid. Copy the new file to
