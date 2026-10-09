@@ -207,7 +207,16 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         }
     }
     let origin = args.origin.trim_end_matches('/');
-    let manifest = fetch_manifest(&http, origin).await?;
+    let init = format!("{origin}/v1/receiver/init");
+    let bytes = get(&http, &init, MAX_MANIFEST_BYTES).await?;
+    // A successful response that is not a valid manifest is wrong data, not an outage.
+    let manifest = serde_json::from_slice::<Manifest>(&bytes)
+        .map_err(|e| e.to_string())
+        .and_then(|m| m.validate().map(|()| m).map_err(|e| e.to_string()));
+    let manifest = match manifest {
+        Ok(manifest) => manifest,
+        Err(error) => return Ok(Some(("answer_mismatch", json!({"manifest": error})))),
+    };
     let directory = &manifest.directory;
     // Another network's publication is wrong whatever the nodes or the fixture say.
     let genesis = Network::Mainnet.genesis_hash();
@@ -621,19 +630,6 @@ async fn oracle(
     Err(unavailable(
         json!({"end_height": height, "node_tip": top, "attempts": attempts}),
     ))
-}
-
-/// The validated session manifest the origin serves now.
-async fn fetch_manifest(http: &reqwest::Client, origin: &str) -> Result<Manifest> {
-    let bytes = get(
-        http,
-        &format!("{origin}/v1/receiver/init"),
-        MAX_MANIFEST_BYTES,
-    )
-    .await?;
-    let manifest: Manifest = serde_json::from_slice(&bytes)?;
-    manifest.validate()?;
-    Ok(manifest)
 }
 
 /// GETs `url`, reading at most `limit` bytes of a successful response's body.
@@ -1193,6 +1189,50 @@ mod tests {
             protocol: receiver_pir::PROTOCOL.into(),
             directory,
             public_digest: [0; 32],
+        }
+    }
+
+    /// A successful `init` response with malformed JSON or a manifest that fails
+    /// validation (protocol or geometry) is an answer mismatch; a failed one is not.
+    #[tokio::test]
+    async fn an_invalid_served_manifest_is_an_answer_mismatch() {
+        use axum::http::StatusCode;
+        let mut protocol = manifest(0);
+        protocol.protocol = "other".into();
+        let mut geometry = manifest(0);
+        geometry.directory.rows = receiver_pir::MIN_ROWS + 1;
+        let json = |m: &Manifest| serde_json::to_string(m).unwrap();
+        for (status, body, mismatch) in [
+            (StatusCode::OK, "{".to_owned(), true),
+            (StatusCode::OK, json(&protocol), true),
+            (StatusCode::OK, json(&geometry), true),
+            (StatusCode::INTERNAL_SERVER_ERROR, json(&manifest(0)), false),
+        ] {
+            let app = Router::new().route(
+                "/v1/receiver/init",
+                routing::get(move || async move { (status, body) }),
+            );
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            let args = Args::parse_from([
+                "probe",
+                "--origin",
+                &origin,
+                "--health-url",
+                &format!("{origin}/health"),
+                "--rpc-url",
+                &origin,
+                "--no-auth",
+            ]);
+            match probe(args, &mut None).await {
+                Ok(Some((category, detail))) => {
+                    assert!(mismatch, "{status}");
+                    assert_eq!(category, "answer_mismatch");
+                    assert!(detail["manifest"].is_string());
+                }
+                other => assert!(!mismatch && other.is_err(), "{status}"),
+            }
         }
     }
 

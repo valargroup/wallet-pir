@@ -265,7 +265,8 @@ struct Active {
 
 /// Brings the index to the requested end on the canonical chain of the freshest of
 /// `nodes` on `genesis`'s network, which serves the whole pass, rewinding past a
-/// reorg, then publishes a directory with fresh NEAR filters and report. While
+/// reorg, then publishes a directory with fresh NEAR filters and report if that node
+/// is still on `genesis`'s network. While
 /// serving, `active` stays while it is served at an unmoved tip and was built from the
 /// same provider sets and report, which time alone can change; otherwise a new one is
 /// built once the previous revision's grace ends.
@@ -448,6 +449,8 @@ async fn refresh(
     {
         return Err("chain changed while building proofs; rerun to reconcile".into());
     }
+    // Ranking read the genesis before the pass, and an endpoint can be repointed.
+    rpc.check_network(genesis).await?;
     let revision = hex::encode(snapshot.manifest.revision()?);
     let summary = serde_json::json!({"revision":revision,"start_height":snapshot.manifest.start_height,
         "end_height":snapshot.manifest.end_height,"records":snapshot.manifest.records,
@@ -576,12 +579,14 @@ mod tests {
 
     /// A node's tip, block hashes by height and the time in every block header. Each
     /// block hash request runs `hook` if there is one, signals `asked`, then waits for a
-    /// permit from `gate` if there is one.
+    /// permit from `gate` if there is one. A genesis read then applies `repoint`, if
+    /// set: the next genesis, or none, so later reads fail.
     #[derive(Clone, Default)]
     struct Node {
         tip: Arc<Mutex<u64>>,
         hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
         time: Arc<Mutex<i64>>,
+        repoint: Arc<Mutex<Option<Option<[u8; 32]>>>>,
         hook: Option<Arc<dyn Fn() + Send + Sync>>,
         gate: Option<Arc<Semaphore>>,
         asked: Arc<Notify>,
@@ -601,7 +606,18 @@ mod tests {
                         gate.acquire().await.unwrap().forget();
                     }
                     let height = r["params"][0].as_u64().unwrap();
-                    json!(Hash(node.hashes.lock().unwrap()[&height]).to_string())
+                    let mut hashes = node.hashes.lock().unwrap();
+                    let Some(hash) = hashes.get(&height).copied() else {
+                        return Json(
+                            json!({"result": null, "error": {"code": -8, "message": "no block"}}),
+                        );
+                    };
+                    match node.repoint.lock().unwrap().take_if(|_| height == 0) {
+                        Some(Some(genesis)) => hashes.insert(0, genesis),
+                        Some(None) => hashes.remove(&0),
+                        None => None,
+                    };
+                    json!(Hash(hash).to_string())
                 }
                 "getblockheader" => json!({"time": *node.time.lock().unwrap()}),
                 method => panic!("unexpected {method}"),
@@ -665,8 +681,8 @@ mod tests {
         dir: tempfile::TempDir,
         args: Args,
         rpc: ZakuraClient,
-        /// The time in the node's block headers, [`NOW`] at first.
-        time: Arc<Mutex<i64>>,
+        /// The node `rpc` serves, its block headers dated [`NOW`] at first.
+        node: Node,
         publications: Publications,
         origin: String,
         active: Option<Active>,
@@ -693,8 +709,7 @@ mod tests {
                 (height, [3; 32]),
             ]);
             *node.time.lock().unwrap() = NOW;
-            let time = node.time.clone();
-            let rpc = serve_node(node).await;
+            let rpc = serve_node(node.clone()).await;
             let mut store = Store::open(
                 dir.path().join("directory.sqlite"),
                 Config {
@@ -737,7 +752,7 @@ mod tests {
                 dir,
                 args,
                 rpc,
-                time,
+                node,
                 publications,
                 origin,
                 active: None,
@@ -784,7 +799,7 @@ mod tests {
                 "near-payouts",
                 Some(NOW - 100),
                 &[(payout, true, NOW - 50)],
-                &[(payout, [7; 32])],
+                &[(payout, [7; 32], NOW - 10)],
                 NOW - 50,
                 NOW - 10,
             )
@@ -797,7 +812,7 @@ mod tests {
         assert!(paused.publications.ready_at().is_none());
         // A terminal block past the payout's grace: the same session is republished in
         // place with the new report.
-        *paused.time.lock().unwrap() = NOW - 10 + 3600;
+        *paused.node.time.lock().unwrap() = NOW - 10 + 3600;
         paused.refresh().await.unwrap();
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
@@ -836,6 +851,30 @@ mod tests {
         assert_eq!(paused.publications.anchors(), anchors);
     }
 
+    /// A node that leaves mainnet, or stops giving its genesis, after ranking publishes
+    /// nothing, one-shot or serving, though its chain still matches the index; one
+    /// still on mainnet publishes both ways.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_node_repointed_during_a_pass_publishes_nothing() {
+        let mainnet = Network::Mainnet.genesis_hash();
+        for repoint in [Some(Some([9; 32])), Some(None), None] {
+            let mut paused = Paused::new(|_| {}).await;
+            *paused.node.repoint.lock().unwrap() = repoint;
+            let rpc = std::slice::from_ref(&paused.rpc);
+            let (active, cache) = (&mut paused.active, &mut paused.cache);
+            let one_shot = refresh(&paused.args, rpc, mainnet, None, active, cache).await;
+            assert_eq!(one_shot.is_ok(), repoint.is_none());
+            let written = paused.dir.path().join("publications").exists();
+            assert_eq!(written, repoint.is_none());
+            *paused.node.repoint.lock().unwrap() = repoint;
+            paused.node.hashes.lock().unwrap().insert(0, mainnet.0);
+            assert_eq!(paused.refresh().await.is_ok(), repoint.is_none());
+            let serving = !paused.publications.anchors().is_empty();
+            assert_eq!(serving, repoint.is_none());
+            assert_eq!(paused.active.is_some(), repoint.is_none());
+        }
+    }
+
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_future_block_time_reports_no_payout_missing_early() {
@@ -847,12 +886,12 @@ mod tests {
                 "near-payouts",
                 Some(now - 100),
                 &[],
-                &[(payout, [7; 32])],
+                &[(payout, [7; 32], now - 10)],
                 now - 50,
                 now - 10,
             )
             .unwrap();
-        *paused.time.lock().unwrap() = now + 2 * 3600;
+        *paused.node.time.lock().unwrap() = now + 2 * 3600;
         paused.refresh().await.unwrap();
         assert_eq!(paused.get("health").await["indexer"]["payouts_missing"], 0);
     }
