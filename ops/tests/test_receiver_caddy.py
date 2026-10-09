@@ -240,12 +240,59 @@ class ReceiverCaddy(unittest.TestCase):
         self.assertNotIn('--await-feed-reads', argv)
         self.assertNotIn(check[position + 1], argv)
 
-    def test_an_identical_candidate_only_verifies(self):
-        run = self.apply(LIVE)
+    def restore_attempted(self):
+        return any('"op": "restore"' in json.loads(line)[-1] for line in self.lines('ssh'))
+
+    def on_disk(self, candidate):
+        """The live file holds `candidate` while Caddy runs the original, as an interrupted apply leaves it."""
+        self.live.write_text(candidate)
+
+    def test_a_candidate_already_on_disk_is_validated_reloaded_and_verified(self):
+        candidate = LIVE + '# reviewed change\n'
+        self.on_disk(candidate)
+        run = self.apply(candidate)
         self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertIn('nothing changed', run.stdout)
-        self.assert_untouched()
-        self.assertEqual(self.lines('caddy'), [])
+        self.assertIn('already held the candidate; reloaded and verified on receiver-01; no backup made', run.stdout)
+        self.assertEqual(self.live.read_text(), candidate)
+        self.assertEqual(self.running.read_text(), candidate)
+        self.assertEqual(self.reloads(), 1)
+        (validated,) = self.lines('caddy')
+        self.assertIn('/etc/caddy/.Caddyfile.candidate-', validated)
+        self.assertEqual(len(self.lines('probe')), 2)  # baseline and after the reload
+        self.assertEqual(sorted(p.name for p in self.caddy_dir.iterdir()), ['Caddyfile'])
+
+    def test_a_failing_candidate_already_on_disk_is_not_reported_or_restored(self):
+        cases = {
+            'invalid': ('# stub: invalid\n', 4, 'not replaced (it already holds these bytes)'),
+            'reload': ('# stub: reload fails\n', 7, 'reload failed'),
+            'probe': ('# stub: probe fails\n', 7, 'lookup missed the pinned payment'),
+            'route': ('# stub: expose /metrics\n', 7, '/metrics answered 200, not 404'),
+        }
+        for case, (marker, status, reason) in cases.items():
+            for kept in ([], ['20260101T000000Z', '20260102T000000Z']):
+                with self.subTest(case=case, kept=kept):
+                    self.setUp()
+                    for stamp in kept:
+                        (self.caddy_dir / ('Caddyfile.before-' + stamp)).write_text(LIVE)
+                    candidate = LIVE + marker
+                    self.on_disk(candidate)
+                    run = self.apply(candidate)
+                    self.assertEqual(run.returncode, status, run.stderr)
+                    self.assertIn(reason, run.stderr)
+                    self.assertNotIn('verified on', run.stdout)
+                    self.assertFalse(self.restore_attempted())
+                    self.assertEqual(self.live.read_text(), candidate)
+                    self.assertEqual([p.name for p in self.backups()], ['Caddyfile.before-' + s for s in kept])
+                    self.assertEqual(self.reloads(), 0 if case == 'invalid' else 1)
+                    self.assertEqual(self.running.read_text(), candidate if case in ('probe', 'route') else LIVE)
+                    if case == 'invalid':
+                        continue
+                    self.assertIn('nothing restored, no backup made', run.stderr)
+                    if kept:
+                        self.assertIn("latest backup is /etc/caddy/Caddyfile.before-%s; " % kept[-1], run.stderr)
+                        self.assertIn("ssh receiver-01 'cp -p /etc/caddy/Caddyfile.before-%s " % kept[-1], run.stderr)
+                    else:
+                        self.assertIn('no backup exists to restore', run.stderr)
 
     def test_an_invalid_candidate_replaces_nothing(self):
         run = self.apply(LIVE + '# stub: invalid\n')

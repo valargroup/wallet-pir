@@ -14,14 +14,18 @@ without `--await-feed-reads` since nothing restarts, run on the Droplet, plus
 `/v1/receiver/health` and `/metrics` answering exactly 404 at the public origin,
 checked from the coordinator as an outside client. The live configuration must
 pass the same verification before anything changes. The predecessor is kept as
-/etc/caddy/Caddyfile.before-<UTC time>, also after a restore.
+/etc/caddy/Caddyfile.before-<UTC time>, also after a restore. A live file that
+already holds the candidate, as an apply interrupted before its reload leaves
+it, is validated, reloaded and verified without a new backup or a restore.
 
-Exit status: 0 applied and verified (or already live), 2 usage, 3 refused
-before any change, 4 candidate invalid (nothing replaced), 5 candidate rejected
-and the predecessor restored and verified, 6 restoration failed, 75 outcome
-unknown. SSH's deadline stops only the local client: after a timeout or a lost
-connection the remote step may still replace the file or reload Caddy, so 75
-means check the Droplet before anything else.
+Exit status: 0 applied and verified (or already on disk, then reloaded and
+verified), 2 usage, 3 refused before any change, 4 candidate invalid (nothing
+replaced), 5 candidate rejected and the predecessor restored and verified, 6
+restoration failed, 7 the candidate already on disk failed its reload or
+verification (nothing restored), 75 outcome unknown. SSH's deadline stops only
+the local client: after a timeout or a lost connection the remote step may
+still replace the file or reload Caddy, so 75 means check the Droplet before
+anything else.
 """
 import json
 import os
@@ -53,7 +57,7 @@ APPLY_SECONDS = 180
 RESTORE_SECONDS = 180
 CURL_SECONDS = 15
 KEEPALIVE = ['-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=3']
-APPLIED, USAGE, REFUSED, INVALID, RESTORED, RESTORE_FAILED, UNKNOWN = 0, 2, 3, 4, 5, 6, 75
+APPLIED, USAGE, REFUSED, INVALID, RESTORED, RESTORE_FAILED, RECONCILE_FAILED, UNKNOWN = 0, 2, 3, 4, 5, 6, 7, 75
 
 # Runs on the Droplet as root with one JSON request as its argument (the
 # candidate on stdin for `apply`) and prints one JSON reply. Temporary names are
@@ -100,10 +104,17 @@ def sibling(kind):
     return os.path.join(os.path.dirname(LIVE), ".Caddyfile.%s-%s" % (kind, secrets.token_hex(8)))
 
 
-def reload(status):
-    """Reloads Caddy and replies `status`, or `reload_failed`."""
+def reload(status, failed="reload_failed", **fields):
+    """Reloads Caddy and replies `status`, or `failed`, with `fields`."""
     code, output = run(["systemctl", "reload", "caddy"], 90)
-    reply("reload_failed" if code else status, output=output)
+    reply(failed if code else status, output=output, **fields)
+
+
+def latest_backup():
+    """The name of the newest kept backup beside the live file (UTC names sort by time), or None."""
+    directory, name = os.path.split(LIVE)
+    backups = sorted(entry for entry in os.listdir(directory) if entry.startswith(name + ".before-"))
+    return backups[-1] if backups else None
 
 
 def resolve():
@@ -128,19 +139,25 @@ def resolve():
 
 
 def apply():
-    """Validates the candidate on stdin, keeps the live file as the backup, installs the candidate and reloads."""
+    """Validates the candidate on stdin, keeps the live file as the backup, installs the candidate and reloads.
+
+    A candidate the live file already holds (say after a lost reply between
+    rename and reload) is validated and reloaded but not backed up again.
+    """
     candidate = sys.stdin.buffer.read()
     with open(LIVE, "rb") as handle:
         live = handle.read()
-    if candidate == live:
-        reply("unchanged")
+    same = candidate == live
     temp = sibling("candidate")
     try:
         with os.fdopen(os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644), "wb") as handle:
             handle.write(candidate)
         code, output = run(["caddy", "validate", "--adapter", "caddyfile", "--config", temp], 60)
         if code:
-            reply("invalid", output=output)
+            reply("invalid", output=output, same=same)
+        if same:
+            os.unlink(temp)
+            reload("reconciled", "reconcile_failed", latest_backup=latest_backup())
         try:
             descriptor = os.open(request["backup"], os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
         except FileExistsError:
@@ -303,6 +320,25 @@ def restore(droplet, backup, probe):
     return RESTORED
 
 
+def reconcile(droplet, reply, probe):
+    """Verifies the reload of a live file that already held the candidate; returns the exit status.
+
+    Nothing is restored on failure: no backup was made, and the latest one may
+    not be what Caddy ran before.
+    """
+    failures = (['reload failed: %s' % reply.get('output')] if reply['status'] == 'reconcile_failed'
+                else verify(droplet, probe))
+    if not failures:
+        say('%s already held the candidate; reloaded and verified on %s; no backup made' % (LIVE, droplet.host))
+        return APPLIED
+    latest = reply.get('latest_backup') and os.path.join(os.path.dirname(LIVE), reply['latest_backup'])
+    manual = ('the latest backup is %s; if it is the configuration to return to, restore it by hand under the '
+              'lock: %s' % (latest, droplet.restore_command(latest)) if latest else 'no backup exists to restore')
+    say('%s already held the candidate, and reloading or verifying it failed: %s; nothing restored, no backup made; %s'
+        % (LIVE, '; '.join(failures), manual), sys.stderr)
+    return RECONCILE_FAILED
+
+
 def apply(inventory_path, candidate_path):
     """Applies one candidate Caddyfile; returns the exit status."""
     try:
@@ -336,7 +372,7 @@ def apply(inventory_path, candidate_path):
             % '; '.join(failures), sys.stderr)
         return REFUSED
     backup = BACKUP % time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
-    say('baseline verified; backup %s' % backup)
+    say('baseline verified; a replaced file is kept as %s' % backup)
     try:
         reply = droplet.call({'op': 'apply', 'backup': backup}, APPLY_SECONDS, stdin=candidate)
     except Unknown as error:
@@ -345,11 +381,11 @@ def apply(inventory_path, candidate_path):
             % (droplet.host, error, LIVE, backup, droplet.restore_command(backup)), sys.stderr)
         return UNKNOWN
     status = reply.get('status')
-    if status == 'unchanged':
-        say('%s already matches the candidate and passes verification; nothing changed, no backup made' % LIVE)
-        return APPLIED
+    if status in ('reconciled', 'reconcile_failed'):
+        return reconcile(droplet, reply, probe)
     if status == 'invalid':
-        say('candidate invalid; %s not replaced, Caddy not reloaded:\n%s' % (LIVE, reply.get('output')), sys.stderr)
+        say('candidate invalid; %s not replaced%s, Caddy not reloaded:\n%s'
+            % (LIVE, ' (it already holds these bytes)' if reply.get('same') else '', reply.get('output')), sys.stderr)
         return INVALID
     if status != 'applied' and status != 'reload_failed':
         say('refused before any change: %s' % reply.get('reason'), sys.stderr)
