@@ -1062,9 +1062,9 @@ fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
     s.data[offset..offset + RECORD_BYTES].copy_from_slice(&bytes);
 }
 
-/// Records of any receivers agree on each height's block hash and each transaction's
-/// txid, in a build and in a supplied publication, even when another receiver's
-/// record sorts between them.
+/// Records of any receivers agree on each height's block hash, each transaction's
+/// txid and each txid's location, in a build and in a supplied publication, even when
+/// another receiver's record sorts between them.
 #[test]
 fn receivers_agree_on_blocks_and_transactions() {
     allow_small_tables();
@@ -1085,9 +1085,17 @@ fn receivers_agree_on_blocks_and_transactions() {
     let records = [first, at(1, 101, [3; 32], [2; 32], 0), last.clone()];
     let valid = Snapshot::build(m.clone(), &records, &[]).unwrap();
     valid.validate().unwrap();
+    // The shared transaction moved to another block, or to another index in its own.
+    let moved = |height, block_hash| {
+        let mut r = at(2, height, block_hash, [1; 32], 1);
+        r.payment.tx_index += 1;
+        r
+    };
     for conflict in [
         at(2, 100, [11; 32], [1; 32], 1),
         at(2, 100, [10; 32], [9; 32], 1),
+        moved(101, [3; 32]),
+        moved(100, [10; 32]),
     ] {
         let mut edited = records.clone();
         edited[2] = conflict.clone();
