@@ -3,7 +3,10 @@
   "observed": "2026-10-08T23:18:07Z",
   "source": {
     "deployed_release": "c7f6d296",
-    "note": "the receiver deployment commit before its review fixes, from the release directory name in host.txt"
+    "release_commit": "c7f6d2966a2d58a1403f0993c7384a639b7c56c4",
+    "rust_toolchain": "1.97.1",
+    "cargo_lock_blob": "9f5cdb7ff9202469c439ed5e6daf843899a90c5b",
+    "note": "deployed_release is the release directory prefix in host.txt and resolves uniquely here to release_commit, the receiver deployment commit before its review fixes. Its rust-toolchain.toml and Cargo.lock are source configuration: nothing attests that host.txt's binary was built from it."
   },
   "network": "mainnet",
   "droplet": {
@@ -13,6 +16,7 @@
     "size_slug": "s-4vcpu-8gb-amd"
   },
   "origin": "https://receiver-pir.valargroup.dev",
+  "publication": "public-init.json holds the served directory manifest: genesis, coverage from height 3428143 to the 3511128 anchor, geometry and filter sets",
   "raw": [
     "captured_at.txt",
     "cloud-firewalls.json",
@@ -26,5 +30,13 @@
   "limits": [
     "a point-in-time inventory, not a qualification run",
     "capture commands not retained"
+  ],
+  "performance": "not applicable: a point-in-time inventory measures no performance",
+  "not_retained": [
+    "the deployed binary's compiler, resolved dependencies, Cargo profile, build command and build host",
+    "an attestation tying host.txt's binary SHA-256 to release_commit",
+    "the Droplet's CPU model, RAM, storage and running OS and kernel; droplet.json gives only its size slug and creation image",
+    "the capture client's environment: its host, tool versions and network location",
+    "the upstream Zcash node's version and configuration, and network conditions during the capture"
   ]
 }
