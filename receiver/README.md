@@ -152,8 +152,9 @@ directory.
 
 Without `--serve`, one run writes `<revision>.rows`, `<revision>.filters`,
 `<revision>.json` and, with `--witnesses`, `<revision>.witness` under
-`publications/` and prints a summary. Witnesses need commitments from position
-zero, so the index must start at Ironwood activation. With `--serve`, the process
+`publications/` and prints a summary, writing nothing if the manifest would exceed
+16 KiB. Witnesses need commitments from position zero, so the index must start at
+Ironwood activation. With `--serve`, the process
 polls every `--poll-seconds` (default 10), prepares each new canonical tip in
 memory, writing no publication files, and serves on `--bind` (default
 `127.0.0.1:18380`), a loopback, private IPv4 or unique-local IPv6 address behind a

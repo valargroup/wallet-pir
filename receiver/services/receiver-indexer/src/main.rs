@@ -424,8 +424,13 @@ fn log_stage(stage: &str, started: std::time::Instant) {
 }
 
 /// Durably write a revision's row and filter files and any witness file, then its
-/// manifest.
+/// manifest. A manifest over [`receiver_pir::MAX_MANIFEST_BYTES`], which clients read
+/// no more of, writes nothing.
 fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>>) -> Result<()> {
+    let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
+    if manifest.len() > receiver_pir::MAX_MANIFEST_BYTES {
+        return Err("publication manifest exceeds its size bound; nothing written".into());
+    }
     std::fs::create_dir_all(root)?;
     let revision = hex::encode(snapshot.manifest.revision()?);
     write_revision_file(root, &format!("{revision}.rows"), &snapshot.data)?;
@@ -437,7 +442,6 @@ fn write_publication(root: &Path, snapshot: &Snapshot, witnesses: Option<Vec<u8>
         temp.as_file().sync_all()?;
         temp.persist(root.join(format!("{revision}.witness")))?;
     }
-    let manifest = serde_json::to_vec_pretty(&snapshot.manifest)?;
     write_revision_file(root, &format!("{revision}.json"), &manifest)?;
     std::fs::File::open(root)?.sync_all()?;
     Ok(())
@@ -563,5 +567,25 @@ mod tests {
         node.hashes.lock().unwrap().insert(101, [3; 32]);
         check_serving(&publications, &rpc).await.unwrap();
         assert!(publications.anchors().is_empty());
+    }
+
+    /// A one-shot run writes nothing for a manifest over the size clients read.
+    #[test]
+    fn an_oversized_manifest_is_not_written() {
+        let provider: Vec<_> = (0..300)
+            .map(|i| receiver_directory::snapshot::ProviderSet {
+                label: format!("p{i:03}/seen"),
+                window_secs: None,
+                since_unix: 1,
+                until_unix: 2,
+                receivers: Vec::new(),
+            })
+            .collect();
+        let manifest = super::common::manifest(receiver_pir::MIN_ROWS);
+        let snapshot = Snapshot::build(manifest, &[], &provider).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("publications");
+        assert!(write_publication(&root, &snapshot, None).is_err());
+        assert!(!root.exists());
     }
 }
