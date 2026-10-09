@@ -343,20 +343,49 @@ impl Transport for Http {
     }
 }
 
-/// Send `request` and return its successful body, failing if it exceeds `limit` bytes.
+/// Send `request` and return its successful body, failing as soon as it exceeds `limit`
+/// bytes.
 async fn read(request: reqwest::RequestBuilder, limit: usize) -> Result<Vec<u8>, Error> {
     let failed = |e: reqwest::Error| Error::Transport(e.to_string());
-    let response = request.send().await.map_err(failed)?;
+    let mut response = request.send().await.map_err(failed)?;
     match response.status() {
         reqwest::StatusCode::GONE => return Err(Error::Revision),
         status if !status.is_success() => return Err(Error::Transport(status.to_string())),
         _ => {}
     }
-    let body = response.bytes().await.map_err(failed)?;
-    if body.len() > limit {
-        return Err(Error::Malformed);
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(failed)? {
+        if body.len() + chunk.len() > limit {
+            return Err(Error::Malformed);
+        }
+        body.extend_from_slice(&chunk);
     }
-    Ok(body.to_vec())
+    Ok(body)
+}
+
+/// The transport refuses a chunked body once it crosses the limit, without waiting for
+/// the server to end it.
+#[tokio::test]
+async fn the_transport_stops_reading_at_its_limit() {
+    use tokio::io::AsyncWriteExt;
+    let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", socket.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = socket.accept().await.unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n\
+                  10\r\n0123456789abcdef\r\n10\r\n0123456789abcdef\r\n",
+            )
+            .await
+            .unwrap();
+        std::future::pending::<()>().await;
+    });
+    let transport = Http(http());
+    let read = Transport::get(&transport, &url, 20);
+    let result = tokio::time::timeout(Duration::from_secs(5), read).await;
+    assert!(matches!(result, Ok(Err(Error::Malformed))));
+    server.abort();
 }
 
 /// A transport that counts requests and body bytes.
