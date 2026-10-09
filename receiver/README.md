@@ -45,9 +45,9 @@ refused.
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
-in chain order as `snapshot::check_next` requires, unique outputs and positions,
-and, across receivers, one block hash per height, one txid per transaction
-index at a height and one location per txid. No chain trust is implied. A
+in chain order as `snapshot::check_next` requires, and, across receivers,
+distinct note positions in chain order, one block hash per height, one txid per
+transaction index at a height and one location per txid. No chain trust is implied. A
 record stored outside its bucket would otherwise make lookups of that receiver
 find nothing.
 
