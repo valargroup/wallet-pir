@@ -31,7 +31,7 @@ resource "digitalocean_project_resources" "receiver_pir" {
 }
 
 # Public TLS for the wallet routes; the service port only from the PIR monitor,
-# which reads health and metrics over the private network. SSH also admits the
+# whose probe reads health over the private network. SSH also admits the
 # coordinator's public /32: it is in another region's private network, and the
 # locked deploys and changes run from it.
 resource "digitalocean_firewall" "receiver_pir" {

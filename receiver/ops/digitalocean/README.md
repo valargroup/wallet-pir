@@ -7,8 +7,9 @@ on the Droplet's private address, `10.70.0.11:18380`, and nothing listens on its
 public interface. Caddy terminates public TLS for `receiver-pir.valargroup.dev` and
 proxies only the wallet routes (`init`, `public`, `query`, `rows`, `witness` and
 `filters` under `/v1/receiver/`). `/v1/receiver/health` and `/metrics` stay off
-the edge, as Transparent keeps its operator routes: the PIR monitor reads health
-(through its probe) and `/metrics` over the private network.
+the edge, as Transparent keeps its operator routes: the PIR monitor's probe reads
+health over the private network. `/metrics` is private and nothing collects it
+yet; collection belongs in pir-apm when something consumes it.
 [`ops/tests/test_receiver_ops_config.py`](../../../ops/tests/test_receiver_ops_config.py)
 pins this edge, the unit's private listener and hardening, and cloud-init's account,
 directories and firewall rule. The public-chain index lives in `/srv/receiver-pir/index` and
@@ -369,19 +370,6 @@ the filter file is wrong or a completed NEAR payout is missing from the index
 (correctness), when the
 fixture fails its pin (oracle), and after three failed probes when the publication
 or the recent set goes stale or a request fails (availability).
-
-From this commit, the same drop-in sets `PIR_MONITOR_METRICS_TARGETS` to scrape
-`http://10.70.0.11:18380/metrics` once a minute (body capped at 256 KiB, 5-second
-deadline); it takes effect once the monitor runs a build from this commit with the
-reinstalled drop-in. `/monitor-status` reports each target under `metrics`: collection health
-(`stale` after 180 seconds without a successful scrape, and the last failure
-`category`), per-endpoint request, status-class, cancellation and incomplete-response
-increases with p50/p99 latency bucket bounds, and the per-minute samples, with
-`reset` marking a restart. All of these cover only samples whose whole interval
-lies in the last hour; `window_seconds` is the span they cover, shorter after a
-start or an outage, since a sample spanning the hour's start is dropped, not
-split. Status classes are as counted: `4xx` includes 429 overload but is not
-overload. It adds no alert rules.
 
 `pir-monitor` is not a deploy-tool service, so install `receiver-probe` and its
 fixture on the monitor host from the bundle. On the coordinator, `release.py

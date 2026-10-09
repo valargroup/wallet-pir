@@ -2578,7 +2578,6 @@ dependencies = [
  "enhance-pir",
  "hex",
  "pir-apm",
- "pir-observability",
  "reqwest",
  "rusqlite",
  "serde",
