@@ -419,6 +419,7 @@ async fn refresh(
     }
     let witnesses = if args.witnesses {
         let started = std::time::Instant::now();
+        // Blocks only the main future, not a worker: the HTTP server and guard are spawned tasks.
         let proof = match store.witnesses(
             &snapshot.manifest,
             witness_cache,
