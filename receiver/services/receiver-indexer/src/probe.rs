@@ -1,29 +1,30 @@
-//! A `pir-monitor` service probe for the receiver directory, also run as a deploy's
-//! exact check. With `--await-feed-reads` it first waits for the running process to
-//! read both NEAR feeds (`feeds_not_read` otherwise). It then checks the served
-//! publication against independent nodes, one at a time and freshest first (see
-//! [`oracle`]), looks up a pinned historical payment over live encrypted PIR, as
-//! Transparent's canary checks one query against a pinned row, checks the witness file
-//! (with `--witnesses`) and the filter file against the manifest, then checks the NEAR
-//! feed's freshness and the indexer's payout check, which health reports on the private
-//! network. It prints one JSON line: `passed`, on failure a `category` and `detail`,
-//! and the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
-//! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
-//! correctness incident; `oracle_invalid` a fixture that fails its pin, including an
-//! Action whose recovered receiver differs from the fixture's pinned one; anything else,
-//! such as `oracle_unavailable` when no node that reached the publication can complete
-//! the chain checks, is an availability failure. Every response body is bounded before
-//! it is buffered.
+//! A `pir-monitor` service probe for the receiver directory, run as `receiver-directory
+//! probe` or `receiver-probe`, and a deploy's exact check. With `--await-feed-reads` it
+//! first waits for the running process to read both NEAR feeds (`feeds_not_read`
+//! otherwise). It then checks the served publication against independent nodes, one at
+//! a time and freshest first, looks up a pinned historical payment over live encrypted
+//! PIR, as Transparent's canary checks one query against a pinned row, checks the
+//! witness file (with `--witnesses`) and the filter file against the manifest, then
+//! checks the NEAR feed's freshness and the indexer's payout check, which health
+//! reports on the private network. It prints one JSON line: `passed`, on failure a
+//! `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"` with
+//! `queries` and `correct`. `answer_mismatch` marks served data that is wrong, which
+//! the monitor treats as a correctness incident; `oracle_invalid` a fixture that fails
+//! its pin, including an Action whose recovered receiver differs from the fixture's
+//! pinned one; anything else, such as `oracle_unavailable` when no node that reached
+//! the publication can complete the chain checks, is an availability failure. Every
+//! response body is bounded before it is buffered.
+use crate::{
+    near::Feed,
+    read_limited,
+    zakura::{ZakuraClient, ZakuraError},
+};
 use clap::Parser;
 use receiver_directory::{
     extract::Action,
     filter::{Filters, MAX_FILTERS_BYTES},
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
     Hash, Payment, Receiver,
-};
-use receiver_indexer::{
-    near::Feed,
-    zakura::{ZakuraClient, ZakuraError},
 };
 use receiver_pir::{
     public_bytes, response_bytes, transport::MAX_PIR_PAGES, AcceptedCoverage, Client, Manifest,
@@ -34,6 +35,9 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{path::PathBuf, time::Duration};
 
+/// The production fixture: a mainnet refund to a zero-OVK receiver (see `Fixture`).
+const MAINNET_FIXTURE: &[u8] = include_bytes!("../fixtures/mainnet-probe.json");
+
 /// The recent set's largest age that wallets still trust (`zakura-pir-receiver`).
 const MAX_RECENT_AGE_SECS: i64 = 15 * 60;
 /// Bound on the health report, a few hundred bytes.
@@ -43,8 +47,9 @@ const FEED_READS_POLL: Duration = Duration::from_secs(2);
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
+/// The probe's command line.
 #[derive(Parser)]
-struct Args {
+pub struct Args {
     /// The receiver directory's public origin, which serves the wallet routes.
     #[arg(long)]
     origin: String,
@@ -52,16 +57,12 @@ struct Args {
     /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
     #[arg(long)]
     health_url: String,
-    /// The pinned payment: a public zero-OVK Action with its transaction, height, note
-    /// position and independently decoded receiver (see [`Fixture`]).
+    /// A fixture file to look up instead of the embedded mainnet one, for tests.
     #[arg(long)]
-    fixture: PathBuf,
-    /// The fixture file's SHA-256, hex.
-    #[arg(long)]
-    fixture_sha256: String,
+    fixture: Option<PathBuf>,
     /// An independent node's RPC endpoint. Repeat it for fallbacks: the nodes that
-    /// reached the publication check it one at a time, highest tip first and in this
-    /// order among equal tips, until one completes the checks.
+    /// reached the publication check it one at a time, ranked as
+    /// [`ZakuraClient::ranked`] does, until one completes the checks.
     #[arg(long, required = true)]
     rpc_url: Vec<String>,
     #[arg(long, required_unless_present = "no_auth", conflicts_with = "no_auth")]
@@ -101,6 +102,10 @@ struct Fixture {
     /// Displayed (reversed) hex, as RPC shows it.
     txid: String,
     height: u32,
+    /// The hash of the block at `height`, displayed hex.
+    block_hash: String,
+    /// The transaction's index in that block.
+    tx_index: u32,
     action_index: u32,
     position: u64,
     /// The Orchard receiver the Action pays, hex, decoded independently of zero-OVK
@@ -127,10 +132,10 @@ fn bytes<const N: usize>(hex: &str) -> Option<[u8; N]> {
     hex::decode(hex).ok()?.try_into().ok()
 }
 
-#[tokio::main]
-async fn main() {
+/// Runs the probe, prints its JSON line and returns whether every check passed.
+pub async fn run(args: Args) -> bool {
     let mut lookup = None;
-    let (passed, category, detail) = match probe(Args::parse(), &mut lookup).await {
+    let (passed, category, detail) = match probe(args, &mut lookup).await {
         Ok(None) => (true, None, Value::Null),
         Ok(Some((category, detail))) => (false, Some(category), detail),
         Err(error) => (false, Some("request_failed"), error.to_string().into()),
@@ -142,16 +147,16 @@ async fn main() {
         output["correct"] = (if correct { queries } else { 0 }).into();
     }
     println!("{output}");
-    std::process::exit(if passed { 0 } else { 1 });
+    passed
 }
 
 /// The failed check, or `None` when every check passes. `lookup` records the encrypted
 /// queries made and whether they found the fixture's payment.
 async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Failure>> {
-    let raw = std::fs::read(&args.fixture)?;
-    if hex::encode(Sha256::digest(&raw)) != args.fixture_sha256.to_ascii_lowercase() {
-        return Ok(Some(("oracle_invalid", json!({"fixture": "sha256"}))));
-    }
+    let raw = match &args.fixture {
+        Some(path) => std::fs::read(path)?,
+        None => MAINNET_FIXTURE.to_vec(),
+    };
     let Ok(fixture) = serde_json::from_slice::<Fixture>(&raw) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
@@ -171,7 +176,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         .parse::<zakura_chain::transaction::Hash>()
         .ok()
         .map(|t| t.0);
-    let (Some(action), Some(txid)) = (action, txid) else {
+    let block_hash = parse_hash(&fixture.block_hash).ok();
+    let (Some(action), Some(txid), Some(block_hash)) = (action, txid, block_hash) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
     let Some(receiver) = bytes(&fixture.receiver).and_then(|b| Receiver::from_bytes(b).ok()) else {
@@ -207,14 +213,13 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             json!({"fixture": "outside coverage"}),
         )));
     }
-    let oracle = oracle(
-        &args.rpc_url,
-        args.cookie.as_deref(),
-        directory,
-        fixture.height,
-        args.witnesses,
-    );
-    let (verified, tip) = match oracle.await? {
+    let nodes = args
+        .rpc_url
+        .iter()
+        .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let pinned = (fixture.height, block_hash);
+    let (rpc, root, tip) = match oracle(&nodes, directory, pinned, args.witnesses).await {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
     };
@@ -231,9 +236,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         public_bytes(rows)?,
     )
     .await?;
+    // Wallets require history from Ironwood activation, independently of what the
+    // manifest claims.
     let accepted = AcceptedCoverage {
         genesis: directory.genesis,
-        required_start: directory.start_height,
+        required_start: crate::blocks::ironwood_activation(),
         height: directory.end_height,
         hash: directory.end_hash,
     };
@@ -246,7 +253,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             .body(query.body().to_vec())
             .send()
             .await?;
-        let response = read_limited(response, response_bytes(rows)?).await?;
+        let response = read_limited(response.error_for_status()?, response_bytes(rows)?).await?;
         queries += 1;
         let record = match client.decode(query, &response) {
             Ok(Some(record)) => record,
@@ -269,25 +276,16 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let expected = |p: &Payment| {
         p.position == fixture.position
             && p.height == fixture.height
+            && p.block_hash == block_hash
             && p.txid == txid
+            && p.tx_index == fixture.tx_index
             && p.action_index == fixture.action_index
             && p.action_nullifier == action.nullifier
             && p.cmx == action.cmx
             && p.ephemeral_key == action.ephemeral_key
             && p.ciphertext_prefix[..] == action.enc_ciphertext[..52]
     };
-    let correct = match &found {
-        Some(payment) if expected(payment) && verified.fixture_hash == payment.block_hash => {
-            match check_tx_index(&verified.fixture_block, &txid, payment) {
-                Ok(correct) => correct,
-                Err(failure) => {
-                    *lookup = Some((queries, false));
-                    return Ok(Some(failure));
-                }
-            }
-        }
-        _ => false,
-    };
+    let correct = found.as_ref().is_some_and(expected);
     *lookup = Some((queries, correct));
     if !correct {
         return Ok(Some((
@@ -295,7 +293,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
             json!({"lookup": found.map(|p| (p.height, p.position)), "queries": queries}),
         )));
     }
-    if let (Some(root), Some(payment)) = (verified.root, &found) {
+    if let (Some(root), Some(payment)) = (root, &found) {
         let check = check_witnesses(&http, origin, &id, directory, payment, root);
         if let Some(failure) = check.await? {
             return Ok(Some(failure));
@@ -303,6 +301,11 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     }
     if let Some(failure) = check_filters(&http, origin, &id, directory).await? {
         return Ok(Some(failure));
+    }
+    // The node's checks hold for the whole lookup only if the terminal block is still
+    // its own.
+    if parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)? != directory.end_hash {
+        return Err("chain changed during the probe".into());
     }
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
@@ -408,21 +411,11 @@ fn check_lag(
     })
 }
 
-/// What one node gave for checking the served data against.
-struct Verified {
-    /// The node's block hash at the fixture's height.
-    fixture_hash: Hash,
-    /// That block, read by its hash and checked against its merkle root.
-    fixture_block: zakura_chain::block::Block,
-    /// The Ironwood root after the publication's terminal block, when witness files
-    /// are checked.
-    root: Option<Hash>,
-}
-
 /// The outcome of [`verify`] on one node.
 enum Verdict {
-    /// Every check passed.
-    Verified(Verified),
+    /// Every check passed, with the Ironwood root after the publication's terminal
+    /// block when witness files are checked.
+    Verified(Option<Hash>),
     /// Valid evidence against the publication or the fixture. It is final.
     Failed(Failure),
     /// The node could not complete the checks, so the next one tries.
@@ -430,21 +423,23 @@ enum Verdict {
 }
 
 /// Checks the publication against one node: the anchor ([`check_anchor`]), then the
-/// fixture's canonical block at `fixture_height` and, with `witnesses`, the Ironwood
-/// root after the terminal block, read by its hash. Its reads come from one chain: the
-/// terminal block must still be the node's after the last of them.
+/// fixture's `pinned` height and block hash, which must be the node's (a fixture off
+/// the chain is invalid), and, with `witnesses`, the Ironwood root after the terminal
+/// block, read by its hash. Reads by hash or of deep history need no recheck; the
+/// probe rechecks the terminal block once its lookup ends.
 async fn verify(
     rpc: &ZakuraClient,
     directory: &receiver_directory::snapshot::Manifest,
-    fixture_height: u32,
+    pinned: (u32, Hash),
     witnesses: bool,
 ) -> Verdict {
     let checks = async {
         if let Some(failure) = check_anchor(rpc, directory).await? {
             return Ok(Err(failure));
         }
-        let fixture_hash = parse_hash(&rpc.block_hash(u64::from(fixture_height)).await?)?;
-        let fixture_block = rpc.receiver_block(fixture_hash).await?;
+        if parse_hash(&rpc.block_hash(u64::from(pinned.0)).await?)? != pinned.1 {
+            return Ok(Err(("oracle_invalid", json!({"fixture": "block hash"}))));
+        }
         let root = if witnesses {
             Some(
                 rpc.ironwood_root(directory.end_hash, directory.end_height)
@@ -453,37 +448,13 @@ async fn verify(
         } else {
             None
         };
-        let end = parse_hash(&rpc.block_hash(u64::from(directory.end_height)).await?)?;
-        if end != directory.end_hash {
-            return Err(ZakuraError::Block("chain changed during the checks".into()));
-        }
-        Ok(Ok(Verified {
-            fixture_hash,
-            fixture_block,
-            root,
-        }))
+        Ok(Ok(root))
     };
     match checks.await {
-        Ok(Ok(verified)) => Verdict::Verified(verified),
+        Ok(Ok(root)) => Verdict::Verified(root),
         Ok(Err(failure)) => Verdict::Failed(failure),
         Err(error) => Verdict::Unavailable(error),
     }
-}
-
-/// Whether `payment`, the fixture's as served, has the transaction index of the
-/// fixture's transaction `txid` in `block`, the oracle's canonical block at the
-/// fixture's height. A fixture whose transaction is not in that block is invalid.
-fn check_tx_index(
-    block: &zakura_chain::block::Block,
-    txid: &Hash,
-    payment: &Payment,
-) -> std::result::Result<bool, Failure> {
-    let index = block
-        .transactions
-        .iter()
-        .position(|tx| tx.hash().0 == *txid)
-        .ok_or(("oracle_invalid", json!({"fixture": "not in its block"})))?;
-    Ok(u32::try_from(index).is_ok_and(|index| index == payment.tx_index))
 }
 
 /// Checks the session's common witness file, which wallets prove their payments with:
@@ -569,54 +540,37 @@ async fn indexer_report(
 }
 
 /// Checks the publication with [`verify`] on the nodes that have reached it, one at a
-/// time, highest tip first and in `urls` order among equal tips. The first node to
-/// complete the checks decides, and the first valid evidence against the publication
-/// is final rather than retried on a friendlier node; only a node that could not
-/// complete them hands over to the next. Returns the result with the highest tip any
-/// node reported, from which lag is measured whichever node verified. With no node
-/// completing the checks it is `oracle_unavailable`, with each node's tip or failure
-/// and each attempt's error.
+/// time in [`ZakuraClient::ranked`] order. The first node to complete the checks
+/// decides, and the first valid evidence against the publication is final rather than
+/// retried on a friendlier node; only a node that could not complete them hands over
+/// to the next. Returns the node that verified and its result, with the highest tip
+/// any node reported, from which lag is measured whichever node verified. With no node
+/// completing the checks it is `oracle_unavailable`, with each attempt's tip and error.
 async fn oracle(
-    urls: &[String],
-    cookie: Option<&std::path::Path>,
+    nodes: &[ZakuraClient],
     directory: &receiver_directory::snapshot::Manifest,
-    fixture_height: u32,
+    pinned: (u32, Hash),
     witnesses: bool,
-) -> Result<std::result::Result<(Verified, u64), Failure>> {
+) -> std::result::Result<(ZakuraClient, Option<Hash>, u64), Failure> {
     let height = u64::from(directory.end_height);
-    let (mut tips, mut reached, mut top) = (Vec::<Value>::new(), Vec::new(), 0);
-    for (node, url) in urls.iter().enumerate() {
-        let rpc = match cookie {
-            Some(path) => ZakuraClient::from_cookie_file(vec![url.clone()], path)?,
-            None => ZakuraClient::unauthenticated(vec![url.clone()])?,
-        };
-        match rpc.tip_height().await {
-            Ok(tip) => {
-                tips.push(tip.into());
-                top = top.max(tip);
-                if tip >= height {
-                    reached.push((node, rpc, tip));
-                }
-            }
-            Err(error) => tips.push(error.to_string().into()),
-        }
-    }
-    // A stable sort keeps the configured order among equal tips.
-    reached.sort_by_key(|(_, _, tip)| std::cmp::Reverse(*tip));
+    let unavailable = |detail: Value| ("oracle_unavailable", detail);
+    let ranked = ZakuraClient::ranked(nodes)
+        .await
+        .map_err(|error| unavailable(json!({"end_height": height, "error": error.to_string()})))?;
+    let top = ranked[0].0;
     let mut attempts = Vec::new();
-    for (node, rpc, _) in &reached {
-        match verify(rpc, directory, fixture_height, witnesses).await {
-            Verdict::Verified(verified) => return Ok(Ok((verified, top))),
-            Verdict::Failed(failure) => return Ok(Err(failure)),
+    for (tip, rpc) in ranked.iter().filter(|(tip, _)| *tip >= height) {
+        match verify(rpc, directory, pinned, witnesses).await {
+            Verdict::Verified(root) => return Ok((rpc.clone(), root, top)),
+            Verdict::Failed(failure) => return Err(failure),
             Verdict::Unavailable(error) => {
-                attempts.push(json!({"node": node, "error": error.to_string()}))
+                attempts.push(json!({"node_tip": tip, "error": error.to_string()}))
             }
         }
     }
-    Ok(Err((
-        "oracle_unavailable",
-        json!({"end_height": height, "nodes": tips, "attempts": attempts}),
-    )))
+    Err(unavailable(
+        json!({"end_height": height, "node_tip": top, "attempts": attempts}),
+    ))
 }
 
 /// The validated session manifest the origin serves now.
@@ -632,28 +586,10 @@ async fn fetch_manifest(http: &reqwest::Client, origin: &str) -> Result<Manifest
     Ok(manifest)
 }
 
-/// GETs `url`, reading at most `limit` bytes of its body.
+/// GETs `url`, reading at most `limit` bytes of a successful response's body.
 async fn get(http: &reqwest::Client, url: &str, limit: usize) -> Result<Vec<u8>> {
-    read_limited(http.get(url).send().await?, limit).await
-}
-
-/// A successful response's body, refused as soon as it exceeds `limit` bytes.
-async fn read_limited(response: reqwest::Response, limit: usize) -> Result<Vec<u8>> {
-    let mut response = response.error_for_status()?;
-    if response
-        .content_length()
-        .is_some_and(|length| length > limit as u64)
-    {
-        return Err("response exceeds its bound".into());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await? {
-        if body.len() + chunk.len() > limit {
-            return Err("response exceeds its bound".into());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
+    let response = http.get(url).send().await?.error_for_status()?;
+    Ok(read_limited(response, limit).await?)
 }
 
 #[cfg(test)]
@@ -694,14 +630,14 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::new(url, None).unwrap()
     }
 
     /// [`super::common::manifest`] ending at Ironwood activation, where a node reports
     /// tree sizes.
     fn anchored() -> receiver_directory::snapshot::Manifest {
         let mut directory = super::common::manifest(receiver_pir::MIN_ROWS);
-        directory.end_height = receiver_indexer::blocks::ironwood_activation();
+        directory.end_height = crate::blocks::ironwood_activation();
         directory
     }
 
@@ -733,80 +669,19 @@ mod tests {
         }
     }
 
-    /// `--max-lag` defaults to 12 and bounds the publication's lag inclusively.
-    #[test]
-    fn the_lag_bound_is_configurable() {
-        let args = |extra: &[&str]| {
-            let required = [
-                "receiver-probe",
-                "--origin",
-                "https://receiver",
-                "--health-url",
-                "http://10.0.0.1/health",
-                "--fixture",
-                "fixture.json",
-                "--fixture-sha256",
-                "00",
-                "--rpc-url",
-                "http://node",
-                "--no-auth",
-            ];
-            Args::try_parse_from(required.iter().chain(extra)).unwrap()
-        };
-        assert_eq!(args(&[]).max_lag, 12);
-        // A depth of 50 needs about ten more blocks for the poll, preparation and grace.
-        let max_lag = args(&["--max-lag", "60"]).max_lag;
-        assert_eq!(max_lag, 60);
-        let directory = anchored();
-        let height = u64::from(directory.end_height);
-        for (lag, stale) in [(60, false), (61, true)] {
-            assert_eq!(
-                check_lag(height + lag, &directory, max_lag).map(|f| f.0),
-                stale.then_some("stale_publication")
-            );
-        }
-    }
-
-    /// A block holding a transaction before the fixture's refund, with a valid merkle
-    /// root, and the refund's ID.
-    fn fixture_block() -> (zakura_chain::block::Block, Hash) {
-        use zakura_chain::{
-            block::Block,
-            serialization::{ZcashDeserialize, ZcashSerialize},
-            transaction::Transaction,
-        };
-        let raw = hex::decode(include_str!("../tests/fixtures/receiver-refund.hex").trim());
-        let refund = Transaction::zcash_deserialize(raw.unwrap().as_slice()).unwrap();
-        let mut first = refund.clone();
-        if let Transaction::V6 { expiry_height, .. } = &mut first {
-            expiry_height.0 += 1;
-        }
-        // A header and empty solution, then the two transactions.
-        let mut bytes = vec![0u8; 140];
-        bytes[..4].copy_from_slice(&4u32.to_le_bytes());
-        bytes.extend_from_slice(&[0xfd, 0x40, 0x05]);
-        bytes.extend_from_slice(&[0; 1344]);
-        bytes.push(2);
-        first.zcash_serialize(&mut bytes).unwrap();
-        refund.zcash_serialize(&mut bytes).unwrap();
-        let mut block = Block::zcash_deserialize(bytes.as_slice()).unwrap();
-        let root = block.transactions.iter().collect();
-        std::sync::Arc::make_mut(&mut block.header).merkle_root = root;
-        (block, refund.hash().0)
-    }
-
     /// A node for [`oracle`] over [`anchored`]: its tip and the hash it gives at the
     /// anchor's height, `[anchor; 32]`, with the tree size after it. Genesis is
     /// `[1; 32]`, as [`super::common::manifest`] declares, and the block below the
-    /// anchor is [`fixture_block`]. `fails` names the reads it refuses: every
-    /// `getblockhash` but genesis, or the raw `getblock`. With `moved`, the anchor's
-    /// height holds `[9; 32]` after the boundary's two reads, as when the chain changes
+    /// anchor, the fixture's, is `[fixture; 32]`. With `fails` set to `"getblockhash"`
+    /// it refuses every `getblockhash` but genesis. With `moved`, the anchor's
+    /// height holds `[9; 32]` after the boundary's first read, as when the chain changes
     /// during the checks. Its `z_gettreestate` gives `root`, or no root for `None`, and
     /// names another block when `fails` is `"treestate block"`.
     #[derive(Clone, Copy)]
     struct Node {
         tip: u64,
         anchor: u8,
+        fixture: u8,
         size: Option<u64>,
         fails: &'static str,
         moved: bool,
@@ -818,6 +693,7 @@ mod tests {
         Node {
             tip,
             anchor: 3,
+            fixture: 5,
             size: Some(300),
             fails: "",
             moved: false,
@@ -827,26 +703,17 @@ mod tests {
 
     /// Serves `node`. Returns its URL.
     async fn serve_node(node: Node) -> String {
-        use zakura_chain::serialization::ZcashSerialize;
         let end = u64::from(anchored().end_height);
-        let (block, _) = fixture_block();
-        let fixture = block.hash().to_string();
-        let raw = hex::encode(block.zcash_serialize_to_vec().unwrap());
         let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let app = Router::new().route(
             "/",
             routing::post(move |Json(request): Json<Value>| {
-                let (fixture, raw, reads) = (fixture.clone(), raw.clone(), reads.clone());
+                let reads = reads.clone();
                 async move {
                     let display = |byte| zakura_chain::block::Hash([byte; 32]).to_string();
                     let (method, params) =
                         (request["method"].as_str().unwrap(), &request["params"]);
-                    let refused = match method {
-                        "getblockhash" => node.fails == method && params[0] != 0,
-                        "getblock" => node.fails == "raw getblock" && params[1] == 0,
-                        _ => false,
-                    };
-                    if refused {
+                    if node.fails == method && params[0] != 0 {
                         let error = json!({"code": -1, "message": "refused"});
                         return Json(json!({"result": null, "error": error}));
                     }
@@ -855,18 +722,19 @@ mod tests {
                         ("getblockhash", Some(0)) => json!(display(1)),
                         ("getblockhash", Some(height)) if height == end => {
                             let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            json!(display(if node.moved && read >= 2 {
+                            json!(display(if node.moved && read >= 1 {
                                 9
                             } else {
                                 node.anchor
                             }))
                         }
-                        ("getblockhash", Some(height)) if height == end - 1 => json!(fixture),
-                        ("getblock", _) if params[1] == 1 => match node.size {
+                        ("getblockhash", Some(height)) if height == end - 1 => {
+                            json!(display(node.fixture))
+                        }
+                        ("getblock", _) => match node.size {
                             Some(size) => json!({"trees": {"ironwood": {"size": size}}}),
                             None => json!({"trees": {}}),
                         },
-                        ("getblock", _) => json!(raw),
                         ("z_gettreestate", _) => {
                             let hash = match node.fails {
                                 "treestate block" => json!(display(9)),
@@ -890,24 +758,21 @@ mod tests {
         url
     }
 
-    /// What [`oracle`] decides over `nodes`, listed in this order, reading roots with
-    /// `witnesses`: the highest tip and the root once a node verifies the fixture's
-    /// block, or the failure.
+    /// What [`oracle`] decides over `nodes`, listed in this order, for a fixture pinned
+    /// to `[5; 32]` below the anchor, reading roots with `witnesses`: the highest tip
+    /// and the root once a node verifies, or the failure.
     async fn decide(
         nodes: &[Node],
         witnesses: bool,
     ) -> std::result::Result<(u64, Option<Hash>), Failure> {
-        let mut urls = Vec::new();
+        let mut clients = Vec::new();
         for node in nodes {
-            urls.push(serve_node(*node).await);
+            clients.push(ZakuraClient::new(serve_node(*node).await, None).unwrap());
         }
         let directory = anchored();
-        let fixture_height = directory.end_height - 1;
-        let (verified, top) = oracle(&urls, None, &directory, fixture_height, witnesses)
-            .await
-            .unwrap()?;
-        assert_eq!(verified.fixture_hash, fixture_block().0.hash().0);
-        Ok((top, verified.root))
+        let pinned = (directory.end_height - 1, [5; 32]);
+        let (_, root, top) = oracle(&clients, &directory, pinned, witnesses).await?;
+        Ok((top, root))
     }
 
     /// A node that cannot complete the checks hands over to the next that reached the
@@ -930,10 +795,6 @@ mod tests {
                 ..good(end + 50)
             },
             Node {
-                fails: "raw getblock",
-                ..good(end + 40)
-            },
-            Node {
                 moved: true,
                 ..good(end + 30)
             },
@@ -951,16 +812,16 @@ mod tests {
         // With every node that reached the publication failing, each attempt is listed.
         let (category, detail) = decide(&nodes[2..], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
-        assert_eq!(detail["attempts"].as_array().unwrap().len(), 4);
-        assert_eq!(detail["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(detail["attempts"].as_array().unwrap().len(), 3);
+        assert_eq!(detail["node_tip"], end + 50);
         let (category, detail) = decide(&[behind], false).await.unwrap_err();
         assert_eq!(category, "oracle_unavailable");
         assert!(detail["attempts"].as_array().unwrap().is_empty());
     }
 
-    /// Valid evidence against the publication from the first node to complete the
-    /// checks is final, even when a later node would agree with it, and equal tips
-    /// keep their configured order.
+    /// Valid evidence against the publication, or against the fixture's pinned block,
+    /// from the first node to complete the checks is final, even when a later node
+    /// would agree with it, and equal tips keep their configured order.
     #[tokio::test]
     async fn valid_evidence_against_the_publication_is_final() {
         let end = u64::from(anchored().end_height);
@@ -972,11 +833,20 @@ mod tests {
             size: Some(299),
             ..good(end + 2)
         };
-        for first in [off_chain, short] {
+        // A node whose block at the fixture's height is not the pinned one.
+        let unpinned = Node {
+            fixture: 6,
+            ..good(end + 2)
+        };
+        for (first, expected) in [
+            (off_chain, "answer_mismatch"),
+            (short, "answer_mismatch"),
+            (unpinned, "oracle_invalid"),
+        ] {
             let (category, _) = decide(&[good(end + 1), first], false).await.unwrap_err();
-            assert_eq!(category, "answer_mismatch");
+            assert_eq!(category, expected);
             let (category, _) = decide(&[first, good(end + 2)], false).await.unwrap_err();
-            assert_eq!(category, "answer_mismatch");
+            assert_eq!(category, expected);
             assert_eq!(
                 decide(&[good(end + 2), first], false).await,
                 Ok((end + 2, None))
@@ -1126,20 +996,6 @@ mod tests {
         let (_, forged, _) = witnessed(&tree, &forged);
         let detail = check(serve(200, forged).await, payment).await;
         assert_eq!(detail.unwrap().unwrap()["node_root"], hex::encode(root));
-    }
-
-    /// The served payment must carry its transaction's index in the oracle's block,
-    /// and a fixture transaction missing from that block is invalid.
-    #[test]
-    fn the_transaction_index_comes_from_the_oracles_block() {
-        let (block, txid) = fixture_block();
-        let mut payment = super::common::record(0, 1).payment;
-        payment.tx_index = 1;
-        assert_eq!(check_tx_index(&block, &txid, &payment), Ok(true));
-        payment.tx_index = 0;
-        assert_eq!(check_tx_index(&block, &txid, &payment), Ok(false));
-        let missing = check_tx_index(&block, &[0; 32], &payment);
-        assert_eq!(missing.unwrap_err().0, "oracle_invalid");
     }
 
     /// The hex ID of `m`, as health reports it.
@@ -1297,11 +1153,6 @@ mod tests {
         let origin = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let (health, _) = health_route(|_| reads(Value::Null, Value::Null)).await;
-        let fixture = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../ops/digitalocean/probe-fixture.json"
-        );
-        let digest = hex::encode(Sha256::digest(std::fs::read(fixture).unwrap()));
         let argv = |extra: &[&str]| {
             let required = [
                 "receiver-probe",
@@ -1309,10 +1160,6 @@ mod tests {
                 &origin,
                 "--health-url",
                 &health,
-                "--fixture",
-                fixture,
-                "--fixture-sha256",
-                &digest,
                 "--rpc-url",
                 "http://127.0.0.1:1",
                 "--no-auth",
@@ -1373,7 +1220,8 @@ mod tests {
 
     /// The fixture's pinned receiver is checked against recovery before any request:
     /// a missing, malformed or invalid pin, or another valid receiver, is
-    /// `oracle_invalid` and reaches no server, while the independent pin goes on.
+    /// `oracle_invalid` and reaches no server, while the embedded fixture's pin passes
+    /// and the probe goes on.
     #[tokio::test]
     async fn the_fixture_receiver_pin_is_checked_before_any_request() {
         use std::sync::{
@@ -1391,31 +1239,26 @@ mod tests {
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("fixture.json");
-        let run = |fixture: Value| {
-            let bytes = serde_json::to_vec(&fixture).unwrap();
-            std::fs::write(&path, &bytes).unwrap();
-            let args = Args::try_parse_from([
-                "receiver-probe",
-                "--origin",
-                &url,
-                "--health-url",
-                &format!("{url}/health"),
-                "--fixture",
-                path.to_str().unwrap(),
-                "--fixture-sha256",
-                &hex::encode(Sha256::digest(&bytes)),
-                "--rpc-url",
-                &url,
-                "--no-auth",
-            ])
-            .unwrap();
+        // Runs the probe on `fixture`, or on the embedded one for `None`.
+        let run = |fixture: Option<Value>| {
+            let mut args = vec![
+                "receiver-probe".to_owned(),
+                "--origin".into(),
+                url.clone(),
+                "--health-url".into(),
+                format!("{url}/health"),
+                "--rpc-url".into(),
+                url.clone(),
+                "--no-auth".into(),
+            ];
+            if let Some(fixture) = fixture {
+                std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+                args.extend(["--fixture".into(), path.to_str().unwrap().into()]);
+            }
+            let args = Args::try_parse_from(args).unwrap();
             async move { probe(args, &mut None).await }
         };
-        let mut fixture: Value = serde_json::from_str(include_str!(
-            "../../../crates/receiver-directory/tests/fixtures/zero-ovk-action.json"
-        ))
-        .unwrap();
-        fixture["position"] = 0.into();
+        let fixture: Value = serde_json::from_slice(MAINNET_FIXTURE).unwrap();
         assert_eq!(fixture["receiver"], super::common::RECEIVER_HEX);
         let other = {
             use orchard::keys::{FullViewingKey, Scope, SpendingKey};
@@ -1440,7 +1283,7 @@ mod tests {
                     altered.as_object_mut().unwrap().remove("receiver");
                 }
             }
-            let failure = run(altered).await.unwrap();
+            let failure = run(Some(altered)).await.unwrap();
             assert_eq!(
                 failure,
                 Some(("oracle_invalid", json!({"fixture": detail})))
@@ -1448,7 +1291,7 @@ mod tests {
             assert_eq!(requests.load(Ordering::SeqCst), 0, "{detail}");
         }
         // The independent pin passes, so the probe asks the origin for its manifest.
-        assert!(run(fixture).await.is_err());
+        assert!(run(None).await.is_err());
         assert!(requests.load(Ordering::SeqCst) > 0);
     }
 }

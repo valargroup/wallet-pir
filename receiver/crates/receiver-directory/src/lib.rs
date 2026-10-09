@@ -18,7 +18,7 @@ pub enum Error {
     Malformed,
     #[error("receiver directory coverage is incomplete or uses a different anchor")]
     Coverage,
-    #[error("receiver directory bucket capacity exceeded")]
+    #[error("receiver directory table or witness limit exceeded")]
     Capacity,
     #[error("missing continuation page")]
     MissingPage,

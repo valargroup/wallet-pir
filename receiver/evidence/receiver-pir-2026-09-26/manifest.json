@@ -4,19 +4,10 @@
   "source": {
     "client": "f12f7794f80836d76480f31e318985f67260a9f0",
     "service": "5921064016b79e10fa9757e10363bfd8f0e56b9c",
-    "client_cargo_lock_blob": "f6757eb9975758031ee4355d5f8c9e2b4fb22e07",
-    "service_cargo_lock_blob": "1400b1da3e38be5384c002d3e2b45233a0e59952",
     "ipir_sp": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
-    "ipir_sp_repository": "https://github.com/valargroup/ipir-sp.git",
-    "note": "results.json records client and service as the prefixes f12f779 and 5921064, which resolve uniquely here to these commits, reachable only from pre-rewrite development branches such as origin/adam/near-swap-complete-20260929; the service is the client's direct child. Both commits' Cargo.lock files resolve ipir-sp 0.1.0-rc.6 to ipir_sp, which results.json records only as 1f2aec65. These are source configuration: nothing records that the tested builds were clean checkouts of them. The protocol measured (q48) was replaced by this stack's pir-native protocol."
+    "ipir_sp_repository": "https://github.com/valargroup/ipir-sp.git"
   },
   "protocol": "ironwood-receiver-pir-v1-q48",
-  "toolchain": {
-    "rust": null,
-    "cargo_profile": null,
-    "status": "unavailable: neither was recorded at the time",
-    "note": "The README's command passes no --profile, so as shown Cargo builds the test with its default test profile, but no record shows the command was run exactly as shown, nor how the isolated Enhance service was built. The client and service prefixes resolve in this repository's remote branches to commits whose rust-toolchain.toml pins Rust 1.91.0; a pin does not show what built. results.json's profile is the receiver PIR protocol profile (ironwood-receiver-pir-v1-q48, as in protocol here), not a Cargo profile."
-  },
   "network": "mainnet",
   "range": [
     3428143,
@@ -28,38 +19,13 @@
   "raw": [
     "results.json"
   ],
-  "derived": [
-    {
-      "file": "results.json",
-      "json_pointer": "/lookup_payload_bytes/fifty_single_page_lookups_including_setup",
-      "classification": "derived",
-      "formula": "public_setup + 50 * (request + response) = 14336 + 50 * (135220 + 5172) = 7033936",
-      "assumptions": [
-        "one public setup shared by every lookup",
-        "fifty single-page lookups",
-        "each lookup's request and response at the historical q48 sizes at 8192 rows, as measured by this run's one query"
-      ],
-      "excludes": "manifest, HTTP/TLS, Enhance, witness and spentness traffic, as for every receiver byte count in results.json",
-      "note": "A projection from one query's payload sizes, not traffic observed from fifty lookups."
-    }
-  ],
+  "derived": {
+    "results.json#/lookup_payload_bytes/fifty_single_page_lookups_including_setup": "14336 + 50*(135220+5172), projection from one query"
+  },
   "limits": [
     "no wallet state",
     "one integration query, not a benchmark"
   ],
-  "historical": true,
   "qualification": "development evidence, not release qualification",
-  "not_retained": [
-    "the Rust toolchain and Cargo build profile of the receiver test and of the isolated Enhance service",
-    "whether the client and service builds were clean checkouts of the recorded commits (only 7-character prefixes were recorded at the time)",
-    "the resolved dependencies actually built for the client and the service; their commits' Cargo.lock files declare only what a build would use",
-    "the exact commands executed; the README's command is the documented form",
-    "the opt-in integration test that ran, which no longer exists in the tree",
-    "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run",
-    "the full publication and session manifests, the PIR request and response, the Enhance response and the integration test's output, so the encrypted lookup and the authenticated-output claims cannot be rechecked",
-    "the local host's CPU and SKU, RAM, storage and operating system (only \"Mac Studio\" was recorded)",
-    "the isolated Enhance service's hardware or instance SKU, whether its CPU was shared, its RAM, storage, region and operating system",
-    "the SSH tunnel's topology: its endpoints and any hosts between them",
-    "the network conditions during the query: latency, bandwidth and competing load on either host or the path"
-  ]
+  "not_retained": "everything outside SHA256SUMS, including the publication, PIR and Enhance exchanges, the anchor checks' RPC responses and test output"
 }

@@ -1,8 +1,5 @@
 //! Canonical RPC adapter. The shared crate owns recovery, storage and row encoding.
-use crate::zakura::{
-    Treestate, VerboseBlock, ZakuraClient, ZakuraError, RAW_BLOCK_RESPONSE_BYTES,
-    TREESTATE_RESPONSE_BYTES, VERBOSE_BLOCK_RESPONSE_BYTES,
-};
+use crate::zakura::{Treestate, VerboseBlock, ZakuraClient, ZakuraError};
 use receiver_directory::{
     extract::Action,
     store::{Checkpoint, IndexedBlock},
@@ -39,13 +36,7 @@ impl ZakuraClient {
         let position = if height < ironwood_activation() {
             0
         } else {
-            let result: VerboseBlock = self
-                .call(
-                    "getblock",
-                    json!([displayed, 1]),
-                    VERBOSE_BLOCK_RESPONSE_BYTES,
-                )
-                .await?;
+            let result: VerboseBlock = self.call("getblock", json!([displayed, 1])).await?;
             result
                 .trees
                 .ironwood
@@ -75,13 +66,7 @@ impl ZakuraClient {
         height: u32,
     ) -> Result<[u8; 32], ZakuraError> {
         let displayed = zakura_chain::block::Hash(hash).to_string();
-        let state: Treestate = self
-            .call(
-                "z_gettreestate",
-                json!([displayed]),
-                TREESTATE_RESPONSE_BYTES,
-            )
-            .await?;
+        let state: Treestate = self.call("z_gettreestate", json!([displayed])).await?;
         let named = state
             .hash
             .parse::<zakura_chain::block::Hash>()
@@ -99,6 +84,20 @@ impl ZakuraClient {
         zakura_chain::orchard::tree::Root::try_from(root)
             .map_err(|e| ZakuraError::Block(e.to_string()))?;
         Ok(root)
+    }
+
+    /// The time in the header of the block `hash` (protocol byte order), in Unix
+    /// seconds.
+    pub async fn block_time(&self, hash: [u8; 32]) -> Result<i64, ZakuraError> {
+        #[derive(serde::Deserialize)]
+        struct Header {
+            time: i64,
+        }
+        let displayed = zakura_chain::block::Hash(hash).to_string();
+        let header: Header = self
+            .call("getblockheader", json!([displayed, true]))
+            .await?;
+        Ok(header.time)
     }
 
     /// Fetch a bounded range concurrently, then validate its complete chain before returning it.
@@ -175,28 +174,8 @@ impl ZakuraClient {
 
     /// The block at `height`, decoded from the node's raw `getblock` bytes.
     async fn receiver_raw_block(&self, height: u32) -> Result<Block, ZakuraError> {
-        self.raw_block(height.to_string()).await
-    }
-
-    /// The block whose hash is `hash` (protocol byte order), with its transactions in
-    /// the order the chain commits to: the node's raw block must hash to `hash` and its
-    /// transactions must match its header's merkle root.
-    pub async fn receiver_block(&self, hash: [u8; 32]) -> Result<Block, ZakuraError> {
-        let block = self
-            .raw_block(zakura_chain::block::Hash(hash).to_string())
-            .await?;
-        if block.hash().0 != hash {
-            return Err(ZakuraError::Block("block does not match its hash".into()));
-        }
-        check_transactions(&block)?;
-        Ok(block)
-    }
-
-    /// The block `id` names, a height or a displayed hash, decoded from the node's raw
-    /// `getblock` bytes.
-    async fn raw_block(&self, id: String) -> Result<Block, ZakuraError> {
         let raw: String = self
-            .call("getblock", json!([id, 0]), RAW_BLOCK_RESPONSE_BYTES)
+            .call("getblock", json!([height.to_string(), 0]))
             .await?;
         let bytes = hex::decode(raw)?;
         let mut input = bytes.as_slice();
@@ -324,7 +303,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
+        ZakuraClient::new(url, None).unwrap()
     }
 
     /// The root is the bytes the node gives, unreversed: the pinned node encodes its

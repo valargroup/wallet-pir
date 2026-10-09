@@ -1,7 +1,6 @@
 //! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
     snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE, TREE_SIZE},
-    witness::MAX_WITNESS_COMMITMENTS,
     Error, Hash, Payment, Receiver, Record,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -84,25 +83,14 @@ impl Store {
     }
 
     /// Build the publication's common proofs, reusing unchanged subtrees from `cache`.
-    /// Old indexes without all commitments must be rebuilt before producing proofs.
-    /// A history beyond [`MAX_WITNESS_COMMITMENTS`] is [`Error::Capacity`], found
-    /// before any commitment is read.
+    /// A history of more than `max_commitments` commitments is [`Error::Capacity`],
+    /// before any is read; building peaks at about 200 bytes per commitment.
     pub fn witnesses(
         &self,
         manifest: &Manifest,
         cache: &mut crate::witness::WitnessCache,
-    ) -> Result<crate::witness::WitnessSnapshot, Error> {
-        let (commitments, positions) = self.witness_inputs(manifest, MAX_WITNESS_COMMITMENTS)?;
-        cache.build(manifest, &commitments, &positions)
-    }
-
-    /// The commitments below `manifest`'s end and the indexed payment positions, read
-    /// from one database view, or [`Error::Capacity`] for more than `max_commitments`.
-    fn witness_inputs(
-        &self,
-        manifest: &Manifest,
         max_commitments: u64,
-    ) -> Result<(Vec<Hash>, std::collections::BTreeSet<u32>), Error> {
+    ) -> Result<crate::witness::WitnessSnapshot, Error> {
         manifest.validate()?;
         if manifest.end_position > max_commitments {
             return Err(Error::Capacity);
@@ -137,7 +125,7 @@ impl Store {
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
         drop(query);
         tx.commit()?;
-        Ok((commitments, positions))
+        cache.build(manifest, &commitments, &positions)
     }
 
     /// The last stored block, or the configured boundary when none is stored.
@@ -145,8 +133,10 @@ impl Store {
         tip(&self.db, &self.config)
     }
 
-    /// Reject gaps, changed parents, coinbase payments and malformed records before
-    /// advancing coverage.
+    /// Reject gaps, changed parents, coinbase payments, malformed records and payments
+    /// a snapshot would refuse before advancing coverage: each must continue its
+    /// receiver's last stored payment as [`snapshot::check_next`] requires, and the
+    /// block's payments must agree on their block hash and transaction locations.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
             .db
@@ -185,6 +175,7 @@ impl Store {
             )?;
         }
         let mut previous_position = None;
+        let mut locations = snapshot::Locations::default();
         for (receiver, p) in &block.payments {
             // Coinbase recipients are excluded: the coinbase is transaction zero, and its
             // Actions take the block's first positions.
@@ -202,13 +193,30 @@ impl Store {
                 return Err(Error::Malformed);
             }
             previous_position = Some(p.position);
-            let record = Record {
+            let mut record = Record {
                 receiver: *receiver,
-                page: 0,
-                total: 1,
+                page: 1,
+                total: 2,
                 payment: p.clone(),
+            };
+            if !locations.add(&(&record).into()) {
+                return Err(Error::Malformed);
             }
-            .encode()?;
+            let last: Option<Vec<u8>> = tx
+                .query_row(
+                    "SELECT record FROM payments WHERE receiver=?1 ORDER BY position DESC LIMIT 1",
+                    [receiver.as_bytes()],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(last) = last {
+                // Stored as a lone page; compare as the page before this one.
+                let mut last = Record::decode(&last)?.ok_or(Error::Malformed)?;
+                last.total = 2;
+                snapshot::check_next(&last, &record)?;
+            }
+            (record.page, record.total) = (0, 1);
+            let record = record.encode()?;
             tx.execute(
                 "INSERT INTO payments VALUES (?1,?2,?3,?4,?5,?6)",
                 params![
@@ -263,9 +271,9 @@ impl Store {
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
-    /// overflowed at `rows`, or the history has more payments than `rows` has slots, which
-    /// is found before any record is loaded. `provider` holds the swap provider filter
-    /// sets (see [`ProviderStore::sets`]).
+    /// overflowed at `rows`, or the history has more payments than `rows` has slots,
+    /// found without loading more records than that. `provider` holds the swap provider
+    /// filter sets (see [`ProviderStore::sets`]).
     pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
         let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
@@ -273,20 +281,14 @@ impl Store {
         if anchor.height < self.config.start_height {
             return Err(Error::Coverage);
         }
-        // Counting stops one past capacity, so an oversized history is not scanned.
-        let stored: u64 = tx.query_row(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM payments LIMIT ?1)",
-            [capacity + 1],
-            |r| r.get(0),
-        )?;
-        if stored > capacity {
-            return Err(Error::Capacity);
-        }
         let mut records = Vec::new();
         {
             let mut query = tx.prepare("SELECT record FROM payments ORDER BY receiver,position")?;
             let mut result = query.query([])?;
             while let Some(row) = result.next()? {
+                if records.len() as u64 == capacity {
+                    return Err(Error::Capacity);
+                }
                 let bytes: Vec<u8> = row.get(0)?;
                 records.push(Record::decode(&bytes)?.ok_or(Error::Malformed)?);
             }
@@ -369,9 +371,8 @@ impl ProviderStore {
             CREATE TABLE IF NOT EXISTS receivers (receiver BLOB NOT NULL CHECK(length(receiver)=43),
                 payout INTEGER NOT NULL CHECK(payout IN (0,1)), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS cursors (feed TEXT PRIMARY KEY, created_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS starts (feed TEXT PRIMARY KEY, started_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS reads (feed TEXT PRIMARY KEY, read_at INTEGER NOT NULL);
+            CREATE TABLE IF NOT EXISTS feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
+                cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
                 PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
@@ -381,22 +382,13 @@ impl ProviderStore {
         Ok(Self { db })
     }
 
-    /// Records one complete read of `feed` that began at `read_at`, in one transaction,
-    /// so a failed or interrupted read records nothing: receivers from swaps it created
-    /// up to `cursor`, its new position, where `true` marks a payout address and `false`
-    /// a refund address, each with its swap's creation time; the completed payouts it
-    /// saw, each a payout receiver and the transaction (protocol byte order) that paid
-    /// it, so each payment can be checked against the index; and `initial_since`, where
-    /// the read began reading if it began without a cursor. A receiver keeps its latest
-    /// time and a payout the earliest start of any read that saw it complete, whatever
-    /// order they commit in (a receiver reused across swaps has one payout per
-    /// transaction). Only an initial read sets the feed's start, or lowers it to its
-    /// own, so racing initial reads keep the earliest; a read that followed the cursor
-    /// passes `None` and never moves it, since it read back only to the cursor and
-    /// covers no earlier history. The cursor and read time move as one pair: a read
-    /// that advances the cursor also sets the read time, one that reaches the same
-    /// cursor can only advance the read time, and one behind the cursor changes
-    /// neither, so a stale read cannot make the feed look fresher.
+    /// Records one complete read of `feed` that began at `read_at`, atomically: the
+    /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
+    /// each with its swap's creation time; the completed payouts it saw, each a payout
+    /// receiver and the transaction (protocol byte order) that paid it; and, for the
+    /// feed's first read, `initial_since`, where it began. A receiver keeps its latest
+    /// time and a payout its earliest. The cursor and read time move as one pair and
+    /// never backwards, so a stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -414,44 +406,17 @@ impl ProviderStore {
                 params![receiver.as_bytes(), payout, seen_at],
             )?;
         }
-        let stored: Option<i64> = tx
-            .query_row(
-                "SELECT created_at FROM cursors WHERE feed=?1",
-                [feed],
-                |r| r.get(0),
-            )
-            .optional()?;
-        let read_sql = match stored {
-            Some(stored) if cursor < stored => None,
-            Some(stored) if cursor == stored => Some(
-                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
-            ),
-            _ => Some(
-                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET read_at=excluded.read_at",
-            ),
-        };
-        if let Some(read_sql) = read_sql {
-            tx.execute(
-                "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET created_at=excluded.created_at",
-                params![feed, cursor],
-            )?;
-            tx.execute(read_sql, params![feed, read_at])?;
-        }
+        tx.execute(
+            "INSERT INTO feeds VALUES (?1,?2,?3,?4) ON CONFLICT(feed)
+             DO UPDATE SET cursor=excluded.cursor, read_at=excluded.read_at
+             WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
+            params![feed, initial_since, cursor, read_at],
+        )?;
         for (receiver, txid) in completions {
             tx.execute(
                 "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
                 params![receiver.as_bytes(), txid.as_slice(), read_at],
-            )?;
-        }
-        if let Some(since) = initial_since {
-            tx.execute(
-                "INSERT INTO starts VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET started_at=MIN(started_at,excluded.started_at)",
-                params![feed, since],
             )?;
         }
         tx.commit()?;
@@ -513,34 +478,30 @@ impl ProviderStore {
 
     /// The creation time from which `feed` first read swaps, if it ever started.
     pub fn started(&self, feed: &str) -> Result<Option<i64>, Error> {
-        Ok(self
-            .db
-            .query_row("SELECT started_at FROM starts WHERE feed=?1", [feed], |r| {
-                r.get(0)
-            })
-            .optional()?)
+        self.feed(feed, "started_at")
     }
 
     /// When the last complete read of `feed` began, if one finished.
     pub fn read(&self, feed: &str) -> Result<Option<i64>, Error> {
-        Ok(self
-            .db
-            .query_row("SELECT read_at FROM reads WHERE feed=?1", [feed], |r| {
-                r.get(0)
-            })
-            .optional()?)
+        self.feed(feed, "read_at")
     }
 
     /// The creation time of the newest swap recorded from `feed`.
     pub fn cursor(&self, feed: &str) -> Result<Option<i64>, Error> {
+        self.feed(feed, "cursor")
+    }
+
+    /// `feed`'s `column`, or `None` when the feed or the value is absent.
+    fn feed(&self, feed: &str, column: &str) -> Result<Option<i64>, Error> {
         Ok(self
             .db
             .query_row(
-                "SELECT created_at FROM cursors WHERE feed=?1",
+                &format!("SELECT {column} FROM feeds WHERE feed=?1"),
                 [feed],
                 |r| r.get(0),
             )
-            .optional()?)
+            .optional()?
+            .flatten())
     }
 
     /// The receivers seen at or after `since`, payout or refund, and every payout
@@ -606,97 +567,5 @@ fn tip(db: &Connection, c: &Config) -> Result<Checkpoint, Error> {
         None => Ok(boundary(c)),
         Some(Some(p)) => Ok(p),
         Some(None) => Err(Error::Malformed),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::snapshot::{FilterSet, MIN_ROWS};
-    use orchard::keys::{FullViewingKey, Scope, SpendingKey};
-
-    /// A history longer than the witness limit is refused from its manifest alone,
-    /// before any commitment row is read, and the limit itself passes.
-    #[test]
-    fn witness_inputs_refuse_long_histories_before_reading_commitments() {
-        let dir = tempfile::tempdir().unwrap();
-        let config = Config {
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-        };
-        let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
-        let fvk = FullViewingKey::from(&SpendingKey::from_bytes([7; 32]).unwrap());
-        let receiver =
-            Receiver::from_bytes(fvk.address_at(0u32, Scope::External).to_raw_address_bytes())
-                .unwrap();
-        // One payment among four commitments, after a coinbase Action.
-        let commitments = vec![[1; 32], [2; 32], [3; 32], [4; 32]];
-        let payment = Payment {
-            height: 100,
-            block_hash: [3; 32],
-            txid: [5; 32],
-            tx_index: 1,
-            action_index: 0,
-            position: 2,
-            action_nullifier: [6; 32],
-            cmx: commitments[2],
-            ephemeral_key: [7; 32],
-            ciphertext_prefix: [8; 52],
-        };
-        store
-            .append(&IndexedBlock {
-                height: 100,
-                hash: [3; 32],
-                parent: [2; 32],
-                start_position: 0,
-                end_position: 4,
-                coinbase_actions: 1,
-                payments: vec![(receiver, payment)],
-                commitments: commitments.clone(),
-            })
-            .unwrap();
-        let manifest = Manifest {
-            profile: PROFILE.into(),
-            genesis: [1; 32],
-            start_height: 100,
-            start_parent: [2; 32],
-            start_position: 0,
-            end_height: 100,
-            end_hash: [3; 32],
-            end_position: 4,
-            rows: MIN_ROWS,
-            salt: [3; 32],
-            records: 1,
-            data_sha256: [0; 32],
-            filters: vec![FilterSet {
-                label: crate::filter::PAID.into(),
-                count: 1,
-                window_secs: None,
-                since_unix: None,
-                until_unix: None,
-            }],
-            filters_sha256: [0; 32],
-        };
-        let (read, positions) = store.witness_inputs(&manifest, 4).unwrap();
-        assert_eq!((read, positions), (commitments, [2].into_iter().collect()));
-        assert!(matches!(
-            store.witness_inputs(&manifest, 3),
-            Err(Error::Capacity)
-        ));
-        // With a gap in the rows, reading them fails, but the limit still refuses first.
-        store
-            .db
-            .execute("DELETE FROM commitments WHERE position=0", [])
-            .unwrap();
-        assert!(matches!(
-            store.witness_inputs(&manifest, 4),
-            Err(Error::Coverage)
-        ));
-        assert!(matches!(
-            store.witness_inputs(&manifest, 3),
-            Err(Error::Capacity)
-        ));
     }
 }

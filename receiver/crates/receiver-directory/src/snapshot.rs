@@ -5,6 +5,7 @@ use crate::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 
 /// The directory format a manifest commits to.
 pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
@@ -12,7 +13,8 @@ pub const PROFILE: &str = "ironwood-zero-ovk-receiver-v1";
 pub const ROW_BYTES: usize = 4096;
 /// Records per row.
 pub const SLOTS: usize = ROW_BYTES / RECORD_BYTES;
-/// Smallest row count a wallet accepts. Publications start here and double.
+/// Smallest supported row count, which the PIR client, server and indexer enforce.
+/// Publications start here and double.
 pub const MIN_ROWS: u32 = 8192;
 /// Largest supported row count.
 pub const MAX_ROWS: u32 = 65536;
@@ -20,39 +22,10 @@ pub const MAX_ROWS: u32 = 65536;
 /// end. The last leaf's position is one less.
 pub const TREE_SIZE: u64 = 1 << 32;
 
-#[cfg(feature = "small-tables")]
-thread_local! {
-    static SMALL_TABLES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    static VALIDATIONS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// For test fixtures only: lets manifests validated on this thread have fewer than
-/// [`MIN_ROWS`] rows, so bucket placement and overflow can be tested on tiny tables.
-#[cfg(feature = "small-tables")]
-pub fn allow_small_tables() {
-    SMALL_TABLES.set(true);
-}
-
-/// For test fixtures only: how many times [`Manifest::validate`] has run on this
-/// thread.
-#[cfg(feature = "small-tables")]
-pub fn manifest_validations() -> u64 {
-    VALIDATIONS.get()
-}
-
-/// The smallest row count [`Manifest::validate`] accepts on this thread.
-fn min_rows() -> u32 {
-    #[cfg(feature = "small-tables")]
-    if SMALL_TABLES.get() {
-        return 1;
-    }
-    MIN_ROWS
-}
-
 /// The record slots in a table of `rows` rows. A row count that is not a power of two
-/// from [`MIN_ROWS`] to [`MAX_ROWS`] is [`Error::Malformed`].
+/// up to [`MAX_ROWS`] is [`Error::Malformed`].
 pub(crate) fn capacity(rows: u32) -> Result<u64, Error> {
-    if !rows.is_power_of_two() || rows < min_rows() || rows > MAX_ROWS {
+    if !rows.is_power_of_two() || rows > MAX_ROWS {
         return Err(Error::Malformed);
     }
     Ok(u64::from(rows) * SLOTS as u64)
@@ -113,11 +86,9 @@ pub struct ProviderSet {
 }
 
 impl Manifest {
-    /// Check the profile, coverage order and geometry bounds, [`MIN_ROWS`] to
-    /// [`MAX_ROWS`] rows.
+    /// Check the profile, coverage order and geometry bounds, at most [`MAX_ROWS`]
+    /// rows.
     pub fn validate(&self) -> Result<(), Error> {
-        #[cfg(feature = "small-tables")]
-        VALIDATIONS.set(VALIDATIONS.get() + 1);
         let labels_ordered = self
             .filters
             .windows(2)
@@ -125,14 +96,11 @@ impl Manifest {
         let sets_valid = self.filters.iter().all(|set| {
             let recent = set.label.ends_with(&format!("/{}", filter::RECENT));
             let span = match (set.since_unix, set.until_unix) {
-                (Some(since), Some(until)) => since <= until,
+                (Some(since), Some(until)) => set.label != filter::PAID && since <= until,
                 (None, None) => set.label == filter::PAID,
                 _ => false,
             };
-            filter::valid_label(&set.label)
-                && span
-                && (set.label == filter::PAID) == set.since_unix.is_none()
-                && recent == set.window_secs.is_some()
+            filter::valid_label(&set.label) && span && recent == set.window_secs.is_some()
         });
         if self.profile != PROFILE
             || !labels_ordered
@@ -279,9 +247,10 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// More records than the table has slots, or bucket overflow, fails the whole
-    /// candidate with [`Error::Capacity`]. It never drops records or coverage. A filter file over [`filter::MAX_FILTERS_BYTES`] is
-    /// [`Error::Malformed`]. The paid filter holds the records' receivers; `provider`
-    /// sets come from the publisher's swap provider feeds (see [`crate::filter`]).
+    /// candidate with [`Error::Capacity`]. It never drops records or coverage. A filter
+    /// file over [`filter::MAX_FILTERS_BYTES`] is [`Error::Malformed`]. The paid filter
+    /// holds the records' receivers; `provider` sets come from the publisher's swap
+    /// provider feeds (see [`crate::filter`]).
     pub fn build(
         mut manifest: Manifest,
         records: &[Record],
@@ -339,14 +308,7 @@ impl Snapshot {
         })
     }
 
-    /// Checks a supplied publication as [`Self::build`] would have made it, before it
-    /// is prepared or served: the manifest, the row and filter sizes and digests, the
-    /// declared filter sets, and a paid set of exactly the records' receivers; every
-    /// slot and row padding as [`lookup_row`] checks them, so each record sits in its
-    /// own bucket; exactly the manifest's record count; and every receiver's pages, as
-    /// [`Self::build`] requires them. No chain trust is implied. Only each record's
-    /// page fields are kept, and only up to the manifest's count, itself within the
-    /// table's slots.
+    /// Checks a supplied publication whole, as [`Self::build`] would have made it.
     pub fn validate(&self) -> Result<(), Error> {
         let m = &self.manifest;
         let placement = Placement::new(m)?;
@@ -383,7 +345,7 @@ impl Snapshot {
 /// The fields of a [`Record`] that [`check_pages`] reads, so validating a publication
 /// need not hold its records whole.
 #[derive(Clone, Copy)]
-struct PageMeta {
+pub(crate) struct PageMeta {
     receiver: Receiver,
     page: u32,
     total: u32,
@@ -440,16 +402,13 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
 /// total, each continuing the last as [`check_next`] requires, no two records share
-/// an output or note position, and no two, of any receivers, disagree on the hash of
-/// a height, the txid at a height and transaction index, or the location of a txid.
+/// an output or note position, and all agree on their [`Locations`].
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::BTreeSet;
     let mut previous: Option<PageMeta> = None;
     let mut outputs = BTreeSet::new();
     let mut positions = BTreeSet::new();
-    let mut blocks = BTreeMap::new();
-    let mut txids = BTreeMap::new();
-    let mut locations = BTreeMap::new();
+    let mut locations = Locations::default();
     for record in sorted {
         // Every advertised page must exist in this revision, in chain order.
         match previous {
@@ -467,15 +426,7 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
         previous = Some(record);
         if !outputs.insert((record.txid, record.action_index))
             || !positions.insert(record.position)
-            || *blocks.entry(record.height).or_insert(record.block_hash) != record.block_hash
-            || *txids
-                .entry((record.height, record.tx_index))
-                .or_insert(record.txid)
-                != record.txid
-            || *locations
-                .entry(record.txid)
-                .or_insert((record.height, record.tx_index))
-                != (record.height, record.tx_index)
+            || !locations.add(&record)
         {
             return Err(Error::Malformed);
         }
@@ -484,6 +435,25 @@ fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> 
         return Err(Error::Malformed);
     }
     Ok(())
+}
+
+/// The chain locations of the records seen so far, of any receivers: one block hash
+/// per height, one txid per transaction index at a height, and one location per txid.
+#[derive(Default)]
+pub(crate) struct Locations {
+    blocks: BTreeMap<u32, Hash>,
+    txids: BTreeMap<(u32, u32), Hash>,
+    transactions: BTreeMap<Hash, (u32, u32)>,
+}
+
+impl Locations {
+    /// Adds `r`'s location, or returns `false` if it disagrees with an earlier one.
+    pub(crate) fn add(&mut self, r: &PageMeta) -> bool {
+        let location = (r.height, r.tx_index);
+        *self.blocks.entry(r.height).or_insert(r.block_hash) == r.block_hash
+            && *self.txids.entry(location).or_insert(r.txid) == r.txid
+            && *self.transactions.entry(r.txid).or_insert(location) == location
+    }
 }
 
 /// Rejects a record whose payment lies outside the manifest's blocks or positions, or

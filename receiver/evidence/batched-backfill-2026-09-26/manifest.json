@@ -3,8 +3,7 @@
   "observed": "2026-09-26T17:53:50Z",
   "source": {
     "baseline": "46f99bff229e115f662a29c0b9c2bb620c882dad",
-    "optimized": "aa0fb4fcdfc15c105ed8a173100a00136ee0ae12",
-    "note": "Historical references from before the receiver history was rewritten into this stack: reachable only from development branches such as origin/adam/near-swap-complete-20260929, not from main or this stack, so they may stop resolving. The batching measured is now receiver_batch in receiver/services/receiver-indexer/src/blocks.rs, from this stack's 'Add the receiver directory indexer' (ed48e82f). The binaries' hashes are in results.json."
+    "optimized": "aa0fb4fcdfc15c105ed8a173100a00136ee0ae12"
   },
   "command": "receiver-directory --data-dir <fresh-directory> --rpc-url http://159.65.183.89:8232 --no-auth --start-height 3496100 --end-height 3496200",
   "settings": {
@@ -12,18 +11,7 @@
     "concurrency": 8
   },
   "toolchain": {
-    "rust": null,
-    "resolved_dependencies": null,
-    "status": "unavailable: neither the Rust compiler that built the two binaries nor their resolved build dependencies was recorded",
-    "cargo_profile": "test",
-    "cargo_profile_source": "reported, not observed: the README committed with this record at aa0fb4fc (receiver/evidence/2026-09-26-batched-backfill.md) says both binaries used the same local Cargo test build configuration, and both source commits' Cargo.toml declare [profile.test] opt-level = 1. The exact build invocation and its output were not retained.",
-    "source_configuration": {
-      "rust_toolchain": "1.91.0",
-      "rust_toolchain_file": "rust-toolchain.toml, blob d72668b05a68dda0f669536c512af49cec597d32 at both commits",
-      "cargo_lock_blob": "86939d6992d2678303e28d25058f764eead80409",
-      "profile_test_opt_level": 1,
-      "note": "Declared identically by the baseline and optimized commits, which resolve in this repository. A toolchain pin and a lockfile declare what a build at those commits would use, not what built these binaries; the optimized run was observed at 17:53:53Z, a minute before its commit's 17:54:50Z timestamp, so its binary was built from an uncommitted tree before that commit existed."
-    }
+    "cargo_profile": "test"
   },
   "network": "mainnet",
   "range": [
@@ -44,13 +32,6 @@
     "small network measurement",
     "not an isolated node benchmark"
   ],
-  "historical": true,
-  "qualification": "development evidence, not release qualification: both binaries were reported built with the workspace's test profile (opt-level 1), not release-fast, so the speedup is indicative only",
-  "not_retained": [
-    "the two 16,384-byte publications whose digests results.json reports as identical, so the byte-identical claim cannot be recomputed",
-    "the Rust compiler and resolved build dependencies of the two binaries; only the source commits' declared toolchain pin and Cargo.lock are known",
-    "the exact build invocation and its output, so the reported test profile cannot be confirmed for the binaries whose hashes results.json records",
-    "the local host's CPU model, RAM, storage, operating system, location and network connection (only \"Mac Studio\" was recorded)",
-    "the RPC server's node software and version, configuration, host and load, and the network conditions to it"
-  ]
+  "qualification": "development evidence, not release qualification: both binaries were reported built with the workspace's test profile, not release-fast, so the speedup is indicative only",
+  "not_retained": "everything outside SHA256SUMS, including the publications, build commands and test output"
 }

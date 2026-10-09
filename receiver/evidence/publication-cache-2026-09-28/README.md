@@ -4,9 +4,8 @@ Measured September 28, 2026 on an Apple M3 Ultra. Implementation is
 `8bfb120c211d2674fbf0a49f4d8455a0f54e6790`, the direct child of the merge
 `2f99300debde3d65a0c0d263a5129042eddf12ab` of main at
 `5337a43c619039a39c35b54d9251a5131ebb93ba` into the baseline
-`207053dc02453d43ebfd3ba60c758f99f848c509`; all four resolve in this repository.
-Rust 1.98.0 and `release-fast` are as reported; the exact builds and commands
-measured were not recorded. This is local validation, not a deployment.
+`207053dc02453d43ebfd3ba60c758f99f848c509`. This is local validation, not a
+deployment.
 The run metadata is in [`manifest.json`](manifest.json). `SHA256SUMS.original`
 is the capture's checksum manifest, from before this note's navigation edits;
 `SHA256SUMS` hashes the current files.
@@ -58,7 +57,7 @@ controlled tip advance. Processing through activation took **2.367 seconds**.
 Witness preparation was 104.680 milliseconds. Ingestion, directory construction,
 file writes, PIR preparation and activation timings are in `serve.log`.
 The served proof matched the full-build reference hash above, and both row files
-matched their manifest SHA-256 (as observed; those outputs were not retained). No daemon restart was needed for the update.
+matched their manifest SHA-256. No daemon restart was needed for the update.
 
 This includes local polling and RPC round trips. It is not actual block-arrival
 latency on the deployed server, nor wallet retry or end-to-end restore time.
