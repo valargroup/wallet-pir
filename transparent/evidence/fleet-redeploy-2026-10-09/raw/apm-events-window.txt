@@ -1,0 +1,52 @@
+11:00:17 shadow :large_orange_circle: *SHADOW FIRED · warning* · `quality_publication_warning` on `transparent-publisher` · production
+>*Observed:* 31.0s unpublished
+>*Threshold:* unpublished age &gt;30s
+`quality_publication_warning-179
+11:00:27 shadow :large_green_circle: *SHADOW RECOVERED after 10s · warning* · `quality_publication_warning` on `transparent-publisher` · production
+>*Observed:* 0.0s unpublished
+>*Threshold:* unpublished age &gt;30s
+`quality_publication
+13:03:57 shadow :large_orange_circle: *SHADOW FIRED · warning* · `quality_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* unavailable
+>*Threshold:* source unavailable for 45s
+`quality_cover
+13:03:57 shadow :large_orange_circle: *SHADOW FIRED · warning* · `quality_host_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Host resource observation coverage
+>*Threshold:* host observat
+13:03:57 shadow :large_orange_circle: *SHADOW FIRED · warning* · `quality_http_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Outer HTTP observation capability
+>*Threshold:* HTTP observati
+13:04:32 shadow :large_orange_circle: *SHADOW FIRED · warning* · `quality_publication_warning` on `transparent-publisher` · production
+>*Observed:* 34.1s unpublished
+>*Threshold:* unpublished age &gt;30s
+`quality_publication_warning-179
+13:06:02 shadow :red_circle: *SHADOW FIRED · critical* · `quality_publication_critical` on `transparent-publisher` · production
+>*Observed:* 124.1s unpublished
+>*Threshold:* unpublished age &gt;60s for 60s
+`quality_publication_critical-
+13:07:02 shadow :large_green_circle: *SHADOW RECOVERED after 3m 5s · warning* · `quality_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* fresh
+>*Threshold:* source unavailable for 45s
+`qual
+13:07:02 shadow :large_green_circle: *SHADOW RECOVERED after 3m 5s · warning* · `quality_host_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Host resource observation coverage
+>*Threshold:
+13:07:02 shadow :large_green_circle: *SHADOW RECOVERED after 3m 5s · warning* · `quality_http_coverage_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Outer HTTP observation capability
+>*Threshold:*
+13:07:57 shadow :red_circle: *SHADOW FIRED · critical* · `quality_ready_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Archive owner readiness
+>*Threshold:* archive coverage unavailable for 60s
+`qu
+13:08:57 shadow :large_green_circle: *SHADOW RECOVERED after 4m 25s · warning* · `quality_publication_warning` on `transparent-publisher` · production
+>*Observed:* 0.0s unpublished
+>*Threshold:* unpublished age &gt;30s
+`quality_publicat
+13:08:57 shadow :large_green_circle: *SHADOW RECOVERED after 2m 55s · critical* · `quality_publication_critical` on `transparent-publisher` · production
+>*Observed:* 0.0s unpublished
+>*Threshold:* unpublished age &gt;60s for 60s
+`qualit
+13:09:07 shadow :large_green_circle: *SHADOW RECOVERED after 1m 10s · critical* · `quality_ready_transparent-pir-archive-03` on `transparent-pir-archive-03` · production
+>*Observed:* Archive owner readiness
+>*Threshold:* archive coverag
+events since 11:00 UTC: 14

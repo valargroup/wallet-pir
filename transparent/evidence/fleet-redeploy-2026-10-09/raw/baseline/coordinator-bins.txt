@@ -1,0 +1,4 @@
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /usr/local/bin/transparent-publish-controller
+a22f7a93cb7f18a4b256020a997b7106ac43ca87a104e98245999b696c2c3d8d  /usr/local/bin/shard-assign
+fe5edd221ef12073bf5c5fc1ec39313edc7cd76bcc300fda0d513965e6fca125  /usr/local/bin/shard-control
+161fd6582a4b0f7df37466a87f3e235fe72d61be17657b1a0ce8f51df1b16876  /usr/local/bin/transparent-filter-server

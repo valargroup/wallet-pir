@@ -1,0 +1,10 @@
+### start 2026-10-09T13:32:29.630Z
+### cmd:
+for p in /status /v1/status; do printf "%s " $p; curl -s -m 3 -o /tmp/v6-status.json -w "%{http_code}\n" 127.0.0.1:8099$p; head -c 600 /tmp/v6-status.json; echo; done; rm -f /tmp/v6-status.json; systemctl is-active transparent-txid-display-controller
+### output:
+/status 404
+
+/v1/status 200
+{"failures":0,"halted":null,"journal_end":3511813,"last_cycle":{"activate_ms":74,"activated_ms":1791552749552,"archive_chain_sha256":"eca6126a7dcfbe2d894274de91c466963e7f5258a8b5db4c8be108b12254508e","archives":425,"build_s":0.047186996,"candidate_ms":26,"cycle":1129,"cycle_ms":4569,"digest_s":0.022918946,"dropped":[],"first_observed_ms":1791552744972,"first_shard_id":0,"freshness_ms":[4580],"map_sha256":"7b6840bf95ce940eff04f62d06c7011c4afa2f08976ca2f74f21589cfa893b4c","prebuild_failures":0,"prebuild_ms":null,"prepare_ms":3827,"recent":{"digest":"bf9c0735f95e6bf08b396daecba523cf9f2fb5fba00bf4
+active
+### end 2026-10-09T13:32:29.650Z rc=0

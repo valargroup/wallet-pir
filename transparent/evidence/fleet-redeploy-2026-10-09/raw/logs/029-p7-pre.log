@@ -1,0 +1,20 @@
+### start 2026-10-09T12:47:53.733Z
+### cmd:
+bash $DEP/steps/p7-pre.sh
+### output:
+membership age 0.3 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'e52ad8319688'), 'transparent-pir-recent-02': ('serving', True, True, 'e52ad8319688'), 'transparent-pir-archive-03': ('serving', True, True, 'e52ad8319688')}
+archive member {"role": "archive-owner", "intent": "enrolled", "state": "serving", "routed": true, "map_sha256": "e52ad8319688007854ffbee2d03e753eabf14d33a5fcd91ad182e6c7b9939aaf", "warm": true, "candidate_map_sha256": null, "preparing": false, "transport_failures": 0, "error": null, "observed_unix": 1791550073.225517, "rendered": true, "drained_since_unix": null}
+archive ready True warm 164 164 6db1fa05cfaf {'bytes': 38528316640, 'hits': 164, 'limit_bytes': 103079215104, 'misses': 0, 'pending_saves': 0, 'restore_slots': 4, 'write_failures': 0} 0
+MemTotal:       65847080 kB
+MemAvailable:   32020864 kB
+36G	/srv/transparent-pir/v11/runtime-cache
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       193G  133G   60G  69% /
+/dev/vda1       193G  133G   60G  69% /
+MainPID=2974411
+NRestarts=0
+MemoryCurrent=33579347968
+ActiveEnterTimestamp=Sat 2026-10-03 17:49:31 UTC
+active
+lock-free
+### end 2026-10-09T12:47:54.105Z rc=0

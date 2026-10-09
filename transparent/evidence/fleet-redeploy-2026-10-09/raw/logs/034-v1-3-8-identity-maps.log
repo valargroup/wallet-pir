@@ -1,0 +1,75 @@
+### start 2026-10-09T13:31:58.430Z
+### cmd:
+bash $DEP/steps/v-identity.sh
+### output:
+== 1. worker identity
+transparent-pir-recent-01
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /usr/local/bin/transparent-shard-server
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /usr/local/bin/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /proc/2433501/exe
+NRestarts=0
+MemoryCurrent=1261801472
+MemoryHigh=5905580032
+MemoryMax=7516192768
+MemTotal:        8131780 kB
+MemAvailable:    5708632 kB
+/dev/vda1      165295407104 23868293120 141410336768  15% /
+10.142.0.10 unit flags equal baseline modulo order
+transparent-pir-recent-02
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /usr/local/bin/transparent-shard-server
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /usr/local/bin/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /proc/1645664/exe
+NRestarts=0
+MemoryCurrent=1267838976
+MemoryHigh=5905580032
+MemoryMax=7516192768
+MemTotal:        8131780 kB
+MemAvailable:    6374844 kB
+/dev/vda1      165295407104 18526449664 146752180224  12% /
+10.142.0.8 unit flags equal baseline modulo order
+transparent-pir-archive-03
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /usr/local/bin/transparent-shard-server
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /usr/local/bin/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /proc/3255967/exe
+NRestarts=0
+MemoryCurrent=33567281152
+MemoryHigh=51539607552
+MemoryMax=60129542144
+MemTotal:       65847080 kB
+MemAvailable:   32043828 kB
+/dev/vda1      206900281344 142628843520 64254660608  69% /
+10.142.0.7 unit flags equal baseline modulo order
+NEWW=34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c NEWS=9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  /proc/641897/exe
+NEWC=13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba
+== 2. ready and warm
+10.142.0.10 True True warm 18 18 prewarm_failed 0 write_failures 0 map e1ce89d13c64
+10.142.0.8 True True warm 18 18 prewarm_failed 0 write_failures 0 map e1ce89d13c64
+10.142.0.7 True True warm 164 164 prewarm_failed 0 write_failures 0 map e1ce89d13c64
+controller serving map e1ce89d13c64 3511812 3511812 14.20536442
+membership age 0.0 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'e1ce89d13c64'), 'transparent-pir-recent-02': ('serving', True, True, 'e1ce89d13c64'), 'transparent-pir-archive-03': ('serving', True, True, 'e1ce89d13c64')}
+== 3. maps
+origins-agree
+e1ce89d13c640094cc365b2bc5703ccf09112421d0d200d61b59f5f173b1eb53  /root/deploy-a317455e/map-public-after.json
+sealed prefix identical: 90 sealed; tail 90 3511812
+active e1ce89d13c640094cc365b2bc5703ccf09112421d0d200d61b59f5f173b1eb53
+transparent-pir-recent-01 shard-assign rc=0 lines=195
+transparent-pir-recent-02 shard-assign rc=0 lines=195
+transparent-pir-archive-03 shard-assign rc=0 lines=265
+== setup compare
+88 True directory same
+88 True pages same
+89 True directory same
+89 True pages same
+90 False directory same
+90 False pages same
+== 8. coordinator headroom
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       193G  147G   47G  76% /
+/dev/sda        1.0T  790G  234G  78% /srv/zakura
+/dev/sdb        250G  101G  150G  41% /srv/transparent-activity
+Mem:              62          13          17           0          33          49
+== scaler
+observe {'action': 'hold', 'decided_unix': 1791552720.493063, 'reason': 'steady: desired 2, serving 2, offered 3.7 qps'}
+actuator-still-disabled
+### end 2026-10-09T13:32:02.777Z rc=0

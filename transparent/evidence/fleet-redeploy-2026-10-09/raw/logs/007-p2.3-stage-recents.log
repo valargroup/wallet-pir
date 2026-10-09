@@ -1,0 +1,29 @@
+### start 2026-10-09T11:51:29.598Z
+### cmd:
+
+for id in transparent-pir-recent-01 transparent-pir-recent-02; do
+  s=$(date +%s); flock -n -E 75 $LOCK timeout 900 python3 -B $DEP/install-worker.py $S $FLEET $id $R/binaries $OUT/$id stage 2>&1 | tee $DEP/stage-$id.log; rc=${PIPESTATUS[0]}; echo "$id rc=$rc seconds=$(( $(date +%s) - s ))"; [ $rc = 0 ] || break
+done
+
+### output:
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.025077, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.025161, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.254238, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.091308, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.042271, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.346822, "exit_code": 0}
+[2m2026-10-09T11:51:37.435579Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"acae9cb41bca61915c912db4c3ae1c73f097334fce186e447f311d56cc81aa0d" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"cea0f6ccf9c7d1d78b8a4621cb596a1986f0e9a94c18b11c80f74b59498b40d3" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3511736
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.023671, "exit_code": 0}
+{"worker": "transparent-pir-recent-01", "mode": "stage", "done": true}
+transparent-pir-recent-01 rc=0 seconds=8
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014389, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017748, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.2699, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.083983, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.046129, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 8.029122, "exit_code": 0}
+[2m2026-10-09T11:51:46.057575Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"acae9cb41bca61915c912db4c3ae1c73f097334fce186e447f311d56cc81aa0d" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"cea0f6ccf9c7d1d78b8a4621cb596a1986f0e9a94c18b11c80f74b59498b40d3" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3511736
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.050623, "exit_code": 0}
+{"worker": "transparent-pir-recent-02", "mode": "stage", "done": true}
+transparent-pir-recent-02 rc=0 seconds=9
+### end 2026-10-09T11:51:46.218Z rc=0

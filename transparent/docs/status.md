@@ -6,6 +6,67 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Fleet redeploy to a317455e, 2026-10-09
+
+The history workers and the publisher run `main` at `a317455e`, the release from full-CI run
+37921342549. Roman approved the deploy. Nothing that clients see changed: the publisher still
+declares no re-cuts, and every sealed map entry is the same as before. New on history is runtime
+code that had not served it before: the batched recent hint, admission against memory in use,
+held-byte accounting, restore-slot release and the tail sealer
+([evidence](../evidence/fleet-redeploy-2026-10-09/README.md)).
+
+- **Binaries.**
+  - recent-01, recent-02 and archive-03: `transparent-shard-server` `6db1fa05…` → `34ba7ebb…`,
+    `shard-control` `6dfe78fa…` → `9208555a…`.
+  - Coordinator: `transparent-publish-controller` `a68dca01…` → `13af048e…`. `controller.json`
+    `source_sha` is now `a317455e`, and new publications record it as `tool_sha`.
+  - Unchanged: the coordinator's `shard-assign`, `shard-control` and `transparent-filter-server`,
+    the router, and txid display.
+- **Order.** Each worker was staged and verified with no restart. Then, between 11:59 and 13:08
+  UTC:
+  - recent-01 was rolled, with a 33-minute exact load while the recent tier ran mixed versions;
+  - recent-02 was rolled;
+  - the controller was swapped;
+  - archive-03 was restarted from its disk runtime cache.
+
+  The two-replica roll used `roll-recent-replicas.py` with its other-serving floor set to 1 for
+  this run only; the committed default stays 2.
+- **Outages.**
+  - Recent shards: none. Each replica took 24 s.
+  - Public metadata: at most 3.3 s of 502/503 at the controller restart, not the expected
+    30–60 s.
+  - Archive shards 0–81: 339 s. The shard set loaded in 224 s, then all 164 runtimes were
+    restored from disk in 112 s with no misses.
+  - Publication stalled for the archive window; the first activation after it had 290 s
+    freshness, and the next was back to 12 s.
+- **Validation.**
+  - The 5 QPS exact load ran 30 minutes on the new fleet: 9,088 exact, 0 errors.
+  - Freshness p50 was 12.8 s and max 23.4 s.
+  - Both origins served byte-identical maps, and the sealed prefix equals the pre-deploy map.
+  - Cross-replica setups are identical, and the new `shard-assign` re-serializes the live map.
+  - `txid_live_lookup` passed.
+  - APM opened no incidents; only shadow alerts fired during the archive window.
+  - The independent canary, moved to the v11 fixture by a separate change at 13:50 (below), has
+    passed every sample since, all of them against the fully redeployed fleet: 30 successes and
+    no failures at 14:19.
+  - All workers are warm. archive-03 uses 33.6 GB and has 30.5 GiB available.
+  - Coordinator `/srv/zakura` has 22.8% free.
+- **20 QPS.** 10 minutes on top of the 5 QPS load: 12,290/12,290 exact, 0 errors, 20.51 QPS,
+  p50 17 ms, p99 59 ms. On 2026-09-30 (v10, three recent replicas) p99 was 48 ms; on 2026-09-29
+  (v10, two replicas) it was 53 ms. The 423 missed slots came from the client host, which was
+  also running CI builds.
+- **Not covered.**
+  - The wallet regression still stops with publication drift: its fixture pins the v10 map. No
+    wallet sync ran against production.
+  - Txid display was not redeployed.
+- **Deviation.** The 5 QPS load stayed stopped about 21 minutes longer than needed after the
+  archive was warm.
+- **Rollback.** Material is under `/opt/transparent-publisher/rollback/roll-a317455e/` on each
+  worker. For the controller, copies of the previous binary (`a68dca01…`, also in the `12ce1291`
+  release artifacts) and of `controller.json` are in `/root/deploy-a317455e` on the coordinator.
+- **Stale pins.** Future v11 schema operations still pin the old worker (`6db1fa05…`,
+  `6dfe78fa…`) and adapter `f3df5c53…`, so they need new pins.
+
 ## Quality monitoring after the v11 cutover, 2026-10-09
 
 A read-only production inspection on 2026-10-09 found two monitoring inputs that

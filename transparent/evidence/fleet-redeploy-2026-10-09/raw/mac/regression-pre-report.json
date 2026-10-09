@@ -1,0 +1,82 @@
+{
+  "cases": [
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "unused-p2pkh",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "unused-p2sh",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "small-active",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "zero-balance",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "old-receive-recent-spend",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "offline-receive-spend",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "active-p2sh",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "reused-pages",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "multi-script-self-transfer",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "recent-birthday",
+      "passed": false
+    },
+    {
+      "error": "preflight unavailable or drift: publication drift at https://enhance-pir.valargroup.dev",
+      "id": "coinbase",
+      "passed": false
+    }
+  ],
+  "fixture_sha256": "8401c9309aa507e41593a75934b6d109b66450b3e0039be3392111d3825af4bc",
+  "http": {
+    "attempts": 1,
+    "failed_attempts": 0,
+    "failed_requests": 0,
+    "log": "preflight.http.ndjson",
+    "recovered_requests": 0,
+    "requests": 1
+  },
+  "http_policy": {
+    "case_deadline_seconds": 1800,
+    "maximum_attempts": 3,
+    "request_deadline_seconds": 60,
+    "same_buffered_request": true
+  },
+  "map_sha256": "3780f252bde6256f26fd4b48fc0a50401d3ca79b42dbcea2be0c2dde5230214f",
+  "passed": false,
+  "preflight": null,
+  "preflight_error": "publication drift at https://enhance-pir.valargroup.dev",
+  "runner_binary_sha256": "5730b233449f1dc97ca6e2e30e2dd40f257f45c7ab9047f7853f1e8ea3138972",
+  "sealed_prefix_sha256": "282645efac21aefb6d0589923b30d3991d1cdfc297791624ba8fe7439362ea30",
+  "sealed_prefix_shards": 85,
+  "source_sha": "a317455e9feecdd2639d5348188c6a2341819a4d"
+}

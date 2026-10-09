@@ -1,0 +1,20 @@
+### start 2026-10-09T11:58:55.615Z
+### cmd:
+
+python3 -c "import json;l=json.load(open(\"$LOAD/status.json\"));print(l[\"mode\"],l[\"trailing_60s\"],l[\"counts\"])"
+systemctl stop transparent-5qps-continuous
+cp -p $LOAD/pins.json $DEP/pins.json.before
+test ! -e $LOAD/latched.json && echo stopped-clean
+systemctl is-active transparent-5qps-continuous; true
+python3 - <<"EOF"
+import json, time
+m = json.load(open("/opt/transparent-publisher/v11/state/membership.json"))
+print("age", round(time.time()-m["updated_unix"],1), "routed_recent", m["routed_recent"], {k:(v["state"],v.get("rendered"),v["warm"],v["map_sha256"][:12]) for k,v in m["members"].items()})
+EOF
+
+### output:
+running {'exact': 300, 'errors': 0, 'missed_slots': 0, 'completed_qps': 5.0, 'http_p50_seconds': 0.012946655, 'http_p95_seconds': 0.03014309, 'http_p99_seconds': 0.044089756, 'max_schedule_lag_seconds': 0.028681798} {'ready': 1, 'paused': 549, 'query': 698724, 'http_attempts': 698894, 'missed_slot': 429, 'cancelled_slot': 43, 'error': 170, 'recovered': 1}
+stopped-clean
+inactive
+age 0.4 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '1253442ac49f'), 'transparent-pir-recent-02': ('serving', True, True, '1253442ac49f'), 'transparent-pir-archive-03': ('serving', True, True, '1253442ac49f')}
+### end 2026-10-09T11:58:56.246Z rc=0

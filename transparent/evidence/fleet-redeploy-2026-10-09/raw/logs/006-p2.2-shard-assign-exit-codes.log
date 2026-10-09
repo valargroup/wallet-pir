@@ -1,0 +1,20 @@
+### start 2026-10-09T11:51:13.846Z
+### cmd:
+
+A=/srv/transparent-activity/full-v11/publications/active.json
+D=$(python3 -c "import json;print(json.load(open(\"$A\"))[\"directory\"])")
+M=$(python3 -c "import json;print(json.load(open(\"$A\"))[\"map_sha256\"])")
+echo "active: $D $M"
+for id in transparent-pir-recent-01 transparent-pir-recent-02 transparent-pir-archive-03; do
+  $R/binaries/shard-assign files --shard-dir $D --assignment /opt/transparent-publisher/v11/state/$M.assignment.json --worker-id $id > /tmp/sa-new-$id.txt; rn=$?
+  /usr/local/bin/shard-assign files --shard-dir $D --assignment /opt/transparent-publisher/v11/state/$M.assignment.json --worker-id $id > /tmp/sa-old-$id.txt; ro=$?
+  echo "$id new rc=$rn lines=$(wc -l < /tmp/sa-new-$id.txt) old rc=$ro lines=$(wc -l < /tmp/sa-old-$id.txt) identical=$(cmp -s /tmp/sa-new-$id.txt /tmp/sa-old-$id.txt && echo yes || echo no)"
+  rm -f /tmp/sa-new-$id.txt /tmp/sa-old-$id.txt
+done
+
+### output:
+active: /srv/transparent-activity/full-v11/publications/candidate-3511736-00000000003d352b953eebef0dc857c8d85af766d9fd3af559d8b63f7316ff29-1791546650205209272 acae9cb41bca61915c912db4c3ae1c73f097334fce186e447f311d56cc81aa0d
+transparent-pir-recent-01 new rc=0 lines=195 old rc=0 lines=195 identical=yes
+transparent-pir-recent-02 new rc=0 lines=195 old rc=0 lines=195 identical=yes
+transparent-pir-archive-03 new rc=0 lines=265 old rc=0 lines=265 identical=yes
+### end 2026-10-09T11:51:13.926Z rc=0

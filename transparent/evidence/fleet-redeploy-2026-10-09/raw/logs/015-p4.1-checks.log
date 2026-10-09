@@ -1,0 +1,40 @@
+### start 2026-10-09T11:59:48.915Z
+### cmd:
+
+curl -s http://$R01:8093/v1/ready | python3 -c "import json,sys;r=json.load(sys.stdin);print(\"new_binary\",r[\"binary_sha256\"]==\"$NEWW\", r[\"ready\"], r[\"mode\"], r[\"warm_runtimes\"], r[\"target_runtimes\"], r[\"runtime_cache\"], r.get(\"prewarm_failed\"), r.get(\"started_unix\"), r[\"map_sha256\"][:12])"
+python3 -c "import json;m=json.load(open(\"/opt/transparent-publisher/v11/state/membership.json\"));print(m[\"routed_recent\"],{k:(v[\"state\"],v.get(\"rendered\"),v[\"map_sha256\"][:12]) for k,v in m[\"members\"].items()})"
+$W root@$R01 "sha256sum /usr/local/bin/shard-control /usr/local/bin/transparent-shard-server /proc/\$(systemctl show -p MainPID --value transparent-shard-server)/exe; systemctl show transparent-shard-server -p NRestarts -p MemoryCurrent -p ActiveEnterTimestamp; ls -la $OUT/transparent-pir-recent-01/; sha256sum $OUT/transparent-pir-recent-01/*; grep MemAvailable /proc/meminfo"
+awk "{print \$2,\$3,\$4,\$5,\$6}" $DEP/probe-recent-01.log | uniq -c
+
+### output:
+new_binary True True warm 18 18 {'bytes': 1527967792, 'hits': 18, 'limit_bytes': 10737418240, 'misses': 2, 'pending_saves': 0, 'restore_slots': 4, 'write_failures': 0} 0 1791547165 1d2d6edfdf20
+2 {'transparent-pir-recent-01': ('serving', True, '1d2d6edfdf20'), 'transparent-pir-recent-02': ('serving', True, '1d2d6edfdf20'), 'transparent-pir-archive-03': ('serving', True, '1d2d6edfdf20')}
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /usr/local/bin/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /usr/local/bin/transparent-shard-server
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /proc/2433501/exe
+NRestarts=0
+MemoryCurrent=1106259968
+ActiveEnterTimestamp=Fri 2026-10-09 11:59:18 UTC
+total 6136
+drwxr-xr-x 2 root root    4096 Oct  9 11:59 .
+drwxr-xr-x 3 root root    4096 Oct  9 11:51 ..
+-rwxr-xr-x 1 root root    3397 Oct  9 11:59 headless-console.py
+-rwxr-xr-x 1 root root  567528 Oct  9 11:59 shard-control
+-rwxr-xr-x 1 root root    4480 Oct  9 11:59 storage-policy.py
+-rwxr-xr-x 1 root root 5687496 Oct  9 11:59 transparent-shard-server
+-rw-r--r-- 1 root root    3773 Oct  9 11:59 worker.service
+1daa5418f1dc9a510e839f032c2aed6b062395bd855d5b6a729db563f4cf44df  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-recent-01/headless-console.py
+6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-recent-01/shard-control
+f862a88122c404775f5aa70951ea356d56cd15463c8d0c343aff076c343a54ff  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-recent-01/storage-policy.py
+6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-recent-01/transparent-shard-server
+616904005dfe5a5236a83aaf2a9082743103fdb789bd31607f5998fdc7bd2fa0  /opt/transparent-publisher/rollback/roll-a317455e/transparent-pir-recent-01/worker.service
+MemAvailable:    5843880 kB
+     12 True warm 18 18 6db1fa05cfaf
+      7 unreachable    
+      1 False warm 0 18 34ba7ebbdb9c
+      1 False warm 4 18 34ba7ebbdb9c
+      1 False warm 8 18 34ba7ebbdb9c
+      1 False warm 11 18 34ba7ebbdb9c
+      1 False warm 14 18 34ba7ebbdb9c
+     19 True warm 18 18 34ba7ebbdb9c
+### end 2026-10-09T11:59:49.442Z rc=0

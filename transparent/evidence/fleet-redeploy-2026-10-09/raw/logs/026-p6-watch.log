@@ -1,0 +1,8 @@
+### start 2026-10-09T12:46:03.215Z
+### cmd:
+bash $DEP/steps/p6-watch.sh
+### output:
+12:46:03 502 502 unavailable
+12:46:05 200 200 serving 3511771 3511772 0.0
+SERVING
+### end 2026-10-09T12:46:05.410Z rc=0

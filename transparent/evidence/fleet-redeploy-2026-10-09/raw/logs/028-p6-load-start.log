@@ -1,0 +1,12 @@
+### start 2026-10-09T12:47:22.598Z
+### cmd:
+bash $DEP/steps/p6-load-start.sh
+### output:
+{
+  "transparent-pir-archive-03": "6db1fa05cfaf7a6422f7307b394c95ef20129598ea591818c9d4da324ef20430",
+  "transparent-pir-recent-01": "34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c",
+  "transparent-pir-recent-02": "34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c"
+}
+2026-10-09T12:47:22Z
+active
+### end 2026-10-09T12:47:22.627Z rc=0

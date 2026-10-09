@@ -1,0 +1,21 @@
+### start 2026-10-09T11:59:08.801Z
+### cmd:
+
+s=$(date +%s); flock -n -E 75 $LOCK python3 -B $DEP/roll-two-replica.py $S/roll-recent-replicas.py --fleet-config $FLEET --artifacts $R/binaries --out $OUT --workers transparent-pir-recent-01 --warm-seconds 900 --route-seconds 300 2>&1 | tee $DEP/roll-recent-01.log; rc=${PIPESTATUS[0]}; echo "rc=$rc wall=$(( $(date +%s) - s ))s"; exit $rc
+
+### output:
+{"event": "override", "MIN_OTHER_SERVING": {"default": 2, "this_run": 1}, "decision": "D2"}
+{"event": "roll_start", "worker": "transparent-pir-recent-01", "others_serving": ["transparent-pir-recent-02"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.377322, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.018812, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.067134, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.07159, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.044478, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.597414, "exit_code": 0}
+[2m2026-10-09T11:59:17.024623Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"1253442ac49fa6cc35626ba2f12cc3f6fb97cdc8416bfab57637f2fa9e089c0a" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"e24bd56eee7abdf61078c52e4423530c6d6d6f66946032e7f0ab6cc4f7cc3265" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3511743
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016757, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 1.02327, "exit_code": 0}
+transparent-pir-recent-01: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-01", "seconds": 24.3}
+rc=0 wall=25s
+### end 2026-10-09T11:59:33.222Z rc=0

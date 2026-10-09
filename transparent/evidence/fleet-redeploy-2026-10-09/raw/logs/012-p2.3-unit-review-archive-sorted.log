@@ -1,0 +1,9 @@
+### start 2026-10-09T11:58:44.696Z
+### cmd:
+$W root@$A03 "diff <(grep -v ^ExecStart= /etc/systemd/system/transparent-shard-server.service | sort) <(grep -v ^ExecStart= /opt/transparent-publisher/staged/worker.service | sort) && echo archive-03: same non-ExecStart lines as a set, MemoryMax line reordered only; grep -nE \"^Memory\" /opt/transparent-publisher/staged/worker.service"
+### output:
+archive-03: same non-ExecStart lines as a set, MemoryMax line reordered only
+7:MemoryHigh=51539607552
+8:MemoryMax=56G
+58:MemorySwapMax=0
+### end 2026-10-09T11:58:44.977Z rc=0

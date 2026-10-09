@@ -1,0 +1,24 @@
+### start 2026-10-09T11:58:28.525Z
+### cmd:
+
+for h in $A03; do $W root@$h "L=/etc/systemd/system/transparent-shard-server.service; N=/opt/transparent-publisher/staged/worker.service
+  diff <(sed -n \"s/^ExecStart=//p\" \$L | tr \" \" \"\n\" | sort) <(sed -n \"s/^ExecStart=//p\" \$N | tr \" \" \"\n\" | sort) && diff <(grep -v \"^ExecStart=\" \$L) <(grep -v \"^ExecStart=\" \$N) && echo \"\$(hostname): same flags and lines\"; sha256sum /opt/transparent-publisher/staged/*"; done
+awk "{print \$1, \$2, \$3}" $DEP/archive-mem.log | sort -k3 -n | head -2
+grep -o "MemAvailable: [0-9]*" $DEP/archive-mem.log | awk "{print \$2}" | sort -n | head -1 | awk "{printf \"min MemAvailable during verify: %.1f GiB\n\", \$1/1048576}"
+grep -o "MemoryCurrent=[0-9]*" $DEP/archive-mem.log | cut -d= -f2 | sort -n | tail -1 | awk "{printf \"max service MemoryCurrent: %.2f GB\n\", \$1/1e9}"
+grep -oE "active [0-9]+ " $DEP/archive-mem.log | awk "{print \$2}" | sort -n | tail -1 | awk "{printf \"max verify RSS: %.0f MB\n\", \$1/1024}"
+
+### output:
+7d6
+< MemoryMax=56G
+8a8
+> MemoryMax=56G
+9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66  /opt/transparent-publisher/staged/shard-control
+34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c  /opt/transparent-publisher/staged/transparent-shard-server
+664362f7fa15f85971e065547f01c8e7a8ae403f5d10b73bc6a029b607d2cf54  /opt/transparent-publisher/staged/worker.service
+2026-10-09T11:58:17Z MemAvailable: 31844676
+2026-10-09T11:58:28Z MemAvailable: 31851764
+min MemAvailable during verify: 30.4 GiB
+max service MemoryCurrent: 33.53 GB
+max verify RSS: 195 MB
+### end 2026-10-09T11:58:28.829Z rc=0

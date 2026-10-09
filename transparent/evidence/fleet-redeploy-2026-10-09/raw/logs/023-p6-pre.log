@@ -1,0 +1,11 @@
+### start 2026-10-09T12:35:54.780Z
+### cmd:
+bash $DEP/steps/p6-pre.sh
+### output:
+membership age 0.9 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '932d4fdf0e13'), 'transparent-pir-recent-02': ('serving', True, True, '932d4fdf0e13'), 'transparent-pir-archive-03': ('serving', True, True, '932d4fdf0e13')}
+controller serving 3511767 3511767 16.702952263
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /usr/local/bin/transparent-publish-controller
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /proc/4015132/exe
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /srv/transparent-activity/build/evidence/release-12ce12918446eaa56e2d766ec2f43d82c531abb9/artifacts/transparent-publish-controller
+lock-free
+### end 2026-10-09T12:35:54.904Z rc=0

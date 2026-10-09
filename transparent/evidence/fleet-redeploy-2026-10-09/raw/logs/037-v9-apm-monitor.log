@@ -1,0 +1,20 @@
+### start 2026-10-09T13:32:46.910Z
+### cmd:
+python3 -c "
+import sqlite3,json;c=sqlite3.connect(\"file:/var/lib/pir-apm/incidents.sqlite?mode=ro\",uri=True)
+act=[];recent=[]
+for k,v in c.execute(\"select key,value from incidents\"):
+  try: d=json.loads(v)
+  except Exception: continue
+  if d.get(\"active\"): act.append((k,d.get(\"since\"),d.get(\"id\")))
+print(\"active incidents\", len(act)); [print(a) for a in act]
+cols=[r[1] for r in c.execute(\"pragma table_info(events)\")]; print(\"events cols\", cols)
+"; curl -s -m 10 https://monitor-pir.valargroup.dev/monitor-status > $DEP/monitor-status-after.json; python3 -c "import json;s=json.load(open(\"$DEP/monitor-status-after.json\"));t=s[\"services\"][\"transparent\"];print(\"pir-monitor transparent\",t[\"category\"],t[\"consecutive_failures\"],t[\"successes\"])"; curl -s 127.0.0.1:3002/api/quality > $DEP/apm-quality-after.json; python3 -c "import json;q=json.load(open(\"$DEP/apm-quality-after.json\"));print(\"apm publication\",q[\"publication\"]);print(\"apm synthetic utc\",q[\"synthetic\"].get(\"utc\"),\"fresh\",q[\"synthetic\"].get(\"fresh\"))"; curl -s -o /dev/null -w "apm public %{http_code}\n" https://enhance-pir.valargroup.dev/apm/transparent/
+### output:
+active incidents 0
+events cols ['id', 'at', 'shadow', 'body']
+pir-monitor transparent oracle_invalid 619 0
+apm publication {'canonical': True, 'lag_blocks': 1, 'map_sha256': 'cfa878835a03532cf9ca9e3ffb8f6f32bebb86fed6b6e611328ddf2fcd631313', 'origins_agree': True, 'public_height': 3511813, 'sampled_at': 1791552762}
+apm synthetic utc 2026-10-03T17:35:31.651283+00:00 fresh False
+apm public 200
+### end 2026-10-09T13:32:47.493Z rc=0

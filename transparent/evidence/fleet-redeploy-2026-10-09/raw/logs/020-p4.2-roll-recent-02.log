@@ -1,0 +1,24 @@
+### start 2026-10-09T12:33:09.485Z
+### cmd:
+cat $DEP/steps/p4.2-roll.sh; echo ---; bash $DEP/steps/p4.2-roll.sh
+### output:
+. /root/deploy-a317455e/env.sh
+s=$(date +%s)
+flock -n -E 75 $LOCK python3 -B $DEP/roll-two-replica.py $S/roll-recent-replicas.py --fleet-config $FLEET --artifacts $R/binaries --out $OUT --workers transparent-pir-recent-02 --warm-seconds 900 --route-seconds 300 2>&1 | tee $DEP/roll-recent-02.log
+rc=${PIPESTATUS[0]}; echo "rc=$rc wall=$(( $(date +%s) - s ))s"; exit $rc
+---
+{"event": "override", "MIN_OTHER_SERVING": {"default": 2, "this_run": 1}, "decision": "D2"}
+{"event": "roll_start", "worker": "transparent-pir-recent-02", "others_serving": ["transparent-pir-recent-01"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.413431, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015502, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.051698, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.069409, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.046297, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.667359, "exit_code": 0}
+[2m2026-10-09T12:33:17.805481Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"932d4fdf0e13821443aa769f9e33d5e149ae1742b0ee30225ff4bbede7155b7e" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"b5c353ed02ced175ce2e367fd8d5c9a33cb3c0fcc02960083a8d37fc322c2712" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3511767
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.017243, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.870281, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-02", "seconds": 24.2}
+rc=0 wall=24s
+### end 2026-10-09T12:33:33.843Z rc=0

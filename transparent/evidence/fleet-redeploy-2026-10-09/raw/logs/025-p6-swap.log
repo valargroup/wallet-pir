@@ -1,0 +1,41 @@
+### start 2026-10-09T12:46:02.906Z
+### cmd:
+cat $DEP/steps/p6-swap-inner.sh; echo ---; flock -n -E 75 $LOCK bash $DEP/steps/p6-swap-inner.sh
+### output:
+# Runs under the production lock. Swap the controller binary, record source_sha (D5), restart.
+set -eu
+. /root/deploy-a317455e/env.sh
+systemctl stop transparent-5qps-continuous; systemctl is-active transparent-5qps-continuous || true
+test "$(sha256sum < /usr/local/bin/transparent-publish-controller | cut -d' ' -f1)" = "$OLDC" || { echo "live controller binary is not OLDC; refusing"; exit 1; }
+test ! -e $DEP/transparent-publish-controller.before
+cp -p /usr/local/bin/transparent-publish-controller $DEP/transparent-publish-controller.before
+cp -p /opt/transparent-publisher/v11/controller.json $DEP/controller.json.before
+curl -sf https://transparent-pir.valargroup.dev/v1/shards > $DEP/map-before-controller.json
+sha256sum $DEP/transparent-publish-controller.before $DEP/controller.json.before $DEP/map-before-controller.json
+install -m 0755 $R/binaries/transparent-publish-controller /usr/local/bin/transparent-publish-controller.next
+mv /usr/local/bin/transparent-publish-controller.next /usr/local/bin/transparent-publish-controller
+sha256sum /usr/local/bin/transparent-publish-controller
+python3 - $NEW_SHA <<'PY'
+import json, os, shutil, sys
+p = '/opt/transparent-publisher/v11/controller.json'; c = json.load(open(p)); old = c['source_sha']; c['source_sha'] = sys.argv[1]
+t = p + '.tmp'; open(t, 'w').write(json.dumps(c, indent=2, sort_keys=True) + '\n'); shutil.copymode(p, t); os.replace(t, p)
+print('source_sha', old, '->', sys.argv[1])
+PY
+diff $DEP/controller.json.before /opt/transparent-publisher/v11/controller.json || true
+date -u +%s.%N > $DEP/controller-restart-start; cat $DEP/controller-restart-start
+systemctl restart transparent-publish-controller
+date -u +%s.%N > $DEP/controller-restart-returned; cat $DEP/controller-restart-returned
+---
+inactive
+a68dca012c35004ec9628368a87b1cda9ee21605404f0f8cb0ac40d4d8ffad4d  /root/deploy-a317455e/transparent-publish-controller.before
+49598575d1514963701eb314f99a6e4458b4f0a38b8dbb04c6494478cb4d157b  /root/deploy-a317455e/controller.json.before
+1be64741fc593b6a7d2832240eb8e2d8cff8b8da05e70f035429cbf56ba3153c  /root/deploy-a317455e/map-before-controller.json
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  /usr/local/bin/transparent-publish-controller
+source_sha 12ce12918446eaa56e2d766ec2f43d82c531abb9 -> a317455e9feecdd2639d5348188c6a2341819a4d
+16c16
+<   "source_sha": "12ce12918446eaa56e2d766ec2f43d82c531abb9"
+---
+>   "source_sha": "a317455e9feecdd2639d5348188c6a2341819a4d"
+1791549963.082887576
+1791549963.205016224
+### end 2026-10-09T12:46:03.209Z rc=0

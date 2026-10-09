@@ -1,0 +1,19 @@
+### start 2026-10-09T14:01:06.818Z
+### cmd:
+bash $DEP/steps/load-gate.sh; python3 - <<"EOF"
+import statistics
+rows=[l.split() for l in open("/root/deploy-a317455e/freshness.log") if len(l.split())>=6]
+rows=[r for r in rows if float(r[0])>=1791552618]
+by={}
+for r in rows:
+    if r[1]=="serving": by.setdefault(r[2],[]).append(float(r[4]))
+f=[max(v) for v in by.values()]
+lag=[int(r[3])-int(r[2]) for r in rows if r[1]=="serving"]
+print("since 13:30:18: heights",len(by),"freshness p50",round(statistics.median(f),2),"max",round(max(f),2),"max node-public",max(lag),"samples",len(rows),"non-serving",sum(1 for r in rows if r[1]!="serving"))
+EOF
+### output:
+running 2026-10-09T14:00:58.067645+00:00 1791552618.0746014 {'ready': 1, 'paused': 4, 'query': 9088, 'http_attempts': 9088} {'exact': 299, 'errors': 0, 'missed_slots': 0, 'completed_qps': 4.983333333333333, 'http_p50_seconds': 0.020771387, 'http_p95_seconds': 0.048789579, 'http_p99_seconds': 0.072816601, 'max_schedule_lag_seconds': 0.00649493} incidents 0 []
+no-latch
+active
+since 13:30:18: heights 32 freshness p50 12.79 max 23.44 max node-public 2 samples 368 non-serving 0
+### end 2026-10-09T14:01:06.870Z rc=0

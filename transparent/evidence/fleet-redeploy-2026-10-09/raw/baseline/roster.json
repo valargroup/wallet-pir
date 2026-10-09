@@ -1,0 +1,41 @@
+[
+  {
+    "build_slots": 1,
+    "cache_bytes": 5368709120,
+    "id": "transparent-pir-recent-01",
+    "intent": "enrolled",
+    "memory_max": "7G",
+    "origin": "static",
+    "replica_group": "recent",
+    "role": "recent-replica",
+    "ssh_host": "10.142.0.10",
+    "upstream": "10.142.0.10:8093"
+  },
+  {
+    "build_slots": 1,
+    "cache_bytes": 5368709120,
+    "id": "transparent-pir-recent-02",
+    "intent": "enrolled",
+    "memory_max": "7G",
+    "origin": "static",
+    "replica_group": "recent",
+    "role": "recent-replica",
+    "ssh_host": "10.142.0.8",
+    "upstream": "10.142.0.8:8093"
+  },
+  {
+    "archive_range": [
+      0,
+      81
+    ],
+    "build_slots": 1,
+    "cache_bytes": 52613349376,
+    "id": "transparent-pir-archive-03",
+    "intent": "enrolled",
+    "memory_max": "56G",
+    "origin": "static",
+    "role": "archive-owner",
+    "ssh_host": "10.142.0.7",
+    "upstream": "10.142.0.7:8093"
+  }
+]

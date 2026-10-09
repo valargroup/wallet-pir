@@ -1,0 +1,11 @@
+### start 2026-10-09T14:20:16.234Z
+### cmd:
+curl -s -m 10 https://monitor-pir.valargroup.dev/monitor-status > $DEP/monitor-status-recheck.json; python3 -c "import json,datetime;s=json.load(open(\"$DEP/monitor-status-recheck.json\"));t=s[\"services\"][\"transparent\"];print(datetime.datetime.fromtimestamp(t[\"sampled_at\"],datetime.timezone.utc).isoformat(), t[\"category\"], \"successes\", t[\"successes\"], \"failures\", t[\"failures\"], \"consecutive_failures\", t[\"consecutive_failures\"], \"duration\", t[\"duration_seconds\"])"; curl -s 127.0.0.1:3002/api/quality > /tmp/apmq.json; python3 -c "import json;q=json.load(open(\"/tmp/apmq.json\"));s=q[\"synthetic\"];print(\"apm synthetic\",s.get(\"utc\"),\"fresh\",s.get(\"fresh\"),s.get(\"mode\"),s.get(\"trailing_60s\"))"; rm -f /tmp/apmq.json; python3 -c "
+import sqlite3,json;c=sqlite3.connect(\"file:/var/lib/pir-apm/incidents.sqlite?mode=ro\",uri=True)
+print(\"active incidents\", sum(1 for k,v in c.execute(\"select key,value from incidents\") if json.loads(v).get(\"active\")))"; lslocks | grep wallet-pir-production || echo lock-free
+### output:
+2026-10-09T14:19:28+00:00  successes 30 failures 0 consecutive_failures 0 duration 1.84273106
+apm synthetic 2026-10-09T14:20:04.198276+00:00 fresh True running {'completed_qps': 4.983333333333333, 'errors': 0.0, 'exact': 299.0, 'http_p50_seconds': 0.013271534, 'http_p95_seconds': 0.034563234, 'http_p99_seconds': 0.069038355, 'max_schedule_lag_seconds': 0.010256917, 'missed_slots': 0.0}
+active incidents 0
+lock-free
+### end 2026-10-09T14:20:16.809Z rc=0
