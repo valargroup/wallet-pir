@@ -36,15 +36,28 @@ INVENTORY = module('product_inventory', HERE.parent/'scripts/transparent-fleet-i
 C = I.C
 H, R = T.H, T.R
 # Historical identity of the immutable publication, its initial assignment and
-# the frozen version-1 build. Version 2 binds candidate executables/gates (C).
+# the frozen version-1 build. Version 1 installs the deployed portable worker
+# pair and controller (I.WORKER_HASHES, I.COORDINATOR_HASHES) and 12ce for the
+# rest. Version 2 binds candidate executables/gates (C).
 NATIVE = '12ce12918446eaa56e2d766ec2f43d82c531abb9'
 STATE = Path('/srv/transparent-activity/ops/schema')
 PUBLICATION = Path('/srv/transparent-activity/full-v11/publications/initial')
 LOAD_ROOT = Path('/srv/transparent-activity/canonical-load/v11')
-LOAD_BINARY = Path('/srv/transparent-activity/build/evidence')/('release-'+NATIVE)/'artifacts/examples/rate-query'
+RELEASE = Path('/srv/transparent-activity/build/evidence')/('release-'+NATIVE)/'artifacts'
+LOAD_BINARY = RELEASE/'examples/rate-query'
 GATES = {'artifact-verification', 'native-certificates', 'independent-chain-oracle', 'comprehensive-ci'}
 ROLLBACK_TIMEOUTS = {'withdraw-origins':60, 'restore-v10':140, 'verify-rollback':300,
                      'reopen-v10':100, 'verify-service':140}
+
+
+def selected_binary(role, name, candidate):
+    """The verified release file a host plan must install as /usr/local/bin/NAME."""
+    if candidate:
+        return C.binary(name)
+    # The deployed portable release replaces the worker pair and the controller;
+    # the coordinator's other tools, its shard-control included, stay 12ce.
+    deployed = {'worker':I.WORKER_HASHES, 'coordinator':I.COORDINATOR_HASHES}.get(role, {})
+    return I.worker_binary(name) if name in deployed else RELEASE/name
 
 
 def input_(value):
@@ -256,15 +269,10 @@ class Product:
             groups.add((target['geometry'],target.get('table')))
         H.require(groups == {(g,t) for g in ('recent-4k-8k','archive-wide') for t in ('directory','pages')},
                   'load fixture omits the required 80/20 recent/archive directory/page mix')
-        release=Path('/srv/transparent-activity/build/evidence')/('release-'+NATIVE)/'artifacts'
         for entry in self.hosts:
             for install in entry['plan']['installs']:
                 if install['target'].startswith('/usr/local/bin/'):
-                    name = Path(install['target']).name
-                    if candidate:
-                        binary = C.binary(name)
-                    else:
-                        binary = I.worker_binary(name) if entry['plan']['role'] == 'worker' and name in I.WORKER_HASHES else release/name
+                    binary = selected_binary(entry['plan']['role'], Path(install['target']).name, candidate)
                     H.require(H.checksum(binary) == install['sha256'], 'host native binary is not the selected release')
         policy = H.load(self.spec['load']['policy']['path'])
         H.require(policy.get('mode') == 'observe', 'schema switch requires observe-only scaler policy')

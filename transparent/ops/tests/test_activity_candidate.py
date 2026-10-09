@@ -450,8 +450,10 @@ class ServiceInputs(unittest.TestCase):
     def test_candidate_inputs_bind_candidate_worker_pins_and_controller_source(self):
         candidate, portable = C.ARTIFACTS['transparent-shard-server'], I.WORKER_HASHES['transparent-shard-server']
         self.render(2, candidate, C.SOURCE_SHA)
-        self.render(1, portable, OLD)
-        for version, pins, source in ((2, portable, C.SOURCE_SHA), (2, candidate, OLD), (1, candidate, OLD), (1, portable, C.SOURCE_SHA)):
+        # Version 1 runs the deployed portable controller, which records its own source.
+        self.render(1, portable, I.DEPLOYED_SHA)
+        for version, pins, source in ((2, portable, C.SOURCE_SHA), (2, candidate, OLD), (1, candidate, I.DEPLOYED_SHA),
+                                      (1, portable, C.SOURCE_SHA), (1, portable, OLD)):
             with self.subTest(version=version, pins=pins[:8], source=source[:8]), self.assertRaises(ValueError):
                 self.render(version, pins, source)
 

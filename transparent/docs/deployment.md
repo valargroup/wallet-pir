@@ -1065,6 +1065,12 @@ Source staging and candidate upload use the closed bootstrap survey in
 `activity_bootstrap_fleet.py`. It verifies the immutable retained full-v11
 inventory by its physical file hash and the existing `4c85b6c2` runtime receipt
 before importing its pinned SSH transport in an isolated package namespace.
+That receipt check accepts exactly one recorded deviation: the txid display
+router hook (committed 2026-10-06) replaced
+`transparent/ops/scripts/transparent-live-fleet.py` in that tree in place, from
+`f3df5c53…` (git `4c85b6c2`) to `35b6b436…` (git `d191f86b`), and the receipt
+still records the original. Any other file, or either adapter's bytes
+restored or changed again, still refuses. The runtime never imports the adapter.
 There are exactly five named hosts with their reviewed machine pins. The survey
 uses the shared bounded owner reader across schema, host-action, input and source
 receipts, then associates live processes and descendants. It preserves the
@@ -1077,7 +1083,8 @@ not a baseline unit, and its operation (stdin) is not observable, so it is never
 treated as read-only. `ops/lib/wallet_pir_ops/control_attribution.py`, embedded
 with the survey, attributes ownership only. A worker reports a control as pending
 only for an exact chain: the fixed argv (SHA-256 `c5827d6f…`) and pinned
-executable bytes (`6dfe78fa…`, the staged portable worker pin), root's login shell
+executable bytes (`9208555a…`, the portable worker pin production runs since
+2026-10-09), root's login shell
 running exactly the reconciler's `-c` command as its session leader with no other
 child, an sshd session process in the same root `session-N.scope` holding exactly
 one established TCP connection, and stable start ticks. Everything else stays
@@ -1085,7 +1092,8 @@ unattributed. Candidates come from the same complete process scan used by the
 ownership survey, rather than an earlier PID listing. Before each worker survey and after a reply with pending controls,
 the coordinating survey snapshots the reconciler: unit active, pinned fragment
 `869e2606…`, no drop-ins, main argv equal to the fragment's literal `ExecStart`,
-pinned script `f3df5c53…` at the immutable `4c85b6c2` source path
+pinned script `35b6b436…` (the router hook's in-place replacement) at the
+`4c85b6c2` source path
 (`/srv/transparent-activity/ops/sources/<full-source-sha>/transparent/ops/scripts/transparent-live-fleet.py`),
 with the exact `/usr/bin/python3 -B` prefix and resolved interpreter executable,
 unchanged since the main process started, and direct
@@ -1145,6 +1153,9 @@ exact shape can hide only PIDs that no other record names. Callers without
 `evidence`, including candidate execution
 (`activity_candidate_execution.survey`), still treat every recorded PID as an
 owner and refuse when retained replies name live services.
+Worker replies are checked by control shape, so an executable repin keeps them
+recognized; attribution files holding verified snapshots of an older script pin
+are walked as owner records.
 
 Read-only preflight checks every host without creating a lock or owner.
 Use `schema-source-preflight --private-evidence-file FILE` on the local
@@ -1421,24 +1432,45 @@ scaler stay stopped until the outer approved phases restore them.
 ### Portable activity worker executables
 
 The full-chain journal, publication tools and reference reader retain the 12ce
-fat-LTO release identity. Worker server/control instead use the checksummed
-`transparent-publisher` bundle from successful comprehensive main CI 36819961986
-at `80c94f32d7d8cde6615226d41b9cdd7627cc774b`. Native Rust, Cargo and toolchain
-inputs match 12ce; the CPU flags explicitly select `x86-64-v3` plus `pclmulqdq`.
+fat-LTO release identity. Worker server/control instead use a checksummed
+`transparent-publisher` bundle from comprehensive main CI.
+
+- **Selected now:** the bundle production runs since 2026-10-09
+  ([redeploy](../evidence/fleet-redeploy-2026-10-09/README.md)), full CI
+  37921342549 at `a317455e9feecdd2639d5348188c6a2341819a4d`, built with
+  `-C target-cpu=x86-64-v3`. The workers run its `transparent-shard-server`
+  (`34ba7ebb…`) and `shard-control` (`9208555a…`). Version-1 products also
+  install its `transparent-publish-controller` (`13af048e…`) on the coordinator,
+  and its v11 `controller.json` must record `source_sha` `a317455e`, as the
+  live one does.
+- **Still 12ce on the coordinator:** filter, `shard-assign` and `shard-control`.
+- **Staged for the 2026-10-03 cutover:** CI 36819961986 at `80c94f32`
+  (`6db1fa05…`, `6dfe78fa…`). Its native Rust, Cargo and toolchain inputs
+  matched 12ce.
+
 The coordinator native-CPU build required instructions unavailable on the recent
 workers and failed candidate verification with SIGILL. Preserve that failed
 owner, native result and abandoned bytes after locked reconciliation.
 
-Stage the two portable executables through wrapper plan/preflight and
+Stage the portable executables through wrapper plan/preflight and
 `preflight --stage` into checksum-named releases under
-`/srv/transparent-activity/portable-workers`. This only prepares candidate files.
-The input builder and product preflight pin both exact executable hashes, modes
-and source paths; they refuse the coordinator-native worker bytes. Use a fresh
-input request/attempt after reconciliation. Prove native verification on an
-actual recent worker before starting the archive copy. The original release
-receipt still binds publication/assignment tools; worker file records bind the
-separately compiled portable artifacts. Never rewrite the old build receipt or
-claim that reusing CI artifacts establishes fleet or load qualification.
+`/srv/transparent-activity/portable-workers/releases/<sha256>/<name>`, mode 0755,
+before a version-1 worker-input, service-input or product preflight. A bundle
+extracted for a manual redeploy is not this layout. This only prepares
+candidate files. The input builder and product preflight pin the exact
+executable hashes, modes and source paths; they refuse the coordinator-native
+worker bytes. Use a fresh input request/attempt after reconciliation. Prove
+native verification on an actual recent worker before starting the archive copy.
+The original release receipt still binds publication/assignment tools; worker
+file records bind the separately compiled portable artifacts. Never rewrite the
+old build receipt or claim that reusing CI artifacts establishes fleet or load
+qualification.
+
+A recorded schema transaction's rollback runs from the operations source its
+recipe was built with, and every product phase verifies that source's receipt.
+An in-place edit to that tree therefore disables the recorded rollback until
+the tree verifies again; the 2026-10-03 transaction's case is in
+[remaining work](remaining-work.md#transparent-operations-after-the-2026-10-09-redeploy).
 
 Candidate preparation executables and unit text are flat `.input-*` files beside
 `shards.json`. The native server inspects every immediate child directory as a
@@ -1460,7 +1492,13 @@ publication job and its 18 retained 12ce artifacts, and the recovery samples
 created by the 12ce tools. They also include the 80c94f32 portable-worker
 receipts, the four existing 12ce gate reports, the rollback recovery reader and
 captured predecessor executables. Version 1 service, cutover, worker-input and
-product inputs select only that historical build.
+product inputs select that historical build, apart from the deployed portable
+worker pair and controller described above.
+
+`c3c66b9b` is an ancestor of the `a317455e` release production runs since
+2026-10-09. A version-2 cutover with these pins would install older workers
+and an older controller than the live ones. Re-pin the candidate first. Its
+13 supplemental tools have no `a317455e` build.
 
 `transparent/ops/lib/activity_candidate.py` pins the candidate's 18 artifacts.
 Five serving roles come from the exact-head CI release bundles of comprehensive

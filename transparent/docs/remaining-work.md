@@ -56,6 +56,64 @@ authoritative outstanding checklist for the opt-in, recovery-only macOS beta. [S
 work; [deployment](deployment.md) owns all operating thresholds. Historical gate
 numbers are reconciled below rather than retained as a second release checklist.
 
+## Transparent operations after the 2026-10-09 redeploy
+
+The [2026-10-09 redeploy](../evidence/fleet-redeploy-2026-10-09/README.md) moved the
+history workers and the controller to `a317455e`. Operations source now pins those
+bytes, and the adapter the reconciler runs, for v11 schema operations
+([deployment](deployment.md#portable-activity-worker-executables)). These items remain;
+the last two were found during the redeploy.
+
+- [ ] Stage the operations source that carries the new pins on the coordinator with
+  `schema-source-plan`, `-preflight` and `-stage`. Every schema operation runs from a
+  staged source, and `4c85b6c2`'s copy still pins the old bytes. Run the read-only
+  preflight first. Attribution files retained on 2026-10-05 carry the old script pin
+  and are now walked as owner records; the reconciler processes they name have exited.
+- [ ] Stage the deployed portable executables on the coordinator before any version-1
+  worker-input, service-input or product preflight. These are `transparent-shard-server`
+  `34ba7ebb…`, `shard-control` `9208555a…` and `transparent-publish-controller`
+  `13af048e…` from full CI 37921342549, whose verified extract is on the coordinator
+  under `/opt/transparent-publisher/releases/a317455e…/binaries`. They go into
+  `/srv/transparent-activity/portable-workers/releases/<sha256>/<name>`, mode 0755,
+  through wrapper plan/preflight and `preflight --stage`. Until then those preflights
+  refuse with "portable worker artifact identity/mode differs".
+- [ ] Make the `4c85b6c2` operations source verify again, or record that the 2026-10-03
+  cutover's rollback is no longer available.
+  - **The change.** On 2026-10-06 the txid display router hook rewrote
+    `transparent-live-fleet.py` inside that tree (`f3df5c53…` → `35b6b436…`). The live
+    controller's `fleet_command` and the replica reconciler both run that file.
+  - **Why it refuses.** The receipt still records the original bytes, so every phase of
+    the committed 2026-10-03 schema transaction refuses at receipt verification, its
+    rollback included.
+  - **Why source cannot fix it.** Those phases run `4c85b6c2`'s own code. Only the
+    bootstrap survey, which runs from the staging client, accepts the one replacement.
+  - **One fix.** Stage a new source and point the controller's `fleet_command` and the
+    reconciler and control-sessions units at its adapter, then restart them. Next,
+    restore the original bytes kept by the router-hook transaction. After that, the
+    attribution pins move to the new source.
+- [ ] Re-pin or retire the changed-native candidate `c3c66b9b`. It predates `a317455e`,
+  so version-2 inputs would install older workers and an older controller than
+  production runs, and its 13 supplemental tools have no `a317455e` build.
+- [ ] Port the standard deploy paths to v11; the v11 fleet lives under
+  `/opt/transparent-publisher/v11/`.
+  - `deploy-transparent-publisher.py` `shadow` and `activate` write
+    `/opt/transparent-publisher/controller.json` and `fleet.json`. They default to the
+    v7 publication, the version-2 journal and `/srv/zakura/transparent-publications`.
+    `deploy-transparent-publisher.yml` runs it with those defaults.
+  - `upgrade-transparent-fleet.py` defaults to `/opt/transparent-publisher/fleet.json`.
+  - `deploy-transparent-shard.yml` reads `/opt/transparent-publisher/state/inventory.json`
+    and `roster.json`.
+
+  Run now, they would point the controller back at pre-v11 configuration. The
+  2026-10-09 redeploy used a manual runbook instead (its `raw/steps/`), reusing only
+  `install_worker`.
+- [ ] Give `roll-recent-replicas.py` a reviewed floor for a two-replica tier. It
+  restarts a replica only while two other recent replicas serve
+  (`MIN_OTHER_SERVING = 2`). The tier has two replicas, and the actuator that used to add
+  a temporary third is disabled. The 2026-10-09 roll therefore set the floor to 1 for
+  that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
+  Add an explicit, logged override, or bring up a temporary third replica for each roll.
+
 ## Activity metadata v3/v11 delivery (2026-09-30)
 
 Attempt 7 failed the candidate cache reader, then the locked wrapper completed

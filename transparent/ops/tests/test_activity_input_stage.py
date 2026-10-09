@@ -186,6 +186,30 @@ class Inputs(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'symlink'):M.worker_binary(name)
             with self.assertRaisesRegex(ValueError,'unsupported'):M.worker_binary('publisher')
 
+    def test_portable_pins_are_the_release_production_runs(self):
+        # Independent record of the 2026-10-09 redeploy: its manifest's "after"
+        # identities and the CI bundle's own checksums.
+        evidence=Path(__file__).parents[2]/'evidence/fleet-redeploy-2026-10-09'
+        manifest=json.loads((evidence/'manifest.json').read_text())
+        sums=dict(reversed(line.split()) for line in (evidence/'raw/release-SHA256SUMS').read_text().splitlines())
+        binaries=manifest['binaries']
+        self.assertEqual(M.DEPLOYED_SHA,manifest['source']['commit'])
+        self.assertEqual(M.WORKER_HASHES,{'transparent-shard-server':binaries['transparent-shard-server']['after'],
+                                          'shard-control':binaries['shard-control (workers)']['after']})
+        self.assertEqual(M.COORDINATOR_HASHES,{'transparent-publish-controller':binaries['transparent-publish-controller']['after']})
+        for name,value in {**M.WORKER_HASHES,**M.COORDINATOR_HASHES}.items():
+            self.assertEqual(sums[name],value)
+        # The coordinator's own shard-control is not the worker pair's.
+        self.assertNotEqual(binaries['unchanged']['coordinator shard-control'],M.WORKER_HASHES['shard-control'])
+
+    def test_deployed_controller_uses_the_same_checksum_named_release_root(self):
+        name='transparent-publish-controller'; data=b'controller'; expected=hashlib.sha256(data).hexdigest()
+        with patch.object(M,'WORKER_ROOT',self.root/'portable'),patch.dict(M.COORDINATOR_HASHES,{name:expected},clear=True):
+            path=M.WORKER_ROOT/expected/name; path.parent.mkdir(parents=True); path.write_bytes(data); path.chmod(0o755)
+            self.assertEqual(M.worker_binary(name),path)
+            path.write_bytes(b'12ce controller')
+            with self.assertRaisesRegex(ValueError,'identity/mode'):M.worker_binary(name)
+
     def client(self):
         client=object.__new__(M.Client)
         client.inventory=SimpleNamespace(lock={'type':'pinned_host','machine_id':'c'*32})
@@ -370,7 +394,7 @@ class ServiceInputs(unittest.TestCase):
         files={
             'controller.json':json.dumps({'data_dir':str(M.P.JOURNAL),'publication_root':str(self.output.parent),
                 'initial_publication':str(self.output),'fleet_config':'/opt/transparent-publisher/v11/fleet.json',
-                'source_sha':M.P.RELEASE_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
+                'source_sha':M.DEPLOYED_SHA,'shadow':False,'recent_from':1,'recent_geometry':'recent-4k-8k',
                 'archive_geometry':'archive-wide','directory_choice':'all','range_profile':'zcash-transparent-range-v2',
                 'fleet_command':str(M.SOURCE/source/'transparent/ops/scripts/transparent-live-fleet.py')}),
             'fleet.json':json.dumps({'state_dir':'/opt/transparent-publisher/v11/state','roster':'/opt/transparent-publisher/v11/roster.json',
@@ -409,6 +433,8 @@ class ServiceInputs(unittest.TestCase):
                ('controller.json','range_profile','v2'),
                ('controller.json','range_profile','zcash-transparent-range-v99'),
                ('controller.json','fleet_command','/old/live-fleet.py'),
+               # The deployed controller records its own source, not the frozen 12ce build's.
+               ('controller.json','source_sha',M.P.RELEASE_SHA),
                ('fleet.json','state_dir','/opt/transparent-publisher/state'),('policy.json','mode','active'),
                ('pins.json','worker-0','0'*64)]
         for name,key,value in cases:

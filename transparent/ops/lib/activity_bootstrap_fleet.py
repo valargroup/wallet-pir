@@ -49,6 +49,14 @@ ROOT = Path('/srv/transparent-activity/ops')
 INPUTS = ROOT/'input-staging'
 LOCK = Path('/run/lock/wallet-pir-production.lock')
 RUNTIME_SHA = '4c85b6c20ced1e2077245491e77d3afc98bfd644'
+# The txid display router hook (transaction
+# txid-display-deploy-router-hook-20261006T125118Z-0b6b9e, committed 2026-10-06)
+# rewrote the live v11 adapter inside this source in place, from git 4c85b6c2's
+# bytes to git d191f86b's. The receipt still records the original. The runtime
+# never imports this file; accept exactly that replacement and nothing else.
+RUNTIME_REPLACED = {'transparent/ops/scripts/transparent-live-fleet.py':
+    ('f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083',
+     '35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a')}
 INVENTORY = Path('/srv/transparent-activity/full-v11/inputs/0604bc95c50fa084919cfc5d0fcf3310398761f721404c78f604c98d78ffb060/inventory.json')
 INVENTORY_SHA = '39609723d74fa60852dc86be763bd892bc085a21e05fb6526ff6fb73a08f1b9f'
 PINS = {'coordinator':'6a16bce88fb2493681d327344090293a',
@@ -174,6 +182,14 @@ def pinned(inventory):
     return inventory
 
 
+def runtime_receipt(receipt):
+    """The runtime receipt with its recorded in-place replacement applied."""
+    files=receipt.get('files')
+    require(isinstance(files,dict) and all(files.get(name)==old for name,(old,_) in RUNTIME_REPLACED.items()),
+            'bootstrap runtime receipt does not record the replaced adapter')
+    return {**receipt,'files':{**files,**{name:new for name,(_,new) in RUNTIME_REPLACED.items()}}}
+
+
 def runtime(verify_receipt):
     """Verify installed transport source before importing it; no guessed keys."""
     root=ROOT/'sources'/RUNTIME_SHA
@@ -181,7 +197,7 @@ def runtime(verify_receipt):
     receipt_path=ROOT/'staging'/(RUNTIME_SHA+'.json')
     no_links(receipt_path);require(receipt_path.stat().st_size<=1<<20,'bootstrap runtime receipt exceeds bound')
     receipt=json.loads(receipt_path.read_text(),object_pairs_hook=S.unique)
-    verify_receipt(receipt,root,RUNTIME_SHA,receipt['archive_sha256'])
+    verify_receipt(runtime_receipt(receipt),root,RUNTIME_SHA,receipt['archive_sha256'])
     no_links(INVENTORY)
     require(INVENTORY.stat().st_size<=1<<20 and hashlib.sha256(INVENTORY.read_bytes()).hexdigest()==INVENTORY_SHA,
             'bootstrap retained fleet inventory differs')

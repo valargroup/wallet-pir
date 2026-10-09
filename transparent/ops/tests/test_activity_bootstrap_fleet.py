@@ -543,4 +543,44 @@ class RetainedSurvey(unittest.TestCase):
                 self.assertIsNone(G.retained('input-staging',name,dict(value,ancillary=changed)))
 
 
+class RuntimeSource(unittest.TestCase):
+    EVIDENCE=HERE.parents[2]/'evidence'
+
+    def test_replacement_is_the_committed_router_hook_and_the_reconciler_pins(self):
+        hook=json.loads((self.EVIDENCE/'txid-display-tiered-2026-10-07/deploy/transactions/'
+                         'txid-display-deploy-router-hook-20261006T125118Z-0b6b9e.json').read_text())
+        self.assertEqual(hook['status'],'committed')
+        change=next(c for c in hook['changes'] if c['path'].endswith('/transparent-live-fleet.py'))
+        name=str(Path(change['path']).relative_to(G.ROOT/'sources'/G.RUNTIME_SHA))
+        self.assertEqual(G.RUNTIME_REPLACED,{name:(change['previous_sha256'],change['new_sha256'])})
+        # The reconciler runs that same file, and its controls run the deployed worker shard-control.
+        self.assertEqual((G.CA.SCRIPT,G.CA.SCRIPT_SHA256),(G.ROOT/'sources'/G.RUNTIME_SHA/name,change['new_sha256']))
+        redeploy=json.loads((self.EVIDENCE/'fleet-redeploy-2026-10-09/manifest.json').read_text())
+        self.assertEqual(G.CA.CONTROL_EXE_SHA256,redeploy['binaries']['shard-control (workers)']['after'])
+
+    def test_receipt_accepts_only_the_recorded_in_place_replacement(self):
+        name='transparent/ops/scripts/transparent-live-fleet.py'
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)/'source';(root/'ops').mkdir(parents=True);(root/name).parent.mkdir(parents=True)
+            (root/'ops/a.py').write_bytes(b'transport')
+            digest=lambda data:hashlib.sha256(data).hexdigest()
+            receipt={'version':1,'status':'staged','source_sha':G.RUNTIME_SHA,'archive_sha256':'a'*64,
+                     'files':{'ops/a.py':digest(b'transport'),name:digest(b'original adapter')}}
+            verify=lambda value:B.HOST.verify_receipt(G.runtime_receipt(value),root,G.RUNTIME_SHA,'a'*64)
+            with patch.object(G,'RUNTIME_REPLACED',{name:(digest(b'original adapter'),digest(b'replaced adapter'))}):
+                (root/name).write_bytes(b'replaced adapter');verify(receipt)
+                self.assertEqual(receipt['files'][name],digest(b'original adapter'))
+                for data in (b'original adapter',b'another adapter'):
+                    (root/name).write_bytes(data)
+                    with self.subTest(data=data),self.assertRaisesRegex(ValueError,'checksum changed'):verify(receipt)
+                (root/name).write_bytes(b'replaced adapter')
+                (root/'ops/a.py').write_bytes(b'changed transport')
+                with self.assertRaisesRegex(ValueError,'checksum changed'):verify(receipt)
+                (root/'ops/a.py').write_bytes(b'transport')
+                for files in ({'ops/a.py':digest(b'transport')},{'ops/a.py':digest(b'transport'),name:digest(b'replaced adapter')}):
+                    with self.subTest(files=files),self.assertRaisesRegex(ValueError,'replaced adapter'):
+                        verify(dict(receipt,files=files))
+                with self.assertRaisesRegex(ValueError,'replaced adapter'):verify({k:v for k,v in receipt.items() if k!='files'})
+
+
 if __name__=='__main__':unittest.main()

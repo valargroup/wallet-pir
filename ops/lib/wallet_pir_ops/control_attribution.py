@@ -1,6 +1,6 @@
 """Read-only cross-host attribution of the replica reconciler's worker controls.
 
-The installed `transparent-replica-reconciler.service` (source 4c85b6c2) runs
+The installed `transparent-replica-reconciler.service` (source path 4c85b6c2) runs
 `/usr/local/bin/shard-control /run/transparent-pir/control.sock` on workers
 over SSH. On the worker that process lives in an SSH `session-N.scope`, never
 in a baseline unit cgroup, so an owner survey cannot bind it locally. Its
@@ -51,12 +51,15 @@ FRAGMENT = Path('/etc/systemd/system/'+UNIT)
 FRAGMENT_SHA256 = '869e260606f0ad020824a14c906ea6f7ac235c5832739452e027033631ca4915'
 SCRIPT_SOURCE = '4c85b6c20ced1e2077245491e77d3afc98bfd644'
 SCRIPT = Path('/srv/transparent-activity/ops/sources')/SCRIPT_SOURCE/'transparent/ops/scripts/transparent-live-fleet.py'
-SCRIPT_SHA256 = 'f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083'
+# The txid display router hook replaced the script in place on 2026-10-06 with
+# git d191f86b's bytes; the 4c85b6c2 original was f3df5c53.
+SCRIPT_SHA256 = '35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a'
 CONTROL = ('/usr/local/bin/shard-control', '/run/transparent-pir/control.sock')
 CONTROL_COMMAND = shlex.join(CONTROL)+' || [ "$?" -eq 1 ]'
 CONTROL_SHA256 = 'c5827d6ffd4521742577b98784b6f9b557b1e5724e88146716af2ae3f917dad8'
-# The installed portable worker shard-control (activity_input_stage pin).
-CONTROL_EXE_SHA256 = '6dfe78fa1909fa542d540cd685b7e2dcc536eb0085cd14f052f1f02b70120170'
+# The installed portable worker shard-control since 2026-10-09
+# (activity_input_stage pin).
+CONTROL_EXE_SHA256 = '9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66'
 MAX_EXE = 128 << 20
 SSH = '/usr/bin/ssh'
 SSHD = ('/usr/sbin/sshd', '/usr/lib/openssh/sshd-session')

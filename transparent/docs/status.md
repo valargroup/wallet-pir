@@ -64,8 +64,21 @@ held-byte accounting, restore-slot release and the tail sealer
 - **Rollback.** Material is under `/opt/transparent-publisher/rollback/roll-a317455e/` on each
   worker. For the controller, copies of the previous binary (`a68dca01…`, also in the `12ce1291`
   release artifacts) and of `controller.json` are in `/root/deploy-a317455e` on the coordinator.
-- **Stale pins.** Future v11 schema operations still pin the old worker (`6db1fa05…`,
-  `6dfe78fa…`) and adapter `f3df5c53…`, so they need new pins.
+- **Pins.** Operations source now selects this release's worker pair (`34ba7ebb…`,
+  `9208555a…`) and controller (`13af048e…`) for version-1 schema operations, and
+  attributes reconciler controls to the live adapter `35b6b436…` and worker `shard-control`.
+  Neither that source nor the portable copies are staged on the coordinator, where the
+  bundle sits read-only under `/opt/transparent-publisher/releases/a317455e…/binaries`.
+  A read-only look at the coordinator on 2026-10-09 found:
+  - `portable-workers/releases` holds only `6db1fa05…` and `6dfe78fa…`;
+  - the `4c85b6c2` tree's adapter is `35b6b436…`, while its staged receipt still records
+    `f3df5c53…`;
+  - the reconciler runs that adapter from its pinned fragment `869e2606…`, active since
+    2026-10-07 15:45 UTC.
+
+  So the 2026-10-03 transaction's recorded rollback, which runs from `4c85b6c2`, fails that
+  tree's receipt check (see
+  [remaining work](remaining-work.md#transparent-operations-after-the-2026-10-09-redeploy)).
 
 ## Quality monitoring after the v11 cutover, 2026-10-09
 
