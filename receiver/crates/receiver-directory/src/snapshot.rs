@@ -403,8 +403,8 @@ pub fn check_next(previous: &Record, next: &Record) -> Result<(), Error> {
 
 /// Checks records sorted by receiver and page: every receiver has pages zero to its
 /// total, each continuing the last as [`check_next`] requires, and no two records
-/// share an output or note position. Different receivers' records are not checked
-/// against each other: a wallet reads only its own receiver's pages.
+/// share an output or note position. Beyond that uniqueness, different receivers'
+/// records are not checked against each other: a wallet reads only its own pages.
 fn check_pages(sorted: impl IntoIterator<Item = PageMeta>) -> Result<(), Error> {
     let mut previous: Option<PageMeta> = None;
     let mut outputs = BTreeSet::new();
