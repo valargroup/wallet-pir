@@ -9,7 +9,8 @@ negative cases run it against mutated copies. The unit is the template
 `wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
 The example inventory's `exact_check` must probe this edge, listener, fixture and
 nodes from the receiver's own host before a deploy commits, running the probe and
-fixture the deploy stages from the same bundle.
+fixture the deploy stages from the same bundle. The Terraform firewall must admit
+the coordinator's SSH, which every locked operation needs.
 """
 import copy
 import hashlib
@@ -17,6 +18,7 @@ import importlib.util
 import ipaddress
 import json
 from pathlib import Path
+import re
 import shlex
 import tomllib
 import unittest
@@ -28,6 +30,7 @@ WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'enhance/ops/deploy/deploy.toml'
 INVENTORY = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
+INFRA = ROOT / 'ops/infra/digitalocean/production'
 PROBE = '{release_dir}/receiver-probe'
 PROBE_FIXTURE = '{release_dir}/probe-fixture.json'
 COMPANIONS = [{'name': 'receiver-probe', 'mode': 0o755}, {'name': 'probe-fixture.json', 'mode': 0o644}]
@@ -172,6 +175,24 @@ def check_exact_check(service, unit, caddy, fixture, descriptor):
     assert isinstance(check.get('timeout'), int) and 0 < check['timeout'] <= 300, check.get('timeout')
 
 
+def ssh_sources(tf, firewall):
+    """The `source_addresses` expression of `firewall`'s port-22 inbound rule in Terraform `tf`."""
+    body = tf.split('resource "digitalocean_firewall" "%s" {' % firewall, 1)[1].split('\n}\n', 1)[0]
+    (sources,) = re.findall(r'port_range\s*=\s*"22"\s*\n\s*source_addresses\s*=\s*(.+)', body)
+    return sources.strip()
+
+
+def check_firewall(tf, monitor_tf):
+    """The receiver's SSH rule admits the coordinator's public /32, as the monitor's does.
+
+    The coordinator is in another region's private network, so only its public
+    address reaches the Droplet.
+    """
+    expected = 'concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])'
+    assert ssh_sources(monitor_tf, 'pir_monitor') == expected, ssh_sources(monitor_tf, 'pir_monitor')
+    assert ssh_sources(tf, 'receiver_pir') == expected, ssh_sources(tf, 'receiver_pir')
+
+
 class ReceiverOpsContract(unittest.TestCase):
     def setUp(self):
         self.caddy = (DIR / 'Caddyfile').read_text()
@@ -264,6 +285,16 @@ class ReceiverOpsContract(unittest.TestCase):
             self.assertNotEqual(mutated, self.unit)
             with self.assertRaises(AssertionError):
                 check_unit(mutated)
+
+    def test_the_firewall_admits_the_coordinators_ssh(self):
+        tf, monitor_tf = (INFRA / 'receiver.tf').read_text(), (INFRA / 'monitor.tf').read_text()
+        check_firewall(tf, monitor_tf)
+        expression = 'concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])'
+        for mutated in [tf.replace(expression, 'var.allowed_ssh_cidrs'),
+                        tf.replace('${var.wallet_pir_coordinator_dns_ipv4}/32', '10.142.0.0/16')]:
+            self.assertNotEqual(mutated, tf)
+            with self.assertRaises(AssertionError):
+                check_firewall(mutated, monitor_tf)
 
     def test_cloud_init_must_create_the_units_account_and_keep_the_port_private(self):
         bind, _ = check_unit(self.unit)

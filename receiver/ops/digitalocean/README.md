@@ -20,9 +20,12 @@ holds no wallet data. No Enhance service runs on this Droplet.
 `s-4vcpu-8gb-amd`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
 membership, its firewall and the unproxied A record `receiver-pir.valargroup.dev`
 (TTL 300), behind `receiver_pir_enabled`. The Droplet has `prevent_destroy` and
-ignores `user_data` and `ssh_keys` changes. The firewall allows SSH from `allowed_ssh_cidrs`, HTTP
-and HTTPS from anywhere, and port 18380 only from the PIR monitor Droplet; the
-host's `ufw` also limits 18380 to `10.70.0.0/16`.
+ignores `user_data` and `ssh_keys` changes. The firewall allows SSH from `allowed_ssh_cidrs`
+and from the coordinator's public address (`wallet_pir_coordinator_dns_ipv4`, as
+`monitor.tf` does), HTTP and HTTPS from anywhere, and port 18380 only from the PIR
+monitor Droplet; the host's `ufw` also limits 18380 to `10.70.0.0/16`. The
+coordinator, in `ams3`, is not on this Droplet's private network, so the locked
+operations below reach it only over that public SSH rule.
 
 The Droplet (ID 604069093) and its DNS record already exist, as the
 [2026-10-08 deployment record](../../evidence/deployment-2026-10-08/README.md)
@@ -50,8 +53,9 @@ whose keys change, so `receiver.tf` ignores them; keep it that way. The saved pl
 that follows must show no Droplet replacement or resize; the
 recorded size slug is `s-4vcpu-8gb-amd`, and if the live one differs, set it first.
 The plan creates the firewall, which then closes every port it does not list, so
-confirm SSH from `allowed_ssh_cidrs` and the monitor's 18380 rule in it, and may add
-the Droplet to the project. Do not apply a plan that destroys anything.
+confirm in it SSH from `allowed_ssh_cidrs` and from the coordinator's `/32`, without
+which every later locked operation loses the Droplet, and the monitor's 18380
+rule. It may also add the Droplet to the project. Do not apply a plan that destroys anything.
 
 ## Release and deploy
 
