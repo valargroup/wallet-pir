@@ -1,6 +1,6 @@
 //! Atomic contiguous coverage with explicit rewind. Empty blocks are retained too.
 use crate::{
-    snapshot::{Manifest, ProviderSet, Snapshot, PROFILE},
+    snapshot::{self, Manifest, ProviderSet, Snapshot, PROFILE},
     Error, Hash, Payment, Receiver, Record,
 };
 use rusqlite::{params, Connection, OptionalExtension};
@@ -254,13 +254,24 @@ impl Store {
     /// Build all receiver pages from one SQLite read transaction and immutable anchor.
     /// A crowded bucket retries the next of [`SALT_ATTEMPTS`] salts derived from the
     /// anchor, so the result is deterministic; [`Error::Capacity`] means every salt
-    /// overflowed at `rows`. `provider` holds the swap provider filter sets (see
-    /// [`ProviderStore::sets`]).
+    /// overflowed at `rows`, or the history has more payments than `rows` has slots, which
+    /// is found before any record is loaded. `provider` holds the swap provider filter
+    /// sets (see [`ProviderStore::sets`]).
     pub fn snapshot(&mut self, rows: u32, provider: &[ProviderSet]) -> Result<Snapshot, Error> {
+        let capacity = snapshot::capacity(rows)?;
         let tx = self.db.transaction()?;
         let anchor = tip(&tx, &self.config)?;
         if anchor.height < self.config.start_height {
             return Err(Error::Coverage);
+        }
+        // Counting stops one past capacity, so an oversized history is not scanned.
+        let stored: u64 = tx.query_row(
+            "SELECT COUNT(*) FROM (SELECT 1 FROM payments LIMIT ?1)",
+            [capacity + 1],
+            |r| r.get(0),
+        )?;
+        if stored > capacity {
+            return Err(Error::Capacity);
         }
         let mut records = Vec::new();
         {

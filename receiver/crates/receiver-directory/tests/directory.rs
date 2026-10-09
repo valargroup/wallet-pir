@@ -1,7 +1,9 @@
 mod common;
 use common::{action, manifest, receiver, record};
 use receiver_directory::{
-    snapshot::{allow_small_tables, lookup_row, row_for, Snapshot, MIN_ROWS, ROW_BYTES},
+    snapshot::{
+        allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
+    },
     Error, Receiver, Record, RECORD_BYTES,
 };
 
@@ -394,6 +396,40 @@ fn overflow_and_bad_padding_fail_closed() {
     assert!(lookup_row(&s.manifest, &r, 0, &b).is_err());
 }
 
+/// More records than slots is a capacity failure, found before placement; a bad row
+/// count stays malformed.
+#[test]
+fn records_beyond_the_slots_are_a_capacity_failure() {
+    allow_small_tables();
+    let records = |n: u32| (0..n).map(|p| record(p, n)).collect::<Vec<_>>();
+    let full = Snapshot::build(manifest(1), &records(SLOTS as u32), &[]).unwrap();
+    assert_eq!(full.manifest.records, SLOTS as u64);
+    assert!(matches!(
+        Snapshot::build(manifest(1), &records(SLOTS as u32 + 1), &[]),
+        Err(Error::Capacity)
+    ));
+    for rows in [0, 3, MAX_ROWS * 2] {
+        assert!(matches!(
+            Snapshot::build(manifest(rows), &records(SLOTS as u32 + 1), &[]),
+            Err(Error::Malformed)
+        ));
+    }
+    // A supplied manifest claiming more records than slots is malformed, not a
+    // capacity failure.
+    let mut claimed = full.manifest.clone();
+    claimed.records += 1;
+    assert!(matches!(claimed.validate(), Err(Error::Malformed)));
+    assert!(matches!(
+        claimed.accept([1; 32], 100, 101, [3; 32]),
+        Err(Error::Malformed)
+    ));
+    let r = receiver();
+    assert!(matches!(
+        lookup_row(&claimed, &r, 0, row(&full, &r, 0)),
+        Err(Error::Malformed)
+    ));
+}
+
 #[cfg(feature = "store")]
 #[test]
 fn durable_coverage_atomic_failure_and_reorg() {
@@ -725,4 +761,55 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let mut wrong = replacement.manifest;
     wrong.end_position -= 1;
     assert!(store.witnesses(&wrong, &mut cache).is_err());
+}
+
+/// A history with more payments than the table has slots fails with
+/// [`Error::Capacity`] before any record is loaded, and builds at a larger size.
+#[cfg(feature = "store")]
+#[test]
+fn a_history_beyond_the_slots_fails_before_loading_records() {
+    allow_small_tables();
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("directory.sqlite");
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(&path, config).unwrap();
+    let n = SLOTS as u32 + 1;
+    let payments = (0..n)
+        .map(|page| {
+            let mut r = record(page, n);
+            r.payment.height = 100;
+            (r.receiver, r.payment)
+        })
+        .collect();
+    store
+        .append(&IndexedBlock {
+            height: 100,
+            hash: [3; 32],
+            parent: [2; 32],
+            start_position: 200,
+            end_position: 200 + u64::from(n),
+            coinbase_actions: 0,
+            payments,
+            commitments: vec![[6; 32]; n as usize],
+        })
+        .unwrap();
+    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
+    assert!(matches!(store.snapshot(3, &[]), Err(Error::Malformed)));
+    assert_eq!(
+        store.snapshot(4, &[]).unwrap().manifest.records,
+        u64::from(n)
+    );
+    // With every stored record undecodable, the count still decides first.
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE payments SET record=x'00'", [])
+        .unwrap();
+    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
+    assert!(matches!(store.snapshot(4, &[]), Err(Error::Malformed)));
 }
