@@ -572,6 +572,23 @@ class StatusTests(Fleet):
         self.assertIn('MemoryMax=6G', text)
         self.assertIn(STATUS_LEGACY, text)
 
+    def test_template_values_cannot_add_unit_lines_or_path_segments(self):
+        deployer = self.status_fleet()
+        sha = sha256(STATUS_NEW)
+        document = json.loads(self.inventory_path.read_text())
+        for value in ['ab\nExecStartPre=/bin/sh -c id', 'ab cd', '../ab', 'ab/cd', 'a=b', '"ab"', '']:
+            with self.subTest(value=value):
+                document['services']['status']['template_vars']['NETWORK'] = value
+                self.inventory_path.write_text(json.dumps(document))
+                inventory = descriptors.load_inventory(self.inventory_path)
+                with self.assertRaisesRegex(descriptors.DescriptorError, 'template_vars.NETWORK'):
+                    descriptors.template_values(SERVICES['status'], inventory, sha)
+                deployer.inventory = inventory
+                with self.assertRaisesRegex(DeployError, 'refused before any change'):
+                    deployer.deploy(sha, self.status_binary, allow_drift=True)
+                self.assertEqual(self.fake.log, [])
+        self.assertEqual(descriptors.template_values(SERVICES['status'], self.inventory, sha)['NETWORK'], NETWORK)
+
     def test_set_property_drop_in_counts_as_live_configuration(self):
         self.status_fleet()
         self.fake.edit('status-01', '/etc/systemd/system.control/status-worker.service.d/50-MemoryMax.conf',
