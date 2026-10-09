@@ -47,7 +47,7 @@ pub const RECENT_SECS: i64 = 24 * 60 * 60;
 /// the wall clock, measures it, so payouts stay pending, not missing, while the chain
 /// pauses or behind `--depth`.
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
-/// A completed payout that NEAR reported without a usable recipient or a parsable
+/// A completed payout to an Orchard receiver that NEAR reported without a parsable
 /// transaction is recorded under [`uncheckable_receiver`] and this many zero bytes,
 /// which no transaction hash starts with, then a digest of its swap's length-prefixed
 /// deposit address and optional memo, the explorer's identity for a swap, so one row
@@ -187,10 +187,10 @@ impl Capture {
     /// checked again until a rewind forgets them (see
     /// [`ProviderStore::forget_matches`]), and one that stays missing stays in the count.
     /// A missing payout means the indexer missed it, or NEAR paid it without the zero
-    /// OVK, which a seed restore cannot find. Payouts NEAR reported complete without a
-    /// usable recipient or a parsable transaction cannot be looked up;
+    /// OVK, which a seed restore cannot find. Payouts to an Orchard receiver that NEAR
+    /// reported complete without a parsable transaction cannot be looked up;
     /// `payouts_uncheckable` counts those first seen in the same span but within the
-    /// last day, so it clears on its own.
+    /// last day, so it clears on its own. Payouts to other recipients are not checked.
     pub fn report(
         &self,
         index: &Store,
@@ -347,22 +347,18 @@ impl Explorer {
                     Feed::Payouts => &swap.recipient,
                     Feed::Refunds => &swap.refund_to,
                 };
-                let receiver = address.as_deref().and_then(orchard_receiver);
-                if let Some(receiver) = receiver {
-                    found.push((receiver, feed == Feed::Payouts, created));
-                }
+                let Some(receiver) = address.as_deref().and_then(orchard_receiver) else {
+                    continue;
+                };
+                found.push((receiver, feed == Feed::Payouts, created));
                 if feed == Feed::Payouts && swap.status.as_deref() == Some("SUCCESS") {
                     let txids = swap.destination_chain_tx_hashes.iter().flatten();
                     let before = completed.len();
-                    if let Some(receiver) = receiver {
-                        completed.extend(
-                            txids
-                                .filter_map(|hash| {
-                                    hash.parse::<zakura_chain::transaction::Hash>().ok()
-                                })
-                                .map(|txid| (receiver, txid.0)),
-                        );
-                    }
+                    completed.extend(
+                        txids
+                            .filter_map(|hash| hash.parse::<zakura_chain::transaction::Hash>().ok())
+                            .map(|txid| (receiver, txid.0)),
+                    );
                     if completed.len() == before {
                         let address = swap.deposit_address.as_bytes();
                         let memo = swap.deposit_memo.as_deref();
@@ -710,41 +706,62 @@ mod tests {
         assert_eq!(completed[0].1[1], 0x7e);
     }
 
-    /// A completed payout without a parsable transaction, or whose recipient is
-    /// missing, malformed, for another network or without an Orchard receiver, is one
+    /// A completed payout to an Orchard receiver without a parsable transaction is one
     /// uncheckable record per swap, told apart by memo, under a receiver that enters no
-    /// filter set. A reread after reopening derives the same records, keeping when each
-    /// was first seen, and the report counts them for a day after their grace.
+    /// filter set; one whose recipient is missing, malformed, for another network or
+    /// without an Orchard receiver is not recorded, with or without a transaction. A
+    /// reread after reopening derives the same records, keeping when each was first
+    /// seen, and the report counts them for a day after their grace.
     #[tokio::test]
     async fn uncheckable_payouts_are_one_record_per_swap() {
         use axum::{routing::get, Router};
-        use zcash_address::unified::Encoding;
+        use zcash_address::{unified::Encoding, ToAddress};
         let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
         let orchard = orchard_receiver(swap).unwrap();
-        let testnet =
-            unified::Address::try_from_items(vec![unified::Receiver::Orchard(*orchard.as_bytes())])
+        let unified = |items, network| {
+            unified::Address::try_from_items(items)
                 .unwrap()
-                .encode(&NetworkType::Test);
+                .encode(&network)
+        };
+        let excluded = [
+            None,
+            Some("not an address".to_owned()),
+            Some(unified(
+                vec![unified::Receiver::Orchard(*orchard.as_bytes())],
+                NetworkType::Test,
+            )),
+            Some("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua".to_owned()),
+            Some(ZcashAddress::from_transparent_p2sh(NetworkType::Main, [1; 20]).encode()),
+            Some(ZcashAddress::from_sapling(NetworkType::Main, [1; 43]).encode()),
+            Some(unified(
+                vec![
+                    unified::Receiver::Sapling([1; 43]),
+                    unified::Receiver::P2pkh([1; 20]),
+                ],
+                NetworkType::Main,
+            )),
+        ];
         let record =
             |recipient: Option<&str>, address: &str, memo: Option<&str>, txids: &[&str]| {
                 serde_json::json!({"recipient": recipient, "createdAtTimestamp": 9_999_999_999i64,
                 "depositAddress": address, "depositMemo": memo, "status": "SUCCESS",
                 "destinationChainTxHashes": txids})
             };
-        let page = serde_json::json!([
+        let mut page = vec![
             record(Some(swap), "a", None, &[]),
             record(Some(swap), "a", Some("m"), &["not hex"]),
-            record(None, "b", None, &[PAYOUT_TXID]),
-            record(Some("not an address"), "c", None, &[PAYOUT_TXID]),
-            record(Some(&testnet), "d", None, &[PAYOUT_TXID]),
-            record(
-                Some("t1KfwsnwJeNRVjQGBDZhwKskpQbih2qx5Ua"),
-                "e",
-                None,
-                &[PAYOUT_TXID]
-            ),
-        ])
-        .to_string();
+        ];
+        for (i, recipient) in excluded.iter().enumerate() {
+            for txids in [&[][..], &[PAYOUT_TXID]] {
+                page.push(record(
+                    recipient.as_deref(),
+                    &format!("{i}-{}", txids.len()),
+                    None,
+                    txids,
+                ));
+            }
+        }
+        let page = serde_json::Value::from(page).to_string();
         let app = Router::new().route(
             "/",
             get(move || {
@@ -767,7 +784,7 @@ mod tests {
             .unwrap()
             .as_secs() as i64;
         let first = store.unmatched(first_seen).unwrap();
-        assert_eq!(first.len(), 6);
+        assert_eq!(first.len(), 2);
         assert!(first
             .iter()
             .all(|p| p.0 == uncheckable_receiver() && uncheckable(&p.1)));
@@ -782,7 +799,7 @@ mod tests {
         assert_eq!(store.unmatched(i64::MAX).unwrap(), first);
         assert_eq!(store.unmatched(first_seen).unwrap(), first);
         let counted = |anchor_time| capture(&store, anchor_time).unwrap().uncheckable;
-        assert_eq!(counted(first_seen + COMPLETION_GRACE_SECS), 6);
+        assert_eq!(counted(first_seen + COMPLETION_GRACE_SECS), 2);
         assert_eq!(counted(first_seen + RECENT_SECS + 1), 0);
     }
 

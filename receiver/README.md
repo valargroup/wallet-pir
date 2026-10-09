@@ -181,8 +181,8 @@ sets; without one, publications carry no provider sets. Health's `indexer` repor
 activated with each publication, gives each feed's last read and `payouts_missing`,
 completed NEAR payouts with no indexed payment: the signal that the index missed
 one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
-first seen in the last day that NEAR reported without a usable recipient or
-transaction.
+to an Orchard receiver first seen in the last day that NEAR reported without a
+parsable transaction. Payouts to other recipients are not checked.
 `services/receiver-indexer/src/near.rs` documents the feed and the report.
 
 `receiver-directory probe --origin <url> --health-url <private health URL>

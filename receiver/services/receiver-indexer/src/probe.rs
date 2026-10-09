@@ -11,8 +11,8 @@
 //! fails its pin, including an Action whose recovered receiver differs from the
 //! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
 //! reached the publication can complete the chain checks, or `payouts_uncheckable` when
-//! the indexer's report counts a recent completed payout that NEAR gave no usable
-//! recipient or transaction for, is an availability failure.
+//! the indexer's report counts a recent completed payout to an Orchard receiver that
+//! NEAR gave no parsable transaction for, is an availability failure.
 //! Every response body is bounded before it is buffered.
 use crate::{
     read_limited,
