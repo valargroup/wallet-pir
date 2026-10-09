@@ -312,17 +312,19 @@ async fn refresh(
     if end < tip.height {
         return Err("end height precedes stored tip".into());
     }
-    let mut provider = None;
+    // A publication's filters and report come from one capture of the provider store,
+    // so a feed read committing meanwhile cannot make them describe different states.
+    let mut captured = None;
     if let Some(serving) =
         serving.filter(|s| tip.height == end && s.anchors().first() == Some(&(end, tip.hash)))
     {
-        let sets = receiver_indexer::near::provider_sets(&provider_store)?;
-        let inputs = receiver_indexer::near::digest(&sets);
+        let capture = receiver_indexer::near::capture(&provider_store, now)?;
+        let inputs = receiver_indexer::near::digest(&capture.sets);
         if let Some(active) = active
             .as_mut()
             .filter(|a| a.anchor == (end, tip.hash) && a.inputs == inputs)
         {
-            let report = receiver_indexer::near::report(&mut provider_store, &store, now)?;
+            let (report, matched) = capture.report(&store)?;
             if report != active.report {
                 if !serving.replace_report(active.id, report.clone(), active.epoch) {
                     return Err("publication changed before its report; retrying".into());
@@ -330,9 +332,10 @@ async fn refresh(
                 info!(%report, "receiver report");
                 active.report = report;
             }
+            provider_store.match_payouts(&matched)?;
             return Ok(());
         }
-        provider = Some(sets);
+        captured = Some(capture);
     }
     // Wait out the previous revision's grace before building the next (see
     // `Publications::ready_at`); a later poll publishes.
@@ -377,19 +380,19 @@ async fn refresh(
     log_stage("ingestion", started);
     let started = std::time::Instant::now();
     let records = store.counts()?.0;
-    // Sets read before an unmoved chain was found unpublished need no rereading.
-    let provider = match provider {
-        Some(sets) => sets,
-        None => receiver_indexer::near::provider_sets(&provider_store)?,
+    // A capture taken before an unmoved chain was found unpublished needs no retaking.
+    let capture = match captured {
+        Some(capture) => capture,
+        None => receiver_indexer::near::capture(&provider_store, now)?,
     };
-    let inputs = receiver_indexer::near::digest(&provider);
+    let inputs = receiver_indexer::near::digest(&capture.sets);
     // Start at half occupancy. A crowded bucket retries the salt, then grows the table.
     let mut rows = u32::try_from((records / 7 + 1).next_power_of_two())?.max(args.min_rows);
     let snapshot = loop {
         if rows > MAX_ROWS {
             return Err("directory exceeds the maximum row count; no publication created".into());
         }
-        match store.snapshot(rows, &provider) {
+        match store.snapshot(rows, &capture.sets) {
             Ok(s) => break s,
             Err(Error::Capacity) => rows *= 2,
             Err(e) => return Err(e.into()),
@@ -452,7 +455,7 @@ async fn refresh(
     }
     // The report describes the reconciled index this publication was built from, and
     // activates with it.
-    let report = receiver_indexer::near::report(&mut provider_store, &store, now)?;
+    let (report, matched) = capture.report(&store)?;
     let (id, anchor) = (publication.id(), (anchor.end_height, anchor.end_hash));
     let epoch = epoch.unwrap();
     if !serving.publish(publication.with_report(report.clone()), epoch) {
@@ -465,6 +468,7 @@ async fn refresh(
         inputs,
         report,
     });
+    provider_store.match_payouts(&matched)?;
     log_stage("activate", started);
     info!(
         height = end_height,
@@ -555,12 +559,13 @@ mod tests {
     };
     use tokio::sync::{Notify, Semaphore};
 
-    /// A node's tip and block hashes by height. Each block hash request signals
-    /// `asked`, then waits for a permit from `gate` if there is one.
+    /// A node's tip and block hashes by height. Each block hash request runs `hook` if
+    /// there is one, signals `asked`, then waits for a permit from `gate` if there is one.
     #[derive(Clone, Default)]
     struct Node {
         tip: Arc<Mutex<u64>>,
         hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
+        hook: Option<Arc<dyn Fn() + Send + Sync>>,
         gate: Option<Arc<Semaphore>>,
         asked: Arc<Notify>,
     }
@@ -571,6 +576,9 @@ mod tests {
             let result = match r["method"].as_str().unwrap() {
                 "getblockcount" => json!(*node.tip.lock().unwrap()),
                 "getblockhash" => {
+                    if let Some(hook) = &node.hook {
+                        hook();
+                    }
                     node.asked.notify_one();
                     if let Some(gate) = &node.gate {
                         gate.acquire().await.unwrap().forget();
@@ -631,138 +639,233 @@ mod tests {
         assert!(publications.anchors().is_empty());
     }
 
+    /// The report time the serving tests start from, in Unix seconds.
+    const NOW: i64 = 1_000_000_000;
+
+    /// A serving indexer whose index and node both stop at Ironwood activation.
+    struct Paused {
+        dir: tempfile::TempDir,
+        args: Args,
+        rpc: ZakuraClient,
+        publications: Publications,
+        origin: String,
+        active: Option<Active>,
+        cache: WitnessCache,
+    }
+
+    impl Paused {
+        /// Indexes the activation block and serves it. Each block hash request first
+        /// runs `on_hash` on the provider store, as a concurrent feed read would.
+        async fn new(on_hash: impl Fn(&mut ProviderStore) + Send + Sync + 'static) -> Self {
+            let height = u64::from(receiver_indexer::blocks::ironwood_activation());
+            let dir = tempfile::tempdir().unwrap();
+            let provider = dir.path().join("provider.sqlite");
+            let node = Node {
+                hook: Some(Arc::new(move || {
+                    on_hash(&mut ProviderStore::open(&provider).unwrap())
+                })),
+                ..Node::default()
+            };
+            *node.tip.lock().unwrap() = height;
+            node.hashes
+                .lock()
+                .unwrap()
+                .extend([(height - 1, [2; 32]), (height, [3; 32])]);
+            let rpc = serve_node(node).await;
+            let mut store = Store::open(
+                dir.path().join("directory.sqlite"),
+                Config {
+                    genesis: Network::Mainnet.genesis_hash().0,
+                    start_height: height as u32,
+                    start_parent: [2; 32],
+                    start_position: 0,
+                },
+            )
+            .unwrap();
+            store
+                .append(&receiver_directory::store::IndexedBlock {
+                    height: height as u32,
+                    hash: [3; 32],
+                    parent: [2; 32],
+                    start_position: 0,
+                    end_position: 0,
+                    coinbase_actions: 0,
+                    payments: Vec::new(),
+                    commitments: Vec::new(),
+                })
+                .unwrap();
+            let args = Args::parse_from([
+                "receiver-directory",
+                "--data-dir",
+                dir.path().to_str().unwrap(),
+                "--rpc-url",
+                "http://127.0.0.1:1",
+                "--no-auth",
+                "--depth",
+                "0",
+                "--serve",
+            ]);
+            let publications = Publications::default();
+            let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let origin = format!("http://{}", socket.local_addr().unwrap());
+            let app = receiver_pir_server::router_with_publications(publications.clone());
+            tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+            Self {
+                dir,
+                args,
+                rpc,
+                publications,
+                origin,
+                active: None,
+                cache: WitnessCache::default(),
+            }
+        }
+
+        /// Refreshes at `now`, as the serving loop does.
+        async fn refresh(&mut self, now: i64) {
+            refresh(
+                &self.args,
+                &self.rpc,
+                Network::Mainnet.genesis_hash(),
+                Some(&self.publications),
+                &mut self.active,
+                &mut self.cache,
+                now,
+            )
+            .await
+            .unwrap()
+        }
+
+        /// The service's `/v1/receiver/{path}` response.
+        async fn get(&self, path: &str) -> Value {
+            let url = format!("{}/v1/receiver/{path}", self.origin);
+            reqwest::get(url).await.unwrap().json().await.unwrap()
+        }
+
+        /// The provider store.
+        fn provider(&self) -> ProviderStore {
+            ProviderStore::open(self.dir.path().join("provider.sqlite")).unwrap()
+        }
+
+        /// The served filter set labeled `near-intents/{name}`'s end, and the served
+        /// report's read time of `feed`.
+        async fn until_and_read(&self, name: &str, feed: &str) -> (Value, Value) {
+            let manifest = self.get("init").await;
+            let filters = manifest["directory"]["filters"].as_array().unwrap();
+            let label = format!("near-intents/{name}");
+            let set = filters.iter().find(|set| set["label"] == label).unwrap();
+            let health = self.get("health").await;
+            (
+                set["until_unix"].clone(),
+                health["indexer"]["feeds"][feed].clone(),
+            )
+        }
+    }
+
     /// With the chain paused, a completed feed read republishes with its coverage, a
     /// payout crossing its grace replaces only the report, and nothing new changes
     /// nothing.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_paused_chain_still_publishes_new_feeds_and_reports() {
-        let height = u64::from(receiver_indexer::blocks::ironwood_activation());
-        let genesis = Network::Mainnet.genesis_hash();
-        let node = Node::default();
-        *node.tip.lock().unwrap() = height;
-        node.hashes
-            .lock()
-            .unwrap()
-            .extend([(height - 1, [2; 32]), (height, [3; 32])]);
-        let rpc = serve_node(node).await;
-        let dir = tempfile::tempdir().unwrap();
-        let mut store = Store::open(
-            dir.path().join("directory.sqlite"),
-            Config {
-                genesis: genesis.0,
-                start_height: height as u32,
-                start_parent: [2; 32],
-                start_position: 0,
-            },
-        )
-        .unwrap();
-        store
-            .append(&receiver_directory::store::IndexedBlock {
-                height: height as u32,
-                hash: [3; 32],
-                parent: [2; 32],
-                start_position: 0,
-                end_position: 0,
-                coinbase_actions: 0,
-                payments: Vec::new(),
-                commitments: Vec::new(),
-            })
-            .unwrap();
-        drop(store);
-        let args = Args::parse_from([
-            "receiver-directory",
-            "--data-dir",
-            dir.path().to_str().unwrap(),
-            "--rpc-url",
-            "http://127.0.0.1:1",
-            "--no-auth",
-            "--depth",
-            "0",
-            "--serve",
-        ]);
-        let publications = Publications::default();
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", socket.local_addr().unwrap());
-        let app = receiver_pir_server::router_with_publications(publications.clone());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        let health = || async {
-            let url = format!("{origin}/v1/receiver/health");
-            reqwest::get(url)
-                .await
-                .unwrap()
-                .json::<Value>()
-                .await
-                .unwrap()
-        };
-        let (mut active, mut cache) = (None, WitnessCache::default());
-        let now = 1_000_000_000;
-        // Refreshes at `now`, as the serving loop does.
-        macro_rules! refresh_at {
-            ($now:expr) => {
-                refresh(
-                    &args,
-                    &rpc,
-                    genesis,
-                    Some(&publications),
-                    &mut active,
-                    &mut cache,
-                    $now,
-                )
-                .await
-                .unwrap()
-            };
-        }
-        refresh_at!(now);
-        let first = health().await;
-        refresh_at!(now);
-        assert_eq!(health().await, first);
+        let mut paused = Paused::new(|_| {}).await;
+        paused.refresh(NOW).await;
+        let first = paused.get("health").await;
+        paused.refresh(NOW).await;
+        assert_eq!(paused.get("health").await, first);
         // A completed read of the payout feed, with no new block.
-        let mut provider = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        let mut provider = paused.provider();
         let payout = super::common::receiver();
         provider
             .record(
                 "near-payouts",
-                now - 100,
-                &[(payout, true, now - 50)],
+                NOW - 100,
+                &[(payout, true, NOW - 50)],
                 &[],
-                now - 50,
-                now - 10,
+                NOW - 50,
+                NOW - 10,
             )
             .unwrap();
-        refresh_at!(now);
-        let fed = health().await;
+        paused.refresh(NOW).await;
+        let fed = paused.get("health").await;
         assert_ne!(fed["serving"], first["serving"]);
-        let manifest: Value = reqwest::get(format!("{origin}/v1/receiver/init"))
-            .await
-            .unwrap()
-            .json()
-            .await
-            .unwrap();
+        let manifest = paused.get("init").await;
         assert_eq!(
             manifest["directory"]["filters"][0]["label"],
             "near-intents/seen"
         );
-        assert_eq!(manifest["directory"]["filters"][0]["until_unix"], now - 10);
+        assert_eq!(manifest["directory"]["filters"][0]["until_unix"], NOW - 10);
         // A payout NEAR reports complete, still within its grace.
         provider
             .record(
                 "near-payouts",
-                now - 100,
+                NOW - 100,
                 &[],
                 &[(payout, [7; 32])],
-                now - 50,
-                now - 10,
+                NOW - 50,
+                NOW - 10,
             )
             .unwrap();
-        refresh_at!(now + 3600 - 11);
-        assert_eq!(health().await, fed);
+        paused.refresh(NOW + 3600 - 11).await;
+        assert_eq!(paused.get("health").await, fed);
         // Its grace ends with no new block or read: only the report changes, and the
         // displaced publication keeps its grace.
-        refresh_at!(now + 3600);
-        let reported = health().await;
+        paused.refresh(NOW + 3600).await;
+        let reported = paused.get("health").await;
         assert_eq!(reported["serving"], fed["serving"]);
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
-        assert!(publications.ready_at().is_some());
+        assert!(paused.publications.ready_at().is_some());
+    }
+
+    /// A feed read committed while a publication is prepared changes neither its
+    /// filters nor its report, which both describe the feed state captured first.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_publication_reports_the_feed_state_of_its_filters() {
+        let reads = std::sync::atomic::AtomicI64::new(NOW - 10);
+        let mut paused = Paused::new(move |provider| {
+            let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let feed = receiver_indexer::near::Feed::Payouts.name();
+            provider
+                .record(feed, NOW - 100, &[], &[], NOW - 50, read)
+                .unwrap();
+        })
+        .await;
+        paused.refresh(NOW).await;
+        let (until, read) = paused.until_and_read("seen", "near-payouts").await;
+        assert_eq!(read, until);
+        // Reads committed after the capture, during preparation.
+        let latest = paused.provider().read("near-payouts").unwrap().unwrap();
+        assert!(latest > until.as_i64().unwrap());
+    }
+
+    /// With the chain paused and the filters unchanged, a report swapped in describes
+    /// the feed state the filters were compared in.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_paused_report_swap_reports_the_compared_feed_state() {
+        // Refund reads newer than the payout read move the report but not the recent
+        // set, whose window ends at the older read.
+        let reads = std::sync::atomic::AtomicI64::new(NOW - 10);
+        let mut paused = Paused::new(move |provider| {
+            let read = reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let feed = receiver_indexer::near::Feed::Refunds.name();
+            provider
+                .record(feed, NOW - 100, &[], &[], NOW - 50, read)
+                .unwrap();
+        })
+        .await;
+        paused
+            .provider()
+            .record("near-payouts", NOW - 100, &[], &[], NOW - 50, NOW - 20)
+            .unwrap();
+        paused.refresh(NOW).await;
+        let first = paused.get("health").await;
+        paused.refresh(NOW).await;
+        let swapped = paused.get("health").await;
+        assert_eq!(swapped["serving"], first["serving"]);
+        assert_ne!(swapped["indexer"], first["indexer"]);
+        let (until, read) = paused.until_and_read("recent", "near-payouts").await;
+        assert_eq!((until, read), (json!(NOW - 20), json!(NOW - 20)));
+        let refunds = paused.provider().read("near-refunds").unwrap();
+        assert_eq!(swapped["indexer"]["feeds"]["near-refunds"], json!(refunds));
     }
 
     /// A one-shot run writes nothing for a manifest over the size clients read.
