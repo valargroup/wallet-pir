@@ -717,12 +717,29 @@ impl WalletStore for SqliteStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
-            // A range replaces every range of this script it contains, whatever
-            // shard they came from: a repeat, a longer revision at the same
-            // start, and the narrower shards a re-cut merged into this one. A
-            // longer range already at this start is a conflict the primary key
-            // refuses. The scan begins at this range's start, so appending past
-            // the covered history reads and rewrites no earlier row.
+            // A range strictly inside the one starting nearest at or below it
+            // is already covered: nothing changes. Otherwise it replaces every
+            // range of this script it contains, whatever shard they came
+            // from: a repeat, a longer revision at the same start, and the
+            // narrower shards a re-cut merged into this one. Both lookups seek
+            // the script-and-start key, so appending past the covered history
+            // reads one row and rewrites none. The memory store keeps the
+            // same rule.
+            let holder: Option<(i64, i64)> = tx
+                .query_row(
+                    "SELECT start_height, end_height FROM coverage WHERE script = ?1 AND start_height <= ?2 \
+                     ORDER BY start_height DESC LIMIT 1",
+                    params![script, range.start_height as i64],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(io)?;
+            if holder.is_some_and(|(start, end)| {
+                end as u64 >= range.end_height
+                    && (start as u64, end as u64) != (range.start_height, range.end_height)
+            }) {
+                continue;
+            }
             tx.execute(
                 "DELETE FROM coverage WHERE script = ?1 AND start_height >= ?2 AND end_height <= ?3",
                 params![

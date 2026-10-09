@@ -241,9 +241,22 @@ impl WalletStore for MemoryStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
-            // A range replaces every range of this script it contains, whatever
-            // shard they came from: a repeat, a longer revision at the same
-            // start, and the narrower shards a re-cut merged into this one.
+            // A range strictly inside the one starting nearest at or below it
+            // is already covered: nothing changes. Otherwise it replaces every
+            // range of this script it contains, whatever shard they came
+            // from: a repeat, a longer revision at the same start, and the
+            // narrower shards a re-cut merged into this one. The SQLite store
+            // keeps the same rule.
+            let holder = ranges
+                .iter()
+                .filter(|old| old.start_height <= range.start_height)
+                .max_by_key(|old| (old.start_height, old.end_height));
+            if holder.is_some_and(|old| {
+                old.end_height >= range.end_height
+                    && (old.start_height, old.end_height) != (range.start_height, range.end_height)
+            }) {
+                continue;
+            }
             ranges.retain(|old| {
                 !(old.start_height >= range.start_height && old.end_height <= range.end_height)
             });
