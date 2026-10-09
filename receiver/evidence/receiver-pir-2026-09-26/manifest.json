@@ -4,8 +4,9 @@
   "source": {
     "client": "f12f779",
     "service": "5921064",
-    "ipir_sp": "1f2aec65",
-    "note": "7-character prefixes recorded at the time from pre-rewrite development branches; they may not resolve. The protocol measured (q48) was replaced by this stack's pir-native protocol."
+    "ipir_sp": "1f2aec654d42d8c180373036eb1f6d30ff4ad30c",
+    "ipir_sp_repository": "https://github.com/valargroup/ipir-sp.git",
+    "note": "client and service are 7-character prefixes recorded at the time from pre-rewrite development branches; they may not resolve. results.json records ipir_sp only as the prefix 1f2aec65; the full revision and repository come from this repository's retained Cargo.lock, which resolves ipir-sp 0.1.0-rc.6 to that revision. The protocol measured (q48) was replaced by this stack's pir-native protocol."
   },
   "protocol": "ironwood-receiver-pir-v1-q48",
   "network": "mainnet",
