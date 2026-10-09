@@ -76,6 +76,11 @@ impl Server {
         &self.manifest
     }
 
+    /// The session ID, [`Manifest::id`] of [`Self::manifest`].
+    pub fn id(&self) -> Hash {
+        self.id
+    }
+
     /// The public setup that clients download once per session.
     pub fn public(&self) -> &[u8] {
         &self.public

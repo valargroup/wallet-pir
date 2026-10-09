@@ -13,7 +13,7 @@ doc = false
 
 [[bin]]
 name = "receiver-probe"
-path = "src/probe.rs"
+path = "src/bin/receiver-probe.rs"
 
 [dependencies]
 axum = "0.7"

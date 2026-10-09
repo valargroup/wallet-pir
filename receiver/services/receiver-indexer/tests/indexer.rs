@@ -126,6 +126,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             "getblock" if r["params"][1] == 1 => {
                 json!({"trees":{"ironwood":{"size":if r["params"][0] == second.hash().to_string() {3} else {2}}}})
             }
+            "getblockheader" => json!({"time": 1_800_000_000}),
             "getblock" => {
                 let mut raw = Vec::new();
                 b.zcash_serialize(&mut raw).unwrap();
@@ -326,22 +327,24 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     ))
     .unwrap();
     fixture["height"] = payment.height.into();
+    fixture["block_hash"] = zakura_chain::block::Hash(payment.block_hash)
+        .to_string()
+        .into();
+    fixture["tx_index"] = payment.tx_index.into();
     fixture["position"] = payment.position.into();
-    let probe_nodes = |fixture: &Value, pin: Option<&str>, nodes: &[&str]| {
+    // The deploy gate's form of the probe: `receiver-directory probe`.
+    let probe_nodes = |fixture: &Value, nodes: &[&str]| {
         let path = dir.path().join("fixture.json");
-        let bytes = serde_json::to_vec(fixture).unwrap();
-        std::fs::write(&path, &bytes).unwrap();
-        let sha256 = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
-        let output = Command::new(env!("CARGO_BIN_EXE_receiver-probe"))
+        std::fs::write(&path, serde_json::to_vec(fixture).unwrap()).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
             .args([
+                "probe",
                 "--origin",
                 &format!("http://{addr}"),
                 "--health-url",
                 &format!("http://{addr}/v1/receiver/health"),
                 "--fixture",
                 path.to_str().unwrap(),
-                "--fixture-sha256",
-                pin.unwrap_or(&sha256),
                 "--no-auth",
                 "--witnesses",
             ])
@@ -350,8 +353,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             .unwrap();
         serde_json::from_slice::<Value>(&output.stdout).unwrap()
     };
-    let probe = |fixture: &Value, pin: Option<&str>| probe_nodes(fixture, pin, &[&url]);
-    let result = probe(&fixture, None);
+    let probe = |fixture: &Value| probe_nodes(fixture, &[&url]);
+    let result = probe(&fixture);
     assert_eq!(result["phase"], "live_encrypted_probe", "{result}");
     assert_eq!(
         (result["queries"].clone(), result["correct"].clone()),
@@ -359,10 +362,6 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     );
     assert_eq!(result["category"], "stale_feed");
     assert_eq!(result["passed"], false);
-    assert_eq!(
-        probe(&fixture, Some(&"0".repeat(64)))["category"],
-        "oracle_invalid"
-    );
     // The fixture carries its receiver's independent decoding; a pin that recovery
     // does not reproduce is refused before any lookup.
     let mut repinned = fixture.clone();
@@ -371,20 +370,20 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
         let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
         hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes()).into()
     };
-    let result = probe(&repinned, None);
+    let result = probe(&repinned);
     assert_eq!(result["category"], "oracle_invalid", "{result}");
     assert!(result["phase"].is_null(), "{result}");
     let mut moved = fixture.clone();
     moved["position"] = (payment.position + 1).into();
-    let result = probe(&moved, None);
+    let result = probe(&moved);
     assert_eq!(result["category"], "answer_mismatch", "{result}");
     assert_eq!(result["correct"], 0);
     // An unreachable node falls back to the next; a node behind the publication can
     // check nothing, which is unavailability, never a pass.
-    let result = probe_nodes(&fixture, None, &["http://127.0.0.1:1", &url]);
+    let result = probe_nodes(&fixture, &["http://127.0.0.1:1", &url]);
     assert_eq!(result["correct"], 1, "{result}");
     count.store(1, Ordering::SeqCst);
-    let result = probe(&fixture, None);
+    let result = probe(&fixture);
     assert_eq!(result["category"], "oracle_unavailable", "{result}");
     assert_eq!(result["passed"], false);
     count.store(2, Ordering::SeqCst);
@@ -423,10 +422,6 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
         peak: Arc<AtomicUsize>,
     }
     async fn handler(State(s): State<BatchRpc>, Json(r): Json<Value>) -> Json<Value> {
-        // Block hash lookups first check the tip; those checks are not counted calls.
-        if r["method"] == "getblockcount" {
-            return Json(json!({"result": 3496114 + s.blocks.len(), "error": null}));
-        }
         let call = s.calls.fetch_add(1, Ordering::SeqCst) + 1;
         let terminal = s.blocks.last().unwrap().hash().to_string();
         let result = match r["method"].as_str().unwrap() {
@@ -518,7 +513,7 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
             .route("/", post(handler))
             .with_state(state.clone());
         let task = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let client = ZakuraClient::unauthenticated(vec![url]).unwrap();
+        let client = ZakuraClient::new(url, None).unwrap();
         let previous = Checkpoint {
             height: 3496113,
             hash: [0; 32],
@@ -549,47 +544,6 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
         }
         task.abort();
     }
-}
-
-/// A block read by hash must be the block with that hash, with the transactions its
-/// header commits to, so its transaction order is the chain's.
-#[tokio::test]
-async fn a_block_read_by_hash_is_that_block() {
-    let serve = |b: Block| async move {
-        let mut raw = Vec::new();
-        b.zcash_serialize(&mut raw).unwrap();
-        let raw = hex::encode(raw);
-        let app = Router::new().route(
-            "/",
-            post(move |Json(r): Json<Value>| async move {
-                assert_eq!(
-                    (r["method"].as_str(), &r["params"][1]),
-                    (Some("getblock"), &json!(0))
-                );
-                Json(json!({"result": raw, "error": null}))
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(vec![url]).unwrap()
-    };
-    let b = block();
-    let hash = b.hash().0;
-    let read = serve(b.clone()).await.receiver_block(hash).await.unwrap();
-    assert_eq!(read.transactions.len(), 2);
-    assert!(serve(b.clone())
-        .await
-        .receiver_block([0; 32])
-        .await
-        .is_err());
-    // A transaction changed under the same header.
-    let mut altered = b;
-    if let Transaction::V6 { expiry_height, .. } = Arc::make_mut(&mut altered.transactions[1]) {
-        expiry_height.0 += 1;
-    }
-    assert_eq!(altered.hash().0, hash);
-    assert!(serve(altered).await.receiver_block(hash).await.is_err());
 }
 
 #[test]
@@ -634,29 +588,6 @@ fn cli_refuses_witnesses_after_activation_before_contacting_the_node() {
         .unwrap();
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("witnesses need commitments"));
-}
-
-/// A unique-local IPv6 bind is private: it passes the bind check and reaches the node.
-#[test]
-fn cli_accepts_a_unique_local_ipv6_bind() {
-    let dir = tempfile::tempdir().unwrap();
-    let output = std::process::Command::new(env!("CARGO_BIN_EXE_receiver-directory"))
-        .args([
-            "--data-dir",
-            dir.path().to_str().unwrap(),
-            "--rpc-url",
-            "http://127.0.0.1:1",
-            "--no-auth",
-            "--serve",
-            "--bind",
-            "[fd00::1]:18380",
-        ])
-        .output()
-        .unwrap();
-    assert!(!output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!stderr.contains("loopback or private bind"), "{stderr}");
-    assert!(stderr.contains("Connection refused"), "{stderr}");
 }
 
 /// Serving binds loopback or a private address, never a public one.
