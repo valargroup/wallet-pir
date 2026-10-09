@@ -30,5 +30,9 @@
     "small network measurement",
     "not an isolated node benchmark"
   ],
-  "historical": true
+  "historical": true,
+  "qualification": "development evidence, not release qualification: both binaries used the workspace's test profile (opt-level 1), not release-fast, so the speedup is indicative only",
+  "not_retained": [
+    "the two 16,384-byte publications whose digests results.json reports as identical, so the byte-identical claim cannot be recomputed"
+  ]
 }

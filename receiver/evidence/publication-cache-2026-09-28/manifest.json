@@ -34,5 +34,10 @@
     "local validation, not a deployment",
     "cold-cache figures vary with host load"
   ],
-  "historical": true
+  "historical": true,
+  "qualification": "development evidence, not release qualification",
+  "not_retained": [
+    "the 42.9 MB source SQLite database (only its path and SHA-256 are in results.json), so the commitments, payment positions and cache state cannot be reconstructed",
+    "the exact command lines (see invocations)"
+  ]
 }
