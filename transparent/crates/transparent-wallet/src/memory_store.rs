@@ -241,10 +241,11 @@ impl WalletStore for MemoryStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
+            // A range replaces every range of this script it contains, whatever
+            // shard they came from: a repeat, a longer revision at the same
+            // start, and the narrower shards a re-cut merged into this one.
             ranges.retain(|old| {
-                !(old.shard_id == range.shard_id
-                    && old.start_height == range.start_height
-                    && old.end_height <= range.end_height)
+                !(old.start_height >= range.start_height && old.end_height <= range.end_height)
             });
             if !ranges.contains(&range) {
                 ranges.push(range);

@@ -717,31 +717,22 @@ impl WalletStore for SqliteStore {
                 revision_digest: commit.revision_digest.clone(),
                 terminal_block_hash: commit.terminal_block_hash.clone(),
             };
-            // New checkpoint starts do not replace any existing primary key.
-            // Keep append work independent of the accumulated coverage history.
-            let exists: bool = tx
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM coverage WHERE script = ?1 AND start_height = ?2)",
-                    params![script, range.start_height as i64],
-                    |row| row.get(0),
-                )
-                .map_err(io)?;
-            if !exists {
-                Self::insert_coverage(&tx, script, &range)?;
-                continue;
-            }
-            // Preserve the existing replay/replacement and conflict semantics.
-            let mut ranges = Self::coverage_of(&tx, script)?;
-            ranges.retain(|old| {
-                !(old.shard_id == range.shard_id
-                    && old.start_height == range.start_height
-                    && old.end_height <= range.end_height)
-            });
-            if !ranges.contains(&range) {
-                ranges.push(range);
-            }
-            let merged = merge_coverage(ranges);
-            Self::write_coverage(&tx, script, &merged)?;
+            // A range replaces every range of this script it contains, whatever
+            // shard they came from: a repeat, a longer revision at the same
+            // start, and the narrower shards a re-cut merged into this one. A
+            // longer range already at this start is a conflict the primary key
+            // refuses. The scan begins at this range's start, so appending past
+            // the covered history reads and rewrites no earlier row.
+            tx.execute(
+                "DELETE FROM coverage WHERE script = ?1 AND start_height >= ?2 AND end_height <= ?3",
+                params![
+                    script,
+                    range.start_height as i64,
+                    range.end_height as i64
+                ],
+            )
+            .map_err(io)?;
+            Self::insert_coverage(&tx, script, &range)?;
         }
         for id in &commit.pending_complete {
             tx.execute(
