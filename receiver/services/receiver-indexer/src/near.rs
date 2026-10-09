@@ -49,7 +49,8 @@ pub const RECENT_SECS: i64 = 24 * 60 * 60;
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 /// A completed payout that NEAR reported without a parsable transaction is recorded
 /// under this many zero bytes, which no transaction hash starts with, then a digest of
-/// its swap's deposit address, one row per swap. [`Capture::report`] counts these
+/// its swap's length-prefixed deposit address and optional memo, the explorer's
+/// identity for a swap, so one row per swap. [`Capture::report`] counts these
 /// (`payouts_uncheckable`) while first seen within [`RECENT_SECS`].
 const UNCHECKABLE_ZEROS: usize = 16;
 
@@ -350,7 +351,14 @@ impl Explorer {
                                 .map(|txid| (receiver, txid.0)),
                         );
                         if completed.len() == before {
-                            let digest = Sha256::digest(swap.deposit_address.as_bytes());
+                            let address = swap.deposit_address.as_bytes();
+                            let memo = swap.deposit_memo.as_deref();
+                            let digest = Sha256::new()
+                                .chain_update((address.len() as u64).to_le_bytes())
+                                .chain_update(address)
+                                .chain_update([u8::from(memo.is_some())])
+                                .chain_update(memo.unwrap_or_default())
+                                .finalize();
                             let mut txid = [0; 32];
                             txid[UNCHECKABLE_ZEROS..]
                                 .copy_from_slice(&digest[..32 - UNCHECKABLE_ZEROS]);
@@ -688,6 +696,49 @@ mod tests {
         assert_eq!(completed[0].1[0], 0x7f);
         assert_eq!(completed[0].1[31], 0x7f);
         assert_eq!(completed[0].1[1], 0x7e);
+    }
+
+    /// Uncheckable payouts from one deposit address are told apart by their memos, and a
+    /// reread derives the same records, keeping when each was first seen.
+    #[tokio::test]
+    async fn uncheckable_payouts_are_one_record_per_swap() {
+        use axum::{routing::get, Router};
+        let swap = "u14nnj43rj7dpf7qh6gu24fuyu8vld9fgatxd32xre27yqgu6p0yq0sf0t3uxnwts4968hf7d8nvyh4wfzqtmcdt6xzk7el6pn0ufx6pdg";
+        let record = |memo: Option<&str>| {
+            serde_json::json!({"recipient": swap, "createdAtTimestamp": 9_999_999_999i64,
+                "depositAddress": "a", "depositMemo": memo, "status": "SUCCESS"})
+        };
+        let page = serde_json::json!([record(None), record(Some("m"))]).to_string();
+        let app = Router::new().route(
+            "/",
+            get(move || {
+                let page = page.clone();
+                async move { page }
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut explorer = Explorer::at(format!("http://{}/", socket.local_addr().unwrap()));
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
+        explorer
+            .sync(&mut store, Feed::Payouts, 1_000)
+            .await
+            .unwrap();
+        let first_seen = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let first = store.unmatched(first_seen).unwrap();
+        assert_eq!(first.len(), 2);
+        assert!(first.iter().all(|p| uncheckable(&p.1)));
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        explorer
+            .sync(&mut store, Feed::Payouts, 1_000)
+            .await
+            .unwrap();
+        assert_eq!(store.unmatched(i64::MAX).unwrap(), first);
+        assert_eq!(store.unmatched(first_seen).unwrap(), first);
     }
 
     /// [`Capture::report`] for the current state of `provider` on a terminal block with
