@@ -54,8 +54,8 @@ find nothing.
 ## Filters
 
 Each publication carries an `IWFLT1` filter file of labeled BIP 158 Golomb-coded
-sets of receivers, keyed by the salt, so a wallet can test its receivers before looking
-any up. The manifest declares every set's label and size:
+sets of receivers, keyed by the salt, so a wallet can test its receivers before
+looking any up. The manifest declares every set's label and size:
 
 - `paid`: every receiver with a payment in the publication.
 - `<provider>/recent`: every Orchard receiver a swap provider was given within the
@@ -85,10 +85,12 @@ rows.
 ## Witnesses
 
 The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
-terminal height and hash, tree size and root. Sorted 37-byte nodes (level, index,
-hash) follow, with every sibling of each payment position. It is capped at 64 MiB.
-A server publishes a file only once it has checked a path to that root for every
-record in the rows.
+terminal height and hash, tree size and root. Sorted 37-byte nodes (level,
+index, hash) follow, with every sibling of each payment position. It is capped
+at 64 MiB. A server publishes a file only once it has checked a path to that
+root for every record in the rows. Building the file reads every commitment
+since the empty tree, so the store refuses a history longer than the caller's
+commitment limit before reading it.
 
 ## Protocol
 
@@ -162,9 +164,6 @@ returns a receiver's complete history or an error. Over PIR it reads up to
 the client across batches and reconnect for a new revision. The server sees the
 mode and the number of queries, so it learns how many lookups found several
 payments, but never which receivers were looked up.
-
-Building the file reads every commitment since the empty tree, so the store
-refuses a history longer than the caller's commitment limit before reading it.
 
 ## Tests
 

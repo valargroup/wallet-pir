@@ -47,14 +47,10 @@ const ENDPOINTS: [&str; 7] = [
     "receiver_health",
 ];
 
-/// Serve the current publication while the owner prepares, validates and rotates revisions.
-/// Queries are admitted with the shared `pir_control::admission` primitives: two in flight
-/// per client, then a wait of up to 2 seconds behind at most eight others for one of two
-/// evaluation slots. Overload is 429 with `Retry-After: 1`, as Enhance answers.
-/// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` reports the
-/// process identity of `docs/serving-contract.md` and the owner's report, and `/metrics`
-/// the shared HTTP observations; both are for operators, and a deployment's edge proxies
-/// only the wallet routes.
+/// Serve the current publication while the owner prepares, validates and rotates
+/// revisions, with the admission and refusals of `docs/serving-contract.md`.
+/// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` and
+/// `/metrics` are for operators; a deployment's edge proxies only the wallet routes.
 pub fn router_with_publications(publications: Publications) -> Router {
     router(Service {
         publications,
