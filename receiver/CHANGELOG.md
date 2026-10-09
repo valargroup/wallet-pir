@@ -17,7 +17,8 @@
   to one receiver cannot fail a lookup. An HTTP service serves each publication's
   sessions, rows, witnesses and filters, with process identity and the indexer's
   latest report at `/v1/receiver/health` and the shared HTTP metrics, and refuses
-  a witness file without a path for every served record. A replaced
+  a publication that fails `Snapshot::validate` and a witness file without a path
+  for every served record. A replaced
   publication keeps serving its sessions for 60 seconds, and the next replacement
   waits for that to end; a revocation stops session files and query answers
   still being sent at their next frame.
