@@ -842,7 +842,8 @@ mod tests {
             position: 0,
             action_nullifier: [0; 32],
             cmx: [5; 32],
-            ephemeral_key: [0; 32],
+            // The identity encoding is not a valid ephemeral key.
+            ephemeral_key: [7; 32],
             ciphertext_prefix: [0; 52],
         };
         let block = IndexedBlock {

@@ -32,6 +32,10 @@
     "the exact source revision (see source.note)",
     "the verbose RPC block response behind the block-position check",
     "the publication files and the independently recomputed row digest",
-    "the rerun's output"
+    "the rerun's output",
+    "the run's UTC time; only its date was recorded",
+    "the host's CPU model and SKU, RAM, storage and operating system (only \"Mac Studio\" was recorded)",
+    "the compiler, resolved dependencies (Cargo.lock) and Cargo profile of the binary: the shown cargo run passes no profile flag, so it built the dev profile only if run exactly as shown, which nothing records",
+    "the RPC host's configuration, node software and version, and the network path and conditions to it"
   ]
 }
