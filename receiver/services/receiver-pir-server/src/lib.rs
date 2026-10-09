@@ -4,23 +4,17 @@
 mod common;
 pub mod publication;
 use axum::{
-    body::{Body, Bytes},
+    body::Bytes,
     extract::{Path, Request, State},
     http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
-use http_body::{Body as HttpBody, Frame, SizeHint};
 use pir_control::admission::{client_key, read_body, BodyError, ClientSlots, Queue};
 pub use publication::{Publication, Publications};
 use receiver_pir::{query_bytes, Error, HEADER_BYTES, MAGIC, MAX_ROWS};
-use std::{
-    pin::Pin,
-    sync::Arc,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::{sync::Arc, time::Duration};
 
 /// Queries evaluated at once.
 const EVALUATING: usize = 2;
@@ -33,8 +27,6 @@ const WAIT: Duration = Duration::from_secs(2);
 const PER_CLIENT: usize = 2;
 /// How long a query's upload may take.
 const UPLOAD: Duration = Duration::from_secs(15);
-/// Bytes of a [`FencedBody`] frame, the most sent between checks for a revocation.
-const CHUNK: usize = 64 * 1024;
 
 #[derive(Clone)]
 struct Service {
@@ -62,8 +54,7 @@ const ENDPOINTS: [&str; 7] = [
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` reports the
 /// process identity of `docs/serving-contract.md` and the owner's report, and `/metrics`
 /// the shared HTTP observations; both are for operators, and a deployment's edge proxies
-/// only the wallet routes. A revocation stops session files and query answers still
-/// being sent at their next frame; bytes already sent cannot be recalled.
+/// only the wallet routes.
 pub fn router_with_publications(publications: Publications) -> Router {
     router(Service {
         publications,
@@ -184,66 +175,23 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
     let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
-    let (p, epoch) = match s.publications.select(Some(id)) {
-        Ok(selected) => selected,
+    let p = match s.publications.select(Some(id)) {
+        Ok((p, _)) => p,
         Err(status) => return status.into_response(),
     };
-    let bytes = match material {
-        Material::Public => Bytes::copy_from_slice(p.server.public()),
-        Material::Rows => Bytes::from_owner(p.server.rows()),
-        Material::Filters => Bytes::from_owner(p.server.filters()),
+    match material {
+        Material::Public => binary(p.server.public().to_vec()),
+        Material::Rows => binary(Bytes::from_owner(p.server.rows())),
+        Material::Filters => binary(Bytes::from_owner(p.server.filters())),
         Material::Witness => match &p.witnesses {
-            Some(bytes) => bytes.clone(),
-            None => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            Some(bytes) => binary(bytes.clone()),
+            None => StatusCode::SERVICE_UNAVAILABLE.into_response(),
         },
-    };
-    fenced(bytes, &s.publications, epoch)
-}
-
-/// A response body sent in [`CHUNK`]-byte frames. The epoch is checked before each
-/// frame is yielded, and once a revocation advances it past the one the session was
-/// selected in, the body fails and the transfer is aborted. This covers only frames
-/// not yet yielded: the status and length are already sent, so the client sees a
-/// truncated body, and bytes already handed to the connection cannot be recalled,
-/// which is why wallets still check their anchor.
-struct FencedBody {
-    bytes: Bytes,
-    publications: Publications,
-    epoch: u64,
-}
-
-impl HttpBody for FencedBody {
-    type Data = Bytes;
-    type Error = std::io::Error;
-    fn poll_frame(
-        mut self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Bytes>, std::io::Error>>> {
-        if self.bytes.is_empty() {
-            return Poll::Ready(None);
-        }
-        if self.publications.epoch() != self.epoch {
-            return Poll::Ready(Some(Err(std::io::Error::other("publication revoked"))));
-        }
-        let n = self.bytes.len().min(CHUNK);
-        Poll::Ready(Some(Ok(Frame::data(self.bytes.split_to(n)))))
-    }
-    fn is_end_stream(&self) -> bool {
-        self.bytes.is_empty()
-    }
-    fn size_hint(&self) -> SizeHint {
-        SizeHint::with_exact(self.bytes.len() as u64)
     }
 }
 
-/// An uncached `application/octet-stream` response of `bytes` as a [`FencedBody`] for
-/// the session selected in `epoch`.
-fn fenced(bytes: Bytes, publications: &Publications, epoch: u64) -> Response {
-    let body = Body::new(FencedBody {
-        bytes,
-        publications: publications.clone(),
-        epoch,
-    });
+/// An uncached `application/octet-stream` response.
+fn binary(body: impl IntoResponse) -> Response {
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
@@ -296,12 +244,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         publication.server.respond(&body)
     })
     .await;
-    // A revocation during evaluation is 410; one after this check stops the body.
+    // A revocation during evaluation is 410.
     if s.publications.epoch() != epoch {
         return StatusCode::GONE.into_response();
     }
     match result {
-        Ok(Ok(body)) => fenced(body.into(), &s.publications, epoch),
+        Ok(Ok(body)) => binary(body),
         Ok(Err(Error::Revision)) => StatusCode::CONFLICT.into_response(),
         Ok(Err(Error::Malformed)) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
