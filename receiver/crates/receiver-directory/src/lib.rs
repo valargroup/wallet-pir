@@ -3,6 +3,8 @@ pub mod extract;
 pub mod filter;
 pub mod record;
 pub mod snapshot;
+#[cfg(feature = "store")]
+pub mod store;
 pub mod witness;
 
 pub use record::{Payment, Receiver, Record, RECORD_BYTES};
