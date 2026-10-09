@@ -1,4 +1,4 @@
-use super::WitnessSnapshot;
+use super::{WitnessSnapshot, HEADER, MAX_WITNESS_BYTES, NODE};
 use crate::{snapshot::Manifest, Error, Hash};
 use incrementalmerkletree::Hashable;
 use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
@@ -20,6 +20,18 @@ impl WitnessCache {
         manifest: &Manifest,
         commitments: &[Hash],
         positions: &BTreeSet<u32>,
+    ) -> Result<WitnessSnapshot, Error> {
+        self.build_within(manifest, commitments, positions, MAX_WITNESS_BYTES)
+    }
+
+    /// [`Self::build`], failing with [`Error::Capacity`] as soon as the file's nodes
+    /// would exceed `max_bytes`, before collecting the rest.
+    fn build_within(
+        &mut self,
+        manifest: &Manifest,
+        commitments: &[Hash],
+        positions: &BTreeSet<u32>,
+        max_bytes: usize,
     ) -> Result<WitnessSnapshot, Error> {
         manifest.validate()?;
         if manifest.start_position != 0
@@ -74,15 +86,67 @@ impl WitnessCache {
                 first_changed = first_parent;
             }
         }
+        let max_nodes = (max_bytes - HEADER) / NODE;
         let mut nodes = BTreeMap::new();
         for depth in 0..32u8 {
             for position in positions {
                 let index = (*position >> depth) ^ 1;
                 if let Some(hash) = self.levels[depth as usize].get(index as usize) {
-                    nodes.insert((depth, index), *hash);
+                    if nodes.insert((depth, index), *hash).is_none() && nodes.len() > max_nodes {
+                        return Err(Error::Capacity);
+                    }
                 }
             }
         }
         WitnessSnapshot::from_nodes(manifest, self.levels[32][0].to_bytes(), nodes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::snapshot::{FilterSet, MIN_ROWS, PROFILE};
+
+    /// Sparse positions need a sibling at nearly every level, so a small cap is
+    /// exceeded while the nodes are still being collected.
+    #[test]
+    fn the_size_cap_stops_collecting_nodes() {
+        let leaves: Vec<Hash> = (1..=64u64)
+            .map(|i| {
+                let mut cmx = [0; 32];
+                cmx[..8].copy_from_slice(&i.to_le_bytes());
+                cmx
+            })
+            .collect();
+        let manifest = Manifest {
+            profile: PROFILE.into(),
+            genesis: [1; 32],
+            start_height: 100,
+            start_parent: [2; 32],
+            start_position: 0,
+            end_height: 110,
+            end_hash: [3; 32],
+            end_position: 64,
+            rows: MIN_ROWS,
+            salt: [3; 32],
+            records: 0,
+            data_sha256: [0; 32],
+            filters: vec![FilterSet {
+                label: crate::filter::PAID.into(),
+                count: 0,
+                window_secs: None,
+                since_unix: None,
+                until_unix: None,
+            }],
+            filters_sha256: [0; 32],
+        };
+        let positions = [0, 63].into_iter().collect();
+        let mut cache = WitnessCache::default();
+        assert!(matches!(
+            cache.build_within(&manifest, &leaves, &positions, HEADER + NODE * 4),
+            Err(Error::Capacity)
+        ));
+        let built = cache.build(&manifest, &leaves, &positions).unwrap();
+        assert!(built.nodes.len() > 4);
     }
 }

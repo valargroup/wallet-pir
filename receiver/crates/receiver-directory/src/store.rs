@@ -362,9 +362,10 @@ impl ProviderStore {
     /// Records a complete read of `feed` that began at `read_at`: receivers from swaps
     /// it created up to `cursor`, its new position, where `true` marks a payout address
     /// and `false` a refund address, each with its swap's creation time. A receiver
-    /// keeps its latest time. The cursor and read time advance together: a read whose
-    /// cursor is behind the stored one changes neither, so a stale read cannot make the
-    /// feed look fresher.
+    /// keeps its latest time. The cursor and read time move as one pair: a read that
+    /// advances the cursor also sets the read time, one that reaches the same cursor
+    /// can only advance the read time, and one behind the cursor changes neither, so a
+    /// stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
@@ -387,17 +388,24 @@ impl ProviderStore {
                 |r| r.get(0),
             )
             .optional()?;
-        if stored.is_none_or(|stored| cursor >= stored) {
+        let read_sql = match stored {
+            Some(stored) if cursor < stored => None,
+            Some(stored) if cursor == stored => Some(
+                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
+            ),
+            _ => Some(
+                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
+                 DO UPDATE SET read_at=excluded.read_at",
+            ),
+        };
+        if let Some(read_sql) = read_sql {
             tx.execute(
                 "INSERT INTO cursors VALUES (?1,?2) ON CONFLICT(feed)
                  DO UPDATE SET created_at=excluded.created_at",
                 params![feed, cursor],
             )?;
-            tx.execute(
-                "INSERT INTO reads VALUES (?1,?2) ON CONFLICT(feed)
-                 DO UPDATE SET read_at=MAX(read_at,excluded.read_at)",
-                params![feed, read_at],
-            )?;
+            tx.execute(read_sql, params![feed, read_at])?;
         }
         tx.commit()?;
         Ok(())
