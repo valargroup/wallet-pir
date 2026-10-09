@@ -44,7 +44,7 @@ for tool in jq shellcheck; do
 done
 
 echo "== shell syntax and lint"
-for script in ops/scripts/*.sh transparent/ops/scripts/*.sh; do
+for script in ops/scripts/*.sh transparent/ops/scripts/*.sh receiver/ops/digitalocean/*.sh; do
   if ! bash -n "$script"; then
     bad "$script" "does not parse"
     continue
