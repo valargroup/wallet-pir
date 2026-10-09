@@ -1,0 +1,38 @@
+{
+  "run_id": "receiver-publication-cache-2026-09-28",
+  "observed": "2026-09-28",
+  "source": {
+    "baseline": "207053dc02453d43ebfd3ba60c758f99f848c509",
+    "integrated_base": "2f99300debde3d65a0c0d263a5129042eddf12ab",
+    "main_integrated": "5337a43c619039a39c35b54d9251a5131ebb93ba",
+    "implementation": "8bfb120c211d2674fbf0a49f4d8455a0f54e6790"
+  },
+  "toolchain": {
+    "rust": "1.98.0",
+    "profile": "release-fast",
+    "provenance": "reported, not independently verified"
+  },
+  "host": "Apple M3 Ultra (local)",
+  "network": "mainnet",
+  "range": [
+    3428143,
+    3497894
+  ],
+  "commitments": 623845,
+  "records": 20916,
+  "rows": 8192,
+  "row_bytes": 4096,
+  "publication_bytes": 33554432,
+  "raw": [
+    "results.json",
+    "serve.log",
+    "SHA256SUMS.original"
+  ],
+  "block_hash_byte_order": "results.json's block_hash values are in protocol byte order (proof-of-work zeros last), the reverse of the RPC display order used by the other runs",
+  "limits": [
+    "local validation, not a deployment",
+    "cold-cache figures vary with host load"
+  ],
+  "qualification": "development evidence, not release qualification",
+  "not_retained": "everything outside SHA256SUMS, including the source database, publications, served proof and exact commands"
+}

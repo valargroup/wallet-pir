@@ -1,0 +1,80 @@
+{
+  "date": "2026-09-28",
+  "baseline": "207053dc02453d43ebfd3ba60c758f99f848c509",
+  "integrated_base": "2f99300debde3d65a0c0d263a5129042eddf12ab",
+  "main_integrated": "5337a43",
+  "cpu": "Apple M3 Ultra",
+  "rust": "1.98.0",
+  "profile": "release-fast",
+  "source_input": {
+    "source": "/Users/czstudio/.codex/worktrees/near-swap-pir-integration/receiver-mainnet-witness/index/directory.sqlite",
+    "sha256": "2760f628beb9d7e7d571586704de57787899893ec08bfdae6dbd4c041603e1a2",
+    "bytes": 42917888
+  },
+  "trials": [
+    {
+      "append_us": 357,
+      "block_hash": "38c355c0d646c6580521590ddb1383612f75ef830954e745283e1a0000000000",
+      "cached_witness_us": 86186,
+      "cold_cache_us": 14447307,
+      "commitments": 623845,
+      "directory_us": 201690,
+      "equal": true,
+      "full_witness_us": 13403996,
+      "height": 3497894,
+      "new_commitments": 11,
+      "records": 20916,
+      "revision": "55e380571ead71e84f4c208a22f23e23303b64fa9b4ab31568e115c475b9beb7",
+      "trial": 0,
+      "witness_bytes": 4034558,
+      "witness_sha256": "162fb3ee81090a3b5a050290a20a9a506a3da87e6c80ba1fe433438cfa995f7b"
+    },
+    {
+      "append_us": 542,
+      "block_hash": "38c355c0d646c6580521590ddb1383612f75ef830954e745283e1a0000000000",
+      "cached_witness_us": 84250,
+      "cold_cache_us": 13333081,
+      "commitments": 623845,
+      "directory_us": 189584,
+      "equal": true,
+      "full_witness_us": 13353690,
+      "height": 3497894,
+      "new_commitments": 11,
+      "records": 20916,
+      "revision": "55e380571ead71e84f4c208a22f23e23303b64fa9b4ab31568e115c475b9beb7",
+      "trial": 1,
+      "witness_bytes": 4034558,
+      "witness_sha256": "162fb3ee81090a3b5a050290a20a9a506a3da87e6c80ba1fe433438cfa995f7b"
+    },
+    {
+      "append_us": 512,
+      "block_hash": "38c355c0d646c6580521590ddb1383612f75ef830954e745283e1a0000000000",
+      "cached_witness_us": 85337,
+      "cold_cache_us": 13350567,
+      "commitments": 623845,
+      "directory_us": 189496,
+      "equal": true,
+      "full_witness_us": 13446841,
+      "height": 3497894,
+      "new_commitments": 11,
+      "records": 20916,
+      "revision": "55e380571ead71e84f4c208a22f23e23303b64fa9b4ab31568e115c475b9beb7",
+      "trial": 2,
+      "witness_bytes": 4034558,
+      "witness_sha256": "162fb3ee81090a3b5a050290a20a9a506a3da87e6c80ba1fe433438cfa995f7b"
+    }
+  ],
+  "serve": {
+    "binary_sha256": "e47744e729631cffd98abc4a1bee2356a2418029183e65f26cf35080924af1f3",
+    "poll_seconds": 10,
+    "cold_available_ms": 12650.573041000001,
+    "warm_tip_change_to_http_ms": 12400.320458999999,
+    "processing_ms": 2367,
+    "witness_prepare_ms": 104.68
+  },
+  "proof_matches_full_reference": true,
+  "median_full_witness_ms": 13403.996,
+  "median_cached_witness_ms": 85.337,
+  "deployment_performed": false,
+  "implementation_revision": "8bfb120c211d2674fbf0a49f4d8455a0f54e6790"
+}

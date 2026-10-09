@@ -2,6 +2,7 @@
 
 - [Transparent recovery](../transparent/evidence/README.md): accepted milestones, correctness, fleet and filter measurements.
 - [Enhance](../enhance/evidence/README.md): reported performance and preflight results, with provenance limits.
+- [Receiver directory](../receiver/evidence/README.md): mainnet indexing, backfill, encrypted lookup and publication cache runs.
 
 ## Retention and historical paths
 
