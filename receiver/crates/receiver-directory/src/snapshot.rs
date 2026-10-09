@@ -129,6 +129,8 @@ impl Manifest {
             || self.start_position > self.end_position
             // A depth-32 note commitment tree holds at most 2^32 leaves.
             || self.end_position > 1 << 32
+            // Each record has its own note position in the covered span.
+            || self.records > self.end_position - self.start_position
             || !capacity(self.rows).is_ok_and(|slots| self.records <= slots)
         {
             return Err(Error::Malformed);
@@ -329,10 +331,12 @@ impl Snapshot {
     }
 }
 
-/// Rejects a record whose payment lies outside the manifest's blocks or positions.
+/// Rejects a record whose payment lies outside the manifest's blocks or positions, or
+/// in a coinbase transaction, which the directory excludes.
 fn validate_location(m: &Manifest, r: &Record) -> Result<(), Error> {
     let p = &r.payment;
-    if p.height < m.start_height
+    if p.tx_index == 0
+        || p.height < m.start_height
         || p.height > m.end_height
         || p.position < m.start_position
         || p.position >= m.end_position
