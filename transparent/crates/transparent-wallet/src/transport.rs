@@ -360,7 +360,10 @@ pub trait FilterSource {
     /// default does nothing. An implementation must hand each prefetched
     /// filter out at most once through [`filter`](Self::filter) and fetch
     /// afresh after that, so a republished tail's superseded filter cannot be
-    /// served twice; the sync still checks every filter against the map.
+    /// served twice. It must also drop what an earlier prefetch left unused
+    /// when the next one starts or the map is fetched: those filters were
+    /// fetched for the map in hand then, and a re-cut gives their ids to other
+    /// shards. The sync still checks every filter against the map.
     fn prefetch(&mut self, _shard_ids: &[u64]) {}
 
     /// Research-only parent discovery for uncached work. Default sources never

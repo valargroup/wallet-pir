@@ -599,6 +599,12 @@ pub struct HttpFilterSource {
     observer: Option<HttpObserver>,
     retry: RetryPolicy,
     /// Filters fetched ahead of the walk, each handed out at most once.
+    ///
+    /// Kept only for the walk that asked for them. A filter is addressed by
+    /// shard id, and a map fetched since may give that id to another shard (a
+    /// re-cut renumbers every shard above it), so the next prefetch or map
+    /// fetch drops whatever the last walk left unused rather than hand it out
+    /// under a map it was not fetched for.
     prefetched: std::collections::HashMap<u64, Vec<u8>>,
     /// Requests a prefetch keeps in flight.
     concurrency: usize,
@@ -713,6 +719,8 @@ impl FilterSource for HttpFilterSource {
     }
 
     fn shard_map(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
+        // The map about to be read may number its shards differently.
+        self.prefetched.clear();
         let bytes = execute(
             self.client.get(format!("{}/v1/filters/shards", self.base)),
             "map",
@@ -726,14 +734,14 @@ impl FilterSource for HttpFilterSource {
     }
 
     fn prefetch(&mut self, shard_ids: &[u64]) {
+        // A new walk: what an earlier one left was fetched for its map.
+        self.prefetched.clear();
         if self.concurrency <= 1 || shard_ids.len() <= 1 {
             return;
         }
-        let wanted: Vec<u64> = shard_ids
-            .iter()
-            .copied()
-            .filter(|id| !self.prefetched.contains_key(id))
-            .collect();
+        let mut wanted: Vec<u64> = shard_ids.to_vec();
+        wanted.sort_unstable();
+        wanted.dedup();
         let next = std::sync::atomic::AtomicUsize::new(0);
         let failed = std::sync::atomic::AtomicBool::new(false);
         let fetched = std::sync::Mutex::new(Vec::new());
@@ -923,6 +931,27 @@ mod observation_tests {
             "a second request is fetched afresh"
         );
 
+        // What one walk left unused is never handed to the next walk, or
+        // under a map fetched since: either may number its shards differently.
+        source.prefetch(&[1, 2, 3]);
+        source.filter(1).unwrap();
+        assert_eq!(paths.lock().unwrap().len(), 7);
+        source.prefetch(&[2]);
+        source.filter(2).unwrap();
+        assert_eq!(
+            paths.lock().unwrap().len(),
+            8,
+            "a later prefetch drops what the last walk left"
+        );
+        source.prefetch(&[1, 2, 3]);
+        source.shard_map().unwrap();
+        source.filter(3).unwrap();
+        assert_eq!(
+            paths.lock().unwrap().len(),
+            13,
+            "a map fetch drops every prefetched filter"
+        );
+
         let mut serial = HttpFilterSource::new(
             format!("http://{address}"),
             &HttpOptions {
@@ -935,7 +964,7 @@ mod observation_tests {
         serial.prefetch(&[1, 2, 3]);
         assert_eq!(
             paths.lock().unwrap().len(),
-            4,
+            13,
             "concurrency 1 disables prefetch"
         );
     }
