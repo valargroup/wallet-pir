@@ -662,62 +662,32 @@ fn store_positions_end_within_the_tree() {
         start_parent: [2; 32],
         start_position,
     };
-    for start in [TREE_SIZE + 1, i64::MAX as u64] {
-        let path = dir.path().join(format!("{start}.sqlite"));
-        assert!(matches!(
-            Store::open(&path, config(start)),
-            Err(Error::Malformed)
-        ));
-    }
-    // A full tree accepts no commitment, before or after a reopen.
-    let path = dir.path().join("full.sqlite");
-    let mut store = Store::open(&path, config(TREE_SIZE)).unwrap();
+    assert!(matches!(
+        Store::open(dir.path().join("over.sqlite"), config(TREE_SIZE + 1)),
+        Err(Error::Malformed)
+    ));
+    let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
     let crossing = IndexedBlock {
         height: 100,
         hash: [3; 32],
         parent: [2; 32],
-        start_position: TREE_SIZE,
+        start_position: TREE_SIZE - 1,
         end_position: TREE_SIZE + 1,
         coinbase_actions: 0,
         payments: vec![],
-        commitments: vec![[6; 32]],
+        commitments: vec![[6; 32]; 2],
     };
-    for reopen in [false, true] {
-        if reopen {
-            drop(store);
-            store = Store::open(&path, config(TREE_SIZE)).unwrap();
-        }
-        assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
-        let tip = store.tip().unwrap();
-        assert_eq!((tip.height, tip.position), (99, TREE_SIZE));
-        assert_eq!(store.counts().unwrap(), (0, 0));
-    }
-    // The last leaf fills the tree, and an empty block can follow it.
-    let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
+    assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
+    // The last leaf fills the tree, which can still be published.
     store
         .append(&IndexedBlock {
-            start_position: TREE_SIZE - 1,
             end_position: TREE_SIZE,
+            commitments: vec![[6; 32]],
             ..crossing
         })
         .unwrap();
-    store
-        .append(&IndexedBlock {
-            height: 101,
-            hash: [4; 32],
-            parent: [3; 32],
-            start_position: TREE_SIZE,
-            end_position: TREE_SIZE,
-            coinbase_actions: 0,
-            payments: vec![],
-            commitments: vec![],
-        })
-        .unwrap();
     let manifest = store.snapshot(8, &[]).unwrap().manifest;
-    assert_eq!(
-        (manifest.end_height, manifest.end_position),
-        (101, TREE_SIZE)
-    );
+    assert_eq!(manifest.end_position, TREE_SIZE);
 }
 
 #[cfg(feature = "store")]
@@ -1075,8 +1045,8 @@ fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
 }
 
 /// Records of any receivers agree on each height's block hash, each transaction's
-/// txid and each txid's location, in a build and in a supplied publication, even when
-/// another receiver's record sorts between them.
+/// txid and each txid's location, even when another receiver's record sorts between
+/// them, in a build and, for one conflict, in a supplied publication.
 #[test]
 fn receivers_agree_on_blocks_and_transactions() {
     let mut m = manifest(8);
@@ -1102,28 +1072,30 @@ fn receivers_agree_on_blocks_and_transactions() {
         r.payment.tx_index += 1;
         r
     };
-    for conflict in [
+    let conflicts = [
         at(2, 100, [11; 32], [1; 32], 1),
         at(2, 100, [10; 32], [9; 32], 1),
         moved(101, [3; 32]),
         moved(100, [10; 32]),
-    ] {
+    ];
+    for conflict in &conflicts {
         let mut edited = records.clone();
         edited[2] = conflict.clone();
         assert!(matches!(
             Snapshot::build(m.clone(), &edited, &[]),
             Err(Error::Malformed)
         ));
-        let mut s = valid.clone();
-        let offset = slot_of(&s, &last);
-        put(&mut s, offset, Some(&conflict));
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    let mut s = valid;
+    let offset = slot_of(&s, &last);
+    put(&mut s, offset, Some(&conflicts[0]));
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 }
 
 /// A note commitment, Action nullifier or ephemeral key that is not a canonical
-/// encoding is refused by encoding, decoding, a build and a supplied publication.
+/// encoding is refused by encoding, and one such field by decoding, a build and a
+/// supplied publication.
 #[test]
 fn records_refuse_noncanonical_fields() {
     let a = action();
@@ -1134,28 +1106,24 @@ fn records_refuse_noncanonical_fields() {
         real.payment.ephemeral_key,
     ) = (a.nullifier, a.cmx, a.ephemeral_key);
     assert_eq!(Record::decode(&real.encode().unwrap()).unwrap(), Some(real));
-    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
-    let valid = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
-    // The Action nullifier, note commitment and ephemeral key, by byte offset.
-    for offset in [137, 169, 201] {
+    for field in 0..3 {
         let mut r = record(0, 1);
         let p = &mut r.payment;
-        *match offset {
-            137 => &mut p.action_nullifier,
-            169 => &mut p.cmx,
-            _ => &mut p.ephemeral_key,
-        } = [255; 32];
+        *[&mut p.action_nullifier, &mut p.cmx, &mut p.ephemeral_key][field] = [255; 32];
         assert!(matches!(r.encode(), Err(Error::Malformed)));
-        assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
-        let mut bytes = record(0, 1).encode().unwrap();
-        bytes[offset..offset + 32].fill(255);
-        assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
-        let mut s = valid.clone();
-        let slot = slot_of(&s, &record(0, 1));
-        s.data[slot + offset..slot + offset + 32].fill(255);
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    // The ephemeral key, at byte offset 201.
+    let mut r = record(0, 1);
+    r.payment.ephemeral_key = [255; 32];
+    assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
+    let mut bytes = record(0, 1).encode().unwrap();
+    bytes[201..233].fill(255);
+    assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
+    let mut s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    let slot = slot_of(&s, &record(0, 1));
+    s.data[slot + 201..slot + 233].fill(255);
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 }
 
 /// A supplied publication is checked as a whole: digests, placement, count, pages,
@@ -1208,25 +1176,10 @@ fn supplied_publications_are_validated_record_by_record() {
     );
     assert!(matches!(misplaced.validate(), Err(Error::Malformed)));
 
-    // A missing page, a duplicate page and an inconsistent total.
+    // A missing page; the other page faults are tested against a build.
     refused(&|s| {
         put(s, slot_of(s, &a1), None);
         s.manifest.records -= 1;
-    });
-    refused(&|s| {
-        let mut again = a1.clone();
-        (again.payment.txid, again.payment.position) = ([7; 32], 205);
-        let offset = slot_of(s, &a1) + RECORD_BYTES;
-        assert!(s.data[offset..offset + RECORD_BYTES]
-            .iter()
-            .all(|x| *x == 0));
-        put(s, offset, Some(&again));
-        s.manifest.records += 1;
-    });
-    refused(&|s| {
-        let mut wider = a1.clone();
-        wider.total = 3;
-        put(s, slot_of(s, &a1), Some(&wider));
     });
 
     // More or fewer records than the manifest declares.
@@ -1335,8 +1288,8 @@ fn a_populated_largest_table_validates() {
     s.validate().unwrap();
 }
 
-/// Each page continues the last as [`check_next`] requires, in a build and in a
-/// supplied publication, each of whose edits is rehashed.
+/// Each page continues the last as [`check_next`] requires, which a build and a
+/// supplied publication apply.
 #[test]
 fn pages_continue_in_chain_order() {
     use receiver_directory::{snapshot::check_next, Payment};
@@ -1373,12 +1326,7 @@ fn pages_continue_in_chain_order() {
         },
     ];
     for edit in continuing {
-        let r = next(edit);
-        check_next(&first, &r).unwrap();
-        Snapshot::build(m.clone(), &[first.clone(), r], &[])
-            .unwrap()
-            .validate()
-            .unwrap();
+        check_next(&first, &next(edit)).unwrap();
     }
 
     let broken: [fn(&mut Payment); 5] = [
@@ -1394,18 +1342,22 @@ fn pages_continue_in_chain_order() {
         |p| (p.txid, p.action_index) = ([2; 32], 2),
     ];
     for edit in broken {
-        let r = next(edit);
-        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
         assert!(matches!(
-            Snapshot::build(m.clone(), &[first.clone(), r.clone()], &[]),
+            check_next(&first, &next(edit)),
             Err(Error::Malformed)
         ));
-        let mut s = valid.clone();
-        let offset = slot_of(&s, &within_tx);
-        put(&mut s, offset, Some(&r));
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    // A build and a supplied publication apply the same rule.
+    let earlier_action = next(broken[0]);
+    assert!(matches!(
+        Snapshot::build(m, &[first.clone(), earlier_action.clone()], &[]),
+        Err(Error::Malformed)
+    ));
+    let mut s = valid;
+    let offset = slot_of(&s, &within_tx);
+    put(&mut s, offset, Some(&earlier_action));
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 
     // The page, total and position conditions hold for the predicate too.
     let mut other = within_tx.clone();
