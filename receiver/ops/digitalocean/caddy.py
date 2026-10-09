@@ -44,6 +44,7 @@ temp = os.path.join(os.path.dirname(LIVE), ".Caddyfile.%d.tmp" % os.getpid())
 
 
 def run(argv, seconds):
+    """Runs `argv` without stdin; returns its status (1 if it cannot run or times out) and output tail."""
     try:
         result = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=seconds)
     except (OSError, subprocess.TimeoutExpired) as error:
@@ -52,6 +53,7 @@ def run(argv, seconds):
 
 
 def reply(ok, output=""):
+    """Prints the one reply line and exits."""
     print(json.dumps({"ok": ok, "output": output}))
     sys.exit(0)
 
