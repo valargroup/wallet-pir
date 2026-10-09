@@ -2578,6 +2578,7 @@ dependencies = [
  "enhance-pir",
  "hex",
  "pir-apm",
+ "pir-observability",
  "reqwest",
  "serde",
  "serde_json",

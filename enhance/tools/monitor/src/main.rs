@@ -1,4 +1,5 @@
 //! Independent, low-rate public PIR correctness and monitoring-progress checker.
+mod private_metrics;
 mod service_probes;
 use anyhow::{Context, Result};
 use axum::{extract::State, routing::get, Json, Router};
@@ -29,6 +30,7 @@ struct Record {
 #[derive(Clone, Default, Serialize)]
 struct View {
     services: std::collections::BTreeMap<String, service_probes::Probe>,
+    metrics: std::collections::BTreeMap<String, private_metrics::Summary>,
     evaluated_at: u64,
     canary_at: u64,
     canary_ok: bool,
@@ -128,6 +130,7 @@ async fn main() -> Result<()> {
         "invalid service alert mode"
     );
     let probes = service_probes::start()?;
+    let metrics = private_metrics::start()?;
     tokio::spawn(async move {
         if incidents::deliver(path, webhook).await.is_err() {
             eprintln!("notification worker stopped");
@@ -344,8 +347,10 @@ async fn main() -> Result<()> {
                 )?;
                 Ok((store.incidents()?, store.health(configured, now)?))
             })();
+            let metrics = private_metrics::summaries(&*metrics.read().await, now);
             let mut v = eval.write().await;
             v.services = probe_snapshot;
+            v.metrics = metrics;
             v.evaluated_at = now;
             v.storage_error = result.is_err();
             if let Ok((incidents, delivery)) = result {

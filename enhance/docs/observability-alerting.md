@@ -302,6 +302,10 @@ array of `{service, command, timeout_seconds}` records; the host drop-in
 [`pir-monitor-service-quality.conf`](../ops/deploy/pir-monitor-service-quality.conf)
 sets it and loads the probes' node cookie. Commands are absolute
 argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
+`PIR_MONITOR_METRICS_TARGETS`, optional and set in the same drop-in, is a JSON
+list of `{service, url}` private plain-HTTP `pir_observability` endpoints the
+monitor scrapes once a minute; `/monitor-status` reports their bounded summaries
+under `metrics`, without alert rules.
 Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical
 anchor. Never construct expected answers from the encrypted server response.
