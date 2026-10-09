@@ -76,5 +76,5 @@ ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.
 tower = { version = "0.5", features = ["util"] }
 transparent-wallet = { path = "../../crates/transparent-wallet", features = ["reqwest"] }
 transparent-wallet-store = { path = "../../crates/transparent-wallet-store" }
-transparent-txid-client = { path = "../../crates/transparent-txid-client" }
+transparent-txid-client = { path = "../../crates/transparent-txid-client", features = ["testing"] }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }

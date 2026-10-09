@@ -11,9 +11,10 @@ use axum::Router;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayTable};
+use transparent_shard::display::{self, DisplayTable, TXID_4K};
 use transparent_shard::txid::{DisplayRecord, Tag};
 use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::DisplayCommand;
@@ -21,7 +22,9 @@ use transparent_shard_server::display::service::{router, DisplayRuntime, Display
 use transparent_shard_server::display::set::DisplaySet;
 use transparent_shard_server::display::synth::{self, Published};
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
-use transparent_txid_client::{Placement, Route, Tier, TxidError, TxidLookup, TxidReply};
+use transparent_txid_client::{
+    Placement, Route, Tier, TxidDisplayClient, TxidError, TxidLookup, TxidReply,
+};
 
 #[path = "support/display_world.rs"]
 mod display_world;
@@ -429,6 +432,276 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
     .unwrap();
     world.recent.publish(&p1.0, &p1.1).await;
     world.wallet().found(&world.r0_records[CLASSES], 230);
+}
+
+/// Every query of a transcript uploads `bytes`.
+fn assert_uploads(log: &[Sent], bytes: u64) {
+    let posts: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Query).collect();
+    assert_eq!(posts.len(), 2);
+    assert!(posts
+        .iter()
+        .all(|post| post.status == 200 && post.body.len() as u64 == bytes));
+}
+
+/// A txid-4k query: the 8-byte binding and the 4,096-row native selection.
+const QUERY_BYTES_4K: u64 = 52_744;
+
+/// A fresh lineage replaces the publication behind the same edge, as a
+/// display re-cut or re-layout does: a lower start, shard ids restarted from
+/// 0, every digest new, and an archive of another registered geometry.
+/// Wallets holding the old map are answered from the retired snapshot while
+/// it is resident, then sent to refresh once; they follow the new map with
+/// one init refetch for the new geometry and keep nothing of the old lineage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn wallets_follow_a_fresh_lineage_without_downtime() {
+    let world = World::start().await;
+    let (a0, r0) = (&world.a0.digest, &world.r0.digest);
+    // Transactions mined below the old start.
+    let older = records(40, &[]);
+    let sorted = |digests: &[&String]| {
+        let mut digests: Vec<String> = digests.iter().map(|d| d.to_string()).collect();
+        digests.sort();
+        digests
+    };
+
+    // `held` places by the default rule: its map was just fetched, so a
+    // height below it is placed from it with no request.
+    let mut held = world.wallet();
+    held.found(&world.a0_records[CLASSES], 150);
+    held.found(&world.r0_records[CLASSES], 230);
+    assert_eq!(
+        held.lookup(older[CLASSES].txid, 60).unwrap(),
+        TxidLookup::PlacementUnknown(Placement::Below)
+    );
+    assert!(held.http.take_log().is_empty());
+    let old_map = held.client.map_sha256().unwrap().to_string();
+    assert_eq!(held.client.cached_revisions(), sorted(&[a0, r0]));
+    // `aged` counts any map it did not fetch in the same lookup as stale.
+    let mut aged = world.wallet();
+    aged.client =
+        TxidDisplayClient::with_profiles(profiles()).with_placement_refresh_age(Duration::ZERO);
+    aged.found(&world.a0_records[CLASSES + 1], 150);
+
+    // The fresh lineage, from height 50, over the same transactions.
+    let root = world.root.path();
+    let mut first = spec(0, 50, 139, true, "");
+    first.geometry = &TXID_4K;
+    let b0 = write_shard(root, &first, &older);
+    let b1 = write_shard(
+        root,
+        &spec(1, 140, 209, true, &b0.digest),
+        &world.a0_records,
+    );
+    let b2 = write_shard(
+        root,
+        &spec(2, 210, 270, false, &b1.digest),
+        &world.r0_records,
+    );
+    let fresh = synth::write_candidate(
+        root,
+        &params(1),
+        &[b0.clone(), b1.clone(), b2.clone()],
+        "fresh",
+    )
+    .unwrap();
+    // Each worker prepares it beside the old publication, then swaps.
+    assert_eq!(world.archive.publish(&fresh.0, &fresh.1).await["built"], 2);
+    assert_eq!(world.recent.publish(&fresh.0, &fresh.1).await["built"], 1);
+    let (_, init) = world.get("/v1/txid/init").await;
+    assert_eq!(init["geometries"].as_array().unwrap().len(), 2, "{init}");
+
+    // The old map's archive is answered from the retired snapshot while its
+    // runtime is resident.
+    let (provenance, log) = held.found(&world.a0_records[CLASSES + 2], 150);
+    assert_eq!(
+        (&provenance.manifest_digest, &provenance.map_sha256),
+        (a0, &old_map)
+    );
+    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+
+    // Once evicted, the old revision is refused with a 409: the wallet
+    // refreshes its map once and finds the entry in the new recent shard.
+    // The new map names nothing the wallet held, so it keeps nothing.
+    for worker in [&world.archive, &world.recent] {
+        worker.runtime.cache.evict_unpinned();
+    }
+    let (provenance, log) = held.found(&world.r0_records[CLASSES], 230);
+    assert_eq!(stale_retries(&log), 1);
+    assert_eq!(
+        routes(&log),
+        [
+            Route::Query,
+            Route::Map,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query
+        ]
+    );
+    assert_eq!(
+        (provenance.shard_id, &provenance.manifest_digest),
+        (2, &b2.digest)
+    );
+    assert_ne!(provenance.map_sha256, old_map);
+    assert_eq!(held.client.cached_revisions(), [b2.digest.as_str()]);
+    // The old archive's height lies in the new archive 1, through a new
+    // index chunk.
+    let (provenance, log) = held.found(&world.a0_records[CLASSES + 2], 150);
+    assert_eq!(
+        routes(&log),
+        [
+            Route::MapChunk,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query
+        ]
+    );
+    assert_eq!(
+        (provenance.shard_id, &provenance.manifest_digest),
+        (1, &b1.digest)
+    );
+    // Below the old start, in the txid-4k archive: init, cached from the old
+    // publication, lacks the geometry, so it and the map, which this lookup
+    // had not fetched, are fetched once more.
+    let (provenance, log) = held.found(&older[CLASSES], 60);
+    assert_eq!(
+        routes(&log),
+        [
+            Route::Init,
+            Route::Map,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query
+        ]
+    );
+    assert_uploads(&log, QUERY_BYTES_4K);
+    assert_eq!(
+        (provenance.shard_id, &provenance.manifest_digest),
+        (0, &b0.digest)
+    );
+    assert_eq!(
+        held.client.cached_revisions(),
+        sorted(&[&b0.digest, &b1.digest, &b2.digest])
+    );
+    // Warm: two queries only.
+    let (_, log) = held.found(&older[CLASSES + 1], 61);
+    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+
+    // `aged` still holds the old map, which places 60 below it. That map is
+    // stale, so it is fetched again first, and the lookup reaches the new
+    // archive with one map, chunk and init request.
+    let (provenance, log) = aged.found(&older[CLASSES + 2], 60);
+    assert_eq!(
+        routes(&log),
+        [
+            Route::Map,
+            Route::MapChunk,
+            Route::Init,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query
+        ]
+    );
+    assert_uploads(&log, QUERY_BYTES_4K);
+    assert_eq!(provenance.manifest_digest, b0.digest);
+    assert_eq!(aged.client.cached_revisions(), [b0.digest.as_str()]);
+    // Below the new start: one refresh, then placed below.
+    assert_eq!(
+        aged.lookup(older[CLASSES].txid, 10).unwrap(),
+        TxidLookup::PlacementUnknown(Placement::Below)
+    );
+    assert_eq!(routes(&aged.http.take_log()), [Route::Map]);
+
+    // A new wallet sees only the new lineage.
+    let mut wallet = world.wallet();
+    for (record, height, shard) in [
+        (&older[CLASSES + 3], 100, &b0),
+        (&world.a0_records[CLASSES + 3], 150, &b1),
+        (&world.r0_records[CLASSES + 3], 230, &b2),
+    ] {
+        let (provenance, _) = wallet.found(record, height);
+        assert_eq!(provenance.manifest_digest, shard.digest);
+    }
+}
+
+/// With two buckets, two txids in different buckets send the same requests
+/// in the same order, of the same sizes and with the same statuses: cold,
+/// warm, in either order, and through a 409 retry. Paths differ only in the
+/// bucket's table label, the leakage the design accepts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_transcript_depends_on_the_bucket_label_alone() {
+    let root = tempfile::tempdir().unwrap();
+    let archived = records(50, &[]);
+    let mut a = spec(0, 100, 199, true, "");
+    a.n_buckets = 2;
+    let a0 = write_shard(root.path(), &a, &archived);
+    let mut r = spec(1, 200, 260, false, &a0.digest);
+    r.n_buckets = 2;
+    let r0 = write_shard(root.path(), &r, &records(60, &[]));
+    let (dir, map_sha256) =
+        synth::write_candidate(root.path(), &params(2), &[a0, r0], "n2").unwrap();
+    let archive = Worker::new(root.path(), WorkerRole::ArchiveOwner, config(), Vec::new());
+    let recent = Worker::new(root.path(), WorkerRole::RecentReplica, config(), Vec::new());
+    assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 2);
+    assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 2);
+    let app = Router::new().fallback(edge).with_state(Edge {
+        archive: archive.live.router(),
+        recent: recent.live.router(),
+        faults: Faults::default(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+
+    let in_bucket = |bucket: u32| {
+        archived
+            .iter()
+            .find(|r| display::bucket(&Tag::of(&r.txid), 2) == bucket)
+            .unwrap()
+    };
+    let (zero, one) = (in_bucket(0), in_bucket(1));
+    // What an observer of the transport sees, with the bucket label blanked.
+    let seen = |log: &[Sent]| {
+        let paths: Vec<String> = log
+            .iter()
+            .map(|s| {
+                s.path
+                    .replace("directory-0", "directory-b")
+                    .replace("directory-1", "directory-b")
+            })
+            .collect();
+        (shape(log), paths)
+    };
+    // Each wallet: a cold lookup, the other bucket, then both warm.
+    let mut transcripts = Vec::new();
+    for (first, second) in [(zero, one), (one, zero)] {
+        let mut wallet = Wallet::at(&url);
+        let mut lookups = Vec::new();
+        for record in [first, second, first, second] {
+            let (_, log) = wallet.found(record, 150);
+            assert_eq!(posts(&log), 2);
+            lookups.push(seen(&log));
+        }
+        // A 409 on the first query: one map refresh, then the same retry.
+        let mut queries = 0;
+        wallet.http.intercept = Some(Box::new(move |request| {
+            queries += usize::from(request.route == Route::Query);
+            (request.route == Route::Query && queries == 1).then(|| TxidReply {
+                status: 409,
+                body: br#"{"error":"stale"}"#.to_vec(),
+                ..TxidReply::default()
+            })
+        }));
+        let (_, log) = wallet.found(first, 150);
+        assert_eq!(stale_retries(&log), 1);
+        lookups.push(seen(&log));
+        transcripts.push(lookups);
+    }
+    assert_eq!(transcripts[0], transcripts[1]);
+    server.abort();
 }
 
 /// Status, headers and body of one GET through the edge.

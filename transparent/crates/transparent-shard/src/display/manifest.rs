@@ -336,6 +336,7 @@ impl DisplayMap {
         if self.schema != DISPLAY_SCHEMA {
             return Err(format!("unsupported display map schema {:?}", self.schema));
         }
+        self.seal.check()?;
         let Some(first) = self.shards.first() else {
             return Err("display map is empty".into());
         };
@@ -382,6 +383,7 @@ pub(crate) fn check_entry(seal: &DisplaySealParams, shard: &DisplayMapEntry) -> 
         seal.n_recent
     };
     if shard.n_buckets != expected_buckets
+        || !(1..=MAX_BUCKETS).contains(&shard.n_buckets)
         || shard.directory_segments.len() != shard.n_buckets as usize
         || shard.directory_segments.contains(&0)
     {

@@ -11,7 +11,7 @@
 //! block and sealing once over a long range give the same shards. That is what
 //! lets an archive be rebuilt later, from the journal, to the same digest.
 
-use super::bucket;
+use super::{bucket, MAX_BUCKETS};
 use crate::txid::DisplayEntry;
 use serde::{Deserialize, Serialize};
 use std::ops::RangeInclusive;
@@ -27,6 +27,19 @@ pub struct DisplaySealParams {
     pub recent_floor: u64,
     /// Blocks a sealed range must lie below the tip.
     pub reorg_margin: u64,
+}
+
+impl DisplaySealParams {
+    /// Checks both bucket counts lie in `1..=MAX_BUCKETS`, so every bucket
+    /// computation has a divisor and every table label is valid.
+    pub fn check(&self) -> Result<(), String> {
+        for (tier, buckets) in [("archive", self.n_archive), ("recent", self.n_recent)] {
+            if !(1..=MAX_BUCKETS).contains(&buckets) {
+                return Err(format!("{buckets} {tier} display buckets"));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Default for DisplaySealParams {

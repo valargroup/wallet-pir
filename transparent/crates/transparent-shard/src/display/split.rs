@@ -265,6 +265,7 @@ impl DisplayRecentMap {
         if self.chunk_shards != INDEX_CHUNK_SHARDS {
             return Err(format!("{} archives per index chunk", self.chunk_shards));
         }
+        self.seal.check()?;
         if self.archives == 0 && self.recent.is_none() {
             return Err("display map is empty".into());
         }
@@ -498,6 +499,21 @@ mod tests {
             Box::new(|m| m.recent.as_mut().unwrap().shard_id += 1),
             Box::new(|m| m.recent.as_mut().unwrap().n_buckets = 2),
             Box::new(|m| m.recent.as_mut().unwrap().start_height = 200),
+            // Bucket counts with no divisor or past every table label, the
+            // recent entry agreeing with them.
+            Box::new(|m| {
+                m.seal.n_recent = 0;
+                let recent = m.recent.as_mut().unwrap();
+                recent.n_buckets = 0;
+                recent.directory_segments.clear();
+            }),
+            Box::new(|m| {
+                m.seal.n_recent = crate::display::MAX_BUCKETS + 1;
+                let recent = m.recent.as_mut().unwrap();
+                recent.n_buckets = m.seal.n_recent;
+                recent.directory_segments = vec![1; m.seal.n_recent as usize];
+            }),
+            Box::new(|m| m.seal.n_archive = 0),
             Box::new(|m| {
                 m.archives = 0;
                 m.chunks.clear();
@@ -558,6 +574,14 @@ mod tests {
         let mut full = map(0, 3);
         full.shards[1].parent_block_hash = "99".repeat(32);
         assert!(full.split().is_err());
+        // No bucket at all, with entries agreeing.
+        let mut empty = map(0, 3);
+        empty.seal.n_archive = 0;
+        for shard in empty.shards.iter_mut().filter(|shard| shard.sealed) {
+            shard.n_buckets = 0;
+            shard.directory_segments.clear();
+        }
+        assert!(empty.check_shape().is_err());
         let mut sealed_only = map(0, 3);
         sealed_only.shards.pop();
         let split = sealed_only.split().unwrap();
