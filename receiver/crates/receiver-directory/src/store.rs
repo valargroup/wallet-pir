@@ -134,9 +134,10 @@ impl Store {
     }
 
     /// Reject gaps, changed parents, coinbase payments, malformed records and payments
-    /// a snapshot would refuse before advancing coverage: each must continue its
-    /// receiver's last stored payment as [`snapshot::check_next`] requires, the block's
-    /// payments must agree on their block hash and transaction locations, and a txid
+    /// a snapshot would refuse before advancing coverage: the block's payments must
+    /// follow chain order by position, transaction index and action index, each must
+    /// continue its receiver's last stored payment as [`snapshot::check_next`] requires,
+    /// they must agree on their block hash and transaction locations, and a txid
     /// already stored must keep its height and transaction index.
     pub fn append(&mut self, block: &IndexedBlock) -> Result<(), Error> {
         let tx = self
@@ -175,7 +176,7 @@ impl Store {
                 ],
             )?;
         }
-        let mut previous_position = None;
+        let mut previous_output = None;
         let mut locations = snapshot::Locations::default();
         for (receiver, p) in &block.payments {
             // Coinbase recipients are excluded: the coinbase is transaction zero, and its
@@ -189,11 +190,14 @@ impl Store {
                     .commitments
                     .get((p.position - block.start_position) as usize)
                     != Some(&p.cmx)
-                || previous_position.is_some_and(|pos| p.position <= pos)
+                // Heights and position ranges already order the blocks.
+                || previous_output.is_some_and(|(position, output)| {
+                    p.position <= position || (p.tx_index, p.action_index) <= output
+                })
             {
                 return Err(Error::Malformed);
             }
-            previous_position = Some(p.position);
+            previous_output = Some((p.position, (p.tx_index, p.action_index)));
             let mut record = Record {
                 receiver: *receiver,
                 page: 1,

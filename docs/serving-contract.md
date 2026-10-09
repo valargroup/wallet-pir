@@ -61,8 +61,8 @@ code maps to each product's codes rather than unifying them.
 | Condition | Enhance | Status | Transparent | Receiver |
 |---|---|---|---|---|
 | Overload | 429, `Retry-After: 1` | 429, no `Retry-After` | 503, `Retry-After` | 429, `Retry-After: 1` |
-| Stale routing or revision | 409 | 409 | 409 with `map_sha256` | 409 |
-| Revoked or expired session | 410 | 410 | — | 410 |
+| Stale routing or revision | 409 | 409 | 409 with `map_sha256` | — |
+| Revoked or expired session | 410 | 410 | — | 410, as is any session not served |
 | Not assigned here | — | — | 421 | — |
 | No authority or not ready | 503 | 503 | 503 | 503 |
 | Worker refused before acceptance | 503 with `x-enhance-evaluation: not-accepted`; the router may retry once elsewhere | — | — | — |

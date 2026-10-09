@@ -246,7 +246,17 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         height: directory.end_height,
         hash: directory.end_hash,
     };
-    let client = Client::new(manifest.clone(), &public, accepted)?;
+    let client = match Client::new(manifest.clone(), &public, accepted) {
+        Ok(client) => client,
+        // Served history that starts after activation is wrong for every wallet.
+        Err(receiver_pir::Error::Directory(receiver_directory::Error::Coverage)) => {
+            return Ok(Some((
+                "answer_mismatch",
+                json!({"coverage": "starts after Ironwood activation"}),
+            )))
+        }
+        Err(error) => return Err(error.into()),
+    };
     let mut queries = 0;
     let found = loop {
         let query = client.prepare(receiver, queries)?;
@@ -913,8 +923,8 @@ mod tests {
     }
 
     /// Wallets require history from Ironwood activation, so a publication starting
-    /// after it fails before any lookup, though it holds the fixture and agrees with the
-    /// node; one starting at activation reaches the lookup.
+    /// after it is an answer mismatch before any lookup, though it holds the fixture and
+    /// agrees with the node; one starting at activation reaches the lookup.
     #[tokio::test]
     async fn a_publication_must_start_at_ironwood_activation() {
         let activation = crate::blocks::ironwood_activation();
@@ -955,9 +965,11 @@ mod tests {
                 "--no-auth",
             ]);
             let mut lookup = None;
-            let result = probe(args, &mut lookup).await;
+            let (category, detail) = probe(args, &mut lookup).await.unwrap().unwrap();
+            // The empty publication lacks the fixture's payment once looked up.
+            assert_eq!(category, "answer_mismatch", "{start}");
             assert_eq!(lookup.is_some(), reaches_lookup, "{start}");
-            assert_eq!(result.is_err(), !reaches_lookup, "{start}");
+            assert_eq!(detail.get("coverage").is_none(), reaches_lookup, "{start}");
         }
     }
 
