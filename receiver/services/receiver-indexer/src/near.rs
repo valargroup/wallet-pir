@@ -243,7 +243,7 @@ impl Feed {
 /// last read this process completed began, in Unix seconds. Health reports it as
 /// `near.reads`, null for a feed this process has not read, so without a key both stay
 /// null. The report's `feeds` cannot serve as this evidence: they come from the
-/// published capture of `provider.sqlite`, so they lag publication and may hold an
+/// published capture of `providers.sqlite`, so they lag publication and may hold an
 /// earlier process's reads.
 #[derive(Clone, Default)]
 pub struct Reads(Arc<[AtomicI64; 2]>);
@@ -655,7 +655,7 @@ mod tests {
     }
 
     /// Health's `near.reads` shows only this process's completed reads: null at start
-    /// although `provider.sqlite` holds an earlier run's read times, still null after
+    /// although `providers.sqlite` holds an earlier run's read times, still null after
     /// reads the explorer refuses, and each feed's begin time once a read of it completes.
     #[tokio::test]
     async fn health_reports_only_this_processs_completed_reads() {
@@ -678,7 +678,7 @@ mod tests {
         let explorer = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("provider.sqlite");
+        let path = dir.path().join("providers.sqlite");
         let mut store = ProviderStore::open(&path).unwrap();
         for feed in [Feed::Payouts, Feed::Refunds] {
             store
