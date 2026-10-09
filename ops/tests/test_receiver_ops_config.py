@@ -182,6 +182,8 @@ def check_exact_check(service, unit, caddy, fixture, descriptor):
     nodes = lambda words: [words[i + 1] for i, word in enumerate(words) if word == '--rpc-url']
     assert nodes(argv) and nodes(argv) == nodes(served), (nodes(argv), nodes(served))
     assert ('--no-auth' in argv) == ('--no-auth' in served), argv
+    # A service that serves witness files has them checked against the nodes' root.
+    assert ('--witnesses' in argv) == ('--witnesses' in served), argv
     # The probe first waits for the restarted process to read both NEAR feeds, which
     # proves the key the unit names; the timeout leaves 120 to 300 seconds for the rest.
     assert '--await-feed-reads' in argv, argv
@@ -222,6 +224,8 @@ def check_probe_config(configs, fixture):
     argv = config['command']
     assert argv[0] == '/opt/pir-monitor/receiver-probe', argv
     assert argv[argv.index('--fixture-sha256') + 1] == hashlib.sha256(fixture).hexdigest(), argv
+    # The service serves witness files (see check_exact_check), so the monitor checks them too.
+    assert '--witnesses' in argv, argv
 
 
 def monitor_merge(readme):

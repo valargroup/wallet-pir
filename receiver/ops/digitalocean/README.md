@@ -284,7 +284,9 @@ from this commit on and is not in a release bundle: build it with
 `enhance/ops/scripts/build-observability.sh`, as for its other probes. The chain
 checks use the monitor host's own node and cookie, as the Status probe and the
 Transparent canary do, not the fleet nodes the service reads, so they are an
-independent oracle. The cookie and the probe config come from the monitor's host
+independent oracle. That node must answer `z_gettreestate` with the Ironwood
+root, which `--witnesses` checks the served witness file against; each run then
+downloads that file (about 4.8 MB in October 2026, at most 64 MiB). The cookie and the probe config come from the monitor's host
 drop-in, [`pir-monitor-service-quality.conf`](../../../enhance/ops/deploy/pir-monitor-service-quality.conf),
 installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
 (the live monitor already has it). Its `LoadCredential` source,
@@ -307,7 +309,8 @@ probe:
     "/opt/pir-monitor/receiver-probe-fixture.json", "--fixture-sha256",
     "b54f89f7346022918a0f137a2d1ea139fb5853238d695f9c8b98972c9f2a7591",
     "--rpc-url", "http://127.0.0.1:18232", "--cookie",
-    "/run/credentials/pir-monitor.service/chain-rpc-cookie"], "timeout_seconds": 30}
+    "/run/credentials/pir-monitor.service/chain-rpc-cookie", "--witnesses"],
+   "timeout_seconds": 30}
 ]
 ```
 
