@@ -334,11 +334,11 @@ impl Store {
         ))
     }
 
-    /// Whether the index holds a payment to `receiver`.
-    pub fn paid(&self, receiver: &Receiver) -> Result<bool, Error> {
+    /// Whether the index holds a payment to `receiver` in transaction `txid`.
+    pub fn paid_in(&self, receiver: &Receiver, txid: &Hash) -> Result<bool, Error> {
         Ok(self.db.query_row(
-            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1)",
-            [receiver.as_bytes()],
+            "SELECT EXISTS(SELECT 1 FROM payments WHERE receiver=?1 AND txid=?2)",
+            params![receiver.as_bytes(), txid.as_slice()],
             |r| r.get(0),
         )?)
     }
@@ -350,7 +350,10 @@ pub struct ProviderStore {
 }
 
 impl ProviderStore {
-    /// Opens or creates the provider database.
+    /// Opens or creates the provider database. Earlier development schemas are not
+    /// migrated: the indexer keeps this one in `providers.sqlite` and ignores the
+    /// `provider.sqlite` of earlier builds. Deleting `providers.sqlite` rebuilds it
+    /// from `--near-since`.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, Error> {
         let db = Connection::open(path)?;
         db.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -361,25 +364,27 @@ impl ProviderStore {
                 PRIMARY KEY(receiver,payout)) WITHOUT ROWID;
             CREATE TABLE IF NOT EXISTS feeds (feed TEXT PRIMARY KEY, started_at INTEGER,
                 cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
-            CREATE TABLE IF NOT EXISTS completions (receiver BLOB PRIMARY KEY CHECK(length(receiver)=43),
-                seen_at INTEGER NOT NULL) WITHOUT ROWID;",
+            CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
+                txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
+                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
         )?;
         Ok(Self { db })
     }
 
     /// Records one complete read of `feed` that began at `read_at`, atomically: the
     /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
-    /// each with its swap's creation time; the payout receivers whose swaps it saw
-    /// complete; and, for the feed's first read, `initial_since`, where it began. A
-    /// receiver keeps its latest time and a completion its earliest. The cursor and read
-    /// time move as one pair and never backwards, so a stale read cannot make the feed
-    /// look fresher.
+    /// each with its swap's creation time; the completed payouts it saw, each a payout
+    /// receiver, the transaction (protocol byte order) that paid it and when the read
+    /// saw it complete; and, for the feed's first read, `initial_since`, where it
+    /// began. A receiver keeps its latest time and a payout its earliest. The cursor and
+    /// read time move as one pair and never backwards, so a stale read cannot make the
+    /// feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
         initial_since: Option<i64>,
         receivers: &[(Receiver, bool, i64)],
-        completions: &[Receiver],
+        completions: &[(Receiver, Hash, i64)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
@@ -397,11 +402,11 @@ impl ProviderStore {
              WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
             params![feed, initial_since, cursor, read_at],
         )?;
-        for receiver in completions {
+        for (receiver, txid, seen_at) in completions {
             tx.execute(
-                "INSERT INTO completions VALUES (?1,?2) ON CONFLICT(receiver)
+                "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
-                params![receiver.as_bytes(), read_at],
+                params![receiver.as_bytes(), txid.as_slice(), seen_at],
             )?;
         }
         tx.commit()?;
@@ -420,14 +425,22 @@ impl ProviderStore {
         Ok(value)
     }
 
-    /// Payout receivers first seen complete from `from` through `until`.
-    pub fn completed(&self, from: i64, until: i64) -> Result<Vec<Receiver>, Error> {
+    /// Every payout first seen complete by `until`, however old; see [`Self::record`].
+    pub fn payouts(&self, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
         let mut query = self
             .db
-            .prepare("SELECT receiver FROM completions WHERE seen_at BETWEEN ?1 AND ?2")?;
-        let rows = query.query_map([from, until], |r| r.get::<_, Vec<u8>>(0))?;
-        rows.map(|bytes| Receiver::from_bytes(bytes?.try_into().map_err(|_| Error::Malformed)?))
-            .collect()
+            .prepare("SELECT receiver,txid FROM payouts WHERE seen_at <= ?1")?;
+        let rows = query.query_map([until], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        rows.map(|row| {
+            let (receiver, txid) = row?;
+            Ok((
+                Receiver::from_bytes(receiver.try_into().map_err(|_| Error::Malformed)?)?,
+                txid.try_into().map_err(|_| Error::Malformed)?,
+            ))
+        })
+        .collect()
     }
 
     /// The creation time from which `feed` first read swaps, if it ever started.

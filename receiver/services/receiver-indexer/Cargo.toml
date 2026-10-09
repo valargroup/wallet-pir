@@ -1,0 +1,39 @@
+[package]
+name = "receiver-indexer"
+version = "0.0.1"
+edition = "2021"
+license = "MIT"
+description = "Indexes zero-OVK Ironwood payments from a Zakura node and publishes the receiver directory"
+
+[[bin]]
+name = "receiver-directory"
+path = "src/main.rs"
+# Its documentation would collide with the `receiver-directory` library's.
+doc = false
+
+[[bin]]
+name = "receiver-probe"
+path = "src/bin/receiver-probe.rs"
+
+[dependencies]
+axum = "0.7"
+clap = { version = "4", features = ["derive", "env"] }
+hex = "0.4"
+receiver-directory = { path = "../../crates/receiver-directory", features = ["store"] }
+receiver-pir = { path = "../../crates/receiver-pir", features = ["server"] }
+receiver-pir-server = { path = "../receiver-pir-server" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf150fc3648aae22c55a6b30f8f5a9b9ce934e" }
+zcash_address = "0.13"
+zcash_protocol = "0.10"
+
+[dev-dependencies]
+orchard = { package = "zakura-orchard", version = "2", default-features = false }

@@ -11,11 +11,13 @@ use std::{
     time::{Duration, Instant},
 };
 
-/// One revision prepared for serving, with its optional common witness file.
+/// One revision prepared for serving, with its optional common witness file and the
+/// owner's report on the index it was built from.
 pub struct Publication {
     pub(crate) server: Server,
     pub(crate) witnesses: Option<Bytes>,
     pub(crate) id: Hash,
+    pub(crate) report: Option<serde_json::Value>,
 }
 
 impl Publication {
@@ -42,7 +44,15 @@ impl Publication {
             id: server.id(),
             server,
             witnesses: witnesses.map(Into::into),
+            report: None,
         })
+    }
+
+    /// Attaches the owner's report, such as feed freshness, which health serves with
+    /// this publication's ID for monitoring, so the two activate together.
+    pub fn with_report(mut self, report: serde_json::Value) -> Self {
+        self.report = Some(report);
+        self
     }
 
     /// The directory manifest this publication serves.
@@ -59,7 +69,6 @@ struct State {
     epoch: u64,
     current: Option<Arc<Publication>>,
     previous: Option<(Arc<Publication>, Instant)>,
-    report: Option<serde_json::Value>,
 }
 
 impl State {
@@ -139,19 +148,12 @@ impl Publications {
         (state.epoch, state.anchors())
     }
 
-    /// Records the owner's latest report, such as feed freshness, which health serves
-    /// for monitoring.
-    pub fn set_report(&self, report: serde_json::Value) {
-        self.0.write().unwrap().report = Some(report);
-    }
-
-    /// The current session's id, the recovery epoch and the [`Self::set_report`]
-    /// report, read together so health never pairs one state's session with another's
-    /// epoch.
-    pub(crate) fn health(&self) -> (Option<Hash>, u64, Option<serde_json::Value>) {
+    /// The current session's ID with its report, and the recovery epoch, read together
+    /// so health never pairs one state's session with another's epoch.
+    pub(crate) fn health(&self) -> (Option<(Hash, Option<serde_json::Value>)>, u64) {
         let state = self.0.read().unwrap();
-        let serving = state.current.as_ref().map(|p| p.id);
-        (serving, state.epoch, state.report.clone())
+        let serving = state.current.as_ref().map(|p| (p.id, p.report.clone()));
+        (serving, state.epoch)
     }
 
     /// When the next revision may activate, if the previous one is still in its grace.
