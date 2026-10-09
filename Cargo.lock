@@ -2560,10 +2560,13 @@ dependencies = [
 name = "pir-control"
 version = "0.1.0"
 dependencies = [
+ "axum",
  "hex",
  "rand 0.8.5",
  "serde",
  "sha2 0.10.9",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]

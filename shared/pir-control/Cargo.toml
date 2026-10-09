@@ -3,10 +3,20 @@ name = "pir-control"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Process identity and control-lease watchdog shared by the Enhance, Status and Transparent PIR services"
+description = "Process identity, control-lease watchdog and admission shared by the Enhance, Status, Transparent and Receiver PIR services"
+
+[features]
+# HTTP admission primitives; see `src/admission.rs`.
+admission = ["dep:axum", "dep:tokio"]
 
 [dependencies]
+axum = { version = "0.7", optional = true }
 hex = "0.4"
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+tokio = { version = "1", features = ["sync", "time"], optional = true }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio-stream = "0.1"
