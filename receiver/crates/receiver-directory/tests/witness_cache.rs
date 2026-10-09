@@ -7,7 +7,8 @@ use receiver_directory::{
 };
 use std::collections::BTreeSet;
 
-fn manifest(len: usize) -> Manifest {
+/// A manifest ending at `len` commitments that promises `records` records.
+fn manifest(len: usize, records: usize) -> Manifest {
     Manifest {
         profile: PROFILE.into(),
         genesis: [1; 32],
@@ -19,7 +20,7 @@ fn manifest(len: usize) -> Manifest {
         end_position: len as u64,
         rows: MIN_ROWS,
         salt: [3; 32],
-        records: 0,
+        records: records as u64,
         data_sha256: [0; 32],
         filters: vec![receiver_directory::snapshot::FilterSet {
             label: receiver_directory::filter::PAID.into(),
@@ -42,7 +43,7 @@ fn leaves(len: usize) -> Vec<Hash> {
 }
 /// A reused cache must match a fresh build, whose root must match an independent tree.
 fn compare(cache: &mut WitnessCache, cmxs: &[Hash], positions: BTreeSet<u32>) {
-    let manifest = manifest(cmxs.len());
+    let manifest = manifest(cmxs.len(), positions.len());
     let full = WitnessSnapshot::build(&manifest, cmxs, &positions).unwrap();
     let cached = cache.build(&manifest, cmxs, &positions).unwrap();
     assert_eq!(cached.encode(), full.encode());
@@ -82,7 +83,7 @@ fn positions_and_manifest_are_never_cached() {
     compare(&mut cache, &cmxs, [0].into_iter().collect());
     compare(&mut cache, &cmxs, [1, 19, 30].into_iter().collect());
     compare(&mut cache, &cmxs, BTreeSet::new());
-    let mut m = manifest(cmxs.len());
+    let mut m = manifest(cmxs.len(), 1);
     m.end_hash[0] ^= 1;
     m.end_height += 1;
     assert_eq!(
@@ -103,12 +104,34 @@ fn rejected_inputs_do_not_poison_later_builds() {
     let mut malformed = cmxs.clone();
     malformed[8] = [255; 32];
     assert!(cache
-        .build(&manifest(17), &malformed, &BTreeSet::new())
+        .build(&manifest(17, 0), &malformed, &BTreeSet::new())
         .is_err());
     assert!(cache
-        .build(&manifest(17), &cmxs, &[17].into_iter().collect())
+        .build(&manifest(17, 1), &cmxs, &[17].into_iter().collect())
         .is_err());
-    assert!(cache.build(&manifest(18), &cmxs, &BTreeSet::new()).is_err());
-    assert!(cache.build(&manifest(0), &[], &BTreeSet::new()).is_err());
+    assert!(cache
+        .build(&manifest(18, 0), &cmxs, &BTreeSet::new())
+        .is_err());
+    assert!(cache.build(&manifest(0, 0), &[], &BTreeSet::new()).is_err());
     compare(&mut cache, &cmxs[..9], [0, 8].into_iter().collect());
+}
+#[test]
+fn positions_must_cover_exactly_the_manifest_records() {
+    let cmxs = leaves(17);
+    let two: BTreeSet<u32> = [0, 16].into_iter().collect();
+    let mut cache = WitnessCache::default();
+    compare(&mut cache, &cmxs[..9], [0, 8].into_iter().collect());
+    // An omitted position and an extra one, through the cached and fresh entrypoints.
+    for (records, positions) in [(3, &two), (1, &two)] {
+        assert!(matches!(
+            cache.build(&manifest(17, records), &cmxs, positions),
+            Err(receiver_directory::Error::Coverage)
+        ));
+        assert!(matches!(
+            WitnessSnapshot::build(&manifest(17, records), &cmxs, positions),
+            Err(receiver_directory::Error::Coverage)
+        ));
+    }
+    // The rejections left the primed cache usable.
+    compare(&mut cache, &cmxs, two);
 }

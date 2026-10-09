@@ -624,6 +624,7 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
     let mut manifest = manifest(8);
     manifest.start_position = 0;
     manifest.end_position = 20;
+    manifest.records = 5;
     let positions = [0, 5, 6, 18, 19].into_iter().collect();
     let snapshot = WitnessSnapshot::build(&manifest, &commitments, &positions).unwrap();
     let encoded = snapshot.encode();
