@@ -27,7 +27,8 @@ pub fn action() -> Action {
 }
 
 /// The Orchard receiver that [`action`] pays, decoded without this crate from the
-/// swap's `refundTo` address; see `fixtures/zero-ovk-action-oracle/README.md`.
+/// swap's `refundTo` address; see `fixtures/zero-ovk-action-oracle/README.md`. The
+/// fixture's `receiver` field holds the same bytes.
 pub const RECEIVER_HEX: &str =
     "42cd776949bba6f2164b347ebdbf9c225028ed0f5b6eaa3a402f3322c6aadfbde6288d167dbcaed0fdf01e";
 

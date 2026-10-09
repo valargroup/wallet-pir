@@ -7,7 +7,8 @@
 //! network. It prints one JSON line: `passed`, on failure a `category` and `detail`,
 //! and the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
 //! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
-//! correctness incident; `oracle_invalid` a fixture that fails its pin; anything else,
+//! correctness incident; `oracle_invalid` a fixture that fails its pin, including an
+//! Action whose recovered receiver differs from the fixture's pinned one; anything else,
 //! such as `oracle_unavailable` when no node that reached the publication can complete
 //! the chain checks, is an availability failure. Every response body is bounded before
 //! it is buffered.
@@ -16,7 +17,7 @@ use receiver_directory::{
     extract::Action,
     filter::{Filters, MAX_FILTERS_BYTES},
     witness::{WitnessSnapshot, MAX_WITNESS_BYTES},
-    Hash, Payment,
+    Hash, Payment, Receiver,
 };
 use receiver_indexer::zakura::{ZakuraClient, ZakuraError};
 use receiver_pir::{
@@ -44,8 +45,8 @@ struct Args {
     /// `http://10.70.0.11:18380/v1/receiver/health`; the public edge does not serve it.
     #[arg(long)]
     health_url: String,
-    /// The pinned payment: a public zero-OVK Action with its transaction, height and
-    /// note position (see [`Fixture`]).
+    /// The pinned payment: a public zero-OVK Action with its transaction, height, note
+    /// position and independently decoded receiver (see [`Fixture`]).
     #[arg(long)]
     fixture: PathBuf,
     /// The fixture file's SHA-256, hex.
@@ -85,6 +86,10 @@ struct Fixture {
     height: u32,
     action_index: u32,
     position: u64,
+    /// The Orchard receiver the Action pays, hex, decoded independently of zero-OVK
+    /// recovery (from the swap's refund address). Recovery must reproduce it, so a
+    /// recovery regression shared by the indexer and the probe cannot pass.
+    receiver: String,
     action: FixtureAction,
 }
 
@@ -130,7 +135,9 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     if hex::encode(Sha256::digest(&raw)) != args.fixture_sha256.to_ascii_lowercase() {
         return Ok(Some(("oracle_invalid", json!({"fixture": "sha256"}))));
     }
-    let fixture: Fixture = serde_json::from_slice(&raw)?;
+    let Ok(fixture) = serde_json::from_slice::<Fixture>(&raw) else {
+        return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
+    };
     let a = &fixture.action;
     let action = (|| {
         Some(Action {
@@ -150,9 +157,19 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let (Some(action), Some(txid)) = (action, txid) else {
         return Ok(Some(("oracle_invalid", json!({"fixture": "malformed"}))));
     };
-    let Ok(Some(receiver)) = action.recover_receiver() else {
-        return Ok(Some(("oracle_invalid", json!({"fixture": "not zero-OVK"}))));
+    let Some(receiver) = bytes(&fixture.receiver).and_then(|b| Receiver::from_bytes(b).ok()) else {
+        return Ok(Some(("oracle_invalid", json!({"fixture": "receiver"}))));
     };
+    match action.recover_receiver() {
+        Ok(Some(recovered)) if recovered == receiver => {}
+        Ok(Some(_)) => {
+            return Ok(Some((
+                "oracle_invalid",
+                json!({"fixture": "recovered receiver differs from the pin"}),
+            )))
+        }
+        _ => return Ok(Some(("oracle_invalid", json!({"fixture": "not zero-OVK"})))),
+    }
     let http = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
         .redirect(reqwest::redirect::Policy::none())
@@ -1156,5 +1173,86 @@ mod tests {
         // Health answers for a publication the origin does not serve.
         let origin = serve(probed.clone(), id(&rotated)).await;
         assert_eq!(report(origin).await.unwrap().0, "report_unavailable");
+    }
+
+    /// The fixture's pinned receiver is checked against recovery before any request:
+    /// a missing, malformed or invalid pin, or another valid receiver, is
+    /// `oracle_invalid` and reaches no server, while the independent pin goes on.
+    #[tokio::test]
+    async fn the_fixture_receiver_pin_is_checked_before_any_request() {
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let requests = Arc::new(AtomicUsize::new(0));
+        let counted = requests.clone();
+        let app = Router::new().fallback(move || {
+            counted.fetch_add(1, Ordering::SeqCst);
+            async { axum::http::StatusCode::NOT_FOUND }
+        });
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fixture.json");
+        let run = |fixture: Value| {
+            let bytes = serde_json::to_vec(&fixture).unwrap();
+            std::fs::write(&path, &bytes).unwrap();
+            let args = Args::try_parse_from([
+                "receiver-probe",
+                "--origin",
+                &url,
+                "--health-url",
+                &format!("{url}/health"),
+                "--fixture",
+                path.to_str().unwrap(),
+                "--fixture-sha256",
+                &hex::encode(Sha256::digest(&bytes)),
+                "--rpc-url",
+                &url,
+                "--no-auth",
+            ])
+            .unwrap();
+            async move { probe(args, &mut None).await }
+        };
+        let mut fixture: Value = serde_json::from_str(include_str!(
+            "../../../crates/receiver-directory/tests/fixtures/zero-ovk-action.json"
+        ))
+        .unwrap();
+        fixture["position"] = 0.into();
+        assert_eq!(fixture["receiver"], super::common::RECEIVER_HEX);
+        let other = {
+            use orchard::keys::{FullViewingKey, Scope, SpendingKey};
+            let fvk = FullViewingKey::from(&SpendingKey::from_bytes([3; 32]).unwrap());
+            hex::encode(fvk.address_at(0u32, Scope::External).to_raw_address_bytes())
+        };
+        for (pin, detail) in [
+            (None, "malformed"),
+            (Some("zz".to_owned()), "receiver"),
+            (
+                Some(super::common::RECEIVER_HEX[2..].to_owned()),
+                "receiver",
+            ),
+            // The identity point is not a transmission key.
+            (Some("00".repeat(43)), "receiver"),
+            (Some(other), "recovered receiver differs from the pin"),
+        ] {
+            let mut altered = fixture.clone();
+            match pin {
+                Some(pin) => altered["receiver"] = pin.into(),
+                None => {
+                    altered.as_object_mut().unwrap().remove("receiver");
+                }
+            }
+            let failure = run(altered).await.unwrap();
+            assert_eq!(
+                failure,
+                Some(("oracle_invalid", json!({"fixture": detail})))
+            );
+            assert_eq!(requests.load(Ordering::SeqCst), 0, "{detail}");
+        }
+        // The independent pin passes, so the probe asks the origin for its manifest.
+        assert!(run(fixture).await.is_err());
+        assert!(requests.load(Ordering::SeqCst) > 0);
     }
 }
