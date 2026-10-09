@@ -371,16 +371,17 @@ impl ProviderStore {
     /// Records one complete read of `feed` that began at `read_at`, atomically: the
     /// receivers from swaps it created up to `cursor`, `true` marking a payout address,
     /// each with its swap's creation time; the completed payouts it saw, each a payout
-    /// receiver and the transaction (protocol byte order) that paid it; and, for the
-    /// feed's first read, `initial_since`, where it began. A receiver keeps its latest
-    /// time and a payout its earliest. The cursor and read time move as one pair and
-    /// never backwards, so a stale read cannot make the feed look fresher.
+    /// receiver, the transaction (protocol byte order) that paid it and when the read
+    /// saw it complete; and, for the feed's first read, `initial_since`, where it
+    /// began. A receiver keeps its latest time and a payout its earliest. The cursor and
+    /// read time move as one pair and never backwards, so a stale read cannot make the
+    /// feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
         initial_since: Option<i64>,
         receivers: &[(Receiver, bool, i64)],
-        completions: &[(Receiver, Hash)],
+        completions: &[(Receiver, Hash, i64)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
@@ -398,11 +399,11 @@ impl ProviderStore {
              WHERE excluded.cursor>cursor OR (excluded.cursor=cursor AND excluded.read_at>read_at)",
             params![feed, initial_since, cursor, read_at],
         )?;
-        for (receiver, txid) in completions {
+        for (receiver, txid, seen_at) in completions {
             tx.execute(
                 "INSERT INTO payouts VALUES (?1,?2,?3) ON CONFLICT(receiver,txid)
                  DO UPDATE SET seen_at=MIN(seen_at,excluded.seen_at)",
-                params![receiver.as_bytes(), txid.as_slice(), read_at],
+                params![receiver.as_bytes(), txid.as_slice(), seen_at],
             )?;
         }
         tx.commit()?;
