@@ -7,11 +7,10 @@ the files listed in each run's `SHA256SUMS` were retained, so any detail, check,
 log, attempt history or environment fact not in those files cannot be re-verified.
 Cited commits live on development branches and may not resolve later.
 
-- [Mainnet smoke test](mainnet-smoke-2026-09-26/README.md): a bounded mainnet
-  range holding the known NEAR refund.
 - [Batched backfill](batched-backfill-2026-09-26/README.md): concurrent batched
   block reads 13.8 times faster than sequential ones under the test profile, with
-  identical publication digests.
+  identical publication digests, over a bounded mainnet range holding the known
+  NEAR refund.
 - [Receiver to Enhance integration](receiver-pir-2026-09-26/README.md): an
   encrypted lookup of the full publication recovered the refund, then an Enhance
   query authenticated its output (q48 protocol).
