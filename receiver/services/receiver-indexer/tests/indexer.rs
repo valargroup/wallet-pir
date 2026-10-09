@@ -131,6 +131,24 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                 b.zcash_serialize(&mut raw).unwrap();
                 json!(hex::encode(raw))
             }
+            // The root comes from the node's own tree over every Action up to the block.
+            "z_gettreestate" => {
+                let extended = r["params"][0] == second.hash().to_string();
+                let blocks = if extended {
+                    vec![first, &second]
+                } else {
+                    vec![first]
+                };
+                let mut tree = zakura_chain::orchard::tree::NoteCommitmentTree::default();
+                for tx in blocks.iter().flat_map(|b| &b.transactions) {
+                    for action in tx.ironwood_actions() {
+                        tree.append(action.cm_x).unwrap();
+                    }
+                }
+                let root = hex::encode(tree.root().bytes_in_display_order());
+                json!({"hash": r["params"][0], "height": height + u64::from(extended),
+                    "ironwood": {"commitments": {"finalRoot": root}}})
+            }
             _ => panic!("unexpected method"),
         };
         Json(json!({"result":result,"error":null}))
@@ -289,7 +307,8 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     wait_height(&client, &endpoint, activation() + 1).await;
     assert_eq!(files(), written, "serving publishes from memory");
     // The monitor's probe looks up a pinned payment over encrypted PIR: the public refund,
-    // at the height and position this synthetic chain gives it. The index has no NEAR
+    // at the height and position this synthetic chain gives it, and checks its path in
+    // the served witness file under the node's root. The index has no NEAR
     // feed, so after the lookup it reports the recent set as stale.
     let revision = extended["revision"].as_str().unwrap();
     let rows = std::fs::read(dir.path().join(format!("publications/{revision}.rows"))).unwrap();
@@ -324,6 +343,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
                 "--fixture-sha256",
                 pin.unwrap_or(&sha256),
                 "--no-auth",
+                "--witnesses",
             ])
             .args(nodes.iter().flat_map(|node| ["--rpc-url", node]))
             .output()

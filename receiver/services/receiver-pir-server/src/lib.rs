@@ -6,7 +6,7 @@ pub mod publication;
 use axum::{
     body::{Body, Bytes},
     extract::{Path, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -33,7 +33,7 @@ const WAIT: Duration = Duration::from_secs(2);
 const PER_CLIENT: usize = 2;
 /// How long a query's upload may take.
 const UPLOAD: Duration = Duration::from_secs(15);
-/// Bytes of a file response sent between checks for a revocation.
+/// Bytes of a [`FencedBody`] frame, the most sent between checks for a revocation.
 const CHUNK: usize = 64 * 1024;
 
 /// Process-local fields an owner adds to `/v1/receiver/health`, read on each request.
@@ -66,7 +66,8 @@ const ENDPOINTS: [&str; 7] = [
 /// Cancellation never frees a still-running CPU slot. `/v1/receiver/health` reports the
 /// process identity of `docs/serving-contract.md` and the owner's report, and `/metrics`
 /// the shared HTTP observations; both are for operators, and a deployment's edge proxies
-/// only the wallet routes. A revocation aborts the session files still being sent.
+/// only the wallet routes. A revocation stops session files and query answers still
+/// being sent at their next frame; bytes already sent cannot be recalled.
 pub fn router_with_publications(publications: Publications) -> Router {
     router_with_health(publications, Arc::new(serde_json::Map::new))
 }
@@ -141,11 +142,26 @@ fn router(service: Service) -> Router {
                 },
             ),
         )
+        .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(
             metrics,
             pir_observability::observe,
         ))
         .with_state(service)
+}
+
+/// Marks every error response `no-store`, leaving its status, other headers and body
+/// as they are. Caches may keep a 410 heuristically, but a revoked session id is
+/// deterministic and can be published again, so no refusal may outlive the state that
+/// produced it.
+async fn no_store_errors(mut response: Response) -> Response {
+    let status = response.status();
+    if status.is_client_error() || status.is_server_error() {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 /// The process identity and the revision being served, for deploys and monitoring.
@@ -182,7 +198,7 @@ enum Material {
     Filters,
 }
 
-/// Serves one file of the publication whose hex id is `id`, as a [`FencedBody`].
+/// Serves one file of the publication whose hex id is `id`.
 fn material(s: &Service, id: &str, material: Material) -> Response {
     let Some(id) = hex::decode(id).ok().and_then(|v| v.try_into().ok()) else {
         return StatusCode::BAD_REQUEST.into_response();
@@ -200,17 +216,15 @@ fn material(s: &Service, id: &str, material: Material) -> Response {
             None => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         },
     };
-    binary(Body::new(FencedBody {
-        bytes,
-        publications: s.publications.clone(),
-        epoch,
-    }))
+    fenced(bytes, &s.publications, epoch)
 }
 
-/// A file response sent in [`CHUNK`]-byte frames that fails, aborting the transfer,
-/// once a revocation advances the epoch past the one its session was selected in.
-/// The status and length are already sent, so the client sees a truncated body; bytes
-/// already sent cannot be recalled, which is why wallets still check their anchor.
+/// A response body sent in [`CHUNK`]-byte frames. The epoch is checked before each
+/// frame is yielded, and once a revocation advances it past the one the session was
+/// selected in, the body fails and the transfer is aborted. This covers only frames
+/// not yet yielded: the status and length are already sent, so the client sees a
+/// truncated body, and bytes already handed to the connection cannot be recalled,
+/// which is why wallets still check their anchor.
 struct FencedBody {
     bytes: Bytes,
     publications: Publications,
@@ -241,8 +255,14 @@ impl HttpBody for FencedBody {
     }
 }
 
-/// An uncached `application/octet-stream` response.
-fn binary(body: impl IntoResponse) -> Response {
+/// An uncached `application/octet-stream` response of `bytes` as a [`FencedBody`] for
+/// the session selected in `epoch`.
+fn fenced(bytes: Bytes, publications: &Publications, epoch: u64) -> Response {
+    let body = Body::new(FencedBody {
+        bytes,
+        publications: publications.clone(),
+        epoch,
+    });
     (
         [
             (header::CONTENT_TYPE, "application/octet-stream"),
@@ -295,11 +315,12 @@ async fn query(State(s): State<Service>, request: Request) -> Response {
         publication.server.respond(&body)
     })
     .await;
+    // A revocation during evaluation is 410; one after this check stops the body.
     if s.publications.epoch() != epoch {
         return StatusCode::GONE.into_response();
     }
     match result {
-        Ok(Ok(body)) => binary(body),
+        Ok(Ok(body)) => fenced(body.into(), &s.publications, epoch),
         Ok(Err(Error::Revision)) => StatusCode::CONFLICT.into_response(),
         Ok(Err(Error::Malformed)) => StatusCode::BAD_REQUEST.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
