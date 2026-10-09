@@ -86,6 +86,10 @@ struct Args {
     near_since: Option<i64>,
     #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(10..))]
     near_poll_seconds: u64,
+    /// The partner key `NEAR_INTENTS_EXPLORER` holds, if any. Without one, publications
+    /// carry no provider sets, whatever an earlier run left in `providers.sqlite`.
+    #[arg(skip)]
+    near_key: Option<String>,
 }
 
 #[tokio::main]
@@ -102,7 +106,10 @@ async fn main() -> Result<()> {
         .with_writer(std::io::stderr)
         .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
         .init();
-    let args = Args::parse();
+    let mut args = Args::parse();
+    args.near_key = std::env::var("NEAR_INTENTS_EXPLORER")
+        .ok()
+        .filter(|k| !k.is_empty());
     receiver_pir::validate_rows(args.min_rows)?;
     if args.start_height < receiver_indexer::blocks::ironwood_activation() {
         return Err("start must be at or after Ironwood activation".into());
@@ -166,10 +173,7 @@ async fn main() -> Result<()> {
             tokio::time::sleep(Duration::from_secs(poll_seconds)).await;
         }
     });
-    if let Some(key) = std::env::var("NEAR_INTENTS_EXPLORER")
-        .ok()
-        .filter(|k| !k.is_empty())
-    {
+    if let Some(key) = args.near_key.clone() {
         let path = args.data_dir.join(PROVIDERS);
         let since = args
             .near_since
@@ -318,7 +322,11 @@ async fn refresh(
             start_position: boundary.position,
         },
     )?;
-    let provider_store = ProviderStore::open(args.data_dir.join(PROVIDERS))?;
+    // An empty in-memory store without a key; see `Args::near_key`.
+    let provider_store = match args.near_key {
+        Some(_) => ProviderStore::open(args.data_dir.join(PROVIDERS))?,
+        None => ProviderStore::open(":memory:")?,
+    };
     let node_tip = u32::try_from(node_tip)?;
     let requested = args
         .end_height
@@ -769,7 +777,7 @@ mod tests {
                     commitments: Vec::new(),
                 })
                 .unwrap();
-            let args = Args::parse_from([
+            let mut args = Args::parse_from([
                 "receiver-directory",
                 "--data-dir",
                 dir.path().to_str().unwrap(),
@@ -780,6 +788,7 @@ mod tests {
                 "0",
                 "--serve",
             ]);
+            args.near_key = Some("key".into());
             let publications = Publications::default();
             let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let origin = format!("http://{}", socket.local_addr().unwrap());
@@ -931,6 +940,31 @@ mod tests {
             let serving = !paused.publications.anchors().is_empty();
             assert_eq!(serving, repoint.is_some());
         }
+    }
+
+    /// Without a key, a refresh publishes no provider sets and reports no feed, though
+    /// `providers.sqlite` holds completed reads of both feeds.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn without_a_key_no_provider_sets_are_published() {
+        let mut paused = Paused::new(|_| {}).await;
+        for feed in [Feed::Payouts, Feed::Refunds] {
+            let mut provider = paused.provider();
+            provider
+                .record(feed.name(), Some(NOW - 100), &[], &[], NOW - 50, NOW - 10)
+                .unwrap();
+        }
+        paused.args.near_key = None;
+        paused.refresh().await.unwrap();
+        let filters = paused.get("init").await["directory"]["filters"].clone();
+        let labels: Vec<_> = filters
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["label"].clone())
+            .collect();
+        assert_eq!(labels, [receiver_directory::filter::PAID]);
+        let feeds = paused.get("health").await["indexer"]["feeds"].clone();
+        assert_eq!(feeds, json!({"near-payouts": null, "near-refunds": null}));
     }
 
     /// A terminal block dated ahead of the wall clock leaves a fresh payout pending.
