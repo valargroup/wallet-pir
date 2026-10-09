@@ -82,8 +82,10 @@ profile that Enhance and Transparent also use: a 4096-byte row is one
 setup derive from the protocol and the row count. At 8192 rows a query is 77,876
 bytes, a response 5,684 and the public setup 14,848. A session manifest holds the
 directory manifest, the protocol and the SHA-256 of the public setup, and refuses
-unknown fields. A domain-separated hash of the protocol, the directory revision
-and that digest is the session ID.
+unknown fields. Its compact JSON, as `/v1/receiver/init` serves it, is at most 16
+KiB: a server refuses to prepare a larger one, and a client reads no more. A
+domain-separated hash of the protocol, the directory revision and that digest is
+the session ID.
 
 | Route | Content |
 |---|---|

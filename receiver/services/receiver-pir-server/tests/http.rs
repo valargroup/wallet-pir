@@ -703,6 +703,64 @@ fn reject_corrupt_rows_before_preprocessing() {
     assert!(Snapshot::build(manifest(MIN_ROWS / 2), &[], &[]).is_err());
 }
 
+/// A session manifest is valid up to exactly [`receiver_pir::MAX_MANIFEST_BYTES`] of
+/// compact JSON, so a server refuses to prepare one with more provider sets than fit.
+#[test]
+fn session_manifests_are_bounded_by_their_serialized_size() {
+    use receiver_directory::snapshot::{FilterSet, ProviderSet};
+    use receiver_pir::MAX_MANIFEST_BYTES;
+    let label = |i: usize, pad: usize| format!("p{i:03}{}/seen", "x".repeat(pad));
+    let mut session = receiver_pir::Manifest {
+        protocol: receiver_pir::PROTOCOL.into(),
+        directory: manifest(MIN_ROWS),
+        public_digest: [0; 32],
+    };
+    let size = |m: &receiver_pir::Manifest| serde_json::to_vec(m).unwrap().len();
+    // Sets sort before `paid`. Add them until the manifest nears the bound, then
+    // lengthen labels a byte at a time to reach it exactly.
+    while size(&session) < MAX_MANIFEST_BYTES - 200 {
+        let i = session.directory.filters.len() - 1;
+        session.directory.filters.insert(
+            i,
+            FilterSet {
+                label: label(i, 0),
+                count: 0,
+                window_secs: None,
+                since_unix: Some(1),
+                until_unix: Some(2),
+            },
+        );
+    }
+    let mut pads = vec![0; session.directory.filters.len() - 1];
+    let mut next = 0;
+    let mut lengthen = |session: &mut receiver_pir::Manifest| {
+        let i = next % pads.len();
+        next += 1;
+        pads[i] += 1;
+        session.directory.filters[i].label = label(i, pads[i]);
+    };
+    while size(&session) < MAX_MANIFEST_BYTES {
+        lengthen(&mut session);
+    }
+    assert_eq!(size(&session), MAX_MANIFEST_BYTES);
+    session.validate().unwrap();
+    lengthen(&mut session);
+    assert_eq!(size(&session), MAX_MANIFEST_BYTES + 1);
+    assert!(matches!(session.validate(), Err(Error::Malformed)));
+    // The directory accepts any number of sets, but a server refuses the session.
+    let provider: Vec<_> = (0..300)
+        .map(|i| ProviderSet {
+            label: label(i, 0),
+            window_secs: None,
+            since_unix: 1,
+            until_unix: 2,
+            receivers: Vec::new(),
+        })
+        .collect();
+    let snapshot = Snapshot::build(manifest(MIN_ROWS), &[], &provider).unwrap();
+    assert!(matches!(Server::new(snapshot), Err(Error::Malformed)));
+}
+
 #[test]
 fn every_growth_geometry_roundtrips_above_the_previous_capacity() {
     for rows in [16_384, 32_768, receiver_pir::MAX_ROWS] {
