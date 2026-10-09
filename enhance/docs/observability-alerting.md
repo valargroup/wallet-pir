@@ -258,9 +258,9 @@ the API; history work runs outside request and scrape tasks.
 ```json
 {
   "publisher_url": "http://127.0.0.1:8094/metrics",
-  "roster": "/opt/transparent-publisher/roster.json",
+  "roster": "/opt/transparent-publisher/v11/roster.json",
   "router_metrics_url": "file:///var/lib/pir-apm/edge.prom",
-  "synthetic_status": "/opt/transparent-5qps-20260929/status.json",
+  "synthetic_status": "/srv/transparent-activity/canonical-load/v11/status.json",
   "host_snapshot": "/var/lib/pir-apm/hosts.json",
   "public_origins": [
     "https://transparent-pir.valargroup.dev",
@@ -281,6 +281,27 @@ Caddy 2.6 metrics must be enabled in the generated router configuration. Only
 the deployed top-level `subroute` handler boundary is counted; nested handler
 totals must not be added. This includes responses and refusals at that route. Caddy size
 estimates and service payload byte counters have different semantics.
+
+A schema cutover moves these inputs. Since v11 (2026-10-03) the fleet roster is
+`/opt/transparent-publisher/v11/roster.json` and the continuous load writes
+`/srv/transparent-activity/canonical-load/v11/status.json`; point the APM config
+and the host sampler's `roster` block at them, then restart `pir-apm`, which
+reads its config only at start (the sampler rereads its own each cycle). The pre-v11 roster and
+`/opt/transparent-5qps-20260929/status.json` stopped changing at the cutover, so
+an unmoved APM shows retired workers and a stale load. The v11 load pins worker
+binaries in `canonical-load/v11/pins.json`. `/etc/pir-quality/qualified-workers.json`
+belongs to the stopped v10 load and is kept as v10 rollback state; neither APM
+nor the v11 load reads it.
+
+`enhance/ops/scripts/retarget-transparent-quality.py` makes both moves. Its
+`apm` mode, on the coordinator, rewrites only those inputs and restarts only
+`pir-apm`; its `monitor` mode rewrites only the Transparent probe's canary,
+fixture and pins after the new command passes once, then restarts `pir-monitor`.
+Without `--apply` it only prints the changes. `--apply --backup-dir DIR` copies
+each changed file into DIR first; restore those copies and restart the same
+service to roll back. It never changes an alert mode, so check
+`PIR_APM_QUALITY_ALERT_MODE` and `PIR_MONITOR_SERVICE_ALERT_MODE` are `shadow`
+before the move and promote nothing until the canary passes.
 
 Transparent HTTP instrumentation measures arrivals, cancellations, status
 classes, consumed request bytes, emitted response bytes, body errors and dropped
@@ -304,6 +325,18 @@ Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical
 anchor. Never construct expected answers from the encrypted server response.
 The existing Enhance canary remains unchanged.
+
+The Transparent canary refuses with `oracle_invalid` whenever the service's shard
+schema differs from its fixture's, so a schema cutover fails it on every sample
+until both change. Give it the continuous load's fixture (for v11,
+`/srv/transparent-activity/canonical-load/v11/fixture.json`, exported from the
+gate-verified initial publication) and derive its pins with
+`enhance/ops/scripts/transparent-canary-pins.py --fixture FILE --shard-map
+<live publication>/shards.json --rpc-url URL --cookie FILE`. It refuses a fixture
+naming any revision the live map no longer serves sealed, and prints the fixture
+SHA-256 and the anchor: the terminal block of the highest fixture shard, checked
+at the node. Rebuild the canary from source that supports the new schema; its
+query binds to the fixture's schema, not to the compiled default.
 
 New alert families have independent modes: `PIR_APM_QUALITY_ALERT_MODE` and
 `PIR_MONITOR_SERVICE_ALERT_MODE`, both defaulting to `shadow`. Existing active

@@ -6,6 +6,26 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Quality monitoring after the v11 cutover, 2026-10-09
+
+A read-only production inspection on 2026-10-09 found two monitoring inputs that
+the 2026-10-03 v11 cutover left behind. Serving was not affected.
+
+- **Transparent canary failing.** The independent canary on `wallet-pir-monitor-01`
+  reported `oracle_invalid` on every sample: 129 failures, no successes. Its fixture
+  is the 2026-09-29 v10 load fixture, and the canary refuses a fixture whose schema
+  differs from the service's. Its binary is also from before v11: it binds every
+  query to schema v10, so a v11 fixture alone would not make it pass.
+- **APM Transparent view stale.** pir-apm read the pre-v11 roster and the v10
+  load's `status.json`, last written 2026-10-03 17:35 UTC.
+  `/etc/pir-quality/qualified-workers.json` still names the destroyed recent-08;
+  it is the stopped v10 load's pin file, which nothing current reads.
+- **Source fix.** The canary now binds queries to its fixture's schema. A new
+  script derives its pins from the v11 load fixture, and another moves the APM and
+  probe configs. See [observability alerting](../../enhance/docs/observability-alerting.md#seven-day-quality-history-and-transparent-page).
+- **Open.** Deploying the rebuilt canary and moved configs needs approval; the
+  service and quality alert families stay in shadow until the canary passes.
+
 ## Sealed tier boundary rule, 2026-10-08
 
 `main` at `569f68e6` changes how `shard-cutoff` picks the boundary between the archive and recent

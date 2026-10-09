@@ -129,7 +129,10 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
     if sample.sha256.len() != f.segments as usize {
         return Ok("oracle_invalid");
     }
-    let mut client = TableClient::new(table, &f.geometry, rows, width, scheme)?;
+    // Bind the query to the schema just checked against both the service and
+    // the fixture, not to whichever schema this binary was compiled with.
+    let mut client =
+        TableClient::new_with_schema(&fixture.schema, table, &f.geometry, rows, width, scheme)?;
     for segment in 0..f.segments {
         let (bytes, _) = transport.setup(f.shard_id, &f.revision, table, segment)?;
         let setup: Setup = serde_json::from_slice(&bytes)?;
