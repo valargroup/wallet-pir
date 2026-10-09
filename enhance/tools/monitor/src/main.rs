@@ -425,29 +425,39 @@ mod tests {
             .unwrap();
         assert!(caddy.starts_with(&format!("{host} {{")));
         assert!(caddy.contains(&format!("handle /{path} {{")));
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("incidents.sqlite");
-        let mut store = Store::open(&path).unwrap().with_family("service-quality");
-        let probes = std::collections::BTreeMap::from([(
-            "receiver".to_owned(),
-            service_probes::Probe {
-                sampled_at: 100,
-                consecutive_failures: 3,
-                category: "request_failed".into(),
-                ..Default::default()
-            },
-        )]);
-        evaluate_services(&mut store, &probes, 100, false, PUBLIC_STATUS_URL).unwrap();
-        let db = rusqlite::Connection::open(&path).unwrap();
-        let bodies: Vec<String> = db
-            .prepare("SELECT body FROM outbox")
-            .unwrap()
-            .query_map([], |r| r.get(0))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap();
-        assert_eq!(bodies.len(), 1);
-        assert!(bodies[0].contains("service_canary_receiver_availability"));
-        assert!(bodies[0].contains(&format!("<{PUBLIC_STATUS_URL}|Dashboard>")));
+        let services = ["receiver", "status", "transparent"];
+        let probes: std::collections::BTreeMap<_, _> = services
+            .iter()
+            .map(|service| {
+                let probe = service_probes::Probe {
+                    sampled_at: 100,
+                    consecutive_failures: 3,
+                    category: "request_failed".into(),
+                    ..Default::default()
+                };
+                (service.to_string(), probe)
+            })
+            .collect();
+        // The default and a `PIR_MONITOR_PUBLIC_STATUS_URL` override.
+        for url in [PUBLIC_STATUS_URL, "https://status.example/monitor-status"] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("incidents.sqlite");
+            let mut store = Store::open(&path).unwrap().with_family("service-quality");
+            evaluate_services(&mut store, &probes, 100, false, url).unwrap();
+            let db = rusqlite::Connection::open(&path).unwrap();
+            let bodies: Vec<String> = db
+                .prepare("SELECT body FROM outbox")
+                .unwrap()
+                .query_map([], |r| r.get(0))
+                .unwrap()
+                .collect::<rusqlite::Result<_>>()
+                .unwrap();
+            assert_eq!(bodies.len(), services.len());
+            for service in services {
+                let key = format!("service_canary_{service}_availability");
+                let body = bodies.iter().find(|body| body.contains(&key)).unwrap();
+                assert!(body.contains(&format!("<{url}|Dashboard>")), "{body}");
+            }
+        }
     }
 }
