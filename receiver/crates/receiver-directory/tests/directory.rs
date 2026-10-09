@@ -638,6 +638,82 @@ fn coinbase_payments_are_refused() {
     assert_eq!(store.counts().unwrap(), (1, 2));
 }
 
+/// A store's positions stay within the note commitment tree, so every tip it reaches
+/// can be published: a start or block past `TREE_SIZE` is refused, and one ending
+/// exactly at it is valid.
+#[cfg(feature = "store")]
+#[test]
+fn store_positions_end_within_the_tree() {
+    allow_small_tables();
+    use receiver_directory::{
+        snapshot::TREE_SIZE,
+        store::{Config, IndexedBlock, Store},
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let config = |start_position| Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position,
+    };
+    for start in [TREE_SIZE + 1, i64::MAX as u64] {
+        let path = dir.path().join(format!("{start}.sqlite"));
+        assert!(matches!(
+            Store::open(&path, config(start)),
+            Err(Error::Malformed)
+        ));
+    }
+    // A full tree accepts no commitment, before or after a reopen.
+    let path = dir.path().join("full.sqlite");
+    let mut store = Store::open(&path, config(TREE_SIZE)).unwrap();
+    let crossing = IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: TREE_SIZE,
+        end_position: TREE_SIZE + 1,
+        coinbase_actions: 0,
+        payments: vec![],
+        commitments: vec![[6; 32]],
+    };
+    for reopen in [false, true] {
+        if reopen {
+            drop(store);
+            store = Store::open(&path, config(TREE_SIZE)).unwrap();
+        }
+        assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
+        let tip = store.tip().unwrap();
+        assert_eq!((tip.height, tip.position), (99, TREE_SIZE));
+        assert_eq!(store.counts().unwrap(), (0, 0));
+    }
+    // The last leaf fills the tree, and an empty block can follow it.
+    let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
+    store
+        .append(&IndexedBlock {
+            start_position: TREE_SIZE - 1,
+            end_position: TREE_SIZE,
+            ..crossing
+        })
+        .unwrap();
+    store
+        .append(&IndexedBlock {
+            height: 101,
+            hash: [4; 32],
+            parent: [3; 32],
+            start_position: TREE_SIZE,
+            end_position: TREE_SIZE,
+            coinbase_actions: 0,
+            payments: vec![],
+            commitments: vec![],
+        })
+        .unwrap();
+    let manifest = store.snapshot(8, &[]).unwrap().manifest;
+    assert_eq!(
+        (manifest.end_height, manifest.end_position),
+        (101, TREE_SIZE)
+    );
+}
+
 #[cfg(feature = "store")]
 #[test]
 fn crowded_buckets_retry_the_salt_before_growing() {
