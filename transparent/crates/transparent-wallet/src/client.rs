@@ -23,6 +23,12 @@
 //! Everything the server sends is re-derived rather than trusted. A client that
 //! adopted the server's parameters would decode against whatever geometry the
 //! server chose, including one that leaks the selection.
+//!
+//! The query is sent at 44 dithered bits when the service advertises the
+//! dithered scheme and it reproduces exactly; otherwise at the 49 bits every
+//! service accepts. The fallback is what keeps a newer wallet working against
+//! a service that predates dithering, and it needs no trust: the 49-bit scheme
+//! is still checked whole.
 
 use crate::transport::{BoxError, ByteCharges, Overloaded, ShardTransport, StaleRevision};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -88,6 +94,9 @@ pub struct TableClient {
     schema: String,
     table: Table,
     profile: TableProfile,
+    /// Whether queries go at 44 dithered bits, which the service advertised
+    /// and this client reproduced, rather than 49.
+    dithered: bool,
     /// Per segment, because the published masks come from each segment's own
     /// database. Keyed by manifest digest and segment index, so a superseded
     /// revision's setup is never reused for the revision that replaced it.
@@ -108,12 +117,17 @@ impl TableClient {
     /// Builds a client for one table of `geometry`, re-deriving the native
     /// parameters — bit widths, query masks and packing setup — rather than
     /// adopting what the service published.
+    ///
+    /// `served` is the 49-bit scheme, which must reproduce. `served_dithered`
+    /// is the 44-bit dithered scheme, if the service advertised one: queries
+    /// use it only when it reproduces too, and otherwise fall back to 49 bits.
     pub fn new(
         table: Table,
         geometry: &str,
         rows: u64,
         row_bytes: u32,
         served: &NativeScheme,
+        served_dithered: Option<&NativeScheme>,
     ) -> Result<Self, ClientError> {
         Self::new_with_schema(
             transparent_shard::SCHEMA,
@@ -122,6 +136,7 @@ impl TableClient {
             rows,
             row_bytes,
             served,
+            served_dithered,
         )
     }
 
@@ -132,6 +147,7 @@ impl TableClient {
         rows: u64,
         row_bytes: u32,
         served: &NativeScheme,
+        served_dithered: Option<&NativeScheme>,
     ) -> Result<Self, ClientError> {
         if !transparent_shard::manifest::supported_schema(schema) {
             return Err(ClientError::Session("unsupported schema".into()));
@@ -144,10 +160,14 @@ impl TableClient {
                 table.as_str()
             )));
         }
+        // Compared whole, like the 49-bit scheme. One that does not reproduce
+        // is not adopted; the query falls back to the 49 bits checked above.
+        let dithered = served_dithered == Some(&profile.dithered_scheme);
         Ok(Self {
             schema: schema.to_string(),
             table,
             profile,
+            dithered,
             segments: HashMap::new(),
             stashed: HashMap::new(),
         })
@@ -155,6 +175,16 @@ impl TableClient {
 
     pub fn rows(&self) -> usize {
         self.profile.rows
+    }
+
+    /// Bits each selection coefficient is sent at: 44 when the service
+    /// advertised the dithered scheme and it reproduced, otherwise 49.
+    pub fn query_bits(&self) -> usize {
+        if self.dithered {
+            self.profile.dithered_scheme.query_bits
+        } else {
+            self.profile.scheme.query_bits
+        }
     }
 
     /// Records one segment's published setup after checking it against its
@@ -208,7 +238,12 @@ impl TableClient {
         if row >= self.profile.rows {
             return Err(ClientError::Session("row outside table".into()));
         }
-        let (secret, upload) = self.profile.prepare(row).map_err(ClientError::Pir)?;
+        let (secret, upload) = if self.dithered {
+            self.profile.prepare_dithered(row)
+        } else {
+            self.profile.prepare(row)
+        }
+        .map_err(ClientError::Pir)?;
         let mut body = transparent_shard::manifest::query_binding_for_schema(
             &self.schema,
             revision,
@@ -368,4 +403,80 @@ pub(crate) fn classify_transport(error: crate::transport::BoxError) -> ClientErr
         return ClientError::Overloaded(overloaded.clone());
     }
     ClientError::Transport(crate::transport::describe_error(error.as_ref()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn profile(table: Table) -> TableProfile {
+        TableProfile::new(
+            transparent_shard::SCHEMA,
+            "recent-4k",
+            table.as_str(),
+            4_096,
+            4_096,
+        )
+        .unwrap()
+    }
+
+    fn client(table: Table, dithered: Option<&NativeScheme>) -> TableClient {
+        let profile = profile(table);
+        TableClient::new(table, "recent-4k", 4_096, 4_096, &profile.scheme, dithered).unwrap()
+    }
+
+    fn body_len(client: &TableClient) -> usize {
+        client.prepare("revision", 17).unwrap().body.len()
+    }
+
+    /// A service advertising the dithered scheme gets 44-bit queries.
+    #[test]
+    fn a_reproduced_dithered_scheme_is_used() {
+        let profile = profile(Table::Directory);
+        let client = client(Table::Directory, Some(&profile.dithered_scheme));
+        assert_eq!(client.query_bits(), 44);
+        assert_eq!(body_len(&client), 8 + profile.dithered_scheme.request_bytes);
+        assert_eq!(body_len(&client), 8 + 27_648 + 22_528);
+    }
+
+    /// A service that predates dithering, or advertises a dithered scheme this
+    /// build does not derive, gets the 49-bit query it has always accepted.
+    #[test]
+    fn anything_else_falls_back_to_the_49_bit_query() {
+        let profile = profile(Table::Directory);
+        let legacy = 8 + profile.scheme.request_bytes;
+        assert_eq!(legacy, 8 + 27_648 + 25_088);
+
+        let absent = client(Table::Directory, None);
+        assert_eq!((absent.query_bits(), body_len(&absent)), (49, legacy));
+
+        let mut moved = profile.dithered_scheme.clone();
+        moved.query_mask_seed = profile.scheme.packing_setup_id.clone();
+        let unknown = client(Table::Directory, Some(&moved));
+        assert_eq!((unknown.query_bits(), body_len(&unknown)), (49, legacy));
+
+        // Another table's dithered scheme is not this one's.
+        let other = self::profile(Table::Pages);
+        let crossed = client(Table::Directory, Some(&other.dithered_scheme));
+        assert_eq!(crossed.query_bits(), 49);
+    }
+
+    /// The 49-bit scheme is checked whatever the dithered one says: a service
+    /// cannot get a wallet past a moved scheme by advertising a good dithered
+    /// one beside it.
+    #[test]
+    fn the_49_bit_scheme_must_still_reproduce() {
+        let profile = profile(Table::Directory);
+        let mut moved = profile.scheme.clone();
+        moved.rows = 8_192;
+        let refused = TableClient::new(
+            Table::Directory,
+            "recent-4k",
+            4_096,
+            4_096,
+            &moved,
+            Some(&profile.dithered_scheme),
+        );
+        assert!(matches!(refused, Err(ClientError::Session(_))));
+    }
 }

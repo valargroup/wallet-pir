@@ -421,12 +421,19 @@ async fn main() -> Result<(), BoxError> {
                         as u32,
                     directory_scheme: serde_json::from_value(entry["directory_scheme"].clone())
                         .map_err(|e| e.to_string())?,
+                    // Absent from a service that predates dithered queries.
+                    directory_scheme_dq44: serde_json::from_value(
+                        entry["directory_scheme_dq44"].clone(),
+                    )
+                    .map_err(|e| e.to_string())?,
                     directory_setup_seed: entry["directory_setup_seed"]
                         .as_u64()
                         .unwrap_or_default(),
                     page_rows: entry["page_rows"].as_u64().unwrap_or_default(),
                     page_row_bytes: entry["page_row_bytes"].as_u64().unwrap_or_default() as u32,
                     pages_scheme: serde_json::from_value(entry["pages_scheme"].clone())
+                        .map_err(|e| e.to_string())?,
+                    pages_scheme_dq44: serde_json::from_value(entry["pages_scheme_dq44"].clone())
                         .map_err(|e| e.to_string())?,
                     pages_setup_seed: entry["pages_setup_seed"].as_u64().unwrap_or_default(),
                 });

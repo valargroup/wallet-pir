@@ -186,11 +186,16 @@ pub struct DisplayState {
 }
 
 /// One geometry's table kind, as `GET /v1/txid/init` publishes it.
+///
+/// `scheme` is the 49-bit query, which clients deployed before dithering read
+/// and send; `scheme_dq44` is the 44-bit dithered query over the same setup.
+/// The service accepts either, by the body's exact length.
 #[derive(Serialize)]
 pub struct TableInit {
     pub rows: u64,
     pub row_bytes: u32,
     pub scheme: transparent_native::NativeScheme,
+    pub scheme_dq44: transparent_native::NativeScheme,
     pub setup_seed: u64,
 }
 
@@ -654,13 +659,16 @@ impl RequestError {
     }
 }
 
-/// The request body limit: the longest query any display geometry accepts.
-/// Fixed at startup, before any publication is loaded.
+/// The request body limit: the longest query any display geometry accepts,
+/// at either width. Fixed at startup, before any publication is loaded.
 pub fn body_limit() -> usize {
     display::DISPLAY_PROFILES
         .iter()
-        .map(|geometry| geometry.directory_rows)
-        .map(|rows| 8 + transparent_native::request_len(rows as usize))
+        .map(|geometry| geometry.directory_rows as usize)
+        .map(|rows| {
+            8 + transparent_native::request_len(rows)
+                .max(transparent_native::dithered_request_len(rows))
+        })
         .max()
         .unwrap_or(0)
 }
@@ -768,6 +776,7 @@ async fn init(State(state): State<DisplayState>) -> Response {
             rows: kind.rows(geometry),
             row_bytes: kind.row_bytes(geometry),
             scheme: shared.scheme().clone(),
+            scheme_dq44: shared.dithered_scheme().clone(),
             setup_seed: shared.setup_seed,
         }
     };
@@ -1058,9 +1067,8 @@ async fn query_inner(
         }
     };
 
-    // The exact length is known before a byte is read; anything else is
-    // refused before it is buffered or queued.
-    let expected = shared.query_bytes();
+    // The two exact lengths, 49-bit and 44-bit dithered, are known before a
+    // byte is read; anything else is refused before it is buffered or queued.
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -1074,15 +1082,20 @@ async fn query_inner(
         Metrics::incr(&metrics.query_length_rejections);
         return RequestError::LengthRequired.into_response(&map_digest);
     };
-    if declared != expected as u64 {
+    let Some(expected) = usize::try_from(declared)
+        .ok()
+        .filter(|&len| shared.accepts_query_bytes(len))
+    else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
-            "a {label} query for geometry {} must be exactly {expected} bytes, not {declared}",
-            shared.geometry.name
+            "a {label} query for geometry {} must be exactly {} or {} bytes, not {declared}",
+            shared.geometry.name,
+            shared.query_bytes(),
+            shared.dithered_query_bytes(),
         ))
         .into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
-    }
+    };
 
     let pending = match runtime.admission.try_enter(Some(expected)) {
         Ok(pending) => pending,

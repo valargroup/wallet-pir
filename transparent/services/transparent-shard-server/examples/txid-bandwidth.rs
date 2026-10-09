@@ -74,12 +74,12 @@ enum Command {
     },
 }
 
-/// Body bytes of one query and of its answer, for a table of `rows` rows
-/// of 4,096 bytes answered by `segments` segments.
+/// Body bytes of one 44-bit dithered query and of its answer, for a table of
+/// `rows` rows of 4,096 bytes answered by `segments` segments.
 fn query_bytes(rows: u64, segments: u64) -> (u64, u64) {
     let cols = transparent_shard::txid::ROW_BYTES / 2;
     (
-        8 + transparent_native::request_len(rows as usize) as u64,
+        8 + transparent_native::dithered_request_len(rows as usize) as u64,
         segments * (16 + transparent_native::response_len(cols) as u64),
     )
 }
@@ -429,13 +429,20 @@ mod tests {
     use super::*;
 
     /// The figures the design was argued from, reproduced from the native
-    /// lengths: 40,200 B per query at 2,048 rows, and the warm transcripts,
-    /// which are two directory queries for every lookup.
+    /// lengths: 38,920 B per dithered query at 2,048 rows (40,200 B at the 49
+    /// bits every server also accepts), and the warm transcripts, which are
+    /// two directory queries for every lookup.
     #[test]
     fn warm_transcripts_match_the_native_lengths() {
-        assert_eq!(query_bytes(2_048, 1), (40_200, 5_648));
-        assert_eq!(query_bytes(4_096, 1).0, 52_744);
-        assert_eq!(query_bytes(32_768, 1).0, 228_360);
+        assert_eq!(query_bytes(2_048, 1), (38_920, 5_648));
+        assert_eq!(query_bytes(4_096, 1).0, 50_184);
+        assert_eq!(query_bytes(32_768, 1).0, 207_880);
+        // The 49-bit lengths the design was first argued from.
+        let legacy = |rows: usize| 8 + transparent_native::request_len(rows) as u64;
+        assert_eq!(
+            (legacy(2_048), legacy(4_096), legacy(32_768)),
+            (40_200, 52_744, 228_360)
+        );
         let rows = formula(1, 0, 0, 0, 0);
         let total = |geometry: &str, state: &str| {
             rows.iter()
@@ -444,12 +451,14 @@ mod tests {
                 .as_u64()
                 .unwrap()
         };
-        assert_eq!(total("txid-2k", "warm"), 91_696);
-        assert_eq!(total("txid-4k", "warm"), 116_784);
-        assert_eq!(total("archive-wide", "warm"), 468_016);
+        // Two dithered queries: 2,560, 5,120 and 40,960 B below the 49-bit
+        // totals of 91,696, 116,784 and 468,016.
+        assert_eq!(total("txid-2k", "warm"), 89_136);
+        assert_eq!(total("txid-4k", "warm"), 111_664);
+        assert_eq!(total("archive-wide", "warm"), 427_056);
         assert_eq!(setup_bytes(0), 19_800);
         // Cold adds one setup per directory segment, plus map and manifest.
-        assert_eq!(total("txid-2k", "cold"), 91_696 + 19_800);
+        assert_eq!(total("txid-2k", "cold"), 89_136 + 19_800);
         assert!(rows.iter().all(|r| r["queries"] == 2));
     }
 }

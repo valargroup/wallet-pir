@@ -185,15 +185,16 @@ struct Cli {
 ///
 /// The same formula the server bounds a request with, so a projection here and
 /// a measurement there cannot drift: the binding and the native `K_g` packing
-/// key, which the row count does not move, plus a 49-bit selection that it does. Response and published setup follow the row
-/// *width* instead and so are equal across every candidate compared here, which
-/// is why only the query is priced.
+/// key, which the row count does not move, plus the 44-bit dithered selection
+/// a current wallet sends, which it does. Response and published setup follow
+/// the row *width* instead and so are equal across every candidate compared
+/// here, which is why only the query is priced.
 fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
     assert!(
         row_bytes.is_multiple_of(transparent_native::INSTANCE_BYTES),
         "a validated geometry has whole instances"
     );
-    (8 + transparent_native::request_len(rows as usize)) as u64
+    (8 + transparent_native::dithered_request_len(rows as usize)) as u64
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {

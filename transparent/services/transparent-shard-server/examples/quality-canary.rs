@@ -111,9 +111,19 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
         .iter()
         .find(|g| g.name == f.geometry)
         .ok_or("missing geometry")?;
-    let (rows, width, scheme) = match table {
-        Table::Directory => (g.directory_rows, g.directory_row_bytes, &g.directory_scheme),
-        Table::Pages => (g.page_rows, g.page_row_bytes, &g.pages_scheme),
+    let (rows, width, scheme, dithered) = match table {
+        Table::Directory => (
+            g.directory_rows,
+            g.directory_row_bytes,
+            &g.directory_scheme,
+            g.directory_scheme_dq44.as_ref(),
+        ),
+        Table::Pages => (
+            g.page_rows,
+            g.page_row_bytes,
+            &g.pages_scheme,
+            g.pages_scheme_dq44.as_ref(),
+        ),
     };
     if rows != f.rows || width != f.row_bytes || f.segments == 0 || f.samples.is_empty() {
         return Ok("oracle_invalid");
@@ -131,8 +141,15 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
     }
     // Bind the query to the schema just checked against both the service and
     // the fixture, not to whichever schema this binary was compiled with.
-    let mut client =
-        TableClient::new_with_schema(&fixture.schema, table, &f.geometry, rows, width, scheme)?;
+    let mut client = TableClient::new_with_schema(
+        &fixture.schema,
+        table,
+        &f.geometry,
+        rows,
+        width,
+        scheme,
+        dithered,
+    )?;
     for segment in 0..f.segments {
         let (bytes, _) = transport.setup(f.shard_id, &f.revision, table, segment)?;
         let setup: Setup = serde_json::from_slice(&bytes)?;

@@ -185,6 +185,9 @@ struct InitTable {
     rows: u64,
     row_bytes: u32,
     scheme: NativeScheme,
+    /// The 44-bit dithered scheme; absent from a service that predates it.
+    #[serde(default)]
+    scheme_dq44: Option<NativeScheme>,
     setup_seed: u64,
 }
 
@@ -222,6 +225,8 @@ struct Target {
     entry: Arc<DisplayMapEntry>,
     table: DisplayTable,
     profile: Arc<TableProfile>,
+    /// Whether queries go at 44 dithered bits rather than 49.
+    dithered: bool,
     setups: Arc<Vec<Arc<Setup>>>,
 }
 
@@ -503,12 +508,14 @@ impl DisplayClient {
         Ok(cached)
     }
 
+    /// The derived profile, checked against init, and whether init's
+    /// dithered scheme reproduces too; queries use it only then.
     fn profile(
         &self,
         init: &Init,
         geometry: &'static Geometry,
         table: Table,
-    ) -> Result<Arc<TableProfile>, LookupError> {
+    ) -> Result<(Arc<TableProfile>, bool), LookupError> {
         let profile = {
             let cached = self
                 .inner
@@ -558,7 +565,8 @@ impl DisplayClient {
                 geometry.name
             )));
         }
-        Ok(profile)
+        let dithered = served.scheme_dq44.as_ref() == Some(&profile.dithered_scheme);
+        Ok((profile, dithered))
     }
 
     async fn manifest(
@@ -672,6 +680,7 @@ impl DisplayClient {
             entry,
             table,
             profile,
+            dithered,
             setups,
         } = target;
         let mut trace = QueryTrace {
@@ -681,11 +690,16 @@ impl DisplayClient {
         };
         let prepared = Instant::now();
         let prepare_profile = profile.clone();
-        let (secret, upload) =
-            tokio::task::spawn_blocking(move || prepare_profile.prepare(row as usize))
-                .await
-                .map_err(protocol)?
-                .map_err(protocol)?;
+        let (secret, upload) = tokio::task::spawn_blocking(move || {
+            if dithered {
+                prepare_profile.prepare_dithered(row as usize)
+            } else {
+                prepare_profile.prepare(row as usize)
+            }
+        })
+        .await
+        .map_err(protocol)?
+        .map_err(protocol)?;
         trace.prepare_s = prepared.elapsed().as_secs_f64();
         let binding = display::query_binding(&entry.manifest_digest, table);
         let mut body = binding.to_vec();
@@ -943,7 +957,7 @@ impl DisplayClient {
         segments: u32,
         accounting: &Arc<Mutex<Accounting>>,
     ) -> Result<Target, LookupError> {
-        let profile = self.profile(&located.init, located.geometry, kind(table))?;
+        let (profile, dithered) = self.profile(&located.init, located.geometry, kind(table))?;
         let mut setups = Vec::new();
         for segment in 0..segments {
             setups.push(
@@ -962,6 +976,7 @@ impl DisplayClient {
             entry: located.entry.clone(),
             table,
             profile,
+            dithered,
             setups: Arc::new(setups),
         })
     }

@@ -90,7 +90,10 @@ pub(crate) fn database_server(
 
 /// The first-dimension scan shape for one table: full 16-bit plaintexts, one
 /// column per coefficient, and the native transport's 49-bit query and 22-bit
-/// response widths. The scan itself runs modulo the native `q` = 2^54.
+/// response widths. The scan itself runs modulo the native `q` = 2^54, on the
+/// selection already lifted back to `q`, so it is the same for a 44-bit
+/// dithered query; the 49 here only keeps the shape, and with it every runtime
+/// disk-cache key, what it was before dithered queries.
 pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, String> {
     let (_, mut params) = ipir_sp::params_for_simplepir_profile(
         rows,
@@ -213,18 +216,36 @@ impl SharedParams {
         })
     }
 
-    /// What `/v1/shards/init` publishes for this table.
+    /// What `/v1/shards/init` publishes for this table as its scheme: the
+    /// 49-bit nearest-rounded query. Also what keys the runtime disk cache.
     pub fn scheme(&self) -> &NativeScheme {
         &self.profile.scheme
     }
 
-    /// The exact length every query body must have: the 8-byte binding, the
-    /// `K_g` packing key and the 49-bit selection.
-    ///
-    /// Fixed, because a body whose size varied with the selection would leak it
-    /// through its length alone.
+    /// The 44-bit dithered scheme `/v1/shards/init` publishes beside it.
+    pub fn dithered_scheme(&self) -> &NativeScheme {
+        &self.profile.dithered_scheme
+    }
+
+    /// The length of a 49-bit query body: the 8-byte binding, the `K_g`
+    /// packing key and the 49-bit selection. The longer of the two accepted
+    /// lengths, so it is also the most a body may be.
     pub fn query_bytes(&self) -> usize {
         8 + self.profile.scheme.request_bytes
+    }
+
+    /// The length of a 44-bit dithered query body.
+    pub fn dithered_query_bytes(&self) -> usize {
+        8 + self.profile.dithered_scheme.request_bytes
+    }
+
+    /// Whether `len` is one of the two exact lengths a query body may have.
+    ///
+    /// Each is fixed, because a body whose size varied with the selection
+    /// would leak it through its length alone. The two say only which scheme
+    /// the wallet sends, which every query of that wallet shares.
+    pub fn accepts_query_bytes(&self, len: usize) -> bool {
+        len == self.query_bytes() || len == self.dithered_query_bytes()
     }
 
     /// Bytes one segment's answer carries: binding, epoch and body.
@@ -247,9 +268,9 @@ impl SharedParams {
         if body.get(..8) != Some(binding.as_slice()) {
             return Err("query does not name this revision and table".to_string());
         }
-        // A fixed length for every query: a body that varied with the selection
-        // would leak through its size alone.
-        if body.len() != self.query_bytes() {
+        // A fixed length per scheme: a body that varied with the selection
+        // would leak through its size alone. The length picks the width.
+        if !self.accepts_query_bytes(body.len()) {
             return Err("query has the wrong fixed length".to_string());
         }
         let (keys, query) = self.profile.parse(&body[8..])?;

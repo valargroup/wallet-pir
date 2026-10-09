@@ -218,6 +218,46 @@ fn found_exact_transcript() {
     }
 }
 
+/// A client sends 49-bit queries, which every server accepts, unless init
+/// advertises a dithered scheme it reproduces: whether init carries none, as
+/// a server predating dithering does not, or one that differs from the local
+/// derivation. Either way the lookup finds the published entry.
+#[test]
+fn queries_fall_back_to_49_bits_without_a_reproducible_dithered_scheme() {
+    let _serial = serial();
+    let env = env();
+    let record = &env.world.a0_records[CLASSES];
+    let edits: [fn(&mut serde_json::Value); 2] = [
+        |table| {
+            let removed = table.as_object_mut().unwrap().remove("scheme_dq44");
+            assert!(removed.is_some(), "the server advertises a dithered scheme");
+        },
+        |table| table["scheme_dq44"]["query_mask_seed"] = serde_json::json!("00"),
+    ];
+    for edit in edits {
+        let mut http = env.http();
+        http.tamper = Some(on(Route::Init, move |reply| {
+            let mut json: serde_json::Value = serde_json::from_slice(&reply.body).unwrap();
+            for geometry in json["geometries"].as_array_mut().unwrap() {
+                edit(&mut geometry["txdirectory"]);
+            }
+            reply.body = serde_json::to_vec(&json).unwrap();
+        }));
+        found(
+            env.client()
+                .lookup(&mut http, record.txid.0, 150, &never)
+                .unwrap(),
+            record,
+        );
+        let log = http.take_log();
+        let posts: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Query).collect();
+        assert_eq!(posts.len(), 2);
+        assert!(posts
+            .iter()
+            .all(|post| post.status == 200 && post.body.len() as u64 == LEGACY_QUERY_BYTES));
+    }
+}
+
 /// Every case the format distinguishes comes back as exactly the entry the
 /// publisher derived, flags included, through the same transcript as an
 /// absent txid, cold and warm, in both tiers.

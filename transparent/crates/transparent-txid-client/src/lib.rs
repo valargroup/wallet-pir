@@ -12,7 +12,10 @@
 //! shard's manifest and the bucket's directory setups when they are not
 //! cached, then exactly two directory queries (even when both candidate rows
 //! coincide). Entries are fixed-size, so a found txid and an absent one send
-//! the same requests with the same body sizes. Placement comes from the
+//! the same requests with the same body sizes. Each query carries a 44-bit
+//! dithered selection when init advertises the dithered scheme and it
+//! reproduces locally, and the 49-bit one every service accepts otherwise;
+//! either way every query of one client has the same size. Placement comes from the
 //! caller's mined height; nothing
 //! is asked to discover it, so placement and support results send no query.
 //!

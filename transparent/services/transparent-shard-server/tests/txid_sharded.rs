@@ -443,8 +443,9 @@ fn assert_uploads(log: &[Sent], bytes: u64) {
         .all(|post| post.status == 200 && post.body.len() as u64 == bytes));
 }
 
-/// A txid-4k query: the 8-byte binding and the 4,096-row native selection.
-const QUERY_BYTES_4K: u64 = 52_744;
+/// A txid-4k query: the 8-byte binding, the `K_g` key and the 4,096-row
+/// native selection at 44 dithered bits (52,744 B at 49 bits).
+const QUERY_BYTES_4K: u64 = 50_184;
 
 /// A fresh lineage replaces the publication behind the same edge, as a
 /// display re-cut or re-layout does: a lower start, shard ids restarted from

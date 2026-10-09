@@ -132,16 +132,26 @@ fn main() -> Result<(), BoxError> {
                 .iter()
                 .find(|g| g.name == f.geometry)
                 .ok_or("missing geometry")?;
-            let (rows, width, scheme) = match table {
-                Table::Directory => (g.directory_rows, g.directory_row_bytes, &g.directory_scheme),
-                Table::Pages => (g.page_rows, g.page_row_bytes, &g.pages_scheme),
+            let (rows, width, scheme, dithered) = match table {
+                Table::Directory => (
+                    g.directory_rows,
+                    g.directory_row_bytes,
+                    &g.directory_scheme,
+                    g.directory_scheme_dq44.as_ref(),
+                ),
+                Table::Pages => (
+                    g.page_rows,
+                    g.page_row_bytes,
+                    &g.pages_scheme,
+                    g.pages_scheme_dq44.as_ref(),
+                ),
             };
             if rows != f.rows || width != f.row_bytes {
                 return Err("fixture geometry mismatch".into());
             }
             clients.insert(
                 key.clone(),
-                TableClient::new(table, &f.geometry, rows, width, scheme)?,
+                TableClient::new(table, &f.geometry, rows, width, scheme, dithered)?,
             );
         }
         let client = clients.get_mut(&key).unwrap();

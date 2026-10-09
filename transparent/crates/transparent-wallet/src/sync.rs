@@ -217,10 +217,14 @@ pub struct GeometryParams {
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
     pub directory_scheme: transparent_native::NativeScheme,
+    /// The 44-bit dithered directory scheme, when the service advertises one.
+    pub directory_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
+    /// The 44-bit dithered page scheme, when the service advertises one.
+    pub pages_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub pages_setup_seed: u64,
 }
 
@@ -301,6 +305,7 @@ impl Clients {
                     geometry.directory_rows,
                     geometry.directory_row_bytes as u32,
                     &params.directory_scheme,
+                    params.directory_scheme_dq44.as_ref(),
                 )?,
                 pages: TableClient::new_with_schema(
                     &self.schema,
@@ -309,6 +314,7 @@ impl Clients {
                     geometry.page_rows,
                     geometry.page_row_bytes as u32,
                     &params.pages_scheme,
+                    params.pages_scheme_dq44.as_ref(),
                 )?,
             };
             self.prepared.insert(name.to_string(), clients);

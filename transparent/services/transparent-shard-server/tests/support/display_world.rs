@@ -28,9 +28,12 @@ use transparent_txid_client::{
     TxidReply, TxidRequest, TxidTransport,
 };
 
-/// Every directory query uploads this many bytes: the 8-byte binding and the
-/// 2,048-row native selection.
-pub const QUERY_BYTES: u64 = 40_200;
+/// Every directory query uploads this many bytes: the 8-byte binding, the
+/// `K_g` key and the 2,048-row native selection at 44 dithered bits.
+pub const QUERY_BYTES: u64 = 38_920;
+/// The same query at the 49 bits a client sends when init advertises no
+/// dithered scheme it reproduces, and that every server still accepts.
+pub const LEGACY_QUERY_BYTES: u64 = 40_200;
 /// A one-segment directory reply: the binding, the epoch and one response.
 pub const REPLY_BYTES: u64 = 5_648;
 

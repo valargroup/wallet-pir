@@ -33,7 +33,12 @@ pub const PLACEMENT_REFRESH_AGE: Duration = Duration::from_secs(30);
 struct InitTable {
     rows: u64,
     row_bytes: u32,
+    /// The 49-bit query, which every service accepts.
     scheme: NativeScheme,
+    /// The 44-bit dithered query over the same setup. Absent from a service
+    /// that predates it; used only when it reproduces, as `scheme` must.
+    #[serde(default)]
+    scheme_dq44: Option<NativeScheme>,
     setup_seed: u64,
 }
 
@@ -109,6 +114,8 @@ struct Located {
 struct Target {
     table: DisplayTable,
     profile: Arc<TableProfile>,
+    /// Whether queries go at 44 dithered bits rather than 49.
+    dithered: bool,
     setups: Vec<Arc<Setup>>,
 }
 
@@ -665,13 +672,17 @@ impl TxidDisplayClient {
     }
 
     /// The locally derived profile of `kind` at `geometry`, checked against
-    /// what init publishes.
+    /// what init publishes, and whether init's dithered scheme reproduces too.
+    ///
+    /// The 49-bit scheme must reproduce. Queries go at 44 dithered bits when
+    /// init also publishes the dithered scheme and it reproduces; otherwise at
+    /// the 49 bits every service accepts.
     fn profile(
         &self,
         init: &Init,
         geometry: &'static Geometry,
         kind: DisplayKind,
-    ) -> Result<Arc<TableProfile>, TxidError> {
+    ) -> Result<(Arc<TableProfile>, bool), TxidError> {
         let cached = self
             .profiles
             .lock()
@@ -714,7 +725,8 @@ impl TxidDisplayClient {
         {
             return Err(TxidError::Protocol(ProtocolKind::Profile));
         }
-        Ok(profile)
+        let dithered = served.scheme_dq44.as_ref() == Some(&profile.dithered_scheme);
+        Ok((profile, dithered))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -790,7 +802,7 @@ impl TxidDisplayClient {
         table: DisplayTable,
         segments: u32,
     ) -> Result<Target, TxidError> {
-        let profile = self.profile(&located.init, located.geometry, table.kind())?;
+        let (profile, dithered) = self.profile(&located.init, located.geometry, table.kind())?;
         let mut setups = Vec::with_capacity(segments as usize);
         for segment in 0..segments {
             setups.push(self.setup(
@@ -806,6 +818,7 @@ impl TxidDisplayClient {
         Ok(Target {
             table,
             profile,
+            dithered,
             setups,
         })
     }
@@ -833,10 +846,12 @@ impl TxidDisplayClient {
         );
         let mut unique = BTreeMap::new();
         for &row in rows {
-            let (secret, upload) = target
-                .profile
-                .prepare(row as usize)
-                .map_err(protocol(ProtocolKind::Profile))?;
+            let (secret, upload) = if target.dithered {
+                target.profile.prepare_dithered(row as usize)
+            } else {
+                target.profile.prepare(row as usize)
+            }
+            .map_err(protocol(ProtocolKind::Profile))?;
             let mut body = binding.to_vec();
             body.extend(upload);
             let reply = send(
