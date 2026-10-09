@@ -27,24 +27,26 @@ Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
 start at 8192 rows, the fewest that PIR clients and servers accept. A crowded
 bucket retries up to 16 salts derived from the terminal hash, the first being
-the hash itself, and only then doubles the table, up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
-records. So do more records than the table has slots, caught before placement; a
-supplied manifest claiming more records than its slots is malformed. The
-manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
-inclusive block coverage, boundary hashes, tree positions, geometry, salt, record
-count, the filter sets and the SHA-256 of the rows and of the filter file. The
-immutable revision is a domain-separated SHA-256 of every field at fixed width, as
-Enhance and Status hash their manifests, and a manifest with a field this version
-does not know is refused.
+the hash itself, and only then doubles the table, up to 65536 rows. Overflow at
+the maximum fails the candidate instead of dropping records. So do more records
+than the table has slots, caught before placement; a supplied manifest claiming
+more records than its slots is malformed. The manifest (profile
+`ironwood-zero-ovk-receiver-v1`) binds the network, inclusive block coverage,
+boundary hashes, tree positions, geometry, salt, record count, the filter sets
+and the SHA-256 of the rows and of the filter file. The immutable revision is a
+domain-separated SHA-256 of every field at fixed width, as Enhance and Status
+hash their manifests, and a manifest with a field this version does not know is
+refused.
 
 `Snapshot::validate` checks a supplied publication whole, before a server prepares
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
 in chain order as `snapshot::check_next` requires, unique outputs and positions,
-and, across receivers, one block hash per height and one txid per transaction
-index at a height. A record stored outside its bucket would otherwise make
-lookups of that receiver find nothing.
+and, across receivers, one block hash per height, one txid per transaction
+index at a height and one location per txid. No chain trust is implied. A
+record stored outside its bucket would otherwise make lookups of that receiver
+find nothing.
 
 ## Filters
 
@@ -62,11 +64,10 @@ For each provider set the manifest also declares when the feed's last complete r
 began, so a wallet can tell how current the set is. A recent window reaches back
 from that read.
 
-The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen` from
-the NEAR Intents explorer, and adds a provider's sets only once its feed has
-completed a read.
-Wallets use the sets they recognize and ignore the rest, so a new provider needs no
-format change.
+The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen`
+from the NEAR Intents explorer, and adds a provider's sets only once its feed
+has completed a read. Wallets use the sets they recognize and ignore the rest,
+so a new provider needs no format change.
 
 Sets are built with `bitcoin::bip158`, as Transparent's filters are, with P = 10
 and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a

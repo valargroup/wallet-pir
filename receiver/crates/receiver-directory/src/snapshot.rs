@@ -96,14 +96,11 @@ impl Manifest {
         let sets_valid = self.filters.iter().all(|set| {
             let recent = set.label.ends_with(&format!("/{}", filter::RECENT));
             let span = match (set.since_unix, set.until_unix) {
-                (Some(since), Some(until)) => since <= until,
+                (Some(since), Some(until)) => set.label != filter::PAID && since <= until,
                 (None, None) => set.label == filter::PAID,
                 _ => false,
             };
-            filter::valid_label(&set.label)
-                && span
-                && (set.label == filter::PAID) == set.since_unix.is_none()
-                && recent == set.window_secs.is_some()
+            filter::valid_label(&set.label) && span && recent == set.window_secs.is_some()
         });
         if self.profile != PROFILE
             || !labels_ordered
@@ -250,9 +247,10 @@ pub struct Snapshot {
 
 impl Snapshot {
     /// More records than the table has slots, or bucket overflow, fails the whole
-    /// candidate with [`Error::Capacity`]. It never drops records or coverage. A filter file over [`filter::MAX_FILTERS_BYTES`] is
-    /// [`Error::Malformed`]. The paid filter holds the records' receivers; `provider`
-    /// sets come from the publisher's swap provider feeds (see [`crate::filter`]).
+    /// candidate with [`Error::Capacity`]. It never drops records or coverage. A filter
+    /// file over [`filter::MAX_FILTERS_BYTES`] is [`Error::Malformed`]. The paid filter
+    /// holds the records' receivers; `provider` sets come from the publisher's swap
+    /// provider feeds (see [`crate::filter`]).
     pub fn build(
         mut manifest: Manifest,
         records: &[Record],
@@ -310,14 +308,7 @@ impl Snapshot {
         })
     }
 
-    /// Checks a supplied publication as [`Self::build`] would have made it, before it
-    /// is prepared or served: the manifest, the row and filter sizes and digests, the
-    /// declared filter sets, and a paid set of exactly the records' receivers; every
-    /// slot and row padding as [`lookup_row`] checks them, so each record sits in its
-    /// own bucket; exactly the manifest's record count; and every receiver's pages, as
-    /// [`Self::build`] requires them. No chain trust is implied. Only each record's
-    /// page fields are kept, and only up to the manifest's count, itself within the
-    /// table's slots.
+    /// Checks a supplied publication whole, as [`Self::build`] would have made it.
     pub fn validate(&self) -> Result<(), Error> {
         let m = &self.manifest;
         let placement = Placement::new(m)?;
