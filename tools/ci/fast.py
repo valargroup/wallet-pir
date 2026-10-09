@@ -59,6 +59,9 @@ def route(path):
     """Return helper targets/full groups, or None for an unknown path."""
     if path in {'tools/check-doc-links.sh', 'tools/check-doc-links.py'}:
         return {'check-docs', 'check-tools'}, {'ops'}
+    if path in {'receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md'}:
+        # tools/tests pins the probe fixture to the README's monitor config.
+        return {'check-docs', 'check-tools'}, {'ops'}
     if path.endswith('.md') or path.startswith(('docs/', 'evidence/', 'enhance/evidence/', 'transparent/evidence/', 'receiver/evidence/')):
         return {'check-docs'}, {'ops'}
     if path.startswith('receiver/ops/'):

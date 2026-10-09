@@ -85,6 +85,10 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(result['groups'], ['receiver'])
         self.assertIn('receiver-directory/store', full.commands('receiver', full.inventory())[0])
 
+    def test_receiver_probe_pin_changes_run_the_tools_check(self):
+        for path in ['receiver/ops/digitalocean/probe-fixture.json', 'receiver/ops/digitalocean/README.md']:
+            self.assertIn('check-tools', fast.plan(self.packages, [path])['helpers'], path)
+
     def test_shared_rust_and_unknown_changes_broaden_full_coverage(self):
         result = fast.plan(self.packages, ['shared/pir-control/src/lib.rs'])
         self.assertTrue({'shared', 'enhance', 'transparent', 'receiver'} <= set(result['groups']))
