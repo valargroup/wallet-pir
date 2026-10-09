@@ -186,10 +186,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let nodes = args
         .rpc_url
         .iter()
-        .map(|url| match &args.cookie {
-            Some(path) => ZakuraClient::from_cookie_file(url.clone(), path),
-            None => ZakuraClient::unauthenticated(url.clone()),
-        })
+        .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let (verified, tip) = match oracle(&nodes, directory, fixture.height, args.witnesses).await {
         Ok(found) => found,
@@ -614,7 +611,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(url).unwrap()
+        ZakuraClient::new(url, None).unwrap()
     }
 
     /// [`super::common::manifest`] ending at Ironwood activation, where a node reports
@@ -819,7 +816,7 @@ mod tests {
     ) -> std::result::Result<(u64, Option<Hash>), Failure> {
         let mut clients = Vec::new();
         for node in nodes {
-            clients.push(ZakuraClient::unauthenticated(serve_node(*node).await).unwrap());
+            clients.push(ZakuraClient::new(serve_node(*node).await, None).unwrap());
         }
         let directory = anchored();
         let fixture_height = directory.end_height - 1;

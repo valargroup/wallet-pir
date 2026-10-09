@@ -101,10 +101,7 @@ async fn main() -> Result<()> {
     let nodes = args
         .rpc_url
         .iter()
-        .map(|url| match &args.cookie {
-            Some(p) => ZakuraClient::from_cookie_file(url.clone(), p),
-            None => ZakuraClient::unauthenticated(url.clone()),
-        })
+        .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let genesis: Hash = freshest(&nodes).await?.1.block_hash(0).await?.parse()?;
     if genesis != Network::Mainnet.genesis_hash() {
@@ -611,7 +608,7 @@ mod tests {
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", socket.local_addr().unwrap());
         tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::unauthenticated(url).unwrap()
+        ZakuraClient::new(url, None).unwrap()
     }
 
     /// An empty publication ending at block `[hash; 32]`, height 101.

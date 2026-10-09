@@ -160,9 +160,8 @@ receiver-directory --data-dir /srv/receiver-pir/index --rpc-url http://127.0.0.1
 ```
 
 `--no-auth` replaces `--cookie` for explicitly selected nodes without RPC
-authentication. A request a node rejects rereads the cookie and is retried once
-with it if it changed, so a node restart that rotates the cookie needs no indexer
-restart. Repeat `--rpc-url` for more nodes: each pass, and each check of the
+authentication. Every request reads the cookie, so a node restart that rotates it
+needs no indexer restart. Repeat `--rpc-url` for more nodes: each pass, and each check of the
 served anchors, runs on the node with the highest tip, so all its reads come from
 one chain; a pass that fails is retried at the next poll, which ranks the nodes
 again. Each response is read only up to a bound for its method: 4 KiB for a tip or a
