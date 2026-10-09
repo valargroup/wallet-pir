@@ -274,6 +274,38 @@ fn coverage_anchor_and_position_are_required() {
     assert!(Snapshot::build(m, &[r], &[]).is_err());
 }
 
+/// A row whose record claims more pages than the publication has records is
+/// malformed.
+#[test]
+fn a_total_beyond_the_record_count_is_malformed() {
+    allow_small_tables();
+    let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    let r = receiver();
+    let mut b = row(&s, &r, 0).to_vec();
+    assert!(lookup_row(&s.manifest, &r, 0, &b).unwrap().is_some());
+    let slot = b
+        .chunks(RECORD_BYTES)
+        .position(|slot| slot.iter().any(|x| *x != 0))
+        .unwrap();
+    // The total pages field follows the version, receiver and page.
+    b[slot * RECORD_BYTES + 48..slot * RECORD_BYTES + 52].copy_from_slice(&2u32.to_le_bytes());
+    assert!(Record::decode(&b[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES]).is_ok());
+    assert!(matches!(
+        lookup_row(&s.manifest, &r, 0, &b),
+        Err(Error::Malformed)
+    ));
+}
+
+/// The note commitment tree ends at 2^32 positions.
+#[test]
+fn coverage_ends_within_the_tree() {
+    let mut m = manifest(MIN_ROWS);
+    m.end_position = 1 << 32;
+    m.validate().unwrap();
+    m.end_position += 1;
+    assert!(m.validate().is_err());
+}
+
 #[test]
 fn overflow_and_bad_padding_fail_closed() {
     allow_small_tables();
