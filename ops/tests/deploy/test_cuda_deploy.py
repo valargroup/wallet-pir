@@ -77,6 +77,12 @@ class CoordinatorPreflight(unittest.TestCase):
 
 class CudaFleet(Fleet):
     def test_repeat_validation_checks_exact_answers_without_restarting(self):
+        # Like deploy-cuda.py's own check, this one needs no `{release_dir}`, so
+        # nothing is staged.
+        document = json.loads(self.inventory_path.read_text())
+        document['services']['enhance']['exact_check']['argv'] = ['/usr/local/bin/exact', '{transaction}']
+        self.inventory_path.write_text(json.dumps(document))
+        self.inventory = descriptors.load_inventory(self.inventory_path)
         runner = self.enhance_fleet()
         result = runner.deploy(OLD_SHA, verify_noop=True)
         self.assertEqual(result.status, 'committed')

@@ -32,8 +32,9 @@ BINARIES = {
     'status-pir': ['status-pir'],
     # The receiver directory's indexer and server, which
     # ops/scripts/wallet-pir-deploy.py deploys, and its probe, which pir-monitor
-    # and the deploy's exact check run; receiver/ops/digitalocean/README.md
-    # installs it for both.
+    # and the deploy's exact check run. The deploy stages the probe and
+    # probe-fixture.json in the release directory; receiver/ops/digitalocean/
+    # README.md installs them for pir-monitor.
     'receiver-pir': ['receiver-directory', 'receiver-probe'],
 }
 FILES = {

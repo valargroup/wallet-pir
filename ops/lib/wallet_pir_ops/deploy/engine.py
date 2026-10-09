@@ -8,6 +8,7 @@ unit rendered from its `.service.in`. Every side effect is journaled first; a
 failure restores the touched units in reverse order and checks that the
 previous executable is running again.
 """
+from collections import namedtuple
 from dataclasses import dataclass, field
 import difflib
 import hashlib
@@ -28,6 +29,11 @@ SELF_CHECK_SECONDS = 60
 
 class DeployError(RuntimeError):
     pass
+
+
+# A companion file to stage: its verified digest and local copy (None when it
+# can only be checked against an already staged release).
+Artifact = namedtuple('Artifact', 'path sha256')
 
 
 def file_sha256(path):
@@ -174,8 +180,10 @@ class Deployer:
             plan.changes = []
         return plan
 
-    def assess(self, sha, binary=None, allow_drift=False, retire_historical=False, require_baseline=True):
+    def assess(self, sha, binary=None, allow_drift=False, retire_historical=False, require_baseline=True,
+               companions=None, verify_noop=False):
         """Plans for every target and the reasons, if any, a deploy must not start. Read-only."""
+        files = self.release_files(sha, binary, companions)
         states = self.probe()
         problems = self.baseline_problems(states, required=require_baseline)
         plans = [self.plan_target(t, states[t.key], sha, retire_historical) for t in self.targets]
@@ -188,12 +196,16 @@ class Deployer:
             if plan.action == 'restart' and any(c['op'] == 'retire' for c in plan.changes) and not retire_historical:
                 problems.append('%s: historical ExecStart drop-ins would be retired into the transaction '
                                 'directory; pass --retire-historical to accept' % key)
-        size = os.path.getsize(binary) if binary else 0
-        for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
-            if self.ex.sha256(host, self.service.release_binary(sha)) == sha:
+        needed = self.release_hosts(plans, verify_noop)
+        # Conflicts are refused wherever the release exists, before any no-op.
+        for host in dict.fromkeys(needed + [p.target.host for p in plans]):
+            missing, conflicts = self.inspect_release(host, sha, files)
+            problems += conflicts
+            if host not in needed or conflicts or not missing:
                 continue
-            if not binary:
-                problems.append('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
+            size = sum(os.path.getsize(path) for _, _, path, _ in missing if path)
+            if any(path is None for _, _, path, _ in missing):
+                problems.append(self.unstaged(host, sha, missing))
             elif self.ex.free_bytes(host, self.service.root) < size + self.service.min_free_bytes:
                 problems.append('%s: less than %d bytes free for the release under %s'
                                 % (host, size + self.service.min_free_bytes, self.service.root))
@@ -342,28 +354,88 @@ class Deployer:
                        'health_equals': target.health_equals},
         }
 
-    def stage(self, hosts, sha, binary, journal=None):
-        """Install the binary as `/opt/<svc>/releases/<sha256>/<binary>` and run its self-check there.
+    def release_files(self, sha, binary, companions):
+        """`(name, mode, local path or None, sha256)` of the binary, then each descriptor companion.
 
-        Adds an immutable release directory only; no unit or process changes.
+        A service with companions needs the digest of every one, and only those.
         """
+        companions = companions or {}
+        names = [companion.name for companion in self.service.companions]
+        if sorted(companions) != sorted(names):
+            raise DeployError('%s stages companions %s with its binary; got %s'
+                              % (self.service.name, names, sorted(companions)))
+        return [(self.service.binary, 0o755, binary, sha)] + [
+            (c.name, c.mode, companions[c.name].path, companions[c.name].sha256) for c in self.service.companions]
+
+    def release_hosts(self, plans, verify_noop=False):
+        """Hosts that need the release: each restarted target's, and the exact check's if it runs `{release_dir}`.
+
+        A no-op runs no check, so needs none unless `verify_noop` asks for the check anyway.
+        """
+        hosts = [plan.target.host for plan in plans if plan.action == 'restart']
+        if not hosts and not verify_noop:
+            return []
+        check = descriptors.exact_check(self.service, self.inventory)
+        if check and any('{release_dir}' in argument for argument in check['argv']):
+            hosts.append(check['host'])
+        return list(dict.fromkeys(hosts))
+
+    def inspect_release(self, host, sha, files):
+        """`(missing files, conflict messages)` for the release directory on `host`.
+
+        The directory is keyed by the binary's digest alone, so two bundles with
+        the same binary but another companion share it. A file holding other
+        bytes is a conflict, refused, never reused or overwritten.
+        """
+        missing, conflicts = [], []
+        for entry in files:
+            path = self.service.release_file(sha, entry[0])
+            current = self.ex.sha256(host, path)
+            if current is None:
+                missing.append(entry)
+            elif current != entry[3]:
+                conflicts.append('%s: immutable release file %s holds different bytes (%s, expected %s)'
+                                 % (host, path, current, entry[3]))
+        return missing, conflicts
+
+    def unstaged(self, host, sha, missing):
+        """The refusal for `missing` release files that have no local copy to upload."""
+        names = [name for name, _, local, _ in missing if local is None]
+        if names[0] == self.service.binary:
+            return '%s: release %s is not staged and no binary was given' % (host, sha[:12])
+        return '%s: release %s lacks %s and no bundle was given' % (host, sha[:12], names)
+
+    def stage(self, hosts, sha, binary, journal=None, companions=None):
+        """Install the binary and its companions in `/opt/<svc>/releases/<sha256>/` and run its self-check there.
+
+        Every missing file is uploaded into a partial directory and checked
+        against its digest before it is renamed into place: a new release
+        directory at once, or one file at a time into an existing release that
+        lacks companions. Adds files only; no unit or process changes.
+        """
+        files = self.release_files(sha, binary, companions)
         path = self.service.release_binary(sha)
         for host in hosts:
             self.lock.verify()
-            current = self.ex.sha256(host, path)
-            if current is None:
-                if binary is None:
-                    raise DeployError('%s: release %s is not staged and no binary was given' % (host, sha[:12]))
+            missing, conflicts = self.inspect_release(host, sha, files)
+            if conflicts:
+                raise DeployError('\n  '.join(conflicts))
+            if any(local is None for _, _, local, _ in missing):
+                raise DeployError(self.unstaged(host, sha, missing))
+            if missing:
                 partial = '%s/releases/.partial-%s' % (self.service.root, journal.id if journal else sha)
                 if journal:
-                    journal.event('staging', host=host)
+                    journal.event('staging', host=host, files=[entry[0] for entry in missing])
                 self.ex.mkdir(host, partial, 0o755)
-                self.ex.upload(host, binary, '%s/%s' % (partial, self.service.binary), 0o755)
-                if self.ex.sha256(host, '%s/%s' % (partial, self.service.binary)) != sha:
-                    raise DeployError('%s: uploaded binary does not match %s' % (host, sha))
-                self.ex.rename(host, partial, self.service.release_dir(sha))
-            elif current != sha:
-                raise DeployError('%s: immutable release %s holds different bytes (%s)' % (host, path, current))
+                for name, mode, local, digest in missing:
+                    self.ex.upload(host, local, '%s/%s' % (partial, name), mode)
+                    if self.ex.sha256(host, '%s/%s' % (partial, name)) != digest:
+                        raise DeployError('%s: uploaded %s does not match %s' % (host, name, digest))
+                if len(missing) == len(files):
+                    self.ex.rename(host, partial, self.service.release_dir(sha))
+                else:
+                    for name, *_ in missing:
+                        self.ex.rename(host, '%s/%s' % (partial, name), self.service.release_file(sha, name))
             code, output = self.ex.run(host, [path, *self.service.self_check], SELF_CHECK_SECONDS)
             if code:
                 raise DeployError('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-500:]))
@@ -407,8 +479,12 @@ class Deployer:
         if code:
             raise DeployError('exact-answer check failed (exit %d): %s' % (code, output[-1000:]))
 
-    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False, verify_noop=False):
-        """Returns the committed journal, or None when every target already matches."""
+    def deploy(self, sha, binary=None, source=None, allow_drift=False, retire_historical=False, skip_exact_check=False,
+               verify_noop=False, companions=None):
+        """Returns the committed journal, or None when every target already matches.
+
+        `companions` maps each descriptor companion's name to its `Artifact`.
+        """
         check = descriptors.exact_check(self.service, self.inventory)
         if check is None and not skip_exact_check:
             raise DeployError('inventory has no %s.exact_check; configure one or pass --skip-exact-check '
@@ -418,7 +494,8 @@ class Deployer:
             self.lock = lock
             try:
                 self.schema_fence()
-                return self._deploy(sha, binary, source, allow_drift, retire_historical, check, verify_noop)
+                return self._deploy(sha, binary, source, allow_drift, retire_historical, check, verify_noop,
+                                    companions)
             finally:
                 self.lock = None
 
@@ -430,12 +507,13 @@ class Deployer:
         elif host:
             schema_fence.schema_mutation_fence(lambda path: self.ex.read(host, path))
 
-    def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
+    def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False, companions=None):
         latest = Journal.load(self.state_dir, self.service.name)
         if latest is not None and latest.status not in FINAL:
             raise DeployError('transaction %s is %s; finish it with rollback before deploying again'
                               % (latest.id, latest.status))
-        plans, problems = self.assess(sha, binary, allow_drift, retire_historical)
+        plans, problems = self.assess(sha, binary, allow_drift, retire_historical, companions=companions,
+                                      verify_noop=verify_noop)
         self.describe(plans, sha)
         if problems:
             raise DeployError('refused before any change:\n  ' + '\n  '.join(problems))
@@ -448,7 +526,7 @@ class Deployer:
                                  [self.record(plan) for plan in plans], baseline)
         self.out('transaction %s (%s)' % (journal.id, journal.path))
         try:
-            self.stage(list(dict.fromkeys(p.target.host for p in restart)), sha, binary, journal)
+            self.stage(self.release_hosts(plans, verify_noop), sha, binary, journal, companions)
             journal.set_status('activating')
             for index, record in enumerate(journal.hosts):
                 if record['action'] == 'restart':

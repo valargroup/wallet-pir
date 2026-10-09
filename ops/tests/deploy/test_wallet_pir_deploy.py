@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 import sys
+import tarfile
 import tempfile
 import threading
 import unittest
@@ -20,7 +21,7 @@ sys.path.insert(0, str(ROOT / 'ops/lib'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from fake_fleet import FakeFleet, sha256  # noqa: E402
 from wallet_pir_ops.deploy import cli, descriptors, units  # noqa: E402
-from wallet_pir_ops.deploy.engine import Deployer, DeployError  # noqa: E402
+from wallet_pir_ops.deploy.engine import Artifact, Deployer, DeployError  # noqa: E402
 from wallet_pir_ops.deploy.remote import LockHeld, SSHExecutor  # noqa: E402
 from wallet_pir_ops.deploy.transaction import Journal  # noqa: E402
 
@@ -63,7 +64,19 @@ RECEIVER_OLD = b'receiver-directory built from c7f6d296'
 RECEIVER_NEW = b'receiver-directory built from a later revision'
 RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
 RECEIVER_LIVE = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/current'})
-RECEIVER_PROBE = ['/opt/receiver-pir/tools/receiver-probe', '--origin', 'https://receiver.example', '--no-auth']
+RECEIVER_PROBE = ['{release_dir}/receiver-probe', '--origin', 'https://receiver.example',
+                  '--fixture', '{release_dir}/probe-fixture.json', '--no-auth']
+PROBE = b'receiver-probe built from a later revision'
+FIXTURE = (ROOT / 'receiver/ops/digitalocean/probe-fixture.json').read_bytes()
+
+
+def receiver_release(sha):
+    return '/opt/receiver-pir/releases/' + sha
+
+
+def probe_argv(sha):
+    """The receiver's exact check as it runs for release `sha`."""
+    return [argument.replace('{release_dir}', receiver_release(sha)) for argument in RECEIVER_PROBE]
 
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
@@ -133,6 +146,12 @@ class Fleet(unittest.TestCase):
         self.status_binary.write_bytes(STATUS_NEW)
         self.receiver_binary = self.dir / 'receiver-directory'
         self.receiver_binary.write_bytes(RECEIVER_NEW)
+        self.companions = {}
+        for name, data in (('receiver-probe', PROBE), ('probe-fixture.json', FIXTURE)):
+            (self.dir / name).write_bytes(data)
+            self.companions[name] = Artifact(self.dir / name, sha256(data))
+        # The same digests with no local copy: usable only once staged.
+        self.staged_companions = {name: Artifact(None, a.sha256) for name, a in self.companions.items()}
 
     def deployer(self, name='enhance', only=None, service=None):
         deployer = Deployer(service or SERVICES[name], self.inventory, self.fake, self.state, out=self.lines.append,
@@ -167,6 +186,17 @@ class Fleet(unittest.TestCase):
                 text = text.replace(old, new)
             self.fake.install(host, service.roles[role].unit, text, (), {STATUS_LEGACY + '/status-pir': STATUS_OLD})
         deployer = self.deployer('status')
+        deployer.capture_baseline()
+        self.fake.log.clear()
+        return deployer
+
+    def receiver_fleet(self):
+        """The live Droplet's hand-installed unit: the template, starting the binary through `current`."""
+        self.fake.install('receiver-01', 'receiver-pir.service', RECEIVER_LIVE, (), {RECEIVER_CURRENT: RECEIVER_OLD})
+        # Identity is nested, and `serving` stays null until the first publication.
+        self.fake.health_shapes[('receiver-01', 'receiver-pir.service')] = lambda ready, exe: {
+            'identity': {'binary_sha256': exe}, 'serving': 'cd' * 32 if ready else None, 'epoch': 0}
+        deployer = self.deployer('receiver')
         deployer.capture_baseline()
         self.fake.log.clear()
         return deployer
@@ -555,35 +585,31 @@ class StatusTests(Fleet):
 
 
 class ReceiverTests(Fleet):
-    def receiver_fleet(self):
-        """The live Droplet's hand-installed unit: the template, starting the binary through `current`."""
-        self.fake.install('receiver-01', 'receiver-pir.service', RECEIVER_LIVE, (), {RECEIVER_CURRENT: RECEIVER_OLD})
-        # Identity is nested, and `serving` stays null until the first publication.
-        self.fake.health_shapes[('receiver-01', 'receiver-pir.service')] = lambda ready, exe: {
-            'identity': {'binary_sha256': exe}, 'serving': 'cd' * 32 if ready else None, 'epoch': 0}
-        deployer = self.deployer('receiver')
-        deployer.capture_baseline()
-        self.fake.log.clear()
-        return deployer
-
     def unit(self):
         return self.fake.read('receiver-01', '/etc/systemd/system/receiver-pir.service')
 
     def command(self):
         return self.fake.host('receiver-01').units['receiver-pir.service']['exec_start']
 
+    def release(self, host, sha):
+        """The files of release `sha` on `host`, by name."""
+        prefix = receiver_release(sha) + '/'
+        return {path[len(prefix):]: data for path, data in self.fake.host(host).files.items() if path.startswith(prefix)}
+
+    def staged(self):
+        return {'receiver-directory': RECEIVER_NEW, 'receiver-probe': PROBE, 'probe-fixture.json': FIXTURE}
+
     def test_first_deploy_adopts_the_hand_installed_unit_and_rollback_returns_to_current(self):
         deployer = self.receiver_fleet()
         sha = sha256(RECEIVER_NEW)
         before = dict(self.fake.host('receiver-01').files)
         # Only the binary path differs from the hand-installed unit, so this is no drift.
-        journal = deployer.deploy(sha, self.receiver_binary)
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(journal.hosts[0]['drift'], [])
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
-        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(),
-                                                   {'RELEASE': '/opt/receiver-pir/releases/' + sha}))
+        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha)}))
         self.assertEqual(self.fake.unit_paths('receiver-01', 'receiver-pir.service'),
                          ['/etc/systemd/system/receiver-pir.service'])
         self.assertIn('--bind 10.70.0.11:18380', self.command())
@@ -597,9 +623,140 @@ class ReceiverTests(Fleet):
         for path in self.fake.unit_paths('receiver-01', 'receiver-pir.service'):
             self.assertEqual(self.fake.host('receiver-01').files[path], before[path])
 
+    def test_the_bundle_probe_and_fixture_are_staged_with_the_binary_and_gate_the_deploy(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        uploads, upload = [], self.fake.upload
+        self.fake.upload = lambda host, local, path, mode: (uploads.append((host, path, mode)),
+                                                            upload(host, local, path, mode))
+        seen, run = [], self.fake.run
+
+        def observe(host, argv, timeout):
+            if argv == probe_argv(sha):
+                seen.append((host, self.release(host, sha)))
+            return run(host, argv, timeout)
+        self.fake.run = observe
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(journal.status, 'committed')
+        partial = '/opt/receiver-pir/releases/.partial-' + journal.id
+        self.assertEqual(uploads, [('receiver-01', partial + '/receiver-directory', 0o755),
+                                   ('receiver-01', partial + '/receiver-probe', 0o755),
+                                   ('receiver-01', partial + '/probe-fixture.json', 0o644)])
+        # One rename makes the whole verified release visible at once.
+        self.assertEqual([d for _, op, d in self.fake.log if op == 'rename'], [(partial, receiver_release(sha))])
+        self.assertEqual(self.release('receiver-01', sha), self.staged())
+        # The probe and fixture that ran are this bundle's, from the release directory.
+        self.assertEqual(seen, [('receiver-01', self.staged())])
+        self.assertIn('--fixture', probe_argv(sha))
+        self.assertIn(receiver_release(sha) + '/probe-fixture.json', probe_argv(sha))
+        # A repeat with the same bundle is a no-op.
+        self.fake.log.clear()
+        self.assertIsNone(deployer.deploy(sha, self.receiver_binary, companions=self.companions))
+        self.assertEqual(self.fake.log, [])
+
+    def test_missing_or_corrupt_companions_stage_nothing(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        for companions, error in [
+                (None, r"stages companions \['receiver-probe', 'probe-fixture.json'\]"),
+                ({'receiver-probe': self.companions['receiver-probe']}, 'stages companions'),
+                ({**self.companions, 'extra': self.companions['receiver-probe']}, 'stages companions'),
+                ({**self.companions, 'probe-fixture.json': Artifact(None, sha256(FIXTURE))},
+                 r"lacks \['probe-fixture.json'\] and no bundle was given")]:
+            with self.subTest(error=error):
+                with self.assertRaisesRegex(DeployError, error):
+                    deployer.deploy(sha, self.receiver_binary, companions=companions)
+                self.assertEqual(self.fake.log, [])
+        # A local file that is not the bytes the bundle's checksum names.
+        corrupt = {**self.companions, 'probe-fixture.json': Artifact(self.dir / 'receiver-probe', sha256(FIXTURE))}
+        with self.assertRaisesRegex(DeployError, 'uploaded probe-fixture.json does not match'):
+            deployer.deploy(sha, self.receiver_binary, companions=corrupt)
+        self.assertEqual(self.release('receiver-01', sha), {})
+        self.assertEqual(self.restarts(), [])
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
+
+    def test_interrupted_staging_leaves_no_release_and_a_retry_completes_it(self):
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+
+        class Crash(BaseException):
+            pass
+
+        def crash(host, op, detail):
+            if op == 'upload' and detail.endswith('/probe-fixture.json'):
+                raise Crash()
+        self.fake.observer = crash
+        with self.assertRaises(Crash):
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(self.release('receiver-01', sha), {})
+        self.assertNotIn(receiver_release(sha), self.fake.host('receiver-01').dirs)
+        self.assertEqual(self.restarts(), [])
+        self.assertEqual(Journal.load(self.state, 'receiver').status, 'failed')
+        self.fake.observer = None
+        self.assertEqual(deployer.deploy(sha, self.receiver_binary, companions=self.companions).status, 'committed')
+        self.assertEqual(self.release('receiver-01', sha), self.staged())
+
+    def test_a_reused_release_is_checked_file_by_file(self):
+        sha = sha256(RECEIVER_NEW)
+        release = receiver_release(sha)
+        with self.subTest('matching'):
+            deployer = self.receiver_fleet()
+            for name, data in self.staged().items():
+                self.fake.put('receiver-01', '%s/%s' % (release, name), data)
+            self.assertEqual(deployer.deploy(sha, companions=self.staged_companions).status, 'committed')
+            self.assertEqual([op for _, op, _ in self.fake.log if op in ('upload', 'rename')], [])
+        with self.subTest('staged before companions'):
+            self.fake, self.state = FakeFleet(), self.dir / 'state-older'
+            deployer = self.receiver_fleet()
+            self.fake.put('receiver-01', release + '/receiver-directory', RECEIVER_NEW)
+            journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+            self.assertEqual(journal.status, 'committed')
+            partial = '/opt/receiver-pir/releases/.partial-' + journal.id
+            # Only the missing files, each renamed in without replacing anything.
+            self.assertEqual([d for _, op, d in self.fake.log if op == 'upload'],
+                             [partial + '/receiver-probe', partial + '/probe-fixture.json'])
+            self.assertEqual([d for _, op, d in self.fake.log if op == 'rename'],
+                             [(partial + '/receiver-probe', release + '/receiver-probe'),
+                              (partial + '/probe-fixture.json', release + '/probe-fixture.json')])
+            self.assertEqual(self.release('receiver-01', sha), self.staged())
+        with self.subTest('conflicting'):
+            # Same server bytes, another bundle's fixture: refused before any
+            # change, even though every target already runs this binary.
+            other = self.dir / 'other-fixture.json'
+            other.write_bytes(FIXTURE + b'\n')
+            companions = {**self.companions, 'probe-fixture.json': Artifact(other, sha256(FIXTURE + b'\n'))}
+            self.fake.log.clear()
+            with self.assertRaisesRegex(DeployError, 'immutable release file %s/probe-fixture.json holds different '
+                                        'bytes' % release):
+                deployer.deploy(sha, self.receiver_binary, companions=companions)
+            self.assertEqual(self.fake.log, [])
+            self.assertEqual(self.release('receiver-01', sha), self.staged())
+            self.assertEqual(Journal.load(self.state, 'receiver').id, journal.id)
+
+    def test_the_release_is_staged_on_a_separate_check_host(self):
+        document = json.loads(self.inventory_path.read_text())
+        document['services']['receiver']['exact_check']['host'] = 'coordinator'
+        self.inventory_path.write_text(json.dumps(document))
+        self.inventory = descriptors.load_inventory(self.inventory_path)
+        deployer = self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        journal = deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.fake.runs[-1], ('coordinator', probe_argv(sha)))
+        for host in ('receiver-01', 'coordinator'):
+            self.assertEqual(self.release(host, sha), self.staged(), host)
+        # The check host only received the release; it runs no unit.
+        self.assertEqual({op for _, op, _ in self.fake.mutations('coordinator')}, {'mkdir', 'upload', 'rename'})
+        # Its copy is checked too: a conflict there refuses even a no-op.
+        self.fake.put('coordinator', receiver_release(sha) + '/receiver-probe', b'an older probe')
+        self.fake.log.clear()
+        with self.assertRaisesRegex(DeployError, 'coordinator: immutable release file'):
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions, verify_noop=True)
+        self.assertEqual(self.fake.log, [])
+
     def test_template_argument_change_takes_effect_and_rolls_back(self):
         sha = sha256(RECEIVER_NEW)
-        self.receiver_fleet().deploy(sha, self.receiver_binary)
+        self.receiver_fleet().deploy(sha, self.receiver_binary, companions=self.companions)
         deployed = self.unit()
         template = self.dir / 'receiver-pir.service.in'
         template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
@@ -611,10 +768,10 @@ class ReceiverTests(Fleet):
         # The same, already staged binary: only the arguments change, and the
         # plan shows them as drift for review.
         with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
-            deployer.deploy(sha)
+            deployer.deploy(sha, companions=self.staged_companions)
         self.assertIn('--concurrency 16', '\n'.join(line for line in self.lines if 'drift Service.ExecStart' in line))
         self.assertEqual(self.fake.log, [])
-        journal = deployer.deploy(sha, allow_drift=True)
+        journal = deployer.deploy(sha, allow_drift=True, companions=self.staged_companions)
         self.assertEqual(journal.status, 'committed')
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertIn('--concurrency 16', self.unit())
@@ -632,11 +789,11 @@ class ReceiverTests(Fleet):
         sha = sha256(RECEIVER_NEW)
         self.fake.unhealthy.add(('receiver-01', sha))
         with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
-            deployer.deploy(sha, self.receiver_binary)
+            deployer.deploy(sha, self.receiver_binary, companions=self.companions)
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
         self.assertEqual(self.unit(), RECEIVER_LIVE)
         self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
-        self.assertNotIn(RECEIVER_PROBE, [argv for _, argv in self.fake.runs])
+        self.assertNotIn(probe_argv(sha), [argv for _, argv in self.fake.runs])
 
     def test_the_probe_runs_on_the_receiver_under_the_lock_before_commit(self):
         deployer = self.receiver_fleet()
@@ -644,15 +801,16 @@ class ReceiverTests(Fleet):
         seen, run = [], self.fake.run
 
         def observe(host, argv, timeout):
-            if argv == RECEIVER_PROBE:
+            if argv == probe_argv(sha):
                 seen.append((host, timeout, LOCK in self.fake.held, Journal.load(self.state, 'receiver').status,
                              self.running('receiver-01', 'receiver-pir.service')))
             return run(host, argv, timeout)
         self.fake.run = observe
-        self.assertEqual(deployer.deploy(sha, self.receiver_binary).status, 'committed')
+        self.assertEqual(deployer.deploy(sha, self.receiver_binary, companions=self.companions).status, 'committed')
         self.assertEqual(seen, [('receiver-01', 120, True, 'verifying', sha)])
 
     def test_a_failed_or_timed_out_probe_rolls_back(self):
+        sha = sha256(RECEIVER_NEW)
         for i, result in enumerate([(1, '{"passed":false,"category":"answer_mismatch"}'),
                                     (124, 'timed out after 120s'),
                                     subprocess.TimeoutExpired(['ssh', 'receiver-01'], 150)]):
@@ -661,11 +819,13 @@ class ReceiverTests(Fleet):
                 deployer = self.receiver_fleet()
                 self.fake.exact_result = result
                 with self.assertRaises((DeployError, subprocess.TimeoutExpired)):
-                    deployer.deploy(sha256(RECEIVER_NEW), self.receiver_binary)
-                self.assertEqual([argv for _, argv in self.fake.runs][-1], RECEIVER_PROBE)
+                    deployer.deploy(sha, self.receiver_binary, companions=self.companions)
+                self.assertEqual([argv for _, argv in self.fake.runs][-1], probe_argv(sha))
                 self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
                 self.assertEqual(self.unit(), RECEIVER_LIVE)
                 self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
+                # The verified release stays staged for a retry; only units roll back.
+                self.assertEqual(self.release('receiver-01', sha), self.staged())
 
 
 class UnitTests(unittest.TestCase):
@@ -710,6 +870,27 @@ class UnitTests(unittest.TestCase):
         self.assertIn('receiver-directory', cli.load_release().BINARIES['receiver-pir'])
         (server,) = descriptors.targets(SERVICES['receiver'], inventory)
         self.assertEqual(descriptors.exact_check(SERVICES['receiver'], inventory)['host'], server.host)
+        self.assertEqual(SERVICES['receiver'].companions, (descriptors.Companion('receiver-probe', 0o755),
+                                                           descriptors.Companion('probe-fixture.json', 0o644)))
+        self.assertEqual([service.companions for name, service in SERVICES.items() if name != 'receiver'], [(), ()])
+
+    def test_companions_need_distinct_plain_names_and_explicit_modes(self):
+        text = (DEPLOY / 'deploy.toml').read_text()
+        declared = '{ name = "probe-fixture.json", mode = 0o644 }'
+        self.assertIn(declared, text)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'deploy.toml'
+            path.write_text(text.replace('template = "', 'template = "%s/' % DEPLOY))
+            self.assertEqual(descriptors.load_descriptors(path)['receiver'].companions, SERVICES['receiver'].companions)
+            for companion in ['{ name = "probe-fixture.json", mode = 0o600 }', '{ name = "probe-fixture.json" }',
+                              '{ name = "receiver-directory", mode = 0o755 }', '{ name = "receiver-probe", mode = 0o755 }',
+                              '{ name = "../probe-fixture.json", mode = 0o644 }', '"probe-fixture.json"',
+                              '{ name = "probe-fixture.json", mode = "0644" }']:
+                with self.subTest(companion=companion):
+                    # Templates resolve beside the descriptors, so anchor them to the repository.
+                    path.write_text(text.replace(declared, companion).replace('template = "', 'template = "%s/' % DEPLOY))
+                    with self.assertRaisesRegex(descriptors.DescriptorError, 'companions'):
+                        descriptors.load_descriptors(path)
 
 
 class LocalExecutor(SSHExecutor):
@@ -795,6 +976,49 @@ class CommandLineTests(Fleet):
         self.assertIn('committed', self.lines[0])
         self.assertEqual(self.run_cli('rollback', 'enhance'), 0)
         self.assertTrue(all(self.running(h, u) == OLD_SHA for h, u in ENHANCE))
+
+
+    def receiver_bundle(self, revision, probe=PROBE):
+        """A `receiver-pir` release archive in the shape `tools/ci/release.py` assembles."""
+        directory = self.dir / ('bundle-' + revision[:8])
+        directory.mkdir()
+        files = {'receiver-directory': RECEIVER_NEW, 'receiver-probe': probe, 'revision': (revision + '\n').encode()}
+        for source in cli.load_release().FILES['receiver-pir']:
+            files[Path(source).name] = (ROOT / source).read_bytes()
+        files['SHA256SUMS'] = ''.join('%s  %s\n' % (sha256(data), name) for name, data in sorted(files.items())).encode()
+        for name, data in files.items():
+            (directory / name).write_bytes(data)
+        archive = self.dir / ('receiver-pir-%s.tar.gz' % revision[:8])
+        with tarfile.open(archive, 'w:gz') as handle:
+            for name in sorted(files):
+                handle.add(directory / name, arcname=name)
+        return archive
+
+    def test_receiver_deploys_only_from_a_verified_bundle_with_its_companions(self):
+        self.receiver_fleet()
+        sha = sha256(RECEIVER_NEW)
+        for flags in (['--binary', str(self.receiver_binary)], ['--sha256', sha]):
+            self.assertEqual(self.run_cli('deploy', 'receiver', *flags), 1)
+            self.assertTrue(any('give --archive with --sha' in line for line in self.lines), self.lines)
+        self.assertEqual(self.fake.log, [])
+        revision = '1' * 40
+        archive = self.receiver_bundle(revision)
+        self.assertEqual(self.run_cli('deploy', 'receiver', '--archive', str(archive), '--sha', revision), 0, self.lines)
+        journal = Journal.load(self.state, 'receiver')
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(journal.data['source']['companions'],
+                         {'receiver-probe': sha256(PROBE), 'probe-fixture.json': sha256(FIXTURE)})
+        self.assertEqual(self.fake.read('receiver-01', receiver_release(sha) + '/receiver-probe'), PROBE.decode())
+        self.assertEqual(self.fake.runs[-1], ('receiver-01', probe_argv(sha)))
+        # A later bundle with the same server but another probe cannot reuse the release.
+        self.fake.log.clear()
+        other = '2' * 40
+        archive = self.receiver_bundle(other, b'another probe')
+        self.assertEqual(self.run_cli('plan', 'receiver', '--archive', str(archive), '--sha', other), 0)
+        self.assertTrue(any('receiver-probe holds different bytes' in line for line in self.lines), self.lines)
+        self.assertEqual(self.run_cli('deploy', 'receiver', '--archive', str(archive), '--sha', other), 1)
+        self.assertTrue(any('receiver-probe holds different bytes' in line for line in self.lines), self.lines)
+        self.assertEqual(self.fake.log, [])
 
 
 if __name__ == '__main__':

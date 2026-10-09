@@ -82,8 +82,9 @@ ops/scripts/wallet-pir-deploy.py rollback receiver [--transaction ID]
 ```
 
 The tool installs the binary as
-`/opt/receiver-pir/releases/<sha256>/receiver-directory`, runs its `--help` there,
-and writes `/etc/systemd/system/receiver-pir.service` from the template with
+`/opt/receiver-pir/releases/<sha256>/receiver-directory`, with the bundle's
+`receiver-probe` and `probe-fixture.json` beside it, each checked against the
+bundle's `SHA256SUMS`, runs its `--help` there, and writes `/etc/systemd/system/receiver-pir.service` from the template with
 `@RELEASE@` set to that directory. After the restart it requires the running
 executable's digest and a health answer from
 `http://10.70.0.11:18380/v1/receiver/health` whose `serving` is set, within 300
@@ -103,8 +104,8 @@ Report `status receiver` and the rollback command after each deploy.
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
 reviewed commit and deploy from that checkout. `plan` prints each changed setting
 as a `drift` line, and `deploy` refuses it until `--allow-unit-drift` accepts the
-reviewed drift. With the binary unchanged, `--sha256 <running digest>` redeploys
-the staged release with the new unit. The restart, readiness check and rollback
+reviewed drift. The receiver deploys only from a bundle (`--archive`); with the
+binary unchanged, the same bundle redeploys the staged release with the new unit. The restart, readiness check and rollback
 are those of any deploy, and a commit refreshes the baseline.
 
 Before the first tool deploy, once:
@@ -117,8 +118,7 @@ Before the first tool deploy, once:
    to the inventory's pinned `known_hosts` and update `known_hosts_sha256`.
 2. Authorize the deploy key (`ssh.key`, `~/.ssh/wallet-pir-deploy` in the example)
    for root on the Droplet.
-3. Install the [deploy probe](#deploy-probe).
-4. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
+3. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
 
 The live Droplet still runs the unit installed by hand, which starts
@@ -137,34 +137,17 @@ hand-installed unit in place until the template changes.
 
 ### Deploy probe
 
-The inventory's `exact_check` runs `/opt/receiver-pir/tools/receiver-probe` with
-`/opt/receiver-pir/tools/receiver-probe-fixture.json`, the `receiver-probe` and
-`probe-fixture.json` of a `receiver-pir` bundle. A deploy installs only
-`receiver-directory`, so install these before the first deploy, and again when a
-release changes either; a new fixture also needs its digest in the check's
-`--fixture-sha256`. On the coordinator, `release.py extract` checks every file
-against the bundle's `SHA256SUMS`; copy the result to the Droplet and install it
-there under the production lock, checking the digests again:
-
-```sh
-tools/ci/release.py extract --sha <rev> --kind receiver-pir --archive receiver-pir.tar.gz --output receiver-pir-<rev>
-scp -r receiver-pir-<rev> <droplet>:/root/receiver-pir-tools.new
-flock -n /run/lock/wallet-pir-production.lock ssh <droplet> sh -s <<'EOF'
-set -eu
-cd /root/receiver-pir-tools.new
-sha256sum -c SHA256SUMS
-install -D -m 0755 -o root -g root receiver-probe /opt/receiver-pir/tools/receiver-probe
-install -m 0644 -o root -g root probe-fixture.json /opt/receiver-pir/tools/receiver-probe-fixture.json
-cmp receiver-probe /opt/receiver-pir/tools/receiver-probe
-cmp probe-fixture.json /opt/receiver-pir/tools/receiver-probe-fixture.json
-cd /
-rm -r /root/receiver-pir-tools.new
-EOF
-```
-
-Then run the check's `argv` once by hand on the Droplet and confirm it prints
-`"passed":true`, which also shows that the Droplet reaches the public origin and
-both nodes.
+The inventory's `exact_check` runs `{release_dir}/receiver-probe` with
+`{release_dir}/probe-fixture.json`: the probe and fixture the deploy staged in the
+release directory from the bundle it deploys, so nothing is installed for it by
+hand. A new fixture also needs its digest in the check's `--fixture-sha256`. The
+release directory is named by the server binary's digest alone, so a bundle with
+the same `receiver-directory` but another probe or fixture is refused, before any
+change, wherever that release is already staged; it is never reused or
+overwritten. After `preflight --stage`, run the check's `argv` once by hand on the
+Droplet, with `{release_dir}` replaced by the staged release directory, and confirm
+it prints `"passed":true`, which also shows that the Droplet reaches the public
+origin and both nodes.
 
 ## Host provisioning
 
@@ -283,5 +266,23 @@ start or an outage, since a sample spanning the hour's start is dropped, not
 split. Status classes are as counted: `4xx` includes 429 overload but is not
 overload. It adds no alert rules.
 
-`pir-monitor` is not a deploy-tool service, so `receiver-probe` and its fixture are
-installed on the monitor host as above.
+`pir-monitor` is not a deploy-tool service, so install `receiver-probe` and its
+fixture on the monitor host from the bundle. On the coordinator, `release.py
+extract` checks every file against the bundle's `SHA256SUMS`; copy the result to
+the monitor host and install it there, checking the digests again:
+
+```sh
+tools/ci/release.py extract --sha <rev> --kind receiver-pir --archive receiver-pir.tar.gz --output receiver-pir-<rev>
+scp -r receiver-pir-<rev> <monitor>:/root/receiver-pir-tools.new
+ssh <monitor> sh -s <<'EOF'
+set -eu
+cd /root/receiver-pir-tools.new
+sha256sum -c SHA256SUMS
+install -D -m 0755 -o root -g root receiver-probe /opt/pir-monitor/receiver-probe
+install -m 0644 -o root -g root probe-fixture.json /opt/pir-monitor/receiver-probe-fixture.json
+cmp receiver-probe /opt/pir-monitor/receiver-probe
+cmp probe-fixture.json /opt/pir-monitor/receiver-probe-fixture.json
+cd /
+rm -r /root/receiver-pir-tools.new
+EOF
+```

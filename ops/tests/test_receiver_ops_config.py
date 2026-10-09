@@ -8,10 +8,12 @@ directories and firewall rule. Each check takes the file's text, so the
 negative cases run it against mutated copies. The unit is the template
 `wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
 The example inventory's `exact_check` must probe this edge, listener, fixture and
-nodes from the receiver's own host before a deploy commits.
+nodes from the receiver's own host before a deploy commits, running the probe and
+fixture the deploy stages from the same bundle.
 """
 import copy
 import hashlib
+import importlib.util
 import ipaddress
 import json
 from pathlib import Path
@@ -26,8 +28,9 @@ WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
 DEPLOY = ROOT / 'enhance/ops/deploy/deploy.toml'
 INVENTORY = ROOT / 'enhance/ops/deploy/deploy-inventory.example.json'
-PROBE = '/opt/receiver-pir/tools/receiver-probe'
-PROBE_FIXTURE = '/opt/receiver-pir/tools/receiver-probe-fixture.json'
+PROBE = '{release_dir}/receiver-probe'
+PROBE_FIXTURE = '{release_dir}/probe-fixture.json'
+COMPANIONS = [{'name': 'receiver-probe', 'mode': 0o755}, {'name': 'probe-fixture.json', 'mode': 0o644}]
 USER = 'receiver-pir'
 STATE = '/srv/receiver-pir'
 HARDENING = {'NoNewPrivileges': 'true', 'ProtectSystem': 'strict', 'ProtectHome': 'true',
@@ -131,19 +134,30 @@ def check_cloud_init(text, bind):
     assert ['ufw', '--force', 'enable'] in commands
 
 
-def check_exact_check(service, unit, caddy, fixture):
-    """Check the receiver's deploy gate: the provisioned probe, run on the server's host.
+def release_bundle_files():
+    """Every file name of a `receiver-pir` release bundle, from `tools/ci/release.py`."""
+    spec = importlib.util.spec_from_file_location('release', ROOT / 'tools/ci/release.py')
+    release = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release)
+    return set(release.BINARIES['receiver-pir']) | {Path(path).name for path in release.FILES['receiver-pir']}
 
-    The coordinator cannot reach the private health route, and a deploy stages only
-    `receiver-directory`, so the probe is a fixed path rather than `{release_dir}`.
+
+def check_exact_check(service, unit, caddy, fixture, descriptor):
+    """Check the receiver's deploy gate: the release's own probe, run on the server's host.
+
+    The coordinator cannot reach the private health route. The descriptor stages
+    the bundle's probe and fixture with the binary, so the check runs them from
+    `{release_dir}`, never a separately installed copy.
     """
     (server,) = service['roles']['server']
     check = service['exact_check']
     bind, _ = check_unit(unit)
     assert server['vars']['listen'] == bind, server
     assert check['host'] == server['host'], check['host']
+    assert descriptor.get('companions') == COMPANIONS, descriptor.get('companions')
+    assert {c['name'] for c in COMPANIONS} <= release_bundle_files()
     argv = check['argv']
-    assert argv[0] == PROBE and not any('{' in word for word in argv), argv
+    assert argv[0] == PROBE and not any('{' in word for word in argv[1:] if word != PROBE_FIXTURE), argv
     option = lambda name: argv[argv.index(name) + 1]
     (site, _), = caddy_tree(caddy)
     assert option('--origin') == 'https://' + site, argv
@@ -165,6 +179,8 @@ class ReceiverOpsContract(unittest.TestCase):
         self.cloud = (DIR / 'cloud-init.yaml').read_text()
         self.service = json.loads(INVENTORY.read_text())['services']['receiver']
         self.fixture = (DIR / 'probe-fixture.json').read_bytes()
+        with open(DEPLOY, 'rb') as handle:
+            self.descriptor = tomllib.load(handle)['services']['receiver']
 
     def test_repository_files_satisfy_the_contract(self):
         bind, _ = check_unit(self.unit)
@@ -179,7 +195,7 @@ class ReceiverOpsContract(unittest.TestCase):
         self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 
     def test_the_deploy_runs_the_probe_on_the_receiver_before_commit(self):
-        check_exact_check(self.service, self.unit, self.caddy, self.fixture)
+        check_exact_check(self.service, self.unit, self.caddy, self.fixture, self.descriptor)
         self.assertNotIn('--skip-exact-check', (DIR / 'README.md').read_text())
 
     def test_misdirected_or_unbounded_probe_fails(self):
@@ -192,17 +208,27 @@ class ReceiverOpsContract(unittest.TestCase):
             mutated(lambda check, argv: check.update(host='coordinator')),
             mutated(lambda check, argv: check.pop('timeout')),
             mutated(lambda check, argv: check.update(timeout=900)),
-            mutated(swap(PROBE, '{release_dir}/receiver-probe')),
+            mutated(swap(PROBE, '/opt/receiver-pir/tools/receiver-probe')),
             mutated(swap('https://receiver-pir.valargroup.dev', 'https://receiver.example')),
             mutated(swap('http://10.70.0.11:18380/v1/receiver/health', 'http://127.0.0.1:18380/v1/receiver/health')),
-            mutated(swap(PROBE_FIXTURE, '/root/probe-fixture.json')),
+            mutated(swap(PROBE_FIXTURE, '/opt/receiver-pir/tools/receiver-probe-fixture.json')),
+            mutated(swap(PROBE_FIXTURE, '{release_dir}/receiver-probe-fixture.json')),
             mutated(swap(hashlib.sha256(self.fixture).hexdigest(), '0' * 64)),
             mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
             mutated(lambda check, argv: argv.remove('--no-auth')),
         ]:
             self.assertNotEqual(service, self.service)
             with self.assertRaises(AssertionError):
-                check_exact_check(service, self.unit, self.caddy, self.fixture)
+                check_exact_check(service, self.unit, self.caddy, self.fixture, self.descriptor)
+
+    def test_unstaged_or_misnamed_companions_fail(self):
+        for companions in [COMPANIONS[:1], COMPANIONS[1:], [],
+                           [COMPANIONS[0], {'name': 'probe-fixture.json', 'mode': 0o755}],
+                           [{'name': 'receiver-probe', 'mode': 0o644}, COMPANIONS[1]],
+                           [COMPANIONS[0], {'name': 'receiver-probe-fixture.json', 'mode': 0o644}]]:
+            descriptor = dict(self.descriptor, companions=companions)
+            with self.assertRaises(AssertionError):
+                check_exact_check(self.service, self.unit, self.caddy, self.fixture, descriptor)
 
     def test_exposed_operator_routes_or_catch_all_proxy_fail(self):
         matcher = '/v1/receiver/filters/*'

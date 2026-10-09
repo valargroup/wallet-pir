@@ -14,6 +14,7 @@ import string
 import tomllib
 
 MODES = ('exec-drop-in', 'template')
+COMPANION_MODES = (0o755, 0o644)
 UNIT = re.compile(r'^[A-Za-z0-9@._-]+\.service$')
 PLAIN_PATH = re.compile(r'^/[A-Za-z0-9._/-]+$')
 PLAIN_NAME = re.compile(r'^[A-Za-z0-9._-]+$')
@@ -44,6 +45,13 @@ class Role:
 
 
 @dataclass(frozen=True)
+class Companion:
+    """A bundle file staged with the binary in every release directory, with its file mode."""
+    name: str
+    mode: int
+
+
+@dataclass(frozen=True)
 class Service:
     name: str
     root: str
@@ -54,12 +62,17 @@ class Service:
     self_check: tuple = ('--help',)
     min_free_bytes: int = 1 << 30
     template_vars: tuple = ()
+    companions: tuple = ()
 
     def release_dir(self, sha):
         return '%s/releases/%s' % (self.root, sha)
 
     def release_binary(self, sha):
-        return '%s/%s' % (self.release_dir(sha), self.binary)
+        return self.release_file(sha, self.binary)
+
+    def release_file(self, sha, name):
+        """The path of the binary or a companion in the release directory of binary digest `sha`."""
+        return '%s/%s' % (self.release_dir(sha), name)
 
     def transaction_dir(self, transaction):
         return '%s/transactions/%s' % (self.root, transaction)
@@ -115,9 +128,17 @@ def load_descriptors(path):
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)
         require(PLAIN_NAME.match(raw.get('binary', '')), '%s: binary must be a plain file name' % name)
+        companions = tuple(Companion(spec.get('name'), spec.get('mode')) for spec in raw.get('companions', ())
+                           if isinstance(spec, dict) and set(spec) == {'name', 'mode'})
+        names = [raw['binary']] + [companion.name for companion in companions]
+        require(len(companions) == len(raw.get('companions', ())) and len(names) == len(set(names))
+                and all(isinstance(c.name, str) and PLAIN_NAME.match(c.name)
+                        and type(c.mode) is int and c.mode in COMPANION_MODES for c in companions),
+                '%s: companions are distinct {name, mode} plain file names besides the binary, mode 0o755 or 0o644' % name)
         services[name] = Service(name, raw['root'], raw['binary'], order, roles,
                                  tuple(raw.get('artifact_kinds', ())), tuple(raw.get('self_check', ('--help',))),
-                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())))
+                                 int(raw.get('min_free_bytes', 1 << 30)), tuple(raw.get('template_vars', ())),
+                                 companions)
     return services
 
 

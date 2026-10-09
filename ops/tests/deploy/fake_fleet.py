@@ -206,7 +206,8 @@ class FakeFleet(Executor):
     def run(self, host, argv, timeout):
         self.runs.append((host, list(argv)))
         data = self.host(host).files.get(argv[0])
-        if data is not None:
+        # A staged binary's self-check; any other command is an exact check.
+        if data is not None and argv[1:] == ['--help']:
             return (1, 'illegal instruction') if sha256(data) in self.self_check_fails else (0, 'Usage: ...')
         if isinstance(self.exact_result, BaseException):
             raise self.exact_result
