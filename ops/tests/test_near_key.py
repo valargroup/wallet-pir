@@ -291,6 +291,20 @@ class NearKeyInstaller(unittest.TestCase):
         self.assertEqual(self.installed().read_bytes(), b'NEAR_INTENTS_EXPLORER=%s' % LINE.encode())
         self.assertEqual(sorted(self.keys.iterdir()), sorted(left + [self.installed()]))
 
+    def test_a_retry_after_an_unsynced_publication_makes_it_durable(self):
+        """Killed after its link, before removing its temporary name or syncing the directory."""
+        run = self.install(hook='kill-after-link')
+        self.assertNotEqual(run.returncode, 0)
+        self.assertEqual(self.installed().stat().st_nlink, 2)
+        run = self.install(hook='trace-fsync')
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertIn('already installed', run.stdout)
+        self.assertEqual(sorted(p.name for p in self.keys.iterdir()), ['near-%s.env' % ID])
+        self.assertEqual(self.installed().stat().st_nlink, 1)
+        synced = [json.loads(line) for line in self.fsyncs.read_text().splitlines()]
+        inodes = [path.stat().st_ino for path in (self.installed(), self.keys, self.root / 'etc')]
+        self.assertEqual(synced, inodes)
+
 
 if __name__ == '__main__':
     unittest.main()

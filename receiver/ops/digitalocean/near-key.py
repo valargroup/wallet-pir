@@ -49,6 +49,7 @@ if not re.fullmatch(r"[A-Za-z0-9._-]+", key_id) or not re.fullmatch(rb"[A-Za-z0-
     sys.exit("refused: malformed id, or stdin is not one complete key line")
 content = b"NEAR_INTENTS_EXPLORER=" + data
 final = os.path.join(directory, "near-" + key_id + ".env")
+temp_prefix = ".near-" + key_id + "."
 
 
 def refuse(reason):
@@ -56,11 +57,24 @@ def refuse(reason):
     sys.exit("refused: " + final + " " + reason + "; key files are never replaced")
 
 
+def sync_directories():
+    """Fsyncs the key directory and its parent, making the published name durable."""
+    for path in (directory, os.path.dirname(directory)):
+        dfd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(dfd)
+        finally:
+            os.close(dfd)
+
+
 def settle():
     """Exits for an existing final name: 0 if it is a private file holding this key, else 1.
 
     Checked on the open file: owned by this user (root), mode without group or
-    other bits, and one name. No temporary name of this run links to it here.
+    other bits, and one name. An earlier run killed between its publishing link
+    and removing its temporary name leaves that name linked to the file, so such
+    names are removed first. Success first makes the file and its name durable,
+    which that earlier run may not have done.
     """
     try:
         fd = os.open(final, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -69,6 +83,11 @@ def settle():
     info = os.fstat(fd)
     if not stat.S_ISREG(info.st_mode):
         refuse("is not a regular file")
+    for name in os.listdir(directory):
+        path = os.path.join(directory, name)
+        if name.startswith(temp_prefix) and name.endswith(".tmp") and os.path.samestat(os.lstat(path), info):
+            os.unlink(path)
+    info = os.fstat(fd)
     if info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
         refuse("is not a private file of this user with one name")
     current = b""
@@ -79,6 +98,8 @@ def settle():
         current += chunk
     if current != content:
         refuse("holds another key")
+    os.fsync(fd)
+    sync_directories()
     print(final + " is already installed with this key")
     sys.exit(0)
 
@@ -89,7 +110,7 @@ if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode
     sys.exit("refused: " + directory + " must be a directory owned by this user and writable by no one else")
 if os.path.lexists(final):
     settle()
-temp = os.path.join(directory, ".near-" + key_id + "." + secrets.token_hex(8) + ".tmp")
+temp = os.path.join(directory, temp_prefix + secrets.token_hex(8) + ".tmp")
 fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
 published = False
 try:
@@ -109,12 +130,7 @@ finally:
         pass
 if not published:
     settle()
-for path in (directory, os.path.dirname(directory)):
-    dfd = os.open(path, os.O_RDONLY)
-    try:
-        os.fsync(dfd)
-    finally:
-        os.close(dfd)
+sync_directories()
 print("installed " + final)
 '''
 
