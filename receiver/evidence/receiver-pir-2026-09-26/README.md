@@ -36,6 +36,13 @@ cargo test -p receiver-pir-server --test http \
   known_mainnet_refund_through_receiver_and_enhance_pir -- --ignored --nocapture
 ```
 
+The Rust toolchain and Cargo build profile were not recorded, and
+[`manifest.json`](manifest.json) declares both unavailable. As shown, the command
+passes no `--profile`, so Cargo would build the test with its default `test`
+profile, but nothing records that it ran exactly as shown or how the isolated
+Enhance service was built. The `profile` in `results.json` is the q48 protocol
+profile, not a Cargo profile.
+
 Seven receiver-directory tests and the focused receiver client/service tests
 cover authentication, corrupted setup, mismatched requests/revisions/anchors,
 continuation errors, budget exhaustion, absence, and oversized requests. The

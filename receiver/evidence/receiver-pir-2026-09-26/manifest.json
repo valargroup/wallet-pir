@@ -9,6 +9,12 @@
     "note": "client and service are 7-character prefixes recorded at the time from pre-rewrite development branches; they may not resolve. results.json records ipir_sp only as the prefix 1f2aec65; the full revision and repository come from this repository's retained Cargo.lock, which resolves ipir-sp 0.1.0-rc.6 to that revision. The protocol measured (q48) was replaced by this stack's pir-native protocol."
   },
   "protocol": "ironwood-receiver-pir-v1-q48",
+  "toolchain": {
+    "rust": null,
+    "cargo_profile": null,
+    "status": "unavailable: neither was recorded at the time",
+    "note": "The README's command passes no --profile, so as shown Cargo builds the test with its default test profile, but no record shows the command was run exactly as shown, nor how the isolated Enhance service was built. The client and service prefixes resolve in this repository's remote branches to commits whose rust-toolchain.toml pins Rust 1.91.0; a pin does not show what built. results.json's profile is the receiver PIR protocol profile (ironwood-receiver-pir-v1-q48, as in protocol here), not a Cargo profile."
+  },
   "network": "mainnet",
   "range": [
     3428143,
@@ -27,6 +33,7 @@
   "historical": true,
   "qualification": "development evidence, not release qualification",
   "not_retained": [
+    "the Rust toolchain and Cargo build profile of the receiver test and of the isolated Enhance service",
     "the full client and service commit IDs and their refs (only 7-character prefixes from pre-rewrite development branches were recorded)",
     "the opt-in integration test that ran, which no longer exists in the tree",
     "the RPC responses or checker output behind results.json's terminal-anchor validation; the anchor check cannot be re-verified from this run",
