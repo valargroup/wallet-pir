@@ -45,6 +45,10 @@ class Role:
     ready_url: str = None
     ready_timeout: int = 180
     adoptable_drop_ins: tuple = ()
+    # A template role whose rendered unit is all of its configuration: a drop-in
+    # the tool would keep is refused, so none can add settings the deploy did not
+    # review, such as another EnvironmentFile.
+    owns_unit: bool = False
 
 
 @dataclass(frozen=True)
@@ -124,9 +128,12 @@ def load_descriptors(path):
             ready = spec.get('ready')
             require(ready is None or (set(ready) in ({'field', 'equals'}, {'field', 'nonempty'})),
                     '%s.%s: ready is {field, equals} or {field, nonempty}' % (name, role_name))
+            owns_unit = spec.get('owns_unit', False)
+            require(isinstance(owns_unit, bool) and (not owns_unit or mode == 'template'),
+                    '%s.%s: owns_unit is a boolean, true only for a template role' % (name, role_name))
             roles[role_name] = Role(role_name, spec['unit'], mode, spec['health'], template, ready,
                                     spec.get('ready_url'), int(spec.get('ready_timeout', 180)),
-                                    tuple(spec.get('adoptable_drop_ins', ())))
+                                    tuple(spec.get('adoptable_drop_ins', ())), owns_unit)
         order = tuple(raw.get('order', ()))
         require(order and sorted(order) == sorted(roles), '%s: order must list every role once' % name)
         require(PLAIN_PATH.match(raw.get('root', '')), '%s: root must be a plain absolute path' % name)

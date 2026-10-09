@@ -905,6 +905,27 @@ class ReceiverTests(Fleet):
         self.assertEqual(self.unit(), previous)
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
 
+    def test_a_drop_in_cannot_add_settings_to_the_unit_it_owns(self):
+        sha = sha256(RECEIVER_NEW)
+        for path in [dropin('receiver-pir.service', '50-key.conf'),
+                     '/etc/systemd/system.control/receiver-pir.service.d/50-MemoryMax.conf']:
+            with self.subTest(path=path):
+                self.fake, self.state = FakeFleet(), self.dir / ('state-' + os.path.basename(path))
+                self.receiver_fleet()
+                self.fake.edit('receiver-01', path, '[Service]\nEnvironmentFile=/etc/receiver-pir/near.env\n')
+                deployer = self.deployer('receiver')
+                deployer.capture_baseline()
+                self.fake.log.clear()
+                refusal = 'server@receiver-01: role server owns its whole unit; remove or fold in ' + path
+                plans, problems = deployer.assess(sha, self.receiver_binary, allow_drift=True,
+                                                  companions=self.companions)
+                self.assertEqual(plans[0].drop_ins, [(path, 'refuse')])
+                self.assertIn(refusal, problems)
+                with self.assertRaisesRegex(DeployError, 'refused before any change:(.|\n)*' + refusal):
+                    deployer.deploy(sha, self.receiver_binary, allow_drift=True, companions=self.companions)
+                self.assertEqual(self.fake.log, [])
+                self.assertEqual(Journal.load(self.state, 'receiver'), None)
+
     def test_a_rotation_failing_its_check_or_start_restores_the_previous_key(self):
         sha = sha256(RECEIVER_NEW)
         for i, (key, exact) in enumerate([('next', (1, '{"passed":false,"category":"feeds_not_read"}')),
@@ -992,6 +1013,21 @@ class UnitTests(unittest.TestCase):
         self.assertEqual(SERVICES['receiver'].companions, (descriptors.Companion('receiver-probe', 0o755),
                                                            descriptors.Companion('probe-fixture.json', 0o644)))
         self.assertEqual([service.companions for name, service in SERVICES.items() if name != 'receiver'], [(), ()])
+
+    def test_only_a_template_role_can_own_its_unit(self):
+        self.assertTrue(SERVICES['receiver'].roles['server'].owns_unit)
+        self.assertFalse(any(role.owns_unit for name in ('enhance', 'status') for role in SERVICES[name].roles.values()))
+        text = (DEPLOY / 'deploy.toml').read_text().replace('template = "', 'template = "%s/' % DEPLOY)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'deploy.toml'
+            for old, new in [('\nowns_unit = true\n', '\nowns_unit = "yes"\n'),
+                             ('adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]\n',
+                              'adoptable_drop_ins = ["90-v7.conf", "zz-cleanup-*.conf"]\nowns_unit = true\n')]:
+                with self.subTest(new=new):
+                    self.assertIn(old, text)
+                    path.write_text(text.replace(old, new, 1))
+                    with self.assertRaisesRegex(descriptors.DescriptorError, 'owns_unit'):
+                        descriptors.load_descriptors(path)
 
     def test_companions_need_distinct_plain_names_and_explicit_modes(self):
         text = (DEPLOY / 'deploy.toml').read_text()
@@ -1137,6 +1173,21 @@ class CommandLineTests(Fleet):
         self.assertTrue(any('receiver-probe holds different bytes' in line for line in self.lines), self.lines)
         self.assertEqual(self.run_cli('deploy', 'receiver', '--archive', str(archive), '--sha', other), 1)
         self.assertTrue(any('receiver-probe holds different bytes' in line for line in self.lines), self.lines)
+        self.assertEqual(self.fake.log, [])
+
+    def test_plan_and_preflight_name_a_drop_in_on_a_unit_its_role_owns(self):
+        self.receiver_fleet()
+        path = dropin('receiver-pir.service', '50-key.conf')
+        self.fake.edit('receiver-01', path, '[Service]\nEnvironmentFile=/etc/receiver-pir/near.env\n')
+        self.assertEqual(self.run_cli('capture-baseline', 'receiver'), 0)
+        archive = self.receiver_bundle('4' * 40)
+        problem = 'problem: server@receiver-01: role server owns its whole unit; remove or fold in ' + path
+        self.assertEqual(self.run_cli('plan', 'receiver', '--archive', str(archive), '--sha', '4' * 40), 0)
+        self.assertIn(problem, self.lines)
+        self.assertIn('  drop-in %s: REFUSED' % path, self.lines)
+        self.assertEqual(self.run_cli('preflight', 'receiver', '--archive', str(archive), '--sha', '4' * 40,
+                                      '--allow-unit-drift'), 1)
+        self.assertIn(problem, self.lines)
         self.assertEqual(self.fake.log, [])
 
     def test_preflight_stage_uploads_nothing_when_a_later_host_conflicts(self):

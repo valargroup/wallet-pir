@@ -20,7 +20,9 @@
 # `adoptable_drop_ins`. An adoptable drop-in that sets only ExecStart is retired
 # into the transaction directory (with --retire-historical); one that also sets
 # other directives stays in place, and the managed drop-in, which sorts after
-# it, overrides its ExecStart.
+# it, overrides its ExecStart. Other drop-ins stay and still apply, except on a
+# template role with `owns_unit = true`, where any drop-in that would stay is
+# refused, so the rendered unit is the whole configuration.
 #
 # Readiness after a restart: the unit is active, sha256(/proc/<MainPID>/exe)
 # equals the release, `health` answers 200 (a `binary_sha256` field, if
@@ -130,6 +132,8 @@ unit = "receiver-pir.service"
 # /opt/receiver-pir/current/receiver-directory) is replaced by the first deploy.
 mode = "template"
 template = "../../../receiver/ops/digitalocean/receiver-pir.service.in"
+# The unit names the NEAR key file, so a drop-in must not supply another key.
+owns_unit = true
 # The unit's --bind, the Droplet's private address on port 18380.
 health = "http://{listen}/v1/receiver/health"
 # Health answers at once; `serving` stays null until the first publication.

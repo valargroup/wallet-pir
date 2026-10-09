@@ -245,6 +245,8 @@ class ReceiverOpsContract(unittest.TestCase):
         with open(DEPLOY, 'rb') as handle:
             role = tomllib.load(handle)['services']['receiver']['roles']['server']
         self.assertEqual((role['unit'], role['mode']), ('receiver-pir.service', 'template'))
+        # No drop-in may stay beside it, so the key file the unit names is the only key.
+        self.assertIs(role.get('owns_unit'), True)
         self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
         self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 

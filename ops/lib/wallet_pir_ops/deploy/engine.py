@@ -128,6 +128,9 @@ class Deployer:
             name = os.path.basename(path)
             if role.mode == 'exec-drop-in' and path == managed:
                 disposition = 'managed'
+            elif not units.sets_exec_start(text) and role.owns_unit:
+                disposition = 'refuse'
+                plan.refusals.append('role %s owns its whole unit; remove or fold in %s' % (role.name, path))
             elif not units.sets_exec_start(text):
                 disposition = 'keep'
             elif units.adoptable(path, role.adoptable_drop_ins) or name == units.MANAGED_DROP_IN:
