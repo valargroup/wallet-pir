@@ -32,6 +32,6 @@
     "small network measurement",
     "not an isolated node benchmark"
   ],
-  "qualification": "development evidence, not release qualification: both binaries were reported built with the workspace's test profile (opt-level 1), not release-fast, so the speedup is indicative only",
+  "qualification": "development evidence, not release qualification: both binaries were reported built with the workspace's test profile, not release-fast, so the speedup is indicative only",
   "not_retained": "everything outside SHA256SUMS, including the publications, build commands and test output"
 }

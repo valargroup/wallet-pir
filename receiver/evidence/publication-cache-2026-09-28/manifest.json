@@ -27,6 +27,7 @@
     "serve.log",
     "SHA256SUMS.original"
   ],
+  "block_hash_byte_order": "results.json's block_hash values are in protocol byte order (proof-of-work zeros last), the reverse of the RPC display order used by the other runs",
   "limits": [
     "local validation, not a deployment",
     "cold-cache figures vary with host load"
