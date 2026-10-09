@@ -10,7 +10,7 @@ use receiver_directory::{
 };
 use receiver_indexer::{
     blocks::{MAX_RECEIVER_BATCH_BLOCKS, MAX_RECEIVER_CONCURRENCY},
-    near::{Explorer, Feed},
+    near::{Explorer, Reads},
     zakura::ZakuraClient,
 };
 use receiver_pir::server::Server;
@@ -140,7 +140,11 @@ async fn main() -> Result<()> {
     }
     let publications = Publications::default();
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
-    let app = receiver_pir_server::router_with_publications(publications.clone());
+    let reads = Reads::default();
+    let app = receiver_pir_server::router_with_health(publications.clone(), {
+        let reads = reads.clone();
+        std::sync::Arc::new(move || reads.health())
+    });
     info!(
         address = %listener.local_addr()?,
         "receiver PIR listening; waiting for a canonical publication"
@@ -173,21 +177,7 @@ async fn main() -> Result<()> {
         let mut explorer = Explorer::new(key)?;
         tokio::spawn(async move {
             loop {
-                match ProviderStore::open(&path) {
-                    Ok(mut store) => {
-                        for feed in [Feed::Payouts, Feed::Refunds] {
-                            match explorer.sync(&mut store, feed, since).await {
-                                Ok(receivers) => {
-                                    info!(feed = feed.name(), receivers, "near feed read")
-                                }
-                                Err(error) => {
-                                    warn!(feed = feed.name(), %error, "near feed deferred")
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => warn!(%error, "near provider store unavailable"),
-                }
+                receiver_indexer::near::poll(&mut explorer, &path, since, &reads).await;
                 tokio::time::sleep(poll).await;
             }
         });
