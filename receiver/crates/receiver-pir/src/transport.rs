@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 
 /// Hosts supply their route policy, cancellation, and timeout for every request.
 /// Enforce `limit` while streaming, reject non-success responses, and map HTTP
-/// 409/410 to [`Error::Revision`]. Do not follow redirects or retry in cleartext.
+/// 410 to [`Error::Revision`]. Do not follow redirects or retry in cleartext.
 #[allow(async_fn_in_trait)]
 pub trait Transport {
     /// GET `url`, returning a body of at most `limit` bytes.
