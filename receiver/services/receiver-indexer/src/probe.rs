@@ -148,7 +148,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let manifest = fetch_manifest(&http, origin).await?;
     let directory = &manifest.directory;
     let height = u64::from(directory.end_height);
-    let (rpc, tip) = match oracle(&args, height).await? {
+    let (rpc, tip) = match oracle(&args.rpc_url, args.cookie.as_deref(), height).await? {
         Ok(found) => found,
         Err(tips) => {
             return Ok(Some((
@@ -309,26 +309,35 @@ async fn indexer_report(
     }
 }
 
-/// The first node, in `--rpc-url` order, whose tip has reached `height`, with that tip.
-/// A node behind the publication can check neither its anchor nor its lag, so without
-/// one the error lists each node's tip or failure.
+/// The reachable node with the highest tip, with that tip, if it has reached `height`.
+/// The highest tip bounds the lag, and a node behind the publication can check neither
+/// its anchor nor its lag, so otherwise the error lists each node's tip or failure.
 async fn oracle(
-    args: &Args,
+    urls: &[String],
+    cookie: Option<&std::path::Path>,
     height: u64,
 ) -> Result<std::result::Result<(ZakuraClient, u64), Vec<Value>>> {
     let mut tips = Vec::new();
-    for url in &args.rpc_url {
-        let node = match &args.cookie {
+    let mut best: Option<(ZakuraClient, u64)> = None;
+    for url in urls {
+        let node = match cookie {
             Some(path) => ZakuraClient::from_cookie_file(vec![url.clone()], path)?,
             None => ZakuraClient::unauthenticated(vec![url.clone()])?,
         };
         match node.tip_height().await {
-            Ok(tip) if tip >= height => return Ok(Ok((node, tip))),
-            Ok(tip) => tips.push(tip.into()),
+            Ok(tip) => {
+                tips.push(tip.into());
+                if best.as_ref().is_none_or(|(_, top)| tip > *top) {
+                    best = Some((node, tip));
+                }
+            }
             Err(error) => tips.push(error.to_string().into()),
         }
     }
-    Ok(Err(tips))
+    Ok(match best {
+        Some((node, tip)) if tip >= height => Ok((node, tip)),
+        _ => Err(tips),
+    })
 }
 
 /// The validated session manifest the origin serves now.
@@ -376,6 +385,44 @@ mod common;
 mod tests {
     use super::*;
     use axum::{routing, Json, Router};
+
+    /// A node at tip `tip` whose block hashes are `fill` repeated. Returns its URL.
+    async fn node(tip: u64, fill: &'static str) -> String {
+        let app = Router::new().route(
+            "/",
+            routing::post(move |Json(request): Json<Value>| async move {
+                Json(match request["method"].as_str() {
+                    Some("getblockcount") => json!({"result": tip, "error": null}),
+                    _ => json!({"result": fill.repeat(64), "error": null}),
+                })
+            }),
+        );
+        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", socket.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
+        url
+    }
+
+    /// A node that merely reached the publication does not hide a later, fresher one,
+    /// so the lag is measured from the highest tip.
+    #[tokio::test]
+    async fn the_oracle_is_the_freshest_node_that_reached_the_publication() {
+        let urls = vec![
+            node(105, "a").await,
+            node(150, "b").await,
+            node(90, "c").await,
+        ];
+        let Ok((rpc, tip)) = oracle(&urls, None, 100).await.unwrap() else {
+            panic!("a node reached the publication");
+        };
+        assert_eq!(tip, 150);
+        assert_eq!(rpc.block_hash(100).await.unwrap(), "b".repeat(64));
+        let behind = vec![node(90, "c").await, "http://127.0.0.1:1".into()];
+        let Err(tips) = oracle(&behind, None, 100).await.unwrap() else {
+            panic!("no node reached the publication");
+        };
+        assert_eq!(tips.len(), 2);
+    }
 
     /// A session manifest whose directory salt starts with `salt`.
     fn manifest(salt: u8) -> Manifest {
