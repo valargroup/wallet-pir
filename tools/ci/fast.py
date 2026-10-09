@@ -70,7 +70,8 @@ def route(path):
         return {'check-docs'}, {'ops'}
     if path.startswith('receiver/ops/'):
         # ops/tests pins the receiver's edge, unit and cloud-init contract and
-        # tests its key installer, and the deploy tests install its unit.
+        # tests its key installer and Caddyfile helper, and the deploy tests
+        # install its unit.
         return {'check-docs', 'check-ops-shared', 'check-ops-deploy'}, {'ops'}
     if path.startswith('.github/workflows/deploy-') or path.startswith('.github/workflows/configure-'):
         return {'check-tools', 'check-ops-contracts', 'check-ops-deploy'}, {'ops'}
