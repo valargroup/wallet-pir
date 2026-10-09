@@ -571,13 +571,10 @@ async fn indexer_report(
     health_url: &str,
     id: &str,
 ) -> Result<Option<Failure>> {
-    let health = fetch(http.get(health_url), MAX_HEALTH_BYTES, "health", |bytes| {
-        serde_json::from_slice::<Value>(bytes)
-    });
-    let health = match health.await? {
-        Ok(health) => health,
-        Err(failure) => return Ok(Some(failure)),
-    };
+    // The indexer's monitoring channel, not wallet data: a bad body is an availability
+    // failure, not an answer mismatch (see `fetch`).
+    let response = http.get(health_url).send().await?.error_for_status()?;
+    let health: Value = serde_json::from_slice(&read_limited(response, MAX_HEALTH_BYTES).await?)?;
     let serving = health["serving"].as_str();
     if serving != Some(id) {
         return Ok(Some((
@@ -635,8 +632,8 @@ async fn oracle(
     ))
 }
 
-/// Sends `request` for a served artifact and decodes its body. A failed request or a
-/// non-success status is an error; a successful body over `limit` bytes, or one
+/// Sends `request` for a wallet-facing artifact and decodes its body. A failed request
+/// or a non-success status is an error; a successful body over `limit` bytes, or one
 /// `decode` refuses, is wrong served data: `answer_mismatch` naming `artifact`.
 async fn fetch<T, E: std::fmt::Display>(
     request: reqwest::RequestBuilder,
@@ -1529,7 +1526,7 @@ mod tests {
     }
 
     /// Health's report counts only for the probed publication, even after a rotation,
-    /// and a body over its bound is an answer mismatch.
+    /// and a body over its bound is an error, not an answer mismatch.
     #[tokio::test]
     async fn the_report_is_bound_to_the_probed_publication() {
         let (probed, rotated) = (id(&manifest(1)), id(&manifest(2)));
@@ -1548,7 +1545,7 @@ mod tests {
         assert!(current.await.is_none());
         let origin = serve(Value::Null).await;
         let failure = indexer_report(&http, &format!("{origin}/large"), &probed).await;
-        assert!(failure.unwrap().unwrap().1["health"].is_string());
+        assert!(failure.is_err());
         // The service rotated after the lookup, or health answers for another one.
         let failure = report(json!({"serving": rotated, "indexer": indexer(0)}))
             .await
