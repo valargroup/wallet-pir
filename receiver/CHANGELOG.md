@@ -23,5 +23,6 @@
   mainnet with batch anchor checks and reorg rollback, serves each canonical tip
   from memory while revoking orphaned sessions, feeds the `near-intents` filter
   sets from the NEAR Intents explorer and reports completed NEAR payouts missing
-  from the index. `receiver-directory probe`, also built as `receiver-probe`, is a
+  from the index or recently reported without a usable transaction.
+  `receiver-directory probe`, also built as `receiver-probe`, is a
   `pir-monitor` service probe that looks up a pinned payment over live encrypted PIR.
