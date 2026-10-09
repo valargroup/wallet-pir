@@ -1,14 +1,6 @@
-//! Pinned bytes for what receiver PIR adds to the shared `pir-native` profile, whose
-//! own helpers `shared/pir-native/tests/golden.rs` pins: the profile seeds, the session
-//! ID, request and response framing, and the directory's row placement and encoding.
-//!
-//! The test derives the seeds and frames the request itself, from a fixed secret and
-//! nonce, instead of through `Client`, and checks that `Server` answers with the
-//! fixture's row. The round-trip tests change with the client and server together;
-//! these digests do not. They were produced by this test's first run on 2026-10-08, on
-//! the receiver-pir commit `502d930e` with the directory review fixes merged, where
-//! every round-trip test passed. A change that alters one is a protocol change: it needs a
-//! new protocol name, not a new pin.
+//! Pinned bytes for what receiver PIR adds to the shared `pir-native` profile (seeds,
+//! session ID, framing and row placement), from a request built without `Client`; a
+//! change that alters one needs a new protocol name, not a new pin.
 #[path = "../../receiver-directory/tests/common/mod.rs"]
 mod common;
 use common::{manifest, receiver, record};

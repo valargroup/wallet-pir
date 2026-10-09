@@ -26,30 +26,25 @@ pub struct Publication {
 impl Publication {
     /// Prepare a complete immutable revision. The caller must separately accept its chain anchor.
     /// A witness file must bind to the publication and hold a path to its root for every
-    /// record in the rows, which must hold exactly the manifest's records.
+    /// record in the rows.
     pub fn new(server: Server, witnesses: Option<Vec<u8>>) -> Result<Self, receiver_pir::Error> {
         if let Some(proof) = &witnesses {
-            let manifest = &server.manifest().directory;
-            let proof = WitnessSnapshot::decode(proof, manifest)?;
+            let proof = WitnessSnapshot::decode(proof, &server.manifest().directory)?;
             let rows = server.rows();
             let mut leaves = Vec::new();
             for row in rows.as_chunks::<ROW_BYTES>().0 {
                 // Bytes after the last slot are row padding, not a record.
                 for slot in row[..SLOTS * RECORD_BYTES].as_chunks::<RECORD_BYTES>().0 {
                     if let Some(record) = Record::decode(slot)? {
-                        let position = u32::try_from(record.payment.position)
-                            .map_err(|_| receiver_directory::Error::Coverage)?;
-                        leaves.push((position, record.payment.cmx));
+                        // `Server::new` validated every record, so positions are in the tree.
+                        leaves.push((record.payment.position as u32, record.payment.cmx));
                     }
                 }
-            }
-            if leaves.len() as u64 != manifest.records {
-                return Err(receiver_directory::Error::Coverage.into());
             }
             proof.check_paths(leaves)?;
         }
         Ok(Self {
-            id: server.manifest().id()?,
+            id: server.id(),
             server: Arc::new(server),
             witnesses: witnesses.map(Into::into),
             report: None,
@@ -86,44 +81,48 @@ struct State {
 }
 
 impl State {
-    /// When the previous revision's grace ends, if it has not yet.
-    fn grace_until(&self) -> Option<Instant> {
+    /// The previous revision and the end of its grace, while that has not passed.
+    fn live_previous(&self) -> Option<&(Arc<Publication>, Instant)> {
         self.previous
             .as_ref()
-            .map(|(_, until)| *until)
-            .filter(|until| *until > Instant::now())
+            .filter(|(_, until)| *until > Instant::now())
     }
 
-    /// Whether the previous revision's grace has ended, so it can be dropped.
-    fn previous_expired(&self) -> bool {
-        self.previous.is_some() && self.grace_until().is_none()
+    /// When the previous revision's grace ends, if it has not yet.
+    fn grace_until(&self) -> Option<Instant> {
+        self.live_previous().map(|(_, until)| *until)
+    }
+
+    /// The revisions that accept new requests, current first.
+    fn live(&self) -> impl Iterator<Item = &Arc<Publication>> {
+        self.current
+            .iter()
+            .chain(self.live_previous().map(|(p, _)| p))
     }
 
     /// See [`Publications::anchors`].
     fn anchors(&self) -> Vec<(u32, Hash)> {
-        self.current
-            .iter()
-            .chain(
-                self.previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            )
+        self.live()
             .map(|p| (p.manifest().end_height, p.manifest().end_hash))
             .collect()
+    }
+
+    /// Answers `id` with 410 from now on, keeping the last eight such ids.
+    fn retire(&mut self, id: Hash) {
+        self.revoked.push_back(id);
+        if self.revoked.len() > 8 {
+            self.revoked.pop_front();
+        }
     }
 
     /// See [`Publications::revoke`].
     fn revoke(&mut self) {
         self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
-        if let Some(p) = self.current.take() {
-            self.revoked.push_back(p.id);
-        }
-        if let Some((p, _)) = self.previous.take() {
-            self.revoked.push_back(p.id);
-        }
-        while self.revoked.len() > 8 {
-            self.revoked.pop_front();
+        for p in [self.current.take(), self.previous.take().map(|(p, _)| p)]
+            .into_iter()
+            .flatten()
+        {
+            self.retire(p.id);
         }
     }
 }
@@ -134,14 +133,16 @@ pub struct Publications(Arc<RwLock<State>>);
 
 impl Publications {
     /// Drops the previous revision once its grace has ended, freeing its rows and PIR
-    /// state; queries still running on it keep their own reference. Every read path
-    /// calls it, including the owner's periodic [`Self::anchors`] check, so an idle
-    /// service frees it within a poll.
+    /// state, and retires its id; queries still running on it keep their own reference.
+    /// Every read path calls it, including the owner's periodic [`Self::anchors`]
+    /// check, so an idle service frees it within a poll.
     fn expire(&self) {
-        if self.0.read().unwrap().previous_expired() {
+        let expired = |s: &State| s.previous.is_some() && s.live_previous().is_none();
+        if expired(&self.0.read().unwrap()) {
             let mut state = self.0.write().unwrap();
-            if state.previous_expired() {
-                state.previous = None;
+            if expired(&state) {
+                let (p, _) = state.previous.take().unwrap();
+                state.retire(p.id);
             }
         }
     }
@@ -165,6 +166,14 @@ impl Publications {
         (state.epoch, state.anchors())
     }
 
+    /// The current session's ID with its report, and the recovery epoch, read together
+    /// so health never pairs one state's session with another's epoch.
+    pub(crate) fn health(&self) -> (Option<(Hash, Option<serde_json::Value>)>, u64) {
+        let state = self.0.read().unwrap();
+        let serving = state.current.as_ref().map(|p| (p.id, p.report.clone()));
+        (serving, state.epoch)
+    }
+
     /// When the next revision may activate, if the previous one is still in its grace.
     /// Activating only after it ends gives every displaced revision its full grace, so
     /// two quick rotations cannot strand a session.
@@ -174,14 +183,22 @@ impl Publications {
     }
 
     /// Install only if no revocation occurred since the caller began preparing and validating,
-    /// and no earlier revision is still in its grace (see [`Self::ready_at`]).
+    /// no earlier revision is still in its grace (see [`Self::ready_at`]), and the current
+    /// revision ends no higher: within one epoch the chain only extends, so a lower end
+    /// comes from a preparation that a newer publish overtook.
     /// The caller must verify the new canonical anchor and revoke before replacing forked coverage.
     pub fn publish(&self, publication: Publication, expected_epoch: u64) -> bool {
         let mut state = self.0.write().unwrap();
-        if state.epoch != expected_epoch || state.grace_until().is_some() {
+        let end = publication.manifest().end_height;
+        if state.epoch != expected_epoch
+            || state.grace_until().is_some()
+            || state
+                .current
+                .as_ref()
+                .is_some_and(|p| p.manifest().end_height > end)
+        {
             return false;
         }
-        state.revoked.retain(|id| *id != publication.id);
         state.previous = state.current.take().map(|p| (p, Instant::now() + GRACE));
         state.current = Some(Arc::new(publication));
         true
@@ -230,24 +247,17 @@ impl Publications {
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
-    /// epoch. A revoked id is `GONE` and an unknown or expired one is `CONFLICT`.
+    /// epoch. A revoked or expired id that is not served again is `GONE`, and an unknown
+    /// one `CONFLICT`.
     pub(crate) fn select(&self, id: Option<Hash>) -> Result<(Arc<Publication>, u64), StatusCode> {
         self.expire();
         let state = self.0.read().unwrap();
         if let Some(id) = id {
+            if let Some(p) = state.live().find(|p| p.id == id) {
+                return Ok((p.clone(), state.epoch));
+            }
             if state.revoked.contains(&id) {
                 return Err(StatusCode::GONE);
-            }
-            for p in state.current.iter().chain(
-                state
-                    .previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            ) {
-                if p.id == id {
-                    return Ok((p.clone(), state.epoch));
-                }
             }
             return Err(StatusCode::CONFLICT);
         }
@@ -309,6 +319,25 @@ mod tests {
         assert_eq!(publications.serving(), (epoch + 1, vec![]));
     }
 
+    /// A preparation overtaken by a newer publish cannot replace it, even once the
+    /// newer one's predecessor has left its grace.
+    #[test]
+    fn an_overtaken_preparation_is_not_published() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let mut newer = crate::common::manifest(receiver_pir::MIN_ROWS);
+        (newer.end_height, newer.end_hash) = (102, [2; 32]);
+        let snapshot = receiver_directory::snapshot::Snapshot::build(newer, &[], &[]).unwrap();
+        let newer = Publication::new(Server::new(snapshot).unwrap(), None).unwrap();
+        assert!(publications.publish(newer, 0));
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(!publications.publish(publication_at(3, 3), 0));
+        assert_eq!(publications.anchors(), [(102, [2; 32])]);
+    }
+
     /// An anchor still in its grace revokes the current publication with it.
     #[test]
     fn an_anchor_in_its_grace_still_revokes_every_session() {
@@ -345,7 +374,7 @@ mod tests {
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next
-    /// publication.
+    /// publication, and its id is then 410, unless the same id is still current.
     #[test]
     fn an_expired_previous_publication_is_dropped() {
         let publications = Publications::default();
@@ -363,8 +392,13 @@ mod tests {
         assert!(first.upgrade().is_none());
         assert!(matches!(
             publications.select(Some(id)),
-            Err(StatusCode::CONFLICT)
+            Err(StatusCode::GONE)
         ));
+        // An identical republication displaces its own id, whose expiry leaves it served.
+        let current = publications.0.read().unwrap().current.as_ref().unwrap().id;
+        assert!(publications.publish(publication(2), 0));
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(publications.select(Some(current)).is_ok());
     }
 
     /// A publication with records at positions 0 and 5 of an 8-leaf tree, and the

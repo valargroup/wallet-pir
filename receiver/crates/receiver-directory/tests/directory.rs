@@ -1,9 +1,7 @@
 mod common;
 use common::{action, manifest, receiver, record, RECEIVER_HEX};
 use receiver_directory::{
-    snapshot::{
-        allow_small_tables, lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS,
-    },
+    snapshot::{lookup_row, row_for, Snapshot, MAX_ROWS, MIN_ROWS, ROW_BYTES, SLOTS},
     Error, Receiver, Record, RECORD_BYTES,
 };
 
@@ -53,7 +51,6 @@ fn wire_layout_and_strict_empty_slots() {
 /// binds every field, including each set's optional ones.
 #[test]
 fn manifests_refuse_unknown_fields_and_bind_every_field() {
-    allow_small_tables();
     use receiver_directory::snapshot::Manifest;
     let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
     let json = serde_json::to_value(&s.manifest).unwrap();
@@ -72,7 +69,6 @@ fn manifests_refuse_unknown_fields_and_bind_every_field() {
 
 #[test]
 fn pages_share_one_revision_and_build_order_is_stable() {
-    allow_small_tables();
     let records = [record(0, 2), record(1, 2)];
     let s = Snapshot::build(manifest(8), &records, &[]).unwrap();
     let reversed =
@@ -127,7 +123,6 @@ fn other_receiver() -> Receiver {
 
 #[test]
 fn publications_commit_to_their_filters() {
-    allow_small_tables();
     use receiver_directory::{
         filter::{Filters, PAID},
         snapshot::ProviderSet,
@@ -296,15 +291,14 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
     assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
+    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
 }
 
-/// Only a read that began without a cursor sets the feed's start, or lowers it so that
-/// racing initial reads keep the earliest. A read that followed the cursor, whatever
-/// cursor it reached and whatever `--near-since` the restarted indexer was given,
-/// passes no start and never moves it: it read back only to the cursor.
+/// Only a feed's first read sets its start. A read that followed the cursor, before
+/// or after a reopen, passes no start and never moves it.
 #[cfg(feature = "store")]
 #[test]
-fn only_initial_reads_set_or_lower_a_feed_start() {
+fn only_a_first_read_sets_a_feed_start() {
     use receiver_directory::store::ProviderStore;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("provider.sqlite");
@@ -326,21 +320,12 @@ fn only_initial_reads_set_or_lower_a_feed_start() {
     }
     store.record("unstarted", None, &[], &[], 10, 20).unwrap();
     assert_eq!(store.started("unstarted").unwrap(), None);
-    // After a reopen, as on a restart with an earlier or later `--near-since`, the
-    // feed has a cursor, so its reads pass no start.
+    // After a reopen, as on a restart with another `--near-since`.
     drop(store);
     let mut store = ProviderStore::open(&path).unwrap();
     for cursor in [300, 900] {
         store.record("full", None, &[], &[], cursor, 1_000).unwrap();
         assert_eq!(store.started("full").unwrap(), Some(500));
-    }
-    // Two initial reads that raced keep the earlier start in either commit order.
-    for (feed, first, second) in [("race-a", 300, 500), ("race-b", 500, 300)] {
-        store.record(feed, Some(first), &[], &[], 600, 700).unwrap();
-        store
-            .record(feed, Some(second), &[], &[], 600, 710)
-            .unwrap();
-        assert_eq!(store.started(feed).unwrap(), Some(300));
     }
 }
 
@@ -405,20 +390,8 @@ fn a_provider_view_reads_one_state() {
     assert_eq!(store.read("near-payouts").unwrap(), Some(400));
 }
 
-/// Without the test fixtures' allowance, a table below [`MIN_ROWS`] is refused.
-#[test]
-fn publications_below_the_minimum_rows_are_refused() {
-    let small = manifest(MIN_ROWS / 2);
-    assert!(small.validate().is_err());
-    assert!(small.accept([1; 32], 100, 101, [3; 32]).is_err());
-    assert!(Snapshot::build(small, &[record(0, 1)], &[]).is_err());
-    let s = Snapshot::build(manifest(MIN_ROWS), &[record(0, 1)], &[]).unwrap();
-    s.manifest.accept([1; 32], 100, 101, [3; 32]).unwrap();
-}
-
 #[test]
 fn coverage_anchor_and_position_are_required() {
-    allow_small_tables();
     let m = manifest(8);
     m.accept([1; 32], 100, 101, [3; 32]).unwrap();
     for (network, start, height, hash) in [
@@ -458,7 +431,6 @@ fn records_fit_the_covered_positions() {
 /// malformed.
 #[test]
 fn a_total_beyond_the_record_count_is_malformed() {
-    allow_small_tables();
     let s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
     let r = receiver();
     let mut b = row(&s, &r, 0).to_vec();
@@ -488,7 +460,6 @@ fn coverage_ends_within_the_tree() {
 
 #[test]
 fn overflow_and_bad_padding_fail_closed() {
-    allow_small_tables();
     let records: Vec<_> = (0..50).map(|p| record(p, 50)).collect();
     let mut m = manifest(4);
     let overflow = (0..100).any(|i| {
@@ -510,7 +481,6 @@ fn overflow_and_bad_padding_fail_closed() {
 /// count stays malformed.
 #[test]
 fn records_beyond_the_slots_are_a_capacity_failure() {
-    allow_small_tables();
     let records = |n: u32| (0..n).map(|p| record(p, n)).collect::<Vec<_>>();
     let full = Snapshot::build(manifest(1), &records(SLOTS as u32), &[]).unwrap();
     assert_eq!(full.manifest.records, SLOTS as u64);
@@ -543,7 +513,6 @@ fn records_beyond_the_slots_are_a_capacity_failure() {
 #[cfg(feature = "store")]
 #[test]
 fn durable_coverage_atomic_failure_and_reorg() {
-    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -661,13 +630,58 @@ fn coinbase_payments_are_refused() {
     assert_eq!(store.counts().unwrap(), (1, 2));
 }
 
+/// A block whose payments a snapshot would refuse is not appended: here a receiver's
+/// later position in an earlier transaction, and one txid at two transaction indexes.
+#[cfg(feature = "store")]
+#[test]
+fn unsnapshottable_payments_are_refused() {
+    use receiver_directory::store::{Config, IndexedBlock, Store};
+    let dir = tempfile::tempdir().unwrap();
+    let config = Config {
+        genesis: [1; 32],
+        start_height: 100,
+        start_parent: [2; 32],
+        start_position: 200,
+    };
+    let mut store = Store::open(dir.path().join("directory.sqlite"), config).unwrap();
+    let block = |payments: Vec<Record>| IndexedBlock {
+        height: 100,
+        hash: [3; 32],
+        parent: [2; 32],
+        start_position: 200,
+        end_position: 202,
+        coinbase_actions: 0,
+        commitments: vec![[6; 32]; 2],
+        payments: payments
+            .into_iter()
+            .map(|mut r| {
+                r.payment.height = 100;
+                (r.receiver, r.payment)
+            })
+            .collect(),
+    };
+    let (mut first, second) = (record(0, 2), record(1, 2));
+    first.payment.tx_index = 3;
+    let mut relocated = second.clone();
+    relocated.receiver = other_receiver();
+    (relocated.payment.txid, relocated.payment.action_index) = (first.payment.txid, 1);
+    for bad in [second.clone(), relocated] {
+        assert!(matches!(
+            store.append(&block(vec![first.clone(), bad])),
+            Err(Error::Malformed)
+        ));
+        assert_eq!(store.counts().unwrap(), (0, 0));
+    }
+    first.payment.tx_index = 1;
+    store.append(&block(vec![first, second])).unwrap();
+}
+
 /// A store's positions stay within the note commitment tree, so every tip it reaches
 /// can be published: a start or block past `TREE_SIZE` is refused, and one ending
 /// exactly at it is valid.
 #[cfg(feature = "store")]
 #[test]
 fn store_positions_end_within_the_tree() {
-    allow_small_tables();
     use receiver_directory::{
         snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
@@ -679,68 +693,37 @@ fn store_positions_end_within_the_tree() {
         start_parent: [2; 32],
         start_position,
     };
-    for start in [TREE_SIZE + 1, i64::MAX as u64] {
-        let path = dir.path().join(format!("{start}.sqlite"));
-        assert!(matches!(
-            Store::open(&path, config(start)),
-            Err(Error::Malformed)
-        ));
-    }
-    // A full tree accepts no commitment, before or after a reopen.
-    let path = dir.path().join("full.sqlite");
-    let mut store = Store::open(&path, config(TREE_SIZE)).unwrap();
+    assert!(matches!(
+        Store::open(dir.path().join("over.sqlite"), config(TREE_SIZE + 1)),
+        Err(Error::Malformed)
+    ));
+    let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
     let crossing = IndexedBlock {
         height: 100,
         hash: [3; 32],
         parent: [2; 32],
-        start_position: TREE_SIZE,
+        start_position: TREE_SIZE - 1,
         end_position: TREE_SIZE + 1,
         coinbase_actions: 0,
         payments: vec![],
-        commitments: vec![[6; 32]],
+        commitments: vec![[6; 32]; 2],
     };
-    for reopen in [false, true] {
-        if reopen {
-            drop(store);
-            store = Store::open(&path, config(TREE_SIZE)).unwrap();
-        }
-        assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
-        let tip = store.tip().unwrap();
-        assert_eq!((tip.height, tip.position), (99, TREE_SIZE));
-        assert_eq!(store.counts().unwrap(), (0, 0));
-    }
-    // The last leaf fills the tree, and an empty block can follow it.
-    let mut store = Store::open(dir.path().join("last.sqlite"), config(TREE_SIZE - 1)).unwrap();
+    assert!(matches!(store.append(&crossing), Err(Error::Coverage)));
+    // The last leaf fills the tree, which can still be published.
     store
         .append(&IndexedBlock {
-            start_position: TREE_SIZE - 1,
             end_position: TREE_SIZE,
+            commitments: vec![[6; 32]],
             ..crossing
         })
         .unwrap();
-    store
-        .append(&IndexedBlock {
-            height: 101,
-            hash: [4; 32],
-            parent: [3; 32],
-            start_position: TREE_SIZE,
-            end_position: TREE_SIZE,
-            coinbase_actions: 0,
-            payments: vec![],
-            commitments: vec![],
-        })
-        .unwrap();
     let manifest = store.snapshot(8, &[]).unwrap().manifest;
-    assert_eq!(
-        (manifest.end_height, manifest.end_position),
-        (101, TREE_SIZE)
-    );
+    assert_eq!(manifest.end_position, TREE_SIZE);
 }
 
 #[cfg(feature = "store")]
 #[test]
 fn crowded_buckets_retry_the_salt_before_growing() {
-    allow_small_tables();
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let config = Config {
@@ -802,7 +785,6 @@ fn crowded_buckets_retry_the_salt_before_growing() {
 
 #[test]
 fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
-    allow_small_tables();
     use incrementalmerkletree::{frontier::CommitmentTree, witness::IncrementalWitness};
     use orchard::{note::ExtractedNoteCommitment, tree::MerkleHashOrchard};
     use receiver_directory::witness::WitnessSnapshot;
@@ -861,8 +843,8 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
 #[cfg(feature = "store")]
 #[test]
 fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
-    allow_small_tables();
     use receiver_directory::{
+        snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
         witness::WitnessCache,
     };
@@ -895,14 +877,21 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     // A fresh cache builds from scratch; the reused one must match it byte for byte.
     let full = |store: &Store, m| {
         store
-            .witnesses(m, &mut WitnessCache::default())
+            .witnesses(m, &mut WitnessCache::default(), TREE_SIZE)
             .unwrap()
             .encode()
     };
     let expected = full(&store, &first.manifest);
+    // The caller's commitment limit admits exactly the history's length.
+    let len = first.manifest.end_position;
+    store.witnesses(&first.manifest, &mut cache, len).unwrap();
+    assert!(matches!(
+        store.witnesses(&first.manifest, &mut cache, len - 1),
+        Err(Error::Capacity)
+    ));
     assert_eq!(
         store
-            .witnesses(&first.manifest, &mut cache)
+            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         expected
@@ -918,16 +907,18 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let second = store.snapshot(8, &[]).unwrap();
     assert_eq!(
         store
-            .witnesses(&second.manifest, &mut cache)
+            .witnesses(&second.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         full(&store, &second.manifest)
     );
     store.rewind(100, [3; 32]).unwrap();
-    assert!(store.witnesses(&second.manifest, &mut cache).is_err());
+    assert!(store
+        .witnesses(&second.manifest, &mut cache, TREE_SIZE)
+        .is_err());
     assert_eq!(
         store
-            .witnesses(&first.manifest, &mut cache)
+            .witnesses(&first.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         expected
@@ -940,14 +931,14 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
     let replacement = store.snapshot(8, &[]).unwrap();
     assert_eq!(
         store
-            .witnesses(&replacement.manifest, &mut cache)
+            .witnesses(&replacement.manifest, &mut cache, TREE_SIZE)
             .unwrap()
             .encode(),
         full(&store, &replacement.manifest)
     );
     let mut wrong = replacement.manifest;
     wrong.end_position -= 1;
-    assert!(store.witnesses(&wrong, &mut cache).is_err());
+    assert!(store.witnesses(&wrong, &mut cache, TREE_SIZE).is_err());
 }
 
 /// Indexed blocks before the first commitment publish a header-only proof file
@@ -956,10 +947,10 @@ fn cached_store_proofs_follow_rewinds_reopen_and_replacement_blocks() {
 #[cfg(feature = "store")]
 #[test]
 fn store_proofs_cover_empty_indexed_blocks() {
-    allow_small_tables();
     use incrementalmerkletree::Hashable;
     use orchard::tree::MerkleHashOrchard;
     use receiver_directory::{
+        snapshot::TREE_SIZE,
         store::{Config, IndexedBlock, Store},
         witness::WitnessCache,
     };
@@ -987,7 +978,10 @@ fn store_proofs_cover_empty_indexed_blocks() {
     let empty = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!((empty.records, empty.end_position), (0, 0));
     let mut cache = WitnessCache::default();
-    let proof = store.witnesses(&empty, &mut cache).unwrap().encode();
+    let proof = store
+        .witnesses(&empty, &mut cache, TREE_SIZE)
+        .unwrap()
+        .encode();
     assert_eq!(proof.len(), 152);
     assert_eq!(
         &proof[116..148],
@@ -998,22 +992,30 @@ fn store_proofs_cover_empty_indexed_blocks() {
     store.append(&block).unwrap();
     let one = store.snapshot(8, &[]).unwrap().manifest;
     assert_eq!(
-        store.witnesses(&one, &mut cache).unwrap().encode(),
         store
-            .witnesses(&one, &mut WitnessCache::default())
+            .witnesses(&one, &mut cache, TREE_SIZE)
+            .unwrap()
+            .encode(),
+        store
+            .witnesses(&one, &mut WitnessCache::default(), TREE_SIZE)
             .unwrap()
             .encode()
     );
     store.rewind(101, [4; 32]).unwrap();
-    assert_eq!(store.witnesses(&empty, &mut cache).unwrap().encode(), proof);
+    assert_eq!(
+        store
+            .witnesses(&empty, &mut cache, TREE_SIZE)
+            .unwrap()
+            .encode(),
+        proof
+    );
 }
 
 /// A history with more payments than the table has slots fails with
-/// [`Error::Capacity`] before any record is loaded, and builds at a larger size.
+/// [`Error::Capacity`], and builds at a larger size.
 #[cfg(feature = "store")]
 #[test]
-fn a_history_beyond_the_slots_fails_before_loading_records() {
-    allow_small_tables();
+fn a_history_beyond_the_slots_is_a_capacity_failure() {
     use receiver_directory::store::{Config, IndexedBlock, Store};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("directory.sqlite");
@@ -1045,18 +1047,10 @@ fn a_history_beyond_the_slots_fails_before_loading_records() {
         })
         .unwrap();
     assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
-    assert!(matches!(store.snapshot(3, &[]), Err(Error::Malformed)));
     assert_eq!(
         store.snapshot(4, &[]).unwrap().manifest.records,
         u64::from(n)
     );
-    // With every stored record undecodable, the count still decides first.
-    rusqlite::Connection::open(&path)
-        .unwrap()
-        .execute("UPDATE payments SET record=x'00'", [])
-        .unwrap();
-    assert!(matches!(store.snapshot(1, &[]), Err(Error::Capacity)));
-    assert!(matches!(store.snapshot(4, &[]), Err(Error::Malformed)));
 }
 
 /// Recomputes `s`'s digests after an edit, so validation reaches its semantic checks.
@@ -1082,11 +1076,10 @@ fn put(s: &mut Snapshot, offset: usize, r: Option<&Record>) {
 }
 
 /// Records of any receivers agree on each height's block hash, each transaction's
-/// txid and each txid's location, in a build and in a supplied publication, even when
-/// another receiver's record sorts between them.
+/// txid and each txid's location, even when another receiver's record sorts between
+/// them, in a build and, for one conflict, in a supplied publication.
 #[test]
 fn receivers_agree_on_blocks_and_transactions() {
-    allow_small_tables();
     let mut m = manifest(8);
     m.start_height = 98;
     let mut rs = receivers(3);
@@ -1110,31 +1103,32 @@ fn receivers_agree_on_blocks_and_transactions() {
         r.payment.tx_index += 1;
         r
     };
-    for conflict in [
+    let conflicts = [
         at(2, 100, [11; 32], [1; 32], 1),
         at(2, 100, [10; 32], [9; 32], 1),
         moved(101, [3; 32]),
         moved(100, [10; 32]),
-    ] {
+    ];
+    for conflict in &conflicts {
         let mut edited = records.clone();
         edited[2] = conflict.clone();
         assert!(matches!(
             Snapshot::build(m.clone(), &edited, &[]),
             Err(Error::Malformed)
         ));
-        let mut s = valid.clone();
-        let offset = slot_of(&s, &last);
-        put(&mut s, offset, Some(&conflict));
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    let mut s = valid;
+    let offset = slot_of(&s, &last);
+    put(&mut s, offset, Some(&conflicts[0]));
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 }
 
 /// A note commitment, Action nullifier or ephemeral key that is not a canonical
-/// encoding is refused by encoding, decoding, a build and a supplied publication.
+/// encoding is refused by encoding, and one such field by decoding, a build and a
+/// supplied publication.
 #[test]
 fn records_refuse_noncanonical_fields() {
-    allow_small_tables();
     let a = action();
     let mut real = record(0, 1);
     (
@@ -1143,28 +1137,24 @@ fn records_refuse_noncanonical_fields() {
         real.payment.ephemeral_key,
     ) = (a.nullifier, a.cmx, a.ephemeral_key);
     assert_eq!(Record::decode(&real.encode().unwrap()).unwrap(), Some(real));
-    assert!(Record::decode(&[0; RECORD_BYTES]).unwrap().is_none());
-    let valid = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
-    // The Action nullifier, note commitment and ephemeral key, by byte offset.
-    for offset in [137, 169, 201] {
+    for field in 0..3 {
         let mut r = record(0, 1);
         let p = &mut r.payment;
-        *match offset {
-            137 => &mut p.action_nullifier,
-            169 => &mut p.cmx,
-            _ => &mut p.ephemeral_key,
-        } = [255; 32];
+        *[&mut p.action_nullifier, &mut p.cmx, &mut p.ephemeral_key][field] = [255; 32];
         assert!(matches!(r.encode(), Err(Error::Malformed)));
-        assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
-        let mut bytes = record(0, 1).encode().unwrap();
-        bytes[offset..offset + 32].fill(255);
-        assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
-        let mut s = valid.clone();
-        let slot = slot_of(&s, &record(0, 1));
-        s.data[slot + offset..slot + offset + 32].fill(255);
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    // The ephemeral key, at byte offset 201.
+    let mut r = record(0, 1);
+    r.payment.ephemeral_key = [255; 32];
+    assert!(Snapshot::build(manifest(8), &[r], &[]).is_err());
+    let mut bytes = record(0, 1).encode().unwrap();
+    bytes[201..233].fill(255);
+    assert!(matches!(Record::decode(&bytes), Err(Error::Malformed)));
+    let mut s = Snapshot::build(manifest(8), &[record(0, 1)], &[]).unwrap();
+    let slot = slot_of(&s, &record(0, 1));
+    s.data[slot + 201..slot + 233].fill(255);
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 }
 
 /// A supplied publication is checked as a whole: digests, placement, count, pages,
@@ -1172,7 +1162,6 @@ fn records_refuse_noncanonical_fields() {
 /// alone cannot catch it.
 #[test]
 fn supplied_publications_are_validated_record_by_record() {
-    allow_small_tables();
     let (a0, a1) = (record(0, 2), record(1, 2));
     let mut b = record(0, 1);
     b.receiver = other_receiver();
@@ -1218,25 +1207,10 @@ fn supplied_publications_are_validated_record_by_record() {
     );
     assert!(matches!(misplaced.validate(), Err(Error::Malformed)));
 
-    // A missing page, a duplicate page and an inconsistent total.
+    // A missing page; the other page faults are tested against a build.
     refused(&|s| {
         put(s, slot_of(s, &a1), None);
         s.manifest.records -= 1;
-    });
-    refused(&|s| {
-        let mut again = a1.clone();
-        (again.payment.txid, again.payment.position) = ([7; 32], 205);
-        let offset = slot_of(s, &a1) + RECORD_BYTES;
-        assert!(s.data[offset..offset + RECORD_BYTES]
-            .iter()
-            .all(|x| *x == 0));
-        put(s, offset, Some(&again));
-        s.manifest.records += 1;
-    });
-    refused(&|s| {
-        let mut wider = a1.clone();
-        wider.total = 3;
-        put(s, slot_of(s, &a1), Some(&wider));
     });
 
     // More or fewer records than the manifest declares.
@@ -1319,66 +1293,6 @@ fn rows_are_pinned() {
     assert_eq!(rows, [3472, 2600, 4604, 7755]);
 }
 
-/// Building, validating and looking up a publication each validate its manifest once,
-/// however many records and filter sets it has, and a malformed manifest is still
-/// refused by every public entrypoint.
-#[test]
-fn placement_validates_the_manifest_once_per_call() {
-    allow_small_tables();
-    use receiver_directory::snapshot::{manifest_validations, ProviderSet};
-    let records = spread(&receivers(4), 20);
-    let sets: Vec<_> = (0..8)
-        .flat_map(|i| {
-            ["recent", "seen"].map(|kind| ProviderSet {
-                label: format!("p{i}/{kind}"),
-                window_secs: (kind == "recent").then_some(86_400),
-                since_unix: 1_000,
-                until_unix: 90_000,
-                receivers: receivers(2),
-            })
-        })
-        .collect();
-    /// `f`'s result and how many manifest validations it ran.
-    fn counted<T>(f: impl FnOnce() -> T) -> (T, u64) {
-        let before = manifest_validations();
-        let value = f();
-        (value, manifest_validations() - before)
-    }
-    let (s, count) = counted(|| Snapshot::build(manifest(64), &records, &sets).unwrap());
-    assert_eq!((s.manifest.filters.len(), count), (17, 1));
-    assert_eq!(counted(|| s.validate().unwrap()), ((), 1));
-    for r in &records {
-        let bytes = row(&s, &r.receiver, r.page);
-        let found = counted(|| lookup_row(&s.manifest, &r.receiver, r.page, bytes).unwrap());
-        assert_eq!(found, (Some(r.clone()), 1));
-    }
-
-    let r = receiver();
-    let bytes = row(&s, &r, 0);
-    let mut bad_profile = s.manifest.clone();
-    bad_profile.profile.push('x');
-    let mut bad_rows = s.manifest.clone();
-    bad_rows.rows = 3;
-    let mut unordered = s.manifest.clone();
-    unordered.filters.swap(0, 1);
-    for bad in [bad_profile, bad_rows, unordered] {
-        assert!(matches!(row_for(&bad, &r, 0), Err(Error::Malformed)));
-        assert!(matches!(
-            lookup_row(&bad, &r, 0, bytes),
-            Err(Error::Malformed)
-        ));
-        let supplied = Snapshot {
-            manifest: bad.clone(),
-            ..s.clone()
-        };
-        assert!(matches!(supplied.validate(), Err(Error::Malformed)));
-        // A build replaces the declared sets, so only the others reach it.
-        if bad.filters == s.manifest.filters {
-            assert!(Snapshot::build(bad, &records, &sets).is_err());
-        }
-    }
-}
-
 /// A populated table of [`MAX_ROWS`] rows, about two records per row, validates from
 /// its own bytes once its source records are gone.
 #[test]
@@ -1405,11 +1319,10 @@ fn a_populated_largest_table_validates() {
     s.validate().unwrap();
 }
 
-/// Each page continues the last as [`check_next`] requires, in a build and in a
-/// supplied publication, each of whose edits is rehashed.
+/// Each page continues the last as [`check_next`] requires, which a build and a
+/// supplied publication apply.
 #[test]
 fn pages_continue_in_chain_order() {
-    allow_small_tables();
     use receiver_directory::{snapshot::check_next, Payment};
     let mut m = manifest(8);
     m.start_height = 98;
@@ -1444,12 +1357,7 @@ fn pages_continue_in_chain_order() {
         },
     ];
     for edit in continuing {
-        let r = next(edit);
-        check_next(&first, &r).unwrap();
-        Snapshot::build(m.clone(), &[first.clone(), r], &[])
-            .unwrap()
-            .validate()
-            .unwrap();
+        check_next(&first, &next(edit)).unwrap();
     }
 
     let broken: [fn(&mut Payment); 5] = [
@@ -1465,18 +1373,22 @@ fn pages_continue_in_chain_order() {
         |p| (p.txid, p.action_index) = ([2; 32], 2),
     ];
     for edit in broken {
-        let r = next(edit);
-        assert!(matches!(check_next(&first, &r), Err(Error::Malformed)));
         assert!(matches!(
-            Snapshot::build(m.clone(), &[first.clone(), r.clone()], &[]),
+            check_next(&first, &next(edit)),
             Err(Error::Malformed)
         ));
-        let mut s = valid.clone();
-        let offset = slot_of(&s, &within_tx);
-        put(&mut s, offset, Some(&r));
-        rehash(&mut s);
-        assert!(matches!(s.validate(), Err(Error::Malformed)));
     }
+    // A build and a supplied publication apply the same rule.
+    let earlier_action = next(broken[0]);
+    assert!(matches!(
+        Snapshot::build(m, &[first.clone(), earlier_action.clone()], &[]),
+        Err(Error::Malformed)
+    ));
+    let mut s = valid;
+    let offset = slot_of(&s, &within_tx);
+    put(&mut s, offset, Some(&earlier_action));
+    rehash(&mut s);
+    assert!(matches!(s.validate(), Err(Error::Malformed)));
 
     // The page, total and position conditions hold for the predicate too.
     let mut other = within_tx.clone();

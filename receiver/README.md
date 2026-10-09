@@ -32,33 +32,34 @@ page from zero, and every page repeats the total.
 
 Rows are 4096 bytes and hold 14 records plus zero padding. A domain-separated
 hash of the salt, the receiver's tag and the page selects a row. Publications
-start at 8192 rows, and a manifest with fewer is refused. A crowded bucket retries up to 16 salts derived from the
-terminal hash, the first being the hash itself, and only then doubles the table,
-up to 65536 rows. Overflow at the maximum fails the candidate instead of dropping
-records. So do more records than the table has slots, caught before placement; a
-supplied manifest claiming more records than its slots is malformed. The store
-counts at most one payment past the slots, in the snapshot's read transaction,
-before loading any record. The manifest (profile `ironwood-zero-ovk-receiver-v1`) binds the network,
-inclusive block coverage, boundary hashes, tree positions, geometry, salt, record
-count, the filter sets and the SHA-256 of the rows and of the filter file. The
-immutable revision is a domain-separated SHA-256 of every field at fixed width, as
-Enhance and Status hash their manifests, and a manifest with a field this version
-does not know is refused.
+start at 8192 rows, the fewest that PIR clients and servers accept. A crowded
+bucket retries up to 16 salts derived from the terminal hash, the first being
+the hash itself, and only then doubles the table, up to 65536 rows. Overflow at
+the maximum fails the candidate instead of dropping records. So do more records
+than the table has slots, caught before placement; a supplied manifest claiming
+more records than its slots is malformed. The manifest (profile
+`ironwood-zero-ovk-receiver-v1`) binds the network, inclusive block coverage,
+boundary hashes, tree positions, geometry, salt, record count, the filter sets
+and the SHA-256 of the rows and of the filter file. The immutable revision is a
+domain-separated SHA-256 of every field at fixed width, as Enhance and Status
+hash their manifests, and a manifest with a field this version does not know is
+refused.
 
 `Snapshot::validate` checks a supplied publication whole, before a server prepares
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
 in chain order as `snapshot::check_next` requires, unique outputs and positions,
-and, across receivers, one block hash per height and one txid per transaction
-index at a height. A record stored outside its bucket would otherwise make
-lookups of that receiver find nothing.
+and, across receivers, one block hash per height, one txid per transaction
+index at a height and one location per txid. No chain trust is implied. A
+record stored outside its bucket would otherwise make lookups of that receiver
+find nothing.
 
 ## Filters
 
 Each publication carries an `IWFLT1` filter file of labeled BIP 158 Golomb-coded
-sets of receivers, keyed by the salt, so a wallet can test its receivers before looking
-any up. The manifest declares every set's label and size:
+sets of receivers, keyed by the salt, so a wallet can test its receivers before
+looking any up. The manifest declares every set's label and size:
 
 - `paid`: every receiver with a payment in the publication.
 - `<provider>/recent`: every Orchard receiver a swap provider was given within the
@@ -70,11 +71,10 @@ For each provider set the manifest also declares when the feed's last complete r
 began, so a wallet can tell how current the set is. A recent window reaches back
 from that read.
 
-The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen` from
-the NEAR Intents explorer, and adds a provider's sets only once its feed has
-completed a read.
-Wallets use the sets they recognize and ignore the rest, so a new provider needs no
-format change.
+The indexer publishes `near-intents/recent` (24 hours) and `near-intents/seen`
+from the NEAR Intents explorer, and adds a provider's sets only once its feed
+has completed a read. Wallets use the sets they recognize and ignore the rest,
+so a new provider needs no format change.
 
 Sets are built with `bitcoin::bip158`, as Transparent's filters are, with P = 10
 and M = 1,533 and SipHash keys from a domain-separated SHA-256 of the salt, so a
@@ -89,10 +89,12 @@ rows.
 ## Witnesses
 
 The `IWPROOF1` witness file has a 152-byte header binding the genesis, revision,
-terminal height and hash, tree size and root. Sorted 37-byte nodes (level, index,
-hash) follow, with every sibling of each payment position. It is capped at 64 MiB.
-A server publishes a file only once it has checked a path to that root for every
-record in the rows, and that the rows hold exactly the manifest's record count.
+terminal height and hash, tree size and root. Sorted 37-byte nodes (level,
+index, hash) follow, with every sibling of each payment position. It is capped
+at 64 MiB. A server publishes a file only once it has checked a path to that
+root for every record in the rows. Building the file reads every commitment
+since the empty tree, so the store refuses a history longer than the caller's
+commitment limit before reading it.
 
 ## Protocol
 
@@ -120,18 +122,16 @@ the session ID.
 A query holds `RPQ1`, the session ID, a fresh 16-byte nonce, the packing key and
 the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
-409, a revoked one 410, a query longer than its session's 413 and a shorter or
-otherwise malformed one 400; the length is checked before the query waits for
-evaluation. Every response on these routes, refusals included, is
+409, a revoked or expired one 410, a query longer than its session's 413 and a
+shorter or otherwise malformed one 400; the length is checked before the query
+waits for evaluation. Every response on these routes, refusals included, is
 `Cache-Control: no-store`, since a revoked session ID serves again if the same
-publication is republished. A
-revocation also stops a session file or query answer still being sent, checked
-before each 64 KiB frame: its status and length are already out, so the client
-sees a truncated body rather than 410. Bytes already handed to the connection
-cannot be recalled, which is why wallets still check their anchor. Queries
-are admitted with the primitives Enhance uses (`pir_control::admission`): two in
-flight per client, then a wait of up to 2 seconds for one of two evaluation
-slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
+publication is republished. A query revoked while it is evaluated is 410; a
+response already being sent completes, and wallets revalidate their anchor.
+Queries are admitted with the primitives Enhance uses
+(`pir_control::admission`): two in flight per client, then a wait of up to 2
+seconds for one of two evaluation slots. A client at its cap or a full server
+gets 429 with `Retry-After: 1`.
 
 `/v1/receiver/health` reports the process identity that
 [the serving contract](../docs/serving-contract.md) defines for every PIR server,
@@ -214,12 +214,6 @@ returns a receiver's complete history or an error. Over PIR it reads up to
 the client across batches and reconnect for a new revision. The server sees the
 mode and the number of queries, so it learns how many lookups found several
 payments, but never which receivers were looked up.
-
-Building the file reads every commitment since the empty tree. The builder refuses
-a history of more than 2^22 (4,194,304) commitments before reading it, a limit on
-its memory rather than on the format, about 460 days ahead of mainnet's October 2026
-size. Reaching it stops fresh witness publication, so the service goes stale instead
-of running out of memory, until the limit is raised.
 
 ## Tests
 

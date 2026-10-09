@@ -425,7 +425,9 @@ async fn refresh(
     }
     let witnesses = if args.witnesses {
         let started = std::time::Instant::now();
-        let proof = store.witnesses(&snapshot.manifest, witness_cache)?.encode();
+        let proof = store
+            .witnesses(&snapshot.manifest, witness_cache, 1 << 22)?
+            .encode();
         log_stage("witness_prepare", started);
         info!(witness_bytes = proof.len(), "witnesses prepared");
         Some(proof)
