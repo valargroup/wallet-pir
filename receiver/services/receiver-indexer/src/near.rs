@@ -287,7 +287,8 @@ impl Explorer {
 
     /// Reads `feed` back to an hour before its cursor (`OVERLAP_SECS`), or to `since` on
     /// the first read, and records each swap's Orchard receiver in `store`, with when the read
-    /// began, and each completed payout to one with its reported transactions. A payout
+    /// began, and each completed payout to one with its reported transactions, dated
+    /// when both scans finished so a long read cannot use up its grace. A payout
     /// read that found a cursor also rescans successful swaps created up to
     /// [`RECENT_SECS`] before it, for their completions only. Both scans are recorded in
     /// one transaction once both finish (see [`ProviderStore::record`]), so a failed or
@@ -302,9 +303,7 @@ impl Explorer {
         feed: Feed,
         since: i64,
     ) -> Result<usize> {
-        let read_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_secs() as i64;
+        let read_at = unix_now()?;
         let cursor = store.cursor(feed.name())?;
         // Decided before fetching: a read that found a cursor reads back only to it.
         let initial_since = cursor.is_none().then_some(since);
@@ -348,6 +347,11 @@ impl Explorer {
             )
             .await?;
         }
+        let seen_at = unix_now()?;
+        let completed: Vec<_> = completed
+            .into_iter()
+            .map(|(r, t)| (r, t, seen_at))
+            .collect();
         // Only a completed initial read says where the feed started.
         store.record(
             feed.name(),
@@ -445,6 +449,13 @@ impl Explorer {
         }
         Ok(swaps)
     }
+}
+
+/// Seconds since the Unix epoch.
+fn unix_now() -> Result<i64> {
+    Ok(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64)
 }
 
 /// The Orchard receiver of a mainnet unified address, the only kind a per-swap key has.
@@ -806,7 +817,7 @@ mod tests {
 
     /// A record missing its address is skipped, a future date is capped at the read's
     /// start, and a completed payout is recorded, without a parsable transaction as
-    /// uncheckable, one row per swap.
+    /// uncheckable, one row per swap, dated when the read finished, not began.
     #[tokio::test]
     async fn a_read_skips_bad_records_caps_future_dates_and_notes_completions() {
         use axum::{routing::get, Router};
@@ -822,11 +833,15 @@ mod tests {
              "status": "SUCCESS"},
         ])
         .to_string();
+        // A page that takes over a second, so the read ends in a later second.
         let app = Router::new().route(
             "/",
             get(move || {
                 let page = page.clone();
-                async move { page }
+                async move {
+                    tokio::time::sleep(Duration::from_millis(1100)).await;
+                    page
+                }
             }),
         );
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -839,6 +854,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(read, 3);
+        let began = store.read(Feed::Payouts.name()).unwrap().unwrap();
+        assert!(store.payouts(began).unwrap().is_empty());
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1027,7 +1044,7 @@ mod tests {
                 "near-payouts",
                 Some(0),
                 &[],
-                &[(receiver(1), [7; 32])],
+                &[(receiver(1), [7; 32], now - 2 * 60 * 60)],
                 now,
                 now - 2 * 60 * 60,
             )
@@ -1055,22 +1072,16 @@ mod tests {
         index.append(&block).unwrap();
         let now = 1_000_000;
         // The indexed payout, then a later one to the same receiver that is not indexed.
+        let early = now - 2 * 60 * 60;
         let payouts = [
-            (receiver(1), [7; 32]),
-            (receiver(1), [8; 32]),
-            (receiver(2), [0; 32]),
+            (receiver(1), [7; 32], early),
+            (receiver(1), [8; 32], early),
+            (receiver(2), [0; 32], early),
         ];
         provider
-            .record(
-                "near-payouts",
-                Some(0),
-                &[],
-                &payouts,
-                now,
-                now - 2 * 60 * 60,
-            )
+            .record("near-payouts", Some(0), &[], &payouts, now, early)
             .unwrap();
-        let payouts = [(receiver(2), [9; 32])];
+        let payouts = [(receiver(2), [9; 32], now - 60)];
         provider
             .record("near-payouts", None, &[], &payouts, now, now - 60)
             .unwrap();
@@ -1089,6 +1100,42 @@ mod tests {
         assert_eq!(report["payouts_uncheckable"], 0);
         assert_eq!(report["feeds"]["near-payouts"], now - 30);
         assert!(report["feeds"]["near-refunds"].is_null());
+    }
+
+    /// A completion ages from when a read saw it, not when the read began: after a read
+    /// lasting two hours it stays pending, checkable or not, until its grace from then
+    /// ends, while the feed reports the read's start. A later read, after a reopen,
+    /// keeps the earliest observation.
+    #[test]
+    fn completions_age_from_when_a_read_saw_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("provider.sqlite");
+        let (index, _) = paid_index(&dir.path().join("directory.sqlite"));
+        let (began, seen) = (1_000_000, 1_000_000 + 2 * 60 * 60);
+        let record = |read_at, seen_at| {
+            let payouts = [
+                (receiver(1), [8; 32], seen_at),
+                (uncheckable_receiver(), [0; 32], seen_at),
+            ];
+            ProviderStore::open(&path)
+                .unwrap()
+                .record("near-payouts", Some(0), &[], &payouts, read_at, read_at)
+                .unwrap();
+        };
+        record(began, seen);
+        let due = seen + COMPLETION_GRACE_SECS;
+        let provider = ProviderStore::open(&path).unwrap();
+        let pending = report(&provider, &index, due - 1);
+        assert_eq!(pending["feeds"]["near-payouts"], began);
+        assert_eq!(pending["payouts_checked"], 0);
+        assert_eq!(pending["payouts_uncheckable"], 0);
+        drop(provider);
+        record(seen, seen + 60 * 60);
+        let provider = ProviderStore::open(&path).unwrap();
+        let checked = report(&provider, &index, due);
+        assert_eq!(checked["feeds"]["near-payouts"], seen);
+        assert_eq!(checked["payouts_missing"], 1);
+        assert_eq!(checked["payouts_uncheckable"], 1);
     }
 
     #[test]

@@ -216,7 +216,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
             "near-payouts",
             Some(40),
             &[(payout, true, 100), (payout, true, 50)],
-            &[(payout, [1; 32])],
+            &[(payout, [1; 32], 300)],
             100,
             300,
         )
@@ -249,14 +249,14 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // The feed's start is its initial read's; see the test below.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A payout keeps the earliest read that saw it complete, and a reused receiver has
-    // one per transaction.
+    // A payout keeps the earliest time a read saw it complete, and a reused receiver
+    // has one per transaction.
     store
         .record(
             "near-payouts",
             None,
             &[],
-            &[(payout, [1; 32]), (payout, [2; 32])],
+            &[(payout, [1; 32], 500), (payout, [2; 32], 500)],
             110,
             500,
         )
@@ -264,7 +264,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.payouts(450).unwrap(), [(payout, [1; 32])]);
     let both = [(payout, [1; 32]), (payout, [2; 32])];
     assert_eq!(store.payouts(600).unwrap(), both);
-    // An earlier read committing after a later one lowers the payout to its start,
+    // An earlier read committing after a later one lowers the payout to its time,
     // without moving the cursor and read time; a still later read cannot raise it.
     let saw = |store: &mut ProviderStore, read_at| {
         store
@@ -272,7 +272,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
                 "near-payouts",
                 None,
                 &[],
-                &[(payout, [2; 32])],
+                &[(payout, [2; 32], read_at)],
                 110,
                 read_at,
             )
@@ -349,7 +349,7 @@ fn a_failed_provider_read_records_nothing() {
             "near-payouts",
             Some(40),
             &[(payout, true, 100)],
-            &[(payout, [1; 32])],
+            &[(payout, [1; 32], 300)],
             100,
             300
         )

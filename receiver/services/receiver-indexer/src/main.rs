@@ -809,7 +809,7 @@ mod tests {
                 "near-payouts",
                 Some(NOW - 100),
                 &[(payout, true, NOW - 50)],
-                &[(payout, [7; 32])],
+                &[(payout, [7; 32], NOW - 10)],
                 NOW - 50,
                 NOW - 10,
             )
@@ -896,7 +896,7 @@ mod tests {
                 "near-payouts",
                 Some(now - 100),
                 &[],
-                &[(payout, [7; 32])],
+                &[(payout, [7; 32], now - 10)],
                 now - 50,
                 now - 10,
             )
