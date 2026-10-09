@@ -160,27 +160,9 @@ impl ZakuraClient {
 
     /// The block at `height`, decoded from the node's raw `getblock` bytes.
     async fn receiver_raw_block(&self, height: u32) -> Result<Block, ZakuraError> {
-        self.raw_block(height.to_string()).await
-    }
-
-    /// The block whose hash is `hash` (protocol byte order), with its transactions in
-    /// the order the chain commits to: the node's raw block must hash to `hash` and its
-    /// transactions must match its header's merkle root.
-    pub async fn receiver_block(&self, hash: [u8; 32]) -> Result<Block, ZakuraError> {
-        let block = self
-            .raw_block(zakura_chain::block::Hash(hash).to_string())
+        let raw: String = self
+            .call("getblock", json!([height.to_string(), 0]))
             .await?;
-        if block.hash().0 != hash {
-            return Err(ZakuraError::Block("block does not match its hash".into()));
-        }
-        check_transactions(&block)?;
-        Ok(block)
-    }
-
-    /// The block `id` names, a height or a displayed hash, decoded from the node's raw
-    /// `getblock` bytes.
-    async fn raw_block(&self, id: String) -> Result<Block, ZakuraError> {
-        let raw: String = self.call("getblock", json!([id, 0])).await?;
         let bytes = hex::decode(raw)?;
         let mut input = bytes.as_slice();
         let block =

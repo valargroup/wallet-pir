@@ -232,14 +232,14 @@ completing them, it fails as `oracle_unavailable`, listing each attempt, rather
 than skipping them.
 As Transparent's canary checks one query against a pinned row hash, it looks up a
 pinned historical payment over live encrypted PIR: the fixture holds a public
-zero-OVK Action with its txid, height, Action index, note position and the
-receiver it pays, decoded independently of recovery. Before any request the probe
+zero-OVK Action with its txid, height, block hash, transaction and Action
+indexes, note position and the receiver it pays, decoded independently of
+recovery. Before any request the probe
 requires recovery to reproduce that receiver, which it then looks up, so a
 recovery regression shared with the indexer cannot pass. The answer must hold that
-payment at that position and height with the fixture's fields, the node's block
-hash and the index of the fixture's transaction in the node's block, read by hash
-and checked against its merkle root. A fixture that fails its SHA-256 or receiver
-pin, or whose transaction is not in that block, is `oracle_invalid`. The lookup is reported as `phase:
+payment with every fixture field, and the node's block at the fixture's height
+must have the pinned hash. A fixture that fails its SHA-256, receiver or block
+hash pin is `oracle_invalid`. The lookup is reported as `phase:
 "live_encrypted_probe"` with `queries` and `correct`. It also downloads the
 session's filter file, which must match the manifest's digest and declared sets.
 With `--witnesses`, which a deployment must pass when its indexer runs with
@@ -249,7 +249,7 @@ the publication and prove the fixture's commitment at its position under the
 Ironwood root the node gives after the terminal block (`z_gettreestate`, read by
 that block's hash). A run moves about 140 KB from the service, of which the filter
 file was about 37 KB in October 2026, plus the witness file with `--witnesses`,
-bounded at 64 MiB, and the fixture's block from the node.
+bounded at 64 MiB.
 It fails as `answer_mismatch` when the served anchor is off the node's chain or
 claims a tree size other than the node's after that block (read by its hash), the
 lookup misses or misreports the payment, the witness or filter file is wrong or a

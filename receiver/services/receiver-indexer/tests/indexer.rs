@@ -326,6 +326,10 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
     ))
     .unwrap();
     fixture["height"] = payment.height.into();
+    fixture["block_hash"] = zakura_chain::block::Hash(payment.block_hash)
+        .to_string()
+        .into();
+    fixture["tx_index"] = payment.tx_index.into();
     fixture["position"] = payment.position.into();
     let probe_nodes = |fixture: &Value, pin: Option<&str>, nodes: &[&str]| {
         let path = dir.path().join("fixture.json");
@@ -545,47 +549,6 @@ async fn concurrent_batches_reject_gaps_forks_and_wrong_positions() {
         }
         task.abort();
     }
-}
-
-/// A block read by hash must be the block with that hash, with the transactions its
-/// header commits to, so its transaction order is the chain's.
-#[tokio::test]
-async fn a_block_read_by_hash_is_that_block() {
-    let serve = |b: Block| async move {
-        let mut raw = Vec::new();
-        b.zcash_serialize(&mut raw).unwrap();
-        let raw = hex::encode(raw);
-        let app = Router::new().route(
-            "/",
-            post(move |Json(r): Json<Value>| async move {
-                assert_eq!(
-                    (r["method"].as_str(), &r["params"][1]),
-                    (Some("getblock"), &json!(0))
-                );
-                Json(json!({"result": raw, "error": null}))
-            }),
-        );
-        let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}", socket.local_addr().unwrap());
-        tokio::spawn(async move { axum::serve(socket, app).await.unwrap() });
-        ZakuraClient::new(url, None).unwrap()
-    };
-    let b = block();
-    let hash = b.hash().0;
-    let read = serve(b.clone()).await.receiver_block(hash).await.unwrap();
-    assert_eq!(read.transactions.len(), 2);
-    assert!(serve(b.clone())
-        .await
-        .receiver_block([0; 32])
-        .await
-        .is_err());
-    // A transaction changed under the same header.
-    let mut altered = b;
-    if let Transaction::V6 { expiry_height, .. } = Arc::make_mut(&mut altered.transactions[1]) {
-        expiry_height.0 += 1;
-    }
-    assert_eq!(altered.hash().0, hash);
-    assert!(serve(altered).await.receiver_block(hash).await.is_err());
 }
 
 #[test]
