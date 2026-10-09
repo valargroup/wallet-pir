@@ -238,8 +238,8 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // A feed's start is its first read's.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A payout keeps when a read first saw it complete, and a reused receiver has one
-    // per transaction.
+    // A payout keeps the earliest read that saw it complete, and a reused receiver has
+    // one per transaction.
     store
         .record(
             "near-payouts",
@@ -255,11 +255,24 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     // A matched payout is skipped from then on, however long it stays recorded.
     store.match_payouts(&[(payout, [1; 32])]).unwrap();
     assert_eq!(store.unmatched(600).unwrap(), [(payout, [2; 32])]);
+    // An earlier read committing after a later one lowers the payout to its start,
+    // without moving the cursor and read time; a still later read cannot raise it.
+    let saw = |store: &mut ProviderStore, read_at| {
+        store
+            .record("near-payouts", 60, &[], &[(payout, [2; 32])], 110, read_at)
+            .unwrap()
+    };
+    saw(&mut store, 300);
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    saw(&mut store, 700);
+    assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
+    assert!(store.unmatched(299).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.unmatched(600).unwrap(), [(payout, [2; 32])]);
+    assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
 }
 
 /// A read that fails partway, here on its completions, records nothing: neither its
@@ -635,6 +648,7 @@ fn common_witnesses_bind_positions_and_reject_corrupt_or_stale_data() {
     let mut manifest = manifest(8);
     manifest.start_position = 0;
     manifest.end_position = 20;
+    manifest.records = 5;
     let positions = [0, 5, 6, 18, 19].into_iter().collect();
     let snapshot = WitnessSnapshot::build(&manifest, &commitments, &positions).unwrap();
     let encoded = snapshot.encode();
