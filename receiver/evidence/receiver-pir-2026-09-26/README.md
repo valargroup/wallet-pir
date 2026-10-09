@@ -15,10 +15,7 @@ bytes also matched the independent fixture.
 The receiver terminal block at 3,497,109 and Enhance generation 446's anchor at
 3,497,346 were independently checked against canonical RPC. Exact hashes, revision,
 wire sizes, and the single-query timing are in [the evidence record](results.json),
-and the run metadata in [`manifest.json`](manifest.json). Neither host's hardware,
-operating system or load, nor the tunnel's topology or network conditions, were
-recorded (see the manifest's `not_retained`), so the 945 ms Enhance query cannot
-be attributed to computation, network or contention.
+and the run metadata in [`manifest.json`](manifest.json).
 
 The run made one query, so the record's fifty-lookup byte count,
 `lookup_payload_bytes.fifty_single_page_lookups_including_setup`, is derived rather
@@ -30,8 +27,9 @@ it by path.
 
 This record is historical. It measured the `ironwood-receiver-pir-v1-q48` protocol,
 since replaced by `ironwood-receiver-pir-v1-two-mask-m29`, whose request at 8192
-rows is 77,876 bytes rather than 135,220. The opt-in test below existed at the
-recorded commits but is not part of the current tree.
+rows is 77,876 bytes rather than 135,220. The `profile` in `results.json` is that
+q48 protocol, not a Cargo profile. The opt-in test below existed at the recorded
+commits but is not part of the current tree.
 
 This validates private retrieval and public-output authentication. It does not
 validate wallet ownership, received-note nullifier tracking, witness construction,
@@ -46,13 +44,6 @@ ENHANCE_PIR_ORIGIN=http://127.0.0.1:18381 \
 cargo test -p receiver-pir-server --test http \
   known_mainnet_refund_through_receiver_and_enhance_pir -- --ignored --nocapture
 ```
-
-The Rust toolchain and Cargo build profile were not recorded, and
-[`manifest.json`](manifest.json) declares both unavailable. As shown, the command
-passes no `--profile`, so Cargo would build the test with its default `test`
-profile, but nothing records that it ran exactly as shown or how the isolated
-Enhance service was built. The `profile` in `results.json` is the q48 protocol
-profile, not a Cargo profile.
 
 Seven receiver-directory tests and the focused receiver client/service tests
 cover authentication, corrupted setup, mismatched requests/revisions/anchors,

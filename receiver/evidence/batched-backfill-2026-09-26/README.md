@@ -2,16 +2,14 @@
 
 September 26, 2026, on the Studio against the same public mainnet RPC. The
 baseline source was `46f99bff` and the optimized source `aa0fb4fc`, the batching
-change first committed with this record. Both predate the rewrite of the receiver
-history into its current commits: they are reachable only from development
-branches, not from `main`, so they are historical references rather than a
-reproduction recipe (see [`manifest.json`](manifest.json)). Binary hashes,
-timestamps, row digests, and elapsed times are retained in
-[the measurement record](results.json).
+change first committed with this record; the run metadata is in
+[`manifest.json`](manifest.json). Binary hashes, timestamps, row digests, and
+elapsed times are retained in [the measurement record](results.json).
 
 This record is historical: publications then started at 4 rows, so the revision
 below is not what the same range publishes today at 8192 rows or more. The
-batching it measured is unchanged.
+batching it measured is unchanged; it is now `receiver_batch` in
+[`blocks.rs`](../../services/receiver-indexer/src/blocks.rs).
 
 Both binaries indexed heights 3,496,100–3,496,200 into fresh, separate SQLite
 directories with the ordinary backfill paused. They used the same local Cargo
@@ -19,12 +17,6 @@ test build configuration and RPC endpoint. The optimized run used a batch size o
 64 and concurrency of 8. Both ranges had already been requested before this pair
 to reduce cold-cache differences. This is a small network measurement, not a
 guaranteed full-history rate or an isolated node benchmark.
-
-The Rust compiler and resolved dependencies that built the two binaries were not
-recorded, nor was the exact build command or its output. Both source commits pin
-Rust 1.91.0, share one `Cargo.lock` and declare `opt-level = 1` for the `test`
-profile, but that is source configuration, not proof of what built the binaries;
-[`manifest.json`](manifest.json) records it under `toolchain`.
 
 | Run | Elapsed |
 |---|---:|

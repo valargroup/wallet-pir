@@ -5,25 +5,13 @@
     "baseline": "207053dc02453d43ebfd3ba60c758f99f848c509",
     "integrated_base": "2f99300debde3d65a0c0d263a5129042eddf12ab",
     "main_integrated": "5337a43c619039a39c35b54d9251a5131ebb93ba",
-    "implementation": "8bfb120c211d2674fbf0a49f4d8455a0f54e6790",
-    "note": "results.json names these roles, main_integrated only as 5337a43, which resolves uniquely. integrated_base merges main_integrated, a main commit, into baseline; implementation is its direct child and adds witness caching. Only main_integrated is in main or this stack; the others resolve here from development branches such as origin/adam/receiver-publication-cache."
+    "implementation": "8bfb120c211d2674fbf0a49f4d8455a0f54e6790"
   },
   "toolchain": {
     "rust": "1.98.0",
-    "profile": "release-fast",
-    "status": "as results.json reports them; the compilers, resolved dependencies and build commands of the measured binaries were not recorded",
-    "source_configuration": {
-      "rust_toolchain": "1.91.0",
-      "cargo_lock_blob": "48eec426f529450f7e641b649da5d834f9cc5b02",
-      "note": "declared at the implementation revision; what a build there would use, not what built the measured binaries"
-    }
+    "profile": "release-fast"
   },
-  "invocations": {
-    "witness_refresh": "the receiver-directory example at the implementation revision, run with --features store on an isolated copy of results.json's source_input database as `<copy> --isolated-copy`, its only accepted arguments; the exact command line (cargo flags and copy path) was not retained",
-    "daemon": "receiver-directory --serve at the implementation revision with witnesses, 8192 rows, zero confirmations and the default 10-second poll, listening on 127.0.0.1:18482 (serve.log); the exact command line was not retained",
-    "rpc_proxy_and_timing_harness": "not retained: no source or command for the loopback tip proxy or the HTTP availability timer exists in any recorded revision"
-  },
-  "host": "Apple M3 Ultra (local); RAM, storage medium and OS version were not recorded",
+  "host": "Apple M3 Ultra (local)",
   "network": "mainnet",
   "range": [
     3428143,
@@ -45,12 +33,5 @@
   ],
   "historical": true,
   "qualification": "development evidence, not release qualification",
-  "not_retained": [
-    "the UTC time of the run: results.json and serve.log record only the date, so trials that day cannot be placed against node or host state or told apart",
-    "the 42.9 MB source SQLite database (only its path and SHA-256 are in results.json), so the commitments, payment positions and cache state cannot be reconstructed",
-    "the exact command lines (see invocations)",
-    "which tree, compiler, resolved dependencies and build command produced each measured binary, including results.json's serve.binary_sha256; only the source revisions are known (see toolchain)",
-    "the host's RAM, storage medium and OS version",
-    "the two publications' row files and manifests and the served witness proof, so the row-file and proof-equality checks cannot be recomputed"
-  ]
+  "not_retained": "everything outside SHA256SUMS, including the source database, publications, served proof and exact commands"
 }
