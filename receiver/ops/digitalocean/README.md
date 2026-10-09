@@ -17,7 +17,7 @@ holds no wallet data. No Enhance service runs on this Droplet.
 `s-4vcpu-8gb-amd`, Ubuntu 24.04, with this directory's `cloud-init.yaml`), its project
 membership, its firewall and the unproxied A record `receiver-pir.valargroup.dev`
 (TTL 300), behind `receiver_pir_enabled`. The Droplet has `prevent_destroy` and
-ignores `user_data` changes. The firewall allows SSH from `allowed_ssh_cidrs`, HTTP
+ignores `user_data` and `ssh_keys` changes. The firewall allows SSH from `allowed_ssh_cidrs`, HTTP
 and HTTPS from anywhere, and port 18380 only from the PIR monitor Droplet; the
 host's `ufw` also limits 18380 to `10.70.0.0/16`.
 
@@ -42,7 +42,9 @@ import 'digitalocean_droplet.receiver_pir[0]' 604069093
 import 'cloudflare_dns_record.receiver_pir[0]' 'd3ac9657be6101818fed439c62fdcadf/<record-id>'
 ```
 
-The saved plan that follows must show no Droplet replacement or resize; the
+An imported Droplet has no SSH keys in state, and the provider replaces a Droplet
+whose keys change, so `receiver.tf` ignores them; keep it that way. The saved plan
+that follows must show no Droplet replacement or resize; the
 recorded size slug is `s-4vcpu-8gb-amd`, and if the live one differs, set it first.
 The plan creates the firewall, which then closes every port it does not list, so
 confirm SSH from `allowed_ssh_cidrs` and the monitor's 18380 rule in it, and may add
@@ -93,7 +95,11 @@ from this commit on and is not in a release bundle: build it with
 `enhance/ops/scripts/build-observability.sh`, as for its other probes. The chain
 checks use the monitor host's own node and cookie, as the Status probe and the
 Transparent canary do, not the fleet nodes the service reads, so they are an
-independent oracle:
+independent oracle. The cookie and the probe config come from the monitor's host
+drop-in, [`pir-monitor-service-quality.conf`](../../../enhance/ops/deploy/pir-monitor-service-quality.conf),
+installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
+(the live monitor already has it). Add this entry to its
+`/etc/pir-monitor/service-probes.json`:
 
 ```json
 {"service": "receiver", "command": ["/opt/pir-monitor/receiver-probe", "--origin",
@@ -108,11 +114,13 @@ independent oracle:
 The fixture pins the public NEAR refund
 `2060cf68088b55dcd9e2f91556c72528e1ab8c6834ea3f71b8c80fca9fc51653` (height
 3,496,114, Action 0, note position 610503), which every publication holds. Each
-run looks up its receiver with one live encrypted query over the public origin, so
-it moves about 100 KB: the session manifest, the 14,848-byte public setup, a
-77,876-byte query and a 5,684-byte response, plus health. It alerts when the
-served anchor leaves the chain, the lookup misses or misreports the pinned payment
-or a completed NEAR payout is missing from the index (correctness), when the
+run looks up its receiver with one live encrypted query over the public origin and
+checks the filter file, so it moves about 140 KB: the session manifest, the
+14,848-byte public setup, a 77,876-byte query, a 5,684-byte response and the
+filter file (about 37 KB in October 2026), plus health. It alerts when the
+served anchor leaves the chain, the lookup misses or misreports the pinned payment,
+the filter file is wrong or a completed NEAR payout is missing from the index
+(correctness), when the
 fixture fails its pin (oracle), and after three failed probes when the publication
 or the recent set goes stale or a request fails (availability). To
 upgrade, install a new release directory, repoint `current` and restart the

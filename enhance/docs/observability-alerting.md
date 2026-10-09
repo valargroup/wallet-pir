@@ -298,7 +298,9 @@ not an independently operated consensus oracle.
 
 `PIR_APM_SERVICE_MONITOR_URL` optionally reads the dedicated monitor's aggregate
 Status and Transparent results. `PIR_MONITOR_SERVICE_PROBES_CONFIG` contains an
-array of `{service, command, timeout_seconds}` records. Commands are absolute
+array of `{service, command, timeout_seconds}` records; the host drop-in
+[`pir-monitor-service-quality.conf`](../ops/deploy/pir-monitor-service-quality.conf)
+sets it and loads the probes' node cookie. Commands are absolute
 argument arrays, timeouts are 1–45 seconds, and output is bounded and sanitized.
 Build the Transparent native `quality-canary` separately from native Enhance
 features. Pin the fixture checksum and independently verify its canonical

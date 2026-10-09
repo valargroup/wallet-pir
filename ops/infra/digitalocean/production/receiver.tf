@@ -19,7 +19,8 @@ resource "digitalocean_droplet" "receiver_pir" {
   user_data  = file("${path.module}/../../../../receiver/ops/digitalocean/cloud-init.yaml")
   lifecycle {
     prevent_destroy = true
-    ignore_changes  = [user_data]
+    # An imported Droplet has no keys in state, and a key change forces replacement.
+    ignore_changes = [user_data, ssh_keys]
   }
 }
 
