@@ -1,0 +1,16 @@
+set -e
+export PATH=/root/.cargo/bin:$PATH
+export CARGO_INCREMENTAL=0
+cd /srv/wallet-pir-build-569f68e6
+rustc --version
+RUSTFLAGS="-C target-cpu=x86-64-v3 -C target-feature=+pclmulqdq" CXXFLAGS=-mpclmul CFLAGS=-mpclmul cargo build --locked --profile release-fast -p transparent-filter-server --bin shard-cutoff
+sha256sum target/release-fast/shard-cutoff
+du -sh target
+echo BUILD_DONE
+--- log tail
+    Finished `release-fast` profile [optimized] target(s) in 12m 52s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+de75adb081eb884aea6a1c789b0f053a829e67348ec0a0070cbbfc2756f01efe  target/release-fast/shard-cutoff
+1.2G	target
+BUILD_DONE
