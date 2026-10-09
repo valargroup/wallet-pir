@@ -370,11 +370,14 @@ async fn await_feed_reads(
                 json!({"waited_secs": wait.as_secs(), "reads": reads, "last_error": error}),
             ));
         }
-        let health = fetch(http.get(health_url), MAX_HEALTH_BYTES, "health", |bytes| {
-            serde_json::from_slice::<Value>(bytes)
-        });
+        // Health is not wallet data, so it is read without `fetch`, as `indexer_report` does.
+        let health = async {
+            let response = http.get(health_url).send().await?.error_for_status()?;
+            let body = read_limited(response, MAX_HEALTH_BYTES).await?;
+            Result::<Value>::Ok(serde_json::from_slice(&body)?)
+        };
         match tokio::time::timeout(remaining, health).await {
-            Ok(Ok(Ok(health))) => {
+            Ok(Ok(health)) => {
                 reads = health["near"]["reads"].clone();
                 if [Feed::Payouts, Feed::Refunds]
                     .iter()
@@ -383,7 +386,6 @@ async fn await_feed_reads(
                     return None;
                 }
             }
-            Ok(Ok(Err((_, detail)))) => error = Some(detail.to_string()),
             Ok(Err(e)) => error = Some(e.to_string()),
             Err(_) => error = Some("health did not answer before the deadline".to_owned()),
         }
