@@ -15,7 +15,10 @@ bytes also matched the independent fixture.
 The receiver terminal block at 3,497,109 and Enhance generation 446's anchor at
 3,497,346 were independently checked against canonical RPC. Exact hashes, revision,
 wire sizes, and the single-query timing are in [the evidence record](results.json),
-and the run metadata in [`manifest.json`](manifest.json).
+and the run metadata in [`manifest.json`](manifest.json). Neither host's hardware,
+operating system or load, nor the tunnel's topology or network conditions, were
+recorded (see the manifest's `not_retained`), so the 945 ms Enhance query cannot
+be attributed to computation, network or contention.
 
 The run made one query, so the record's fifty-lookup byte count,
 `lookup_payload_bytes.fifty_single_page_lookups_including_setup`, is derived rather
