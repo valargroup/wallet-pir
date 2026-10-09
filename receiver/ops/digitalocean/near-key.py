@@ -51,37 +51,47 @@ content = b"NEAR_INTENTS_EXPLORER=" + data
 final = os.path.join(directory, "near-" + key_id + ".env")
 
 
-def existing():
-    """The bytes at the final name, or None when nothing is there; refuses anything but a file."""
+def refuse(reason):
+    """Exits 1, leaving the existing final name untouched."""
+    sys.exit("refused: " + final + " " + reason + "; key files are never replaced")
+
+
+def settle():
+    """Exits for an existing final name: 0 if it is a private file holding this key, else 1.
+
+    Checked on the open file: owned by this user (root), mode without group or
+    other bits, and one name. No temporary name of this run links to it here.
+    """
     try:
         fd = os.open(final, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return None
     except OSError:
-        settle(None)
-    if not stat.S_ISREG(os.fstat(fd).st_mode):
-        settle(None)
-    with os.fdopen(fd, "rb") as handle:
-        return handle.read()
-
-
-def settle(current):
-    """Exits for an existing final name holding `current`: 0 if it is this key, else 1."""
-    if current == content:
-        print(final + " is already installed with this key")
-        sys.exit(0)
-    sys.exit("refused: " + final + " exists with another key or is not a file; key files are never replaced")
+        refuse("is not a regular file")
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        refuse("is not a regular file")
+    if info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+        refuse("is not a private file of this user with one name")
+    current = b""
+    while len(current) <= len(content):
+        chunk = os.read(fd, len(content) + 1 - len(current))
+        if not chunk:
+            break
+        current += chunk
+    if current != content:
+        refuse("holds another key")
+    print(final + " is already installed with this key")
+    sys.exit(0)
 
 
 os.makedirs(directory, mode=0o700, exist_ok=True)
 info = os.lstat(directory)
 if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o022:
     sys.exit("refused: " + directory + " must be a directory owned by this user and writable by no one else")
-current = existing()
-if current is not None:
-    settle(current)
+if os.path.lexists(final):
+    settle()
 temp = os.path.join(directory, ".near-" + key_id + "." + secrets.token_hex(8) + ".tmp")
 fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+published = False
 try:
     with os.fdopen(fd, "wb") as handle:
         handle.write(content)
@@ -89,13 +99,16 @@ try:
         os.fsync(handle.fileno())
     try:
         os.link(temp, final)
+        published = True
     except FileExistsError:
-        settle(existing())
+        pass
 finally:
     try:
         os.unlink(temp)
     except FileNotFoundError:
         pass
+if not published:
+    settle()
 for path in (directory, os.path.dirname(directory)):
     dfd = os.open(path, os.O_RDONLY)
     try:

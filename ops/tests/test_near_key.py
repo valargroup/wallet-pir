@@ -171,6 +171,26 @@ class NearKeyInstaller(unittest.TestCase):
         self.assertEqual(list(self.installed().iterdir()), [])
         self.assertEqual(sorted(p.name for p in self.keys.iterdir()), ['near-%s.env' % ID])
 
+    def test_an_existing_key_file_must_be_private_with_one_name(self):
+        """Matching content is not enough: an exposed, foreign or shared file is refused."""
+        self.assertEqual(self.install().returncode, 0)
+        content = self.installed().read_bytes()
+        self.installed().chmod(0o644)
+        run = self.install()
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('not a private file', run.stderr)
+        self.installed().chmod(0o600)
+        run = self.install(hook='other-owner')
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('not a private file', run.stderr)
+        os.link(self.installed(), self.dir / 'elsewhere')
+        run = self.install()
+        self.assertEqual(run.returncode, 1)
+        self.assertIn('not a private file', run.stderr)
+        os.unlink(self.dir / 'elsewhere')
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(self.installed().read_bytes(), content)
+
     def test_a_key_directory_others_can_write_is_refused(self):
         self.keys.mkdir(mode=0o700)
         self.keys.chmod(0o775)
