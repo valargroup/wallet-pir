@@ -100,6 +100,20 @@ class CudaFleet(Fleet):
                 runner.rollback()
                 self.assertTrue(all(self.running(host, unit) == OLD_SHA for host, unit in ENHANCE))
 
+    def test_an_unfinished_rollback_behind_a_verification_blocks_a_deploy(self):
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                self.setUp()
+                runner = self.enhance_fleet()
+                deployment = runner.deploy(NEW_SHA, self.binary, retire_historical=True)
+                runner.deploy(NEW_SHA, verify_noop=True)
+                status = self.fail_rollback(runner, interrupted)
+                third = self.dir / 'third'
+                third.write_bytes(b'third build')
+                with self.assertRaisesRegex(DeployError, '%s is %s; finish it' % (deployment.id, status)):
+                    runner.deploy(hashlib.sha256(b'third build').hexdigest(), third, retire_historical=True,
+                                  verify_noop=True)
+
     def test_nested_health_and_strict_scalar_types(self):
         runner = self.enhance_fleet()
         target = runner.targets[0]

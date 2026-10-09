@@ -7,7 +7,7 @@ moves `pending -> backing-up -> installing -> restarting -> verifying ->
 verified`; from `installing` on the host is *touched* and a rollback restores
 it. Rollback moves a touched host through `restoring -> restored`. A
 verification, which restarts no host, records in `rollback_target` the
-transaction the pointer named before it (see `Deployer.rollback`).
+transaction the pointer named before it (see `Journal.deployment`).
 
 The journal holds everything a rollback needs (previous unit text, previous
 executable digest, readiness checks), so it works from this file alone even if
@@ -69,6 +69,16 @@ class Journal:
         journal = cls(path, json.loads(path.read_text()))
         if journal.data['service'] != service:
             raise ValueError('transaction %s belongs to service %s' % (identifier, journal.data['service']))
+        return journal
+
+    @classmethod
+    def deployment(cls, state_dir, service):
+        """The latest transaction, passing over finished verifications to the one
+        their `rollback_target` chain ends at; None without any."""
+        journal = cls.load(state_dir, service)
+        while (journal and journal.verification_only and journal.status in FINAL
+               and journal.data.get('rollback_target')):
+            journal = cls.load(state_dir, service, journal.data['rollback_target'])
         return journal
 
     @property

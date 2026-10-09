@@ -441,9 +441,11 @@ class Deployer:
 
     def _deploy(self, sha, binary, source, allow_drift, retire_historical, check, verify_noop=False):
         latest = Journal.load(self.state_dir, self.service.name)
-        if latest is not None and latest.status not in FINAL:
+        # A rollback behind a finished verification counts too.
+        unfinished = Journal.deployment(self.state_dir, self.service.name)
+        if unfinished is not None and unfinished.status not in FINAL:
             raise DeployError('transaction %s is %s; finish it with rollback before deploying again'
-                              % (latest.id, latest.status))
+                              % (unfinished.id, unfinished.status))
         plans, problems = self.assess(sha, binary, allow_drift, retire_historical)
         self.describe(plans, sha)
         if problems:
@@ -544,18 +546,14 @@ class Deployer:
             raise DeployError('rollback incomplete; re-run rollback after fixing:\n  ' + '\n  '.join(failures))
 
     def rollback(self, identifier=None, force=False):
-        """Rolls back transaction `identifier`, by default the latest deployment.
+        """Rolls back transaction `identifier`, by default `Journal.deployment`.
 
-        Finished verifications changed nothing, so the default follows their
-        `rollback_target` chain to the deployment before them; an unfinished one
-        is rolled back itself, which only finishes it. An earlier deployment is
-        rolled back only once that latest deployment failed or was rolled back;
-        a later verification does not count.
+        An unfinished verification is rolled back itself, which only finishes
+        it. An earlier deployment is rolled back only once that latest
+        deployment failed or was rolled back; a later verification does not
+        count.
         """
-        newest = Journal.load(self.state_dir, self.service.name)
-        while (newest and newest.verification_only and newest.status in FINAL
-               and newest.data.get('rollback_target')):
-            newest = Journal.load(self.state_dir, self.service.name, newest.data['rollback_target'])
+        newest = Journal.deployment(self.state_dir, self.service.name)
         journal = newest if identifier is None else Journal.load(self.state_dir, self.service.name, identifier)
         if journal is None:
             raise DeployError('no %s transaction is recorded in %s' % (self.service.name, self.state_dir))

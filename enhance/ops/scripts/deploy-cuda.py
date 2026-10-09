@@ -117,9 +117,10 @@ def main():
             deployer.lock_factory = lambda: contextlib.nullcontext(held)
             deployer.lock = held
             deployer.check_identities([inventory.lock.get('host')])
-            latest = Journal.load(args.state_dir, 'enhance')
-            if latest and latest.status not in FINAL:
-                raise DeployError('unfinished transaction; resume rollback before CUDA deployment')
+            unfinished = Journal.deployment(args.state_dir, 'enhance')
+            if unfinished and unfinished.status not in FINAL:
+                raise DeployError('unfinished transaction %s; resume rollback before CUDA deployment'
+                                  % unfinished.id)
             current = executor.probe_unit(target.host, target.unit)
             result['previous_binary_sha256'] = current['exe_sha256']
             ok, reason = deployer.check({'host': target.host, 'unit': target.unit, 'verify': {

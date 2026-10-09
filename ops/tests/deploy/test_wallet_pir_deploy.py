@@ -210,6 +210,24 @@ class Fleet(unittest.TestCase):
         live = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': receiver_release(sha), 'NEAR_KEY': NEAR_KEY})
         return self.receiver_fleet(live), sha
 
+    def fail_rollback(self, deployer, interrupted):
+        """Runs `deployer`'s default rollback with its first restart failing, or with
+        the runner dying there when `interrupted`. Returns the status it leaves."""
+        class Crash(BaseException):
+            pass
+
+        def fail(host, op, detail):
+            if op == 'systemctl' and detail[0] == 'restart':
+                if interrupted:
+                    raise Crash()
+                self.fake.failing_restart.add((host, detail[1]))
+        self.fake.observer = fail
+        with self.assertRaises(Crash if interrupted else DeployError):
+            deployer.rollback()
+        self.fake.observer = None
+        self.fake.failing_restart.clear()
+        return 'rolling-back' if interrupted else 'rollback-failed'
+
     def restarts(self):
         return [(host, detail[1]) for host, op, detail in self.fake.log if op == 'systemctl' and detail[0] == 'restart']
 
@@ -695,6 +713,20 @@ class ReceiverTests(Fleet):
                 self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
                 self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
                 self.assertEqual(Journal.load(self.state, 'receiver', deployment.id).status, 'rolled-back')
+
+    def test_an_unfinished_rollback_behind_a_verification_blocks_a_deploy(self):
+        sha = sha256(RECEIVER_NEW)
+        for interrupted in (False, True):
+            with self.subTest(interrupted=interrupted):
+                self.setUp()
+                deployer = self.receiver_fleet()
+                deployment = deployer.deploy(sha, self.receiver_binary)
+                deployer.deploy(sha, self.receiver_binary)
+                status = self.fail_rollback(deployer, interrupted)
+                third = self.dir / 'third'
+                third.write_bytes(b'receiver-directory third build')
+                with self.assertRaisesRegex(DeployError, '%s is %s; finish it' % (deployment.id, status)):
+                    deployer.deploy(sha256(third.read_bytes()), third)
 
     def test_an_unchanged_target_that_is_not_ready_fails_its_verification(self):
         deployer, sha = self.provisioned_receiver()
