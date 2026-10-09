@@ -20,6 +20,12 @@ test build configuration and RPC endpoint. The optimized run used a batch size o
 to reduce cold-cache differences. This is a small network measurement, not a
 guaranteed full-history rate or an isolated node benchmark.
 
+The Rust compiler and resolved dependencies that built the two binaries were not
+recorded, nor was the exact build command or its output. Both source commits pin
+Rust 1.91.0, share one `Cargo.lock` and declare `opt-level = 1` for the `test`
+profile, but that is source configuration, not proof of what built the binaries;
+[`manifest.json`](manifest.json) records it under `toolchain`.
+
 | Run | Elapsed |
 |---|---:|
 | Sequential baseline | 28.855 seconds |
