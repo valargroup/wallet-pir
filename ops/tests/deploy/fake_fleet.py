@@ -2,7 +2,8 @@
 
 Each host has files, directories and systemd units. Units run what their
 *loaded* configuration names, so a test catches a forgotten daemon-reload;
-the running executable's digest is that binary file's digest at start time.
+the running executable's digest is that binary file's digest at start time,
+and `exec_start` the command line it was started with.
 Every mutating call is logged, and an optional observer sees it first.
 """
 import contextlib
@@ -101,11 +102,12 @@ class FakeFleet(Executor):
     def _start(self, host, unit):
         h = self.host(host)
         state = h.units[unit]
-        binary = units.split_exec(units.exec_start(units.effective(t for _, t in state['loaded'])))[1]
+        command = units.exec_start(units.effective(t for _, t in state['loaded']))
+        binary = units.split_exec(command)[1]
         if (host, unit) in self.failing_restart or binary not in h.files:
-            state.update(active='failed', pid=0, exe=None)
+            state.update(active='failed', pid=0, exe=None, exec_start=None)
         else:
-            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]))
+            state.update(active='active', pid=state['pid'] + 1000, exe=sha256(h.files[binary]), exec_start=command)
 
     # ----------------------------------------------------------- executor
 

@@ -94,7 +94,7 @@ class PlannerTests(unittest.TestCase):
         self.assertIn("check-ops-shared:\n\tpython3 -m unittest discover -s ops/tests -p 'test_*.py'", makefile)
         self.assertTrue((ROOT / 'ops/tests/test_receiver_ops_config.py').is_file())
         for path in ['receiver/ops/digitalocean/Caddyfile', 'receiver/ops/digitalocean/cloud-init.yaml',
-                     'receiver/ops/digitalocean/receiver-pir.service']:
+                     'receiver/ops/digitalocean/receiver-pir.service.in']:
             result = fast.plan(self.packages, [path])
             self.assertTrue({'check-ops-shared', 'check-ops-deploy'} <= set(result['helpers']), path)
             self.assertEqual(result['packages'], [], path)

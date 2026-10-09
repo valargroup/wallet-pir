@@ -113,10 +113,12 @@ min_free_bytes = 1073741824
 order = ["server"]
 
 [services.receiver.roles.server]
-# receiver/ops/digitalocean/receiver-pir.service; its first install starts
-# /opt/receiver-pir/current/receiver-directory.
 unit = "receiver-pir.service"
-mode = "exec-drop-in"
+# The whole unit, arguments included, comes from the repository under the lock;
+# the live Droplet's hand-installed unit (starting
+# /opt/receiver-pir/current/receiver-directory) is replaced by the first deploy.
+mode = "template"
+template = "../../../receiver/ops/digitalocean/receiver-pir.service.in"
 # The unit's --bind, the Droplet's private address on port 18380.
 health = "http://{listen}/v1/receiver/health"
 # Health answers at once; `serving` stays null until the first publication.

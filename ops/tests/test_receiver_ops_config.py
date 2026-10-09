@@ -5,11 +5,13 @@ receiver's operator routes (`/v1/receiver/health`, `/metrics`) on the public
 edge. These checks pin the edge to the six wallet routes, the service to a
 private listener with its hardening, and cloud-init to the matching account,
 directories and firewall rule. Each check takes the file's text, so the
-negative cases run it against mutated copies.
+negative cases run it against mutated copies. The unit is the template
+`wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
 """
 import ipaddress
 from pathlib import Path
 import shlex
+import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,6 +19,7 @@ DIR = ROOT / 'receiver/ops/digitalocean'
 WALLET_ROUTES = {'/v1/receiver/init', '/v1/receiver/query', '/v1/receiver/public/*',
                  '/v1/receiver/rows/*', '/v1/receiver/witness/*', '/v1/receiver/filters/*'}
 PRIVATE_NETWORK = ipaddress.ip_network('10.70.0.0/16')
+DEPLOY = ROOT / 'enhance/ops/deploy/deploy.toml'
 USER = 'receiver-pir'
 STATE = '/srv/receiver-pir'
 HARDENING = {'NoNewPrivileges': 'true', 'ProtectSystem': 'strict', 'ProtectHome': 'true',
@@ -78,7 +81,7 @@ def systemd_sections(text):
 
 
 def check_unit(text):
-    """Return `(bind, data_dir)` after checking the private listener and hardening."""
+    """Return `(bind, data_dir)` after checking the template's release binary, listener and hardening."""
     service = systemd_sections(text)['Service']
     single = {key: values[0] for key, values in service.items() if len(values) == 1}
     assert single.get('User') == USER and single.get('Group') == USER, (single.get('User'), single.get('Group'))
@@ -86,7 +89,7 @@ def check_unit(text):
         assert single.get(key) == value, (key, service.get(key))
     assert int(single.get('RestartSec', '0')) > 0, single.get('RestartSec')
     argv = shlex.split(single['ExecStart'])
-    assert argv[0] == '/opt/receiver-pir/current/receiver-directory', argv[0]
+    assert argv[0] == '@RELEASE@/receiver-directory', argv[0]
     assert '--serve' in argv, argv
     option = lambda name: argv[argv.index(name) + 1]
     bind, data_dir = option('--bind'), option('--data-dir')
@@ -123,13 +126,20 @@ def check_cloud_init(text, bind):
 class ReceiverOpsContract(unittest.TestCase):
     def setUp(self):
         self.caddy = (DIR / 'Caddyfile').read_text()
-        self.unit = (DIR / 'receiver-pir.service').read_text()
+        self.unit = (DIR / 'receiver-pir.service.in').read_text()
         self.cloud = (DIR / 'cloud-init.yaml').read_text()
 
     def test_repository_files_satisfy_the_contract(self):
         bind, _ = check_unit(self.unit)
         self.assertEqual(check_caddyfile(self.caddy), bind)
         check_cloud_init(self.cloud, bind)
+
+    def test_the_deploy_tool_renders_this_whole_unit(self):
+        with open(DEPLOY, 'rb') as handle:
+            role = tomllib.load(handle)['services']['receiver']['roles']['server']
+        self.assertEqual((role['unit'], role['mode']), ('receiver-pir.service', 'template'))
+        self.assertEqual((DEPLOY.parent / role['template']).resolve(), DIR / 'receiver-pir.service.in')
+        self.assertFalse((DIR / 'receiver-pir.service').exists(), 'the template is the only unit source')
 
     def test_exposed_operator_routes_or_catch_all_proxy_fail(self):
         matcher = '/v1/receiver/filters/*'
@@ -160,6 +170,7 @@ class ReceiverOpsContract(unittest.TestCase):
             self.unit.replace('ReadWritePaths=/srv/receiver-pir', 'ReadWritePaths=/'),
             self.unit.replace('Restart=on-failure', 'Restart=no'),
             self.unit.replace('User=receiver-pir', 'User=root'),
+            self.unit.replace('@RELEASE@/receiver-directory', '/opt/receiver-pir/current/receiver-directory'),
         ]:
             self.assertNotEqual(mutated, self.unit)
             with self.assertRaises(AssertionError):

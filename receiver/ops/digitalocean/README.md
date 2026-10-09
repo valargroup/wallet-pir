@@ -56,9 +56,9 @@ the Droplet to the project. Do not apply a plan that destroys anything.
 ## Release and deploy
 
 CI full on `main` builds `receiver-directory` and `receiver-probe` for `x86-64-v3`
-and publishes them, with this directory's unit, `Caddyfile`, `cloud-init.yaml` and
-`probe-fixture.json`, as the `receiver-pir-<sha>` artifact holding
-`receiver-pir.tar.gz` (`tools/ci/release.py`). To build outside CI, use `--locked`,
+and publishes them, with this directory's unit template, `Caddyfile`,
+`cloud-init.yaml` and `probe-fixture.json`, as the `receiver-pir-<sha>` artifact
+holding `receiver-pir.tar.gz` (`tools/ci/release.py`). To build outside CI, use `--locked`,
 `-p receiver-indexer`, `--release` and `RUSTFLAGS='-C target-cpu=x86-64-v3'`; from
 an arm64 host, cross-compile with `--target x86_64-unknown-linux-gnu` in
 `rust:1.98.0-bookworm`, linking with `x86_64-linux-gnu-gcc`.
@@ -66,10 +66,12 @@ an arm64 host, cross-compile with `--target x86_64-unknown-linux-gnu` in
 `receiver-directory` is the `receiver` service of
 [`ops/scripts/wallet-pir-deploy.py`](../../../ops/scripts/wallet-pir-deploy.py),
 described in [`deploy.toml`](../../../enhance/ops/deploy/deploy.toml) with one role,
-`server`, on `receiver-pir.service`. Install, upgrade and roll it back only through
-the tool, which holds the production lock on the coordinator, so two operators
-cannot interleave on the Droplet. Do not copy binaries, repoint `current` or restart
-the unit by hand.
+`server`, whose `receiver-pir.service` the tool renders whole from
+[`receiver-pir.service.in`](receiver-pir.service.in) (`template` mode). Install,
+upgrade and roll back the binary, and change the unit, only through the tool, which
+holds the production lock on the coordinator, so two operators cannot interleave on
+the Droplet. Do not copy binaries, repoint `current`, edit the unit or restart it
+by hand.
 
 ```sh
 ops/scripts/wallet-pir-deploy.py plan receiver --archive receiver-pir.tar.gz --sha <rev>
@@ -81,17 +83,23 @@ ops/scripts/wallet-pir-deploy.py rollback receiver [--transaction ID]
 
 The tool installs the binary as
 `/opt/receiver-pir/releases/<sha256>/receiver-directory`, runs its `--help` there,
-and writes the managed drop-in that replaces only the binary path in the unit's
-`ExecStart`, keeping its arguments. After the restart it requires the running
+and writes `/etc/systemd/system/receiver-pir.service` from the template with
+`@RELEASE@` set to that directory. After the restart it requires the running
 executable's digest and a health answer from
 `http://10.70.0.11:18380/v1/receiver/health` whose `serving` is set, within 300
 seconds: health answers at once, but `serving` stays null until the first
-publication from the index. A failure, or `rollback`, restores the previous drop-ins
-and binary. `current` keeps pointing at the last by-hand install, which the first
-transaction's rollback returns to, so leave it alone. The inventory has no
-`exact_check` for the receiver; the monitor's receiver probe below is that check, so
-confirm its next run passes after a deploy and roll back if it does not. Report
-`status receiver` and the rollback command after each deploy.
+publication from the index. A failure, or `rollback`, restores the previous unit
+file and binary. The inventory has no `exact_check` for the receiver; the monitor's
+receiver probe below is that check, so confirm its next run passes after a deploy
+and roll back if it does not. Report `status receiver` and the rollback command
+after each deploy.
+
+To change the unit's arguments or settings, change `receiver-pir.service.in` in a
+reviewed commit and deploy from that checkout. `plan` prints each changed setting
+as a `drift` line, and `deploy` refuses it until `--allow-unit-drift` accepts the
+reviewed drift. With the binary unchanged, `--sha256 <running digest>` redeploys
+the staged release with the new unit. The restart, readiness check and rollback
+are those of any deploy, and a commit refreshes the baseline.
 
 Before the first tool deploy, once:
 
@@ -105,32 +113,43 @@ Before the first tool deploy, once:
 3. Run `ops/scripts/wallet-pir-deploy.py capture-baseline receiver` and review it.
    `preflight` and `deploy` refuse any unit change made after it.
 
+The live Droplet still runs the unit installed by hand, which starts
+`/opt/receiver-pir/current/receiver-directory` and has no drop-ins. The first
+deploy adopts it: the tool replaces the unit at `/etc/systemd/system`, the only
+fragment path a template role accepts, and keeps the old text in the transaction
+for rollback. Only the binary path should differ, so its `plan` should show a
+`write` of the unit and no `drift` lines. A drift line means the live unit differs
+from the template; reconcile the template in a reviewed commit rather than accept
+it unread. A drop-in that does not set `ExecStart` would stay and still apply; one
+that does is refused, except an `ExecStart`-only managed drop-in from an earlier
+`exec-drop-in` deploy, which `--retire-historical` moves into the transaction
+directory. That first transaction's rollback returns to `current`, so leave
+`current` alone. Deploying the binary that already runs is a no-op that leaves the
+hand-installed unit in place until the template changes.
+
 ## Host provisioning
 
-These steps prepare a new Droplet before it serves anything.
+These steps prepare a new Droplet before it serves anything. It is not yet in the
+deploy inventory, so no deploy can reach it.
 
 1. `cloud-init.yaml` installs Caddy and `ufw`, creates the `receiver-pir` user,
    `/opt/receiver-pir/releases` and `/srv/receiver-pir`, and opens SSH, HTTP, HTTPS
    and port 18380 from the private network.
-2. Install the first `receiver-directory` in a directory under
-   `/opt/receiver-pir/releases` and point `/opt/receiver-pir/current` at it; the
-   unit starts it from there.
+2. Install the first `receiver-directory` as
+   `/opt/receiver-pir/releases/<sha256>/receiver-directory`, where `<sha256>` is
+   its `sha256sum`, the tool's release layout.
 3. Check the nodes' private RPC URLs and the `--bind` address (the Droplet's private
-   IPv4) in `receiver-pir.service`, and the same address in `Caddyfile`, then
-   install them in `/etc/systemd/system` and `/etc/caddy`. `--near-since` sets where
-   a new provider database's first read starts; keep it at the feed's original
-   start.
+   IPv4) in `receiver-pir.service.in`, and the same address in `Caddyfile`. Install
+   the `Caddyfile` in `/etc/caddy`, and the unit rendered as the tool renders it:
+   `sed 's|@RELEASE@|/opt/receiver-pir/releases/<sha256>|' receiver-pir.service.in >/etc/systemd/system/receiver-pir.service`.
+   `--near-since` sets where a new provider database's first read starts; keep it
+   at the feed's original start.
 4. For the recent and seen filters, put the NEAR Intents explorer partner key in
    `/etc/receiver-pir/near.env` as `NEAR_INTENTS_EXPLORER=<key>`, owned by root with
    mode 0600. Without it the service publishes no provider sets.
 5. Enable and start `receiver-pir` and reload `caddy`. Check that
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
-
-The tool changes only the binary. A later change to the unit's arguments, the
-`Caddyfile` or `near.env` is not a deploy-tool operation: make it only when
-`status receiver` shows no open transaction, then run `capture-baseline receiver`
-again; until then `preflight` and `deploy` refuse the changed unit.
 
 The service publishes from memory and writes no publication files; the index keeps
 only `directory.sqlite` and `provider.sqlite`. A `publications/` directory left by

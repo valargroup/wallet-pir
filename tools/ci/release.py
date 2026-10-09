@@ -50,7 +50,7 @@ FILES = {
                                  'transparent/ops/scripts/txid-display-observe.py'],
     'status-pir': ['enhance/ops/deploy/status-worker.service.in', 'enhance/ops/deploy/status-router.service.in',
                    'enhance/ops/deploy/status-controller-qualification.service.in'],
-    'receiver-pir': ['receiver/ops/digitalocean/receiver-pir.service', 'receiver/ops/digitalocean/Caddyfile',
+    'receiver-pir': ['receiver/ops/digitalocean/receiver-pir.service.in', 'receiver/ops/digitalocean/Caddyfile',
                      'receiver/ops/digitalocean/cloud-init.yaml', 'receiver/ops/digitalocean/probe-fixture.json'],
 }
 FILES['enhance-pir-native'] = FILES['enhance-pir'] + ['enhance/ops/deploy/native-tag-integration.md']

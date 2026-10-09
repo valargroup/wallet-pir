@@ -2,6 +2,7 @@
 
 Uses the repository's own descriptors and unit templates; only hosts are fake.
 """
+import dataclasses
 import hashlib
 import http.server
 import json
@@ -57,10 +58,11 @@ NETWORK = 'ab' * 32
 STATUS_OLD = b'status-pir built from c5a6486'
 STATUS_NEW = b'status-pir built from a later revision'
 STATUS_LEGACY = '/opt/wallet-pir/releases/c5a6486/native'
-RECEIVER_UNIT = ROOT / 'receiver/ops/digitalocean/receiver-pir.service'
+RECEIVER_TEMPLATE = ROOT / 'receiver/ops/digitalocean/receiver-pir.service.in'
 RECEIVER_OLD = b'receiver-directory built from c7f6d296'
 RECEIVER_NEW = b'receiver-directory built from a later revision'
 RECEIVER_CURRENT = '/opt/receiver-pir/current/receiver-directory'
+RECEIVER_LIVE = units.render(RECEIVER_TEMPLATE.read_text(), {'RELEASE': '/opt/receiver-pir/current'})
 
 INVENTORY = {
     'lock': {'type': 'remote', 'host': 'coordinator'},
@@ -128,8 +130,8 @@ class Fleet(unittest.TestCase):
         self.receiver_binary = self.dir / 'receiver-directory'
         self.receiver_binary.write_bytes(RECEIVER_NEW)
 
-    def deployer(self, name='enhance', only=None):
-        deployer = Deployer(SERVICES[name], self.inventory, self.fake, self.state, out=self.lines.append,
+    def deployer(self, name='enhance', only=None, service=None):
+        deployer = Deployer(service or SERVICES[name], self.inventory, self.fake, self.state, out=self.lines.append,
                             sleep=self.clock.sleep, clock=self.clock, poll_seconds=5, only=only)
         for target in deployer.targets:
             for url in (target.url(target.role.health), target.url(target.role.ready_url)):
@@ -550,9 +552,8 @@ class StatusTests(Fleet):
 
 class ReceiverTests(Fleet):
     def receiver_fleet(self):
-        """The repository unit as first installed, starting the binary through `current`."""
-        self.fake.install('receiver-01', 'receiver-pir.service', RECEIVER_UNIT.read_text(), (),
-                          {RECEIVER_CURRENT: RECEIVER_OLD})
+        """The live Droplet's hand-installed unit: the template, starting the binary through `current`."""
+        self.fake.install('receiver-01', 'receiver-pir.service', RECEIVER_LIVE, (), {RECEIVER_CURRENT: RECEIVER_OLD})
         # Identity is nested, and `serving` stays null until the first publication.
         self.fake.health_shapes[('receiver-01', 'receiver-pir.service')] = lambda ready, exe: {
             'identity': {'binary_sha256': exe}, 'serving': 'cd' * 32 if ready else None, 'epoch': 0}
@@ -561,25 +562,66 @@ class ReceiverTests(Fleet):
         self.fake.log.clear()
         return deployer
 
-    def test_deploy_swaps_only_the_binary_and_rollback_returns_to_current(self):
+    def unit(self):
+        return self.fake.read('receiver-01', '/etc/systemd/system/receiver-pir.service')
+
+    def command(self):
+        return self.fake.host('receiver-01').units['receiver-pir.service']['exec_start']
+
+    def test_first_deploy_adopts_the_hand_installed_unit_and_rollback_returns_to_current(self):
         deployer = self.receiver_fleet()
         sha = sha256(RECEIVER_NEW)
         before = dict(self.fake.host('receiver-01').files)
+        # Only the binary path differs from the hand-installed unit, so this is no drift.
         journal = deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
         self.assertEqual(journal.status, 'committed')
+        self.assertEqual(journal.hosts[0]['drift'], [])
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
-        tail = units.split_exec(units.exec_start(units.effective([RECEIVER_UNIT.read_text()])))[2]
-        self.assertIn('--bind 10.70.0.11:18380', tail)
-        managed = self.fake.read('receiver-01', dropin('receiver-pir.service', units.MANAGED_DROP_IN))
-        self.assertIn('ExecStart=/opt/receiver-pir/releases/%s/receiver-directory %s\n' % (sha, tail), managed)
+        self.assertEqual(self.unit(), units.render(RECEIVER_TEMPLATE.read_text(),
+                                                   {'RELEASE': '/opt/receiver-pir/releases/' + sha}))
+        self.assertEqual(self.fake.unit_paths('receiver-01', 'receiver-pir.service'),
+                         ['/etc/systemd/system/receiver-pir.service'])
+        self.assertIn('--bind 10.70.0.11:18380', self.command())
         self.assertEqual(self.fake.read('receiver-01', RECEIVER_CURRENT), RECEIVER_OLD.decode())
         self.fake.log.clear()
         deployer.rollback()
         self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+        self.assertEqual(self.unit(), RECEIVER_LIVE)
+        self.assertTrue(self.command().startswith(RECEIVER_CURRENT + ' '))
         for path in self.fake.unit_paths('receiver-01', 'receiver-pir.service'):
             self.assertEqual(self.fake.host('receiver-01').files[path], before[path])
+
+    def test_template_argument_change_takes_effect_and_rolls_back(self):
+        sha = sha256(RECEIVER_NEW)
+        self.receiver_fleet().deploy(sha, self.receiver_binary, skip_exact_check=True)
+        deployed = self.unit()
+        template = self.dir / 'receiver-pir.service.in'
+        template.write_text(RECEIVER_TEMPLATE.read_text().replace('--concurrency 12', '--concurrency 16'))
+        service = SERVICES['receiver']
+        changed = dataclasses.replace(service, roles={'server': dataclasses.replace(service.roles['server'],
+                                                                                    template=template)})
+        deployer = self.deployer('receiver', service=changed)
+        self.fake.log.clear()
+        # The same, already staged binary: only the arguments change, and the
+        # plan shows them as drift for review.
+        with self.assertRaisesRegex(DeployError, 'allow-unit-drift'):
+            deployer.deploy(sha, skip_exact_check=True)
+        self.assertIn('--concurrency 16', '\n'.join(line for line in self.lines if 'drift Service.ExecStart' in line))
+        self.assertEqual(self.fake.log, [])
+        journal = deployer.deploy(sha, allow_drift=True, skip_exact_check=True)
+        self.assertEqual(journal.status, 'committed')
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+        self.assertIn('--concurrency 16', self.unit())
+        self.assertIn(' --concurrency 16 ', self.command())
+        self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha)
+        self.fake.log.clear()
+        deployer.rollback()
+        # Same executable either way; the restart picks up the restored unit.
+        self.assertEqual(self.restarts(), [('receiver-01', 'receiver-pir.service')])
+        self.assertEqual(self.unit(), deployed)
+        self.assertIn(' --concurrency 12 ', self.command())
 
     def test_a_server_that_never_publishes_is_rolled_back(self):
         deployer = self.receiver_fleet()
@@ -588,6 +630,7 @@ class ReceiverTests(Fleet):
         with self.assertRaisesRegex(DeployError, 'not verified within 300s: health serving is None'):
             deployer.deploy(sha, self.receiver_binary, skip_exact_check=True)
         self.assertEqual(self.running('receiver-01', 'receiver-pir.service'), sha256(RECEIVER_OLD))
+        self.assertEqual(self.unit(), RECEIVER_LIVE)
         self.assertEqual(Journal.load(self.state, 'receiver').status, 'rolled-back')
 
 
