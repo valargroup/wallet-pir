@@ -208,13 +208,41 @@ pub struct SupersededShard {
     pub sealed: bool,
 }
 
+/// The most superseded entries a map may declare across all its re-cuts.
+///
+/// A declaration lists every entry a re-cut replaced and is kept forever, so
+/// the list only grows. Sixty-five thousand entries is far more than any
+/// publication will replace (the live sets hold well under a thousand
+/// shards); the bound exists so a hostile map cannot make every wallet index,
+/// store or scan an unbounded list.
+pub const MAX_SUPERSEDED: usize = 65_536;
+
+/// The highest block height a declaration may name. Zcash heights are 32-bit,
+/// and wallets store them that way.
+pub const MAX_DECLARED_HEIGHT: u64 = u32::MAX as u64;
+
 impl ShardMap {
     /// The revision a declared re-cut superseded under `digest`, if any.
+    ///
+    /// A scan of every declaration: for one lookup. Anything looking up many
+    /// digests builds [`superseded_index`](Self::superseded_index) once.
     pub fn superseded(&self, digest: &str) -> Option<&SupersededShard> {
         self.recuts
             .iter()
             .flat_map(|recut| &recut.superseded)
             .find(|shard| shard.manifest_digest == digest)
+    }
+
+    /// Every declared superseded revision, by manifest digest.
+    ///
+    /// `check_shape` refuses a digest declared twice, so on a checked map
+    /// each digest names exactly one entry.
+    pub fn superseded_index(&self) -> BTreeMap<&str, &SupersededShard> {
+        self.recuts
+            .iter()
+            .flat_map(|recut| &recut.superseded)
+            .map(|shard| (shard.manifest_digest.as_str(), shard))
+            .collect()
     }
 
     /// The newest re-cut's epoch; zero for a map never re-cut.
@@ -292,7 +320,7 @@ impl ShardMap {
                 ));
             }
             if let Some(previous) = index.checked_sub(1).and_then(|i| self.shards.get(i)) {
-                if shard.start_height != previous.end_height + 1 {
+                if previous.end_height.checked_add(1) != Some(shard.start_height) {
                     return Err(format!(
                         "shard {index} starts at {} but shard {} ends at {}",
                         shard.start_height, previous.shard_id, previous.end_height
@@ -327,14 +355,34 @@ impl ShardMap {
     /// revisions it holds are named exactly once, that none of them is still
     /// published, and that every shard the re-cut renumbered took a revision
     /// above the one it replaced, so a revision only ever rises within a
-    /// geometry and start height.
+    /// geometry and start height. Every field is also checked for the form a
+    /// wallet stores it in, so a malformed declaration is refused here rather
+    /// than wherever a wallet first tries to use it, and no arithmetic on a
+    /// hostile value can overflow.
     fn check_recuts(&self) -> Result<(), String> {
+        let total: usize = self.recuts.iter().map(|recut| recut.superseded.len()).sum();
+        if total > MAX_SUPERSEDED {
+            return Err(format!(
+                "the map declares {total} superseded entries, more than {MAX_SUPERSEDED}"
+            ));
+        }
         let mut epoch = 0u32;
         let mut digests = std::collections::BTreeSet::new();
         let published: std::collections::BTreeSet<&str> = self
             .shards
             .iter()
             .map(|shard| shard.manifest_digest.as_str())
+            .collect();
+        // The revision each published geometry and start height carries.
+        let current: BTreeMap<(&str, u64), u32> = self
+            .shards
+            .iter()
+            .map(|entry| {
+                (
+                    (entry.geometry.as_str(), entry.start_height),
+                    entry.revision,
+                )
+            })
             .collect();
         for recut in &self.recuts {
             if recut.epoch <= epoch {
@@ -344,6 +392,12 @@ impl ShardMap {
                 ));
             }
             epoch = recut.epoch;
+            if recut.from_height > MAX_DECLARED_HEIGHT {
+                return Err(format!(
+                    "re-cut {} starts at {}, above any block height",
+                    recut.epoch, recut.from_height
+                ));
+            }
             let Some(first) = recut.superseded.first() else {
                 return Err(format!("re-cut {} supersedes nothing", recut.epoch));
             };
@@ -355,15 +409,15 @@ impl ShardMap {
             }
             let last = recut.superseded.len() - 1;
             for (index, shard) in recut.superseded.iter().enumerate() {
-                if shard.end_height < shard.start_height {
+                if shard.end_height < shard.start_height || shard.end_height > MAX_DECLARED_HEIGHT {
                     return Err(format!(
-                        "re-cut {} supersedes a shard ending before it starts",
-                        recut.epoch
+                        "re-cut {} supersedes a shard whose range {}..={} is no block range",
+                        recut.epoch, shard.start_height, shard.end_height
                     ));
                 }
                 if let Some(previous) = index.checked_sub(1).map(|i| &recut.superseded[i]) {
-                    if shard.start_height != previous.end_height + 1
-                        || shard.shard_id != previous.shard_id + 1
+                    if previous.end_height.checked_add(1) != Some(shard.start_height)
+                        || previous.shard_id.checked_add(1) != Some(shard.shard_id)
                     {
                         return Err(format!(
                             "re-cut {} supersedes shards that do not follow one another",
@@ -378,9 +432,15 @@ impl ShardMap {
                         recut.epoch, shard.shard_id
                     ));
                 }
-                if shard.manifest_digest.len() != 64 {
+                if !is_digest(&shard.manifest_digest) {
                     return Err(format!(
                         "re-cut {} supersedes shard {} without a manifest digest",
+                        recut.epoch, shard.shard_id
+                    ));
+                }
+                if !is_digest(&shard.terminal_block_hash) {
+                    return Err(format!(
+                        "re-cut {} supersedes shard {} without a terminal block hash",
                         recut.epoch, shard.shard_id
                     ));
                 }
@@ -400,10 +460,10 @@ impl ShardMap {
                         recut.epoch, shard.geometry
                     ));
                 }
-                let successor = self.shards.iter().find(|entry| {
-                    entry.geometry == shard.geometry && entry.start_height == shard.start_height
-                });
-                if successor.is_some_and(|entry| entry.revision <= shard.revision) {
+                if current
+                    .get(&(shard.geometry.as_str(), shard.start_height))
+                    .is_some_and(|revision| *revision <= shard.revision)
+                {
                     return Err(format!(
                         "shard at {} keeps its geometry across re-cut {} without a higher \
                          revision",
@@ -415,10 +475,9 @@ impl ShardMap {
         // Only the newest re-cut is still a boundary of the current map; a later
         // re-cut may have merged across an older one's starting height.
         if let Some(recut) = self.recuts.last() {
-            if !self
-                .shards
-                .iter()
-                .any(|shard| shard.start_height == recut.from_height)
+            if self
+                .shard_for_height(recut.from_height)
+                .is_none_or(|shard| shard.start_height != recut.from_height)
             {
                 return Err(format!(
                     "re-cut {} starts at {}, which is no shard boundary of this map",
@@ -428,6 +487,15 @@ impl ShardMap {
         }
         Ok(())
     }
+}
+
+/// Sixty-four lowercase hex digits, the form digests and block hashes are
+/// published and stored in.
+fn is_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 #[cfg(test)]
@@ -613,5 +681,90 @@ mod tests {
             },
             "no shard boundary",
         );
+    }
+
+    /// Every declared field is checked for the form a wallet stores it in,
+    /// and no hostile value can overflow the checks themselves.
+    #[test]
+    fn a_malformed_or_oversized_declaration_is_refused() {
+        let (_, after) = before_and_after();
+        let refused = |change: &dyn Fn(&mut ShardMap), expect: &str| {
+            let mut map = after.clone();
+            change(&mut map);
+            let error = map.check_shape().unwrap_err();
+            assert!(error.contains(expect), "{expect}: {error}");
+        };
+        refused(
+            &|m| {
+                m.recuts[0].superseded[1]
+                    .manifest_digest
+                    .make_ascii_uppercase()
+            },
+            "without a manifest digest",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[1].terminal_block_hash = "zz".repeat(32),
+            "without a terminal block hash",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[1].terminal_block_hash = "ab".into(),
+            "without a terminal block hash",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[3].end_height = MAX_DECLARED_HEIGHT + 1,
+            "is no block range",
+        );
+        refused(
+            &|m| {
+                let last = m.recuts[0].superseded.len() - 1;
+                m.recuts[0].superseded[last - 1].end_height = u64::MAX;
+            },
+            "is no block range",
+        );
+        refused(
+            &|m| m.recuts[0].superseded[0].shard_id = u64::MAX,
+            "do not follow",
+        );
+        refused(
+            &|m| {
+                m.recuts[0].from_height = u64::MAX;
+                m.recuts[0].superseded[0].start_height = u64::MAX;
+            },
+            "above any block height",
+        );
+        refused(
+            &|m| {
+                let extra = m.recuts[0].superseded[0].clone();
+                m.recuts[0]
+                    .superseded
+                    .extend(std::iter::repeat_n(extra, MAX_SUPERSEDED));
+            },
+            "more than 65536",
+        );
+        // Overflow in the published shards' own continuity is refused too.
+        let mut overflowing = after.clone();
+        overflowing.recuts.clear();
+        overflowing.shards[0].end_height = u64::MAX;
+        assert!(overflowing.check_shape().is_err());
+    }
+
+    #[test]
+    fn the_index_finds_every_declared_revision_once() {
+        let (before, after) = before_and_after();
+        let index = after.superseded_index();
+        assert_eq!(index.len(), 4);
+        for entry in &before[1..] {
+            assert_eq!(
+                index
+                    .get(entry.manifest_digest.as_str())
+                    .map(|s| s.shard_id),
+                Some(entry.shard_id)
+            );
+            assert_eq!(
+                after.superseded(&entry.manifest_digest),
+                index.get(entry.manifest_digest.as_str()).copied()
+            );
+        }
+        assert!(!index.contains_key(before[0].manifest_digest.as_str()));
     }
 }
