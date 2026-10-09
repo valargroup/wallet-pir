@@ -111,9 +111,13 @@ the encrypted row selection. The response echoes that 52-byte header. The
 receiver and page never appear in a route or header. An unknown session returns
 409, a revoked one 410, a query longer than its session's 413 and a shorter or
 otherwise malformed one 400; the length is checked before the query waits for
-evaluation. A
-revocation also aborts a session file still being sent: its status and length are
-already out, so the client sees a truncated body rather than 410. Queries
+evaluation. Every response on these routes, refusals included, is
+`Cache-Control: no-store`, since a revoked session ID serves again if the same
+publication is republished. A
+revocation also stops a session file or query answer still being sent, checked
+before each 64 KiB frame: its status and length are already out, so the client
+sees a truncated body rather than 410. Bytes already handed to the connection
+cannot be recalled, which is why wallets still check their anchor. Queries
 are admitted with the primitives Enhance uses (`pir_control::admission`): two in
 flight per client, then a wait of up to 2 seconds for one of two evaluation
 slots. A client at its cap or a full server gets 429 with `Retry-After: 1`.
