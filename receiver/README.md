@@ -94,7 +94,7 @@ index, hash) follow, with every sibling of each payment position. It is capped
 at 64 MiB. A server publishes a file only once it has checked a path to that
 root for every record in the rows. Building the file reads every commitment
 since the empty tree, so the store refuses a history longer than the caller's
-commitment limit before reading it.
+limit, the indexer's `--max-witness-commitments`, before reading it.
 
 ## Protocol
 

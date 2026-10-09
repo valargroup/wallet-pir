@@ -37,6 +37,12 @@ struct Args {
     /// Publish common witness data. Requires commitment history from position zero.
     #[arg(long)]
     witnesses: bool,
+    /// The most commitments a witness build reads. A longer history publishes nothing,
+    /// so the served publication goes stale instead of exhausting memory. The default,
+    /// 2^24, peaks near 3.4 GB at about 200 bytes per commitment, within the unit's
+    /// 7 GiB `MemoryMax`, and leaves years of growth at about 7,600 a day.
+    #[arg(long, default_value_t = 1 << 24)]
+    max_witness_commitments: u64,
     /// A node's RPC endpoint. Repeat it for more nodes: each pass runs on the one with
     /// the highest tip (see [`ZakuraClient::ranked`]).
     #[arg(long, required = true)]
@@ -425,9 +431,20 @@ async fn refresh(
     }
     let witnesses = if args.witnesses {
         let started = std::time::Instant::now();
-        let proof = store
-            .witnesses(&snapshot.manifest, witness_cache, 1 << 22)?
-            .encode();
+        let proof = match store.witnesses(
+            &snapshot.manifest,
+            witness_cache,
+            args.max_witness_commitments,
+        ) {
+            Err(Error::Capacity) => {
+                return Err(format!(
+                    "{} commitments exceed --max-witness-commitments; no publication created",
+                    snapshot.manifest.end_position
+                )
+                .into())
+            }
+            proof => proof?.encode(),
+        };
         log_stage("witness_prepare", started);
         info!(witness_bytes = proof.len(), "witnesses prepared");
         Some(proof)
