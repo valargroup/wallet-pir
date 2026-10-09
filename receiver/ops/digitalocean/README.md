@@ -11,9 +11,8 @@ the edge, as Transparent keeps its operator routes: the PIR monitor's probe read
 health over the private network. `/metrics` is private and nothing collects it
 yet; collection belongs in pir-apm when something consumes it.
 [`ops/tests/test_receiver_ops_config.py`](../../../ops/tests/test_receiver_ops_config.py)
-pins this edge, the unit's private listener and hardening, and cloud-init's account,
-directories and firewall rule. The public-chain index lives in `/srv/receiver-pir/index` and
-holds no wallet data. No Enhance service runs on this Droplet.
+pins this edge, the unit and cloud-init. The public-chain index lives in
+`/srv/receiver-pir/index` and holds no wallet data. No Enhance service runs on this Droplet.
 
 ## Infrastructure
 
@@ -49,14 +48,12 @@ import 'digitalocean_droplet.receiver_pir[0]' 604069093
 import 'cloudflare_dns_record.receiver_pir[0]' 'd3ac9657be6101818fed439c62fdcadf/<record-id>'
 ```
 
-An imported Droplet has no SSH keys in state, and the provider replaces a Droplet
-whose keys change, so `receiver.tf` ignores them; keep it that way. The saved plan
-that follows must show no Droplet replacement or resize; the
-recorded size slug is `s-4vcpu-8gb-amd`, and if the live one differs, set it first.
-The plan creates the firewall, which then closes every port it does not list, so
-confirm in it SSH from `allowed_ssh_cidrs` and from the coordinator's `/32`, without
-which every later locked operation loses the Droplet, and the monitor's 18380
-rule. It may also add the Droplet to the project. Do not apply a plan that destroys anything.
+The saved plan that follows must show no Droplet replacement or resize (if the
+live size slug differs from `s-4vcpu-8gb-amd`, set it first). It creates the
+firewall, which closes every port it does not list, so confirm SSH from
+`allowed_ssh_cidrs` and from the coordinator's `/32`, without which every later
+locked operation loses the Droplet, and the monitor's 18380 rule. Do not apply a
+plan that destroys anything.
 
 ## Release and deploy
 
@@ -87,35 +84,31 @@ ops/scripts/wallet-pir-deploy.py rollback receiver [--transaction ID]
 ```
 
 The tool installs the binary as
-`/opt/receiver-pir/releases/<sha256>/receiver-directory`, runs its `--help`
-there, and writes `/etc/systemd/system/receiver-pir.service` from the template with
-`@RELEASE@` set to that directory and `@NEAR_KEY@` to the inventory's key id (see
-[the NEAR key](#installing-or-rotating-the-near-key)). After the restart it requires the running
-executable's digest and a health answer from
-`http://10.70.0.11:18380/v1/receiver/health` whose `serving` is set, within 300
-seconds: health answers at once, but `serving` stays null until the first
-publication from the index. Then, still under the lock and before it commits, it
-runs the inventory's `exact_check`: the [deploy probe](#deploy-probe) on the
-Droplet itself, which looks up the pinned payment with one live encrypted query
-over the public origin and checks the filter file and private health, as the
-monitor's probe below does. It runs on the Droplet because the coordinator, in
-`ams3` on `10.142.0.0/16`, cannot reach the private health route. Its chain checks
-use the fleet nodes the service reads, the only ones the Droplet reaches, so it
-gates the deploy but is not an independent oracle; the monitor's probe remains
-that. The check first waits up to 300 seconds (`--await-feed-reads`) for the
-restarted process to complete a read of both NEAR feeds, which proves the key file
-the unit names. A failed check, or one still running at its 480-second `timeout`,
-fails the deploy. A failure, or `rollback`, restores the previous unit file and binary.
-A deploy whose binary and unit already run restarts nothing but still checks
-readiness and runs the `exact_check` (`verify_unchanged` in `deploy.toml`).
-Report `status receiver` and the rollback command after each deploy.
+`/opt/receiver-pir/releases/<sha256>/receiver-directory` and writes
+`/etc/systemd/system/receiver-pir.service` from the template with `@RELEASE@` set
+to that directory and `@NEAR_KEY@` to the inventory's key id (see
+[the NEAR key](#installing-or-rotating-the-near-key)). After the restart it waits
+up to 300 seconds for `http://10.70.0.11:18380/v1/receiver/health` to report the
+running digest and a set `serving`, which stays null until the first publication.
+Then, still under the lock and before it commits, it runs the inventory's
+`exact_check` on the Droplet, since the coordinator cannot reach the private
+health route: `{release_dir}/receiver-directory probe`, the probe built into the
+deployed binary with its pinned fixture. It first waits up to 300 seconds
+(`--await-feed-reads`) for the restarted process to read both NEAR feeds, which
+proves the key file the unit names, then looks up the pinned payment with one live
+encrypted query over the public origin and checks the filter file and private
+health. Its chain checks use the fleet nodes the service reads, so it gates the
+deploy but is not an independent oracle; the monitor's probe is. A failed check,
+one still running at its 480-second `timeout`, or `rollback` restores the previous
+unit file and binary. A deploy whose binary and unit already run restarts nothing
+but still checks readiness and runs the check (`verify_unchanged` in
+`deploy.toml`). Report `status receiver` and the rollback command after each deploy.
 
 To change the unit's arguments or settings, change `receiver-pir.service.in` in a
 reviewed commit and deploy from that checkout. `plan` prints each changed setting
 as a `drift` line, and `deploy` refuses it until `--allow-unit-drift` accepts the
-reviewed drift. The receiver deploys only from a bundle (`--archive`); with the
-binary unchanged, the same bundle redeploys the staged release with the new unit. The restart, readiness check and rollback
-are those of any deploy, and a commit refreshes the baseline.
+reviewed drift. With the binary unchanged, the same bundle redeploys the staged
+release with the new unit; a commit refreshes the baseline.
 
 Before the first tool deploy, once:
 
@@ -187,14 +180,10 @@ the inventory, so then set `NEAR_KEY` back to the previous id. A rolled-back
 receiver passed readiness again, which does not show that the explorer still
 accepts the previous key: check on the Droplet that health's `near.reads` fill in.
 
-### Deploy probe
-
-The inventory's `exact_check` runs `{release_dir}/receiver-directory probe`, the
-probe built into the deployed binary with its pinned fixture, so nothing is
-installed for it by hand. After `preflight --stage`, run the check's `argv` once by hand on the
-Droplet, with `{release_dir}` replaced by the staged release directory, and confirm
-it prints `"passed":true`, which also shows that the Droplet reaches the public
-origin and both nodes.
+After `preflight --stage` of a new release, run the check's `argv` once by hand on
+the Droplet, with `{release_dir}` replaced by the staged release directory, and
+confirm it prints `"passed":true`, which also shows that the Droplet reaches the
+public origin and both nodes.
 
 ## Host provisioning
 
@@ -222,8 +211,7 @@ before its baseline is captured.
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
 
 The host is not qualified until a deploy of that bundle commits, after the steps
-[before the first tool deploy](#release-and-deploy). It restarts nothing but
-runs the exact check.
+[before the first tool deploy](#release-and-deploy).
 
 After provisioning, every change to the Droplet holds the production lock. Unit
 changes, a NEAR key change included, are deploys, as above. The tool writes only
@@ -254,9 +242,8 @@ private network. `pir-monitor` is not in a release bundle: build it with
 checks use the monitor host's own node and cookie, as the Status probe and the
 Transparent canary do, not the fleet nodes the service reads, so they are an
 independent oracle. That node must answer `z_gettreestate` with the Ironwood
-root, which `--witnesses` checks the served witness file against; each run then
-downloads that file (about 4.8 MB in October 2026, at most 64 MiB). The cookie and the probe config come from the monitor's host
-drop-in, [`pir-monitor-service-quality.conf`](../../../enhance/ops/deploy/pir-monitor-service-quality.conf),
+root, which `--witnesses` checks the served witness file against. The cookie and
+the probe config come from the monitor's host drop-in, [`pir-monitor-service-quality.conf`](../../../enhance/ops/deploy/pir-monitor-service-quality.conf),
 installed as `/etc/systemd/system/pir-monitor.service.d/90-service-quality.conf`
 (the live monitor already has it). Its `LoadCredential` source,
 `/etc/pir-monitor/credentials/chain-rpc-cookie`, must exist before the monitor
@@ -307,21 +294,16 @@ The fixture pins the public NEAR refund
 3,496,114, Action 0, note position 610503), which every publication holds, and
 its receiver as decoded independently from NEAR's refund address (see
 `receiver/crates/receiver-directory/tests/fixtures/zero-ovk-action-oracle`); the
-probe refuses a recovery that does not reproduce it. Each run looks up that
-receiver with one live encrypted query over the public origin and checks the
-filter file, so it moves about 140 KB: the session manifest, the 14,848-byte public
-setup, a 77,876-byte query, a 5,684-byte response and the filter file (about 37 KB
-in October 2026), plus health and, with `--witnesses`, the witness file. It alerts when the
-served anchor leaves the chain, the lookup misses or misreports the pinned payment,
-the filter file is wrong or a completed NEAR payout is missing from the index
-(correctness), when the
-fixture fails its pin (oracle), and after three failed probes when the publication
-or the recent set goes stale or a request fails (availability).
+probe refuses a recovery that does not reproduce it. It alerts when the served
+anchor leaves the chain, the lookup misses or misreports the pinned payment, the
+filter file is wrong or a completed NEAR payout is missing from the index
+(correctness), when the fixture fails its pin (oracle), and after three failed
+probes when the publication or the recent set goes stale or a request fails
+(availability).
 
 `pir-monitor` is not a deploy-tool service, so install `receiver-probe` on the
-monitor host from the bundle. On the coordinator, `release.py
-extract` checks every file against the bundle's `SHA256SUMS`; copy the result to
-the monitor host and install it there, checking the digests again:
+monitor host from the bundle, checked against its `SHA256SUMS` on the coordinator
+and again on the monitor host:
 
 ```sh
 tools/ci/release.py extract --sha <rev> --kind receiver-pir --archive receiver-pir.tar.gz --output receiver-pir-<rev>

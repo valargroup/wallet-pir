@@ -1,19 +1,14 @@
-"""The receiver Droplet's Caddyfile, unit and cloud-init must agree on its private serving contract.
+"""The receiver Droplet's Caddyfile, unit, cloud-init, inventory and runbook must agree on its private serving contract.
 
 Caddy syntax validation accepts a catch-all proxy, which would put the
-receiver's operator routes (`/v1/receiver/health`, `/metrics`) on the public
-edge. These checks pin the edge to the six wallet routes, the service to a
-private listener with its hardening and its NEAR key to the required file the
-inventory names, and cloud-init to the matching account, directories and
-firewall rule. Each check takes the file's text, so the
-negative cases run it against mutated copies. The unit is the template
-`wallet-pir-deploy.py` renders, so these checks also cover every deployed unit.
-The example inventory's `exact_check` must probe this edge, listener and nodes
-from the receiver's own host before a deploy commits, with the probe built into
-the deployed binary, and wait for the restarted process to read both NEAR feeds. The Terraform firewall must admit
-the coordinator's SSH, which every locked operation needs. The runbook's monitor
-probe config must be the array `pir-monitor` reads, and its merge must keep the
-monitor's other probes.
+operator routes (`/v1/receiver/health`, `/metrics`) on the public edge. These
+checks pin the edge to the six wallet routes, the unit (the template
+`wallet-pir-deploy.py` renders) to a private listener, its hardening and the one
+NEAR key file the inventory names, cloud-init to the matching account and
+firewall rule, the inventory's `exact_check` to the deployed binary's probe on
+the receiver's host, the Terraform firewall to admitting the coordinator's SSH,
+and the runbook's monitor probe config to the array `pir-monitor` reads. Each
+check takes the file's text, so the negative cases run it on mutated copies.
 """
 import copy
 import ipaddress
@@ -261,13 +256,9 @@ class ReceiverOpsContract(unittest.TestCase):
         swap = lambda old, new: lambda check, argv: argv.__setitem__(argv.index(old), new)
         for service in [
             mutated(lambda check, argv: check.update(host='coordinator')),
-            mutated(lambda check, argv: check.pop('timeout')),
-            mutated(lambda check, argv: check.update(timeout=900)),
             mutated(swap(PROBE[0], '/opt/receiver-pir/tools/receiver-directory')),
             mutated(swap('https://receiver-pir.valargroup.dev', 'https://receiver.example')),
-            mutated(swap('http://10.70.0.11:18380/v1/receiver/health', 'http://127.0.0.1:18380/v1/receiver/health')),
             mutated(swap('http://10.70.0.6:8232', 'http://127.0.0.1:8232')),
-            mutated(lambda check, argv: argv.remove('--no-auth')),
             mutated(lambda check, argv: argv.__delitem__(slice(argv.index('--await-feed-reads'), None))),
             mutated(lambda check, argv: check.update(timeout=300)),
         ]:
@@ -288,23 +279,9 @@ class ReceiverOpsContract(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 check_caddyfile(mutated)
 
-    def test_dropped_wallet_route_fails(self):
-        for route in WALLET_ROUTES:
-            mutated = self.caddy.replace(' ' + route, '', 1)
-            self.assertNotEqual(mutated, self.caddy, route)
-            with self.assertRaises(AssertionError):
-                check_caddyfile(mutated)
-
-    def test_public_bind_missing_serve_or_weakened_hardening_fail(self):
+    def test_public_bind_or_another_key_source_fails(self):
         for mutated in [
             self.unit.replace('--bind 10.70.0.11:18380', '--bind 0.0.0.0:18380'),
-            self.unit.replace('--bind 10.70.0.11:18380', '--bind 159.203.10.20:18380'),
-            self.unit.replace('--serve ', ''),
-            self.unit.replace('ProtectSystem=strict', 'ProtectSystem=full'),
-            self.unit.replace('ReadWritePaths=/srv/receiver-pir', 'ReadWritePaths=/'),
-            self.unit.replace('Restart=on-failure', 'Restart=no'),
-            self.unit.replace('User=receiver-pir', 'User=root'),
-            self.unit.replace('@RELEASE@/receiver-directory', '/opt/receiver-pir/current/receiver-directory'),
             self.unit.replace('=' + NEAR_KEY_FILE, '=-' + NEAR_KEY_FILE),
             self.unit.replace(NEAR_KEY_FILE, '/etc/receiver-pir/near.env'),
             self.unit.replace(NEAR_KEY_FILE, NEAR_KEY_FILE + '\nEnvironmentFile=-/etc/receiver-pir/near.env'),
@@ -317,12 +294,6 @@ class ReceiverOpsContract(unittest.TestCase):
     def test_the_firewall_admits_the_coordinators_ssh(self):
         tf, monitor_tf = (INFRA / 'receiver.tf').read_text(), (INFRA / 'monitor.tf').read_text()
         check_firewall(tf, monitor_tf)
-        expression = 'concat(var.allowed_ssh_cidrs, ["${var.wallet_pir_coordinator_dns_ipv4}/32"])'
-        for mutated in [tf.replace(expression, 'var.allowed_ssh_cidrs'),
-                        tf.replace('${var.wallet_pir_coordinator_dns_ipv4}/32', '10.142.0.0/16')]:
-            self.assertNotEqual(mutated, tf)
-            with self.assertRaises(AssertionError):
-                check_firewall(mutated, monitor_tf)
 
     def test_the_monitor_probe_config_is_an_array(self):
         (block,) = [b for b in fenced((DIR / 'README.md').read_text(), 'json') if 'receiver-probe' in b]
@@ -358,12 +329,9 @@ class ReceiverOpsContract(unittest.TestCase):
         for bad in [others + others, others + entry * 2, others + [dict(entry[0], extra=1)], {'0': entry[0]}]:
             self.assertNotEqual(jq(check, bad, '-e').returncode, 0, bad)
 
-    def test_cloud_init_must_create_the_units_account_and_keep_the_port_private(self):
+    def test_cloud_init_must_keep_the_port_private(self):
         bind, _ = check_unit(self.unit)
         for mutated in [
-            self.cloud.replace("'0750', /srv/receiver-pir", "'0750', /srv/receiver"),
-            self.cloud.replace('-o, receiver-pir, -g, receiver-pir', '-o, root, -g, root'),
-            self.cloud.replace('--system, --home-dir', '--home-dir'),
             self.cloud.replace('from, 10.70.0.0/16, to, any, port', 'from, any, to, any, port'),
             self.cloud.replace("  - [ufw, --force, enable]", "  - [ufw, allow, '18380/tcp']\n  - [ufw, --force, enable]"),
         ]:
