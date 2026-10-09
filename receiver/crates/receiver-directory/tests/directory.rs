@@ -236,8 +236,11 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.read("near-payouts").unwrap(), Some(340));
     let (recent, seen) = store.sets(150).unwrap();
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
-    // A feed's start is its first read's.
+    // A feed's start is the earliest any read recorded, whichever commits first.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
+    store.record("late-feed", 500, &[], &[], 10, 600).unwrap();
+    store.record("late-feed", 300, &[], &[], 10, 610).unwrap();
+    assert_eq!(store.started("late-feed").unwrap(), Some(300));
     // A completion keeps the earliest read that saw it.
     store
         .record("near-payouts", 60, &[], &[payout, refund], 110, 500)
@@ -353,7 +356,24 @@ fn coverage_anchor_and_position_are_required() {
     assert!(Snapshot::build(m.clone(), &[r], &[]).is_err());
     let mut r = record(0, 1);
     r.payment.block_hash = [9; 32];
-    assert!(Snapshot::build(m, &[r], &[]).is_err());
+    assert!(Snapshot::build(m.clone(), &[r], &[]).is_err());
+    // Transaction zero is the coinbase, whose recipients the directory excludes.
+    let mut r = record(0, 1);
+    r.payment.tx_index = 0;
+    assert!(matches!(
+        Snapshot::build(m, &[r], &[]),
+        Err(Error::Malformed)
+    ));
+}
+
+/// A manifest cannot claim more records than its span has note positions.
+#[test]
+fn records_fit_the_covered_positions() {
+    let mut m = manifest(MIN_ROWS);
+    m.records = m.end_position - m.start_position;
+    m.validate().unwrap();
+    m.records += 1;
+    assert!(matches!(m.validate(), Err(Error::Malformed)));
 }
 
 /// A row whose record claims more pages than the publication has records is

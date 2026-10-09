@@ -431,7 +431,8 @@ impl ProviderStore {
             )?;
         }
         tx.execute(
-            "INSERT OR IGNORE INTO starts VALUES (?1,?2)",
+            "INSERT INTO starts VALUES (?1,?2) ON CONFLICT(feed)
+             DO UPDATE SET started_at=MIN(started_at,excluded.started_at)",
             params![feed, since],
         )?;
         tx.commit()?;
