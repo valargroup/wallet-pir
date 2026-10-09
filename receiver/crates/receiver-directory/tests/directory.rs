@@ -205,7 +205,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
     assert_eq!(store.started("near-payouts").unwrap(), None);
-    // A read that matched no completion.
+    // A read that saw no completion.
     let read = |store: &mut ProviderStore, cursor, read_at| {
         store
             .record("near-payouts", None, &[], &[], cursor, read_at)
@@ -261,11 +261,9 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
             500,
         )
         .unwrap();
-    assert_eq!(store.unmatched(450).unwrap(), [(payout, [1; 32])]);
-    assert_eq!(store.unmatched(600).unwrap().len(), 2);
-    // A matched payout is skipped from then on, however long it stays recorded.
-    store.match_payouts(&[(payout, [1; 32])]).unwrap();
-    assert_eq!(store.unmatched(600).unwrap(), [(payout, [2; 32])]);
+    assert_eq!(store.payouts(450).unwrap(), [(payout, [1; 32])]);
+    let both = [(payout, [1; 32]), (payout, [2; 32])];
+    assert_eq!(store.payouts(600).unwrap(), both);
     // An earlier read committing after a later one lowers the payout to its start,
     // without moving the cursor and read time; a still later read cannot raise it.
     let saw = |store: &mut ProviderStore, read_at| {
@@ -284,13 +282,13 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
     assert_eq!(store.read("near-payouts").unwrap(), Some(500));
     saw(&mut store, 700);
-    assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
-    assert!(store.unmatched(299).unwrap().is_empty());
+    assert_eq!(store.payouts(400).unwrap(), both);
+    assert!(store.payouts(299).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.unmatched(400).unwrap(), [(payout, [2; 32])]);
+    assert_eq!(store.payouts(400).unwrap(), both);
     assert_eq!(store.read("near-payouts").unwrap(), Some(700));
 }
 
@@ -362,7 +360,7 @@ fn a_failed_provider_read_records_nothing() {
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
     assert_eq!(store.started("near-payouts").unwrap(), None);
-    assert!(store.unmatched(i64::MAX).unwrap().is_empty());
+    assert!(store.payouts(i64::MAX).unwrap().is_empty());
 }
 
 /// Every query in one view sees the same state, even when a read commits between them.

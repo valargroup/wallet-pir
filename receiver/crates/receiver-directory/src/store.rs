@@ -363,9 +363,7 @@ impl ProviderStore {
                 cursor INTEGER NOT NULL, read_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS payouts (receiver BLOB NOT NULL CHECK(length(receiver)=43),
                 txid BLOB NOT NULL CHECK(length(txid)=32), seen_at INTEGER NOT NULL,
-                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;
-            CREATE TABLE IF NOT EXISTS matched_payouts (receiver BLOB NOT NULL,
-                txid BLOB NOT NULL, PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
+                PRIMARY KEY(receiver,txid)) WITHOUT ROWID;",
         )?;
         Ok(Self { db })
     }
@@ -423,13 +421,11 @@ impl ProviderStore {
         Ok(value)
     }
 
-    /// Payouts first seen complete by `until` that no check has matched to the index
-    /// yet, however old; see [`Self::record`] and [`Self::match_payouts`].
-    pub fn unmatched(&self, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
-        let mut query = self.db.prepare(
-            "SELECT receiver,txid FROM payouts p WHERE seen_at <= ?1 AND NOT EXISTS(
-                SELECT 1 FROM matched_payouts m WHERE m.receiver=p.receiver AND m.txid=p.txid)",
-        )?;
+    /// Every payout first seen complete by `until`, however old; see [`Self::record`].
+    pub fn payouts(&self, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
+        let mut query = self
+            .db
+            .prepare("SELECT receiver,txid FROM payouts WHERE seen_at <= ?1")?;
         let rows = query.query_map([until], |r| {
             Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
         })?;
@@ -441,27 +437,6 @@ impl ProviderStore {
             ))
         })
         .collect()
-    }
-
-    /// Forgets every payout [`Self::match_payouts`] recorded, so later checks look each
-    /// up again. A rewind of the index can remove a matched payment, so call this
-    /// before rewinding.
-    pub fn forget_matches(&mut self) -> Result<(), Error> {
-        self.db.execute("DELETE FROM matched_payouts", [])?;
-        Ok(())
-    }
-
-    /// Records payouts found in the index, so later checks skip them.
-    pub fn match_payouts(&mut self, payouts: &[(Receiver, Hash)]) -> Result<(), Error> {
-        let tx = self.db.transaction()?;
-        for (receiver, txid) in payouts {
-            tx.execute(
-                "INSERT OR IGNORE INTO matched_payouts VALUES (?1,?2)",
-                params![receiver.as_bytes(), txid.as_slice()],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
     }
 
     /// The creation time from which `feed` first read swaps, if it ever started.
