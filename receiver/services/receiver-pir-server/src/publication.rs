@@ -11,7 +11,9 @@ use std::{
 /// One revision prepared for serving, with its optional common witness file and the
 /// owner's report on the index it was built from.
 pub struct Publication {
-    pub(crate) server: Server,
+    /// Shared with the same revision under a replaced report; see
+    /// [`Publications::replace_report`].
+    pub(crate) server: Arc<Server>,
     pub(crate) witnesses: Option<Bytes>,
     pub(crate) id: Hash,
     pub(crate) report: Option<serde_json::Value>,
@@ -28,7 +30,7 @@ impl Publication {
         }
         Ok(Self {
             id: server.manifest().id()?,
-            server,
+            server: Arc::new(server),
             witnesses: witnesses.map(Into::into),
             report: None,
         })
@@ -44,6 +46,11 @@ impl Publication {
     /// The directory manifest this publication serves.
     pub fn manifest(&self) -> &Manifest {
         &self.server.manifest().directory
+    }
+
+    /// The session ID, which names this publication in every route.
+    pub fn id(&self) -> Hash {
+        self.id
     }
 }
 
@@ -71,6 +78,34 @@ impl State {
     fn previous_expired(&self) -> bool {
         self.previous.is_some() && self.grace_until().is_none()
     }
+
+    /// See [`Publications::anchors`].
+    fn anchors(&self) -> Vec<(u32, Hash)> {
+        self.current
+            .iter()
+            .chain(
+                self.previous
+                    .iter()
+                    .filter(|(_, until)| *until > Instant::now())
+                    .map(|(p, _)| p),
+            )
+            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
+            .collect()
+    }
+
+    /// See [`Publications::revoke`].
+    fn revoke(&mut self) {
+        self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
+        if let Some(p) = self.current.take() {
+            self.revoked.push_back(p.id);
+        }
+        if let Some((p, _)) = self.previous.take() {
+            self.revoked.push_back(p.id);
+        }
+        while self.revoked.len() > 8 {
+            self.revoked.pop_front();
+        }
+    }
 }
 
 /// One current and one briefly retained canonical revision. Revocation also fences in-flight work.
@@ -96,22 +131,18 @@ impl Publications {
         self.0.read().unwrap().epoch
     }
 
-    /// Anchors that still accept new requests. Validate independently of expensive preparation.
+    /// Anchors that still accept new requests, current first. Validate independently of
+    /// expensive preparation.
     pub fn anchors(&self) -> Vec<(u32, Hash)> {
+        self.serving().1
+    }
+
+    /// The recovery epoch and [`Self::anchors`], read together for
+    /// [`Self::revoke_serving`].
+    pub fn serving(&self) -> (u64, Vec<(u32, Hash)>) {
         self.expire();
         let state = self.0.read().unwrap();
-        state
-            .current
-            .iter()
-            .chain(
-                state
-                    .previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            )
-            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
-            .collect()
+        (state.epoch, state.anchors())
     }
 
     /// When the next revision may activate, if the previous one is still in its grace.
@@ -136,22 +167,46 @@ impl Publications {
         true
     }
 
+    /// Replaces the owner's report on the current publication `id`, if no revocation
+    /// occurred since `expected_epoch`, for a report that changed while the
+    /// publication did not. The prepared revision, its sessions and the previous
+    /// revision's grace are unchanged. Returns whether it replaced the report.
+    pub fn replace_report(&self, id: Hash, report: serde_json::Value, expected_epoch: u64) -> bool {
+        let mut state = self.0.write().unwrap();
+        let Some(current) = state.current.as_ref().filter(|p| p.id == id) else {
+            return false;
+        };
+        if state.epoch != expected_epoch {
+            return false;
+        }
+        let replaced = Publication {
+            server: current.server.clone(),
+            witnesses: current.witnesses.clone(),
+            id,
+            report: Some(report),
+        };
+        state.current = Some(Arc::new(replaced));
+        true
+    }
+
     /// Conservatively invalidate all sessions, including CPU work that started before the reorg.
     pub fn revoke(&self) {
+        self.0.write().unwrap().revoke();
+    }
+
+    /// For a check that read `epoch` and `anchor` from [`Self::serving`] and found the
+    /// anchor off the chain: revokes as [`Self::revoke`] does, but atomically only if
+    /// `epoch` is still current and `anchor` still accepts requests, so a publication
+    /// made after a revocation, or after `anchor`'s grace ended, survives the stale
+    /// result. An anchor in its grace still revokes every session. Returns whether it
+    /// revoked.
+    pub fn revoke_serving(&self, epoch: u64, anchor: (u32, Hash)) -> bool {
         let mut state = self.0.write().unwrap();
-        state.epoch = state
-            .epoch
-            .checked_add(1)
-            .expect("recovery epoch exhausted");
-        if let Some(p) = state.current.take() {
-            state.revoked.push_back(p.id);
+        if state.epoch != epoch || !state.anchors().contains(&anchor) {
+            return false;
         }
-        if let Some((p, _)) = state.previous.take() {
-            state.revoked.push_back(p.id);
-        }
-        while state.revoked.len() > 8 {
-            state.revoked.pop_front();
-        }
+        state.revoke();
+        true
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
@@ -194,10 +249,83 @@ mod tests {
 
     /// An empty prepared publication whose salt starts with `salt`.
     fn publication(salt: u8) -> Publication {
+        publication_at(salt, 3)
+    }
+
+    /// An empty prepared publication whose salt starts with `salt`, ending at a block
+    /// hash of `hash` bytes.
+    fn publication_at(salt: u8, hash: u8) -> Publication {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.salt[0] = salt;
+        manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
         Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+    }
+
+    /// A check that found an anchor off the chain revokes only while its epoch is
+    /// current and the anchor still accepts requests.
+    #[test]
+    fn a_stale_check_revokes_only_while_its_anchor_is_served() {
+        let (a, b) = ((101, [1; 32]), (101, [2; 32]));
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        // A check reads A, then a revocation and B's publication overtake it.
+        let (epoch, anchors) = publications.serving();
+        assert_eq!(anchors, [a]);
+        publications.revoke();
+        assert!(publications.publish(publication_at(2, 2), epoch + 1));
+        assert!(!publications.revoke_serving(epoch, a));
+        assert_eq!(publications.serving(), (epoch + 1, vec![b]));
+        // An ordinary rotation keeps the epoch, but once A's grace ends a check that
+        // read A no longer revokes C.
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let (epoch, _) = publications.serving();
+        assert!(publications.publish(publication_at(3, 3), 0));
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(!publications.revoke_serving(epoch, a));
+        assert_eq!(publications.anchors(), [(101, [3; 32])]);
+        // A served anchor off the chain still revokes every session.
+        assert!(publications.revoke_serving(epoch, (101, [3; 32])));
+        assert_eq!(publications.serving(), (epoch + 1, vec![]));
+    }
+
+    /// An anchor still in its grace revokes the current publication with it.
+    #[test]
+    fn an_anchor_in_its_grace_still_revokes_every_session() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let (epoch, _) = publications.serving();
+        assert!(publications.publish(publication_at(2, 2), 0));
+        assert!(publications.revoke_serving(epoch, (101, [1; 32])));
+        assert!(publications.anchors().is_empty());
+    }
+
+    /// A replaced report keeps the current revision, its sessions and the previous
+    /// revision's grace, and needs the current ID and epoch.
+    #[test]
+    fn only_the_current_publication_takes_a_new_report() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication(1), 0));
+        let previous = publications.select(None).unwrap().0.id;
+        assert!(publications.publish(publication(2), 0));
+        let (current, _) = publications.select(None).unwrap();
+        let report = serde_json::json!({"payouts_missing": 1});
+        assert!(!publications.replace_report(previous, report.clone(), 0));
+        assert!(!publications.replace_report(current.id, report.clone(), 1));
+        let grace = publications.ready_at();
+        assert!(publications.replace_report(current.id, report.clone(), 0));
+        let (replaced, epoch) = publications.select(None).unwrap();
+        assert_eq!((replaced.id, epoch), (current.id, 0));
+        assert!(Arc::ptr_eq(&replaced.server, &current.server));
+        assert_eq!(replaced.report, Some(report));
+        assert!(publications.select(Some(previous)).is_ok());
+        assert_eq!(publications.ready_at(), grace);
+        publications.revoke();
+        assert!(!publications.replace_report(current.id, serde_json::Value::Null, 1));
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next
