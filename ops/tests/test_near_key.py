@@ -191,6 +191,19 @@ class NearKeyInstaller(unittest.TestCase):
         self.assertEqual(self.install().returncode, 0)
         self.assertEqual(self.installed().read_bytes(), content)
 
+    def test_retry_cleanup_takes_only_this_ids_generated_names(self):
+        """Other links to the key, even ones resembling a temporary name, are kept and refuse the retry."""
+        self.assertEqual(self.install().returncode, 0)
+        for name in ('.near-%s.backup.tmp' % ID, '.near-%s.x.0123456789abcdef.tmp' % ID):
+            other = self.keys / name
+            os.link(self.installed(), other)
+            run = self.install()
+            self.assertEqual(run.returncode, 1)
+            self.assertIn('not a private file', run.stderr)
+            self.assertTrue(other.exists())
+            os.unlink(other)
+        self.assertEqual(self.install().returncode, 0)
+
     def test_a_key_directory_others_can_write_is_refused(self):
         self.keys.mkdir(mode=0o700)
         self.keys.chmod(0o775)

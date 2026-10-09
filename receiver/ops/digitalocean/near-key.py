@@ -50,6 +50,9 @@ if not re.fullmatch(r"[A-Za-z0-9._-]+", key_id) or not re.fullmatch(rb"[A-Za-z0-
 content = b"NEAR_INTENTS_EXPLORER=" + data
 final = os.path.join(directory, "near-" + key_id + ".env")
 temp_prefix = ".near-" + key_id + "."
+# Exactly the names this program creates for this id, so cleanup never takes
+# another link, such as a backup or a longer dotted id's temporary name.
+temp_name = re.compile(re.escape(temp_prefix) + r"[0-9a-f]{16}\.tmp")
 
 
 def refuse(reason):
@@ -85,7 +88,7 @@ def settle():
         refuse("is not a regular file")
     for name in os.listdir(directory):
         path = os.path.join(directory, name)
-        if name.startswith(temp_prefix) and name.endswith(".tmp") and os.path.samestat(os.lstat(path), info):
+        if temp_name.fullmatch(name) and os.path.samestat(os.lstat(path), info):
             os.unlink(path)
     info = os.fstat(fd)
     if info.st_uid != os.geteuid() or info.st_nlink != 1 or info.st_mode & 0o077:
