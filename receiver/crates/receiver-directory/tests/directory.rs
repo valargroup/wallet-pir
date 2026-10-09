@@ -205,7 +205,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
     assert_eq!(store.started("near-payouts").unwrap(), None);
-    // A read that matched no completion.
+    // A read that saw no completion.
     let read = |store: &mut ProviderStore, cursor, read_at| {
         store
             .record("near-payouts", None, &[], &[], cursor, read_at)
@@ -216,7 +216,7 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
             "near-payouts",
             Some(40),
             &[(payout, true, 100), (payout, true, 50)],
-            &[payout],
+            &[(payout, [1; 32])],
             100,
             300,
         )
@@ -249,18 +249,47 @@ fn provider_store_keeps_latest_times_and_never_rewinds_its_cursor() {
     assert_eq!((recent, seen), (vec![refund], vec![payout]));
     // The feed's start is its initial read's; see the test below.
     assert_eq!(store.started("near-payouts").unwrap(), Some(40));
-    // A completion keeps the earliest read that saw it.
+    // A payout keeps the earliest read that saw it complete, and a reused receiver has
+    // one per transaction.
     store
-        .record("near-payouts", None, &[], &[payout, refund], 110, 500)
+        .record(
+            "near-payouts",
+            None,
+            &[],
+            &[(payout, [1; 32]), (payout, [2; 32])],
+            110,
+            500,
+        )
         .unwrap();
-    assert_eq!(store.completed(0, 450).unwrap(), [payout]);
-    assert_eq!(store.completed(450, 600).unwrap(), [refund]);
+    assert_eq!(store.payouts(450).unwrap(), [(payout, [1; 32])]);
+    let both = [(payout, [1; 32]), (payout, [2; 32])];
+    assert_eq!(store.payouts(600).unwrap(), both);
+    // An earlier read committing after a later one lowers the payout to its start,
+    // without moving the cursor and read time; a still later read cannot raise it.
+    let saw = |store: &mut ProviderStore, read_at| {
+        store
+            .record(
+                "near-payouts",
+                None,
+                &[],
+                &[(payout, [2; 32])],
+                110,
+                read_at,
+            )
+            .unwrap()
+    };
+    saw(&mut store, 300);
+    assert_eq!(store.cursor("near-payouts").unwrap(), Some(110));
+    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    saw(&mut store, 700);
+    assert_eq!(store.payouts(400).unwrap(), both);
+    assert!(store.payouts(299).unwrap().is_empty());
     // Reopening keeps everything.
     drop(store);
     let store = ProviderStore::open(dir.path().join("provider.sqlite")).unwrap();
     assert_eq!(store.sets(100).unwrap().0.len(), 2);
-    assert_eq!(store.completed(0, 600).unwrap().len(), 2);
-    assert_eq!(store.read("near-payouts").unwrap(), Some(500));
+    assert_eq!(store.payouts(400).unwrap(), both);
+    assert_eq!(store.read("near-payouts").unwrap(), Some(700));
 }
 
 /// Only a feed's first read sets its start. A read that followed the cursor, before
@@ -310,7 +339,7 @@ fn a_failed_provider_read_records_nothing() {
     rusqlite::Connection::open(&path)
         .unwrap()
         .execute_batch(
-            "CREATE TRIGGER fail BEFORE INSERT ON completions
+            "CREATE TRIGGER fail BEFORE INSERT ON payouts
              BEGIN SELECT RAISE(ABORT, 'forced'); END;",
         )
         .unwrap();
@@ -320,7 +349,7 @@ fn a_failed_provider_read_records_nothing() {
             "near-payouts",
             Some(40),
             &[(payout, true, 100)],
-            &[payout],
+            &[(payout, [1; 32])],
             100,
             300
         )
@@ -331,7 +360,7 @@ fn a_failed_provider_read_records_nothing() {
     assert_eq!(store.cursor("near-payouts").unwrap(), None);
     assert_eq!(store.read("near-payouts").unwrap(), None);
     assert_eq!(store.started("near-payouts").unwrap(), None);
-    assert!(store.completed(0, i64::MAX).unwrap().is_empty());
+    assert!(store.payouts(i64::MAX).unwrap().is_empty());
 }
 
 /// Every query in one view sees the same state, even when a read commits between them.
