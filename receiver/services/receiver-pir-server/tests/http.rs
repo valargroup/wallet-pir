@@ -250,6 +250,91 @@ async fn a_revocation_aborts_files_in_flight() {
     );
 }
 
+/// Whether `response` forbids caching it.
+fn no_store(response: &reqwest::Response) -> bool {
+    response
+        .headers()
+        .get(reqwest::header::CACHE_CONTROL)
+        .is_some_and(|value| value == "no-store")
+}
+
+/// Every refusal is `no-store`: a revoked session's 410 must not outlive the
+/// republication of the same deterministic session id, which then serves again at the
+/// same URL.
+#[tokio::test]
+async fn refusals_are_not_cached_and_a_republished_session_serves_again() {
+    let snapshot = snapshot(1);
+    let pir = Server::new(snapshot.clone()).unwrap();
+    let client = Client::new(pir.manifest().clone(), pir.public(), accepted()).unwrap();
+    let id = hex::encode(pir.manifest().id().unwrap());
+    let publications = Publications::default();
+    assert!(publications.publish(Publication::new(pir, None).unwrap(), 0));
+    let server = serve_router(receiver_pir_server::router_with_publications(
+        publications.clone(),
+    ))
+    .await;
+    let origin = &server.origin;
+    let get = |path: String| http().get(format!("{origin}{path}")).send();
+    let query = |body: Vec<u8>| {
+        http()
+            .post(format!("{origin}/v1/receiver/query"))
+            .body(body)
+            .send()
+    };
+    let public = format!("/v1/receiver/public/{id}");
+    let ok = get(public.clone()).await.unwrap();
+    assert!(ok.status().is_success() && no_store(&ok));
+    for (path, status) in [
+        ("/v1/receiver/public/zz".to_owned(), 400),
+        (format!("/v1/receiver/public/{}", "00".repeat(32)), 409),
+        (format!("/v1/receiver/witness/{id}"), 503),
+    ] {
+        let refused = get(path.clone()).await.unwrap();
+        assert_eq!(refused.status(), status, "{path}");
+        assert!(no_store(&refused), "{path}");
+    }
+    let exact = client.prepare(receiver(), 0).unwrap().body().to_vec();
+    let mut longer = exact.clone();
+    longer.push(0);
+    for (body, status) in [(vec![0; 8], 400), (longer, 413)] {
+        let refused = query(body).await.unwrap();
+        assert_eq!(refused.status(), status);
+        assert!(no_store(&refused));
+    }
+
+    publications.revoke();
+    let gone = get(public.clone()).await.unwrap();
+    assert_eq!(gone.status(), reqwest::StatusCode::GONE);
+    assert!(no_store(&gone));
+    let gone = query(exact).await.unwrap();
+    assert_eq!(gone.status(), reqwest::StatusCode::GONE);
+    assert!(no_store(&gone));
+    let unavailable = get("/v1/receiver/init".into()).await.unwrap();
+    assert_eq!(
+        unavailable.status(),
+        reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+    assert!(no_store(&unavailable));
+
+    // The identical publication has the same session id and serves the same URL.
+    let pir = Server::new(snapshot).unwrap();
+    let expected = pir.public().to_vec();
+    assert!(publications.publish(Publication::new(pir, None).unwrap(), publications.epoch()));
+    let restored = get(public).await.unwrap();
+    assert!(restored.status().is_success());
+    assert_eq!(restored.bytes().await.unwrap(), expected);
+    let query = client.prepare(receiver(), 0).unwrap();
+    let answer = http()
+        .post(format!("{origin}/v1/receiver/query"))
+        .body(query.body().to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert!(answer.status().is_success());
+    let answer = answer.bytes().await.unwrap();
+    assert_eq!(client.decode(query, &answer).unwrap(), Some(record(0, 1)));
+}
+
 /// Health serves the owner's latest report for monitoring.
 #[tokio::test]
 async fn health_serves_the_owners_report() {
@@ -362,6 +447,7 @@ async fn a_client_over_its_cap_is_told_to_retry() {
     let refused = query("10.0.0.1").await.unwrap();
     assert_eq!(refused.status(), reqwest::StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(refused.headers()["retry-after"], "1");
+    assert!(no_store(&refused));
     assert_eq!(
         query("10.0.0.2").await.unwrap().status(),
         reqwest::StatusCode::BAD_REQUEST

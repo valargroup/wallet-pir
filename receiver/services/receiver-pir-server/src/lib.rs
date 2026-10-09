@@ -6,7 +6,7 @@ pub mod publication;
 use axum::{
     body::{Body, Bytes},
     extract::{Path, Request, State},
-    http::{header, StatusCode},
+    http::{header, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -130,11 +130,26 @@ fn router(service: Service) -> Router {
                 },
             ),
         )
+        .layer(axum::middleware::map_response(no_store_errors))
         .layer(axum::middleware::from_fn_with_state(
             metrics,
             pir_observability::observe,
         ))
         .with_state(service)
+}
+
+/// Marks every error response `no-store`, leaving its status, other headers and body
+/// as they are. Caches may keep a 410 heuristically, but a revoked session id is
+/// deterministic and can be published again, so no refusal may outlive the state that
+/// produced it.
+async fn no_store_errors(mut response: Response) -> Response {
+    let status = response.status();
+    if status.is_client_error() || status.is_server_error() {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 /// The process identity and the revision being served, for deploys and monitoring.
