@@ -207,7 +207,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         )));
     }
     // A start after the fixture is truncated history, which the activation check below
-    // classifies.
+    // classifies. An end before it leaves the fixture uncheckable: oracle_invalid by design.
     if directory.end_height < fixture.height {
         return Ok(Some((
             "oracle_invalid",
@@ -220,6 +220,7 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
         .map(|url| ZakuraClient::new(url.clone(), args.cookie.as_deref()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let pinned = (fixture.height, block_hash);
+    // A session displaced during a slow ranking fails this run; the next starts from /init.
     let (rpc, root, tip) = match oracle(&nodes, directory, pinned, args.witnesses).await {
         Ok(found) => found,
         Err(failure) => return Ok(Some(failure)),
@@ -319,6 +320,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
+    // Wallets check the recent set's window and coverage before trusting it; this checks
+    // only its freshness.
     let recent = directory
         .filters
         .iter()
