@@ -295,8 +295,13 @@ probe:
 ```
 
 On a host that already has the file, such as the live monitor with its `status`
-and `transparent` records, merge instead of overwriting, after installing the probe
-as below. Its cloud-init installs no `jq`, so merge on the coordinator: save
+and `transparent` records, first upgrade `pir-monitor` to a build of this change:
+an earlier one accepts only those two services and does not start with a `receiver`
+record. Build it with `enhance/ops/scripts/build-observability.sh`, install it as
+[the observability deployment](../../../enhance/docs/observability-alerting.md#deployment-and-rollback)
+does, keeping the previous binary for rollback, restart it with the unchanged file and
+check it is active. Then install the probe as below and merge the record instead of
+overwriting the file. Its cloud-init installs no `jq`, so merge on the coordinator: save
 the array above as `receiver-probe.json`, then fetch the live file, replace any
 `receiver` record while keeping every other one, check the result, and rename it
 into place before the restart that reads it:
