@@ -381,10 +381,10 @@ impl ProviderStore {
     /// feed's first read began. A receiver keeps its latest time, a payout the earliest
     /// start of any read that saw it complete, whatever order they commit in (a
     /// receiver reused across swaps has one payout per transaction), and the feed its
-    /// first start. The cursor and read time move as one
-    /// pair: a read that advances the cursor also sets the read time, one that reaches
-    /// the same cursor can only advance the read time, and one behind the cursor
-    /// changes neither, so a stale read cannot make the feed look fresher.
+    /// first start. The cursor and read time move as one pair: a read that advances the
+    /// cursor also sets the read time, one that reaches the same cursor can only
+    /// advance the read time, and one behind the cursor changes neither, so a stale
+    /// read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
