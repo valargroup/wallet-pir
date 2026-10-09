@@ -74,6 +74,7 @@ def main(argv=None):
     service = descriptors.load_descriptors(ROOT / 'enhance/ops/deploy/deploy.toml')['receiver']
     (server,) = descriptors.targets(service, inventory)
     prefix = ['sudo', '-n', '--'] if inventory.hosts[server.host].get('sudo') else []
+    # Stages a key file no unit names yet, under the lock; a locked deploy activates it (see the docstring).
     command = SSHExecutor(inventory).raw_transport(server.host) + [
         shlex.join([*prefix, 'python3', '-c', REMOTE, argv[0]])]
     try:
