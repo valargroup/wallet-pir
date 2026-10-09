@@ -42,7 +42,10 @@ const MAX_PAGES: usize = 500;
 pub const PROVIDER: &str = "near-intents";
 /// How far back the recent set reaches from the feeds' last complete read.
 pub const RECENT_SECS: i64 = 24 * 60 * 60;
-/// How long after a read first sees a payout complete its payment must be indexed.
+/// How long before a publication's terminal block's time a read must first have seen
+/// a payout complete for the report to check its payment. The chain's clock, not the
+/// wall clock, measures it, so payouts stay pending, not missing, while the chain
+/// pauses or behind `--depth`.
 const COMPLETION_GRACE_SECS: i64 = 60 * 60;
 
 /// The NEAR filter sets: `near-intents/recent` once both feeds have completed a read,
@@ -120,14 +123,14 @@ pub struct Capture {
     pub sets: Vec<ProviderSet>,
     /// When each feed's last complete read began.
     feeds: serde_json::Map<String, serde_json::Value>,
-    /// Payouts first seen complete more than an hour before the capture's time that no
-    /// check has matched yet.
+    /// Payouts first seen complete more than [`COMPLETION_GRACE_SECS`] before the
+    /// terminal block's time that no check has matched yet.
     unmatched: Vec<(Receiver, receiver_directory::Hash)>,
 }
 
-/// Reads [`provider_sets`] and the inputs of a report at `now`, in Unix seconds, in
-/// one read transaction of `store`.
-pub fn capture(store: &ProviderStore, now: i64) -> Result<Capture> {
+/// Reads [`provider_sets`] and the inputs of a report on a publication whose terminal
+/// block has time `anchor_time`, in Unix seconds, in one read transaction of `store`.
+pub fn capture(store: &ProviderStore, anchor_time: i64) -> Result<Capture> {
     store.view(|store| {
         let mut feeds = serde_json::Map::new();
         for feed in [Feed::Payouts, Feed::Refunds] {
@@ -136,16 +139,16 @@ pub fn capture(store: &ProviderStore, now: i64) -> Result<Capture> {
         Ok(Capture {
             sets: sets_in(store)?,
             feeds,
-            unmatched: store.unmatched(now - COMPLETION_GRACE_SECS)?,
+            unmatched: store.unmatched(anchor_time - COMPLETION_GRACE_SECS)?,
         })
     })
 }
 
 impl Capture {
     /// The feed's health for monitoring: when each feed's last complete read began, and
-    /// how many payouts first seen complete more than an hour before the capture's time,
-    /// however long ago, still have no payment to their receiver in the transaction NEAR
-    /// reported in `index`. Also returns the payouts it matched, for
+    /// how many payouts first seen complete more than an hour before the terminal
+    /// block's time, however long ago, still have no payment to their receiver in the
+    /// transaction NEAR reported in `index`. Also returns the payouts it matched, for
     /// [`ProviderStore::match_payouts`] once the report is published; they are not
     /// checked again until a rewind forgets them (see
     /// [`ProviderStore::forget_matches`]), and one that stays missing stays in the count.
@@ -646,8 +649,8 @@ mod tests {
         assert_eq!(completed[0].1[1], 0x7e);
     }
 
-    /// [`Capture::report`] for the current state of `provider` at `now`, recording the
-    /// payouts it matched.
+    /// [`Capture::report`] for the current state of `provider` on a terminal block with
+    /// time `now`, recording the payouts it matched.
     fn report(provider: &mut ProviderStore, index: &Store, now: i64) -> Result<serde_json::Value> {
         let (report, matched) = capture(provider, now)?.report(index)?;
         provider.match_payouts(&matched)?;
@@ -748,9 +751,9 @@ mod tests {
         );
     }
 
-    /// A payout first seen complete more than an hour ago with no indexed payment in its
-    /// transaction is reported missing, even to a receiver paid before; a newer one is
-    /// not checked yet.
+    /// A payout first seen complete more than an hour before the terminal block's time
+    /// with no indexed payment in its transaction is reported missing, even to a
+    /// receiver paid before; a newer one is pending, not checked yet.
     #[test]
     fn report_counts_completed_payouts_missing_from_the_index() {
         let dir = tempfile::tempdir().unwrap();

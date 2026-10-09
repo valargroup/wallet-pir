@@ -213,8 +213,9 @@ read from too far back fails rather than skip history. Each read commits in one
 transaction. Health's `indexer`
 report, computed from the index each publication is built from and activated with
 it, gives each feed's last read and how many
-payouts NEAR reported complete more than an hour earlier have no indexed payment to
-their receiver in the transaction NEAR reported, the signal that the index missed
+payouts NEAR reported complete more than an hour before the publication's terminal
+block's time have no indexed payment to their receiver in the transaction NEAR
+reported (later ones are pending, so a paused chain raises no false alarm), the signal that the index missed
 one or NEAR stopped paying with the zero OVK. A payout without a reported
 transaction is not checked. A matched payout is not checked again until a reorg
 rewinds the index, which first forgets every match.

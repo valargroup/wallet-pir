@@ -86,6 +86,20 @@ impl ZakuraClient {
         Ok(root)
     }
 
+    /// The time in the header of the block `hash` (protocol byte order), in Unix
+    /// seconds.
+    pub async fn block_time(&self, hash: [u8; 32]) -> Result<i64, ZakuraError> {
+        #[derive(serde::Deserialize)]
+        struct Header {
+            time: i64,
+        }
+        let displayed = zakura_chain::block::Hash(hash).to_string();
+        let header: Header = self
+            .call("getblockheader", json!([displayed, true]))
+            .await?;
+        Ok(header.time)
+    }
+
     /// Fetch a bounded range concurrently, then validate its complete chain before returning it.
     /// The caller must append every returned block in order from `previous`.
     pub async fn receiver_batch(

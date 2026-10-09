@@ -129,7 +129,6 @@ async fn main() -> Result<()> {
             None,
             &mut active,
             &mut witness_cache,
-            unix_now(),
         )
         .await?;
         return Ok(());
@@ -199,7 +198,6 @@ async fn main() -> Result<()> {
                 Some(&publications),
                 &mut active,
                 &mut witness_cache,
-                unix_now(),
             )
             .await
             {
@@ -275,7 +273,7 @@ struct Active {
 /// directory with fresh NEAR filters and report. While serving, `active` stays while
 /// it is served at an unmoved tip and was built from the same provider sets and
 /// report, which time alone can change; otherwise a new one is built once the previous
-/// revision's grace ends. `now` is the report's time, in Unix seconds.
+/// revision's grace ends.
 async fn refresh(
     args: &Args,
     nodes: &[ZakuraClient],
@@ -283,7 +281,6 @@ async fn refresh(
     serving: Option<&Publications>,
     active: &mut Option<Active>,
     witness_cache: &mut WitnessCache,
-    now: i64,
 ) -> Result<()> {
     let refresh_started = std::time::Instant::now();
     let (node_tip, node) = freshest(nodes).await?;
@@ -390,7 +387,8 @@ async fn refresh(
     // A publication's filters and report come from one capture of the provider store,
     // so a feed read committing meanwhile cannot make them describe different states.
     // The report describes the reconciled index the publication is built from.
-    let capture = receiver_indexer::near::capture(&provider_store, now)?;
+    let anchor_time = rpc.block_time(tip.hash).await?;
+    let capture = receiver_indexer::near::capture(&provider_store, anchor_time)?;
     let inputs = receiver_indexer::near::digest(&capture.sets);
     let (report, matched) = capture.report(&store)?;
     if let (Some(serving), Some(active)) = (serving, active.as_ref()) {
@@ -570,12 +568,14 @@ mod tests {
     };
     use tokio::sync::{Notify, Semaphore};
 
-    /// A node's tip and block hashes by height. Each block hash request runs `hook` if
-    /// there is one, signals `asked`, then waits for a permit from `gate` if there is one.
+    /// A node's tip, block hashes by height and the time in every block header. Each
+    /// block hash request runs `hook` if there is one, signals `asked`, then waits for a
+    /// permit from `gate` if there is one.
     #[derive(Clone, Default)]
     struct Node {
         tip: Arc<Mutex<u64>>,
         hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
+        time: Arc<Mutex<i64>>,
         hook: Option<Arc<dyn Fn() + Send + Sync>>,
         gate: Option<Arc<Semaphore>>,
         asked: Arc<Notify>,
@@ -597,6 +597,7 @@ mod tests {
                     let height = r["params"][0].as_u64().unwrap();
                     json!(Hash(node.hashes.lock().unwrap()[&height]).to_string())
                 }
+                "getblockheader" => json!({"time": *node.time.lock().unwrap()}),
                 method => panic!("unexpected {method}"),
             };
             Json(json!({"result": result, "error": null}))
@@ -660,6 +661,8 @@ mod tests {
         rpc: ZakuraClient,
         /// The node's block hashes by height.
         hashes: Arc<Mutex<HashMap<u64, [u8; 32]>>>,
+        /// The time in the node's block headers, [`NOW`] at first.
+        time: Arc<Mutex<i64>>,
         publications: Publications,
         origin: String,
         active: Option<Active>,
@@ -684,7 +687,8 @@ mod tests {
                 .lock()
                 .unwrap()
                 .extend([(height - 1, [2; 32]), (height, [3; 32])]);
-            let hashes = node.hashes.clone();
+            *node.time.lock().unwrap() = NOW;
+            let (hashes, time) = (node.hashes.clone(), node.time.clone());
             let rpc = serve_node(node).await;
             let mut store = Store::open(
                 dir.path().join("directory.sqlite"),
@@ -729,6 +733,7 @@ mod tests {
                 args,
                 rpc,
                 hashes,
+                time,
                 publications,
                 origin,
                 active: None,
@@ -736,8 +741,8 @@ mod tests {
             }
         }
 
-        /// Refreshes at `now`, as the serving loop does.
-        async fn refresh(&mut self, now: i64) -> Result<()> {
+        /// Refreshes, as the serving loop does.
+        async fn refresh(&mut self) -> Result<()> {
             refresh(
                 &self.args,
                 std::slice::from_ref(&self.rpc),
@@ -745,7 +750,6 @@ mod tests {
                 Some(&self.publications),
                 &mut self.active,
                 &mut self.cache,
-                now,
             )
             .await
         }
@@ -776,8 +780,9 @@ mod tests {
         }
     }
 
-    /// With the chain paused, a refresh with nothing new keeps the publication, and a
-    /// changed report, which time alone can change, republishes it.
+    /// A refresh with nothing new keeps the publication, and a changed report
+    /// republishes it: a completed payout stays pending until the terminal block's time
+    /// passes its grace, however long the chain pauses.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_paused_chain_republishes_only_for_new_sets_or_reports() {
         let mut paused = Paused::new(|_| {}).await;
@@ -794,15 +799,16 @@ mod tests {
                 NOW - 10,
             )
             .unwrap();
-        paused.refresh(NOW).await.unwrap();
+        paused.refresh().await.unwrap();
         let first = paused.get("health").await;
         assert_eq!(first["indexer"]["payouts_missing"], 0);
-        paused.refresh(NOW).await.unwrap();
+        paused.refresh().await.unwrap();
         assert_eq!(paused.get("health").await, first);
         assert!(paused.publications.ready_at().is_none());
-        // The payout's grace ends with no new block or read: the same directory is
-        // republished with the new report.
-        paused.refresh(NOW - 10 + 3600).await.unwrap();
+        // A terminal block past the payout's grace: the same directory is republished
+        // with the new report.
+        *paused.time.lock().unwrap() = NOW - 10 + 3600;
+        paused.refresh().await.unwrap();
         let reported = paused.get("health").await;
         assert_eq!(reported["indexer"]["payouts_missing"], 1);
         assert!(paused.publications.ready_at().is_some());
@@ -814,7 +820,7 @@ mod tests {
     async fn a_larger_depth_publishes_the_stored_tip() {
         let mut paused = Paused::new(|_| {}).await;
         paused.args.depth = 5;
-        paused.refresh(NOW).await.unwrap();
+        paused.refresh().await.unwrap();
         let height = receiver_indexer::blocks::ironwood_activation();
         assert_eq!(paused.get("init").await["directory"]["end_height"], height);
     }
@@ -832,7 +838,7 @@ mod tests {
                 .unwrap();
         })
         .await;
-        paused.refresh(NOW).await.unwrap();
+        paused.refresh().await.unwrap();
         let (until, read) = paused.until_and_read("seen", "near-payouts").await;
         assert_eq!(read, until);
         // Reads committed after the capture, during preparation.
@@ -858,7 +864,7 @@ mod tests {
         // The node's chain replaces the indexed block, but forgetting fails.
         let height = receiver_indexer::blocks::ironwood_activation();
         paused.hashes.lock().unwrap().insert(height.into(), [4; 32]);
-        assert!(paused.refresh(NOW).await.is_err());
+        assert!(paused.refresh().await.is_err());
         let index = Store::open(
             paused.dir.path().join("directory.sqlite"),
             Config {

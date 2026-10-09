@@ -126,6 +126,7 @@ async fn cli_resumes_and_replaces_an_orphaned_publication() {
             "getblock" if r["params"][1] == 1 => {
                 json!({"trees":{"ironwood":{"size":if r["params"][0] == second.hash().to_string() {3} else {2}}}})
             }
+            "getblockheader" => json!({"time": 1_800_000_000}),
             "getblock" => {
                 let mut raw = Vec::new();
                 b.zcash_serialize(&mut raw).unwrap();
