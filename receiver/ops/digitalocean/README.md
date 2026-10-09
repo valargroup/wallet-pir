@@ -151,6 +151,36 @@ deploy inventory, so no deploy can reach it.
    `https://receiver-pir.valargroup.dev/v1/receiver/health` returns 404 and that
    `http://10.70.0.11:18380/v1/receiver/health` answers from the monitor host.
 
+After provisioning, every change to the Droplet holds the production lock. Unit
+changes are deploys, as above. The tool cannot change the `Caddyfile` or `near.env`:
+it writes only unit files and has no command that runs other work under its lock.
+Make those changes under the same lock, held for the whole change with `flock -n`
+on the coordinator, as `ops/scripts/wallet-pir-terraform.sh` holds it. `flock -n`
+fails at once while a deploy, rollback or Terraform run holds the lock; then wait
+and run it again, never without the lock. Neither change touches the unit or the
+binary, so the baseline stays valid. Copy the new file to the Droplet first, which
+changes nothing, then run the change as root on the coordinator, where `<droplet>`
+is SSH to root on the Droplet with an identity it accepts:
+
+```sh
+# Caddyfile, reviewed in this directory first.
+flock -n /run/lock/wallet-pir-production.lock ssh <droplet> sh -s <<'EOF'
+set -eu
+caddy validate --adapter caddyfile --config /root/Caddyfile.new
+install -m 0644 /root/Caddyfile.new /etc/caddy/Caddyfile
+systemctl reload caddy
+EOF
+
+# near.env, which the service reads only at start; the restart interrupts serving.
+flock -n /run/lock/wallet-pir-production.lock ssh <droplet> sh -s <<'EOF'
+set -eu
+install -m 0600 -o root -g root /root/near.env.new /etc/receiver-pir/near.env
+rm /root/near.env.new
+systemctl restart receiver-pir
+timeout 300 sh -c 'until curl -fsS http://10.70.0.11:18380/v1/receiver/health | grep -q "\"serving\":\""; do sleep 5; done'
+EOF
+```
+
 The service publishes from memory and writes no publication files; the index keeps
 only `directory.sqlite` and `provider.sqlite`. A `publications/` directory left by
 an earlier release can be deleted. Back up `provider.sqlite` with the index:
