@@ -49,11 +49,9 @@ refused.
 it: the row and filter digests, the declared filter sets and a paid set of exactly
 the records' receivers, every slot and row padding, each record's coverage and
 bucket, the exact record count, every receiver's pages, each continuing the last
-in chain order as `snapshot::check_next` requires, and, across receivers,
-distinct note positions in chain order, one block hash per height, one txid per
-transaction index at a height and one location per txid. No chain trust is implied. A
-record stored outside its bucket would otherwise make lookups of that receiver
-find nothing.
+in chain order as `snapshot::check_next` requires, and that no two records share an
+output or note position. No chain trust is implied. A record stored outside its
+bucket would otherwise make lookups of that receiver find nothing.
 
 ## Filters
 
@@ -183,8 +181,8 @@ sets; without one, publications carry no provider sets. Health's `indexer` repor
 activated with each publication, gives each feed's last read and `payouts_missing`,
 completed NEAR payouts with no indexed payment: the signal that the index missed
 one or NEAR stopped paying with the zero OVK. `payouts_uncheckable` counts those
-first seen in the last day that NEAR reported without a usable recipient or
-transaction.
+to an Orchard receiver first seen in the last day that NEAR reported without a
+parsable transaction. Payouts to other recipients are not checked.
 `services/receiver-indexer/src/near.rs` documents the feed and the report.
 
 `receiver-directory probe --origin <url> --health-url <private health URL>

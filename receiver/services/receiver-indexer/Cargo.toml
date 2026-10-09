@@ -37,4 +37,3 @@ zcash_protocol = "0.10"
 
 [dev-dependencies]
 orchard = { package = "zakura-orchard", version = "2", default-features = false }
-rusqlite = { version = "0.37", features = ["bundled"] }
