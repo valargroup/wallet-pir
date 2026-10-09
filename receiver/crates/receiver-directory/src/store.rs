@@ -361,17 +361,24 @@ impl ProviderStore {
         Ok(Self { db })
     }
 
-    /// Records a complete read of `feed` that began at `read_at`: receivers from swaps
-    /// it created up to `cursor`, its new position, where `true` marks a payout address
-    /// and `false` a refund address, each with its swap's creation time. A receiver
-    /// keeps its latest time. The cursor and read time move as one pair: a read that
-    /// advances the cursor also sets the read time, one that reaches the same cursor
-    /// can only advance the read time, and one behind the cursor changes neither, so a
-    /// stale read cannot make the feed look fresher.
+    /// Records one complete read of `feed` that began at `read_at`, in one transaction,
+    /// so a failed or interrupted read records nothing: receivers from swaps it created
+    /// up to `cursor`, its new position, where `true` marks a payout address and `false`
+    /// a refund address, each with its swap's creation time; the completed payouts it
+    /// saw, each a payout receiver and the transaction (protocol byte order) that paid
+    /// it, so each payment can be checked against the index; and `since`, where the
+    /// feed's first read began. A receiver keeps its latest time, a payout when a read
+    /// first saw it complete (a receiver reused across swaps has one payout per
+    /// transaction), and the feed its first start. The cursor and read time move as one
+    /// pair: a read that advances the cursor also sets the read time, one that reaches
+    /// the same cursor can only advance the read time, and one behind the cursor
+    /// changes neither, so a stale read cannot make the feed look fresher.
     pub fn record(
         &mut self,
         feed: &str,
+        since: i64,
         receivers: &[(Receiver, bool, i64)],
+        completions: &[(Receiver, Hash)],
         cursor: i64,
         read_at: i64,
     ) -> Result<(), Error> {
@@ -409,32 +416,34 @@ impl ProviderStore {
             )?;
             tx.execute(read_sql, params![feed, read_at])?;
         }
+        for (receiver, txid) in completions {
+            tx.execute(
+                "INSERT OR IGNORE INTO payouts VALUES (?1,?2,?3)",
+                params![receiver.as_bytes(), txid.as_slice(), read_at],
+            )?;
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO starts VALUES (?1,?2)",
+            params![feed, since],
+        )?;
         tx.commit()?;
         Ok(())
     }
 
-    /// Records completed payouts the provider reports, each a payout receiver and the
-    /// transaction (protocol byte order) that paid it, with when a read first saw it
-    /// complete, so each payment can be checked against the index. A receiver reused
-    /// across swaps has one payout per transaction.
-    pub fn record_completions(
-        &mut self,
-        payouts: &[(Receiver, Hash)],
-        seen_at: i64,
-    ) -> Result<(), Error> {
-        let tx = self.db.transaction()?;
-        for (receiver, txid) in payouts {
-            tx.execute(
-                "INSERT OR IGNORE INTO payouts VALUES (?1,?2,?3)",
-                params![receiver.as_bytes(), txid.as_slice(), seen_at],
-            )?;
-        }
-        tx.commit()?;
-        Ok(())
+    /// Runs `read` in one read transaction, so every query it makes sees the same
+    /// committed state even while a feed records.
+    pub fn view<T, E: From<Error>>(
+        &self,
+        read: impl FnOnce(&Self) -> Result<T, E>,
+    ) -> Result<T, E> {
+        let tx = self.db.unchecked_transaction().map_err(Error::from)?;
+        let value = read(self)?;
+        tx.commit().map_err(Error::from)?;
+        Ok(value)
     }
 
     /// Payouts first seen complete by `until` that no check has matched to the index
-    /// yet, however old; see [`Self::record_completions`] and [`Self::match_payouts`].
+    /// yet, however old; see [`Self::record`] and [`Self::match_payouts`].
     pub fn unmatched(&self, until: i64) -> Result<Vec<(Receiver, Hash)>, Error> {
         let mut query = self.db.prepare(
             "SELECT receiver,txid FROM payouts p WHERE seen_at <= ?1 AND NOT EXISTS(
@@ -463,15 +472,6 @@ impl ProviderStore {
             )?;
         }
         tx.commit()?;
-        Ok(())
-    }
-
-    /// Records that `feed` reads swaps created from `since` on, unless it already started.
-    pub fn start(&mut self, feed: &str, since: i64) -> Result<(), Error> {
-        self.db.execute(
-            "INSERT OR IGNORE INTO starts VALUES (?1,?2)",
-            params![feed, since],
-        )?;
         Ok(())
     }
 

@@ -41,7 +41,8 @@ three consecutive failures spanning five seconds, and an answer that does not
 attest removes it at once.
 
 Receiver has no controller or lease either: one process indexes and serves, and
-its canonical guard revokes every session when a served anchor leaves the chain.
+its canonical guard revokes every session when an anchor it still serves leaves
+the chain.
 
 ## Publication identity
 

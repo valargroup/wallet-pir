@@ -196,10 +196,10 @@ impl Explorer {
 
     /// Reads `feed` back to its cursor, or to `since` on the first read, and records
     /// each swap's Orchard receiver in `store`, with when the read began, and each
-    /// completed payout with its reported transactions (see
-    /// [`ProviderStore::record_completions`]). Times are capped at
-    /// the read's start, so a record dated in the future cannot hide later swaps. Returns
-    /// how many receivers it recorded.
+    /// completed payout with its reported transactions, all in one transaction (see
+    /// [`ProviderStore::record`]). Times are capped at the read's start, so a record
+    /// dated in the future cannot hide later swaps. Returns how many receivers it
+    /// recorded.
     pub async fn sync(
         &mut self,
         store: &mut ProviderStore,
@@ -256,11 +256,8 @@ impl Explorer {
                 _ => break,
             }
         }
-        store.record(feed.name(), &found, newest, read_at)?;
-        store.record_completions(&completed, read_at)?;
-        // Only a completed read says where the feed started. Recorded after it, a crash
-        // in between understates the feed's coverage instead of overstating it.
-        store.start(feed.name(), since)?;
+        // Only a completed read says where the feed started.
+        store.record(feed.name(), since, &found, &completed, newest, read_at)?;
         Ok(found.len())
     }
 
@@ -362,15 +359,13 @@ mod tests {
             Receiver::from_bytes(address.to_raw_address_bytes()).unwrap()
         };
         let (payouts, refunds) = (Feed::Payouts.name(), Feed::Refunds.name());
-        store.start(payouts, 1_000).unwrap();
-        store.start(refunds, 2_000).unwrap();
-        // A feed that started but never finished a read publishes nothing.
+        // A feed that never finished a read publishes nothing.
         assert!(provider_sets(&store).unwrap().is_empty());
         let until = 2_000 + RECENT_SECS;
         let old = (receiver(1), true, 1_500);
         let recent = (receiver(2), true, until - 60);
         store
-            .record(payouts, &[old, recent], until, until + 30)
+            .record(payouts, 1_000, &[old, recent], &[], until, until + 30)
             .unwrap();
         let sets = provider_sets(&store).unwrap();
         assert_eq!(sets.len(), 1);
@@ -381,7 +376,9 @@ mod tests {
         );
         // Recent needs both feeds, and reaches back from the older read.
         let refund = (receiver(3), false, until - 120);
-        store.record(refunds, &[refund], until, until).unwrap();
+        store
+            .record(refunds, 2_000, &[refund], &[], until, until)
+            .unwrap();
         let sets = provider_sets(&store).unwrap();
         assert_eq!(sets[0].label, "near-intents/recent");
         assert_eq!((sets[0].since_unix, sets[0].until_unix), (2_000, until));
@@ -514,16 +511,17 @@ mod tests {
             .unwrap();
         let now = 1_000_000;
         // The indexed payout, then a later one to the same receiver that is not indexed.
+        let payouts = [(receiver(1), [7; 32]), (receiver(1), [8; 32])];
         provider
-            .record_completions(
-                &[(receiver(1), [7; 32]), (receiver(1), [8; 32])],
-                now - 2 * 60 * 60,
-            )
+            .record("near-payouts", 0, &[], &payouts, now, now - 2 * 60 * 60)
+            .unwrap();
+        let payouts = [(receiver(2), [9; 32])];
+        provider
+            .record("near-payouts", 0, &[], &payouts, now, now - 60)
             .unwrap();
         provider
-            .record_completions(&[(receiver(2), [9; 32])], now - 60)
+            .record("near-payouts", 0, &[], &[], now, now - 30)
             .unwrap();
-        provider.record("near-payouts", &[], now, now - 30).unwrap();
         let first = report(&mut provider, &index, now).unwrap();
         assert_eq!(first["payouts_checked"], 2);
         assert_eq!(first["payouts_missing"], 1);

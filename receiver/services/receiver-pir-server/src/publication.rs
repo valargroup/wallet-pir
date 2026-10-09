@@ -71,6 +71,34 @@ impl State {
     fn previous_expired(&self) -> bool {
         self.previous.is_some() && self.grace_until().is_none()
     }
+
+    /// See [`Publications::anchors`].
+    fn anchors(&self) -> Vec<(u32, Hash)> {
+        self.current
+            .iter()
+            .chain(
+                self.previous
+                    .iter()
+                    .filter(|(_, until)| *until > Instant::now())
+                    .map(|(p, _)| p),
+            )
+            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
+            .collect()
+    }
+
+    /// See [`Publications::revoke`].
+    fn revoke(&mut self) {
+        self.epoch = self.epoch.checked_add(1).expect("recovery epoch exhausted");
+        if let Some(p) = self.current.take() {
+            self.revoked.push_back(p.id);
+        }
+        if let Some((p, _)) = self.previous.take() {
+            self.revoked.push_back(p.id);
+        }
+        while self.revoked.len() > 8 {
+            self.revoked.pop_front();
+        }
+    }
 }
 
 /// One current and one briefly retained canonical revision. Revocation also fences in-flight work.
@@ -96,22 +124,18 @@ impl Publications {
         self.0.read().unwrap().epoch
     }
 
-    /// Anchors that still accept new requests. Validate independently of expensive preparation.
+    /// Anchors that still accept new requests, current first. Validate independently of
+    /// expensive preparation.
     pub fn anchors(&self) -> Vec<(u32, Hash)> {
+        self.serving().1
+    }
+
+    /// The recovery epoch and [`Self::anchors`], read together for
+    /// [`Self::revoke_serving`].
+    pub fn serving(&self) -> (u64, Vec<(u32, Hash)>) {
         self.expire();
         let state = self.0.read().unwrap();
-        state
-            .current
-            .iter()
-            .chain(
-                state
-                    .previous
-                    .iter()
-                    .filter(|(_, until)| *until > Instant::now())
-                    .map(|(p, _)| p),
-            )
-            .map(|p| (p.manifest().end_height, p.manifest().end_hash))
-            .collect()
+        (state.epoch, state.anchors())
     }
 
     /// When the next revision may activate, if the previous one is still in its grace.
@@ -138,20 +162,22 @@ impl Publications {
 
     /// Conservatively invalidate all sessions, including CPU work that started before the reorg.
     pub fn revoke(&self) {
+        self.0.write().unwrap().revoke();
+    }
+
+    /// For a check that read `epoch` and `anchor` from [`Self::serving`] and found the
+    /// anchor off the chain: revokes as [`Self::revoke`] does, but atomically only if
+    /// `epoch` is still current and `anchor` still accepts requests, so a publication
+    /// made after a revocation, or after `anchor`'s grace ended, survives the stale
+    /// result. An anchor in its grace still revokes every session. Returns whether it
+    /// revoked.
+    pub fn revoke_serving(&self, epoch: u64, anchor: (u32, Hash)) -> bool {
         let mut state = self.0.write().unwrap();
-        state.epoch = state
-            .epoch
-            .checked_add(1)
-            .expect("recovery epoch exhausted");
-        if let Some(p) = state.current.take() {
-            state.revoked.push_back(p.id);
+        if state.epoch != epoch || !state.anchors().contains(&anchor) {
+            return false;
         }
-        if let Some((p, _)) = state.previous.take() {
-            state.revoked.push_back(p.id);
-        }
-        while state.revoked.len() > 8 {
-            state.revoked.pop_front();
-        }
+        state.revoke();
+        true
     }
 
     /// The publication `id` names, or the current one for `None`, with the current
@@ -194,10 +220,59 @@ mod tests {
 
     /// An empty prepared publication whose salt starts with `salt`.
     fn publication(salt: u8) -> Publication {
+        publication_at(salt, 3)
+    }
+
+    /// An empty prepared publication whose salt starts with `salt`, ending at a block
+    /// hash of `hash` bytes.
+    fn publication_at(salt: u8, hash: u8) -> Publication {
         let mut manifest = super::common::manifest(receiver_pir::MIN_ROWS);
         manifest.salt[0] = salt;
+        manifest.end_hash = [hash; 32];
         let snapshot = receiver_directory::snapshot::Snapshot::build(manifest, &[], &[]).unwrap();
         Publication::new(Server::new(snapshot).unwrap(), None).unwrap()
+    }
+
+    /// A check that found an anchor off the chain revokes only while its epoch is
+    /// current and the anchor still accepts requests.
+    #[test]
+    fn a_stale_check_revokes_only_while_its_anchor_is_served() {
+        let (a, b) = ((101, [1; 32]), (101, [2; 32]));
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        // A check reads A, then a revocation and B's publication overtake it.
+        let (epoch, anchors) = publications.serving();
+        assert_eq!(anchors, [a]);
+        publications.revoke();
+        assert!(publications.publish(publication_at(2, 2), epoch + 1));
+        assert!(!publications.revoke_serving(epoch, a));
+        assert_eq!(publications.serving(), (epoch + 1, vec![b]));
+        // An ordinary rotation keeps the epoch, but once A's grace ends a check that
+        // read A no longer revokes C.
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let (epoch, _) = publications.serving();
+        assert!(publications.publish(publication_at(3, 3), 0));
+        let ended = Instant::now()
+            .checked_sub(Duration::from_millis(1))
+            .unwrap();
+        publications.0.write().unwrap().previous.as_mut().unwrap().1 = ended;
+        assert!(!publications.revoke_serving(epoch, a));
+        assert_eq!(publications.anchors(), [(101, [3; 32])]);
+        // A served anchor off the chain still revokes every session.
+        assert!(publications.revoke_serving(epoch, (101, [3; 32])));
+        assert_eq!(publications.serving(), (epoch + 1, vec![]));
+    }
+
+    /// An anchor still in its grace revokes the current publication with it.
+    #[test]
+    fn an_anchor_in_its_grace_still_revokes_every_session() {
+        let publications = Publications::default();
+        assert!(publications.publish(publication_at(1, 1), 0));
+        let (epoch, _) = publications.serving();
+        assert!(publications.publish(publication_at(2, 2), 0));
+        assert!(publications.revoke_serving(epoch, (101, [1; 32])));
+        assert!(publications.anchors().is_empty());
     }
 
     /// A displaced revision is dropped once its grace ends, not kept until the next

@@ -21,7 +21,8 @@
   waits for that to end. Queries are admitted with Enhance's shared primitives:
   each client may have two in flight, and a query waits up to 2 seconds for one of
   two evaluation slots after its upload completes; refusals are 429 with
-  `Retry-After: 1`. Session IDs hash the session manifest at fixed width.
+  `Retry-After: 1`. Session IDs hash the session manifest at fixed width, and a
+  session manifest is at most 16 KiB.
 - Add the `receiver-indexer` service, whose `receiver-directory` binary backfills
   mainnet with batch anchor checks and reorg rollback, keeps publishing and
   serving each canonical tip from memory while revoking orphaned sessions, and
