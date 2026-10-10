@@ -358,7 +358,8 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
 
 /// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
 /// feeds and then the served publication's `indexer.feeds` reach the first such times
-/// seen, so the probe checks a publication of this process's reads, not an older one,
+/// seen from the same process (health's `identity.incarnation`; a restart starts over),
+/// so the probe checks a publication of the running process's reads, not an older one,
 /// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh. Each request is
 /// bounded by the time left of `wait`. At the deadline it fails as `feeds_not_read`
 /// with the last reads and published feeds seen and the last request error.
@@ -377,8 +378,9 @@ async fn await_feed_reads(
             .map(|feed| map[feed.name()].as_i64())
             .collect()
     };
-    // Fixed at the first reads seen: later reads would keep moving ahead of publication.
-    let mut target = None;
+    // Fixed at the first reads seen, with their process: later reads would keep moving
+    // ahead of publication.
+    let mut target: Option<(Value, Vec<i64>)> = None;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
@@ -398,8 +400,13 @@ async fn await_feed_reads(
             Ok(Ok(health)) => {
                 reads = health["near"]["reads"].clone();
                 published = health["indexer"]["feeds"].clone();
-                target = target.or_else(|| times(&reads));
-                if let (Some(target), Some(published)) = (&target, times(&published)) {
+                let (process, current) = (&health["identity"]["incarnation"], times(&reads));
+                target = target
+                    .filter(|(p, _)| p == process)
+                    .or_else(|| Some(process.clone()).zip(current.clone()));
+                if let (Some((_, target)), Some(_), Some(published)) =
+                    (&target, current, times(&published))
+                {
                     let fresh = unix_now() - MAX_RECENT_AGE_SECS;
                     if published
                         .iter()
@@ -1511,6 +1518,27 @@ mod tests {
         .await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 2);
+        // A restart after the first reads: the new process publishes the stored feeds
+        // before reading, so the gate waits for its own reads and their publication.
+        let (url, asked) = health_route(move |n| {
+            let (process, reads, published) = match n {
+                0 => ("a", (json!(t), json!(t + 1)), (json!(t - 1), json!(t + 1))),
+                1 | 2 => ("b", (Value::Null, Value::Null), (json!(t), json!(t + 1))),
+                3 => ("b", (json!(t + 5), json!(t + 6)), (json!(t), json!(t + 1))),
+                _ => (
+                    "b",
+                    (json!(t + 5), json!(t + 6)),
+                    (json!(t + 5), json!(t + 6)),
+                ),
+            };
+            let (status, body) = health(reads, published);
+            let mut body: Value = serde_json::from_str(&body).unwrap();
+            body["identity"] = json!({ "incarnation": process });
+            (status, body.to_string())
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 5);
     }
 
     /// With `--await-feed-reads`, a gate that fails ends the probe before it asks the
