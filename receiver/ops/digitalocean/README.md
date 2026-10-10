@@ -134,9 +134,14 @@ Before the first tool deploy, once:
    `providers.sqlite`, which it builds from `--near-since` on first start, and leaves
    the earlier build's `provider.sqlite` untouched for rollback. Delete
    `/srv/receiver-pir/index/provider.sqlite*` only once the rollback window has passed.
-   That build reads every swap since `--near-since` (about 15 minutes for ten days at
-   October 2026 volume), so for the first deploy raise the inventory's
-   `--await-feed-reads` to 1800 and the exact check's `timeout` to 2100.
+   That build reads every swap since `--near-since`, one feed after the other: in
+   production on 2026-10-10, on a fresh `providers.sqlite`, the payouts feed's first
+   read took about 14 minutes and the refunds feed's about 18. So for the first
+   deploy raise the inventory's `--await-feed-reads` to 3600 and the exact check's
+   `timeout` to 3900. A deploy that rolls back keeps the reads it completed in
+   `providers.sqlite`, so a retry waits only for what remains. During a rollback the
+   old and new processes briefly share the partner key's rate limit, so the explorer
+   may answer one request with HTTP 429, which the next poll retries.
 
 The live Droplet still runs the unit installed by hand, which starts
 `/opt/receiver-pir/current/receiver-directory`, reads the key from the optional
