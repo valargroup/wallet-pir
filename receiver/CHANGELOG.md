@@ -28,4 +28,4 @@
   `receiver-directory probe`, also built as `receiver-probe`, is a `pir-monitor`
   service probe that looks up a pinned payment over live encrypted PIR; a deploy runs
   it with `--await-feed-reads` to wait for the restarted process to read both NEAR
-  feeds.
+  feeds and serve a publication of those reads.

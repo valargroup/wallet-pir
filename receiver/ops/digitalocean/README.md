@@ -95,13 +95,13 @@ Then, still under the lock and before it commits, it runs the inventory's
 health route: `{release_dir}/receiver-directory probe`, the probe built into the
 deployed binary with its pinned fixture. It first waits up to 300 seconds
 (`--await-feed-reads`) for the restarted process to read both NEAR feeds, which
-proves the key file the unit names, then looks up the pinned payment with one live
-encrypted query over the public origin and checks the filter file and private
-health. Its chain checks use the fleet nodes the service reads, so it gates the
-deploy but is not an independent oracle; the monitor's probe is. A failed check,
-one still running at its 480-second `timeout`, or `rollback` restores the previous
-unit file and binary. Report `status receiver` and the rollback command after each
-deploy.
+proves the key file the unit names, and for the served publication to hold those
+reads, then looks up the pinned payment with one live encrypted query over the
+public origin and checks the filter file and private health. Its chain checks use
+the fleet nodes the service reads, so it gates the deploy but is not an independent
+oracle; the monitor's probe is. A failed check, one still running at its
+480-second `timeout`, or `rollback` restores the previous unit file and binary.
+Report `status receiver` and the rollback command after each deploy.
 
 A deploy whose binary and effective unit already run is a no-op: it commits no
 transaction and runs no check, so it is not a fresh qualification. A change to
