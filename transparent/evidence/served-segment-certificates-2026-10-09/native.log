@@ -1,0 +1,2432 @@
+analysed 4096 rows x 2048 cols in 1.8s
+1.88 s 414892 KiB reports/history-s90-directory.0-c8b9a79dc621-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.86 s 420436 KiB reports/history-s90-directory.0-c8b9a79dc621-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.16 s 432116 KiB reports/history-s90-pages.0-c8b9a79dc621-nearest
+analysed 8192 rows x 2048 cols in 1.9s
+2.15 s 451764 KiB reports/history-s90-pages.0-c8b9a79dc621-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406452 KiB reports/txid-s425-txdirectory.0-6eb7f3fa3e97-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406368 KiB reports/txid-s425-txdirectory.0-6eb7f3fa3e97-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.64 s 530256 KiB reports/history-s0-directory.0-38c53bd3037b-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.65 s 529624 KiB reports/history-s0-directory.0-38c53bd3037b-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 701724 KiB reports/history-s0-pages.0-38c53bd3037b-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 701740 KiB reports/history-s0-pages.0-38c53bd3037b-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 529428 KiB reports/history-s1-directory.0-61528d29e884-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 594644 KiB reports/history-s1-directory.0-61528d29e884-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 668860 KiB reports/history-s1-pages.0-61528d29e884-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669020 KiB reports/history-s1-pages.0-61528d29e884-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 562472 KiB reports/history-s2-directory.0-a6dcfc05171a-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.66 s 538728 KiB reports/history-s2-directory.0-a6dcfc05171a-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.71 s 669336 KiB reports/history-s2-pages.0-a6dcfc05171a-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.63 s 669916 KiB reports/history-s2-pages.0-a6dcfc05171a-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 538292 KiB reports/history-s3-directory.0-e8c60419d778-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 596992 KiB reports/history-s3-directory.0-e8c60419d778-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669836 KiB reports/history-s3-pages.0-e8c60419d778-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 701924 KiB reports/history-s3-pages.0-e8c60419d778-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537720 KiB reports/history-s4-directory.0-c3bf6e6c068b-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.65 s 538412 KiB reports/history-s4-directory.0-c3bf6e6c068b-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669264 KiB reports/history-s4-pages.0-c3bf6e6c068b-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 670072 KiB reports/history-s4-pages.0-c3bf6e6c068b-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 562584 KiB reports/history-s5-directory.0-3a324cd02427-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 536416 KiB reports/history-s5-directory.0-3a324cd02427-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669852 KiB reports/history-s5-pages.0-3a324cd02427-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 701788 KiB reports/history-s5-pages.0-3a324cd02427-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 610324 KiB reports/history-s6-directory.0-e5b597dcd431-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 613192 KiB reports/history-s6-directory.0-e5b597dcd431-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669876 KiB reports/history-s6-pages.0-e5b597dcd431-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 670136 KiB reports/history-s6-pages.0-e5b597dcd431-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537772 KiB reports/history-s7-directory.0-f8016c499d6d-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 553280 KiB reports/history-s7-directory.0-f8016c499d6d-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 702032 KiB reports/history-s7-pages.0-f8016c499d6d-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.64 s 668988 KiB reports/history-s7-pages.0-f8016c499d6d-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 553968 KiB reports/history-s8-directory.0-2cdd37bd8fd0-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 562320 KiB reports/history-s8-directory.0-2cdd37bd8fd0-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669168 KiB reports/history-s8-pages.0-2cdd37bd8fd0-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 668932 KiB reports/history-s8-pages.0-2cdd37bd8fd0-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 538060 KiB reports/history-s9-directory.0-aff43450772c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 594604 KiB reports/history-s9-directory.0-aff43450772c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 693536 KiB reports/history-s9-pages.0-aff43450772c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 702052 KiB reports/history-s9-pages.0-aff43450772c-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 610612 KiB reports/history-s10-directory.0-669b1de94884-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 529500 KiB reports/history-s10-directory.0-669b1de94884-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 669328 KiB reports/history-s10-pages.0-669b1de94884-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 701812 KiB reports/history-s10-pages.0-669b1de94884-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 562464 KiB reports/history-s11-directory.0-67176db2c067-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 562332 KiB reports/history-s11-directory.0-67176db2c067-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.66 s 669008 KiB reports/history-s11-pages.0-67176db2c067-nearest
+analysed 65536 rows x 2048 cols in 6.2s
+7.76 s 670152 KiB reports/history-s11-pages.0-67176db2c067-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 529648 KiB reports/history-s12-directory.0-758292491c88-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.66 s 537772 KiB reports/history-s12-directory.0-758292491c88-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669836 KiB reports/history-s12-pages.0-758292491c88-nearest
+analysed 65536 rows x 2048 cols in 6.1s
+7.68 s 701884 KiB reports/history-s12-pages.0-758292491c88-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 529880 KiB reports/history-s13-directory.0-51ec5548e412-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 529428 KiB reports/history-s13-directory.0-51ec5548e412-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.62 s 670040 KiB reports/history-s13-pages.0-51ec5548e412-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 701912 KiB reports/history-s13-pages.0-51ec5548e412-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.66 s 529560 KiB reports/history-s14-directory.0-3751f19d238c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.69 s 529628 KiB reports/history-s14-directory.0-3751f19d238c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669384 KiB reports/history-s14-pages.0-3751f19d238c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.65 s 693764 KiB reports/history-s14-pages.0-3751f19d238c-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 562196 KiB reports/history-s15-directory.0-a32eb4b00f64-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 529364 KiB reports/history-s15-directory.0-a32eb4b00f64-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669136 KiB reports/history-s15-pages.0-a32eb4b00f64-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669776 KiB reports/history-s15-pages.0-a32eb4b00f64-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 594644 KiB reports/history-s16-directory.0-21c9ed4fda63-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 538012 KiB reports/history-s16-directory.0-21c9ed4fda63-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.66 s 668948 KiB reports/history-s16-pages.0-21c9ed4fda63-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 693524 KiB reports/history-s16-pages.0-21c9ed4fda63-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 540280 KiB reports/history-s17-directory.0-22fb3cf32c88-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 537660 KiB reports/history-s17-directory.0-22fb3cf32c88-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 693464 KiB reports/history-s17-pages.0-22fb3cf32c88-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669092 KiB reports/history-s17-pages.0-22fb3cf32c88-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 529772 KiB reports/history-s18-directory.0-30e2789505b6-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 529524 KiB reports/history-s18-directory.0-30e2789505b6-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669832 KiB reports/history-s18-pages.0-30e2789505b6-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669352 KiB reports/history-s18-pages.0-30e2789505b6-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.70 s 537968 KiB reports/history-s19-directory.0-0720914ad755-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537728 KiB reports/history-s19-directory.0-0720914ad755-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 670416 KiB reports/history-s19-pages.0-0720914ad755-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 692220 KiB reports/history-s19-pages.0-0720914ad755-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 537748 KiB reports/history-s20-directory.0-8faf5bbe3670-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 553780 KiB reports/history-s20-directory.0-8faf5bbe3670-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669152 KiB reports/history-s20-pages.0-8faf5bbe3670-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 670120 KiB reports/history-s20-pages.0-8faf5bbe3670-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 529592 KiB reports/history-s21-directory.0-cbd0a2789674-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 562512 KiB reports/history-s21-directory.0-cbd0a2789674-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669832 KiB reports/history-s21-pages.0-cbd0a2789674-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 702032 KiB reports/history-s21-pages.0-cbd0a2789674-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 529340 KiB reports/history-s22-directory.0-13756b0d4f20-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.65 s 562276 KiB reports/history-s22-directory.0-13756b0d4f20-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 693828 KiB reports/history-s22-pages.0-13756b0d4f20-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.64 s 669192 KiB reports/history-s22-pages.0-13756b0d4f20-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 530204 KiB reports/history-s23-directory.0-22fc752a33e5-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 594868 KiB reports/history-s23-directory.0-22fc752a33e5-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 702156 KiB reports/history-s23-pages.0-22fc752a33e5-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 669992 KiB reports/history-s23-pages.0-22fc752a33e5-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 538068 KiB reports/history-s24-directory.0-f6edc6e0520e-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 530164 KiB reports/history-s24-directory.0-f6edc6e0520e-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669768 KiB reports/history-s24-pages.0-f6edc6e0520e-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669168 KiB reports/history-s24-pages.0-f6edc6e0520e-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.68 s 540644 KiB reports/history-s25-directory.0-e940634ebd14-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 537704 KiB reports/history-s25-directory.0-e940634ebd14-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 702048 KiB reports/history-s25-pages.0-e940634ebd14-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669132 KiB reports/history-s25-pages.0-e940634ebd14-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 537828 KiB reports/history-s26-directory.0-7e1072264c9b-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 539536 KiB reports/history-s26-directory.0-7e1072264c9b-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669232 KiB reports/history-s26-pages.0-7e1072264c9b-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 701772 KiB reports/history-s26-pages.0-7e1072264c9b-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 554900 KiB reports/history-s27-directory.0-b9d9daf93c5c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 613400 KiB reports/history-s27-directory.0-b9d9daf93c5c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 675400 KiB reports/history-s27-pages.0-b9d9daf93c5c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 701632 KiB reports/history-s27-pages.0-b9d9daf93c5c-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 530396 KiB reports/history-s28-directory.0-577b1a6f868e-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 562536 KiB reports/history-s28-directory.0-577b1a6f868e-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 701960 KiB reports/history-s28-pages.0-577b1a6f868e-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.65 s 669264 KiB reports/history-s28-pages.0-577b1a6f868e-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 610120 KiB reports/history-s29-directory.0-674612b109af-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 538040 KiB reports/history-s29-directory.0-674612b109af-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669264 KiB reports/history-s29-pages.0-674612b109af-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 669176 KiB reports/history-s29-pages.0-674612b109af-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.55 s 562200 KiB reports/history-s30-directory.0-4999d74f57b9-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 538060 KiB reports/history-s30-directory.0-4999d74f57b9-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669132 KiB reports/history-s30-pages.0-4999d74f57b9-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669788 KiB reports/history-s30-pages.0-4999d74f57b9-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.66 s 562412 KiB reports/history-s31-directory.0-851178fb9c9b-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 562452 KiB reports/history-s31-directory.0-851178fb9c9b-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669024 KiB reports/history-s31-pages.0-851178fb9c9b-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 668744 KiB reports/history-s31-pages.0-851178fb9c9b-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 553644 KiB reports/history-s32-directory.0-67e7bc741a46-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 594452 KiB reports/history-s32-directory.0-67e7bc741a46-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 701848 KiB reports/history-s32-pages.0-67e7bc741a46-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 701644 KiB reports/history-s32-pages.0-67e7bc741a46-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 553556 KiB reports/history-s33-directory.0-595d5338f556-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 537956 KiB reports/history-s33-directory.0-595d5338f556-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 701840 KiB reports/history-s33-pages.0-595d5338f556-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669268 KiB reports/history-s33-pages.0-595d5338f556-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.67 s 546644 KiB reports/history-s34-directory.0-582682f2b51c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 554168 KiB reports/history-s34-directory.0-582682f2b51c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669336 KiB reports/history-s34-pages.0-582682f2b51c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669260 KiB reports/history-s34-pages.0-582682f2b51c-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 529760 KiB reports/history-s35-directory.0-3b4d6a6be10c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 529300 KiB reports/history-s35-directory.0-3b4d6a6be10c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 693296 KiB reports/history-s35-pages.0-3b4d6a6be10c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669260 KiB reports/history-s35-pages.0-3b4d6a6be10c-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 610128 KiB reports/history-s36-directory.0-405d77104adb-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 529584 KiB reports/history-s36-directory.0-405d77104adb-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 693936 KiB reports/history-s36-pages.0-405d77104adb-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.62 s 693372 KiB reports/history-s36-pages.0-405d77104adb-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.64 s 610568 KiB reports/history-s37-directory.0-8a7a80ab2b4e-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 555244 KiB reports/history-s37-directory.0-8a7a80ab2b4e-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669180 KiB reports/history-s37-pages.0-8a7a80ab2b4e-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669260 KiB reports/history-s37-pages.0-8a7a80ab2b4e-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.68 s 537944 KiB reports/history-s38-directory.0-8ba9e3970a82-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 562452 KiB reports/history-s38-directory.0-8ba9e3970a82-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669788 KiB reports/history-s38-pages.0-8ba9e3970a82-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 693332 KiB reports/history-s38-pages.0-8ba9e3970a82-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.55 s 530392 KiB reports/history-s39-directory.0-0d33274cd98e-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 529368 KiB reports/history-s39-directory.0-0d33274cd98e-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669980 KiB reports/history-s39-pages.0-0d33274cd98e-nearest
+analysed 65536 rows x 2048 cols in 5.9s
+7.53 s 669188 KiB reports/history-s39-pages.0-0d33274cd98e-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 529712 KiB reports/history-s40-directory.0-a4c0770082c3-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 530392 KiB reports/history-s40-directory.0-a4c0770082c3-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 701768 KiB reports/history-s40-pages.0-a4c0770082c3-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.63 s 693608 KiB reports/history-s40-pages.0-a4c0770082c3-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 551880 KiB reports/history-s41-directory.0-dabbc87c6246-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.67 s 562236 KiB reports/history-s41-directory.0-dabbc87c6246-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 693508 KiB reports/history-s41-pages.0-dabbc87c6246-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 701760 KiB reports/history-s41-pages.0-dabbc87c6246-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 562404 KiB reports/history-s42-directory.0-7f19fce742fb-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 529616 KiB reports/history-s42-directory.0-7f19fce742fb-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 670036 KiB reports/history-s42-pages.0-7f19fce742fb-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.64 s 670040 KiB reports/history-s42-pages.0-7f19fce742fb-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.74 s 529532 KiB reports/history-s43-directory.0-c317898f88a0-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.74 s 529648 KiB reports/history-s43-directory.0-c317898f88a0-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 701772 KiB reports/history-s43-pages.0-c317898f88a0-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 670092 KiB reports/history-s43-pages.0-c317898f88a0-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 553716 KiB reports/history-s44-directory.0-d163eabdf87f-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 553976 KiB reports/history-s44-directory.0-d163eabdf87f-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 701932 KiB reports/history-s44-pages.0-d163eabdf87f-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 702256 KiB reports/history-s44-pages.0-d163eabdf87f-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.73 s 529492 KiB reports/history-s45-directory.0-44b140b65d5f-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.69 s 562388 KiB reports/history-s45-directory.0-44b140b65d5f-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 701908 KiB reports/history-s45-pages.0-44b140b65d5f-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.66 s 693728 KiB reports/history-s45-pages.0-44b140b65d5f-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 537744 KiB reports/history-s46-directory.0-abcfe0b2f2d6-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 529492 KiB reports/history-s46-directory.0-abcfe0b2f2d6-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669016 KiB reports/history-s46-pages.0-abcfe0b2f2d6-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 669200 KiB reports/history-s46-pages.0-abcfe0b2f2d6-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 562256 KiB reports/history-s47-directory.0-e26454f443ff-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537780 KiB reports/history-s47-directory.0-e26454f443ff-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 693256 KiB reports/history-s47-pages.0-e26454f443ff-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.62 s 669000 KiB reports/history-s47-pages.0-e26454f443ff-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 562620 KiB reports/history-s48-directory.0-d3f467a65cf5-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 536332 KiB reports/history-s48-directory.0-d3f467a65cf5-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669264 KiB reports/history-s48-pages.0-d3f467a65cf5-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669276 KiB reports/history-s48-pages.0-d3f467a65cf5-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 529564 KiB reports/history-s49-directory.0-8712ef7d3aaf-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 594652 KiB reports/history-s49-directory.0-8712ef7d3aaf-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669788 KiB reports/history-s49-pages.0-8712ef7d3aaf-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.63 s 701828 KiB reports/history-s49-pages.0-8712ef7d3aaf-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 592624 KiB reports/history-s50-directory.0-adcb6468e280-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 530524 KiB reports/history-s50-directory.0-adcb6468e280-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669112 KiB reports/history-s50-pages.0-adcb6468e280-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 692368 KiB reports/history-s50-pages.0-adcb6468e280-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 529292 KiB reports/history-s51-directory.0-9732e9dc8bbd-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 562196 KiB reports/history-s51-directory.0-9732e9dc8bbd-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 701880 KiB reports/history-s51-pages.0-9732e9dc8bbd-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 701780 KiB reports/history-s51-pages.0-9732e9dc8bbd-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 538084 KiB reports/history-s52-directory.0-ee59ecaa8874-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 530420 KiB reports/history-s52-directory.0-ee59ecaa8874-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 668932 KiB reports/history-s52-pages.0-ee59ecaa8874-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 702084 KiB reports/history-s52-pages.0-ee59ecaa8874-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 594964 KiB reports/history-s53-directory.0-4f292dc89bf0-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 529620 KiB reports/history-s53-directory.0-4f292dc89bf0-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.65 s 701796 KiB reports/history-s53-pages.0-4f292dc89bf0-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669664 KiB reports/history-s53-pages.0-4f292dc89bf0-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537280 KiB reports/history-s54-directory.0-e9f95508c40b-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 553752 KiB reports/history-s54-directory.0-e9f95508c40b-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 669020 KiB reports/history-s54-pages.0-e9f95508c40b-nearest
+analysed 65536 rows x 2048 cols in 6.1s
+7.63 s 669132 KiB reports/history-s54-pages.0-e9f95508c40b-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.67 s 537588 KiB reports/history-s55-directory.0-051ba4172a35-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.64 s 530392 KiB reports/history-s55-directory.0-051ba4172a35-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 702248 KiB reports/history-s55-pages.0-051ba4172a35-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 674092 KiB reports/history-s55-pages.0-051ba4172a35-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 537096 KiB reports/history-s56-directory.0-ba09a1a460eb-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 530708 KiB reports/history-s56-directory.0-ba09a1a460eb-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 692416 KiB reports/history-s56-pages.0-ba09a1a460eb-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 668960 KiB reports/history-s56-pages.0-ba09a1a460eb-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.68 s 610528 KiB reports/history-s57-directory.0-7dbd20cffd65-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 562232 KiB reports/history-s57-directory.0-7dbd20cffd65-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 669072 KiB reports/history-s57-pages.0-7dbd20cffd65-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 693612 KiB reports/history-s57-pages.0-7dbd20cffd65-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 578020 KiB reports/history-s58-directory.0-a5b183b03502-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 530640 KiB reports/history-s58-directory.0-a5b183b03502-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669000 KiB reports/history-s58-pages.0-a5b183b03502-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669016 KiB reports/history-s58-pages.0-a5b183b03502-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 562316 KiB reports/history-s59-directory.0-e63a6464c1e9-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 536956 KiB reports/history-s59-directory.0-e63a6464c1e9-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 693820 KiB reports/history-s59-pages.0-e63a6464c1e9-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 693852 KiB reports/history-s59-pages.0-e63a6464c1e9-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 538308 KiB reports/history-s60-directory.0-11d7b0894d7e-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.66 s 562328 KiB reports/history-s60-directory.0-11d7b0894d7e-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669136 KiB reports/history-s60-pages.0-11d7b0894d7e-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 694924 KiB reports/history-s60-pages.0-11d7b0894d7e-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 562204 KiB reports/history-s61-directory.0-0293fb2b9958-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 556248 KiB reports/history-s61-directory.0-0293fb2b9958-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 701636 KiB reports/history-s61-pages.0-0293fb2b9958-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 669636 KiB reports/history-s61-pages.0-0293fb2b9958-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537044 KiB reports/history-s62-directory.0-3c7ffda3ec80-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 562332 KiB reports/history-s62-directory.0-3c7ffda3ec80-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 701920 KiB reports/history-s62-pages.0-3c7ffda3ec80-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 670084 KiB reports/history-s62-pages.0-3c7ffda3ec80-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 537760 KiB reports/history-s63-directory.0-b329ce747abf-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 529560 KiB reports/history-s63-directory.0-b329ce747abf-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 668996 KiB reports/history-s63-pages.0-b329ce747abf-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 701868 KiB reports/history-s63-pages.0-b329ce747abf-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 537272 KiB reports/history-s64-directory.0-a48d88781b36-nearest
+analysed 32768 rows x 2048 cols in 3.9s
+4.69 s 562556 KiB reports/history-s64-directory.0-a48d88781b36-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.64 s 692352 KiB reports/history-s64-pages.0-a48d88781b36-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 701908 KiB reports/history-s64-pages.0-a48d88781b36-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.72 s 530388 KiB reports/history-s65-directory.0-94cc6d6e425c-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.66 s 562440 KiB reports/history-s65-directory.0-94cc6d6e425c-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 693724 KiB reports/history-s65-pages.0-94cc6d6e425c-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.61 s 694476 KiB reports/history-s65-pages.0-94cc6d6e425c-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.65 s 530304 KiB reports/history-s66-directory.0-5e2e32d9a7e8-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 530140 KiB reports/history-s66-directory.0-5e2e32d9a7e8-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 668896 KiB reports/history-s66-pages.0-5e2e32d9a7e8-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 670140 KiB reports/history-s66-pages.0-5e2e32d9a7e8-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537396 KiB reports/history-s67-directory.0-97ea310d4ec8-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 553044 KiB reports/history-s67-directory.0-97ea310d4ec8-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.67 s 669264 KiB reports/history-s67-pages.0-97ea310d4ec8-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 701924 KiB reports/history-s67-pages.0-97ea310d4ec8-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.56 s 612748 KiB reports/history-s68-directory.0-241511ca8cb8-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 610268 KiB reports/history-s68-directory.0-241511ca8cb8-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 702196 KiB reports/history-s68-pages.0-241511ca8cb8-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 693888 KiB reports/history-s68-pages.0-241511ca8cb8-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 554544 KiB reports/history-s69-directory.0-f302b670d8b0-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 556648 KiB reports/history-s69-directory.0-f302b670d8b0-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669228 KiB reports/history-s69-pages.0-f302b670d8b0-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669016 KiB reports/history-s69-pages.0-f302b670d8b0-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 553464 KiB reports/history-s70-directory.0-0b73706b5840-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 530252 KiB reports/history-s70-directory.0-0b73706b5840-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 702016 KiB reports/history-s70-pages.0-0b73706b5840-nearest
+analysed 65536 rows x 2048 cols in 6.1s
+7.65 s 670004 KiB reports/history-s70-pages.0-0b73706b5840-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 562528 KiB reports/history-s71-directory.0-e59efb52cb4a-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 553740 KiB reports/history-s71-directory.0-e59efb52cb4a-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 693624 KiB reports/history-s71-pages.0-e59efb52cb4a-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.68 s 669256 KiB reports/history-s71-pages.0-e59efb52cb4a-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 538044 KiB reports/history-s72-directory.0-38180c1132da-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 529704 KiB reports/history-s72-directory.0-38180c1132da-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669020 KiB reports/history-s72-pages.0-38180c1132da-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669888 KiB reports/history-s72-pages.0-38180c1132da-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.64 s 529388 KiB reports/history-s73-directory.0-bb9fd8dfcc9f-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.65 s 538080 KiB reports/history-s73-directory.0-bb9fd8dfcc9f-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.53 s 701540 KiB reports/history-s73-pages.0-bb9fd8dfcc9f-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 702156 KiB reports/history-s73-pages.0-bb9fd8dfcc9f-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 530388 KiB reports/history-s74-directory.0-7c8e5e809cae-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.57 s 562388 KiB reports/history-s74-directory.0-7c8e5e809cae-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.54 s 701884 KiB reports/history-s74-pages.0-7c8e5e809cae-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.68 s 669744 KiB reports/history-s74-pages.0-7c8e5e809cae-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 529704 KiB reports/history-s75-directory.0-52bb118363c1-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.58 s 562464 KiB reports/history-s75-directory.0-52bb118363c1-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 669352 KiB reports/history-s75-pages.0-52bb118363c1-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.55 s 701796 KiB reports/history-s75-pages.0-52bb118363c1-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.63 s 537412 KiB reports/history-s76-directory.0-193ef9848aef-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.66 s 530304 KiB reports/history-s76-directory.0-193ef9848aef-dithered
+analysed 65536 rows x 2048 cols in 6.1s
+7.64 s 670052 KiB reports/history-s76-pages.0-193ef9848aef-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 669180 KiB reports/history-s76-pages.0-193ef9848aef-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.65 s 529496 KiB reports/history-s77-directory.0-e93b14594a6d-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.64 s 594412 KiB reports/history-s77-directory.0-e93b14594a6d-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 670348 KiB reports/history-s77-pages.0-e93b14594a6d-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.64 s 693848 KiB reports/history-s77-pages.0-e93b14594a6d-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 537464 KiB reports/history-s78-directory.0-26024b872b60-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.62 s 537464 KiB reports/history-s78-directory.0-26024b872b60-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.64 s 669124 KiB reports/history-s78-pages.0-26024b872b60-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.63 s 693684 KiB reports/history-s78-pages.0-26024b872b60-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 530512 KiB reports/history-s79-directory.0-98ee9108e9ef-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 530292 KiB reports/history-s79-directory.0-98ee9108e9ef-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.58 s 693352 KiB reports/history-s79-pages.0-98ee9108e9ef-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.57 s 693232 KiB reports/history-s79-pages.0-98ee9108e9ef-dithered
+analysed 32768 rows x 2048 cols in 3.9s
+4.67 s 529616 KiB reports/history-s80-directory.0-742d07ddc620-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.59 s 595108 KiB reports/history-s80-directory.0-742d07ddc620-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 693868 KiB reports/history-s80-pages.0-742d07ddc620-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.59 s 670000 KiB reports/history-s80-pages.0-742d07ddc620-dithered
+analysed 32768 rows x 2048 cols in 3.8s
+4.61 s 553668 KiB reports/history-s81-directory.0-c3bb4594bfc5-nearest
+analysed 32768 rows x 2048 cols in 3.8s
+4.60 s 537492 KiB reports/history-s81-directory.0-c3bb4594bfc5-dithered
+analysed 65536 rows x 2048 cols in 6.0s
+7.56 s 669024 KiB reports/history-s81-pages.0-c3bb4594bfc5-nearest
+analysed 65536 rows x 2048 cols in 6.0s
+7.60 s 669128 KiB reports/history-s81-pages.0-c3bb4594bfc5-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.87 s 415644 KiB reports/history-s82-directory.0-df0061313a3d-nearest
+analysed 4096 rows x 2048 cols in 1.7s
+1.86 s 480352 KiB reports/history-s82-directory.0-df0061313a3d-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.24 s 448476 KiB reports/history-s82-pages.0-df0061313a3d-nearest
+analysed 8192 rows x 2048 cols in 1.9s
+2.14 s 431028 KiB reports/history-s82-pages.0-df0061313a3d-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.89 s 414768 KiB reports/history-s83-directory.0-e05f5e54785a-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.88 s 414776 KiB reports/history-s83-directory.0-e05f5e54785a-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.15 s 431336 KiB reports/history-s83-pages.0-e05f5e54785a-nearest
+analysed 8192 rows x 2048 cols in 2.1s
+2.27 s 463788 KiB reports/history-s83-pages.0-e05f5e54785a-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.87 s 420692 KiB reports/history-s84-directory.0-da3871eb09fd-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.90 s 415640 KiB reports/history-s84-directory.0-da3871eb09fd-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.17 s 431136 KiB reports/history-s84-pages.0-da3871eb09fd-nearest
+analysed 8192 rows x 2048 cols in 2.0s
+2.17 s 449372 KiB reports/history-s84-pages.0-da3871eb09fd-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.88 s 447720 KiB reports/history-s85-directory.0-a8534af57d11-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.88 s 414680 KiB reports/history-s85-directory.0-a8534af57d11-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.16 s 430808 KiB reports/history-s85-pages.0-a8534af57d11-nearest
+analysed 8192 rows x 2048 cols in 1.9s
+2.13 s 463788 KiB reports/history-s85-pages.0-a8534af57d11-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.87 s 455548 KiB reports/history-s86-directory.0-7f9b6f860571-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.87 s 414584 KiB reports/history-s86-directory.0-7f9b6f860571-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.17 s 453864 KiB reports/history-s86-pages.0-7f9b6f860571-nearest
+analysed 8192 rows x 2048 cols in 2.0s
+2.17 s 431164 KiB reports/history-s86-pages.0-7f9b6f860571-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.86 s 414488 KiB reports/history-s87-directory.0-ff12d5aa7f09-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.87 s 415648 KiB reports/history-s87-directory.0-ff12d5aa7f09-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.15 s 451404 KiB reports/history-s87-pages.0-ff12d5aa7f09-nearest
+analysed 8192 rows x 2048 cols in 2.0s
+2.16 s 451928 KiB reports/history-s87-pages.0-ff12d5aa7f09-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.86 s 415692 KiB reports/history-s88-directory.0-661b71c34bde-nearest
+analysed 4096 rows x 2048 cols in 1.8s
+1.89 s 415664 KiB reports/history-s88-directory.0-661b71c34bde-dithered
+analysed 8192 rows x 2048 cols in 2.1s
+2.25 s 431124 KiB reports/history-s88-pages.0-661b71c34bde-nearest
+analysed 8192 rows x 2048 cols in 2.0s
+2.16 s 432100 KiB reports/history-s88-pages.0-661b71c34bde-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439164 KiB reports/txid-s0-txdirectory.0-4b2f48cde150-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407352 KiB reports/txid-s0-txdirectory.0-4b2f48cde150-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406408 KiB reports/txid-s1-txdirectory.0-127df0339070-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407424 KiB reports/txid-s1-txdirectory.0-127df0339070-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406528 KiB reports/txid-s2-txdirectory.0-28cea8d901da-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407152 KiB reports/txid-s2-txdirectory.0-28cea8d901da-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406416 KiB reports/txid-s3-txdirectory.0-e8fbf8bc1af9-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406352 KiB reports/txid-s3-txdirectory.0-e8fbf8bc1af9-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406608 KiB reports/txid-s4-txdirectory.0-05f88a481ebf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406200 KiB reports/txid-s4-txdirectory.0-05f88a481ebf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s5-txdirectory.0-503da021bc21-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 406692 KiB reports/txid-s5-txdirectory.0-503da021bc21-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406688 KiB reports/txid-s6-txdirectory.0-f748e223af9c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.81 s 406376 KiB reports/txid-s6-txdirectory.0-f748e223af9c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439100 KiB reports/txid-s7-txdirectory.0-91eaf4ce38d1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407388 KiB reports/txid-s7-txdirectory.0-91eaf4ce38d1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406432 KiB reports/txid-s8-txdirectory.0-1aafdf16018c-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.90 s 406276 KiB reports/txid-s8-txdirectory.0-1aafdf16018c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439304 KiB reports/txid-s9-txdirectory.0-307035a5ffdb-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.84 s 406268 KiB reports/txid-s9-txdirectory.0-307035a5ffdb-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406212 KiB reports/txid-s10-txdirectory.0-f4a7b470f4bd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406364 KiB reports/txid-s10-txdirectory.0-f4a7b470f4bd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406440 KiB reports/txid-s11-txdirectory.0-3e83d93f6d5b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406308 KiB reports/txid-s11-txdirectory.0-3e83d93f6d5b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407432 KiB reports/txid-s12-txdirectory.0-0d8e343c6323-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439340 KiB reports/txid-s12-txdirectory.0-0d8e343c6323-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406628 KiB reports/txid-s13-txdirectory.0-723740ce7250-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439360 KiB reports/txid-s13-txdirectory.0-723740ce7250-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406356 KiB reports/txid-s14-txdirectory.0-595e869eaa70-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406212 KiB reports/txid-s14-txdirectory.0-595e869eaa70-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406668 KiB reports/txid-s15-txdirectory.0-83df6b54469c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439304 KiB reports/txid-s15-txdirectory.0-83df6b54469c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s16-txdirectory.0-031d838ee2c5-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 439068 KiB reports/txid-s16-txdirectory.0-031d838ee2c5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406540 KiB reports/txid-s17-txdirectory.0-79118f96f56b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 438988 KiB reports/txid-s17-txdirectory.0-79118f96f56b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406568 KiB reports/txid-s18-txdirectory.0-58a7dcbc8d0f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406556 KiB reports/txid-s18-txdirectory.0-58a7dcbc8d0f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406488 KiB reports/txid-s19-txdirectory.0-163e83b09ff5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407436 KiB reports/txid-s19-txdirectory.0-163e83b09ff5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407144 KiB reports/txid-s20-txdirectory.0-1e978a2a71fc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406420 KiB reports/txid-s20-txdirectory.0-1e978a2a71fc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 410044 KiB reports/txid-s21-txdirectory.0-b15cc1057055-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406544 KiB reports/txid-s21-txdirectory.0-b15cc1057055-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406512 KiB reports/txid-s22-txdirectory.0-2ac4e7df1876-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406612 KiB reports/txid-s22-txdirectory.0-2ac4e7df1876-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406480 KiB reports/txid-s23-txdirectory.0-9ec79ee06808-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 445964 KiB reports/txid-s23-txdirectory.0-9ec79ee06808-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406588 KiB reports/txid-s24-txdirectory.0-afa5b7ca5662-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407180 KiB reports/txid-s24-txdirectory.0-afa5b7ca5662-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406372 KiB reports/txid-s25-txdirectory.0-05216f56272d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406520 KiB reports/txid-s25-txdirectory.0-05216f56272d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407648 KiB reports/txid-s26-txdirectory.0-bcf471ed4ab5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406464 KiB reports/txid-s26-txdirectory.0-bcf471ed4ab5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 412424 KiB reports/txid-s27-txdirectory.0-c899ceadb114-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 406988 KiB reports/txid-s27-txdirectory.0-c899ceadb114-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 406576 KiB reports/txid-s28-txdirectory.0-ee09698654ee-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406184 KiB reports/txid-s28-txdirectory.0-ee09698654ee-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406472 KiB reports/txid-s29-txdirectory.0-679c32338b87-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406372 KiB reports/txid-s29-txdirectory.0-679c32338b87-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406412 KiB reports/txid-s30-txdirectory.0-822015c3c72d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406460 KiB reports/txid-s30-txdirectory.0-822015c3c72d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407436 KiB reports/txid-s31-txdirectory.0-53a0c94da670-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406424 KiB reports/txid-s31-txdirectory.0-53a0c94da670-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406496 KiB reports/txid-s32-txdirectory.0-c325c97aeb02-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406468 KiB reports/txid-s32-txdirectory.0-c325c97aeb02-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406224 KiB reports/txid-s33-txdirectory.0-a7f8a41f9acf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406664 KiB reports/txid-s33-txdirectory.0-a7f8a41f9acf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439180 KiB reports/txid-s34-txdirectory.0-4fffea0feb5f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406132 KiB reports/txid-s34-txdirectory.0-4fffea0feb5f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406280 KiB reports/txid-s35-txdirectory.0-93d88cf45481-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407576 KiB reports/txid-s35-txdirectory.0-93d88cf45481-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406156 KiB reports/txid-s36-txdirectory.0-f3c1dd42150c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406332 KiB reports/txid-s36-txdirectory.0-f3c1dd42150c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406504 KiB reports/txid-s37-txdirectory.0-ffb924fbcbd5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406384 KiB reports/txid-s37-txdirectory.0-ffb924fbcbd5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439156 KiB reports/txid-s38-txdirectory.0-22977fc0140a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 449940 KiB reports/txid-s38-txdirectory.0-22977fc0140a-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406368 KiB reports/txid-s39-txdirectory.0-9345a91bd2be-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 407476 KiB reports/txid-s39-txdirectory.0-9345a91bd2be-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406208 KiB reports/txid-s40-txdirectory.0-1c20881485b3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 407240 KiB reports/txid-s40-txdirectory.0-1c20881485b3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406368 KiB reports/txid-s41-txdirectory.0-72be81797317-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406452 KiB reports/txid-s41-txdirectory.0-72be81797317-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406364 KiB reports/txid-s42-txdirectory.0-825092ab1769-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 406404 KiB reports/txid-s42-txdirectory.0-825092ab1769-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406336 KiB reports/txid-s43-txdirectory.0-8fef94d7b1d4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439448 KiB reports/txid-s43-txdirectory.0-8fef94d7b1d4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407324 KiB reports/txid-s44-txdirectory.0-4f1337e3f282-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406556 KiB reports/txid-s44-txdirectory.0-4f1337e3f282-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406536 KiB reports/txid-s45-txdirectory.0-3360bc3d2b3b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406452 KiB reports/txid-s45-txdirectory.0-3360bc3d2b3b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407384 KiB reports/txid-s46-txdirectory.0-7b6d2f49037d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439416 KiB reports/txid-s46-txdirectory.0-7b6d2f49037d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406676 KiB reports/txid-s47-txdirectory.0-733de032ede8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407432 KiB reports/txid-s47-txdirectory.0-733de032ede8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406364 KiB reports/txid-s48-txdirectory.0-7452003f8072-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406344 KiB reports/txid-s48-txdirectory.0-7452003f8072-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407308 KiB reports/txid-s49-txdirectory.0-094c087ae0f4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407272 KiB reports/txid-s49-txdirectory.0-094c087ae0f4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 406336 KiB reports/txid-s50-txdirectory.0-6a221b018214-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 414460 KiB reports/txid-s50-txdirectory.0-6a221b018214-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 407308 KiB reports/txid-s51-txdirectory.0-8713c10e4338-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406424 KiB reports/txid-s51-txdirectory.0-8713c10e4338-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 411664 KiB reports/txid-s52-txdirectory.0-3164b82319ce-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439184 KiB reports/txid-s52-txdirectory.0-3164b82319ce-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 446956 KiB reports/txid-s53-txdirectory.0-1c44dc46030e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406496 KiB reports/txid-s53-txdirectory.0-1c44dc46030e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406508 KiB reports/txid-s54-txdirectory.0-c0b01e49661e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406124 KiB reports/txid-s54-txdirectory.0-c0b01e49661e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406156 KiB reports/txid-s55-txdirectory.0-812202b30043-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407428 KiB reports/txid-s55-txdirectory.0-812202b30043-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s56-txdirectory.0-70854260b8c3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406496 KiB reports/txid-s56-txdirectory.0-70854260b8c3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 439540 KiB reports/txid-s57-txdirectory.0-6f4ef1eca969-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406540 KiB reports/txid-s57-txdirectory.0-6f4ef1eca969-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406448 KiB reports/txid-s58-txdirectory.0-bfdaae2ccd61-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406380 KiB reports/txid-s58-txdirectory.0-bfdaae2ccd61-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406404 KiB reports/txid-s59-txdirectory.0-a8da7001fa2f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406304 KiB reports/txid-s59-txdirectory.0-a8da7001fa2f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406308 KiB reports/txid-s60-txdirectory.0-4e7e07e0688b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406396 KiB reports/txid-s60-txdirectory.0-4e7e07e0688b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406424 KiB reports/txid-s61-txdirectory.0-7733294885a5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407264 KiB reports/txid-s61-txdirectory.0-7733294885a5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407200 KiB reports/txid-s62-txdirectory.0-ae3052c4b2f7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407304 KiB reports/txid-s62-txdirectory.0-ae3052c4b2f7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407416 KiB reports/txid-s63-txdirectory.0-bad75ef1e8c8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439260 KiB reports/txid-s63-txdirectory.0-bad75ef1e8c8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406300 KiB reports/txid-s64-txdirectory.0-b0cc812139b0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406616 KiB reports/txid-s64-txdirectory.0-b0cc812139b0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407432 KiB reports/txid-s65-txdirectory.0-a21fe98315c8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406492 KiB reports/txid-s65-txdirectory.0-a21fe98315c8-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 407048 KiB reports/txid-s66-txdirectory.0-4da8144e55cf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406352 KiB reports/txid-s66-txdirectory.0-4da8144e55cf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439056 KiB reports/txid-s67-txdirectory.0-34523b6d031c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406408 KiB reports/txid-s67-txdirectory.0-34523b6d031c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406612 KiB reports/txid-s68-txdirectory.0-e86ad02adf60-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407464 KiB reports/txid-s68-txdirectory.0-e86ad02adf60-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407436 KiB reports/txid-s69-txdirectory.0-3b5034845b31-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406240 KiB reports/txid-s69-txdirectory.0-3b5034845b31-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406472 KiB reports/txid-s70-txdirectory.0-404b0f1650b0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 406336 KiB reports/txid-s70-txdirectory.0-404b0f1650b0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 446576 KiB reports/txid-s71-txdirectory.0-957d17a6b419-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.86 s 406064 KiB reports/txid-s71-txdirectory.0-957d17a6b419-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406456 KiB reports/txid-s72-txdirectory.0-e2c0c72cf7a6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406628 KiB reports/txid-s72-txdirectory.0-e2c0c72cf7a6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 444532 KiB reports/txid-s73-txdirectory.0-ccfae982cdc1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406448 KiB reports/txid-s73-txdirectory.0-ccfae982cdc1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 438964 KiB reports/txid-s74-txdirectory.0-969a19c2fbf4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407372 KiB reports/txid-s74-txdirectory.0-969a19c2fbf4-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.87 s 406556 KiB reports/txid-s75-txdirectory.0-71da6299c2cc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439032 KiB reports/txid-s75-txdirectory.0-71da6299c2cc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406420 KiB reports/txid-s76-txdirectory.0-e0c93ec113cd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439196 KiB reports/txid-s76-txdirectory.0-e0c93ec113cd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406436 KiB reports/txid-s77-txdirectory.0-ad68f2ed326b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.81 s 446120 KiB reports/txid-s77-txdirectory.0-ad68f2ed326b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407128 KiB reports/txid-s78-txdirectory.0-84cda138f398-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406356 KiB reports/txid-s78-txdirectory.0-84cda138f398-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406408 KiB reports/txid-s79-txdirectory.0-25fd497c263f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439260 KiB reports/txid-s79-txdirectory.0-25fd497c263f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406476 KiB reports/txid-s80-txdirectory.0-41a955ed2ea2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406580 KiB reports/txid-s80-txdirectory.0-41a955ed2ea2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 446348 KiB reports/txid-s81-txdirectory.0-74358d4cdbb0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439092 KiB reports/txid-s81-txdirectory.0-74358d4cdbb0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407180 KiB reports/txid-s82-txdirectory.0-df346ceef59c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406648 KiB reports/txid-s82-txdirectory.0-df346ceef59c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406636 KiB reports/txid-s83-txdirectory.0-928c675896a4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406260 KiB reports/txid-s83-txdirectory.0-928c675896a4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439436 KiB reports/txid-s84-txdirectory.0-387ec0af23c1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406152 KiB reports/txid-s84-txdirectory.0-387ec0af23c1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406556 KiB reports/txid-s85-txdirectory.0-b307a06049b1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406388 KiB reports/txid-s85-txdirectory.0-b307a06049b1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439352 KiB reports/txid-s86-txdirectory.0-fe8e7ee44f65-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406492 KiB reports/txid-s86-txdirectory.0-fe8e7ee44f65-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406388 KiB reports/txid-s87-txdirectory.0-7f20860f9ed6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406484 KiB reports/txid-s87-txdirectory.0-7f20860f9ed6-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.86 s 407404 KiB reports/txid-s88-txdirectory.0-9aee9481d632-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407288 KiB reports/txid-s88-txdirectory.0-9aee9481d632-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406608 KiB reports/txid-s89-txdirectory.0-28a9d42de264-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407308 KiB reports/txid-s89-txdirectory.0-28a9d42de264-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439320 KiB reports/txid-s90-txdirectory.0-e72a3a8b1d6e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406416 KiB reports/txid-s90-txdirectory.0-e72a3a8b1d6e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406644 KiB reports/txid-s91-txdirectory.0-d4c01876de26-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407308 KiB reports/txid-s91-txdirectory.0-d4c01876de26-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 443580 KiB reports/txid-s92-txdirectory.0-a57e4c3fd807-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406408 KiB reports/txid-s92-txdirectory.0-a57e4c3fd807-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406492 KiB reports/txid-s93-txdirectory.0-d94711ff2b4a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406544 KiB reports/txid-s93-txdirectory.0-d94711ff2b4a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406756 KiB reports/txid-s94-txdirectory.0-5be96fd6b170-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406620 KiB reports/txid-s94-txdirectory.0-5be96fd6b170-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406120 KiB reports/txid-s95-txdirectory.0-2620ee09a41e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407236 KiB reports/txid-s95-txdirectory.0-2620ee09a41e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407624 KiB reports/txid-s96-txdirectory.0-e0135c4e03c3-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 407376 KiB reports/txid-s96-txdirectory.0-e0135c4e03c3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406540 KiB reports/txid-s97-txdirectory.0-19d6ce133656-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407288 KiB reports/txid-s97-txdirectory.0-19d6ce133656-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439384 KiB reports/txid-s98-txdirectory.0-74e49a702c46-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406480 KiB reports/txid-s98-txdirectory.0-74e49a702c46-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406452 KiB reports/txid-s99-txdirectory.0-1209c1b4df83-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406328 KiB reports/txid-s99-txdirectory.0-1209c1b4df83-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439284 KiB reports/txid-s100-txdirectory.0-333fb43c018a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 446672 KiB reports/txid-s100-txdirectory.0-333fb43c018a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406260 KiB reports/txid-s101-txdirectory.0-496521e4d572-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406396 KiB reports/txid-s101-txdirectory.0-496521e4d572-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406420 KiB reports/txid-s102-txdirectory.0-6835145213dc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 439340 KiB reports/txid-s102-txdirectory.0-6835145213dc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407076 KiB reports/txid-s103-txdirectory.0-cd72fead5c81-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406540 KiB reports/txid-s103-txdirectory.0-cd72fead5c81-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406264 KiB reports/txid-s104-txdirectory.0-ec9f5501164b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406264 KiB reports/txid-s104-txdirectory.0-ec9f5501164b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406664 KiB reports/txid-s105-txdirectory.0-3b45f32620e2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439440 KiB reports/txid-s105-txdirectory.0-3b45f32620e2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406628 KiB reports/txid-s106-txdirectory.0-d0d322f4f1fe-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 438992 KiB reports/txid-s106-txdirectory.0-d0d322f4f1fe-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 439212 KiB reports/txid-s107-txdirectory.0-f05a8fb61624-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406736 KiB reports/txid-s107-txdirectory.0-f05a8fb61624-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439360 KiB reports/txid-s108-txdirectory.0-4c559025fe3b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407592 KiB reports/txid-s108-txdirectory.0-4c559025fe3b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407416 KiB reports/txid-s109-txdirectory.0-9b6b19a6f00d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406352 KiB reports/txid-s109-txdirectory.0-9b6b19a6f00d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407380 KiB reports/txid-s110-txdirectory.0-84e5df51cd0c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406424 KiB reports/txid-s110-txdirectory.0-84e5df51cd0c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406544 KiB reports/txid-s111-txdirectory.0-1673dbf9a544-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406392 KiB reports/txid-s111-txdirectory.0-1673dbf9a544-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407380 KiB reports/txid-s112-txdirectory.0-8c619f1e5b5b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406412 KiB reports/txid-s112-txdirectory.0-8c619f1e5b5b-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406288 KiB reports/txid-s113-txdirectory.0-67decb251cd0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406280 KiB reports/txid-s113-txdirectory.0-67decb251cd0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406524 KiB reports/txid-s114-txdirectory.0-c1b180840ea8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407436 KiB reports/txid-s114-txdirectory.0-c1b180840ea8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439184 KiB reports/txid-s115-txdirectory.0-a3e85a38af53-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.89 s 406300 KiB reports/txid-s115-txdirectory.0-a3e85a38af53-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406552 KiB reports/txid-s116-txdirectory.0-f6aef062f472-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406592 KiB reports/txid-s116-txdirectory.0-f6aef062f472-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407348 KiB reports/txid-s117-txdirectory.0-8d832002398b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406260 KiB reports/txid-s117-txdirectory.0-8d832002398b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406380 KiB reports/txid-s118-txdirectory.0-01461f487eef-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407436 KiB reports/txid-s118-txdirectory.0-01461f487eef-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439256 KiB reports/txid-s119-txdirectory.0-1626d1310691-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406024 KiB reports/txid-s119-txdirectory.0-1626d1310691-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407524 KiB reports/txid-s120-txdirectory.0-35f3e335153a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407432 KiB reports/txid-s120-txdirectory.0-35f3e335153a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 447568 KiB reports/txid-s121-txdirectory.0-58a827a83898-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406408 KiB reports/txid-s121-txdirectory.0-58a827a83898-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406508 KiB reports/txid-s122-txdirectory.0-0e2ed3dea676-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406436 KiB reports/txid-s122-txdirectory.0-0e2ed3dea676-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439308 KiB reports/txid-s123-txdirectory.0-1ab1f7ba667a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406464 KiB reports/txid-s123-txdirectory.0-1ab1f7ba667a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 438960 KiB reports/txid-s124-txdirectory.0-3e454252f2fd-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 407340 KiB reports/txid-s124-txdirectory.0-3e454252f2fd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406612 KiB reports/txid-s125-txdirectory.0-283a66d124d0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439156 KiB reports/txid-s125-txdirectory.0-283a66d124d0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406248 KiB reports/txid-s126-txdirectory.0-568a4eb0c49a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406380 KiB reports/txid-s126-txdirectory.0-568a4eb0c49a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406456 KiB reports/txid-s127-txdirectory.0-e59b0c3b162f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406580 KiB reports/txid-s127-txdirectory.0-e59b0c3b162f-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 407432 KiB reports/txid-s128-txdirectory.0-92c427b3ee50-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406576 KiB reports/txid-s128-txdirectory.0-92c427b3ee50-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407292 KiB reports/txid-s129-txdirectory.0-7dce12e5d210-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 439320 KiB reports/txid-s129-txdirectory.0-7dce12e5d210-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406540 KiB reports/txid-s130-txdirectory.0-c591e6c9c816-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406428 KiB reports/txid-s130-txdirectory.0-c591e6c9c816-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439092 KiB reports/txid-s131-txdirectory.0-045a695d13a0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406176 KiB reports/txid-s131-txdirectory.0-045a695d13a0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406360 KiB reports/txid-s132-txdirectory.0-25e51cd8a347-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439340 KiB reports/txid-s132-txdirectory.0-25e51cd8a347-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406720 KiB reports/txid-s133-txdirectory.0-cb7abaae59c3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406188 KiB reports/txid-s133-txdirectory.0-cb7abaae59c3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407344 KiB reports/txid-s134-txdirectory.0-f3e98a79d4c4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406488 KiB reports/txid-s134-txdirectory.0-f3e98a79d4c4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407304 KiB reports/txid-s135-txdirectory.0-4245ff1c4714-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 406532 KiB reports/txid-s135-txdirectory.0-4245ff1c4714-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407296 KiB reports/txid-s136-txdirectory.0-07c01887b3b6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406536 KiB reports/txid-s136-txdirectory.0-07c01887b3b6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407656 KiB reports/txid-s137-txdirectory.0-c850bd9dfe7a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406672 KiB reports/txid-s137-txdirectory.0-c850bd9dfe7a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406540 KiB reports/txid-s138-txdirectory.0-60d6a40ebd30-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407140 KiB reports/txid-s138-txdirectory.0-60d6a40ebd30-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407484 KiB reports/txid-s139-txdirectory.0-a2a5a80bfa6d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407488 KiB reports/txid-s139-txdirectory.0-a2a5a80bfa6d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407420 KiB reports/txid-s140-txdirectory.0-940d46533f91-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407164 KiB reports/txid-s140-txdirectory.0-940d46533f91-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406576 KiB reports/txid-s141-txdirectory.0-18156231f51a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406672 KiB reports/txid-s141-txdirectory.0-18156231f51a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406604 KiB reports/txid-s142-txdirectory.0-e0ab92c17be3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439228 KiB reports/txid-s142-txdirectory.0-e0ab92c17be3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439344 KiB reports/txid-s143-txdirectory.0-df701ed3bfa4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406792 KiB reports/txid-s143-txdirectory.0-df701ed3bfa4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406284 KiB reports/txid-s144-txdirectory.0-57b6acc4f3cf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406352 KiB reports/txid-s144-txdirectory.0-57b6acc4f3cf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439312 KiB reports/txid-s145-txdirectory.0-14279ef48c3f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407100 KiB reports/txid-s145-txdirectory.0-14279ef48c3f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439320 KiB reports/txid-s146-txdirectory.0-e0de706c93b2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 438976 KiB reports/txid-s146-txdirectory.0-e0de706c93b2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406152 KiB reports/txid-s147-txdirectory.0-1f139b19eeee-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407360 KiB reports/txid-s147-txdirectory.0-1f139b19eeee-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 446264 KiB reports/txid-s148-txdirectory.0-96476a5385e0-nearest
+analysed 2048 rows x 2048 cols in 1.6s
+1.70 s 406464 KiB reports/txid-s148-txdirectory.0-96476a5385e0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439248 KiB reports/txid-s149-txdirectory.0-1a9bda8e3a22-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406516 KiB reports/txid-s149-txdirectory.0-1a9bda8e3a22-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407208 KiB reports/txid-s150-txdirectory.0-30901823509f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407316 KiB reports/txid-s150-txdirectory.0-30901823509f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406508 KiB reports/txid-s151-txdirectory.0-7876ffb13ea8-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 406496 KiB reports/txid-s151-txdirectory.0-7876ffb13ea8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406532 KiB reports/txid-s152-txdirectory.0-f9cedcd366fd-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 406644 KiB reports/txid-s152-txdirectory.0-f9cedcd366fd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439480 KiB reports/txid-s153-txdirectory.0-55b09514f06e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407516 KiB reports/txid-s153-txdirectory.0-55b09514f06e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s154-txdirectory.0-6ce5043d08dd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439240 KiB reports/txid-s154-txdirectory.0-6ce5043d08dd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406508 KiB reports/txid-s155-txdirectory.0-36cf7b75d57b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 439264 KiB reports/txid-s155-txdirectory.0-36cf7b75d57b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406612 KiB reports/txid-s156-txdirectory.0-949864b5d1cf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406472 KiB reports/txid-s156-txdirectory.0-949864b5d1cf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439300 KiB reports/txid-s157-txdirectory.0-beaa696cf42f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407456 KiB reports/txid-s157-txdirectory.0-beaa696cf42f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439256 KiB reports/txid-s158-txdirectory.0-c40d1d5845e3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406524 KiB reports/txid-s158-txdirectory.0-c40d1d5845e3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439176 KiB reports/txid-s159-txdirectory.0-4aaeacddae98-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.87 s 406124 KiB reports/txid-s159-txdirectory.0-4aaeacddae98-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406532 KiB reports/txid-s160-txdirectory.0-b0ecb2955365-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406284 KiB reports/txid-s160-txdirectory.0-b0ecb2955365-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406284 KiB reports/txid-s161-txdirectory.0-518c62ec33f5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406440 KiB reports/txid-s161-txdirectory.0-518c62ec33f5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406464 KiB reports/txid-s162-txdirectory.0-18efac5ac6a6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.81 s 406284 KiB reports/txid-s162-txdirectory.0-18efac5ac6a6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407324 KiB reports/txid-s163-txdirectory.0-fea28527dfda-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406280 KiB reports/txid-s163-txdirectory.0-fea28527dfda-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406428 KiB reports/txid-s164-txdirectory.0-7d5a816d49ef-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407348 KiB reports/txid-s164-txdirectory.0-7d5a816d49ef-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406312 KiB reports/txid-s165-txdirectory.0-0303ae08a1bb-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406304 KiB reports/txid-s165-txdirectory.0-0303ae08a1bb-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407504 KiB reports/txid-s166-txdirectory.0-d4e7f4909219-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407328 KiB reports/txid-s166-txdirectory.0-d4e7f4909219-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407196 KiB reports/txid-s167-txdirectory.0-6c9c0d2937bf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406368 KiB reports/txid-s167-txdirectory.0-6c9c0d2937bf-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 410072 KiB reports/txid-s168-txdirectory.0-3504eeadc493-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406280 KiB reports/txid-s168-txdirectory.0-3504eeadc493-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439128 KiB reports/txid-s169-txdirectory.0-40cf5021ce3e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406188 KiB reports/txid-s169-txdirectory.0-40cf5021ce3e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406280 KiB reports/txid-s170-txdirectory.0-c8ba6912bf86-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407404 KiB reports/txid-s170-txdirectory.0-c8ba6912bf86-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406560 KiB reports/txid-s171-txdirectory.0-4245c2e04951-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406508 KiB reports/txid-s171-txdirectory.0-4245c2e04951-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439116 KiB reports/txid-s172-txdirectory.0-99998e9e43f9-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s172-txdirectory.0-99998e9e43f9-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.88 s 407208 KiB reports/txid-s173-txdirectory.0-92b7e045aba9-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.86 s 406440 KiB reports/txid-s173-txdirectory.0-92b7e045aba9-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406412 KiB reports/txid-s174-txdirectory.0-0f2340133faf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439436 KiB reports/txid-s174-txdirectory.0-0f2340133faf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406432 KiB reports/txid-s175-txdirectory.0-be44dd7fd3d2-nearest
+analysed 2048 rows x 2048 cols in 1.9s
+1.91 s 406408 KiB reports/txid-s175-txdirectory.0-be44dd7fd3d2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407072 KiB reports/txid-s176-txdirectory.0-f01bf556f401-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.84 s 407432 KiB reports/txid-s176-txdirectory.0-f01bf556f401-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406280 KiB reports/txid-s177-txdirectory.0-cf99de7e3a1a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406320 KiB reports/txid-s177-txdirectory.0-cf99de7e3a1a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406352 KiB reports/txid-s178-txdirectory.0-c3b075856a9b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407184 KiB reports/txid-s178-txdirectory.0-c3b075856a9b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407176 KiB reports/txid-s179-txdirectory.0-227dba51cea7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407364 KiB reports/txid-s179-txdirectory.0-227dba51cea7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407276 KiB reports/txid-s180-txdirectory.0-eb935d6125fb-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406260 KiB reports/txid-s180-txdirectory.0-eb935d6125fb-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406552 KiB reports/txid-s181-txdirectory.0-631af2573eab-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406428 KiB reports/txid-s181-txdirectory.0-631af2573eab-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407236 KiB reports/txid-s182-txdirectory.0-d55b83f0e6df-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406452 KiB reports/txid-s182-txdirectory.0-d55b83f0e6df-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439152 KiB reports/txid-s183-txdirectory.0-c90d8a115ccc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439280 KiB reports/txid-s183-txdirectory.0-c90d8a115ccc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407308 KiB reports/txid-s184-txdirectory.0-3cefd8eccccd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406332 KiB reports/txid-s184-txdirectory.0-3cefd8eccccd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406360 KiB reports/txid-s185-txdirectory.0-6f500a5afdb6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406288 KiB reports/txid-s185-txdirectory.0-6f500a5afdb6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406324 KiB reports/txid-s186-txdirectory.0-8ab25e135fac-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407292 KiB reports/txid-s186-txdirectory.0-8ab25e135fac-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406168 KiB reports/txid-s187-txdirectory.0-e47626d0e3b9-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406444 KiB reports/txid-s187-txdirectory.0-e47626d0e3b9-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439180 KiB reports/txid-s188-txdirectory.0-41794a0304aa-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407348 KiB reports/txid-s188-txdirectory.0-41794a0304aa-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 407512 KiB reports/txid-s189-txdirectory.0-2aace9cbd7e1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406460 KiB reports/txid-s189-txdirectory.0-2aace9cbd7e1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439204 KiB reports/txid-s190-txdirectory.0-215770e12d18-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406488 KiB reports/txid-s190-txdirectory.0-215770e12d18-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407580 KiB reports/txid-s191-txdirectory.0-ef98b32e4908-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439376 KiB reports/txid-s191-txdirectory.0-ef98b32e4908-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407548 KiB reports/txid-s192-txdirectory.0-ae2f7f383628-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406312 KiB reports/txid-s192-txdirectory.0-ae2f7f383628-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406512 KiB reports/txid-s193-txdirectory.0-b3a0053487e5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406620 KiB reports/txid-s193-txdirectory.0-b3a0053487e5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439588 KiB reports/txid-s194-txdirectory.0-868aa1218a1f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406496 KiB reports/txid-s194-txdirectory.0-868aa1218a1f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406248 KiB reports/txid-s195-txdirectory.0-b3440cf987e3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439176 KiB reports/txid-s195-txdirectory.0-b3440cf987e3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407096 KiB reports/txid-s196-txdirectory.0-a8aaceb8af79-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446100 KiB reports/txid-s196-txdirectory.0-a8aaceb8af79-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407436 KiB reports/txid-s197-txdirectory.0-d57c866347a8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 449268 KiB reports/txid-s197-txdirectory.0-d57c866347a8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406416 KiB reports/txid-s198-txdirectory.0-5c9abb4b0984-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407340 KiB reports/txid-s198-txdirectory.0-5c9abb4b0984-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407432 KiB reports/txid-s199-txdirectory.0-e3ec0e1201a2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406304 KiB reports/txid-s199-txdirectory.0-e3ec0e1201a2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406476 KiB reports/txid-s200-txdirectory.0-2d3521921c3a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 406048 KiB reports/txid-s200-txdirectory.0-2d3521921c3a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406096 KiB reports/txid-s201-txdirectory.0-add350b4b36f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406284 KiB reports/txid-s201-txdirectory.0-add350b4b36f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406612 KiB reports/txid-s202-txdirectory.0-76c14b78c046-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 439224 KiB reports/txid-s202-txdirectory.0-76c14b78c046-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 446696 KiB reports/txid-s203-txdirectory.0-b07fd7ed07e4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406128 KiB reports/txid-s203-txdirectory.0-b07fd7ed07e4-dithered
+analysed 2048 rows x 2048 cols in 2.0s
+2.07 s 406568 KiB reports/txid-s204-txdirectory.0-2519e8b5a435-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439360 KiB reports/txid-s204-txdirectory.0-2519e8b5a435-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439124 KiB reports/txid-s205-txdirectory.0-c7979c577b72-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439420 KiB reports/txid-s205-txdirectory.0-c7979c577b72-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407292 KiB reports/txid-s206-txdirectory.0-35fd554d8167-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406572 KiB reports/txid-s206-txdirectory.0-35fd554d8167-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406600 KiB reports/txid-s207-txdirectory.0-9a700f8490c6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406440 KiB reports/txid-s207-txdirectory.0-9a700f8490c6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407260 KiB reports/txid-s208-txdirectory.0-d84df26e0181-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406668 KiB reports/txid-s208-txdirectory.0-d84df26e0181-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.81 s 406552 KiB reports/txid-s209-txdirectory.0-ee0313d4fd61-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406280 KiB reports/txid-s209-txdirectory.0-ee0313d4fd61-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 439104 KiB reports/txid-s210-txdirectory.0-dbc618e0219e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407152 KiB reports/txid-s210-txdirectory.0-dbc618e0219e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446564 KiB reports/txid-s211-txdirectory.0-586139dba33a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407332 KiB reports/txid-s211-txdirectory.0-586139dba33a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439072 KiB reports/txid-s212-txdirectory.0-0e54cf5f30c4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406392 KiB reports/txid-s212-txdirectory.0-0e54cf5f30c4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407288 KiB reports/txid-s213-txdirectory.0-941e60ac7522-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 446236 KiB reports/txid-s213-txdirectory.0-941e60ac7522-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407136 KiB reports/txid-s214-txdirectory.0-31349da16154-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407332 KiB reports/txid-s214-txdirectory.0-31349da16154-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439176 KiB reports/txid-s215-txdirectory.0-d96d9c771b9d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439272 KiB reports/txid-s215-txdirectory.0-d96d9c771b9d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 413412 KiB reports/txid-s216-txdirectory.0-642ddcd22424-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407596 KiB reports/txid-s216-txdirectory.0-642ddcd22424-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406252 KiB reports/txid-s217-txdirectory.0-820e1e4d6d3f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407464 KiB reports/txid-s217-txdirectory.0-820e1e4d6d3f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439152 KiB reports/txid-s218-txdirectory.0-79c4db645c30-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 439184 KiB reports/txid-s218-txdirectory.0-79c4db645c30-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407188 KiB reports/txid-s219-txdirectory.0-7ce68d05e6a7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406428 KiB reports/txid-s219-txdirectory.0-7ce68d05e6a7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406516 KiB reports/txid-s220-txdirectory.0-92576bdb9648-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406672 KiB reports/txid-s220-txdirectory.0-92576bdb9648-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406316 KiB reports/txid-s221-txdirectory.0-67fc1e4808c9-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406720 KiB reports/txid-s221-txdirectory.0-67fc1e4808c9-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406584 KiB reports/txid-s222-txdirectory.0-de11df66cdc5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439496 KiB reports/txid-s222-txdirectory.0-de11df66cdc5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439400 KiB reports/txid-s223-txdirectory.0-760626c63f77-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439200 KiB reports/txid-s223-txdirectory.0-760626c63f77-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.87 s 407048 KiB reports/txid-s224-txdirectory.0-2f98a4ce03fd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406556 KiB reports/txid-s224-txdirectory.0-2f98a4ce03fd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407184 KiB reports/txid-s225-txdirectory.0-76bb1fd3e6c7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406376 KiB reports/txid-s225-txdirectory.0-76bb1fd3e6c7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406536 KiB reports/txid-s226-txdirectory.0-cb5723604646-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406428 KiB reports/txid-s226-txdirectory.0-cb5723604646-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 446000 KiB reports/txid-s227-txdirectory.0-35a218ae1aa4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439176 KiB reports/txid-s227-txdirectory.0-35a218ae1aa4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407304 KiB reports/txid-s228-txdirectory.0-c1178e9b65bf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406316 KiB reports/txid-s228-txdirectory.0-c1178e9b65bf-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 407248 KiB reports/txid-s229-txdirectory.0-2abfc260fdcc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406156 KiB reports/txid-s229-txdirectory.0-2abfc260fdcc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407276 KiB reports/txid-s230-txdirectory.0-cc866703fc3a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439128 KiB reports/txid-s230-txdirectory.0-cc866703fc3a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407260 KiB reports/txid-s231-txdirectory.0-013e0fe10936-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406548 KiB reports/txid-s231-txdirectory.0-013e0fe10936-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406516 KiB reports/txid-s232-txdirectory.0-3e5e71ff36b0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406592 KiB reports/txid-s232-txdirectory.0-3e5e71ff36b0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406624 KiB reports/txid-s233-txdirectory.0-364cfdf7292f-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 439112 KiB reports/txid-s233-txdirectory.0-364cfdf7292f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 408016 KiB reports/txid-s234-txdirectory.0-3584d6b2d212-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439432 KiB reports/txid-s234-txdirectory.0-3584d6b2d212-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 406520 KiB reports/txid-s235-txdirectory.0-1d123f7bc338-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406348 KiB reports/txid-s235-txdirectory.0-1d123f7bc338-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406480 KiB reports/txid-s236-txdirectory.0-504c27e4282f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407528 KiB reports/txid-s236-txdirectory.0-504c27e4282f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407392 KiB reports/txid-s237-txdirectory.0-eda2be590b0f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406416 KiB reports/txid-s237-txdirectory.0-eda2be590b0f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 449664 KiB reports/txid-s238-txdirectory.0-24d9803a313d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406364 KiB reports/txid-s238-txdirectory.0-24d9803a313d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439304 KiB reports/txid-s239-txdirectory.0-5b3d4c04a306-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406364 KiB reports/txid-s239-txdirectory.0-5b3d4c04a306-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406588 KiB reports/txid-s240-txdirectory.0-2aa2947f5434-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406488 KiB reports/txid-s240-txdirectory.0-2aa2947f5434-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.84 s 406596 KiB reports/txid-s241-txdirectory.0-b13b20fb19b7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 411272 KiB reports/txid-s241-txdirectory.0-b13b20fb19b7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407128 KiB reports/txid-s242-txdirectory.0-2e0a566e0e28-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 439092 KiB reports/txid-s242-txdirectory.0-2e0a566e0e28-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406540 KiB reports/txid-s243-txdirectory.0-dc91377e7313-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407672 KiB reports/txid-s243-txdirectory.0-dc91377e7313-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439176 KiB reports/txid-s244-txdirectory.0-20b4c7629ea8-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406456 KiB reports/txid-s244-txdirectory.0-20b4c7629ea8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406484 KiB reports/txid-s245-txdirectory.0-356169415df7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439128 KiB reports/txid-s245-txdirectory.0-356169415df7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407180 KiB reports/txid-s246-txdirectory.0-033b87e3c919-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406284 KiB reports/txid-s246-txdirectory.0-033b87e3c919-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s247-txdirectory.0-587fae25f391-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406616 KiB reports/txid-s247-txdirectory.0-587fae25f391-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406480 KiB reports/txid-s248-txdirectory.0-48f95dbf9c36-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 406464 KiB reports/txid-s248-txdirectory.0-48f95dbf9c36-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439640 KiB reports/txid-s249-txdirectory.0-bac7084f5109-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406476 KiB reports/txid-s249-txdirectory.0-bac7084f5109-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406668 KiB reports/txid-s250-txdirectory.0-d6d320de9c64-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439580 KiB reports/txid-s250-txdirectory.0-d6d320de9c64-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406512 KiB reports/txid-s251-txdirectory.0-2871364b0b5e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407568 KiB reports/txid-s251-txdirectory.0-2871364b0b5e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 447000 KiB reports/txid-s252-txdirectory.0-6c998e0897e3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407292 KiB reports/txid-s252-txdirectory.0-6c998e0897e3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406420 KiB reports/txid-s253-txdirectory.0-388cf2535c4f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439216 KiB reports/txid-s253-txdirectory.0-388cf2535c4f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 445808 KiB reports/txid-s254-txdirectory.0-af5eaa194ad1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406536 KiB reports/txid-s254-txdirectory.0-af5eaa194ad1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 444080 KiB reports/txid-s255-txdirectory.0-a1fa44cfec4b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 445252 KiB reports/txid-s255-txdirectory.0-a1fa44cfec4b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406400 KiB reports/txid-s256-txdirectory.0-c61723414c12-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407524 KiB reports/txid-s256-txdirectory.0-c61723414c12-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406692 KiB reports/txid-s257-txdirectory.0-c449a5d419af-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439296 KiB reports/txid-s257-txdirectory.0-c449a5d419af-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.90 s 406552 KiB reports/txid-s258-txdirectory.0-5e2bff600fd7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 408148 KiB reports/txid-s258-txdirectory.0-5e2bff600fd7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406560 KiB reports/txid-s259-txdirectory.0-4f82a21b3ddb-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 438964 KiB reports/txid-s259-txdirectory.0-4f82a21b3ddb-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 406304 KiB reports/txid-s260-txdirectory.0-4af0acc31cf5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407420 KiB reports/txid-s260-txdirectory.0-4af0acc31cf5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406500 KiB reports/txid-s261-txdirectory.0-95676704e98b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407284 KiB reports/txid-s261-txdirectory.0-95676704e98b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406440 KiB reports/txid-s262-txdirectory.0-d5fc8c810bea-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406248 KiB reports/txid-s262-txdirectory.0-d5fc8c810bea-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439236 KiB reports/txid-s263-txdirectory.0-232006e9207c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439204 KiB reports/txid-s263-txdirectory.0-232006e9207c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407384 KiB reports/txid-s264-txdirectory.0-913323c4717c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439096 KiB reports/txid-s264-txdirectory.0-913323c4717c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406512 KiB reports/txid-s265-txdirectory.0-d9e78dcc6f1e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 446700 KiB reports/txid-s265-txdirectory.0-d9e78dcc6f1e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407372 KiB reports/txid-s266-txdirectory.0-64f78fdbfad4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407176 KiB reports/txid-s266-txdirectory.0-64f78fdbfad4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407436 KiB reports/txid-s267-txdirectory.0-6079b4441014-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439264 KiB reports/txid-s267-txdirectory.0-6079b4441014-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407280 KiB reports/txid-s268-txdirectory.0-0bcba1fbddc9-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406576 KiB reports/txid-s268-txdirectory.0-0bcba1fbddc9-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439320 KiB reports/txid-s269-txdirectory.0-386064fd5c45-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.86 s 407092 KiB reports/txid-s269-txdirectory.0-386064fd5c45-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406404 KiB reports/txid-s270-txdirectory.0-dc8a8e001054-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439312 KiB reports/txid-s270-txdirectory.0-dc8a8e001054-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406408 KiB reports/txid-s271-txdirectory.0-2cb5739a96f5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439208 KiB reports/txid-s271-txdirectory.0-2cb5739a96f5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439432 KiB reports/txid-s272-txdirectory.0-efcf346a300f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406152 KiB reports/txid-s272-txdirectory.0-efcf346a300f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 439308 KiB reports/txid-s273-txdirectory.0-272fa5a20b5d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406124 KiB reports/txid-s273-txdirectory.0-272fa5a20b5d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407504 KiB reports/txid-s274-txdirectory.0-a4018183ce3c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406356 KiB reports/txid-s274-txdirectory.0-a4018183ce3c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407428 KiB reports/txid-s275-txdirectory.0-6ce2b347b71e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407288 KiB reports/txid-s275-txdirectory.0-6ce2b347b71e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406600 KiB reports/txid-s276-txdirectory.0-06b467709678-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439132 KiB reports/txid-s276-txdirectory.0-06b467709678-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406644 KiB reports/txid-s277-txdirectory.0-b6677fb43846-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406412 KiB reports/txid-s277-txdirectory.0-b6677fb43846-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407308 KiB reports/txid-s278-txdirectory.0-23c3d231a0b7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406312 KiB reports/txid-s278-txdirectory.0-23c3d231a0b7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406460 KiB reports/txid-s279-txdirectory.0-bd996dc9dbff-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439324 KiB reports/txid-s279-txdirectory.0-bd996dc9dbff-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406384 KiB reports/txid-s280-txdirectory.0-06c239f2d7c7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406536 KiB reports/txid-s280-txdirectory.0-06c239f2d7c7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406436 KiB reports/txid-s281-txdirectory.0-932bf4a7db97-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406284 KiB reports/txid-s281-txdirectory.0-932bf4a7db97-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439048 KiB reports/txid-s282-txdirectory.0-125905dbc4a8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407384 KiB reports/txid-s282-txdirectory.0-125905dbc4a8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s283-txdirectory.0-4447c4583866-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407524 KiB reports/txid-s283-txdirectory.0-4447c4583866-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 423328 KiB reports/txid-s284-txdirectory.0-963d60b58cbb-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406516 KiB reports/txid-s284-txdirectory.0-963d60b58cbb-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446200 KiB reports/txid-s285-txdirectory.0-99f4b2cf8da3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406240 KiB reports/txid-s285-txdirectory.0-99f4b2cf8da3-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 439308 KiB reports/txid-s286-txdirectory.0-fa6f0b1d79d3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 439260 KiB reports/txid-s286-txdirectory.0-fa6f0b1d79d3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406528 KiB reports/txid-s287-txdirectory.0-6fbd47a53311-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406064 KiB reports/txid-s287-txdirectory.0-6fbd47a53311-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406584 KiB reports/txid-s288-txdirectory.0-12ee511bfba3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406672 KiB reports/txid-s288-txdirectory.0-12ee511bfba3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439308 KiB reports/txid-s289-txdirectory.0-af3d0fbb0ccd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406280 KiB reports/txid-s289-txdirectory.0-af3d0fbb0ccd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439296 KiB reports/txid-s290-txdirectory.0-51146f227c2d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439016 KiB reports/txid-s290-txdirectory.0-51146f227c2d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407560 KiB reports/txid-s291-txdirectory.0-3688b6f8475e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407304 KiB reports/txid-s291-txdirectory.0-3688b6f8475e-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.87 s 407248 KiB reports/txid-s292-txdirectory.0-e60b86fcbfff-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407212 KiB reports/txid-s292-txdirectory.0-e60b86fcbfff-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 439180 KiB reports/txid-s293-txdirectory.0-dcc2505235e6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s293-txdirectory.0-dcc2505235e6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406484 KiB reports/txid-s294-txdirectory.0-8fc7edc3d9dc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406348 KiB reports/txid-s294-txdirectory.0-8fc7edc3d9dc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406232 KiB reports/txid-s295-txdirectory.0-9192946fd9e6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406336 KiB reports/txid-s295-txdirectory.0-9192946fd9e6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406308 KiB reports/txid-s296-txdirectory.0-d6bff268c58a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406976 KiB reports/txid-s296-txdirectory.0-d6bff268c58a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406296 KiB reports/txid-s297-txdirectory.0-07a77d066c57-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407436 KiB reports/txid-s297-txdirectory.0-07a77d066c57-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406328 KiB reports/txid-s298-txdirectory.0-cab63622d60d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407320 KiB reports/txid-s298-txdirectory.0-cab63622d60d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406608 KiB reports/txid-s299-txdirectory.0-5578ccb37b52-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406152 KiB reports/txid-s299-txdirectory.0-5578ccb37b52-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406068 KiB reports/txid-s300-txdirectory.0-0a3256ed1f4b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406232 KiB reports/txid-s300-txdirectory.0-0a3256ed1f4b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 445380 KiB reports/txid-s301-txdirectory.0-1ee61486af6b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407572 KiB reports/txid-s301-txdirectory.0-1ee61486af6b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406396 KiB reports/txid-s302-txdirectory.0-17f3d910aeec-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407360 KiB reports/txid-s302-txdirectory.0-17f3d910aeec-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406376 KiB reports/txid-s303-txdirectory.0-7a6bf8129978-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 407308 KiB reports/txid-s303-txdirectory.0-7a6bf8129978-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406452 KiB reports/txid-s304-txdirectory.0-68ba8e76baf5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407112 KiB reports/txid-s304-txdirectory.0-68ba8e76baf5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407176 KiB reports/txid-s305-txdirectory.0-8f84b24ef4a5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406308 KiB reports/txid-s305-txdirectory.0-8f84b24ef4a5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439448 KiB reports/txid-s306-txdirectory.0-232896a8c456-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406432 KiB reports/txid-s306-txdirectory.0-232896a8c456-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406416 KiB reports/txid-s307-txdirectory.0-5472a246e5af-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406500 KiB reports/txid-s307-txdirectory.0-5472a246e5af-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406612 KiB reports/txid-s308-txdirectory.0-c2f743a32d39-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406516 KiB reports/txid-s308-txdirectory.0-c2f743a32d39-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406572 KiB reports/txid-s309-txdirectory.0-6f0e904f24f1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406368 KiB reports/txid-s309-txdirectory.0-6f0e904f24f1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439436 KiB reports/txid-s310-txdirectory.0-f399b9be7f58-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406572 KiB reports/txid-s310-txdirectory.0-f399b9be7f58-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407272 KiB reports/txid-s311-txdirectory.0-351241db4b5b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406464 KiB reports/txid-s311-txdirectory.0-351241db4b5b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406664 KiB reports/txid-s312-txdirectory.0-01dc62ef1b31-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.88 s 407520 KiB reports/txid-s312-txdirectory.0-01dc62ef1b31-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407308 KiB reports/txid-s313-txdirectory.0-248ea98901ef-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406332 KiB reports/txid-s313-txdirectory.0-248ea98901ef-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407364 KiB reports/txid-s314-txdirectory.0-96fb2eb05a38-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406368 KiB reports/txid-s314-txdirectory.0-96fb2eb05a38-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 406364 KiB reports/txid-s315-txdirectory.0-1a0a6f3e0ca6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406232 KiB reports/txid-s315-txdirectory.0-1a0a6f3e0ca6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439176 KiB reports/txid-s316-txdirectory.0-4be091222a65-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406372 KiB reports/txid-s316-txdirectory.0-4be091222a65-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406512 KiB reports/txid-s317-txdirectory.0-95b7f3f37b45-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406152 KiB reports/txid-s317-txdirectory.0-95b7f3f37b45-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406576 KiB reports/txid-s318-txdirectory.0-c6f2f345ec39-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406324 KiB reports/txid-s318-txdirectory.0-c6f2f345ec39-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407392 KiB reports/txid-s319-txdirectory.0-52c01f7b1d37-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406328 KiB reports/txid-s319-txdirectory.0-52c01f7b1d37-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406456 KiB reports/txid-s320-txdirectory.0-4983b274dc3d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s320-txdirectory.0-4983b274dc3d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407052 KiB reports/txid-s321-txdirectory.0-bc3430acec9f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407472 KiB reports/txid-s321-txdirectory.0-bc3430acec9f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406412 KiB reports/txid-s322-txdirectory.0-128b26cc7141-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 408088 KiB reports/txid-s322-txdirectory.0-128b26cc7141-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406324 KiB reports/txid-s323-txdirectory.0-c5cb08ad9294-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s323-txdirectory.0-c5cb08ad9294-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439440 KiB reports/txid-s324-txdirectory.0-178702f8ad5f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406360 KiB reports/txid-s324-txdirectory.0-178702f8ad5f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 447880 KiB reports/txid-s325-txdirectory.0-11f485f69f4d-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 407448 KiB reports/txid-s325-txdirectory.0-11f485f69f4d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407304 KiB reports/txid-s326-txdirectory.0-7b7459ffe9f8-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407360 KiB reports/txid-s326-txdirectory.0-7b7459ffe9f8-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 439308 KiB reports/txid-s327-txdirectory.0-4523d57f70c1-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407260 KiB reports/txid-s327-txdirectory.0-4523d57f70c1-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406692 KiB reports/txid-s328-txdirectory.0-074770693c1e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406284 KiB reports/txid-s328-txdirectory.0-074770693c1e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406272 KiB reports/txid-s329-txdirectory.0-e8345adff34f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406244 KiB reports/txid-s329-txdirectory.0-e8345adff34f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407312 KiB reports/txid-s330-txdirectory.0-d649d7698e18-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407624 KiB reports/txid-s330-txdirectory.0-d649d7698e18-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407384 KiB reports/txid-s331-txdirectory.0-2dc32a802b5d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406808 KiB reports/txid-s331-txdirectory.0-2dc32a802b5d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406536 KiB reports/txid-s332-txdirectory.0-f093ff8389c0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406540 KiB reports/txid-s332-txdirectory.0-f093ff8389c0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439104 KiB reports/txid-s333-txdirectory.0-4579dfe475de-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406448 KiB reports/txid-s333-txdirectory.0-4579dfe475de-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407500 KiB reports/txid-s334-txdirectory.0-2075bd5b57dc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406540 KiB reports/txid-s334-txdirectory.0-2075bd5b57dc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406464 KiB reports/txid-s335-txdirectory.0-237f211297ba-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407436 KiB reports/txid-s335-txdirectory.0-237f211297ba-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439264 KiB reports/txid-s336-txdirectory.0-c746c5a1066c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406556 KiB reports/txid-s336-txdirectory.0-c746c5a1066c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406412 KiB reports/txid-s337-txdirectory.0-2c774f4b4e65-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406484 KiB reports/txid-s337-txdirectory.0-2c774f4b4e65-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407052 KiB reports/txid-s338-txdirectory.0-e196b3844b57-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406320 KiB reports/txid-s338-txdirectory.0-e196b3844b57-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 439192 KiB reports/txid-s339-txdirectory.0-aaeeb46b9c5b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 407232 KiB reports/txid-s339-txdirectory.0-aaeeb46b9c5b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406412 KiB reports/txid-s340-txdirectory.0-14c6748a411d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407320 KiB reports/txid-s340-txdirectory.0-14c6748a411d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 415148 KiB reports/txid-s341-txdirectory.0-1744c68ac830-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406228 KiB reports/txid-s341-txdirectory.0-1744c68ac830-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439260 KiB reports/txid-s342-txdirectory.0-f98beb49c3c5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406408 KiB reports/txid-s342-txdirectory.0-f98beb49c3c5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407484 KiB reports/txid-s343-txdirectory.0-78dcec2e7b03-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406284 KiB reports/txid-s343-txdirectory.0-78dcec2e7b03-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 447320 KiB reports/txid-s344-txdirectory.0-2858005a7d68-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.81 s 406612 KiB reports/txid-s344-txdirectory.0-2858005a7d68-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407408 KiB reports/txid-s345-txdirectory.0-adf3d1f9a5bd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s345-txdirectory.0-adf3d1f9a5bd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406160 KiB reports/txid-s346-txdirectory.0-5570510daae6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406208 KiB reports/txid-s346-txdirectory.0-5570510daae6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406488 KiB reports/txid-s347-txdirectory.0-76137e679bbd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406232 KiB reports/txid-s347-txdirectory.0-76137e679bbd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406452 KiB reports/txid-s348-txdirectory.0-4decaa30f790-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407568 KiB reports/txid-s348-txdirectory.0-4decaa30f790-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439432 KiB reports/txid-s349-txdirectory.0-44156e87eb5e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407456 KiB reports/txid-s349-txdirectory.0-44156e87eb5e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407440 KiB reports/txid-s350-txdirectory.0-d62ef51a1492-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406100 KiB reports/txid-s350-txdirectory.0-d62ef51a1492-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406512 KiB reports/txid-s351-txdirectory.0-bd085a91a617-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407364 KiB reports/txid-s351-txdirectory.0-bd085a91a617-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406584 KiB reports/txid-s352-txdirectory.0-2f8e3870dc8a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406556 KiB reports/txid-s352-txdirectory.0-2f8e3870dc8a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 446004 KiB reports/txid-s353-txdirectory.0-02939f476d2f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407204 KiB reports/txid-s353-txdirectory.0-02939f476d2f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406564 KiB reports/txid-s354-txdirectory.0-ff7a9d5e6150-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406416 KiB reports/txid-s354-txdirectory.0-ff7a9d5e6150-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406536 KiB reports/txid-s355-txdirectory.0-89512b9693c4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407684 KiB reports/txid-s355-txdirectory.0-89512b9693c4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407192 KiB reports/txid-s356-txdirectory.0-390e168f1f0a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406284 KiB reports/txid-s356-txdirectory.0-390e168f1f0a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 447548 KiB reports/txid-s357-txdirectory.0-c94dbf136818-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.81 s 406476 KiB reports/txid-s357-txdirectory.0-c94dbf136818-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406396 KiB reports/txid-s358-txdirectory.0-6bef9c62251b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407052 KiB reports/txid-s358-txdirectory.0-6bef9c62251b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406160 KiB reports/txid-s359-txdirectory.0-a5d1a5686faf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439204 KiB reports/txid-s359-txdirectory.0-a5d1a5686faf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407068 KiB reports/txid-s360-txdirectory.0-e65bf33c4db0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406512 KiB reports/txid-s360-txdirectory.0-e65bf33c4db0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406268 KiB reports/txid-s361-txdirectory.0-1eda815f266a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439108 KiB reports/txid-s361-txdirectory.0-1eda815f266a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407304 KiB reports/txid-s362-txdirectory.0-548d7a4e76cf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407340 KiB reports/txid-s362-txdirectory.0-548d7a4e76cf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439320 KiB reports/txid-s363-txdirectory.0-2ac2d90537e2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406780 KiB reports/txid-s363-txdirectory.0-2ac2d90537e2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406312 KiB reports/txid-s364-txdirectory.0-f937b632cfd2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 407376 KiB reports/txid-s364-txdirectory.0-f937b632cfd2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406392 KiB reports/txid-s365-txdirectory.0-0d2986dcbabf-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439392 KiB reports/txid-s365-txdirectory.0-0d2986dcbabf-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 446184 KiB reports/txid-s366-txdirectory.0-c7cf4676585e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 444748 KiB reports/txid-s366-txdirectory.0-c7cf4676585e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 414092 KiB reports/txid-s367-txdirectory.0-e07d843a53d0-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439388 KiB reports/txid-s367-txdirectory.0-e07d843a53d0-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446176 KiB reports/txid-s368-txdirectory.0-099e85ba02d2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.79 s 406420 KiB reports/txid-s368-txdirectory.0-099e85ba02d2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439332 KiB reports/txid-s369-txdirectory.0-b35195ebc5b7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 438924 KiB reports/txid-s369-txdirectory.0-b35195ebc5b7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406152 KiB reports/txid-s370-txdirectory.0-f77e9679dde3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 406456 KiB reports/txid-s370-txdirectory.0-f77e9679dde3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406220 KiB reports/txid-s371-txdirectory.0-e1e39678c13d-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439124 KiB reports/txid-s371-txdirectory.0-e1e39678c13d-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439008 KiB reports/txid-s372-txdirectory.0-ac7073f9d651-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439176 KiB reports/txid-s372-txdirectory.0-ac7073f9d651-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406412 KiB reports/txid-s373-txdirectory.0-5cad4082226b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407288 KiB reports/txid-s373-txdirectory.0-5cad4082226b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407276 KiB reports/txid-s374-txdirectory.0-363904567812-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407344 KiB reports/txid-s374-txdirectory.0-363904567812-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406496 KiB reports/txid-s375-txdirectory.0-1b339182294a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439284 KiB reports/txid-s375-txdirectory.0-1b339182294a-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.87 s 406612 KiB reports/txid-s376-txdirectory.0-b09e273103d3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406448 KiB reports/txid-s376-txdirectory.0-b09e273103d3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406540 KiB reports/txid-s377-txdirectory.0-63c5c34347f5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406312 KiB reports/txid-s377-txdirectory.0-63c5c34347f5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406416 KiB reports/txid-s378-txdirectory.0-ee61186f775b-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406544 KiB reports/txid-s378-txdirectory.0-ee61186f775b-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406488 KiB reports/txid-s379-txdirectory.0-62c14a3ea0f3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407180 KiB reports/txid-s379-txdirectory.0-62c14a3ea0f3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406376 KiB reports/txid-s380-txdirectory.0-0bc8c2a064d5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 446472 KiB reports/txid-s380-txdirectory.0-0bc8c2a064d5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406484 KiB reports/txid-s381-txdirectory.0-f2f532d197bd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406612 KiB reports/txid-s381-txdirectory.0-f2f532d197bd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439180 KiB reports/txid-s382-txdirectory.0-2b9b2b92b039-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407392 KiB reports/txid-s382-txdirectory.0-2b9b2b92b039-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446260 KiB reports/txid-s383-txdirectory.0-5e13b3165f48-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 446636 KiB reports/txid-s383-txdirectory.0-5e13b3165f48-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 446816 KiB reports/txid-s384-txdirectory.0-ad53524f6cb3-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.88 s 406476 KiB reports/txid-s384-txdirectory.0-ad53524f6cb3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407220 KiB reports/txid-s385-txdirectory.0-a741c0f7084f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406796 KiB reports/txid-s385-txdirectory.0-a741c0f7084f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 406416 KiB reports/txid-s386-txdirectory.0-42549899b4db-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.82 s 406564 KiB reports/txid-s386-txdirectory.0-42549899b4db-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406456 KiB reports/txid-s387-txdirectory.0-7db68457303a-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406572 KiB reports/txid-s387-txdirectory.0-7db68457303a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.77 s 406684 KiB reports/txid-s388-txdirectory.0-13707f6f92f4-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406600 KiB reports/txid-s388-txdirectory.0-13707f6f92f4-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406460 KiB reports/txid-s389-txdirectory.0-6003e5a58c78-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407220 KiB reports/txid-s389-txdirectory.0-6003e5a58c78-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406508 KiB reports/txid-s390-txdirectory.0-3c40bc081e8c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439292 KiB reports/txid-s390-txdirectory.0-3c40bc081e8c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406188 KiB reports/txid-s391-txdirectory.0-8d13d75839eb-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 439232 KiB reports/txid-s391-txdirectory.0-8d13d75839eb-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 439272 KiB reports/txid-s392-txdirectory.0-d0dbaa1aeb89-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406444 KiB reports/txid-s392-txdirectory.0-d0dbaa1aeb89-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 406692 KiB reports/txid-s393-txdirectory.0-096a2e228989-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s393-txdirectory.0-096a2e228989-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406320 KiB reports/txid-s394-txdirectory.0-166f224d871e-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406692 KiB reports/txid-s394-txdirectory.0-166f224d871e-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406436 KiB reports/txid-s395-txdirectory.0-b2a322b67fe3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 447156 KiB reports/txid-s395-txdirectory.0-b2a322b67fe3-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406368 KiB reports/txid-s396-txdirectory.0-38c3fb463f20-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406280 KiB reports/txid-s396-txdirectory.0-38c3fb463f20-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.80 s 407328 KiB reports/txid-s397-txdirectory.0-3098587f2237-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407052 KiB reports/txid-s397-txdirectory.0-3098587f2237-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406924 KiB reports/txid-s398-txdirectory.0-cb602fde8b6a-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.84 s 406196 KiB reports/txid-s398-txdirectory.0-cb602fde8b6a-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439184 KiB reports/txid-s399-txdirectory.0-032e9c9518a6-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406344 KiB reports/txid-s399-txdirectory.0-032e9c9518a6-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406468 KiB reports/txid-s400-txdirectory.0-10b70a4d4c23-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407264 KiB reports/txid-s400-txdirectory.0-10b70a4d4c23-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406300 KiB reports/txid-s401-txdirectory.0-24b5f9eaf7a3-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406296 KiB reports/txid-s401-txdirectory.0-24b5f9eaf7a3-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 406412 KiB reports/txid-s402-txdirectory.0-606ed0dd3446-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.83 s 407196 KiB reports/txid-s402-txdirectory.0-606ed0dd3446-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407292 KiB reports/txid-s403-txdirectory.0-4c5b5f249481-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407184 KiB reports/txid-s403-txdirectory.0-4c5b5f249481-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406664 KiB reports/txid-s404-txdirectory.0-d390bd3050e2-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406540 KiB reports/txid-s404-txdirectory.0-d390bd3050e2-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407332 KiB reports/txid-s405-txdirectory.0-a7618fdc1caa-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406284 KiB reports/txid-s405-txdirectory.0-a7618fdc1caa-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407288 KiB reports/txid-s406-txdirectory.0-48a8ad6298a7-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406464 KiB reports/txid-s406-txdirectory.0-48a8ad6298a7-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439304 KiB reports/txid-s407-txdirectory.0-df4f1ffa0e67-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406532 KiB reports/txid-s407-txdirectory.0-df4f1ffa0e67-dithered
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 439200 KiB reports/txid-s408-txdirectory.0-d1bcdcd6aebe-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 439004 KiB reports/txid-s408-txdirectory.0-d1bcdcd6aebe-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406460 KiB reports/txid-s409-txdirectory.0-a4033923a69f-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406648 KiB reports/txid-s409-txdirectory.0-a4033923a69f-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406368 KiB reports/txid-s410-txdirectory.0-2a2c40bb5319-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407348 KiB reports/txid-s410-txdirectory.0-2a2c40bb5319-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406412 KiB reports/txid-s411-txdirectory.0-5a9e6112986c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406568 KiB reports/txid-s411-txdirectory.0-5a9e6112986c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.78 s 407260 KiB reports/txid-s412-txdirectory.0-90ef3ffcbcee-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 407648 KiB reports/txid-s412-txdirectory.0-90ef3ffcbcee-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406520 KiB reports/txid-s413-txdirectory.0-14c5b9169368-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.75 s 406640 KiB reports/txid-s413-txdirectory.0-14c5b9169368-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407132 KiB reports/txid-s414-txdirectory.0-a3a8426927ad-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 439172 KiB reports/txid-s414-txdirectory.0-a3a8426927ad-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 408160 KiB reports/txid-s415-txdirectory.0-5ae8b5da050c-nearest
+analysed 2048 rows x 2048 cols in 1.8s
+1.85 s 407152 KiB reports/txid-s415-txdirectory.0-5ae8b5da050c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406572 KiB reports/txid-s416-txdirectory.0-a496c4532c81-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406216 KiB reports/txid-s416-txdirectory.0-a496c4532c81-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407512 KiB reports/txid-s417-txdirectory.0-618042c70d5c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406624 KiB reports/txid-s417-txdirectory.0-618042c70d5c-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406592 KiB reports/txid-s418-txdirectory.0-82d28a35bc03-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406244 KiB reports/txid-s418-txdirectory.0-82d28a35bc03-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407312 KiB reports/txid-s419-txdirectory.0-9598fedf8cfc-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 406536 KiB reports/txid-s419-txdirectory.0-9598fedf8cfc-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406660 KiB reports/txid-s420-txdirectory.0-0e93c17fcafd-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 406536 KiB reports/txid-s420-txdirectory.0-0e93c17fcafd-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 407308 KiB reports/txid-s421-txdirectory.0-ec586c6af663-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.76 s 439180 KiB reports/txid-s421-txdirectory.0-ec586c6af663-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 447232 KiB reports/txid-s422-txdirectory.0-3bd856e517b5-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.74 s 406592 KiB reports/txid-s422-txdirectory.0-3bd856e517b5-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 406412 KiB reports/txid-s423-txdirectory.0-ccc76efc6016-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.73 s 407308 KiB reports/txid-s423-txdirectory.0-ccc76efc6016-dithered
+analysed 2048 rows x 2048 cols in 1.7s
+1.72 s 407408 KiB reports/txid-s424-txdirectory.0-f555cb897c4c-nearest
+analysed 2048 rows x 2048 cols in 1.7s
+1.71 s 407180 KiB reports/txid-s424-txdirectory.0-f555cb897c4c-dithered
+analysed 4096 rows x 2048 cols in 1.8s
+1.88 s 447516 KiB reports/history-s89-directory.0-5a6a8eacf2d7-nearest
+analysed 4096 rows x 2048 cols in 1.9s
+2.00 s 447408 KiB reports/history-s89-directory.0-5a6a8eacf2d7-dithered
+analysed 8192 rows x 2048 cols in 2.0s
+2.16 s 431104 KiB reports/history-s89-pages.0-5a6a8eacf2d7-nearest
+analysed 8192 rows x 2048 cols in 2.0s
+2.17 s 431140 KiB reports/history-s89-pages.0-5a6a8eacf2d7-dithered

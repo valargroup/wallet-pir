@@ -1,0 +1,408 @@
+{
+  "baseline_before": {
+    "captured_unix": 1791315955,
+    "service": "enhance",
+    "targets": {
+      "coordinator@coordinator": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/50-candidate-5270482.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/527048217f8cb83d27c838e94dbaac21ac25837d/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v6/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/60-candidate-216b999.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/216b9993cc3ae4e0f1820d60c6b8f03d104b5e46/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v6/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/90-v7.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v7/releases/ac7cf9d/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/95-architecture2.conf",
+            "text": "[Unit]\nRequires=enhance-pir-artifact-firewall.service\nAfter=enhance-pir-artifact-firewall.service\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/architecture2-c74e2319/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/99-apm-hour.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/apm-hour-cdc8e7f7f6d0/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zz-cleanup-71be21f.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzz-gpu-5ad545d.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/gpu-5ad545d/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzz-main-3685438.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/main-3685438/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v7/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzz-native-ac06df3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native-ac06df3/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-poc/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\nReadWritePaths=/srv/enhance-pir-native-poc/canonical\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzzz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-dc0355b/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-v9/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\nReadWritePaths=/srv/enhance-pir-native-v9/canonical\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzzzz-native2m-1dae185.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-v9-1dae185/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\nReadWritePaths=/srv/enhance-pir-native-v9-1dae185/canonical\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzzzzzzzz-observability.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/observability-20260926/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-v9-1dae185/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/208c75a9/native/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-v9-1dae185/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-coordinator.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cfeaa3baa40ec82e79489d6a77f60212610cdd0dbcee1014daec5106c726cc60/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-native-v9-1dae185/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10 --packing-router-config /etc/enhance-pir/packing-routers.json --artifact-listen 10.142.0.3:8084 --query-ingress http://127.0.0.1:8083 --pool-placement --frontier-replicas 2 --pool-policy /etc/enhance-pir/pool-policy.json\n"
+          }
+        ],
+        "exe_sha256": "cfeaa3baa40ec82e79489d6a77f60212610cdd0dbcee1014daec5106c726cc60",
+        "fragment_path": "/etc/systemd/system/enhance-pir-coordinator.service",
+        "fragment_text": "[Unit]\nDescription=Enhance PIR coordinator\nAfter=network-online.target zakurad.service\nRequires=zakurad.service\n\n[Service]\nType=simple\nUser=root\nExecStart=/opt/enhance-pir-v6/releases/682ee124621fb155033200c6a1565a8cae75c863/enhance-pir-server --sealed-shards 6 coordinator --listen 127.0.0.1:8080 --data-dir /srv/enhance-pir-v6/canonical --worker-config /etc/enhance-pir-v6/workers.json --zakura-rpc-url http://127.0.0.1:8232 --zakura-cookie /root/.cache/zakura/.cookie --poll-seconds 10\nRestart=on-failure\nRestartSec=5\nLimitNOFILE=1048576\nMemoryMax=24G\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "coordinator",
+        "load_state": "loaded",
+        "role": "coordinator",
+        "unit": "enhance-pir-coordinator.service"
+      },
+      "packing-router@router-01": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zz-cleanup-71be21f.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server packing-router --data-dir /srv/enhance-pir-router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzz-gpu-5ad545d.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/gpu-5ad545d/enhance-pir-server packing-router --data-dir /srv/enhance-pir-router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzz-main-3685438.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/main-3685438/enhance-pir-server packing-router --data-dir /srv/enhance-pir-router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzz-mapped-4d14feb.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/mapped-4d14feb/enhance-pir-server packing-router --data-dir /srv/enhance-pir-router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzz-native-ac06df3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native-ac06df3/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-poc/router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\nReadWritePaths=/srv/enhance-pir-native-poc/router\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-dc0355b/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-v9/router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\nReadWritePaths=/srv/enhance-pir-native-v9/router\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzz-native2m-1dae185.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-v9-1dae185/router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\nReadWritePaths=/srv/enhance-pir-native-v9-1dae185/router\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzzzzzz-observability.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/observability-20260926/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-v9-1dae185/router --artifact-origin http://10.142.0.3:8084 --listen 10.142.0.14:8092 --control-listen 10.142.0.14:8093 --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-v9-1dae185/router --artifact-origin http://10.142.0.3:8084 --listen 10.142.0.14:8092 --control-listen 10.142.0.14:8093 --max-objects 6 --requests 4\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-packing-router.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server packing-router --data-dir /srv/enhance-pir-native-v9-1dae185/router --artifact-origin http://10.142.0.3:8084 --listen 10.142.0.14:8092 --control-listen 10.142.0.14:8093 --max-objects 6 --requests 4\n"
+          }
+        ],
+        "exe_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+        "fragment_path": "/etc/systemd/system/enhance-pir-packing-router.service",
+        "fragment_text": "[Unit]\nDescription=Enhance PIR packing router\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=enhance-pir\nEnvironmentFile=/etc/enhance-pir/packing-router.env\nExecStart=/opt/enhance-pir/current/enhance-pir-server packing-router --data-dir /srv/enhance-pir-router --artifact-origin ${ENHANCE_ARTIFACT_ORIGIN} --listen ${ENHANCE_ROUTER_LISTEN} --control-listen ${ENHANCE_ROUTER_CONTROL_LISTEN} --max-objects 6 --requests 4\nRestart=on-failure\nRestartSec=3\nMemoryHigh=7G\nMemoryMax=7G\nMemorySwapMax=0\nLimitNOFILE=4096\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/srv/enhance-pir-router\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "router-01",
+        "load_state": "loaded",
+        "role": "packing-router",
+        "unit": "enhance-pir-packing-router.service"
+      },
+      "query-ingress@coordinator": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/99-apm-hour.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/apm-hour-cdc8e7f7f6d0/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zz-cleanup-71be21f.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzz-main-3685438.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/main-3685438/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzz-native-ac06df3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native-ac06df3/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-native-poc/ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\nReadWritePaths=/srv/enhance-pir-native-poc/ingress\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-dc0355b/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-native-v9/ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\nReadWritePaths=/srv/enhance-pir-native-v9/ingress\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzzz-native2m-1dae185.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-native-v9-1dae185/ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\nReadWritePaths=/srv/enhance-pir-native-v9-1dae185/ingress\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-native-v9-1dae185/ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-query-ingress.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-native-v9-1dae185/ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\n"
+          }
+        ],
+        "exe_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+        "fragment_path": "/etc/systemd/system/enhance-pir-query-ingress.service",
+        "fragment_text": "[Unit]\nDescription=Enhance PIR query ingress\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=enhance-pir\nExecStart=/opt/enhance-pir/releases/architecture2-c74e2319/enhance-pir-server query-ingress --data-dir /srv/enhance-pir-ingress --listen 127.0.0.1:8082 --control-listen 127.0.0.1:8083 --requests 16\nRestart=on-failure\nRestartSec=3\nMemoryMax=256M\nMemorySwapMax=0\nLimitNOFILE=4096\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/srv/enhance-pir-ingress\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "coordinator",
+        "load_state": "loaded",
+        "role": "query-ingress",
+        "unit": "enhance-pir-query-ingress.service"
+      },
+      "worker@worker-01": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/50-candidate-5270482.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/527048217f8cb83d27c838e94dbaac21ac25837d/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v6/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/60-candidate-216b999.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/216b9993cc3ae4e0f1820d60c6b8f03d104b5e46/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v6/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/90-v7.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v7/releases/ac7cf9d/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v7/worker\nReadWritePaths=/srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/95-architecture2.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/architecture2-c74e2319/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v7/worker\nReadWritePaths=/srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/99-apm-hour.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/apm-hour-cdc8e7f7f6d0/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zz-cleanup-71be21f.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzz-latency-47ac3e3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/worker-latency-47ac3e3/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzz-native-ac06df3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native-ac06df3/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-poc/worker\nReadWritePaths=/srv/enhance-pir-native-poc/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-dc0355b/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9/worker\nReadWritePaths=/srv/enhance-pir-native-v9/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzz-native2m-1dae185.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\nReadWritePaths=/srv/enhance-pir-native-v9-1dae185/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n"
+          }
+        ],
+        "exe_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+        "fragment_path": "/etc/systemd/system/enhance-pir-worker.service",
+        "fragment_text": "[Unit]\nDescription=Enhance PIR worker\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=enhance-pir-v4\nGroup=enhance-pir-v4\nExecStart=/opt/enhance-pir-v6/releases/afdb4b6d70d6947fa60688a3cf4df21fe5eeae69/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-v6/worker\nRestart=on-failure\nRestartSec=3\nLimitNOFILE=1048576\nMemoryHigh=7516192768\nMemoryMax=7609516032\nMemorySwapMax=2147479552\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths=/srv/enhance-pir-v6/worker\nPrivateTmp=true\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "worker-01",
+        "load_state": "loaded",
+        "role": "worker",
+        "unit": "enhance-pir-worker.service"
+      },
+      "worker@worker-02": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/50-candidate-5270482.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/527048217f8cb83d27c838e94dbaac21ac25837d/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v6/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/60-candidate-216b999.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v6/releases/216b9993cc3ae4e0f1820d60c6b8f03d104b5e46/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v6/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/90-v7.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir-v7/releases/ac7cf9d/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v7/worker\nReadWritePaths=/srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/95-architecture2.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/architecture2-c74e2319/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v7/worker\nReadWritePaths=/srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/99-apm-hour.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/apm-hour-cdc8e7f7f6d0/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zz-cleanup-71be21f.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/cleanup-71be21f-ba576af27d7f/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzz-latency-47ac3e3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/worker-latency-47ac3e3/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v7/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzz-native-ac06df3.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native-ac06df3/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-native-poc/worker\nReadWritePaths=/srv/enhance-pir-native-poc/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-dc0355b/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-native-v9/worker\nReadWritePaths=/srv/enhance-pir-native-v9/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzz-native2m-1dae185.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/native2m-1dae185/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\nReadWritePaths=/srv/enhance-pir-native-v9-1dae185/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/13ec1fbe875254d45ba2b37c99b7eb55a517f56d/native/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n"
+          },
+          {
+            "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n"
+          }
+        ],
+        "exe_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+        "fragment_path": "/etc/systemd/system/enhance-pir-worker.service",
+        "fragment_text": "[Unit]\nDescription=Enhance PIR worker\nAfter=network-online.target\nWants=network-online.target\n\n[Service]\nType=simple\nUser=enhance-pir-v4\nGroup=enhance-pir-v4\nExecStart=/opt/enhance-pir-v6/releases/afdb4b6d70d6947fa60688a3cf4df21fe5eeae69/enhance-pir-server --sealed-shards 6 worker --listen 10.142.0.16:8091 --data-dir /srv/enhance-pir-v6/worker\nRestart=on-failure\nRestartSec=3\nLimitNOFILE=1048576\nMemoryHigh=7516192768\nMemoryMax=7609516032\nMemorySwapMax=2147479552\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nReadWritePaths=/srv/enhance-pir-v6/worker\nPrivateTmp=true\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "worker-02",
+        "load_state": "loaded",
+        "role": "worker",
+        "unit": "enhance-pir-worker.service"
+      }
+    }
+  },
+  "binary_sha256": "a70b5fbaabe52a0deca9f5e8cb8a1e4b0c77bdb36d333fd9f23596297e38d4db",
+  "created_unix": 1791582838,
+  "events": [
+    {
+      "message": "status activating",
+      "unix": 1791582849.257
+    },
+    {
+      "message": "phase backing-up",
+      "target": "worker@worker-01",
+      "unix": 1791582849.258
+    },
+    {
+      "message": "phase installing",
+      "target": "worker@worker-01",
+      "unix": 1791582866.985
+    },
+    {
+      "message": "phase restarting",
+      "target": "worker@worker-01",
+      "unix": 1791582884.726
+    },
+    {
+      "message": "phase verifying",
+      "target": "worker@worker-01",
+      "unix": 1791582890.261
+    },
+    {
+      "message": "phase verified",
+      "target": "worker@worker-01",
+      "unix": 1791582915.616
+    },
+    {
+      "message": "status verifying",
+      "unix": 1791582915.623
+    },
+    {
+      "argv": [
+        "/root/deploy-06a972db/enhance-pir-load-test",
+        "--oracle",
+        "/root/mixed-fee-20261006/public-oracle.new.json",
+        "--server",
+        "https://enhance-pir.valargroup.dev",
+        "--parallelism",
+        "2",
+        "--rate",
+        "2",
+        "--duration",
+        "60s",
+        "--warmup",
+        "10s",
+        "--max-error-rate",
+        "0",
+        "--json-out",
+        "/root/wallet-pir-deploy-enhance-20261009T215358Z-a70b5fbaabe5-f2c7a0-exact.json"
+      ],
+      "host": "coordinator",
+      "message": "exact check",
+      "unix": 1791582927.542
+    },
+    {
+      "message": "exact check finished",
+      "output": "{\n  \"protocol\": \"ironwood-enhance-pir-v9-native-two-mask-m29\",\n  \"seconds\": 59.776238482,\n  \"concurrency\": 2,\n  \"offered_qps\": 2.0,\n  \"completed\": 120,\n  \"succeeded\": 120,\n  \"incorrect_answers\": 0,\n  \"errors\": {},\n  \"unstarted_arrivals\": 0,\n  \"correct_queries_per_second\": 2.007486637623322,\n  \"p50_ms\": 184.447,\n  \"p95_ms\": 379.135,\n  \"p99_ms\": 544.767,\n  \"scheduled_p99_ms\": 545.791,\n  \"exact_answer_oracle\": true,\n  \"warmup_errors\": {},\n  \"warmup_correct_answers\": 20,\n  \"warmup_incorrect_answers\": 0\n}\n",
+      "returncode": 0,
+      "unix": 1791583000.525
+    },
+    {
+      "message": "status committed",
+      "unix": 1791583000.526
+    }
+  ],
+  "hosts": [
+    {
+      "action": "restart",
+      "changes": [
+        {
+          "new": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/a70b5fbaabe52a0deca9f5e8cb8a1e4b0c77bdb36d333fd9f23596297e38d4db/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n",
+          "new_sha256": "1f80c6024d601804f614c2b90ee2fef057938e16fb6e4d32b83847981dadb405",
+          "op": "write",
+          "path": "/etc/systemd/system/enhance-pir-worker.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+          "previous": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker\n",
+          "previous_sha256": "baab3a524ba8cb9b188a712d050931050a007545f0bf7ee34c8cf61f52d77a4f"
+        }
+      ],
+      "drift": [],
+      "host": "worker-01",
+      "key": "worker@worker-01",
+      "phase": "verified",
+      "previous": {
+        "exe_sha256": "397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c",
+        "exec_binary": "/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server",
+        "exec_start": "/opt/enhance-pir/releases/397d8ba915e35f60b36ea9c32735e3466f0e8c989f9646e626605ccf2c21480c/enhance-pir-server worker --listen 10.142.0.15:8091 --data-dir /srv/enhance-pir-native-v9-1dae185/worker"
+      },
+      "restart_issued": true,
+      "role": "worker",
+      "unit": "enhance-pir-worker.service",
+      "verify": {
+        "health": "http://10.142.0.15:8091/internal/health",
+        "health_equals": {},
+        "ready": {
+          "field": "published",
+          "nonempty": true
+        },
+        "ready_url": null,
+        "timeout": 300
+      }
+    }
+  ],
+  "id": "enhance-20261009T215358Z-a70b5fbaabe5-f2c7a0",
+  "service": "enhance",
+  "source": {
+    "archive": "/private/tmp/claude-501/-Users-roman-projects-wallet-pir--claude-worktrees-affectionate-wright-3a72f9/06e548f5-48d3-4002-bb96-e9d10751a976/scratchpad/rel-06a972db/enhance-pir-native/enhance-pir-native.tar.gz",
+    "kind": "enhance-pir-native",
+    "revision": "06a972db469f302d8c561416d4674e937fdde0cb"
+  },
+  "status": "committed"
+}

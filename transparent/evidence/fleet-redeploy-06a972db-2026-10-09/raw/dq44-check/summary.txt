@@ -1,0 +1,8 @@
+events {'ready': 1, 'query': 896}
+queries 896 exact 896 attempt>1 0
+('archive-wide', 'directory') 89 exact 89 up {207880: 89} p50 0.012 p99 0.023
+('archive-wide', 'pages') 89 exact 89 up {388104: 89} p50 0.019 p99 0.029
+('recent-4k-8k', 'directory') 360 exact 360 up {50184: 360} p50 0.009 p99 0.024
+('recent-4k-8k', 'pages') 358 exact 358 up {72712: 358} p50 0.010 p99 0.026
+2026-10-10T00:44:29Z
+2026-10-10T00:47:30Z

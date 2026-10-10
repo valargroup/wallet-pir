@@ -1,0 +1,18 @@
+{
+  "run": "served-segment-certificates-2026-10-09",
+  "source_revision": "06a972db469f302d8c561416d4674e937fdde0cb",
+  "started_utc": "2026-10-09T21:54:48Z",
+  "finished_utc": "2026-10-09T22:58:55Z",
+  "rerun_shard_89_utc": "2026-10-09T23:24Z",
+  "host": {"name": "roman-ipir-bench-8vcpu", "region": "ams3", "cpu": "Intel Xeon Platinum 8358, 8 vCPU", "memory_gib": 31, "os": "Ubuntu 24.04.4 LTS"},
+  "tool": {"path": "target/release-fast/examples/native_certificate", "crate": "transparent-shard-server", "profile": "release-fast", "rustc": "1.97.1", "rustflags": "target-cpu=native", "sha256": "e20e5eb66cb691bfbe347a75c65f61bf578171b551acf54b7fe29390b4a11f56"},
+  "checker": {"repository": "ipir-sp", "revision": "d76e61a", "path": "reinspiring/tools/security/certify_native.py", "sha256": "9a519715cfdccebdb12766ae7bed6a3b14863664c9f5847ebbc55374095bd6d7", "cdf_sha256": "4c6e3f5145e3b99f225b9dcaa050be85f6f0ad1fb391acfde080fcd09dfc2266"},
+  "history": {"height": 3512212, "hash": "00000000006c2528d1d6b23d89f7fc0986cd519b76d969e5c62712fca2aa924c", "map_sha256": "9ec3faeb96bbc857f27ed69ea91aac894a375a611b774021d12c4f0618676c7d", "shards_json_sha256": "64f892c16ff0d1a58549a82f55cf240ca362832db883fb167d023541012224a6", "shards": 91, "segments": 182},
+  "txid_display": {"tip": 3512212, "cycle": 1528, "map_sha256": "3e4211d5c0c91bdfe22297aeaa5c4fbfa1bc6b04899e56819427a841b5ed7e68", "shards": 426, "segments": 426},
+  "floors": {"archive-wide pages": 83, "otherwise": 128},
+  "widths": ["49 nearest", "44 dithered"],
+  "segments": 608,
+  "reports": 1216,
+  "problems": 0,
+  "fetch_failures_rerun": ["history shard 89 (5a6a8eac...), certified by rerun-89.sh from the publication at 3512274"]
+}

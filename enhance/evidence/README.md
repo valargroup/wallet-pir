@@ -18,6 +18,10 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Enhance and Status production deploy of `06a972db`](production-deploy-06a972db-2026-10-09/README.md) —
+  all eight roles on the full-CI release that also accepts 44-bit dithered queries
+  (nothing advertises them); exact answers 120/120 and Status probe 1,200/1,200 after;
+  one interrupted transaction finished by rollback and redeploy.
 - [Mixed-transaction fee repair in production](mixed-fee-production-2026-10-06/README.md) —
   coordinator-only deploy of `2474cdbb`, historical records rebuilt from chain and
   adopted (374,853 records gained exact fees), independent-oracle and public

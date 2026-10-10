@@ -1,0 +1,30 @@
+### start 2026-10-09T23:57:46.760Z
+### cmd:
+bash $DEP/steps/p7-p8.sh
+### output:
+active
+2026-10-09T23:57:47Z
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.011996, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.010889, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.055911, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.057126, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.028026, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 212.576891, "exit_code": 0}
+[2m2026-10-10T00:01:20.442038Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m82 [3mrevisions[0m[2m=[0m82 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"bc9495757a22c1e6346158d93b5d7b1b487f5d512bc6baf7357a78d76021499d" [3mworker_id[0m[2m=[0m"transparent-pir-archive-03" [3massignment_sha256[0m[2m=[0m"3cdee7a1869438c4514e0d3c669c9b57f5793711c99f50dc7a4ccac6bf93ccb7" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512310
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.012162, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 2.587524, "exit_code": 0}
+transparent-pir-archive-03: warm with publication control
+{"worker": "transparent-pir-archive-03", "mode": "install", "done": true}
+2026-10-10T00:06:58Z
+archive-03 install rc=0 wall=551s
+membership age 0.3 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '258967ab1458'), 'transparent-pir-recent-02': ('serving', True, True, '258967ab1458'), 'transparent-pir-archive-03': ('lagging', True, False, '258967ab1458')}
+controller serving 3512313 3512318 11.854952636
+load inactive scaler active not-latched
+load-status running 2026-10-09T23:57:36.611800+00:00 {}
+10.142.0.10 2490c09d11d8 True warm 18 18 258967ab1458 prewarm_failed 0
+10.142.0.8 2490c09d11d8 True warm 18 18 258967ab1458 prewarm_failed 0
+10.142.0.7 2490c09d11d8 True warm 164 164 258967ab1458 prewarm_failed 0
+{'transparent-pir-archive-03': '2490c09d11d820aab457f74f614f738e8f8fc45149aa5417ffbf85b8b2818594', 'transparent-pir-recent-01': '2490c09d11d820aab457f74f614f738e8f8fc45149aa5417ffbf85b8b2818594', 'transparent-pir-recent-02': '2490c09d11d820aab457f74f614f738e8f8fc45149aa5417ffbf85b8b2818594'}
+2026-10-10T00:06:58Z
+active
+### end 2026-10-10T00:06:58.788Z rc=0

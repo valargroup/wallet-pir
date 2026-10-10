@@ -1,0 +1,29 @@
+### start 2026-10-09T23:48:41.656Z
+### cmd:
+python3 $DEP/steps/membership.py; curl -s 127.0.0.1:8094/v1/status | python3 -c "import json,sys;s=json.load(sys.stdin);print(\x27controller\x27,s[\x27phase\x27],s[\x27public_height\x27],s[\x27node_height\x27],s[\x27freshness_seconds\x27])"; systemctl is-active transparent-5qps-continuous transparent-fleet-scaler; jq -c . $LOAD/status.json 2>/dev/null | cut -c1-400; test -e $LOAD/latched.json && echo LATCHED || echo not-latched; for h in $R01 $R02 $A03; do curl -s http://$h:8093/v1/ready | python3 -c "import json,sys;r=json.load(sys.stdin);print(\x27\x27 if False else r[\x27binary_sha256\x27][:12], r[\x27ready\x27], r[\x27mode\x27], r[\x27warm_runtimes\x27], r[\x27target_runtimes\x27], r[\x27map_sha256\x27][:12])"; done; df -h / /srv/zakura /srv/transparent-activity | tail -3
+### output:
+membership age 0.7 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '22a89e9df151'), 'transparent-pir-recent-02': ('serving', True, True, '22a89e9df151'), 'transparent-pir-archive-03': ('serving', True, True, '22a89e9df151')}
+  File "<string>", line 1
+    import json,sys;s=json.load(sys.stdin);print(\x27controller\x27,s[\x27phase\x27],s[\x27public_height\x27],s[\x27node_height\x27],s[\x27freshness_seconds\x27])
+                                                  ^
+SyntaxError: unexpected character after line continuation character
+active
+active
+{"schema_version":1,"utc":"2026-10-09T23:48:35.406908+00:00","started_unix":1791552618.0746014,"mode":"running","target_query_qps":5,"client_location":"coordinator; shares host with ingest/publication; Nice=10 CPUQuota=200%","workload":"80% recent, 20% archive; directory/pages equally split; sealed revisions; fresh keys; exact row hashes; separate moving-tail health probes","ready":{"event":"ready
+not-latched
+  File "<string>", line 1
+    import json,sys;r=json.load(sys.stdin);print(\x27\x27 if False else r[\x27binary_sha256\x27][:12], r[\x27ready\x27], r[\x27mode\x27], r[\x27warm_runtimes\x27], r[\x27target_runtimes\x27], r[\x27map_sha256\x27][:12])
+                                                  ^
+SyntaxError: unexpected character after line continuation character
+  File "<string>", line 1
+    import json,sys;r=json.load(sys.stdin);print(\x27\x27 if False else r[\x27binary_sha256\x27][:12], r[\x27ready\x27], r[\x27mode\x27], r[\x27warm_runtimes\x27], r[\x27target_runtimes\x27], r[\x27map_sha256\x27][:12])
+                                                  ^
+SyntaxError: unexpected character after line continuation character
+  File "<string>", line 1
+    import json,sys;r=json.load(sys.stdin);print(\x27\x27 if False else r[\x27binary_sha256\x27][:12], r[\x27ready\x27], r[\x27mode\x27], r[\x27warm_runtimes\x27], r[\x27target_runtimes\x27], r[\x27map_sha256\x27][:12])
+                                                  ^
+SyntaxError: unexpected character after line continuation character
+/dev/vda1       193G  147G   47G  76% /
+/dev/sda        1.0T  790G  234G  78% /srv/zakura
+/dev/sdb        250G  101G  149G  41% /srv/transparent-activity
+### end 2026-10-09T23:48:42.103Z rc=0

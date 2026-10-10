@@ -1,0 +1,33 @@
+{
+  "data_dir": "/srv/transparent-activity/full-v3/journal",
+  "elapsed_seconds": 0.75150641,
+  "generated_at": "2026-10-09T21:53:22.182574334+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3512212,
+    "events_stored": 354092160,
+    "start_height": 0
+  },
+  "network": "main",
+  "output": "/srv/transparent-activity/full-v11/publications/candidate-3512212-00000000006c2528d1d6b23d89f7fc0986cd519b76d969e5c62712fca2aa924c-1791582801431174324",
+  "published": {
+    "anchor_hash": "00000000006c2528d1d6b23d89f7fc0986cd519b76d969e5c62712fca2aa924c",
+    "archive_geometry": "archive-wide",
+    "archive_policy": "SealPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, page_rows: Limit { target: 63488, capacity: 65536 } }",
+    "archive_shards": 82,
+    "map_bytes": 61786,
+    "map_sha256": "64f892c16ff0d1a58549a82f55cf240ca362832db883fb167d023541012224a6",
+    "multi_segment_shards": 0,
+    "recent_from": 3289805,
+    "recent_geometry": "recent-4k-8k",
+    "recent_policy": "SealPolicy { scripts: Limit { target: 203630, capacity: 237568 }, page_rows: Limit { target: 7936, capacity: 8192 } }",
+    "recent_shards": 9,
+    "shards": 91,
+    "start_height": 0,
+    "tail_revision": 1381,
+    "through": 3512212
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v11",
+  "tool_sha": "a317455e9feecdd2639d5348188c6a2341819a4d"
+}

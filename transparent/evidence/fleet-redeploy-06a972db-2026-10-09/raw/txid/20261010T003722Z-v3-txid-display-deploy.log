@@ -1,0 +1,143 @@
+txid-display-deploy-controller-20261010T003743Z-9bf332: wrote /opt/transparent-txid-display/workers.json on coordinator
+txid-display-deploy-controller-20261010T003743Z-9bf332: wrote /etc/systemd/system/transparent-txid-display-controller.service on coordinator
+txid-display-deploy-controller-20261010T003743Z-9bf332: controller running
+txid-display-deploy-controller-20261010T003743Z-9bf332: status committed
+{
+  "files": {
+    "fleet.json": "planned",
+    "routes.caddy": "planned",
+    "tfvars": "planned",
+    "unit:archive": "planned",
+    "unit:controller": "planned",
+    "unit:recent": "planned",
+    "workers.json": "planned"
+  },
+  "plan_sha256": "67f42ea740762c3cb058174828d3ea96fdd8c8abcb007918f1cd99a24c50a7f4",
+  "request_sha256": "505e6e205ad44b06c5180734e9398b33bc19189b36d8f8b69d670b57e0465f74",
+  "router_hook": {
+    "adapter_sha256": "35b6b436225c9c0871b8ea6b47c3e192d4080756fb6bbf781749f970f5704b4a",
+    "route_imports": [
+      "/etc/caddy/txid-display/*.caddy"
+    ]
+  },
+  "transactions": [
+    {
+      "action": "deploy-stage",
+      "id": "txid-display-deploy-stage-20261010T000904Z-16af25",
+      "status": "committed"
+    },
+    {
+      "action": "stop",
+      "id": "txid-display-stop-20261010T001700Z-18b981",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-workers",
+      "id": "txid-display-deploy-workers-20261010T002040Z-9d0bd2",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-route",
+      "id": "txid-display-deploy-route-20261010T003246Z-5b55da",
+      "status": "committed"
+    },
+    {
+      "action": "deploy-controller",
+      "id": "txid-display-deploy-controller-20261010T003743Z-9bf332",
+      "status": "committed"
+    }
+  ],
+  "units": {
+    "transparent-txid-display-bootstrap.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-controller.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-ingest-smoke.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-ingest.service@coordinator": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "exited"
+    },
+    "transparent-txid-display-mapwatch.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-observer.service@coordinator": {
+      "active": "inactive",
+      "load": "not-found",
+      "restarts": 0,
+      "result": "success",
+      "sub": "dead"
+    },
+    "transparent-txid-display-worker.service@archive": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    },
+    "transparent-txid-display-worker.service@recent": {
+      "active": "active",
+      "load": "loaded",
+      "restarts": 0,
+      "result": "success",
+      "sub": "running"
+    }
+  },
+  "workers": {
+    "archive": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "4194b7af0743bf0dce88510a081723299f45a350f32fee69a6994c512194c7f3",
+        "covered_through": 3512329,
+        "incarnation": "0ebc353089c48514a241f2716d34d87c",
+        "map_sha256": "e925cf4e9230bef1170d8d18452a526d4f28c3ac7c75099ca0cd943364a9c248",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "archive-owner",
+        "target_runtimes": 425,
+        "warm": true,
+        "warm_runtimes": 425
+      }
+    },
+    "recent": {
+      "http": 200,
+      "ready": {
+        "binary_sha256": "4194b7af0743bf0dce88510a081723299f45a350f32fee69a6994c512194c7f3",
+        "covered_through": 3512346,
+        "incarnation": "ebccc1cf32dd1cc4cad7b5c873b2b5b8",
+        "map_sha256": "c82636825209f5c19263c9da863fef6908b44200e9953f64e4c6ad9c661a5a7e",
+        "prewarm_failed": 0,
+        "prewarm_finished": true,
+        "ready": true,
+        "role": "recent-replica",
+        "target_runtimes": 1,
+        "warm": true,
+        "warm_runtimes": 1
+      }
+    }
+  }
+}
+rollback: /opt/homebrew/opt/python@3.14/bin/python3.14 /Users/roman/projects/wallet-pir/.claude/worktrees/deploy-v2-6c200028/ops/scripts/wallet-pir-deploy.py --inventory /Users/roman/.config/wallet-pir-deploy/inventory.json --state-dir /Users/roman/.config/wallet-pir-deploy/state txid-display-rollback --request /Users/roman/.config/wallet-pir-deploy/txid-display/request-v3.json --request-sha256 505e6e205ad44b06c5180734e9398b33bc19189b36d8f8b69d670b57e0465f74 --transaction txid-display-deploy-controller-20261010T003743Z-9bf332

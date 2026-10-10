@@ -1,0 +1,19 @@
+{
+  "run": "fleet-redeploy-06a972db-2026-10-09",
+  "kind": "production deploy",
+  "source_revision": "06a972db469f302d8c561416d4674e937fdde0cb",
+  "ci_run": 37974719227,
+  "bundles": {
+    "transparent-publisher": {"archive_sha256": "493e22a9a6859f49e5e209e7b0bda491dca1e5a8ed58c1a246b0884cefb52857", "transparent-shard-server": "2490c09d11d820aab457f74f614f738e8f8fc45149aa5417ffbf85b8b2818594", "shard-control": "9208555a4903945e6e7262df94db8934c532d83dad28d395b513ac1f9187bc66", "transparent-publish-controller": "13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba", "shard-assign": "1c61ed6f967271815775816b77a03bff6f2b59429477a819b3ec2aa2b052ebb3"},
+    "transparent-txid-display": {"archive_sha256": "90b6223e12ef5f31f6f1f78e8f4c795b8683d48f8c2ce0e23b3dbedc74e3e243", "transparent-txid-server": "4194b7af0743bf0dce88510a081723299f45a350f32fee69a6994c512194c7f3", "txid-display-controller": "6bfec14eaa10128602386d1ebcb83b6f4ee79e4971105b8a420758849be150ad"}
+  },
+  "before": {"history_worker": "34ba7ebbdb9c59de1ca9f4fd32be9b7058e9b2d2ab08dacaa63bb62cecc1970c", "txid_worker": "3ba0ab47d8d4c8a4d655b06c1c574a8d13cc3f8931e5f2d2329ede61e4f51483", "txid_controller": "96bf18d49385436141bcf8b0ededaa138157c42422a4c06c79ea34593a7baa55"},
+  "history_procedure": {"directory": "/root/deploy-06a972db", "ops_source": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644", "fleet": "/opt/transparent-publisher/v11/fleet.json", "rollback_dir": "/opt/transparent-publisher/rollback/roll-06a972db", "recent_other_serving_floor_override": 1},
+  "txid_procedure": {"request_sha256": "505e6e205ad44b06c5180734e9398b33bc19189b36d8f8b69d670b57e0465f74", "plan_sha256": "67f42ea740762c3cb058174828d3ea96fdd8c8abcb007918f1cd99a24c50a7f4", "phases": ["stage", "stop", "workers", "route", "controller"]},
+  "timeline_utc": {"health": "2026-10-09T23:48Z", "stage": "23:49-23:53", "recent_01_roll": "23:53, 25.1 s", "recent_02_roll": "23:54, 22.8 s", "archive_03_out_of_service": "00:01:20-00:06:58 (338 s)", "txid_503": "about 00:19-00:37", "txid_controller_running": "00:43"},
+  "archive_restore": {"shard_set_seconds": 223, "runtime_restore_seconds": 112, "warm": 164, "target": 164, "failed": 0, "memory_current_bytes": 33605283840, "mem_available_kib": 32016556},
+  "load_5qps_49bit": {"mixed_versions_3_min": {"exact": 860, "errors": 0}, "after_archive_3_min": {"exact": 879, "errors": 0}},
+  "dq44_history_check": {"host": "roman-ipir-bench-8vcpu", "client": "rate-query example at 06a972db, release-fast", "client_sha256": "dd285190c2f831ba41497debcdd80d35258269155b9723d595d0229e4c3a2954", "fixture_sha256": "705770a6cd9e89c56057bd2ad8bf1b6747335a41207b59ce1caf7a9aa6c105d6", "url": "https://transparent-pir.valargroup.dev", "qps": 5, "workers": 16, "seconds": 180, "utc": ["2026-10-10T00:44:29Z", "2026-10-10T00:47:30Z"], "queries": 896, "exact": 896, "retries": 0, "upload_bytes": {"archive-wide directory": 207880, "archive-wide pages": 388104, "recent-4k-8k directory": 50184, "recent-4k-8k pages": 72712}},
+  "txid_live_lookup": {"test_binary_sha256": "a62fcb03611ea1614ce59531654c21f723024ece9f563ef184beba1c3baefad0", "pre": {"up_bytes": 80400, "down_bytes": 50383, "tier": "Archive"}, "post": {"up_bytes": 77840, "down_bytes": 51050, "tier": "Archive"}},
+  "limits": "not a soak or 20 QPS gate; no wallet regression or Vizor sync on the 44-bit path"
+}

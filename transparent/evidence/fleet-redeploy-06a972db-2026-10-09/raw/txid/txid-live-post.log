@@ -1,0 +1,7 @@
+Sat Oct 10 00:43:46 UTC 2026
+running 1 test
+live cold lookup: Provenance { map_sha256: "2a4aab02948af815733f59e9042c0ac9ff5e467f14ef899c65d14aa318b58d27", shard_id: 411, revision: 0, manifest_digest: "5a9e6112986cb3fecdda6adac9ddf3da776cf583f52bc5d8b79d4ceec660304b", tier: Archive }, up 77840 B, down 51050 B
+test txid_live_lookup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.13s
+

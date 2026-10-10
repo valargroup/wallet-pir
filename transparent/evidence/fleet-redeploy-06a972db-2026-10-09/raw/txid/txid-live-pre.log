@@ -1,0 +1,8 @@
+     Running tests/txid_client.rs (target/release-fast/deps/txid_client-f1a58445b93dc879)
+
+running 1 test
+live cold lookup: Provenance { map_sha256: "173bccdc932bc133f7da6182395d6b3b86855bf45440b05b78fa077f50348eef", shard_id: 411, revision: 0, manifest_digest: "5a9e6112986cb3fecdda6adac9ddf3da776cf583f52bc5d8b79d4ceec660304b", tier: Archive }, up 80400 B, down 50383 B
+test txid_live_lookup ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 25 filtered out; finished in 0.13s
+

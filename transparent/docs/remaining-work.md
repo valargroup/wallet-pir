@@ -91,6 +91,11 @@ the last two were found during the redeploy.
     reconciler and control-sessions units at its adapter, then restart them. Next,
     restore the original bytes kept by the router-hook transaction. After that, the
     attribution pins move to the new source.
+- [ ] Re-pin the version-1 portable worker to `2490c09d…` (full CI 37974719227 at
+  `06a972db`), which the history workers run since the
+  [`06a972db` redeploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md); the
+  pinned `34ba7ebb…` would install an older worker. `shard-control` and the controller
+  are unchanged.
 - [ ] Re-pin or retire the changed-native candidate `c3c66b9b`. It predates `a317455e`,
   so version-2 inputs would install older workers and an older controller than
   production runs, and its 13 supplemental tools have no `a317455e` build.
@@ -114,21 +119,28 @@ the last two were found during the redeploy.
   that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
   Add an explicit, logged override, or bring up a temporary third replica for each roll.
 
-## Dithered 44-bit queries (source only, 2026-10-09)
+## Dithered 44-bit queries (deployed 2026-10-09)
 
 Servers in source accept a 49-bit or a 44-bit dithered selection, by exact length, and
 `init` advertises the dithered schemes (`*_scheme_dq44`, display `scheme_dq44`). Wallets
 and txid clients built from this source send 44 bits whenever a service advertises a
 scheme they reproduce, so deploying these servers moves current clients to 44 bits with
 no further switch; older clients keep sending 49
-([architecture](architecture.md#pir-scheme)). Nothing is deployed.
+([architecture](architecture.md#pir-scheme)). History and txid display serve them since
+2026-10-09 ([deploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md)).
 
-- [ ] Before deploying them, certify every served segment at both widths: 49-bit nearest,
+- [x] Before deploying them, certify every served segment at both widths: 49-bit nearest,
   as today, and 44-bit dithered (`native_certificate --query-rounding dithered`), at the
   unchanged floors `{archive-wide-pages: 83, otherwise: 128}`. The `native-certificates`
   gate and its certifier pin must move to ipir-sp `d76e61a`'s `certify_native.py`, which
   reads dithered reports; the [screen](../evidence/dithered-query-2026-10-09/README.md)
   has the shape-level margins.
+  All 608 segments served at 3,512,212 passed at both widths
+  ([certificates](../evidence/served-segment-certificates-2026-10-09/README.md)).
+- [ ] Certify unsealed tip revisions as they are published; only one snapshot of each
+  tip is certified.
+- [ ] Move the `native-certificates` gate's checker pin to `d76e61a` and add the dithered
+  width before the next schema candidate.
 
 ## Activity metadata v3/v11 delivery (2026-09-30)
 

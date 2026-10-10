@@ -1435,14 +1435,16 @@ The full-chain journal, publication tools and reference reader retain the 12ce
 fat-LTO release identity. Worker server/control instead use a checksummed
 `transparent-publisher` bundle from comprehensive main CI.
 
-- **Selected now:** the bundle production runs since 2026-10-09
-  ([redeploy](../evidence/fleet-redeploy-2026-10-09/README.md)), full CI
+- **Selected now:** the bundle of the morning
+  [2026-10-09 redeploy](../evidence/fleet-redeploy-2026-10-09/README.md), full CI
   37921342549 at `a317455e9feecdd2639d5348188c6a2341819a4d`, built with
-  `-C target-cpu=x86-64-v3`. The workers run its `transparent-shard-server`
-  (`34ba7ebb…`) and `shard-control` (`9208555a…`). Version-1 products also
-  install its `transparent-publish-controller` (`13af048e…`) on the coordinator,
-  and its v11 `controller.json` must record `source_sha` `a317455e`, as the
-  live one does.
+  `-C target-cpu=x86-64-v3`: `transparent-shard-server` (`34ba7ebb…`) and
+  `shard-control` (`9208555a…`). Version-1 products also install its
+  `transparent-publish-controller` (`13af048e…`) on the coordinator, and its v11
+  `controller.json` must record `source_sha` `a317455e`, as the live one does.
+  The same night the workers moved to `06a972db`'s `transparent-shard-server`
+  (`2490c09d…`, [redeploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md));
+  its `shard-control` and controller are byte-identical to the selected ones.
 - **Still 12ce on the coordinator:** filter, `shard-assign` and `shard-control`.
 - **Staged for the 2026-10-03 cutover:** CI 36819961986 at `80c94f32`
   (`6db1fa05…`, `6dfe78fa…`). Its native Rust, Cargo and toolchain inputs

@@ -1,0 +1,9 @@
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.262869, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.011325, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.094174, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.059881, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.028716, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 215.647011, "exit_code": 0}
+[2m2026-10-09T23:53:06.186170Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m82 [3mrevisions[0m[2m=[0m82 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"22a89e9df15177ee72c1b5190a18abad8b17f2e96e9986b44c79b861d27a0357" [3mworker_id[0m[2m=[0m"transparent-pir-archive-03" [3massignment_sha256[0m[2m=[0m"931291683302ddc92fac5ca1d6c140a349948c60f1c8be5186893e59ad211d3c" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512299
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.012409, "exit_code": 0}
+{"worker": "transparent-pir-archive-03", "mode": "stage", "done": true}

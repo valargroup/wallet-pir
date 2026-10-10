@@ -1,0 +1,20 @@
+status-01: staged /opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir and it runs
+coordinator: staged /opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir and it runs
+status: target sha256 cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c
+worker@status-01 status-worker.service: restart
+  running 29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344 from /opt/status-pir/releases/29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344/status-pir
+  write /etc/systemd/system/status-worker.service
+router@status-01 status-router.service: restart
+  running 29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344 from /opt/status-pir/releases/29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344/status-pir
+  write /etc/systemd/system/status-router.service
+controller@coordinator status-controller-qualification.service: restart
+  running 29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344 from /opt/status-pir/releases/29b34ed3cb22ad1d003701f0e822bd2935f65536f2056ec6e883eb2da1ac2344/status-pir
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zz-native2m-dc0355b.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzz-main.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzz-status-public.conf: left in place; its ExecStart is overridden by the managed drop-in
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf: managed; replaced
+  drop-in /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-control-sessions.conf: kept (does not set ExecStart)
+  write /etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf
+status-01: staged release runs
+coordinator: staged release runs
+3 target(s) to restart, 0 unchanged

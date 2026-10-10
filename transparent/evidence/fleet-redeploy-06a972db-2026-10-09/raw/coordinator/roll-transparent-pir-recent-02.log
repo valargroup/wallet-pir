@@ -1,0 +1,13 @@
+{"event": "override", "MIN_OTHER_SERVING": {"default": 2, "this_run": 1}, "decision": "D2"}
+{"event": "roll_start", "worker": "transparent-pir-recent-02", "others_serving": ["transparent-pir-recent-01"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014549, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.014954, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.062434, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.07753, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.036256, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 6.736285, "exit_code": 0}
+[2m2026-10-09T23:53:59.236310Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"e84b88ea7e7832cbd4bcc6432a2c37210e9fee63f23ee1d8c173626ba2de1d36" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"600da5c6090110859bdbccf2c1117722e8d3c94b8bb095c69636d2ae58a8245e" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512308
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016073, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.795015, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-02", "seconds": 22.8}

@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## 44-bit dithered queries live on history and txid display, 2026-10-09
+
+History workers and txid display run `main` at `06a972db` (full CI 37974719227) since
+00:43 UTC on 2026-10-10. Their servers accept a 44-bit dithered selection beside the
+49-bit one and advertise it, so wallets and txid clients built from current source
+send 44 bits; older clients are unaffected
+([evidence](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md)).
+
+- **Gate first.** Every segment served at 3,512,212, 182 history and 426 txid display,
+  was certified at 49-bit nearest and 44-bit dithered before the deploy. All pass;
+  archive-wide pages have at least 95 and 120 bits against their 83-bit floor, every
+  other table at least 172 and 183
+  ([certificates](../evidence/served-segment-certificates-2026-10-09/README.md)).
+- **Outages.** Recent tier none (25 s and 23 s rolls). Archive shards 0–81: 338 s,
+  restored from the disk cache with no failures. Txid display returned 503 for about
+  18 minutes, which the deploy tool requires.
+- **Validation.** The 49-bit 5 QPS load stayed exact. 896/896 exact 44-bit history
+  queries at 5 QPS across all four table classes (p99 at most 29 ms), and a 44-bit txid
+  lookup from the archive tier.
+- **Not covered.** No soak, 20 QPS gate, wallet regression or Vizor sync on the 44-bit
+  path. Unsealed tip revisions published after the snapshot are covered only by the
+  shape screen.
+
 ## Wallet regression re-pinned to schema v11, 2026-10-09
 
 The public wallet regression passes again: **11/11 cases and 79/79 syncs** against both

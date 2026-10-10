@@ -1,6 +1,6 @@
 # Enhance PIR deployment
 
-The most recent production change is the [October 6 mixed-transaction fee repair](../evidence/mixed-fee-production-2026-10-06/README.md): a coordinator-only deploy of `2474cdbb` (native v9) through the deploy CLI, with historical records rebuilt from chain and adopted. The other roles kept their binaries. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
+The most recent production change is the [October 9 deploy of `06a972db`](../evidence/production-deploy-06a972db-2026-10-09/README.md): every Enhance and Status role moved to that full-CI release through the deploy CLI, which adds acceptance of 44-bit dithered selections without advertising them. Before it, the [October 6 mixed-transaction fee repair](../evidence/mixed-fee-production-2026-10-06/README.md) was a coordinator-only deploy of `2474cdbb` (native v9), with historical records rebuilt from chain and adopted. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
 
 The initial v7 SSH rollout used `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
 under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)
@@ -107,10 +107,9 @@ cutover did not run Terraform.
 ## Deploy CLI
 
 `ops/scripts/wallet-pir-deploy.py` is the repository's transactional deploy tool
-for Enhance and Status. Read-only `capture-baseline`, `plan` and `preflight`
-runs against production on 2026-09-30 matched the live units; it has not yet
-restarted a production role. Until a real release has been exercised there, the
-manual runbook below remains the procedure and the fallback.
+for Enhance and Status. It has deployed production releases since 2026-10-06
+(coordinator only) and 2026-10-09 (every Enhance and Status role); the manual
+runbook below remains the fallback.
 
 The tool runs on the coordinator, or on a workstation with the production SSH
 access, and takes a local inventory (`--inventory` or
@@ -166,7 +165,10 @@ which is enough for a no-op check or an already staged release.
 - After each restart the tool requires the unit to be active, `/proc/<MainPID>/exe`
   to have the release digest, and the role's health endpoint to report ready
   (and the same `binary_sha256`, when the endpoint reports one). After all roles
-  it runs the inventory's exact-answer command.
+  it runs the inventory's exact-answer command. `--skip-exact-check` applies only when the
+  inventory has no `exact_check`; a configured check runs on every transaction. The
+  check's SSH session has no client-side timeout, so a dropped connection leaves the
+  transaction `verifying` until the process is stopped and the transaction rolled back.
 - Every step is journaled in `~/.local/state/wallet-pir-deploy/<id>.json` before
   it happens; each host keeps the previous files in
   `/opt/enhance-pir/transactions/<id>/`. A failure restores the touched units in

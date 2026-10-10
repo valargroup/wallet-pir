@@ -1,0 +1,3 @@
+00:08:25 running exact=279 errors=0 missed=0 p99=0.039182237 fresh=9 reasons=[]
+00:09:37 running exact=300 errors=0 missed=0 p99=0.034693391 fresh=9 reasons=[]
+00:10:35 running exact=300 errors=0 missed=0 p99=0.044524833 fresh=10 reasons=[]

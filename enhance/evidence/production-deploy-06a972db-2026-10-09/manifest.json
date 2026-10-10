@@ -1,0 +1,25 @@
+{
+  "run": "production-deploy-06a972db-2026-10-09",
+  "kind": "production deploy",
+  "source_revision": "06a972db469f302d8c561416d4674e937fdde0cb",
+  "ci_run": 37974719227,
+  "tool": "ops/scripts/wallet-pir-deploy.py at 06a972db, from a workstation over pinned SSH (coordinator jump)",
+  "releases": {
+    "enhance-pir-native": {"enhance-pir-server_sha256": "a70b5fbaabe52a0deca9f5e8cb8a1e4b0c77bdb36d333fd9f23596297e38d4db", "enhance-pir-load-test_sha256": "5bce9aa7bc51741232d5fc0a78a347dfed7872fb7045bb4657acb8a53dbd9378", "protocol_revision": "ironwood-enhance-pir-v9-native-two-mask-m29", "schema_version": 11},
+    "status-pir": {"status-pir_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c", "protocol": "status-pir-v3-native-two-mask-m29"}
+  },
+  "before": {
+    "enhance": {"worker-01": "397d8ba9", "worker-02": "397d8ba9", "packing-router": "397d8ba9", "query-ingress": "397d8ba9", "coordinator": "cfeaa3ba"},
+    "status": {"worker": "29b34ed3", "router": "29b34ed3", "controller": "29b34ed3"}
+  },
+  "transactions": [
+    {"id": "enhance-20261009T215358Z-a70b5fbaabe5-f2c7a0", "targets": ["worker@worker-01"], "status": "committed"},
+    {"id": "enhance-20261009T215740Z-a70b5fbaabe5-8ff547", "targets": ["worker@worker-02"], "status": "rolled-back", "note": "exact check passed at 22:00 but its SSH session stalled; process killed 23:24, rolled back 23:28"},
+    {"id": "enhance-20261009T233025Z-a70b5fbaabe5-30a6d0", "targets": ["worker@worker-02", "packing-router@router-01", "query-ingress@coordinator", "coordinator@coordinator"], "status": "committed"},
+    {"id": "status-20261009T234307Z-cb259772123b-23e9f7", "targets": ["worker@status-01", "router@status-01", "controller@coordinator"], "status": "committed"}
+  ],
+  "alerting": {"apm_and_monitor_shadow_utc": ["2026-10-09T21:52Z", "2026-10-09T23:49Z"], "open_incidents_at_rearm": 0},
+  "exact_check": {"oracle": "/root/mixed-fee-20261006/public-oracle.new.json", "oracle_sha256": "284ceff738511fa99af52d7a0a1f0f0ced45206d71d5b324559d16ed5da2d514", "origin": "https://enhance-pir.valargroup.dev", "rate_qps": 2, "parallelism": 2, "seconds": 60, "final": {"completed": 120, "correct": 120, "errors": 0, "p50_ms": 89.0, "p99_ms": 153.5}},
+  "status_probe": {"command": "status-pir probe-live-load --origin http://127.0.0.1:8480 --query-origin http://127.0.0.1:8492 --seconds 60", "qps": 20, "offered": 1200, "correct": 1200, "failed": 0, "p99_ms": 64.0, "oracle_source": "independent", "oracle_coverage": "canonical_mined"},
+  "limits": "no load test beyond the exact checks; no 44-bit query sent to Enhance or Status; public availability during restarts not probed"
+}
