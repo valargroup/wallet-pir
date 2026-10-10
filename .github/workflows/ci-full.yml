@@ -305,7 +305,7 @@ jobs:
           python3 tools/ci/stage.py compile:native-cuda-check -- cargo check --locked -p enhance-pir-server -p enhance-pir-load-test --features native-reinspiring,cuda
           tools/ci/full-test.sh --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --test packing_http --test status_wallet --test enhance_wallet_native
           python3 tools/ci/stage.py tests:native-lib -- cargo test --locked --profile release-fast -p enhance-pir --features native-reinspiring --lib native
-          python3 tools/ci/stage.py tests:native-status -- cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib status::
+          python3 tools/ci/stage.py tests:native-server-lib -- cargo test --locked --profile release-fast -p enhance-pir-server --features native-reinspiring --lib
           python3 tools/ci/stage.py tests:pir-native -- cargo test --locked --profile release-fast -p pir-native
 
       - name: Check optional CUDA worker without a GPU
