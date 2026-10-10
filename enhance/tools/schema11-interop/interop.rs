@@ -214,7 +214,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
         chain::BlockSource,
         enhance_pir::{
             EnhancePirBatchResult, EnhancePirRead, EnhancePirStoreResult, EnhancePirWork,
-            EnhancePirWrite, EnhancementMode,
+            EnhancePirWrite, EnhancementMode, TransactionEnhancementWork,
         },
         testing::{AddressType, FakeCompactOutput, IronwoodFvk, TestBuilder},
     };
@@ -259,12 +259,12 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
     let requests: Vec<_> = wallet
         .wallet()
         .db()
-        .enhance_pir_work()
+        .transaction_enhancement_work()
         .unwrap()
         .into_iter()
-        .filter_map(|w| match w {
-            EnhancePirWork::Query(r) => Some(r),
-            _ => None,
+        .map(|w| match w {
+            TransactionEnhancementWork::Private(EnhancePirWork::Query(r)) => r,
+            other => panic!("scanned fixture must route to a private query: {other:?}"),
         })
         .collect();
     assert_eq!(requests.len(), 2);
@@ -404,7 +404,7 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             .unwrap(),
         EnhancePirBatchResult::Rejected { .. }
     ));
-    let remaining = wallet.wallet().db().enhance_pir_work().unwrap();
+    let remaining = wallet.wallet().db().transaction_enhancement_work().unwrap();
     assert_eq!(remaining.len(), 2);
     assert_eq!(
         wallet
@@ -414,7 +414,12 @@ async fn scanned_wallet_applies_one_real_pir_row_atomically() {
             .unwrap(),
         EnhancePirBatchResult::Committed(vec![EnhancePirStoreResult::Stored; 3])
     );
-    assert!(wallet.wallet().db().enhance_pir_work().unwrap().is_empty());
+    assert!(wallet
+        .wallet()
+        .db()
+        .transaction_enhancement_work()
+        .unwrap()
+        .is_empty());
     for task in tasks {
         task.abort();
     }

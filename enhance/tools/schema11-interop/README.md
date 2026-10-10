@@ -6,9 +6,11 @@ Run from the wallet-pir checkout:
 python3 enhance/tools/schema11-interop/run.py /absolute/path/to/wallet-libraries
 ```
 
-The runner checks that wallet-libraries is at PR #28 commit
-`de3ec78f31b6fd184596fc952fe4f78d3a63cd0a` and that its tracked Rust sources and
-workspace manifests are unchanged. It creates a temporary Cargo project,
+The runner uses a wallet checkout where Enhance support is part of the backend
+and SQLite `orchard` feature. It prints the checkout's revision and an Enhance
+client source fingerprint. Pass `--wallet-revision <commit>` to require an exact
+revision. The fingerprint does not check for changes elsewhere in the checkout.
+It creates a temporary Cargo project,
 uses the supplied wallet checkout and the current server sources, and writes
 build artifacts under `target/schema11-interop`. It does not modify the wallet.
 Cargo may download dependencies; tests use loopback servers and synthetic keys.
