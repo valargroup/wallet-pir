@@ -119,9 +119,12 @@ loopback `serve-live` listener with `--origin` and needs the same local RPC
 cookie path. The [SSH trial](../evidence/status-live-trial-2026-09-25/README.md)
 records the first deployed synthetic load and live encrypted checks.
 
-The default 64-block window is for source inspection and the diagnostic is
-bounded to 4,096 blocks. It does not establish
-the production retention window or publication cadence.
+The 64-block `--window-blocks` default suits source inspection. Every source
+path, including the live controller, is capped at 4,096 blocks
+(`MAX_INSPECTION_BLOCKS`). The live controller has run at that cap since
+2026-09-27. Its limits and trade-offs are in
+[Observation window](architecture_status.md#observation-window). This command
+does not establish the production publication cadence.
 
 ## Isolated deployment and probes
 

@@ -308,6 +308,90 @@ expiry decision. The existing expiry, durable attempt-state, and input-lock
 checks remain mandatory. Insufficient evidence preserves locks and recovery
 state, even if that delays retirement indefinitely for an old candidate.
 
+### Observation window
+
+The controller's `window_blocks` is the most canonical blocks the source
+retains; published coverage is that many blocks or fewer. The live controller
+has used 4,096 blocks, about 3.6 days at the measured 75.5-second spacing, since
+the [September 27 change](../evidence/status-window-4096-2026-09-27/README.md).
+That value is `MAX_INSPECTION_BLOCKS` in
+`enhance/services/enhance-pir-server/src/status/source.rs`, a cap from the
+read-only inspection source that `RollingWindow` applies to every caller. The
+change raised the window from 64 blocks to the cap without a separate sizing
+analysis, so 4,096 is not a derived retention target. A larger window needs a
+code change to the cap as well as the config.
+
+Table capacity is not the limit today. The 4,096-block publication held 32,331
+entries, 2.1% of the 1,572,864-entry admission limit. At the sampled average of
+7.6 transactions per block, that limit holds roughly 200,000 blocks; 4,096
+blocks at the sampled 48-transaction maximum would be about 197,000 entries.
+The costs that grow with the window are:
+
+- **Cold start.** Without a usable checkpoint the source fetches the whole
+  window, a raw `getblock` and a `getblockhash` per height in sequence, and must
+  finish before the tip moves. Otherwise the observation fails with `TipChanged`,
+  the partial fetch is discarded and the next attempt starts over. If the fetch
+  takes `T` seconds and blocks arrive roughly as a Poisson process, an attempt
+  succeeds with probability about `exp(-T / 75.5)`. On September 27 public
+  Status was unavailable for about 20 seconds; 13.7 seconds of that was the
+  first full rebuild after the observation, so process start and the
+  4,096-block refetch took roughly 6 seconds. That split is inferred from the
+  record's timestamps, not measured separately.
+- **Checkpoint compatibility.** `source.bin` (`STSOBS01`) records
+  `window_blocks`, and `RollingWindow::open` rejects a checkpoint with a
+  different value. Every window change is therefore a cold start. The old
+  checkpoint must be moved aside, which also discards its retained fork
+  observations. Loading rejects more than 4,000,000 retained txids
+  (`MAX_CHECKPOINT_TXIDS`), which is above the admission limit.
+- **Checkpoint size and writes.** The file is 84 bytes plus 72 per block, 32
+  per mined txid and 68 per fork observation. That is about 1.3 MB at 4,096
+  blocks and today's load, and about 50 MB at the admission limit (computed
+  from the format, not measured). It is rewritten in full with `fsync` whenever
+  the retained blocks or forks change, which means every new block. Reads and
+  writes are unbuffered, one system call per field.
+- **Per-poll work.** Every one-second observation copies the retained blocks
+  and rebuilds the complete record map, bucket counts and row image, even when
+  nothing changed. Controller memory and CPU per poll grow linearly with
+  retained entries. The September 27 record did not measure controller memory.
+- **Full rebuild.** The first publication after a restart rebuilds the worker
+  and router (8.5 and 3.6 seconds on September 27). The database size is fixed
+  by the geometry. Whether rebuild time changes with occupancy has not been
+  measured.
+- **RPC load.** Bootstrap sends two sequential RPCs per block to the
+  coordinator's Zakura node, about 8,200 for 4,096 blocks. In steady state the
+  source fetches only new blocks.
+- **Per-bucket overflow.** The index evicts the oldest complete blocks until
+  every bucket fits, then publishes the resulting `coverage_start`. A larger
+  configured window does not guarantee more coverage. Near the ceiling, or
+  when a burst or txids ground against the public salt fill one bucket, actual
+  coverage is shorter than configured. Monitor published coverage
+  (`anchor_height - coverage_start + 1`), not the configured value.
+
+A short window loses answers but does not produce wrong ones. If a lookup's
+earliest possible inclusion height precedes `coverage_start`, the result is
+`CoverageIncomplete`, never `NotFound`, and confirmed wallet state is not
+cleared (see the two sections above). Some cases get no answer: transactions
+mined before the window, including those of wallets offline for longer than it,
+and migration retirement whose expiry height predates coverage. Their locks and
+recovery state stay in place. At 4,096 blocks this horizon is about 3.6 days.
+
+Size the window and the row count together. A proposed reduction from 8,192 to
+2,048 rows, which makes requests about 46% smaller, would lower the admission
+limit to 393,216 entries. That is roughly 51,000 blocks at 7.6 transactions per
+block and about 8,200 at a sustained 48. It still covers the current window
+(32,331 entries is 8.2% of it) but caps any future growth.
+
+Before raising the window, measure on the production controller and record the
+results as evidence:
+
+- cold-start fetch time against the 75.5-second block interval, with margin
+  for the retry probability above;
+- checkpoint size, load time and per-block rewrite time;
+- controller memory and per-poll observation time at the expected entry count;
+- first full-rebuild time after a restart;
+- Zakura RPC load during bootstrap;
+- published coverage against the configured window under peak load.
+
 ## Observation collection and publication
 
 ### Source consistency and freshness
