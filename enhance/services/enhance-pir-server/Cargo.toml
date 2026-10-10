@@ -17,7 +17,7 @@ path = "src/bin/status.rs"
 
 [features]
 default = []
-native-reinspiring = ["enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring", "zakura-pir-enhance/native-reinspiring"]
+native-reinspiring = ["enhance-pir/native-reinspiring", "dep:pir-native", "dep:reinspiring", "ipir-sp/native-reinspiring"]
 cuda = ["ipir-sp/cuda", "dep:simplepir-kernel"]
 
 [dependencies]
@@ -52,8 +52,8 @@ zakura-chain = { git = "https://github.com/zakura-core/zakura.git", rev = "1faf1
 
 [dev-dependencies]
 zakura-pir-status = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72" }
-# Independent wallet Enhance client; the native feature follows the server feature.
-zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ae8b023207bd35f42862314190b69d9e490fed72", default-features = false, features = ["https-client"] }
+# Independent wallet Enhance client, which is native-only.
+zakura-pir-enhance = { git = "https://github.com/zakura-core/wallet-libraries.git", rev = "ba2f8cad6cf30bfd52a737e6048c83222dc8fa87", default-features = false }
 simplepir-kernel = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }

@@ -39,11 +39,16 @@ impl Transport for PlainHttp {
             .header("content-type", "application/octet-stream")
             .body(request.body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| wallet::ClientError::Transport(e.to_string()))?;
         if !response.status().is_success() {
             return Err(wallet::ClientError::HttpStatus(response.status().as_u16()));
         }
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| wallet::ClientError::Transport(e.to_string()))?
+        {
             body.extend(&chunk)?;
         }
         Ok(body.finish())
@@ -179,6 +184,8 @@ async fn wallet_library_decodes_native_two_mask_answers_over_the_distributed_pat
         ENHANCE_LAYOUT,
     )
     .unwrap();
+    // Three used rows of a 4,096-row domain: the wallet selects over one
+    // 2,048-row block, so this also covers its prefix upload end to end.
     let records: u64 = 67;
     let anchor_hash = "01".repeat(32);
     journal
