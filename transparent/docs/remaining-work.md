@@ -91,11 +91,12 @@ the last two were found during the redeploy.
     reconciler and control-sessions units at its adapter, then restart them. Next,
     restore the original bytes kept by the router-hook transaction. After that, the
     attribution pins move to the new source.
-- [ ] Re-pin the version-1 portable worker to `2490c09d…` (full CI 37974719227 at
-  `06a972db`), which the history workers run since the
-  [`06a972db` redeploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md); the
-  pinned `34ba7ebb…` would install an older worker. `shard-control` and the controller
-  are unchanged.
+- [ ] Re-pin the version-1 portable executables to full CI 38011976059 at `9d2cbda0`,
+  which production runs since the
+  [`9d2cbda0` redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md):
+  `transparent-shard-server` `6ab86d6a…`, `shard-control` `ff3c0264…` and
+  `transparent-publish-controller` `6041ea47…`, with `controller.json` `source_sha`
+  `9d2cbda0`. The pinned `a317455e` bytes would install older executables.
 - [ ] Re-pin or retire the changed-native candidate `c3c66b9b`. It predates `a317455e`,
   so version-2 inputs would install older workers and an older controller than
   production runs, and its 13 supplemental tools have no `a317455e` build.
@@ -127,7 +128,8 @@ and txid clients built from this source send 44 bits whenever a service advertis
 scheme they reproduce, so deploying these servers moves current clients to 44 bits with
 no further switch; older clients keep sending 49
 ([architecture](architecture.md#pir-scheme)). History and txid display serve them since
-2026-10-09 ([deploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md)).
+2026-10-09 ([deploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md); now on
+`9d2cbda0`, [redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
 
 - [x] Before deploying them, certify every served segment at both widths: 49-bit nearest,
   as today, and 44-bit dithered (`native_certificate --query-rounding dithered`), at the

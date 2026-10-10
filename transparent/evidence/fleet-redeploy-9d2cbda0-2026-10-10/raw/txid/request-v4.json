@@ -1,0 +1,145 @@
+{
+ "baseline": {
+  "archive": {
+   "mem_available_bytes": 66510483456
+  },
+  "coordinator": {
+   "mem_available_bytes": 47277842432
+  },
+  "recent": {
+   "mem_available_bytes": 6031306752
+  }
+ },
+ "controller": {
+  "archive_target": 40000,
+  "archives": 425,
+  "blocks_per_step": 25,
+  "geometry": "txid-2k",
+  "max_archive_shards": 1000,
+  "mode": "replay-then-live",
+  "n_archive": 1,
+  "n_recent": 1,
+  "recent_floor": 10000,
+  "reorg_margin": 100,
+  "replay_seals": 4,
+  "rpc_cookie": "/root/.cache/zakura/.cookie",
+  "rpc_url": "http://127.0.0.1:8232",
+  "step_interval_ms": 2000
+ },
+ "history": {
+  "adapter": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py",
+  "fleet": "/opt/transparent-publisher/v11/fleet.json",
+  "load_status": "/srv/transparent-activity/canonical-load/v11/status.json",
+  "membership": "/opt/transparent-publisher/v11/state/membership.json"
+ },
+ "hosts": {
+  "archive": {
+   "inventory": "txid-display-01",
+   "vpc_ip": "10.142.0.6"
+  },
+  "coordinator": {
+   "inventory": "coordinator"
+  },
+  "recent": {
+   "inventory": "recent-01",
+   "vpc_ip": "10.142.0.10"
+  },
+  "router": {
+   "inventory": "router-01"
+  }
+ },
+ "journal": {
+  "data_dir": "/srv/txid-display-genesis/journal-v2x",
+  "node_cache_dir": "/root/.cache/zakura",
+  "start_height": 0
+ },
+ "measure": {
+  "output": "/srv/txid-display-genesis/v2/measure",
+  "public_url": "https://transparent-pir.valargroup.dev"
+ },
+ "ports": {
+  "controller_status": 8099,
+  "worker": 8095
+ },
+ "publication": {
+  "root": "/srv/txid-display-genesis/v2/root"
+ },
+ "release": {
+  "archive_sha256": "e261ce07e9b46728171cb44d1a5fb83e809dea2ebfc36ba064ecbd8b20689090",
+  "binaries": {
+   "transparent-event-ingest": "c8938d122119bbbad7d1bd30b53355a60135cd41c8d5b708050b13a0b0690236",
+   "transparent-txid-server": "f4751961f16b37e4c0e8cacd9efe7cde2883f4f1956b48b17b2abc092a3b3401",
+   "txid-control": "7d5a2505e1eadb3a45b3a02e61a1d74917adfd87f6cbc7b6c0a4fbac0ade8b18",
+   "txid-display-controller": "b522bb84722fd2d9db887c4f8172191e4b6e9630769539fbdc496916ef7b7c38",
+   "txid-inventory": "ce88a3f4fda8a938956a82e9cc9666e799e35d46b7ba859c10e5578f50967a32"
+  },
+  "ci_run": 38011976059,
+  "files": {
+   "transparent-txid-display-controller.service.in": "bceb3cf47aa3177e1a671208a89e31ca4d58c74528a61f8566ee1ceebe66f604",
+   "transparent-txid-display-worker.service.in": "015d4c409d12a4ea29243706a21cd3697a65be009ed29dacabc5d6c17b8d5bde",
+   "txid-display-fleet.py": "4871c83494166730752c451eeb5ae147cf8f16eced05b7d31a6ab91b00a71e6a",
+   "txid-display-observe.py": "f474d75b3b620ec3158bd69b4b0ad1573e51c37e92a47eda71e1795739b022e4",
+   "txid-display-routes.caddy.in": "8f9de70fb2390e54cc00b5e28249a6c4ce1263d5fc8ea730f68610d7985fadcb"
+  }
+ },
+ "router": {
+  "import_glob": "/etc/caddy/txid-display/*.caddy",
+  "live_fleet_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083"
+ },
+ "schema": "txid-display-poc-request-v1",
+ "source_sha": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7",
+ "terraform": {
+  "root": "/opt/enhance-pir/infra/production",
+  "wrapper": "/opt/enhance-pir/ops/wallet-pir-terraform.sh"
+ },
+ "units": {
+  "archive": {
+   "build_slots": 2,
+   "build_threads": 4,
+   "cache_bytes": 25769803776,
+   "cpu_quota": "600%",
+   "cpu_weight": 50,
+   "disk_cache_bytes": 34359738368,
+   "memory_max": "40G",
+   "nice": 5,
+   "oom_score_adjust": 500,
+   "query_slots": 8,
+   "ready_timeout_seconds": 7200,
+   "retain_revisions": 2
+  },
+  "bootstrap": {
+   "cpu_quota": "400%",
+   "cpu_weight": 20,
+   "memory_max": "8G",
+   "nice": 10
+  },
+  "controller": {
+   "cpu_quota": "200%",
+   "cpu_weight": 20,
+   "memory_max": "4G",
+   "nice": 10
+  },
+  "ingest": {
+   "cpu_quota": "400%",
+   "cpu_weight": 20,
+   "io_weight": 20,
+   "memory_max": "12G",
+   "nice": 10,
+   "workers": 4
+  },
+  "recent": {
+   "build_slots": 1,
+   "build_threads": 2,
+   "cache_bytes": 536870912,
+   "cpu_quota": "200%",
+   "cpu_weight": 50,
+   "disk_cache_bytes": null,
+   "memory_max": "1.5G",
+   "nice": 10,
+   "oom_score_adjust": 1000,
+   "query_slots": 2,
+   "ready_timeout_seconds": 600,
+   "retain_revisions": 1
+  }
+ }
+}

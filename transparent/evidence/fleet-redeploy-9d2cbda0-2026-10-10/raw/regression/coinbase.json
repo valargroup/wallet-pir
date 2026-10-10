@@ -1,0 +1,1028 @@
+{
+  "checkpoints": [
+    {
+      "anchor": {
+        "hash": "00000000006e1ab7eccdb7f5a33f56dc4cb32e4a5ad04a3f46a32913a0176994",
+        "height": 3473678
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "2db9449028e276229228738105ec5890631f01e5f76729323fe2ce16b693699d",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "2db9449028e276229228738105ec5890631f01e5f76729323fe2ce16b693699d",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512513,
+          "manifest_digest": "58fbd5d538cf02f51016ba59852a3d32373c8fb8053583a7d5caf3e6da56abd7",
+          "revision": 1677,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 89,
+          "down": 26834987,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 86,
+          "routes": [
+            "/v1/filters/shards/0/filter",
+            "/v1/filters/shards/1/filter",
+            "/v1/filters/shards/2/filter",
+            "/v1/filters/shards/3/filter",
+            "/v1/filters/shards/4/filter",
+            "/v1/filters/shards/5/filter",
+            "/v1/filters/shards/6/filter",
+            "/v1/filters/shards/7/filter",
+            "/v1/filters/shards/8/filter",
+            "/v1/filters/shards/9/filter",
+            "/v1/filters/shards/10/filter",
+            "/v1/filters/shards/11/filter",
+            "/v1/filters/shards/12/filter",
+            "/v1/filters/shards/13/filter",
+            "/v1/filters/shards/14/filter",
+            "/v1/filters/shards/15/filter",
+            "/v1/filters/shards/16/filter",
+            "/v1/filters/shards/17/filter",
+            "/v1/filters/shards/18/filter",
+            "/v1/filters/shards/19/filter",
+            "/v1/filters/shards/20/filter",
+            "/v1/filters/shards/21/filter",
+            "/v1/filters/shards/22/filter",
+            "/v1/filters/shards/23/filter",
+            "/v1/filters/shards/24/filter",
+            "/v1/filters/shards/25/filter",
+            "/v1/filters/shards/26/filter",
+            "/v1/filters/shards/27/filter",
+            "/v1/filters/shards/28/filter",
+            "/v1/filters/shards/29/filter",
+            "/v1/filters/shards/30/filter",
+            "/v1/filters/shards/31/filter",
+            "/v1/filters/shards/32/filter",
+            "/v1/filters/shards/33/filter",
+            "/v1/filters/shards/34/filter",
+            "/v1/filters/shards/35/filter",
+            "/v1/filters/shards/36/filter",
+            "/v1/filters/shards/37/filter",
+            "/v1/filters/shards/38/filter",
+            "/v1/filters/shards/39/filter",
+            "/v1/filters/shards/40/filter",
+            "/v1/filters/shards/41/filter",
+            "/v1/filters/shards/42/filter",
+            "/v1/filters/shards/43/filter",
+            "/v1/filters/shards/44/filter",
+            "/v1/filters/shards/45/filter",
+            "/v1/filters/shards/46/filter",
+            "/v1/filters/shards/47/filter",
+            "/v1/filters/shards/48/filter",
+            "/v1/filters/shards/49/filter",
+            "/v1/filters/shards/50/filter",
+            "/v1/filters/shards/51/filter",
+            "/v1/filters/shards/52/filter",
+            "/v1/filters/shards/53/filter",
+            "/v1/filters/shards/54/filter",
+            "/v1/filters/shards/55/filter",
+            "/v1/filters/shards/56/filter",
+            "/v1/filters/shards/57/filter",
+            "/v1/filters/shards/58/filter",
+            "/v1/filters/shards/59/filter",
+            "/v1/filters/shards/60/filter",
+            "/v1/filters/shards/61/filter",
+            "/v1/filters/shards/62/filter",
+            "/v1/filters/shards/63/filter",
+            "/v1/filters/shards/64/filter",
+            "/v1/filters/shards/65/filter",
+            "/v1/filters/shards/66/filter",
+            "/v1/filters/shards/67/filter",
+            "/v1/filters/shards/68/filter",
+            "/v1/filters/shards/69/filter",
+            "/v1/filters/shards/70/filter",
+            "/v1/filters/shards/71/filter",
+            "/v1/filters/shards/72/filter",
+            "/v1/filters/shards/73/filter",
+            "/v1/filters/shards/74/filter",
+            "/v1/filters/shards/75/filter",
+            "/v1/filters/shards/76/filter",
+            "/v1/filters/shards/77/filter",
+            "/v1/filters/shards/78/filter",
+            "/v1/filters/shards/79/filter",
+            "/v1/filters/shards/80/filter",
+            "/v1/filters/shards/81/filter",
+            "/v1/filters/shards/82/filter",
+            "/v1/filters/shards/83/filter",
+            "/v1/filters/shards/84/filter",
+            "/v1/filters/shards/85/filter",
+            "/v1/filters/shards/86/filter",
+            "/v1/filters/shards/87/filter",
+            "/v1/filters/shards/88/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 53423,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 10723,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 3,
+          "down": 48880,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/manifest",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/manifest",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 3,
+          "down": 16944,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/directory",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/directory",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/directory"
+          ],
+          "up": 150552
+        },
+        "query_pages": {
+          "calls": 37,
+          "down": 208976,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 386993,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages"
+          ],
+          "up": 2690344
+        },
+        "setup_directory": {
+          "calls": 3,
+          "down": 60363,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/setup/directory/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/directory/0",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 3,
+          "down": 60351,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 12225,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/setup/pages/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/pages/0",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 33548,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 2.541244985
+    },
+    {
+      "anchor": {
+        "hash": "00000000001e84d0b5d8289f77ded7b2f7c55b67068e1d7e82b091e82b0a848f",
+        "height": 3473679
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512514,
+          "manifest_digest": "b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0",
+          "revision": 1678,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 9399,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 1,
+          "down": 19356,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 1,
+          "down": 5648,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/directory"
+          ],
+          "up": 50184
+        },
+        "query_pages": {
+          "calls": 10,
+          "down": 56480,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 135898,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages"
+          ],
+          "up": 727120
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 12422,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 0.40517108
+    },
+    {
+      "anchor": {
+        "hash": "00000000002600a2bc04cb08728fd7bef0229d2de863ac37b6c78ddb8802310d",
+        "height": 3492693
+      },
+      "anchor_coverage": "settled",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512514,
+          "manifest_digest": "b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0",
+          "revision": 1678,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 119320,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 6204,
+          "routes": [
+            "/v1/filters/shards/89/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 9820,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 2,
+          "down": 37678,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/manifest",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 2,
+          "down": 11296,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/directory",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/directory"
+          ],
+          "up": 100368
+        },
+        "query_pages": {
+          "calls": 21,
+          "down": 118608,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 202994,
+          "routes": [
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages"
+          ],
+          "up": 1526952
+        },
+        "setup_directory": {
+          "calls": 1,
+          "down": 20121,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 20117,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 2531,
+          "routes": [
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 15080,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 0.747964521
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "continue",
+      "publication": {
+        "filter_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512514,
+          "manifest_digest": "b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0",
+          "revision": 1678,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 1,
+          "down": 33608,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 5883,
+          "routes": [
+            "/v1/filters/shards/90/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 1,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 8967,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 2,
+          "down": 24507,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/manifest",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 2,
+          "down": 11296,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/directory",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/directory"
+          ],
+          "up": 100368
+        },
+        "query_pages": {
+          "calls": 16,
+          "down": 90368,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 175940,
+          "routes": [
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages"
+          ],
+          "up": 994432
+        },
+        "setup_directory": {
+          "calls": 1,
+          "down": 20121,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 1,
+          "down": 20117,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 15030,
+          "routes": [
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 16082,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 0.594890363
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "repeat",
+      "publication": {
+        "filter_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512514,
+          "manifest_digest": "b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0",
+          "revision": 1678,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 9041,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        }
+      },
+      "seconds": 0.021982496
+    },
+    {
+      "anchor": {
+        "hash": "000000000043452bfb6577b7244117cf7e9135b3bcee9f236bf8d4f9ca519235",
+        "height": 3511700
+      },
+      "anchor_coverage": "provisional",
+      "completion": "Complete",
+      "error": null,
+      "phase": "fresh-final",
+      "publication": {
+        "filter_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "filter_url": "https://enhance-pir.valargroup.dev",
+        "origin_tail_skew_blocks": 0,
+        "shard_map_sha256": "24677d637bbf672fafe74a5a4d9f322a6f157b014c0538a8b2c96b5fccc98837",
+        "shard_url": "https://transparent-pir.valargroup.dev",
+        "shards": 91,
+        "tail": {
+          "end_height": 3512514,
+          "manifest_digest": "b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0",
+          "revision": 1678,
+          "sealed": false,
+          "shard_id": 90
+        }
+      },
+      "requests": {
+        "filters": {
+          "calls": 91,
+          "down": 26987915,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 88,
+          "routes": [
+            "/v1/filters/shards/0/filter",
+            "/v1/filters/shards/1/filter",
+            "/v1/filters/shards/2/filter",
+            "/v1/filters/shards/3/filter",
+            "/v1/filters/shards/4/filter",
+            "/v1/filters/shards/5/filter",
+            "/v1/filters/shards/6/filter",
+            "/v1/filters/shards/7/filter",
+            "/v1/filters/shards/8/filter",
+            "/v1/filters/shards/9/filter",
+            "/v1/filters/shards/10/filter",
+            "/v1/filters/shards/11/filter",
+            "/v1/filters/shards/12/filter",
+            "/v1/filters/shards/13/filter",
+            "/v1/filters/shards/14/filter",
+            "/v1/filters/shards/15/filter",
+            "/v1/filters/shards/16/filter",
+            "/v1/filters/shards/17/filter",
+            "/v1/filters/shards/18/filter",
+            "/v1/filters/shards/19/filter",
+            "/v1/filters/shards/20/filter",
+            "/v1/filters/shards/21/filter",
+            "/v1/filters/shards/22/filter",
+            "/v1/filters/shards/23/filter",
+            "/v1/filters/shards/24/filter",
+            "/v1/filters/shards/25/filter",
+            "/v1/filters/shards/26/filter",
+            "/v1/filters/shards/27/filter",
+            "/v1/filters/shards/28/filter",
+            "/v1/filters/shards/29/filter",
+            "/v1/filters/shards/30/filter",
+            "/v1/filters/shards/31/filter",
+            "/v1/filters/shards/32/filter",
+            "/v1/filters/shards/33/filter",
+            "/v1/filters/shards/34/filter",
+            "/v1/filters/shards/35/filter",
+            "/v1/filters/shards/36/filter",
+            "/v1/filters/shards/37/filter",
+            "/v1/filters/shards/38/filter",
+            "/v1/filters/shards/39/filter",
+            "/v1/filters/shards/40/filter",
+            "/v1/filters/shards/41/filter",
+            "/v1/filters/shards/42/filter",
+            "/v1/filters/shards/43/filter",
+            "/v1/filters/shards/44/filter",
+            "/v1/filters/shards/45/filter",
+            "/v1/filters/shards/46/filter",
+            "/v1/filters/shards/47/filter",
+            "/v1/filters/shards/48/filter",
+            "/v1/filters/shards/49/filter",
+            "/v1/filters/shards/50/filter",
+            "/v1/filters/shards/51/filter",
+            "/v1/filters/shards/52/filter",
+            "/v1/filters/shards/53/filter",
+            "/v1/filters/shards/54/filter",
+            "/v1/filters/shards/55/filter",
+            "/v1/filters/shards/56/filter",
+            "/v1/filters/shards/57/filter",
+            "/v1/filters/shards/58/filter",
+            "/v1/filters/shards/59/filter",
+            "/v1/filters/shards/60/filter",
+            "/v1/filters/shards/61/filter",
+            "/v1/filters/shards/62/filter",
+            "/v1/filters/shards/63/filter",
+            "/v1/filters/shards/64/filter",
+            "/v1/filters/shards/65/filter",
+            "/v1/filters/shards/66/filter",
+            "/v1/filters/shards/67/filter",
+            "/v1/filters/shards/68/filter",
+            "/v1/filters/shards/69/filter",
+            "/v1/filters/shards/70/filter",
+            "/v1/filters/shards/71/filter",
+            "/v1/filters/shards/72/filter",
+            "/v1/filters/shards/73/filter",
+            "/v1/filters/shards/74/filter",
+            "/v1/filters/shards/75/filter",
+            "/v1/filters/shards/76/filter",
+            "/v1/filters/shards/77/filter",
+            "/v1/filters/shards/78/filter",
+            "/v1/filters/shards/79/filter",
+            "/v1/filters/shards/80/filter",
+            "/v1/filters/shards/81/filter",
+            "/v1/filters/shards/82/filter",
+            "/v1/filters/shards/83/filter",
+            "/v1/filters/shards/84/filter",
+            "/v1/filters/shards/85/filter",
+            "/v1/filters/shards/86/filter",
+            "/v1/filters/shards/87/filter",
+            "/v1/filters/shards/88/filter",
+            "/v1/filters/shards/89/filter",
+            "/v1/filters/shards/90/filter"
+          ],
+          "up": 0
+        },
+        "filters_prefetch": {
+          "calls": 1,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 55734,
+          "routes": [],
+          "up": 0
+        },
+        "init": {
+          "calls": 1,
+          "down": 6254,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 8496,
+          "routes": [
+            "/v1/shards/init"
+          ],
+          "up": 0
+        },
+        "manifest": {
+          "calls": 5,
+          "down": 73387,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/manifest",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/manifest",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/manifest",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/manifest",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/manifest"
+          ],
+          "up": 0
+        },
+        "query_directory": {
+          "calls": 5,
+          "down": 28240,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/directory",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/directory",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/directory",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/directory",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/directory"
+          ],
+          "up": 250920
+        },
+        "query_pages": {
+          "calls": 53,
+          "down": 299344,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 534016,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/query/pages"
+          ],
+          "up": 3684776
+        },
+        "setup_directory": {
+          "calls": 5,
+          "down": 100605,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 0,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/setup/directory/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/directory/0",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/setup/directory/0",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/setup/directory/0",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/setup/directory/0"
+          ],
+          "up": 0
+        },
+        "setup_pages": {
+          "calls": 5,
+          "down": 100585,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 13217,
+          "routes": [
+            "/v1/shards/86/revisions/7f9b6f8605716d285fcc4bcc4630a868fe75e45fbd3f0c0bc9cd940937d8b124/setup/pages/0",
+            "/v1/shards/87/revisions/ff12d5aa7f0967a291ba43f911bffba930666f7e7b7a8101d3b92a71ba33cbfb/setup/pages/0",
+            "/v1/shards/88/revisions/661b71c34bded948f73a9007287e53a5e628e088f7b55665b313fbccce2d5655/setup/pages/0",
+            "/v1/shards/89/revisions/5a6a8eacf2d79b9e18c0f290cea3a41a3d66fd35fa050555f8592012eefd1d94/setup/pages/0",
+            "/v1/shards/90/revisions/b6e73ad12dcdada66c47e7fd262dc279293e8cd116f9651358e02cc0566b04e0/setup/pages/0"
+          ],
+          "up": 0
+        },
+        "shards_batch": {
+          "calls": 2,
+          "down": 0,
+          "failures": 0,
+          "http_409": 0,
+          "http_503": 0,
+          "micros": 32568,
+          "routes": [],
+          "up": 0
+        }
+      },
+      "seconds": 3.043459284
+    }
+  ],
+  "error": null,
+  "http": {
+    "attempts": 385,
+    "failed_attempts": 0,
+    "failed_requests": 0,
+    "log": "case-coinbase.http.ndjson",
+    "recovered_requests": 0,
+    "requests": 385
+  },
+  "id": "coinbase",
+  "passed": true,
+  "profile": "coinbase"
+}

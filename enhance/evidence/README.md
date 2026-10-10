@@ -18,6 +18,9 @@ release and must not be read as current source paths.
 
 ## Current protocol and release inputs
 
+- [Enhance and Status production deploy of `9d2cbda0`](production-deploy-9d2cbda0-2026-10-10/README.md) —
+  every role on the release that also accepts query-row prefixes; exact answers
+  120/120 twice and Status probe 1,200/1,200.
 - [Enhance and Status production deploy of `06a972db`](production-deploy-06a972db-2026-10-09/README.md) —
   all eight roles on the full-CI release that also accepts 44-bit dithered queries
   (nothing advertises them); exact answers 120/120 and Status probe 1,200/1,200 after;

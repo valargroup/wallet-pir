@@ -1,0 +1,2 @@
+caddy_http_request_duration_seconds_count{code="502",handler="subroute",method="GET",server="srv0"} 1
+caddy_http_request_duration_seconds_count{code="503",handler="subroute",method="GET",server="srv0"} 4

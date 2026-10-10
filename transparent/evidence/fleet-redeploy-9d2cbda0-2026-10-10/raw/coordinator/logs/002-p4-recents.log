@@ -1,0 +1,52 @@
+### start 2026-10-10T03:26:51.776Z
+### cmd:
+bash $DEP/steps/p4-recents.sh
+### output:
+2026-10-10T03:26:52Z
+stopped-clean
+{"event": "override", "MIN_OTHER_SERVING": {"default": 2, "this_run": 1}, "decision": "D2"}
+{"event": "roll_start", "worker": "transparent-pir-recent-01", "others_serving": ["transparent-pir-recent-02"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.296809, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.013073, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.06062, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.060883, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.035011, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 6.282172, "exit_code": 0}
+[2m2026-10-10T03:26:59.279070Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"dca700c9101e43196a422c645dd7344fd904b093222cb248def4a164dc0de616" [3mworker_id[0m[2m=[0m"transparent-pir-recent-01" [3massignment_sha256[0m[2m=[0m"deb3c85877b4e78132f97e0e248e7281bce2373c1c6c117562b4d6f35ce84f85" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512478
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.016664, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.83753, "exit_code": 0}
+transparent-pir-recent-01: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-01", "seconds": 22.7}
+transparent-pir-recent-01 roll rc=0 wall=23s
+membership age 0.9 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'dca700c9101e'), 'transparent-pir-recent-02': ('serving', True, True, 'dca700c9101e'), 'transparent-pir-archive-03': ('serving', True, True, 'dca700c9101e')}
+controller serving 3512478 3512478 10.072560946
+load inactive scaler active not-latched
+load-status running 2026-10-10T03:26:45.457011+00:00 {}
+10.142.0.10 6ab86d6a4027 True warm 18 18 dca700c9101e prewarm_failed 0
+10.142.0.8 2490c09d11d8 True warm 18 18 dca700c9101e prewarm_failed 0
+10.142.0.7 2490c09d11d8 True warm 164 164 dca700c9101e prewarm_failed 0
+{"event": "override", "MIN_OTHER_SERVING": {"default": 2, "this_run": 1}, "decision": "D2"}
+{"event": "roll_start", "worker": "transparent-pir-recent-02", "others_serving": ["transparent-pir-recent-01"]}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.347901, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.015453, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.063934, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.063056, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.042199, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 7.804682, "exit_code": 0}
+[2m2026-10-10T03:27:23.785524Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m9 [3mrevisions[0m[2m=[0m12 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"dca700c9101e43196a422c645dd7344fd904b093222cb248def4a164dc0de616" [3mworker_id[0m[2m=[0m"transparent-pir-recent-02" [3massignment_sha256[0m[2m=[0m"deb3c85877b4e78132f97e0e248e7281bce2373c1c6c117562b4d6f35ce84f85" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512478
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.020704, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.872789, "exit_code": 0}
+transparent-pir-recent-02: warm with publication control
+{"event": "roll_done", "worker": "transparent-pir-recent-02", "seconds": 24.3}
+transparent-pir-recent-02 roll rc=0 wall=24s
+membership age 0.4 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'dca700c9101e'), 'transparent-pir-recent-02': ('serving', True, True, 'dca700c9101e'), 'transparent-pir-archive-03': ('serving', True, True, 'dca700c9101e')}
+controller serving 3512478 3512479 10.072560946
+load inactive scaler active not-latched
+load-status running 2026-10-10T03:26:45.457011+00:00 {}
+10.142.0.10 6ab86d6a4027 True warm 18 18 dca700c9101e prewarm_failed 0
+10.142.0.8 6ab86d6a4027 True warm 18 18 dca700c9101e prewarm_failed 0
+10.142.0.7 2490c09d11d8 True warm 164 164 dca700c9101e prewarm_failed 0
+{'transparent-pir-archive-03': '2490c09d11d820aab457f74f614f738e8f8fc45149aa5417ffbf85b8b2818594', 'transparent-pir-recent-01': '6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd', 'transparent-pir-recent-02': '6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd'}
+2026-10-10T03:27:40Z
+active
+### end 2026-10-10T03:27:40.022Z rc=0

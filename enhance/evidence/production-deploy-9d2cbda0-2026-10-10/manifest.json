@@ -1,0 +1,22 @@
+{
+  "run": "production-deploy-9d2cbda0-2026-10-10",
+  "kind": "production deploy",
+  "source_revision": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7",
+  "ci_run": 38011976059,
+  "tool": "ops/scripts/wallet-pir-deploy.py at 9d2cbda0 from a workstation over pinned SSH (coordinator jump)",
+  "releases": {
+    "enhance-pir-native": {"archive_sha256": "3cf89691400b0fa2d2cb32e4ed425fb561bfc8257b5c97b4270a3ebb3f8de829", "enhance-pir-server_sha256": "0bc560dda0f80dfbfef392985e7b1b8fb99cca91cb6896e6d4c542a7bca9ef31", "enhance-pir-load-test_sha256_prefix": "1720e77ac68a9eb8"},
+    "status-pir": {"archive_sha256": "bac51b78246e3fd9873eab1e88d8e00721bc286fa50d1b9cb55a11618dbce369", "status-pir_sha256": "78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48"}
+  },
+  "before": {"enhance": "a70b5fba (all five)", "status": "cb259772 (all three)"},
+  "transactions": [
+    {"id": "enhance-20261010T030432Z-0bc560dda0f8-0d9e2e", "targets": ["worker@worker-01"], "status": "committed"},
+    {"id": "enhance-20261010T030908Z-0bc560dda0f8-386a35", "targets": ["worker@worker-02", "packing-router@router-01", "query-ingress@coordinator", "coordinator@coordinator"], "status": "committed"},
+    {"id": "status-20261010T031744Z-78975f99759b-da3751", "targets": ["worker@status-01", "router@status-01", "controller@coordinator"], "status": "committed"}
+  ],
+  "restart_to_ready_seconds": {"worker-01": 31, "worker-02": 30, "packing-router": 30, "query-ingress": 28, "coordinator": 14, "status-worker": 18, "status-router": 17, "status-controller": 10},
+  "alerting": {"shadow_utc": ["2026-10-10T03:03Z", "2026-10-10T03:22Z"], "open_incidents_at_rearm": 0},
+  "exact_check": {"oracle_sha256": "284ceff738511fa99af52d7a0a1f0f0ced45206d71d5b324559d16ed5da2d514", "after_worker_01": {"correct": 120, "of": 120, "p99_ms": 132.9}, "final": {"correct": 120, "of": 120, "errors": 0, "p50_ms": 89.0, "p99_ms": 128.5}},
+  "status_probe": {"qps": 20, "seconds": 60, "offered": 1200, "correct": 1200, "failed": 0, "p99_ms": 61.0, "oracle_source": "independent"},
+  "limits": "no prefix-length Enhance query sent; no load beyond the exact checks"
+}

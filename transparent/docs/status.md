@@ -6,6 +6,20 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Tail-pages prefix uploads live, 2026-10-10
+
+History, its publish controller and txid display run `main` at `9d2cbda0` (full CI
+38011976059) since 04:14 UTC. Servers also accept an unsealed tail's pages selection
+over only its leading rows, and the wallet sends it
+([evidence](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
+
+- **Outages.** Recent tier none; public metadata 502 for one 2-second sample at the
+  controller restart; archive shards 0–81 343 s; txid display 503 for about 18 minutes.
+- **Validation.** Public wallet regression 11/11 cases, 2,667 requests without a failure
+  or retry, every query 44-bit and 12 tail-pages queries as 2,048-row prefixes; the
+  49-bit 5 QPS load stayed exact; a 44-bit txid lookup passed.
+- **Not covered.** No soak or 20 QPS gate.
+
 ## 44-bit dithered queries live on history and txid display, 2026-10-09
 
 History workers and txid display run `main` at `06a972db` (full CI 37974719227) since

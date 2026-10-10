@@ -1442,9 +1442,10 @@ fat-LTO release identity. Worker server/control instead use a checksummed
   `shard-control` (`9208555a…`). Version-1 products also install its
   `transparent-publish-controller` (`13af048e…`) on the coordinator, and its v11
   `controller.json` must record `source_sha` `a317455e`, as the live one does.
-  The same night the workers moved to `06a972db`'s `transparent-shard-server`
-  (`2490c09d…`, [redeploy](../evidence/fleet-redeploy-06a972db-2026-10-09/README.md));
-  its `shard-control` and controller are byte-identical to the selected ones.
+  Production has since moved on: since 2026-10-10 the workers run `9d2cbda0`'s
+  `transparent-shard-server` (`6ab86d6a…`) and `shard-control` (`ff3c0264…`), and the
+  coordinator its `transparent-publish-controller` (`6041ea47…`) with `source_sha`
+  `9d2cbda0` ([redeploy](../evidence/fleet-redeploy-9d2cbda0-2026-10-10/README.md)).
 - **Still 12ce on the coordinator:** filter, `shard-assign` and `shard-control`.
 - **Staged for the 2026-10-03 cutover:** CI 36819961986 at `80c94f32`
   (`6db1fa05…`, `6dfe78fa…`). Its native Rust, Cargo and toolchain inputs

@@ -1,0 +1,26 @@
+### start 2026-10-10T03:30:26.386Z
+### cmd:
+bash $DEP/steps/p6-controller.sh
+### output:
+inactive
+13af048e53bf2d5921ede069db582b9821b5d26a54169d84dc15bf1cbb8ba2ba  /root/deploy-9d2cbda0/transparent-publish-controller.before
+19d8baf1601b8a9a83d71ce8d1978d513cc73ba4e2869eead9b587774d804583  /root/deploy-9d2cbda0/controller.json.before
+1747407240781069d43a34dad3ef20200619d25983f6d958f4351e6f94985825  /root/deploy-9d2cbda0/map-before-controller.json
+6041ea475c39399a744d2a951cf29f2c09233df66174275fb0ada61283b40ea5  /usr/local/bin/transparent-publish-controller
+source_sha a317455e9feecdd2639d5348188c6a2341819a4d -> 9d2cbda0b4336258cfce76ca8ee77b095daa7fd7
+16c16
+<   "source_sha": "a317455e9feecdd2639d5348188c6a2341819a4d"
+---
+>   "source_sha": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7"
+1791603027.192449919
+1791603027.247954528
+swap rc=0
+03:30:27 502 502 unavailable
+03:30:29 200 200 serving 3512483 3512483 0.0
+SERVING
+6041ea475c39399a
+9d2cbda0b4336258cfce76ca8ee77b095daa7fd7
+sealed prefix identical: 90 sealed; tail 90 3512483
+2026-10-10T03:30:29Z
+active
+### end 2026-10-10T03:30:29.521Z rc=0

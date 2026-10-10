@@ -1,0 +1,290 @@
+{
+  "baseline_before": {
+    "captured_unix": 1791589648,
+    "service": "status",
+    "targets": {
+      "controller@coordinator": {
+        "active_state": "active",
+        "drop_ins": [
+          {
+            "path": "/etc/systemd/system/status-controller-qualification.service.d/zz-native2m-dc0355b.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/status-pir/releases/native2m-dc0355b/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie\nReadWritePaths=/var/lib/status-pir-controller-native\n"
+          },
+          {
+            "path": "/etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzz-main.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/c5a6486476d91c88b692838c3449f4ddb917201c/native/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie\n"
+          },
+          {
+            "path": "/etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzz-status-public.conf",
+            "text": "[Service]\nExecStart=\nExecStart=/opt/wallet-pir/releases/cd3e9f02/native/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489\n"
+          },
+          {
+            "path": "/etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+            "text": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489\n"
+          },
+          {
+            "path": "/etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-control-sessions.conf",
+            "text": "[Unit]\n# The Status tunnels run under wallet-pir-control-sessions since 2026-09-30.\nAfter=wallet-pir-control-sessions.service\nWants=wallet-pir-control-sessions.service\n"
+          }
+        ],
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "fragment_path": "/etc/systemd/system/status-controller-qualification.service",
+        "fragment_text": "[Unit]\nDescription=Status live publication qualification controller\nAfter=network-online.target status-control-tunnel.service\nWants=status-control-tunnel.service\n\n[Service]\nExecStart=/opt/status-pir/releases/d481baad0504093e/status-pir serve-distributed --config /etc/status-pir-control/controller.json --cookie /root/.cache/zakura/.cookie\nEnvironment=RAYON_NUM_THREADS=2\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=5\nMemoryMax=4G\nMemorySwapMax=0\nCPUQuota=200%\nNoNewPrivileges=true\nProtectSystem=strict\nReadWritePaths=/var/lib/status-pir-controller\nPrivateTmp=true\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "coordinator",
+        "load_state": "loaded",
+        "role": "controller",
+        "unit": "status-controller-qualification.service"
+      },
+      "router@status-01": {
+        "active_state": "active",
+        "drop_ins": [],
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "fragment_path": "/etc/systemd/system/status-router.service",
+        "fragment_text": "[Unit]\nDescription=Status PIR CPU packing router (private qualification)\nAfter=network-online.target status-worker.service\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role router --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native\nEnvironment=RAYON_NUM_THREADS=4\n# Worker and router prepare serially; one thread let the full-occupancy rebuild\n# outlive the 20-second freshness limit. Preparation threads run at nice 10.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\nMemoryMax=3G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-router-native\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "status-01",
+        "load_state": "loaded",
+        "role": "router",
+        "unit": "status-router.service"
+      },
+      "worker@status-01": {
+        "active_state": "active",
+        "drop_ins": [],
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "fragment_path": "/etc/systemd/system/status-worker.service",
+        "fragment_text": "[Unit]\nDescription=Status PIR CPU evaluation worker (private qualification)\nAfter=network-online.target\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role worker --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native\nEnvironment=RAYON_NUM_THREADS=4\n# Candidate preparation has its own pool at nice 10, below query evaluation.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\n# The CPU worker keeps host copies of the database, hints and retained\n# generations. Under 20 QPS with live blocks it grew past 6 GiB and was\n# OOM-killed after about 50 minutes on 2026-09-27; the host has 16 GiB.\nMemoryMax=12G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-worker-native\n\n[Install]\nWantedBy=multi-user.target\n",
+        "host": "status-01",
+        "load_state": "loaded",
+        "role": "worker",
+        "unit": "status-worker.service"
+      }
+    }
+  },
+  "binary_sha256": "78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48",
+  "created_unix": 1791602264,
+  "events": [
+    {
+      "message": "status activating",
+      "unix": 1791602282.307
+    },
+    {
+      "message": "phase backing-up",
+      "target": "worker@status-01",
+      "unix": 1791602282.309
+    },
+    {
+      "message": "phase installing",
+      "target": "worker@status-01",
+      "unix": 1791602299.677
+    },
+    {
+      "message": "phase restarting",
+      "target": "worker@status-01",
+      "unix": 1791602316.825
+    },
+    {
+      "message": "phase verifying",
+      "target": "worker@status-01",
+      "unix": 1791602323.382
+    },
+    {
+      "message": "phase verified",
+      "target": "worker@status-01",
+      "unix": 1791602334.794
+    },
+    {
+      "message": "phase backing-up",
+      "target": "router@status-01",
+      "unix": 1791602334.797
+    },
+    {
+      "message": "phase installing",
+      "target": "router@status-01",
+      "unix": 1791602352.474
+    },
+    {
+      "message": "phase restarting",
+      "target": "router@status-01",
+      "unix": 1791602370.097
+    },
+    {
+      "message": "phase verifying",
+      "target": "router@status-01",
+      "unix": 1791602375.66
+    },
+    {
+      "message": "phase verified",
+      "target": "router@status-01",
+      "unix": 1791602386.785
+    },
+    {
+      "message": "phase backing-up",
+      "target": "controller@coordinator",
+      "unix": 1791602386.794
+    },
+    {
+      "message": "phase installing",
+      "target": "controller@coordinator",
+      "unix": 1791602397.311
+    },
+    {
+      "message": "phase restarting",
+      "target": "controller@coordinator",
+      "unix": 1791602407.716
+    },
+    {
+      "message": "phase verifying",
+      "target": "controller@coordinator",
+      "unix": 1791602411.097
+    },
+    {
+      "message": "phase verified",
+      "target": "controller@coordinator",
+      "unix": 1791602417.95
+    },
+    {
+      "message": "status verifying",
+      "unix": 1791602417.954
+    },
+    {
+      "argv": [
+        "/opt/status-pir/releases/78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48/status-pir",
+        "probe-live-load",
+        "--origin",
+        "http://127.0.0.1:8480",
+        "--query-origin",
+        "http://127.0.0.1:8492",
+        "--cookie",
+        "/root/.cache/zakura/.cookie",
+        "--seconds",
+        "60",
+        "--report-dir",
+        "/root/wallet-pir-deploy-status-20261010T031744Z-78975f99759b-da3751-status-probe"
+      ],
+      "host": "coordinator",
+      "message": "exact check",
+      "unix": 1791602447.682
+    },
+    {
+      "message": "exact check finished",
+      "output": "{\"columns\":6144,\"correct\":1200,\"database_bytes\":100663296,\"failed\":0,\"latency_basis\":\"scheduled_to_completed\",\"offered\":1200,\"oracle_coverage\":\"canonical_mined\",\"oracle_source\":\"independent\",\"p99_ms\":61.0,\"phase\":\"load\",\"production_qualified\":false,\"protocol\":\"status-pir-v3-native-two-mask-m29\",\"qps\":20,\"query_path\":\"separate_query_origin\",\"row_bytes\":12288,\"rows\":8192,\"run_ended_ms\":1791602511075,\"run_started_ms\":1791602451074,\"seconds\":60,\"slot_bytes\":40,\"slots\":256,\"source\":\"live\",\"unstarted\":0}\n",
+      "returncode": 0,
+      "unix": 1791602511.191
+    },
+    {
+      "message": "status committed",
+      "unix": 1791602511.194
+    }
+  ],
+  "hosts": [
+    {
+      "action": "restart",
+      "changes": [
+        {
+          "new": "[Unit]\nDescription=Status PIR CPU evaluation worker (private qualification)\nAfter=network-online.target\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48/status-pir role --role worker --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native\nEnvironment=RAYON_NUM_THREADS=4\n# Candidate preparation has its own pool at nice 10, below query evaluation.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\n# The CPU worker keeps host copies of the database, hints and retained\n# generations. Under 20 QPS with live blocks it grew past 6 GiB and was\n# OOM-killed after about 50 minutes on 2026-09-27; the host has 16 GiB.\nMemoryMax=12G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-worker-native\n\n[Install]\nWantedBy=multi-user.target\n",
+          "new_sha256": "5660371a24b0a25230fd6ea27ede614f72a8e8526cfac3c9a8c3f44c879830a3",
+          "op": "write",
+          "path": "/etc/systemd/system/status-worker.service",
+          "previous": "[Unit]\nDescription=Status PIR CPU evaluation worker (private qualification)\nAfter=network-online.target\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role worker --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native\nEnvironment=RAYON_NUM_THREADS=4\n# Candidate preparation has its own pool at nice 10, below query evaluation.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\n# The CPU worker keeps host copies of the database, hints and retained\n# generations. Under 20 QPS with live blocks it grew past 6 GiB and was\n# OOM-killed after about 50 minutes on 2026-09-27; the host has 16 GiB.\nMemoryMax=12G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-worker-native\n\n[Install]\nWantedBy=multi-user.target\n",
+          "previous_sha256": "a3c4130c85c08a75505e1013252653d584ee9451798799d6f1e6e0918a1cb374"
+        }
+      ],
+      "drift": [],
+      "host": "status-01",
+      "key": "worker@status-01",
+      "phase": "verified",
+      "previous": {
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "exec_binary": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir",
+        "exec_start": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role worker --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8481 --artifact-origin http://127.0.0.1:8495 --state-dir /var/lib/status-pir-worker-native"
+      },
+      "restart_issued": true,
+      "role": "worker",
+      "unit": "status-worker.service",
+      "verify": {
+        "health": "http://127.0.0.1:8481/control/health",
+        "health_equals": {},
+        "ready": {
+          "equals": true,
+          "field": "ready"
+        },
+        "ready_url": null,
+        "timeout": 180
+      }
+    },
+    {
+      "action": "restart",
+      "changes": [
+        {
+          "new": "[Unit]\nDescription=Status PIR CPU packing router (private qualification)\nAfter=network-online.target status-worker.service\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48/status-pir role --role router --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native\nEnvironment=RAYON_NUM_THREADS=4\n# Worker and router prepare serially; one thread let the full-occupancy rebuild\n# outlive the 20-second freshness limit. Preparation threads run at nice 10.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\nMemoryMax=3G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-router-native\n\n[Install]\nWantedBy=multi-user.target\n",
+          "new_sha256": "41a1a245f6c42d7c70a973e02841d6e509af8c19d8595362089d5a56a83b860b",
+          "op": "write",
+          "path": "/etc/systemd/system/status-router.service",
+          "previous": "[Unit]\nDescription=Status PIR CPU packing router (private qualification)\nAfter=network-online.target status-worker.service\n\n[Service]\nUser=status-pir\nGroup=status-pir\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role router --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native\nEnvironment=RAYON_NUM_THREADS=4\n# Worker and router prepare serially; one thread let the full-occupancy rebuild\n# outlive the 20-second freshness limit. Preparation threads run at nice 10.\nEnvironment=STATUS_PREPARATION_THREADS=6\nEnvironment=RUST_LOG=info\nRestart=on-failure\nRestartSec=3\nMemoryMax=3G\nMemorySwapMax=0\nNoNewPrivileges=true\nProtectSystem=strict\nProtectHome=true\nPrivateTmp=true\nReadWritePaths=/var/lib/status-pir-router-native\n\n[Install]\nWantedBy=multi-user.target\n",
+          "previous_sha256": "d5aa35bde219225a75de5b0d61e8ce71c89f42a3038eb35eb60db3afe6c96480"
+        }
+      ],
+      "drift": [],
+      "host": "status-01",
+      "key": "router@status-01",
+      "phase": "verified",
+      "previous": {
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "exec_binary": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir",
+        "exec_start": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir role --role router --network-hex 08ce3d9731b000c08338455c8a4a6bd05da16e26b11daa1b917184ece80f0400 --listen 127.0.0.1:8482 --query-listen 127.0.0.1:8484 --artifact-origin http://127.0.0.1:8481 --worker-origin http://127.0.0.1:8481 --state-dir /var/lib/status-pir-router-native"
+      },
+      "restart_issued": true,
+      "role": "router",
+      "unit": "status-router.service",
+      "verify": {
+        "health": "http://127.0.0.1:8482/control/health",
+        "health_equals": {},
+        "ready": {
+          "equals": true,
+          "field": "ready"
+        },
+        "ready_url": null,
+        "timeout": 180
+      }
+    },
+    {
+      "action": "restart",
+      "changes": [
+        {
+          "new": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/status-pir/releases/78975f99759b042248c84601eaf9517c76e5c751de1ebaad5f7969b78e7e2b48/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489\n",
+          "new_sha256": "b7074914fc17eceaabe6a47adfbc572f8062dbaf9311b4b43d23ee0e858a5a67",
+          "op": "write",
+          "path": "/etc/systemd/system/status-controller-qualification.service.d/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-wallet-pir-release.conf",
+          "previous": "# Managed by ops/scripts/wallet-pir-deploy.py; a deploy or rollback replaces\n# this file. Record any other change in its own drop-in.\n[Service]\nExecStart=\nExecStart=/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489\n",
+          "previous_sha256": "b3d4f4f38e85a4850ba7a62bade274a5c047913ad01e75cff8f49898e59a9166"
+        }
+      ],
+      "drift": [],
+      "host": "coordinator",
+      "key": "controller@coordinator",
+      "phase": "verified",
+      "previous": {
+        "exe_sha256": "cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c",
+        "exec_binary": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir",
+        "exec_start": "/opt/status-pir/releases/cb259772123b82691e05fd1b7846033e1f5e35c7b9178da3c4945d55a3ad703c/status-pir serve-distributed --config /etc/status-pir-control/controller-native.json --cookie /root/.cache/zakura/.cookie --public-listen 127.0.0.1:8489"
+      },
+      "restart_issued": true,
+      "role": "controller",
+      "unit": "status-controller-qualification.service",
+      "verify": {
+        "health": "http://127.0.0.1:8480/internal/health",
+        "health_equals": {},
+        "ready": null,
+        "ready_url": null,
+        "timeout": 180
+      }
+    }
+  ],
+  "id": "status-20261010T031744Z-78975f99759b-da3751",
+  "service": "status",
+  "source": {
+    "archive": "/private/tmp/claude-501/-Users-roman-projects-wallet-pir--claude-worktrees-affectionate-wright-3a72f9/06e548f5-48d3-4002-bb96-e9d10751a976/scratchpad/rel-9d2cbda0/status-pir/status-pir.tar.gz",
+    "kind": "status-pir",
+    "revision": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7"
+  },
+  "status": "committed"
+}

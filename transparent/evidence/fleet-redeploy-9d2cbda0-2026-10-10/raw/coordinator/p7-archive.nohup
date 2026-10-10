@@ -1,0 +1,26 @@
+active
+2026-10-10T03:30:38Z
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.262989, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.010959, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.055887, "exit_code": 0}
+{"event": "fleet_command", "tool": "rsync", "seconds": 0.056301, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.028119, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 217.922115, "exit_code": 0}
+[2m2026-10-10T03:34:16.668800Z[0m [32m INFO[0m [2mtransparent_shard_server[0m[2m:[0m loaded shard set [3mshards[0m[2m=[0m91 [3massigned[0m[2m=[0m82 [3mrevisions[0m[2m=[0m82 [3mprunable[0m[2m=[0m0 [3mgeometries[0m[2m=[0m["archive-wide", "recent-4k-8k"] [3mmap_sha256[0m[2m=[0m"1747407240781069d43a34dad3ef20200619d25983f6d958f4351e6f94985825" [3mworker_id[0m[2m=[0m"transparent-pir-archive-03" [3massignment_sha256[0m[2m=[0m"8a46863d0e65499131fca6f3eda41b840c02744f0dad4484415b85c6a8b32522" [3mstart[0m[2m=[0m0 [3mcovered_through[0m[2m=[0m3512483
+{"event": "fleet_command", "tool": "ssh", "seconds": 0.260704, "exit_code": 0}
+{"event": "fleet_command", "tool": "ssh", "seconds": 2.595847, "exit_code": 0}
+transparent-pir-archive-03: warm with publication control
+{"worker": "transparent-pir-archive-03", "mode": "install", "done": true}
+2026-10-10T03:40:05Z
+archive-03 install rc=0 wall=567s
+membership age 0.5 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, 'b5c38f0d5e74'), 'transparent-pir-recent-02': ('serving', True, True, 'b5c38f0d5e74'), 'transparent-pir-archive-03': ('serving', True, True, 'b5c38f0d5e74')}
+controller serving 3512486 3512486 20.153956884
+load inactive scaler active not-latched
+load-status starting 2026-10-10T03:30:30.240176+00:00 {}
+10.142.0.10 6ab86d6a4027 True warm 18 18 b5c38f0d5e74 prewarm_failed 0
+10.142.0.8 6ab86d6a4027 True warm 18 18 b5c38f0d5e74 prewarm_failed 0
+10.142.0.7 6ab86d6a4027 True warm 164 164 b5c38f0d5e74 prewarm_failed 0
+{'transparent-pir-archive-03': '6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd', 'transparent-pir-recent-01': '6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd', 'transparent-pir-recent-02': '6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd'}
+2026-10-10T03:40:05Z
+active
+### end 2026-10-10T03:40:05.243Z rc=0

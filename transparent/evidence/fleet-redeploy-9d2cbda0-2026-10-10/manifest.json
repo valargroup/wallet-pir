@@ -1,0 +1,18 @@
+{
+  "run": "fleet-redeploy-9d2cbda0-2026-10-10",
+  "kind": "production deploy",
+  "source_revision": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7",
+  "ci_run": 38011976059,
+  "bundles": {
+    "transparent-publisher": {"archive_sha256": "822fb82f14bb4cbbbcfaaf573add5e97fc447989ba51f408bbfbdd15a92f04bd", "transparent-shard-server": "6ab86d6a40273db316bd78c3d6c084362fef8f069c774d108b436cf9018f53bd", "shard-control": "ff3c0264f9ccb0eba3633098f495b1122776e70d2f7d359525ae41c3e4888232", "transparent-publish-controller": "6041ea475c39399a744d2a951cf29f2c09233df66174275fb0ada61283b40ea5", "shard-assign": "857bd603d405737c18a153cd87c53d03bec9d8ef39b678dac0ce23ef392a4b91"},
+    "transparent-txid-display": {"archive_sha256": "e261ce07e9b46728171cb44d1a5fb83e809dea2ebfc36ba064ecbd8b20689090", "transparent-txid-server": "f4751961f16b37e4c0e8cacd9efe7cde2883f4f1956b48b17b2abc092a3b3401", "txid-display-controller": "b522bb84722fd2d9db887c4f8172191e4b6e9630769539fbdc496916ef7b7c38", "txid-control": "7d5a2505e1eadb3a45b3a02e61a1d74917adfd87f6cbc7b6c0a4fbac0ade8b18"}
+  },
+  "before": {"history_worker": "2490c09d", "shard_control": "9208555a", "controller": "13af048e", "txid_worker": "4194b7af", "txid_controller": "6bfec14e"},
+  "history_procedure": {"directory": "/root/deploy-9d2cbda0", "ops_source": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644", "rollback_dir": "/opt/transparent-publisher/rollback/roll-9d2cbda0", "recent_other_serving_floor_override": 1, "controller_source_sha": "9d2cbda0b4336258cfce76ca8ee77b095daa7fd7"},
+  "txid_procedure": {"request_sha256": "f5d6996a90d79657a12c3f43abab4b7c5de53df36fe3bcda8afaaae2370855b5", "plan_sha256": "d6a5e1b4be769abb354a1c949f9edea1341afff970d485091b68b9f9417e8838", "phases": ["stage", "stop", "workers", "route", "controller"]},
+  "timeline_utc": {"stage": "03:23-03:27", "recent_rolls": "03:27, 23 s and 24 s", "controller_502": "03:30:27, recovered 03:30:29", "archive_out_of_service": "03:34:17-03:40:00 (343 s)", "txid_503": "about 03:50-04:08", "txid_controller_running": "04:14"},
+  "load_5qps_49bit": {"mixed_2_min": {"exact": 600, "errors": 0}, "after_archive_3_min": {"exact": 863, "errors": 0}},
+  "regression": {"runner_sha256": "66ee2f02bca11a569bb0eaf00c106c830bad2039c5c8b78ccf15f614af728ee6", "profile": "release-fast", "host": "roman-ipir-bench-8vcpu", "fixture_sha256": "a6115f1ae764fea7b0630b8924f3767f33ee86a6d07f21a45aff024202d36388", "utc": ["2026-10-10T04:03:32Z", "2026-10-10T04:04:20Z"], "cases": 11, "passed": 11, "requests": 2667, "failed": 0, "retried": 0, "upload_bytes": {"query_directory 50184": 164, "query_directory 207880": 81, "query_pages 72712": 194, "query_pages 388104": 30, "query_pages 38920 (prefix)": 12}},
+  "txid_live_lookup": {"test_binary_sha256": "bd8187d5d632434a9e26085cf677a45f0f4f40b8c1d6b5f7897379701beba016", "up_bytes": 77840, "down_bytes": 51050, "tier": "Archive", "passed": true},
+  "limits": "not a soak or 20 QPS gate; served segments certified at the 06a972db snapshot"
+}

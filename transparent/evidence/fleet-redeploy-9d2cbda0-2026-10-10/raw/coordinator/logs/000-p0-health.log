@@ -1,0 +1,12 @@
+### start 2026-10-10T03:22:52.407Z
+### cmd:
+bash $DEP/steps/health.sh
+### output:
+membership age 0.8 routed_recent 2 {'transparent-pir-recent-01': ('serving', True, True, '11092d6c1693'), 'transparent-pir-recent-02': ('serving', True, True, '11092d6c1693'), 'transparent-pir-archive-03': ('serving', True, True, '11092d6c1693')}
+controller serving 3512474 3512474 13.752112138
+load active scaler active not-latched
+load-status running 2026-10-10T03:22:40.060013+00:00 {}
+10.142.0.10 2490c09d11d8 True warm 18 18 11092d6c1693 prewarm_failed 0
+10.142.0.8 2490c09d11d8 True warm 18 18 11092d6c1693 prewarm_failed 0
+10.142.0.7 2490c09d11d8 True warm 164 164 11092d6c1693 prewarm_failed 0
+### end 2026-10-10T03:22:52.542Z rc=0
