@@ -701,15 +701,14 @@ mod tests {
             {
                 assert_eq!(rows, 2048);
                 let short = &query.body()[..HEADER_BYTES + enhance_pir::native::request_len(rows)];
-                assert_eq!(
-                    pack.query_coefficients(short, binding, rows).unwrap(),
-                    coefficients
-                );
-                assert_eq!(
-                    pack.pack(short, &eval.evaluate(&coefficients).unwrap(), rows)
-                        .unwrap(),
-                    response
-                );
+                // The omitted rows are zero-filled, not the full upload's
+                // ciphertexts; they select only zero padding, so the scan is equal.
+                let selection = pack.query_coefficients(short, binding, rows).unwrap();
+                assert_eq!(selection[..rows], coefficients[..rows]);
+                assert!(selection[rows..].iter().all(|&c| c == 0));
+                let scan = eval.evaluate(&selection).unwrap();
+                assert_eq!(scan, eval.evaluate(&coefficients).unwrap());
+                assert_eq!(pack.pack(short, &scan, rows).unwrap(), response);
                 assert!(pack.query_coefficients(short, binding, 4096).is_err());
             }
             let row = client.decode(query, &response).unwrap();
