@@ -152,6 +152,11 @@ pub fn unit_rows(
     if rows.len() != count as usize * RECORD_BYTES {
         return Err("source returned wrong record count".into());
     }
+    // Native queries omit selection coefficients past the domain's used rows,
+    // which is exact only while every byte from there on is zero padding.
+    if rows.len() > spec.used_rows as usize * ENHANCE_LAYOUT.row_bytes() {
+        return Err("unit data past its used rows".into());
+    }
     let allocated = spec.allocated_rows as usize * ENHANCE_LAYOUT.row_bytes();
     rows.reserve_exact(allocated.saturating_sub(rows.len()));
     rows.resize(allocated, 0);
@@ -310,10 +315,13 @@ impl Packing {
             public_params_base64: STANDARD.encode(&self.public),
         }
     }
+    /// q48 queries always select over every logical row; `_query_rows` is
+    /// only for the native profile.
     pub fn query_coefficients(
         &self,
         body: &[u8],
         binding: QueryBinding,
+        _query_rows: usize,
     ) -> Result<Vec<u64>, String> {
         if QueryBinding::decode(body)? != binding
             || binding.epoch != Sha256::digest(&self.public)[..8]
@@ -331,9 +339,14 @@ impl Packing {
         deserialize_first_dim_query(rlwe(), &self.params, &body[HEADER_BYTES + packing_len..])
             .map_err(|e| e.to_string())
     }
-    pub fn pack(&self, body: &[u8], intermediate: &[u64]) -> Result<Vec<u8>, String> {
+    pub fn pack(
+        &self,
+        body: &[u8],
+        intermediate: &[u64],
+        query_rows: usize,
+    ) -> Result<Vec<u8>, String> {
         let binding = QueryBinding::decode(body)?;
-        self.query_coefficients(body, binding)?;
+        self.query_coefficients(body, binding, query_rows)?;
         if intermediate.len() != self.params.db_cols || intermediate.iter().any(|v| *v >= modulus())
         {
             return Err("invalid worker intermediate".into());
@@ -405,17 +418,23 @@ impl PublishedPacking {
         &self,
         body: &[u8],
         binding: QueryBinding,
+        query_rows: usize,
     ) -> Result<Vec<u64>, String> {
         self.serving
             .as_ref()
             .ok_or("packing moved to router")?
-            .query_coefficients(body, binding)
+            .query_coefficients(body, binding, query_rows)
     }
-    pub fn pack(&self, body: &[u8], intermediate: &[u64]) -> Result<Vec<u8>, String> {
+    pub fn pack(
+        &self,
+        body: &[u8],
+        intermediate: &[u64],
+        query_rows: usize,
+    ) -> Result<Vec<u8>, String> {
         self.serving
             .as_ref()
             .ok_or("packing moved to router")?
-            .pack(body, intermediate)
+            .pack(body, intermediate, query_rows)
     }
 }
 
@@ -591,6 +610,29 @@ mod tests {
         round_trip_and_restart(backend);
     }
 
+    /// A unit spec whose data would run past its used rows is refused, since
+    /// native queries omit the selection over every later row.
+    #[test]
+    fn unit_data_must_end_at_its_used_rows() {
+        let g = Geometry::default();
+        let coverage = Lifecycle::default()
+            .coverage(32768 * RECORDS_PER_ROW as u64 + 100, g)
+            .unwrap();
+        let shard = &coverage.shards[1];
+        assert!(shard.composed());
+        let tail = MutableUnit {
+            local_row_start: 4096,
+            used_rows: 4096,
+            allocated_rows: 4096,
+        };
+        assert!(unit_rows(shard, &tail, &mut records).is_ok());
+        let short = MutableUnit {
+            used_rows: 100,
+            ..tail
+        };
+        assert!(unit_rows(shard, &short, &mut records).is_err());
+    }
+
     fn round_trip_and_restart(backend: MatvecConfig) {
         let dir = tempfile::tempdir().unwrap();
         let coverage = Lifecycle::default()
@@ -638,14 +680,35 @@ mod tests {
         for position in [0, 32, 33, 66] {
             let (query, slot) = client.prepare_position(position).unwrap();
             let binding = QueryBinding::decode(query.body()).unwrap();
+            let rows = client.query_rows();
             let old_len = query.body().len() - 4096 * 2 / 8;
             assert!(pack
-                .query_coefficients(&query.body()[..old_len], binding)
+                .query_coefficients(&query.body()[..old_len], binding, rows)
                 .is_err());
-            let coefficients = pack.query_coefficients(query.body(), binding).unwrap();
-            let response = pack
-                .pack(query.body(), &eval.evaluate(&coefficients).unwrap())
+            let coefficients = pack
+                .query_coefficients(query.body(), binding, rows)
                 .unwrap();
+            let response = pack
+                .pack(query.body(), &eval.evaluate(&coefficients).unwrap(), rows)
+                .unwrap();
+            // The three-row domain selects over one block. Its shorter upload
+            // is the full one's prefix and is answered byte for byte the same;
+            // the server takes only the prefix its manifest prescribes.
+            #[cfg(feature = "native-reinspiring")]
+            {
+                assert_eq!(rows, 2048);
+                let short = &query.body()[..HEADER_BYTES + enhance_pir::native::request_len(rows)];
+                assert_eq!(
+                    pack.query_coefficients(short, binding, rows).unwrap(),
+                    coefficients
+                );
+                assert_eq!(
+                    pack.pack(short, &eval.evaluate(&coefficients).unwrap(), rows)
+                        .unwrap(),
+                    response
+                );
+                assert!(pack.query_coefficients(short, binding, 4096).is_err());
+            }
             let row = client.decode(query, &response).unwrap();
             assert_eq!(
                 &row[slot * RECORD_BYTES..(slot + 1) * RECORD_BYTES],
@@ -1037,9 +1100,15 @@ mod tests {
                 let mut body = binding.encode();
                 body.extend(serialize_packing_keys(wallet.rlwe_params(), &keys).unwrap());
                 body.extend(query.to_switched_bytes(rlwe().q, params.query_bits));
-                let coefficients = packing.query_coefficients(&body, binding).unwrap();
+                let coefficients = packing
+                    .query_coefficients(&body, binding, params.db_rows)
+                    .unwrap();
                 let response = packing
-                    .pack(&body, &evaluation.evaluate(&coefficients).unwrap())
+                    .pack(
+                        &body,
+                        &evaluation.evaluate(&coefficients).unwrap(),
+                        params.db_rows,
+                    )
                     .unwrap();
                 assert_eq!(QueryBinding::decode(&response).unwrap(), binding);
                 let decoded =

@@ -213,7 +213,34 @@ impl TableProfile {
     /// Fresh secret and 44-bit dithered upload selecting row `target`, under
     /// [`Self::dithered_scheme`].
     pub fn prepare_dithered(&self, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
-        prepare_dithered(&self.setup, &self.masks, self.rows, target)
+        self.prepare_dithered_prefix(self.rows, target)
+    }
+
+    /// [`Self::prepare`] selecting among only the first `query_rows`, under
+    /// the leading full-shape masks. `query_rows` must be public and the same
+    /// for every query to the table.
+    pub fn prepare_prefix(
+        &self,
+        query_rows: usize,
+        target: usize,
+    ) -> Result<(NativeSecret, Vec<u8>), String> {
+        if query_rows > self.rows {
+            return Err("native query shape".into());
+        }
+        prepare_with(&self.setup, &self.masks, query_rows, target)
+    }
+
+    /// [`Self::prepare_dithered`] selecting among only the first `query_rows`;
+    /// see [`Self::prepare_prefix`].
+    pub fn prepare_dithered_prefix(
+        &self,
+        query_rows: usize,
+        target: usize,
+    ) -> Result<(NativeSecret, Vec<u8>), String> {
+        if query_rows > self.rows {
+            return Err("native query shape".into());
+        }
+        prepare_dithered(&self.setup, &self.masks, query_rows, target)
     }
 
     /// Whether an upload of `len` bytes, after the binding, has one of the two
@@ -222,11 +249,28 @@ impl TableProfile {
         accepted_query_bits(self.rows, len).is_some()
     }
 
+    /// Whether an upload of `len` bytes, after the binding, selects every row
+    /// or only the first `query_rows` at an accepted width.
+    pub fn accepts_selection_len(&self, query_rows: usize, len: usize) -> bool {
+        accepted_query_shape(self.rows, query_rows, len).is_some()
+    }
+
     /// Parses an upload of either scheme into its key and lifted selection.
     /// The width is the one the exact length names; any other length is
     /// refused.
     pub fn parse(&self, bytes: &[u8]) -> Result<(NativeKeys, Vec<u64>), String> {
         parse_accepted(&self.setup, bytes, self.rows)
+    }
+
+    /// Parses an upload of either scheme over every row or over only the
+    /// first `query_rows`, whichever its exact length names, zero-filled back
+    /// to every row.
+    pub fn parse_selection(
+        &self,
+        bytes: &[u8],
+        query_rows: usize,
+    ) -> Result<(NativeKeys, Vec<u64>), String> {
+        parse_selection(&self.setup, bytes, query_rows, self.rows)
     }
 
     /// Decodes one segment's body under that segment's published masks,

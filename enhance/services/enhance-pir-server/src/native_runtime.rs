@@ -91,25 +91,34 @@ impl NativePacking {
             public_params_base64: STANDARD.encode(&self.public),
         }
     }
+    /// The query's selection over every logical row. `query_rows` comes from
+    /// the validated manifest, never from this packing, which a router may
+    /// share between sessions; an upload over only those rows is zero-filled.
     pub fn query_coefficients(
         &self,
         body: &[u8],
         binding: QueryBinding,
+        query_rows: usize,
     ) -> Result<Vec<u64>, String> {
         if QueryBinding::decode(body)? != binding
             || binding.epoch != Sha256::digest(&self.public)[..8]
         {
             return Err("native query session mismatch".into());
         }
-        n::parse(&body[HEADER_BYTES..], self.params.db_rows).map(|(_, q)| q)
+        n::parse_selection(&body[HEADER_BYTES..], query_rows, self.params.db_rows).map(|(_, q)| q)
     }
-    pub fn pack(&self, body: &[u8], intermediate: &[u64]) -> Result<Vec<u8>, String> {
+    pub fn pack(
+        &self,
+        body: &[u8],
+        intermediate: &[u64],
+        query_rows: usize,
+    ) -> Result<Vec<u8>, String> {
         let binding = QueryBinding::decode(body)?;
-        self.query_coefficients(body, binding)?;
+        self.query_coefficients(body, binding, query_rows)?;
         if intermediate.len() != n::COLS || intermediate.iter().any(|&x| x >= n::Q) {
             return Err("native intermediate shape".into());
         }
-        let (keys, _) = n::parse(&body[HEADER_BYTES..], self.params.db_rows)?;
+        let (keys, _) = n::parse_selection(&body[HEADER_BYTES..], query_rows, self.params.db_rows)?;
         let mut out = binding.encode();
         out.extend(n::pack(&self.pre, &keys, intermediate)?);
         Ok(out)

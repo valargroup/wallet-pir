@@ -869,6 +869,7 @@ mod cache_integration_tests {
             rows: Table::Directory.rows(&RECENT_4K),
             row_bytes: Table::Directory.row_bytes(&RECENT_4K),
             sha256: hex::encode(Sha256::digest(&rows)),
+            zero_from_row: Table::Directory.rows(&RECENT_4K),
         };
         fs::write(&source.path, &rows).unwrap();
         drop(rows);
@@ -946,6 +947,7 @@ mod cache_integration_tests {
             rows: Table::Directory.rows(&RECENT_4K),
             row_bytes: Table::Directory.row_bytes(&RECENT_4K),
             sha256: hex::encode(Sha256::digest(&rows)),
+            zero_from_row: Table::Directory.rows(&RECENT_4K),
         };
         fs::write(&source.path, &rows).unwrap();
         drop(rows);
@@ -1134,6 +1136,7 @@ mod shipped_tests {
             rows: profile.rows as u64,
             row_bytes: profile.row_bytes as u32,
             sha256: hex::encode(Sha256::digest(&rows)),
+            zero_from_row: profile.rows as u64,
         };
         Segment {
             shared,

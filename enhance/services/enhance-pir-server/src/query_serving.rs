@@ -12,7 +12,10 @@ fn unavailable(message: impl ToString) -> Error {
     (StatusCode::SERVICE_UNAVAILABLE, message.to_string())
 }
 
-pub(crate) fn validate_binding(manifest: &Manifest, binding: QueryBinding) -> Result<(), Error> {
+/// Checks the binding against the current manifest and returns the rows its
+/// domain's queries select over. The session ID binds the domain's records,
+/// so the client derived the same count from the manifest it accepted.
+pub(crate) fn validate_binding(manifest: &Manifest, binding: QueryBinding) -> Result<usize, Error> {
     if binding.generation != manifest.generation
         || binding.recovery_epoch != manifest.recovery_epoch
     {
@@ -26,7 +29,15 @@ pub(crate) fn validate_binding(manifest: &Manifest, binding: QueryBinding) -> Re
     {
         return Err((StatusCode::GONE, "session_unavailable".into()));
     }
-    Ok(())
+    manifest
+        .coverage
+        .shards
+        .iter()
+        .find(|s| s.id == binding.shard_id)
+        .ok_or("unknown domain".to_string())
+        .and_then(|s| s.query_rows(manifest.geometry))
+        .map(|rows| rows as usize)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))
 }
 
 /// Once evaluation is admitted, disconnecting the caller cannot release its resources.

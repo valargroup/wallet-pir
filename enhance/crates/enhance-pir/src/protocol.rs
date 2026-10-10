@@ -12,6 +12,9 @@ pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v7";
 pub const PROTOCOL_REVISION: &str = "ironwood-enhance-pir-v9-native-two-mask-m29";
 pub const RETAINED_GENERATIONS: usize = 5;
 pub const HEADER_BYTES: usize = 116;
+/// A query's selection covers whole blocks of this many rows: the native ring
+/// degree, which is also the smallest mutable unit.
+pub const QUERY_ROW_QUANTUM: u64 = 2048;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -163,6 +166,25 @@ impl QueryShard {
         } else {
             geometry.logical_rows(self.records)
         }
+    }
+
+    /// Rows a query selects over: the end of the last row any unit can hold,
+    /// rounded up to whole [`QUERY_ROW_QUANTUM`] blocks. Every later row is
+    /// prescribed zero padding, so its selection coefficients cannot change
+    /// the answer and a native query may omit them. Full and composed domains
+    /// select over every logical row.
+    ///
+    /// A function of `id` and `records` alone, both of which the session ID
+    /// binds, and never of the lifecycle state, which it does not. Every query
+    /// to a session therefore has the same length whatever row it selects.
+    pub fn query_rows(&self, geometry: Geometry) -> Result<u64, String> {
+        let end = self
+            .expected_units(geometry)?
+            .iter()
+            .map(|u| u.local_row_start + u.used_rows.next_multiple_of(QUERY_ROW_QUANTUM))
+            .max()
+            .ok_or("empty query shard")?;
+        Ok(end.min(self.expected_logical_rows(geometry)?))
     }
 }
 
@@ -724,5 +746,65 @@ mod tests {
             assert!(QueryBinding::decode(&b.encode()[..n]).is_err());
         }
         assert!(QueryBinding::decode(&[0; HEADER_BYTES]).is_err());
+    }
+
+    /// Every row a real query can select lies below its domain's query rows,
+    /// every unit's data does too, and full or composed domains select over
+    /// every logical row. Exhaustive over the growing domain's used rows, as
+    /// shard 0 and as a successor that composes with its full predecessor.
+    #[test]
+    fn query_rows_cover_every_routed_row_and_unit() {
+        let g = Geometry::default();
+        let span = 32768 * RECORDS_PER_ROW as u64;
+        for used in 1..=32768u64 {
+            for records in [
+                used * RECORDS_PER_ROW as u64,
+                span + used * RECORDS_PER_ROW as u64,
+            ] {
+                let c = Lifecycle::default().coverage(records, g).unwrap();
+                for shard in &c.shards {
+                    let rows = shard.query_rows(g).unwrap();
+                    assert_eq!(rows % QUERY_ROW_QUANTUM, 0);
+                    assert!(rows <= shard.logical_rows);
+                    if shard.composed() || shard.records == span {
+                        assert_eq!(rows, shard.logical_rows);
+                    }
+                    for u in &shard.units {
+                        assert!(u.local_row_start + u.used_rows <= rows);
+                    }
+                }
+                for r in &c.routes {
+                    let shard = c.shards.iter().find(|s| s.id == r.domain_id).unwrap();
+                    let end = r.local_start + (r.global_end - r.global_start);
+                    assert!(end <= shard.query_rows(g).unwrap());
+                }
+            }
+        }
+    }
+
+    /// The shared vector the wallet library checks against its own copy.
+    #[test]
+    fn query_rows_match_the_frozen_vector() {
+        let vector: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/query-rows.json")).unwrap();
+        assert_eq!(vector["quantum"], QUERY_ROW_QUANTUM);
+        let g = Geometry::default();
+        for case in vector["cases"].as_array().unwrap() {
+            let id = case["shard_id"].as_u64().unwrap();
+            let shard = QueryShard {
+                id,
+                global_row_start: id * g.max_shard_rows,
+                records: case["records"].as_u64().unwrap(),
+                logical_rows: 0,
+                state: ShardState::Growing,
+                units: Vec::new(),
+            };
+            assert_eq!(
+                shard.expected_logical_rows(g).unwrap(),
+                case["logical_rows"],
+                "{case}"
+            );
+            assert_eq!(shard.query_rows(g).unwrap(), case["query_rows"], "{case}");
+        }
     }
 }

@@ -1162,7 +1162,7 @@ async fn query_inner(
         let refused = RequestError::Bad("unknown table".into()).into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
     };
-    let (segments, shared) = {
+    let (segments, shared, query_rows) = {
         let shard = match state.revision(shard_id, &digest) {
             Ok(shard) => shard,
             Err(error) => {
@@ -1179,15 +1179,23 @@ async fn query_inner(
                 )
                 .await;
         }
-        (shard.segments(table), state.shared(shard, table))
+        let shared = state.shared(shard, table);
+        // A growing tail's pages queries may select over only the rows its
+        // manifest says can hold data; every other table selects every row.
+        let query_rows = match table {
+            Table::Pages => shard.manifest.pages_query_rows() as usize,
+            _ => shared.profile.rows,
+        };
+        (shard.segments(table), shared, query_rows)
     };
 
-    // The two exact lengths this table's query may have — 49-bit or 44-bit
-    // dithered — are known before a single body byte is read, so a body of any
-    // other length is refused here — before it is buffered, before it queues,
-    // before any runtime is built for it. The global body limit is the ceiling
-    // for the widest geometry; this is the check for the one actually
-    // addressed.
+    // The exact lengths this table's query may have — 49-bit or 44-bit
+    // dithered, over every row or, for a growing tail's pages, over only the
+    // rows its manifest says can hold data — are known before a single body
+    // byte is read, so a body of any other length is refused here — before it
+    // is buffered, before it queues, before any runtime is built for it. The
+    // global body limit is the ceiling for the widest geometry; this is the
+    // check for the one actually addressed.
     let declared = request
         .headers()
         .get(axum::http::header::CONTENT_LENGTH)
@@ -1204,11 +1212,26 @@ async fn query_inner(
     };
     let Some(expected) = usize::try_from(declared)
         .ok()
-        .filter(|&len| shared.accepts_query_bytes(len))
+        .filter(|&len| shared.accepts_query_bytes(query_rows, len))
     else {
         Metrics::incr(&metrics.query_length_rejections);
+        let prefix = if query_rows < shared.profile.rows {
+            format!(
+                ", or {} or {} over its first {query_rows} rows",
+                8 + transparent_native::request_len_bits(
+                    query_rows,
+                    transparent_native::QUERY_BITS
+                ),
+                8 + transparent_native::request_len_bits(
+                    query_rows,
+                    transparent_native::DITHERED_QUERY_BITS
+                ),
+            )
+        } else {
+            String::new()
+        };
         let refused = RequestError::Bad(format!(
-            "a {} query for geometry {} must be exactly {} or {} bytes, not {declared}",
+            "a {} query for geometry {} must be exactly {} or {} bytes{prefix}, not {declared}",
             table.as_str(),
             shared.geometry.name,
             shared.query_bytes(),
@@ -1358,7 +1381,7 @@ async fn query_inner(
         let _timer = evaluation_metrics.evaluation_seconds.timer();
         // The key and selection are parsed once: every segment shares the
         // table's packing setup and query masks, so one parse serves them all.
-        let query = shared.parse(binding, &body)?;
+        let query = shared.parse(binding, &body, query_rows)?;
         let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
         for handle in &handles {
             match handle.get().answer(binding, &query) {

@@ -315,6 +315,17 @@ answers with the binding, an 8-byte mask epoch and a 5,632-byte body. The server
 query once, scans each segment modulo 2^54 and packs against that segment's preprocessing.
 The runtime disk cache stays keyed by the 49-bit scheme, so existing caches still apply.
 
+A pages query to an unsealed, current-schema, single-segment tail may select only its first
+`ShardManifest::pages_query_rows`: the page rows it holds rounded up to 2,048-row blocks,
+every later row being zero, so the answer is unchanged. While the tail holds at most 2,048
+page rows that is 40,200 bytes at 49 bits and 38,920 at 44. The count comes from
+digest-bound manifest fields alone, so every pages query to that revision has one length
+per width. Sealed shards, multi-segment shards and the directory select every row, and
+servers keep accepting the full selection for the tail from older wallets: four exact
+lengths for a tail's pages, two for everything else. Segment verification, at startup, on
+cache restore and before a runtime build, refuses a tail whose rows past that count hold
+data.
+
 Correctness certificates for this mode are snapshot-specific, and a snapshot served at both
 widths needs a certificate for each. The shard server's `native_certificate` example exports
 the `certify_native.py` report for a segment, with `--query-rounding dithered` for the 44-bit

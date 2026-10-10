@@ -226,6 +226,13 @@ pub struct SegmentSource {
     pub row_bytes: u32,
     /// SHA-256 of the file, in hex, as the manifest publishes it.
     pub sha256: String,
+    /// The first row a query may omit, from which every byte must be zero:
+    /// a growing tail's [`pages_query_rows`], or `rows` when queries select
+    /// every row. Checked wherever the digest is, so no runtime is built or
+    /// restored from a segment whose omitted rows hold data.
+    ///
+    /// [`pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    pub zero_from_row: u64,
 }
 
 impl SegmentSource {
@@ -251,6 +258,8 @@ impl SegmentSource {
         let mut hasher = Sha256::new();
         let mut buffer = vec![0u8; 1 << 20];
         let mut total = 0usize;
+        let zero_from = self.zero_from();
+        let mut tail_data = false;
         loop {
             let read = file.read(&mut buffer).map_err(|source| LoadError::Io {
                 path: self.path.clone(),
@@ -260,10 +269,15 @@ impl SegmentSource {
                 break;
             }
             hasher.update(&buffer[..read]);
+            if total + read > zero_from {
+                let skip = zero_from.saturating_sub(total);
+                tail_data |= buffer[skip..read].iter().any(|&byte| byte != 0);
+            }
             total += read;
         }
         crate::filecache::consumed(&file);
-        self.check(total, hasher.finalize().as_slice())
+        self.check(total, hasher.finalize().as_slice())?;
+        self.check_zero_tail(tail_data)
     }
 
     /// Reads and verifies the segment, for building a runtime from.
@@ -289,7 +303,24 @@ impl SegmentSource {
             })?;
         crate::filecache::consumed(&file);
         self.check(bytes.len(), Sha256::digest(&bytes).as_slice())?;
+        self.check_zero_tail(bytes[self.zero_from()..].iter().any(|&byte| byte != 0))?;
         Ok(bytes)
+    }
+
+    /// Byte offset of [`Self::zero_from_row`].
+    fn zero_from(&self) -> usize {
+        self.zero_from_row.min(self.rows) as usize * self.row_bytes as usize
+    }
+
+    fn check_zero_tail(&self, tail_data: bool) -> Result<(), LoadError> {
+        if tail_data {
+            return Err(LoadError::Invalid(format!(
+                "{} holds data at or past row {}, which its queries do not select",
+                self.path.display(),
+                self.zero_from_row
+            )));
+        }
+        Ok(())
     }
 
     fn check(&self, len: usize, digest: &[u8]) -> Result<(), LoadError> {
@@ -499,6 +530,10 @@ impl LoadedShard {
                     rows: published.rows,
                     row_bytes: published.row_bytes,
                     sha256: published.sha256.clone(),
+                    zero_from_row: match table {
+                        Table::Pages => manifest.pages_query_rows(),
+                        _ => published.rows,
+                    },
                 };
                 source.verify()?;
                 sources.push(source);

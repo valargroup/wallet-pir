@@ -912,6 +912,7 @@ pub fn sync_into<S: WalletStore>(
                         &entry,
                         &items,
                         &salt,
+                        manifest.pages_query_rows() as usize,
                         prepared,
                         transport,
                         charges,
@@ -1593,6 +1594,7 @@ fn read_shard_into<S: WalletStore>(
                 &unmatched,
                 choice.as_ref(),
                 &salt,
+                manifest.pages_query_rows() as usize,
                 prepared,
                 transport,
                 charges,
@@ -2089,6 +2091,7 @@ fn retrieve_shard_into<S: WalletStore>(
     unmatched: &[Vec<u8>],
     choice: Option<&transparent_shard::ChoiceTable>,
     salt: &[u8; 32],
+    pages_query_rows: usize,
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -2115,6 +2118,7 @@ fn retrieve_shard_into<S: WalletStore>(
             entry,
             &pending,
             salt,
+            pages_query_rows,
             clients,
             transport,
             charges,
@@ -2188,6 +2192,7 @@ fn retrieve_shard_into<S: WalletStore>(
                 shard_id,
                 revision,
                 entry.directory_segments,
+                directory.rows(),
                 within as usize,
                 charges,
             )?;
@@ -2295,6 +2300,7 @@ fn retrieve_shard_into<S: WalletStore>(
         entry,
         &owed,
         salt,
+        pages_query_rows,
         clients,
         transport,
         charges,
@@ -2307,12 +2313,16 @@ fn retrieve_shard_into<S: WalletStore>(
 /// Fetches the pages still owed for one shard revision, committing each
 /// page's events with the pending item's progress, and closing each item
 /// with its script's coverage when its total is accounted for.
+///
+/// Every pages query selects among the revision's first `query_rows`, from
+/// its verified manifest's [`ShardManifest::pages_query_rows`].
 #[allow(clippy::too_many_arguments)]
 fn finish_pages<S: WalletStore>(
     store: &mut S,
     entry: &transparent_filter::ShardMapEntry,
     owed: &[PendingPages],
     salt: &[u8; 32],
+    query_rows: usize,
     clients: &mut GeometryClients,
     transport: &mut impl ShardTransport,
     charges: &mut ByteCharges,
@@ -2391,17 +2401,30 @@ fn finish_pages<S: WalletStore>(
                 SyncError::Invalid(format!("shard {shard_id} page extent overflows"))
             })?;
             let space = geometry.page_rows * u64::from(entry.page_segments);
-            if u64::from(row) >= space {
+            let (_, within) = transparent_shard::layout::split_row(row as u64, geometry.page_rows);
+            if u64::from(row) >= space || within as usize >= query_rows {
+                // Still one query of the revision's usual length, as an entry
+                // that located a foreign page sends, so whether a directory
+                // entry pointed outside the selectable rows does not show.
+                pages.fetch_row(
+                    transport,
+                    shard_id,
+                    revision,
+                    entry.page_segments,
+                    query_rows,
+                    0,
+                    charges,
+                )?;
                 return Err(SyncError::Invalid(format!(
                     "shard {shard_id} page {row} is outside its {space}-row table"
                 )));
             }
-            let (_, within) = transparent_shard::layout::split_row(row as u64, geometry.page_rows);
             let answers = pages.fetch_row(
                 transport,
                 shard_id,
                 revision,
                 entry.page_segments,
+                query_rows,
                 within as usize,
                 charges,
             )?;

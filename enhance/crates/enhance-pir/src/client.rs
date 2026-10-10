@@ -208,6 +208,14 @@ impl QuerySession {
         })
     }
 
+    /// Rows this domain's queries select over, as servers derive them from
+    /// the same validated manifest.
+    pub fn query_rows(&self) -> usize {
+        self.shard
+            .query_rows(Geometry::default())
+            .expect("validated query domain") as usize
+    }
+
     pub fn prepare_position(&self, position: u64) -> Result<(PreparedQuery, usize), ClientError> {
         if position >= self.records {
             return Err(ClientError::OutsideCoverage(position));

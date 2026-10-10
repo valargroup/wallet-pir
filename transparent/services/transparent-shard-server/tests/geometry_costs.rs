@@ -199,8 +199,8 @@ fn the_server_enforces_the_costed_sizes() {
                 geometry.name
             );
             assert!(
-                shared.accepts_query_bytes(cost.query)
-                    && shared.accepts_query_bytes(cost.legacy_query)
+                shared.accepts_query_bytes(shared.profile.rows, cost.query)
+                    && shared.accepts_query_bytes(shared.profile.rows, cost.legacy_query)
             );
             assert_eq!(shared.response_bytes(), cost.response, "{}", geometry.name);
             assert_eq!(

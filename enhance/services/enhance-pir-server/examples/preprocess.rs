@@ -143,11 +143,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut response_bytes = 0;
             for position in [0, 32, 33, record_count - 1] {
                 let (query, slot) = client.prepare_position(position)?;
-                let coefficients = packing
-                    .query_coefficients(query.body(), QueryBinding::decode(query.body())?)?;
+                let coefficients = packing.query_coefficients(
+                    query.body(),
+                    QueryBinding::decode(query.body())?,
+                    client.query_rows(),
+                )?;
                 let intermediate = eval.evaluate(&coefficients)?;
                 let at = Instant::now();
-                let response = packing.pack(query.body(), &intermediate)?;
+                let response = packing.pack(query.body(), &intermediate, client.query_rows())?;
                 pack_samples_ms.push(ms(at));
                 query_bytes = query.body().len();
                 response_bytes = response.len();

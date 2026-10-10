@@ -1034,3 +1034,137 @@ async fn the_map_is_identical_under_both_paths() {
     let map: ShardMap = serde_json::from_slice(&public_body).expect("map json");
     assert_eq!(map.shards.len() as u64, SHARDS);
 }
+
+/// A growing tail's pages queries may select over only the rows its manifest
+/// says can hold data. That upload is the full one's byte prefix and is
+/// answered byte for byte the same, and it decodes the published row.
+#[tokio::test]
+async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
+    let f = fixture();
+    let tail = SHARDS - 1;
+    let shard = f.set.get(tail).unwrap();
+    assert!(!shard.manifest.sealed);
+    let rows = Table::Pages.rows(&GEOMETRY) as usize;
+    let query_rows = shard.manifest.pages_query_rows() as usize;
+    assert!(query_rows < rows && query_rows.is_multiple_of(transparent_native::D));
+    assert!(shard.manifest.occupancy.page_rows as usize <= query_rows);
+
+    let profile = transparent_native::TableProfile::new(
+        SCHEMA,
+        GEOMETRY.name,
+        "pages",
+        rows as u64,
+        GEOMETRY.page_row_bytes as u32,
+    )
+    .unwrap();
+    let revision = revision_of(&f, tail);
+    let path = format!("/v1/shards/{tail}/revisions/{revision}/query/pages");
+    let binding = query_binding(&revision, "pages");
+    let (_, upload) = profile.prepare(3).unwrap();
+    let mut full = binding.to_vec();
+    full.extend(upload);
+    let prefix = full[..8 + transparent_native::request_len(query_rows)].to_vec();
+    let (status, from_full) = post(&f.state, &path, full).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, from_prefix) = post(&f.state, &path, prefix).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(from_prefix, from_full);
+
+    let (status, raw) = get(
+        &f.state,
+        &format!("/v1/shards/{tail}/revisions/{revision}/setup/pages/0"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let setup: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let public = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        setup["public_params"].as_str().unwrap(),
+    )
+    .unwrap();
+    let (secret, upload) = profile.prepare_prefix(query_rows, 3).unwrap();
+    let mut body = binding.to_vec();
+    body.extend(upload);
+    assert_eq!(body.len(), 8 + transparent_native::request_len(query_rows));
+    let (status, response) = post(&f.state, &path, body).await;
+    assert_eq!(status, StatusCode::OK);
+    let published = shard.segment(Table::Pages, 0).unwrap().load().unwrap();
+    assert_eq!(
+        profile.decode(&secret, &public, &response[16..]).unwrap(),
+        raw_row(&published, GEOMETRY.page_row_bytes, 3)
+    );
+}
+
+/// Only a growing tail's pages take the shorter length, and only the one its
+/// manifest fixes: sealed shards and the directory keep one length, so their
+/// uploads stay alike.
+#[tokio::test]
+async fn only_a_growing_tails_pages_take_a_prefix_and_only_its_own() {
+    let f = fixture();
+    let short = |revision: &str, table: Table, rows: usize| {
+        let mut body = padded_body(revision, table);
+        body.truncate(8 + transparent_native::request_len(rows));
+        body
+    };
+    let tail = SHARDS - 1;
+    let tail_revision = revision_of(&f, tail);
+    let query_rows = f.set.get(tail).unwrap().manifest.pages_query_rows() as usize;
+    let sealed = revision_of(&f, 0);
+    for (shard_id, revision, table, rows) in [
+        (0, sealed.as_str(), Table::Pages, query_rows),
+        (tail, tail_revision.as_str(), Table::Directory, query_rows),
+        (
+            tail,
+            tail_revision.as_str(),
+            Table::Pages,
+            query_rows + transparent_native::D,
+        ),
+    ] {
+        let (status, raw) = post(
+            &f.state,
+            &format!(
+                "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                table.as_str()
+            ),
+            short(revision, table, rows),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "{shard_id} {}",
+            table.as_str()
+        );
+        assert!(String::from_utf8_lossy(&raw).contains("must be exactly"));
+    }
+}
+
+/// A segment whose rows past the ones its queries select hold data is refused
+/// on verification and on load, so no runtime is built or restored from it.
+#[test]
+fn a_segment_with_data_past_its_selected_rows_is_refused() {
+    use sha2::Digest;
+    use transparent_shard_server::shardset::SegmentSource;
+    let dir = tempfile::tempdir().unwrap();
+    let (rows, row_bytes) = (2 * transparent_native::D as u64, 16u32);
+    let mut bytes = vec![0u8; rows as usize * row_bytes as usize];
+    bytes[7] = 1;
+    let source = |bytes: &[u8], zero_from_row| {
+        let path = dir.path().join("pages.0.bin");
+        std::fs::write(&path, bytes).unwrap();
+        SegmentSource {
+            path,
+            rows,
+            row_bytes,
+            sha256: hex::encode(sha2::Sha256::digest(bytes)),
+            zero_from_row,
+        }
+    };
+    let half = transparent_native::D as u64;
+    assert!(source(&bytes, half).verify().is_ok());
+    assert!(source(&bytes, half).load().is_ok());
+    bytes[half as usize * row_bytes as usize] = 1;
+    assert!(source(&bytes, half).verify().is_err());
+    assert!(source(&bytes, half).load().is_err());
+    assert!(source(&bytes, rows).verify().is_ok());
+}

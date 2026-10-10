@@ -1084,7 +1084,7 @@ async fn query_inner(
     };
     let Some(expected) = usize::try_from(declared)
         .ok()
-        .filter(|&len| shared.accepts_query_bytes(len))
+        .filter(|&len| shared.accepts_query_bytes(shared.profile.rows, len))
     else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
@@ -1208,7 +1208,7 @@ async fn query_inner(
     let evaluated = tokio::task::spawn_blocking(move || {
         let _memory = memory;
         let _timer = evaluation_metrics.evaluation_seconds.timer();
-        let query = shared.parse(binding, &body)?;
+        let query = shared.parse(binding, &body, shared.profile.rows)?;
         let mut answer = Vec::with_capacity(shared.response_bytes() * handles.len());
         for handle in &handles {
             answer.extend(handle.get().answer(binding, &query)?);

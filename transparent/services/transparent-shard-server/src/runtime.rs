@@ -62,6 +62,8 @@ use transparent_native::{
 };
 use transparent_shard::layout::Geometry;
 
+const _: () = assert!(transparent_shard::manifest::QUERY_ROW_QUANTUM as usize == native::D);
+
 /// Explicit build policy for reproducible hardware-path comparisons. The
 /// portable feature selects the library's existing fallback; it changes no
 /// parameters or wire encoding and never depends on a client request.
@@ -239,13 +241,17 @@ impl SharedParams {
         8 + self.profile.dithered_scheme.request_bytes
     }
 
-    /// Whether `len` is one of the two exact lengths a query body may have.
+    /// Whether `len` is one of the exact lengths a query body may have: the
+    /// selection over every row or, for a revision whose queries may omit
+    /// every row from `query_rows` on, over only those rows, at either width.
     ///
     /// Each is fixed, because a body whose size varied with the selection
-    /// would leak it through its length alone. The two say only which scheme
-    /// the wallet sends, which every query of that wallet shares.
-    pub fn accepts_query_bytes(&self, len: usize) -> bool {
-        len == self.query_bytes() || len == self.dithered_query_bytes()
+    /// would leak it through its length alone. The width says only which
+    /// scheme the wallet sends, which every query of that wallet shares, and
+    /// `query_rows` is the revision's, which every query to the table shares.
+    pub fn accepts_query_bytes(&self, query_rows: usize, len: usize) -> bool {
+        len.checked_sub(8)
+            .is_some_and(|len| self.profile.accepts_selection_len(query_rows, len))
     }
 
     /// Bytes one segment's answer carries: binding, epoch and body.
@@ -264,16 +270,28 @@ impl SharedParams {
 
     /// Checks the binding and length, then parses the key and selection once
     /// for every segment that will answer them.
-    pub fn parse(&self, binding: [u8; 8], body: &[u8]) -> Result<ParsedQuery, String> {
+    ///
+    /// `query_rows` is the revision's [`pages_query_rows`] for pages and every
+    /// row otherwise. A body selecting over only those rows is zero-filled to
+    /// the full selection; the rows it omits are zero in every segment.
+    ///
+    /// [`pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    pub fn parse(
+        &self,
+        binding: [u8; 8],
+        body: &[u8],
+        query_rows: usize,
+    ) -> Result<ParsedQuery, String> {
         if body.get(..8) != Some(binding.as_slice()) {
             return Err("query does not name this revision and table".to_string());
         }
-        // A fixed length per scheme: a body that varied with the selection
-        // would leak through its size alone. The length picks the width.
-        if !self.accepts_query_bytes(body.len()) {
+        // Fixed lengths for every query to a revision's table: a body that
+        // varied with the selection would leak it through its size alone. The
+        // length picks the width and whether the selection is the prefix.
+        if !self.accepts_query_bytes(query_rows, body.len()) {
             return Err("query has the wrong fixed length".to_string());
         }
-        let (keys, query) = self.profile.parse(&body[8..])?;
+        let (keys, query) = self.profile.parse_selection(&body[8..], query_rows)?;
         Ok(ParsedQuery { keys, query })
     }
 }
@@ -518,7 +536,7 @@ impl TableRuntime {
         binding: [u8; 8],
         body: &[u8],
     ) -> Result<Vec<u8>, String> {
-        self.answer(binding, &shared.parse(binding, body)?)
+        self.answer(binding, &shared.parse(binding, body, shared.profile.rows)?)
     }
 
     /// Checks a runtime this process did not build against the segment's
@@ -1375,6 +1393,7 @@ mod tests {
             rows: Table::Directory.rows(geometry),
             row_bytes: Table::Directory.row_bytes(geometry),
             sha256: hex::encode(Sha256::digest(&rows)),
+            zero_from_row: Table::Directory.rows(geometry),
         };
         assert!(std::process::Command::new("mkfifo")
             .arg(&source.path)

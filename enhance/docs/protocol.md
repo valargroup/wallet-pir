@@ -115,6 +115,20 @@ session or the parameter identity, so v9 clients are unaffected. Dithered
 rounding needs its own per-snapshot correctness certificate; see the
 [dithered query screen](../evidence/dithered-query-2026-10-09/README.md).
 
+The selection covers the domain's first *query rows*: the end of the last row any
+of its units can hold, rounded up to 2,048-row blocks (`QueryShard::query_rows`).
+Every later row is prescribed zero padding, so the omitted selection changes no
+answer. Full and composed domains select every logical row; only the growing
+domain uploads less. At 18,313 used rows that is 140,544 instead of 228,352 bytes
+after the header at 49 bits, and 129,024 instead of 207,872 at 44. The count
+depends only on the domain's records, which the session ID binds, so every query
+to a session, real or cover, has one length per width, and cover targets are
+drawn below it. Servers also accept the full selection from older wallets, so
+they take four exact lengths for a growing domain. Someone watching encrypted
+traffic, though not the server, which sees the domain in the header, can tell
+queries to the growing domain apart by length. The server and wallet share the
+[query-rows vector](../crates/enhance-pir/tests/fixtures/query-rows.json).
+
 The authoritative wire types and validation are in
 [the protocol module](../crates/enhance-pir/src/protocol.rs); record encoding is in
 [record.rs](../crates/enhance-pir/src/record.rs).

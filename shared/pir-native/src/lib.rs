@@ -9,7 +9,8 @@
 //! rows and columns — stays with each product and is passed in.
 //!
 //! Per query the client uploads one `K_g` packing key (27,648 bytes) and a
-//! selection vector. Per 2,048-coefficient block the server publishes both
+//! selection vector, over every row or only over the leading rows that can hold
+//! data (see below). Per 2,048-coefficient block the server publishes both
 //! masks (14,848 bytes) and answers with a 22-bit body (5,632 bytes).
 //! Correctness certificates for this mode are snapshot-specific.
 //!
@@ -26,6 +27,12 @@
 //!   worst case, which is what lets the narrower width certify at least as
 //!   strongly as 49 nearest. The server's parse depends only on the width
 //!   ([`parse_bits`], [`parse_accepted`]), not on how the client rounded.
+//!
+//! The selection covers every row of the table or, when the product's public
+//! geometry says every later row is zero, only its first `query_rows` whole
+//! blocks: those omitted coefficients multiply zero rows, so the scan and the
+//! response are bit-identical. [`parse_selection`] takes either row count at
+//! either width, again by exact length alone.
 //!
 //! `tests/golden.rs` pins the bytes. Its digests were produced by the Enhance
 //! and Transparent copies this crate replaced, which agreed byte for byte.
@@ -300,6 +307,58 @@ pub fn parse_bits(
     if query.len() != rows {
         return Err("native query framing".into());
     }
+    Ok((keys, query))
+}
+
+/// The rows and width an upload of `len` bytes selects over, for a `rows`-row
+/// table whose public geometry lets queries omit every row from `query_rows`
+/// on: every row or only the first `query_rows`, at either accepted width.
+/// `None` for any other length.
+///
+/// Every row is tried first. The four lengths are distinct whenever
+/// `query_rows < rows` for tables of whole `D`-row blocks up to 65,536 rows,
+/// which `tests/golden.rs` checks.
+pub const fn accepted_query_shape(
+    rows: usize,
+    query_rows: usize,
+    len: usize,
+) -> Option<(usize, usize)> {
+    if let Some(bits) = accepted_query_bits(rows, len) {
+        return Some((rows, bits));
+    }
+    if query_rows == 0 || query_rows > rows || !query_rows.is_multiple_of(D) {
+        return None;
+    }
+    match accepted_query_bits(query_rows, len) {
+        Some(bits) => Some((query_rows, bits)),
+        None => None,
+    }
+}
+
+/// Parses an upload over every one of `rows`, or over only the first
+/// `query_rows`, at either accepted width ([`accepted_query_shape`]), and
+/// returns the selection over every row, zero past what was sent.
+///
+/// A client may send the shorter upload when every row from `query_rows` on is
+/// zero: those selection coefficients multiply zero rows, so the scan, and
+/// therefore the response, is bit-identical to the full upload's. Encrypted
+/// under a prefix of the full-shape masks and rounded to nearest, the shorter
+/// upload is byte for byte the full one's prefix. `query_rows` must come from public,
+/// session-bound geometry that every client of the table shares, never from
+/// the target.
+pub fn parse_selection(
+    setup: &NativeSetup,
+    bytes: &[u8],
+    query_rows: usize,
+    rows: usize,
+) -> Result<(NativeKeys, Vec<u64>), String> {
+    if rows == 0 || !rows.is_multiple_of(D) {
+        return Err("native query framing".into());
+    }
+    let (sent, bits) =
+        accepted_query_shape(rows, query_rows, bytes.len()).ok_or("native query framing")?;
+    let (keys, mut query) = parse_bits(setup, bytes, sent, bits)?;
+    query.resize(rows, 0);
     Ok((keys, query))
 }
 
