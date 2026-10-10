@@ -1245,7 +1245,7 @@ mod tests {
     async fn evaluation_failure_over_http(backend: MatvecConfig) {
         use crate::{
             matvec::testing::{scoped, Faults},
-            runtime::{plan, rlwe, Packing},
+            runtime::{modulus, plan, Packing},
         };
         use enhance_pir::protocol::{Geometry, Lifecycle, SCHEMA_VERSION};
         use std::sync::atomic::Ordering::SeqCst;
@@ -1343,7 +1343,7 @@ mod tests {
         assert_eq!(faults.evaluation_calls.load(SeqCst), calls + 1);
         assert_eq!(worker.evaluation.available_permits(), 1);
         // Validation must reject malformed queries before calling even a failed backend.
-        for coefficients in [vec![1], vec![rlwe().q; 4096]] {
+        for coefficients in [vec![1], vec![modulus(); 4096]] {
             let bad = Evaluate {
                 coefficients,
                 ..query.clone()

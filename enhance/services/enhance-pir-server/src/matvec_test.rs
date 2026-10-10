@@ -111,6 +111,27 @@ impl FirstDimKernel<u16> for FaultKernel {
         max: u64,
         out: &mut [u64],
     ) -> Result<(), KernelError> {
+        self.evaluation_fault(out)?;
+        self.inner
+            .try_multiply_query(rlwe, db, rows, cols, query, max, out)
+    }
+    // Native serving evaluates through this entry point instead.
+    fn try_multiply_power_of_two(
+        &self,
+        q: u64,
+        db: &[u16],
+        rows: usize,
+        cols: usize,
+        query: &[u64],
+        out: &mut [u64],
+    ) -> Result<(), KernelError> {
+        self.evaluation_fault(out)?;
+        self.inner
+            .try_multiply_power_of_two(q, db, rows, cols, query, out)
+    }
+}
+impl FaultKernel {
+    fn evaluation_fault(&self, out: &mut [u64]) -> Result<(), KernelError> {
         self.faults.evaluation_calls.fetch_add(1, SeqCst);
         if self.faults.fail_evaluation.load(SeqCst) {
             out.fill(123); // A partial result must never escape as a successful response.
@@ -118,7 +139,6 @@ impl FirstDimKernel<u16> for FaultKernel {
                 "private injected device evaluation detail".into(),
             ));
         }
-        self.inner
-            .try_multiply_query(rlwe, db, rows, cols, query, max, out)
+        Ok(())
     }
 }

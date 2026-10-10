@@ -673,7 +673,10 @@ mod tests {
         old_session.params.query_bits = 46;
         assert!(enhance_pir::client::QuerySession::new(&manifest, old_session).is_err());
         let mut old_plan = plan.clone();
-        old_plan.units[0].parameter_id = old_plan.units[0].parameter_id.replace("-v7/", "-v6/");
+        old_plan.units[0].parameter_id = old_plan.units[0]
+            .parameter_id
+            .replace(PROTOCOL_REVISION, "ironwood-enhance-pir-v6");
+        assert_ne!(old_plan, plan);
         assert!(old_plan.validate().is_err());
         let client =
             enhance_pir::client::QuerySession::new(&manifest, pack.session(&manifest, 0)).unwrap();
@@ -738,7 +741,7 @@ mod tests {
         let selected_eval = selected
             .prepare(plan, |_, _| panic!("artifact must be reusable"))
             .unwrap();
-        let query = vec![rlwe().q - 1; 4096];
+        let query = vec![modulus() - 1; 4096];
         assert_eq!(
             cpu_eval.evaluate(&query).unwrap(),
             selected_eval.evaluate(&query).unwrap()
@@ -911,14 +914,23 @@ mod tests {
         let evaluation = engine.prepare(domain, records).unwrap();
         let mut rows = records(0, shard.records as usize).unwrap();
         rows.resize(16384 * ENHANCE_LAYOUT.row_bytes(), 0);
-        let params = parameters(16384).unwrap();
-        let client = ipir_sp::IPIRClient::from_profile(
-            params.num_items,
-            params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .unwrap();
-        let setup = client.generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id));
+        // Native masks are expanded once at full size for every logical size.
+        #[cfg(feature = "native-reinspiring")]
+        let setup = enhance_pir::native::query_masks(shard.id);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = {
+            let params = parameters(16384).unwrap();
+            let client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .unwrap();
+            client
+                .generate_public_query_setup_simplepir_from_seed(setup_seed(shard.id))
+                .polys()
+                .to_vec()
+        };
         let monolithic = PreparedShard::build(
             &DatabaseLayout {
                 shard_rows: 16384,
@@ -929,13 +941,13 @@ mod tests {
             "test".into(),
             &rows,
             rlwe(),
-            setup.polys(),
+            &setup,
         )
         .unwrap();
         assert_eq!(evaluation.hint().unwrap(), monolithic.crs_blocks);
         for target in [0, 8191, 8192, 10239, 16383] {
             let mut query = vec![0; 16384];
-            query[target] = rlwe().q - 1;
+            query[target] = modulus() - 1;
             assert_eq!(
                 evaluation.evaluate(&query).unwrap(),
                 monolithic.runtime.evaluate(rlwe(), &query).unwrap()
@@ -945,7 +957,9 @@ mod tests {
 
     #[test]
     fn tail_domain_reuses_b_units_and_decodes_b_at_unchanged_coordinates() {
+        #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::modulus_switch::recover_published_c1;
+        #[cfg(not(feature = "native-reinspiring"))]
         use ipir_sp::serialize::serialize_packing_keys;
 
         const B_START: u64 = 32768;
@@ -1010,14 +1024,22 @@ mod tests {
             ..ENHANCE_LAYOUT
         };
         let suffix = records(9_000_000, (SUFFIX_ROWS * RECORDS_PER_ROW as u64) as usize).unwrap();
-        let params = parameters(32768).unwrap();
-        let setup_client = ipir_sp::IPIRClient::from_profile(
-            params.num_items,
-            params.item_size_bits,
-            ipir_sp::SimplePirProfile::P16Q48,
-        )
-        .unwrap();
-        let setup = setup_client.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
+        #[cfg(feature = "native-reinspiring")]
+        let setup = enhance_pir::native::query_masks(7);
+        #[cfg(not(feature = "native-reinspiring"))]
+        let setup = {
+            let params = parameters(32768).unwrap();
+            let setup_client = ipir_sp::IPIRClient::from_profile(
+                params.num_items,
+                params.item_size_bits,
+                ipir_sp::SimplePirProfile::P16Q48,
+            )
+            .unwrap();
+            setup_client
+                .generate_public_query_setup_simplepir_from_seed(setup_seed(7))
+                .polys()
+                .to_vec()
+        };
         let suffix_hash = hex::encode(Sha256::digest(&suffix));
         let extra = PreparedShard::build(
             &layout,
@@ -1026,7 +1048,7 @@ mod tests {
             suffix_hash.clone(),
             &suffix,
             rlwe(),
-            setup.polys(),
+            &setup,
         )
         .unwrap()
         .persist(
@@ -1068,19 +1090,23 @@ mod tests {
             let packing =
                 Packing::new(logical_rows, hint, &crate::PackingBudget::coordinator()).unwrap();
             let params = parameters(logical_rows).unwrap();
-            let wallet = ipir_sp::IPIRClient::from_profile(
-                params.num_items,
-                params.item_size_bits,
-                ipir_sp::SimplePirProfile::P16Q48,
-            )
-            .unwrap();
-            let setup = wallet.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
-            let public = recover_published_c1(
-                &packing.public,
-                rlwe().d,
-                params.db_cols / rlwe().d,
-                rlwe().q,
-            );
+            #[cfg(not(feature = "native-reinspiring"))]
+            let (wallet, setup, public) = {
+                let wallet = ipir_sp::IPIRClient::from_profile(
+                    params.num_items,
+                    params.item_size_bits,
+                    ipir_sp::SimplePirProfile::P16Q48,
+                )
+                .unwrap();
+                let setup = wallet.generate_public_query_setup_simplepir_from_seed(setup_seed(7));
+                let public = recover_published_c1(
+                    &packing.public,
+                    rlwe().d,
+                    params.db_cols / rlwe().d,
+                    rlwe().q,
+                );
+                (wallet, setup, public)
+            };
             let binding = QueryBinding {
                 recovery_epoch: 0,
                 session_id: [7; 32],
@@ -1096,10 +1122,21 @@ mod tests {
                 &[0, 2047, 2048]
             };
             for &row in targets {
-                let (query, keys, seed) = wallet.generate_fresh_query_simplepir(&setup, row);
                 let mut body = binding.encode();
-                body.extend(serialize_packing_keys(wallet.rlwe_params(), &keys).unwrap());
-                body.extend(query.to_switched_bytes(rlwe().q, params.query_bits));
+                #[cfg(feature = "native-reinspiring")]
+                let secret = {
+                    let (secret, upload) =
+                        enhance_pir::native::prepare(7, params.db_rows, row).unwrap();
+                    body.extend(upload);
+                    secret
+                };
+                #[cfg(not(feature = "native-reinspiring"))]
+                let seed = {
+                    let (query, keys, seed) = wallet.generate_fresh_query_simplepir(&setup, row);
+                    body.extend(serialize_packing_keys(wallet.rlwe_params(), &keys).unwrap());
+                    body.extend(query.to_switched_bytes(rlwe().q, params.query_bits));
+                    seed
+                };
                 let coefficients = packing
                     .query_coefficients(&body, binding, params.db_rows)
                     .unwrap();
@@ -1111,6 +1148,14 @@ mod tests {
                     )
                     .unwrap();
                 assert_eq!(QueryBinding::decode(&response).unwrap(), binding);
+                #[cfg(feature = "native-reinspiring")]
+                let decoded = enhance_pir::native::decode(
+                    &secret,
+                    &packing.public,
+                    &response[HEADER_BYTES..],
+                )
+                .unwrap();
+                #[cfg(not(feature = "native-reinspiring"))]
                 let decoded =
                     wallet.decode_response_simplepir(seed, &public, &response[HEADER_BYTES..]);
                 let start = if row == 4096 {
