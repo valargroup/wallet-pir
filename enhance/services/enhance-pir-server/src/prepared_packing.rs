@@ -49,11 +49,15 @@ pub fn describe_hint(root: &Path, hint: &str, rows: u64) -> Result<Artifact, Str
     artifact.validate(rows, public)?;
     Ok(artifact)
 }
+/// Native preprocessing stores each matrix at 32 or 64 bits depending on its
+/// content, so only a bound on the artifact length is fixed.
+#[cfg(feature = "native-reinspiring")]
+const NATIVE_BYTES: std::ops::RangeInclusive<u64> = 192 * 1024 * 1024..=400 * 1024 * 1024;
 fn valid_len(bytes: u64, rows: u64) -> Result<bool, String> {
     #[cfg(feature = "native-reinspiring")]
     {
         enhance_pir::protocol::parameters(rows)?;
-        Ok((192 * 1024 * 1024..=400 * 1024 * 1024).contains(&bytes))
+        Ok(NATIVE_BYTES.contains(&bytes))
     }
     #[cfg(not(feature = "native-reinspiring"))]
     {
@@ -198,14 +202,28 @@ mod tests {
         let public = "ab".repeat(32);
         let name = artifact_name(4096, &public).unwrap();
         assert_ne!(name, artifact_name(8192, &public).unwrap());
+        #[cfg(not(feature = "native-reinspiring"))]
+        let (bytes, invalid) = {
+            let n = expected_len(4096).unwrap();
+            (n, [n - 1, n + 1])
+        };
+        #[cfg(feature = "native-reinspiring")]
+        let (bytes, invalid) = (
+            *NATIVE_BYTES.start(),
+            [NATIVE_BYTES.start() - 1, NATIVE_BYTES.end() + 1],
+        );
         let mut a = Artifact {
             name: name.clone(),
             sha256: "cd".repeat(32),
-            bytes: expected_len(4096).unwrap(),
+            bytes,
             format: FORMAT,
         };
         assert!(a.validate(4096, &public).is_ok());
         assert!(a.validate(8192, &public).is_err());
+        for bytes in invalid {
+            let resized = Artifact { bytes, ..a.clone() };
+            assert!(resized.validate(4096, &public).is_err());
+        }
         fs::create_dir_all(root.path().join(DIRECTORY)).unwrap();
         a.format = 0;
         fs::write(

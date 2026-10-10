@@ -802,17 +802,27 @@ mod persistence_tests {
         let dir = tempfile::tempdir().unwrap();
         let layout = layout();
         let (rlwe, params) = shard_parameters(&layout).unwrap();
+        // Native hints are exact lifted products over the native ring, so they
+        // take the native query masks rather than q48 setup polynomials.
+        #[cfg(feature = "native-reinspiring")]
+        let setup = enhance_pir::native::public_query_masks(
+            DatabaseId::Enhance.setup_seed_bytes(),
+            params.db_rows,
+            params.db_cols,
+        );
+        #[cfg(not(feature = "native-reinspiring"))]
         let setup = ipir_sp::IPIRClient::from_profile(
             params.num_items,
             params.item_size_bits,
             layout.pir_profile,
         )
         .unwrap()
-        .generate_public_query_setup_simplepir_from_seed(DatabaseId::Enhance.setup_seed_bytes());
+        .generate_public_query_setup_simplepir_from_seed(DatabaseId::Enhance.setup_seed_bytes())
+        .polys()
+        .to_vec();
         let rows = vec![3; layout.shard_bytes()];
         let prepared =
-            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, setup.polys())
-                .unwrap();
+            PreparedShard::build(&layout, 0, 0, "fixture".into(), &rows, &rlwe, &setup).unwrap();
         let query = vec![1; params.db_rows];
         let expected_query = prepared.runtime.evaluate(&rlwe, &query).unwrap();
         // Independently reproduce the pre-refactor artifact writer: whole byte

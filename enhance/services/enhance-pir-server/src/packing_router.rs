@@ -1081,12 +1081,27 @@ mod tests {
             "../../../crates/enhance-pir/tests/fixtures/v7-session.json"
         ))
         .unwrap();
+        let manifest: Manifest = serde_json::from_value(vector["manifest"].clone()).unwrap();
+        // The frozen vector is a v7 manifest. Native serving runs its own
+        // protocol revision, which scopes every parameter identity.
+        #[cfg(feature = "native-reinspiring")]
+        let manifest = {
+            let mut manifest = manifest;
+            manifest.protocol_revision = PROTOCOL_REVISION.into();
+            for (session, shard) in manifest.sessions.iter_mut().zip(&manifest.coverage.shards) {
+                session.parameter_id = parameter_id(shard.logical_rows).unwrap();
+            }
+            for unit in manifest.unit_identities.values_mut().flatten() {
+                unit.parameter_id = unit_parameter_id(unit.allocated_rows).unwrap();
+            }
+            manifest
+        };
         View {
             version: CONTROL_VERSION,
             controller_epoch: 1,
             revocation: Revocation::default(),
             snapshots: vec![ServingSnapshot {
-                manifest: serde_json::from_value(vector["manifest"].clone()).unwrap(),
+                manifest,
                 routes: BTreeMap::new(),
                 preferred: BTreeMap::new(),
                 artifacts: BTreeMap::new(),
