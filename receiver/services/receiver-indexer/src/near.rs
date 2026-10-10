@@ -288,7 +288,7 @@ pub async fn poll(explorer: &mut Explorer, path: &Path, since: i64, reads: &Read
 }
 
 /// Seconds since the Unix epoch.
-fn unix_now() -> i64 {
+pub(crate) fn unix_now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock after 1970")

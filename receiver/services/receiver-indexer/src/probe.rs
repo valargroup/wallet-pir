@@ -17,7 +17,7 @@
 //! NEAR gave no parsable transaction for, is an availability failure. Every response
 //! body is bounded before it is buffered.
 use crate::{
-    near::Feed,
+    near::{unix_now, Feed},
     read_limited,
     zakura::{ZakuraClient, ZakuraError},
 };
@@ -358,10 +358,10 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
 
 /// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
 /// feeds and then the served publication's `indexer.feeds` reach the first such times
-/// seen, so the probe checks a publication of this process's reads, not an older one.
-/// Each request is bounded by the time left of `wait`. At the deadline it fails as
-/// `feeds_not_read` with the last reads and published feeds seen and the last request
-/// error.
+/// seen, so the probe checks a publication of this process's reads, not an older one,
+/// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh. Each request is
+/// bounded by the time left of `wait`. At the deadline it fails as `feeds_not_read`
+/// with the last reads and published feeds seen and the last request error.
 async fn await_feed_reads(
     http: &reqwest::Client,
     health_url: &str,
@@ -400,7 +400,12 @@ async fn await_feed_reads(
                 published = health["indexer"]["feeds"].clone();
                 target = target.or_else(|| times(&reads));
                 if let (Some(target), Some(published)) = (&target, times(&published)) {
-                    if published.iter().zip(target).all(|(p, t)| p >= t) {
+                    let fresh = unix_now() - MAX_RECENT_AGE_SECS;
+                    if published
+                        .iter()
+                        .zip(target)
+                        .all(|(p, t)| p >= t && *p >= fresh)
+                    {
                         return None;
                     }
                 }
@@ -1404,18 +1409,20 @@ mod tests {
             let http = http.clone();
             async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
         };
-        let (url, asked) = health_route(|_| reads(json!(5), json!(6))).await;
+        let t = unix_now();
+        let (url, asked) = health_route(move |_| reads(json!(t), json!(t + 1))).await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 1);
         // The refund feed's read appears on the fourth request.
         let (url, asked) =
-            health_route(|n| reads(json!(5), if n < 3 { Value::Null } else { json!(6) })).await;
+            health_route(move |n| reads(json!(t), if n < 3 { Value::Null } else { json!(t + 1) }))
+                .await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 4);
-        let (url, _) = health_route(|_| reads(json!(5), Value::Null)).await;
+        let (url, _) = health_route(move |_| reads(json!(t), Value::Null)).await;
         let (category, detail) = gate(url, 1).await.unwrap();
         assert_eq!(category, "feeds_not_read");
-        let feeds = json!({"near-payouts": 5, "near-refunds": null});
+        let feeds = json!({"near-payouts": t, "near-refunds": null});
         assert_eq!(
             detail,
             json!({"waited_secs": 1, "reads": feeds, "published": feeds, "last_error": null})
@@ -1442,8 +1449,9 @@ mod tests {
     }
 
     /// After both reads, the feed gate also waits for the served publication's feeds to
-    /// reach the first reads it saw: one without them, or with older ones from a stored
-    /// provider database, would fail the freshness check.
+    /// reach the first reads it saw and to be fresh: one without them, with older ones
+    /// from a stored provider database, or with a first read that began too long ago
+    /// would fail the freshness check.
     #[tokio::test]
     async fn the_feed_gate_waits_for_a_publication_of_the_reads() {
         use std::sync::atomic::Ordering;
@@ -1453,16 +1461,17 @@ mod tests {
             let http = http.clone();
             async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
         };
-        let read = (json!(5), json!(6));
+        let t = unix_now();
+        let read = (json!(t), json!(t + 1));
         // No publication of the feeds yet, then one of an earlier process's reads.
-        for published in [(Value::Null, Value::Null), (json!(4), json!(6))] {
+        for published in [(Value::Null, Value::Null), (json!(t - 1), json!(t + 1))] {
             let answer = health(read.clone(), published.clone());
             let (url, _) = health_route(move |_| answer.clone()).await;
             let (category, detail) = gate(url, 1).await.unwrap();
             assert_eq!(category, "feeds_not_read");
             assert_eq!(
                 detail["reads"],
-                json!({"near-payouts": 5, "near-refunds": 6})
+                json!({"near-payouts": t, "near-refunds": t + 1})
             );
             let published = json!({"near-payouts": published.0, "near-refunds": published.1});
             assert_eq!(detail["published"], published);
@@ -1470,18 +1479,33 @@ mod tests {
         // The publication catches up on the fourth request, or is already past the reads.
         let (url, asked) = health_route(move |n| {
             let published = if n < 3 {
-                (json!(4), json!(6))
+                (json!(t - 1), json!(t + 1))
             } else {
-                (json!(5), json!(7))
+                (json!(t), json!(t + 2))
             };
-            health((json!(5), json!(6)), published)
+            health((json!(t), json!(t + 1)), published)
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        // A first payout read that began past the freshness limit, as a fresh provider
+        // database's long first reads leave it, holds the gate until a fresh publication.
+        let stale = (json!(t - MAX_RECENT_AGE_SECS - 60), json!(t - 60));
+        let (url, asked) = health_route(move |n| {
+            let published = if n < 3 {
+                stale.clone()
+            } else {
+                (json!(t), json!(t))
+            };
+            health(stale.clone(), published)
         })
         .await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 4);
         // Reads that keep moving one step ahead of publication do not hold the gate.
-        let (url, asked) = health_route(|n| {
-            let (read, published) = (json!(10 + n), json!(9 + n));
+        let (url, asked) = health_route(move |n| {
+            let n = n as i64;
+            let (read, published) = (json!(t + n), json!(t - 1 + n));
             health((read.clone(), read), (published.clone(), published))
         })
         .await;
