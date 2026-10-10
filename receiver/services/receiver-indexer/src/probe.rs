@@ -1,22 +1,23 @@
 //! A `pir-monitor` service probe for the receiver directory, run as `receiver-directory
 //! probe` or `receiver-probe`, and a deploy's exact check. With `--await-feed-reads` it
-//! first waits for the running process to read both NEAR feeds (`feeds_not_read`
-//! otherwise). It then checks the publication against independent mainnet nodes, one at
-//! a time and freshest first, looks up a pinned payment over live encrypted PIR, as
-//! Transparent's canary checks one query against a pinned row, checks the witness file
-//! (with `--witnesses`) and the filter file against the manifest, then checks the NEAR
-//! feed's freshness and the indexer's payout check, which health reports on the private
-//! network. It prints one JSON line: `passed`, on failure a `category` and `detail`, and
-//! the lookup as `phase: "live_encrypted_probe"` with `queries` and `correct`.
-//! `answer_mismatch` marks served data that is wrong, which the monitor treats as a
-//! correctness incident; `oracle_invalid` a fixture that fails its pin, including an
-//! Action whose recovered receiver differs from the fixture's pinned one; anything else,
-//! such as `oracle_unavailable` when no node that reached the publication can complete
-//! the chain checks, or `payouts_uncheckable` when the indexer's report counts a recent
-//! completed payout to an Orchard receiver that NEAR gave no parsable transaction for,
-//! is an availability failure. Every response body is bounded before it is buffered.
+//! first waits for the running process to read both NEAR feeds and serve a publication
+//! of those reads (`feeds_not_read` otherwise). It then checks the publication against
+//! independent mainnet nodes, one at a time and freshest first, looks up a pinned
+//! payment over live encrypted PIR, as Transparent's canary checks one query against a
+//! pinned row, checks the witness file (with `--witnesses`) and the filter file against
+//! the manifest, then checks the NEAR feed's freshness and the indexer's payout check,
+//! which health reports on the private network. It prints one JSON line: `passed`, on
+//! failure a `category` and `detail`, and the lookup as `phase: "live_encrypted_probe"`
+//! with `queries` and `correct`. `answer_mismatch` marks served data that is wrong,
+//! which the monitor treats as a correctness incident; `oracle_invalid` a fixture that
+//! fails its pin, including an Action whose recovered receiver differs from the
+//! fixture's pinned one; anything else, such as `oracle_unavailable` when no node that
+//! reached the publication can complete the chain checks, or `payouts_uncheckable` when
+//! the indexer's report counts a recent completed payout to an Orchard receiver that
+//! NEAR gave no parsable transaction for, is an availability failure. Every response
+//! body is bounded before it is buffered.
 use crate::{
-    near::Feed,
+    near::{unix_now, Feed},
     read_limited,
     zakura::{ZakuraClient, ZakuraError},
 };
@@ -78,12 +79,13 @@ pub struct Args {
     max_lag: u64,
     /// Before any network check, wait up to this many seconds for health's `near.reads`
     /// to show that the running process completed a read of both NEAR feeds, as a
-    /// deploy that sets the partner key must. Feeds are read in turn at the explorer's
-    /// 5.5-second request pacing (about 40 seconds a poll at October 2026 volume), and
-    /// the 60-second poll interval starts after both, so the deploy's 300 allows about
-    /// three polls. That is a budget, not a worst-case bound: a first read of a new
-    /// provider database can take far longer. Without this flag, as in the monitor's
-    /// periodic probe, nothing waits.
+    /// deploy that sets the partner key must, and for the served publication to hold
+    /// those reads. Feeds are read in turn at the explorer's 5.5-second request pacing
+    /// (about 40 seconds a poll at October 2026 volume), and the 60-second poll
+    /// interval starts after both, so the deploy's 300 allows about three polls. That
+    /// is a budget, not a worst-case bound: a first read of a new provider database can
+    /// take far longer. Without this flag, as in the monitor's periodic probe, nothing
+    /// waits.
     #[arg(long, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..))]
     await_feed_reads: Option<u64>,
     /// The service serves witness files, as the indexer does with `--witnesses`: each
@@ -355,8 +357,12 @@ async fn probe(args: Args, lookup: &mut Option<(u32, bool)>) -> Result<Option<Fa
 }
 
 /// Polls `health_url` every `poll` until its `near.reads` holds a read time for both
-/// feeds, each request bounded by the time left of `wait`. At the deadline it fails as
-/// `feeds_not_read` with the last reads seen and the last request error.
+/// feeds and then the served publication's `indexer.feeds` reach the first such times
+/// seen from the same process (health's `identity.incarnation`; a restart starts over),
+/// so the probe checks a publication of the running process's reads, not an older one,
+/// and are within [`MAX_RECENT_AGE_SECS`], so its recent set is fresh. Each request is
+/// bounded by the time left of `wait`. At the deadline it fails as `feeds_not_read`
+/// with the last reads and published feeds seen and the last request error.
 async fn await_feed_reads(
     http: &reqwest::Client,
     health_url: &str,
@@ -364,13 +370,24 @@ async fn await_feed_reads(
     poll: Duration,
 ) -> Option<Failure> {
     let deadline = tokio::time::Instant::now() + wait;
-    let (mut reads, mut error) = (Value::Null, None);
+    let (mut reads, mut published, mut error) = (Value::Null, Value::Null, None);
+    // Both feeds' times in a health map, if it holds both.
+    let times = |map: &Value| -> Option<Vec<i64>> {
+        [Feed::Payouts, Feed::Refunds]
+            .iter()
+            .map(|feed| map[feed.name()].as_i64())
+            .collect()
+    };
+    // Fixed at the first reads seen, with their process: later reads would keep moving
+    // ahead of publication.
+    let mut target: Option<(Value, Vec<i64>)> = None;
     loop {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() {
             return Some((
                 "feeds_not_read",
-                json!({"waited_secs": wait.as_secs(), "reads": reads, "last_error": error}),
+                json!({"waited_secs": wait.as_secs(), "reads": reads,
+                    "published": published, "last_error": error}),
             ));
         }
         // Health is not wallet data, so it is read without `fetch`, as `indexer_report` does.
@@ -382,11 +399,22 @@ async fn await_feed_reads(
         match tokio::time::timeout(remaining, health).await {
             Ok(Ok(health)) => {
                 reads = health["near"]["reads"].clone();
-                if [Feed::Payouts, Feed::Refunds]
-                    .iter()
-                    .all(|feed| reads[feed.name()].as_i64().is_some())
+                published = health["indexer"]["feeds"].clone();
+                let (process, current) = (&health["identity"]["incarnation"], times(&reads));
+                target = target
+                    .filter(|(p, _)| p == process)
+                    .or_else(|| Some(process.clone()).zip(current.clone()));
+                if let (Some((_, target)), Some(_), Some(published)) =
+                    (&target, current, times(&published))
                 {
-                    return None;
+                    let fresh = unix_now() - MAX_RECENT_AGE_SECS;
+                    if published
+                        .iter()
+                        .zip(target)
+                        .all(|(p, t)| p >= t && *p >= fresh)
+                    {
+                        return None;
+                    }
                 }
             }
             Ok(Err(e)) => error = Some(e.to_string()),
@@ -1360,10 +1388,21 @@ mod tests {
         (url, asked)
     }
 
-    /// A health body whose `near.reads` are `payouts` and `refunds`.
-    fn reads(payouts: Value, refunds: Value) -> (axum::http::StatusCode, String) {
-        let health = json!({"near": {"reads": {"near-payouts": payouts, "near-refunds": refunds}}});
+    /// A health body whose `near.reads` are `reads` and whose served publication's
+    /// `indexer.feeds` are `published`, each as (payouts, refunds).
+    fn health(
+        reads: (Value, Value),
+        published: (Value, Value),
+    ) -> (axum::http::StatusCode, String) {
+        let map = |(payouts, refunds)| json!({"near-payouts": payouts, "near-refunds": refunds});
+        let health = json!({"near": {"reads": map(reads)}, "indexer": {"feeds": map(published)}});
         (axum::http::StatusCode::OK, health.to_string())
+    }
+
+    /// A health body whose `near.reads` are `payouts` and `refunds`, which the served
+    /// publication already holds.
+    fn reads(payouts: Value, refunds: Value) -> (axum::http::StatusCode, String) {
+        health((payouts.clone(), refunds.clone()), (payouts, refunds))
     }
 
     /// The feed gate passes once health shows both feeds read, however late within its
@@ -1377,21 +1416,23 @@ mod tests {
             let http = http.clone();
             async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
         };
-        let (url, asked) = health_route(|_| reads(json!(5), json!(6))).await;
+        let t = unix_now();
+        let (url, asked) = health_route(move |_| reads(json!(t), json!(t + 1))).await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 1);
         // The refund feed's read appears on the fourth request.
         let (url, asked) =
-            health_route(|n| reads(json!(5), if n < 3 { Value::Null } else { json!(6) })).await;
+            health_route(move |n| reads(json!(t), if n < 3 { Value::Null } else { json!(t + 1) }))
+                .await;
         assert_eq!(gate(url, 30).await, None);
         assert_eq!(asked.load(Ordering::SeqCst), 4);
-        let (url, _) = health_route(|_| reads(json!(5), Value::Null)).await;
+        let (url, _) = health_route(move |_| reads(json!(t), Value::Null)).await;
         let (category, detail) = gate(url, 1).await.unwrap();
         assert_eq!(category, "feeds_not_read");
+        let feeds = json!({"near-payouts": t, "near-refunds": null});
         assert_eq!(
             detail,
-            json!({"waited_secs": 1, "reads": {"near-payouts": 5, "near-refunds": null},
-                "last_error": null})
+            json!({"waited_secs": 1, "reads": feeds, "published": feeds, "last_error": null})
         );
         // A failed request is reported after later answers, and a body without reads
         // (an older server) never passes.
@@ -1412,6 +1453,92 @@ mod tests {
             detail["last_error"].as_str().unwrap().contains("503"),
             "{detail}"
         );
+    }
+
+    /// After both reads, the feed gate also waits for the served publication's feeds to
+    /// reach the first reads it saw and to be fresh: one without them, with older ones
+    /// from a stored provider database, or with a first read that began too long ago
+    /// would fail the freshness check.
+    #[tokio::test]
+    async fn the_feed_gate_waits_for_a_publication_of_the_reads() {
+        use std::sync::atomic::Ordering;
+        let http = reqwest::Client::new();
+        let poll = Duration::from_millis(50);
+        let gate = |url: String, secs| {
+            let http = http.clone();
+            async move { await_feed_reads(&http, &url, Duration::from_secs(secs), poll).await }
+        };
+        let t = unix_now();
+        let read = (json!(t), json!(t + 1));
+        // No publication of the feeds yet, then one of an earlier process's reads.
+        for published in [(Value::Null, Value::Null), (json!(t - 1), json!(t + 1))] {
+            let answer = health(read.clone(), published.clone());
+            let (url, _) = health_route(move |_| answer.clone()).await;
+            let (category, detail) = gate(url, 1).await.unwrap();
+            assert_eq!(category, "feeds_not_read");
+            assert_eq!(
+                detail["reads"],
+                json!({"near-payouts": t, "near-refunds": t + 1})
+            );
+            let published = json!({"near-payouts": published.0, "near-refunds": published.1});
+            assert_eq!(detail["published"], published);
+        }
+        // The publication catches up on the fourth request, or is already past the reads.
+        let (url, asked) = health_route(move |n| {
+            let published = if n < 3 {
+                (json!(t - 1), json!(t + 1))
+            } else {
+                (json!(t), json!(t + 2))
+            };
+            health((json!(t), json!(t + 1)), published)
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        // A first payout read that began past the freshness limit, as a fresh provider
+        // database's long first reads leave it, holds the gate until a fresh publication.
+        let stale = (json!(t - MAX_RECENT_AGE_SECS - 60), json!(t - 60));
+        let (url, asked) = health_route(move |n| {
+            let published = if n < 3 {
+                stale.clone()
+            } else {
+                (json!(t), json!(t))
+            };
+            health(stale.clone(), published)
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 4);
+        // Reads that keep moving one step ahead of publication do not hold the gate.
+        let (url, asked) = health_route(move |n| {
+            let n = n as i64;
+            let (read, published) = (json!(t + n), json!(t - 1 + n));
+            health((read.clone(), read), (published.clone(), published))
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 2);
+        // A restart after the first reads: the new process publishes the stored feeds
+        // before reading, so the gate waits for its own reads and their publication.
+        let (url, asked) = health_route(move |n| {
+            let (process, reads, published) = match n {
+                0 => ("a", (json!(t), json!(t + 1)), (json!(t - 1), json!(t + 1))),
+                1 | 2 => ("b", (Value::Null, Value::Null), (json!(t), json!(t + 1))),
+                3 => ("b", (json!(t + 5), json!(t + 6)), (json!(t), json!(t + 1))),
+                _ => (
+                    "b",
+                    (json!(t + 5), json!(t + 6)),
+                    (json!(t + 5), json!(t + 6)),
+                ),
+            };
+            let (status, body) = health(reads, published);
+            let mut body: Value = serde_json::from_str(&body).unwrap();
+            body["identity"] = json!({ "incarnation": process });
+            (status, body.to_string())
+        })
+        .await;
+        assert_eq!(gate(url, 30).await, None);
+        assert_eq!(asked.load(Ordering::SeqCst), 5);
     }
 
     /// With `--await-feed-reads`, a gate that fails ends the probe before it asks the

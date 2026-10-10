@@ -95,13 +95,13 @@ Then, still under the lock and before it commits, it runs the inventory's
 health route: `{release_dir}/receiver-directory probe`, the probe built into the
 deployed binary with its pinned fixture. It first waits up to 300 seconds
 (`--await-feed-reads`) for the restarted process to read both NEAR feeds, which
-proves the key file the unit names, then looks up the pinned payment with one live
-encrypted query over the public origin and checks the filter file and private
-health. Its chain checks use the fleet nodes the service reads, so it gates the
-deploy but is not an independent oracle; the monitor's probe is. A failed check,
-one still running at its 480-second `timeout`, or `rollback` restores the previous
-unit file and binary. Report `status receiver` and the rollback command after each
-deploy.
+proves the key file the unit names, and for the served publication to hold those
+reads, then looks up the pinned payment with one live encrypted query over the
+public origin and checks the filter file and private health. Its chain checks use
+the fleet nodes the service reads, so it gates the deploy but is not an independent
+oracle; the monitor's probe is. A failed check, one still running at its
+480-second `timeout`, or `rollback` restores the previous unit file and binary.
+Report `status receiver` and the rollback command after each deploy.
 
 A deploy whose binary and effective unit already run is a no-op: it commits no
 transaction and runs no check, so it is not a fresh qualification. A change to
@@ -134,9 +134,14 @@ Before the first tool deploy, once:
    `providers.sqlite`, which it builds from `--near-since` on first start, and leaves
    the earlier build's `provider.sqlite` untouched for rollback. Delete
    `/srv/receiver-pir/index/provider.sqlite*` only once the rollback window has passed.
-   That build reads every swap since `--near-since` (about 15 minutes for ten days at
-   October 2026 volume), so for the first deploy raise the inventory's
-   `--await-feed-reads` to 1800 and the exact check's `timeout` to 2100.
+   That build reads every swap since `--near-since`, one feed after the other: in
+   production on 2026-10-10, on a fresh `providers.sqlite`, the payouts feed's first
+   read took about 14 minutes and the refunds feed's about 18. So for the first
+   deploy raise the inventory's `--await-feed-reads` to 3600 and the exact check's
+   `timeout` to 3900. A deploy that rolls back keeps the reads it completed in
+   `providers.sqlite`, so a retry waits only for what remains. During a rollback the
+   old and new processes briefly share the partner key's rate limit, so the explorer
+   may answer one request with HTTP 429, which the next poll retries.
 
 The live Droplet still runs the unit installed by hand, which starts
 `/opt/receiver-pir/current/receiver-directory`, reads the key from the optional

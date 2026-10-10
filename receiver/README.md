@@ -201,7 +201,8 @@ marks wrong served data, a correctness incident; `oracle_invalid` a fixture that
 fails its pin; anything else is an availability failure. `--max-lag` (default 12)
 must cover the indexer's `--depth` plus about ten blocks. With
 `--await-feed-reads <seconds>`, as a deploy runs it, the probe first waits for
-`near.reads` to show both feeds read, failing as `feeds_not_read` otherwise.
+`near.reads` to show both feeds read and for the served publication's
+`indexer.feeds` to hold those reads, failing as `feeds_not_read` otherwise.
 `services/receiver-indexer/src/probe.rs` documents every check.
 
 ## Wallet use
