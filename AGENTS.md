@@ -44,6 +44,7 @@ demo workspace is independent. Preserve existing Cargo package and binary names.
   production hosts by hand (`systemctl`, signals, `scp` of binaries) or while
   another session holds the lock, and never during a monitoring-only task.
   Report `status` and the rollback command after each deploy.
+- The fleet runs but has no users yet: change schemes, formats and protocols with a direct cutover, and never plan dual runtimes, compatibility windows or transitions for older wallets or servers.
 
 ## Documentation and operations
 
