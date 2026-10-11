@@ -397,7 +397,7 @@ fn a_recent_shard_below_the_floor_is_not_queried() {
     let recent = &env.world.r0_records[CLASSES];
     let archive = &env.world.a0_records[CLASSES];
 
-    // The map advertises `recent_floor` 1; the client's own floor holds.
+    // The map advertises `recent_window` 1; the client's own floor holds.
     let mut client = TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(floor + 1);
     let mut http = env.http();
     for txid in [recent.txid.0, ABSENT] {
@@ -419,7 +419,6 @@ fn a_recent_shard_below_the_floor_is_not_queried() {
             Route::MapChunk,
             Route::Manifest,
             Route::Setup,
-            Route::Query,
             Route::Query
         ]
     );
@@ -432,7 +431,7 @@ fn a_recent_shard_below_the_floor_is_not_queried() {
         recent,
     );
     assert_eq!(provenance.tier, Tier::Recent);
-    assert_eq!(posts(&http.take_log()), 2);
+    assert_eq!(posts(&http.take_log()), 1);
 }
 
 #[test]

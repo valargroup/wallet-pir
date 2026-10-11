@@ -75,9 +75,10 @@ pub struct DisplayRecentMap {
     pub first_shard_id: u64,
     /// Sealed archives listed, ids `first_shard_id..first_shard_id + archives`.
     pub archives: u64,
-    /// The last height an archive holds, or `start_height - 1` with none.
-    /// Heights above it are the recent shard's, which may start lower.
-    pub sealed_through: u64,
+    /// The first height no archive holds: the last archive's end plus one,
+    /// or `start_height` with none. It and every later height are the recent
+    /// shard's, which may start lower.
+    pub unsealed_start: u64,
     /// [`INDEX_CHUNK_SHARDS`], restated so a client refuses another chunking.
     pub chunk_shards: u64,
     /// One per index chunk holding a listed archive, oldest first.
@@ -164,7 +165,7 @@ impl DisplayMap {
             start_height: self.start_height,
             first_shard_id: self.first_shard_id,
             archives: archives as u64,
-            sealed_through: self.sealed_through(),
+            unsealed_start: self.unsealed_start(),
             chunk_shards: INDEX_CHUNK_SHARDS,
             chunks: chunks
                 .iter()
@@ -237,11 +238,11 @@ impl DisplayRecentMap {
     }
 
     /// The chunk holding the archive covering `height`, if an archive does:
-    /// heights from the start through [`Self::sealed_through`]. The shape
+    /// heights from the start up to [`Self::unsealed_start`]. The shape
     /// check makes chunks contiguous, so the archive is in the last chunk
     /// starting at or below `height`.
     pub fn chunk_for_height(&self, height: u64) -> Option<usize> {
-        if height < self.start_height || height > self.sealed_through {
+        if height < self.start_height || height >= self.unsealed_start {
             return None;
         }
         self.chunks
@@ -310,8 +311,8 @@ impl DisplayRecentMap {
                 self.chunks[last].start_height + (ids.end - ids.start)
             }
         };
-        let sealed_end = self.sealed_through.checked_add(1).ok_or("sealed height")?;
-        if (self.archives == 0 && sealed_end != self.start_height) || sealed_end < floor {
+        let unsealed = self.unsealed_start;
+        if (self.archives == 0 && unsealed != self.start_height) || unsealed < floor {
             return Err("display map sealed height".into());
         }
         if let Some(recent) = &self.recent {
@@ -319,7 +320,7 @@ impl DisplayRecentMap {
             if recent.sealed || recent.shard_id != self.first_shard_id + self.archives {
                 return Err("recent display shard id or seal".into());
             }
-            check_recent(&self.seal, self.start_height, self.sealed_through, recent)?;
+            check_recent(&self.seal, self.start_height, self.unsealed_start, recent)?;
         }
         Ok(())
     }
@@ -358,7 +359,7 @@ impl DisplayRecentMap {
         }
         let next_start = match self.chunks.get(index + 1) {
             Some(next) => next.start_height,
-            None => self.sealed_through + 1,
+            None => self.unsealed_start,
         };
         if last.end_height + 1 != next_start {
             return Err(format!("index chunk {index} does not reach the next start"));
@@ -509,7 +510,7 @@ mod tests {
             Box::new(|m| m.recent.as_mut().unwrap().start_height = 100),
             Box::new(|m| m.recent.as_mut().unwrap().end_height = 800),
             Box::new(|m| m.recent.as_mut().unwrap().placement_seeds.clear()),
-            Box::new(|m| m.sealed_through -= 701),
+            Box::new(|m| m.unsealed_start -= 701),
             Box::new(|m| m.seal.recent_window = 51),
             // Bucket counts with no divisor or past every table label, the
             // recent entry agreeing with them.
@@ -578,7 +579,7 @@ mod tests {
         assert!(recent.check_chunk(2, &changed).is_err());
         // A sealed height the last chunk does not reach.
         let mut beyond = recent.clone();
-        beyond.sealed_through += 1;
+        beyond.unsealed_start += 1;
         beyond.check_shape().unwrap();
         assert!(beyond.check_chunk(2, &split.chunks[2].chunk).is_err());
         // A chunk served at another chunk's position.
@@ -619,7 +620,7 @@ mod tests {
         recent.parent_block_hash = "99".repeat(32);
         let split = full.split().unwrap();
         let map = &split.recent;
-        assert_eq!(map.sealed_through, last.end_height);
+        assert_eq!(map.unsealed_start, last.end_height + 1);
         for height in last.start_height..=last.end_height {
             let index = map.chunk_for_height(height).unwrap();
             let chunk = &split.chunks[index].chunk;

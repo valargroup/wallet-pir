@@ -1,0 +1,124 @@
+{
+ "baseline": {
+  "archive": {
+   "mem_available_bytes": 66510483456
+  },
+  "coordinator": {
+   "mem_available_bytes": 47277842432
+  }
+ },
+ "controller": {
+  "archive_target": 90000,
+  "archives": 189,
+  "blocks_per_step": 25,
+  "geometry": "txid-2k8",
+  "max_archive_shards": 1000,
+  "mode": "replay-then-live",
+  "n_archive": 1,
+  "n_recent": 1,
+  "recent_window": 90000,
+  "reorg_margin": 100,
+  "replay_seals": 0,
+  "rpc_cookie": "/root/.cache/zakura/.cookie",
+  "rpc_url": "http://127.0.0.1:8232",
+  "step_interval_ms": 2000
+ },
+ "history": {
+  "adapter": "/srv/transparent-activity/ops/sources/4c85b6c20ced1e2077245491e77d3afc98bfd644/transparent/ops/scripts/transparent-live-fleet.py",
+  "fleet": "/opt/transparent-publisher/v11/fleet.json",
+  "load_status": "/srv/transparent-activity/canonical-load/v11/status.json",
+  "membership": "/opt/transparent-publisher/v11/state/membership.json"
+ },
+ "hosts": {
+  "archive": {
+   "inventory": "txid-display-01",
+   "vpc_ip": "10.142.0.6"
+  },
+  "coordinator": {
+   "inventory": "coordinator"
+  },
+  "router": {
+   "inventory": "router-01"
+  }
+ },
+ "journal": {
+  "data_dir": "/srv/txid-display-genesis/journal-v2x",
+  "node_cache_dir": "/root/.cache/zakura",
+  "start_height": 0
+ },
+ "measure": {
+  "output": "/srv/txid-display-genesis/v3/measure",
+  "public_url": "https://transparent-pir.valargroup.dev"
+ },
+ "ports": {
+  "controller_status": 8099,
+  "worker": 8095
+ },
+ "publication": {
+  "root": "/srv/txid-display-genesis/v3/root"
+ },
+ "release": {
+  "archive_sha256": "FILL: CI transparent-txid-display bundle",
+  "binaries": {
+   "transparent-event-ingest": "FILL",
+   "transparent-txid-server": "FILL",
+   "txid-control": "FILL",
+   "txid-display-controller": "FILL",
+   "txid-inventory": "FILL"
+  },
+  "ci_run": "FILL: full CI run of source_sha",
+  "files": {
+   "transparent-txid-display-controller.service.in": "FILL",
+   "transparent-txid-display-worker.service.in": "FILL",
+   "txid-display-fleet.py": "FILL",
+   "txid-display-observe.py": "FILL",
+   "txid-display-routes.caddy.in": "FILL"
+  }
+ },
+ "router": {
+  "import_glob": "/etc/caddy/txid-display/*.caddy",
+  "live_fleet_sha256": "f3df5c533dc6e6f346e42a7fd7ac77dda9f00e97899440c0df813b5d6e26a083"
+ },
+ "schema": "txid-display-poc-request-v1",
+ "source_sha": "FILL: wallet-pir main commit",
+ "terraform": {
+  "root": "/opt/enhance-pir/infra/production",
+  "wrapper": "/opt/enhance-pir/ops/wallet-pir-terraform.sh"
+ },
+ "units": {
+  "archive": {
+   "build_slots": 2,
+   "build_threads": 4,
+   "cache_bytes": 25769803776,
+   "cpu_quota": "600%",
+   "cpu_weight": 50,
+   "disk_cache_bytes": 34359738368,
+   "memory_max": "40G",
+   "nice": 5,
+   "oom_score_adjust": 500,
+   "query_slots": 8,
+   "ready_timeout_seconds": 7200,
+   "retain_revisions": 2
+  },
+  "bootstrap": {
+   "cpu_quota": "400%",
+   "cpu_weight": 20,
+   "memory_max": "8G",
+   "nice": 10
+  },
+  "controller": {
+   "cpu_quota": "200%",
+   "cpu_weight": 20,
+   "memory_max": "4G",
+   "nice": 10
+  },
+  "ingest": {
+   "cpu_quota": "400%",
+   "cpu_weight": 20,
+   "io_weight": 20,
+   "memory_max": "12G",
+   "nice": 10,
+   "workers": 4
+  }
+ }
+}

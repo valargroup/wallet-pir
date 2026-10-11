@@ -330,8 +330,8 @@ the same entries as two kinds of document, derived from the full map
 (`transparent-shard/src/display/split.rs`):
 
 - **Recent map** (`GET /v1/txid/map`, `txid-map.json`): the seal parameters,
-  the start, the archive count, the last height an archive holds
-  (`sealed_through`), one reference (start height and SHA-256) per index
+  the start, the archive count, the first height no archive holds
+  (`unsealed_start`), one reference (start height and SHA-256) per index
   chunk, and the recent shard's entry. Compact canonical JSON, served
   with `X-Txid-Map-Sha256` and `Cache-Control: no-cache`.
 - **Index chunks** (`GET /v1/txid/map/{base}/{sha256}`,
@@ -391,9 +391,10 @@ reference it is tested against.
   Setup, Query`. A lookup sends at most 2 map, 3 init and 2 query requests.
   `Absent` sends the same query. Placement, recent floor and support results
   send no query. `cancel` is polled before every request.
-- **Placement.** A height at or below the recent map's `sealed_through`, the
-  last archive's end, is looked up in its archive through the index chunk
-  covering it; a height above it in the recent shard. A height below the map's start or above its tip is
+- **Placement.** A height below the recent map's `unsealed_start`, one past
+  the last archive's end, is looked up in its archive through the index
+  chunk covering it; that height and above in the recent shard. A height below the
+  map's start or above its tip is
   `PlacementUnknown(Below | Above)` straight from a map the lookup fetched,
   or one less than 30 s old by the wall clock. A lookup holding an older map
   fetches it once more and places the height again on the new map. The wall
@@ -406,9 +407,9 @@ reference it is tested against.
   `recent_window` and the client's own floor (`MIN_RECENT_FLOOR`, 10,000), so
   a server publishing a low `recent_window` does not lower it. Otherwise the
   lookup returns `RecentBelowFloor` with no manifest, setup or query: not
-  privately available, and never `Absent`. A reorg can leave an honest recent
-  shard under the floor until blocks arrive, and a lineage that does not start
-  at genesis starts with a small one. The map check also refuses a recent
+  privately available, and never `Absent`. An honest publication keeps the
+  window through reorgs above the sealed floor; a lineage that does not start
+  at genesis starts with a small recent shard. The map check also refuses a recent
   shard below `recent_window` that does not start at the map's start (see
   the time tiers above). Archive lookups are unaffected. A map
   older than 30 s is fetched once more before this result, as for a placement.

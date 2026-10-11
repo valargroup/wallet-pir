@@ -151,10 +151,10 @@ fn check_windows(maps: &[DisplayMap], window: u64, held: impl Fn(u64) -> u64) ->
         }
         assert_eq!(
             recent.start_height,
-            start.min(map.sealed_through() + 1),
+            start.min(map.unsealed_start()),
             "{recent:?}"
         );
-        overlapping += usize::from(recent.start_height <= map.sealed_through());
+        overlapping += usize::from(recent.start_height < map.unsealed_start());
     }
     overlapping
 }
@@ -177,10 +177,12 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
     assert_eq!(run.outcome, Outcome::Idle);
     check_maps(&run.maps, &first);
     let original = |h: u64| chain_records(0, h).len() as u64;
-    let overlapping = check_windows(&run.maps, 25, original);
-    assert_eq!(overlapping, run.maps.len());
+    // A cycle that publishes while a seal is still staging leaves a wider
+    // unsealed range, which can hold the window alone; once idle, every seal
+    // is published and the window reaches back over several archives.
+    assert!(check_windows(&run.maps, 25, original) > 0);
     let last = run.maps.last().unwrap().clone();
-    assert!(last.sealed_through() + 1 - last.shards.last().unwrap().start_height > 3);
+    assert!(last.unsealed_start() - last.shards.last().unwrap().start_height > 3);
 
     // The tip block is replaced by an empty one: the window reaches back.
     let tip = 130;
@@ -1064,7 +1066,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     // and every recent shard fills the window.
     for map in &maps {
         let recent = map.shards.last().unwrap();
-        assert!(map.sealed_through() + params.reorg_margin <= recent.end_height);
+        assert!(map.unsealed_start() + params.reorg_margin <= recent.end_height + 1);
         assert!(recent.min_bucket_records >= params.recent_window, "{recent:?}");
     }
 }

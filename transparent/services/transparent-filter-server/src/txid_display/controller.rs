@@ -7,8 +7,8 @@
 //! prefix of the queue becomes archives, the recent shard is rebuilt over its
 //! window (every unsealed block, reaching back over the newest archives until
 //! it holds `recent_window` txids), a candidate is written, and workers are
-//! activated archive owners first. A map therefore never names an archive its owners are not
-//! already serving.
+//! activated archive owners first. A map therefore never names an archive its
+//! owners are not already serving.
 //!
 //! Sealed content never changes. A fork below the sealed floor, bytes that
 //! differ under a published identity, or a map whose sealed entries are not
@@ -348,10 +348,10 @@ impl Controller {
     /// Sealed terminals must still be the journal's blocks, and sealed
     /// revisions must verify from disk (unless trusted). The cache is reloaded
     /// from its window floor (see [`cache_floor`]) through the activated tip;
-    /// queued seals are planned again from it and reproduce the same digests. Undelivered
-    /// invalidations are restored. A journal that no longer holds the
-    /// activated tip, unless a recorded rollback accounts for it, owes every
-    /// recent replica an invalidation from the recent start.
+    /// queued seals are planned again from it and reproduce the same digests.
+    /// Undelivered invalidations are restored. A journal that no longer holds
+    /// the activated tip, unless a recorded rollback accounts for it, owes
+    /// every recent replica an invalidation from the recent start.
     pub fn open(
         root: &Path,
         store: EventStore,

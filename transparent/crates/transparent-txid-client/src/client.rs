@@ -1085,7 +1085,7 @@ mod tests {
             start_height,
             first_shard_id: 0,
             archives: 0,
-            sealed_through: start_height - 1,
+            unsealed_start: start_height,
             chunk_shards: display::INDEX_CHUNK_SHARDS,
             chunks: Vec::new(),
             recent: None,

@@ -6,6 +6,24 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display one-query layout measured, not deployed, 2026-10-11
+
+`main` carries the `txid-2k8` layout: one query per lookup, 90,000-entry
+archives and a 90,000-entry sliding recent window
+([txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket)).
+Production still serves the `txid-2k` lineage of the entry below; the
+cutover is prepared and awaits Roman
+([deployment](deployment.md#txid-display-one-query-cutover-prepared-2026-10-11)).
+Development-host gates ([evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)):
+
+- **Placement**, from the live map's 17.05M entries re-sealed at 90,000:
+  189 archives, all one segment, seed tries p50 1 and max 2; the recent
+  window holds 90,017 entries. Not yet run over the journal itself.
+- **Recent rebuild**, one table at 4 build threads under a 3-CPU quota:
+  p50 2.36 s and p95 3.08 s, 1.56× and 1.90× `txid-2k`.
+- **Memory:** 80.04 MiB per runtime; 191 runtimes hold 15.2 GiB of the 40G
+  `MemoryMax`, against 16.7 GiB for today's 427 tables.
+
 ## Txid display served by one combined worker, 2026-10-11
 
 `/v1/txid/` is served by a single worker with role `combined` on

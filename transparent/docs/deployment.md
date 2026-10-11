@@ -3271,7 +3271,7 @@ History is untouched.
 **Checks after step 7.**
 - The public recent map has schema `transparent-txid-display-shard-v3`,
   `recent_window` 90,000, a recent shard holding at least 90,000 entries that
-  starts at or before `sealed_through + 1`, and every archive one segment.
+  starts at or before `unsealed_start`, and every archive one segment.
 - A found and an absent lookup with `transparent-txid-client` at the merged
   commit each send exactly one query to the right tier.
 - The worker is ready and warm on 191 runtimes, at or above 20% available

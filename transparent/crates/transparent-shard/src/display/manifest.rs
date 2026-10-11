@@ -358,18 +358,19 @@ impl DisplayMap {
         self.shards.last().filter(|s| !s.sealed)
     }
 
-    /// The last height an archive holds, or the height before the start when
-    /// none is listed: every height above it is the recent shard's.
-    pub fn sealed_through(&self) -> u64 {
+    /// The first height no archive holds: the last archive's end plus one,
+    /// or the start when none is listed. It and every later height are the
+    /// recent shard's.
+    pub fn unsealed_start(&self) -> u64 {
         self.archives()
             .last()
-            .map_or(self.start_height.saturating_sub(1), |a| a.end_height)
+            .map_or(self.start_height, |a| a.end_height + 1)
     }
 
-    /// The shard a lookup at `height` names: its archive at or below
-    /// [`Self::sealed_through`], otherwise the recent shard.
+    /// The shard a lookup at `height` names: its archive below
+    /// [`Self::unsealed_start`], otherwise the recent shard.
     pub fn shard_for_height(&self, height: u64) -> Option<&DisplayMapEntry> {
-        if height <= self.sealed_through() {
+        if height < self.unsealed_start() {
             return find_by_height(self.archives(), height);
         }
         self.recent().filter(|r| height <= r.end_height)
@@ -416,7 +417,7 @@ impl DisplayMap {
             check_chain(&pair[0], &pair[1])?;
         }
         if let Some(recent) = self.recent() {
-            check_recent(&self.seal, self.start_height, self.sealed_through(), recent)?;
+            check_recent(&self.seal, self.start_height, self.unsealed_start(), recent)?;
             for archive in archives {
                 check_recent_parent(archive, recent)?;
             }
@@ -473,12 +474,12 @@ pub(crate) fn check_entry(seal: &DisplaySealParams, shard: &DisplayMapEntry) -> 
 pub(crate) fn check_recent(
     seal: &DisplaySealParams,
     start_height: u64,
-    sealed_through: u64,
+    unsealed_start: u64,
     recent: &DisplayMapEntry,
 ) -> Result<(), String> {
     if recent.start_height < start_height
-        || recent.start_height > sealed_through + 1
-        || recent.end_height <= sealed_through
+        || recent.start_height > unsealed_start
+        || recent.end_height < unsealed_start
     {
         return Err(format!(
             "recent display shard {} does not cover the unsealed range",
@@ -767,7 +768,7 @@ mod tests {
             let m = overlapping(start, parent);
             m.check_shape().unwrap();
             // Heights the archives hold go to them, the rest to recent.
-            assert_eq!(m.sealed_through(), 299);
+            assert_eq!(m.unsealed_start(), 300);
             assert_eq!(m.shard_for_height(start).unwrap().shard_id, 7 + (start / 100 - 1));
             assert_eq!(m.shard_for_height(299).unwrap().shard_id, 8);
             assert_eq!(m.shard_for_height(300).unwrap().shard_id, 9);
