@@ -72,12 +72,12 @@ FORMER_RECENT = 'former_recent'
 PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
 ACTIONS = ('ingest-start', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop', 'stop')
 MODES = ('live', 'replay', 'replay-then-live')
-GEOMETRIES = ('txid-2k', 'txid-4k')
+GEOMETRIES = ('txid-2k8',)
 # DisplaySealParams plus the map window, as txid-display-controller's seal flags.
-SEAL_KEYS = ('n_archive', 'n_recent', 'archive_target', 'recent_floor', 'reorg_margin', 'max_archive_shards')
+SEAL_KEYS = ('n_archive', 'n_recent', 'archive_target', 'recent_window', 'reorg_margin', 'max_archive_shards')
 MAX_BUCKETS = 64
-# Sealed archives a map lists: genesis coverage is about 426 v2 archives at
-# 40,000 entries, growing about 64 a year.
+# Sealed archives a map lists: genesis coverage is about 189 archives at
+# 90,000 entries, growing about 30 a year.
 MAX_ARCHIVE_SHARDS = 1024
 
 OPT = '/opt/transparent-txid-display'
@@ -313,7 +313,7 @@ def validate(request, inventory):
         integer(controller[key], 1, MAX_BUCKETS, 'controller.' + key)
     # The anonymity floor of the brief; a request cannot lower it.
     integer(controller['archive_target'], 10000, 1 << 32, 'controller.archive_target')
-    integer(controller['recent_floor'], 10000, 1 << 32, 'controller.recent_floor')
+    integer(controller['recent_window'], 10000, 1 << 32, 'controller.recent_window')
     # Sealed shards never change, so they must stay below any reorg the node accepts.
     integer(controller['reorg_margin'], 100, 10000, 'controller.reorg_margin')
     integer(controller['max_archive_shards'], 1, MAX_ARCHIVE_SHARDS, 'controller.max_archive_shards')
@@ -1276,9 +1276,11 @@ class Poc:
                 return posixpath.dirname(path)
         raise PocError('no candidate under %s has map %s; run txid-display-bootstrap first' % (root, map_sha256))
 
-    def workers(self, transaction, map_sha256):
+    def workers(self, transaction, map_sha256, replace_active=None):
         require(isinstance(map_sha256, str) and HEX64.fullmatch(map_sha256),
                 '--publication-map-sha256 (the bootstrap candidate map) is required for workers')
+        require(replace_active is None or (HEX64.fullmatch(replace_active) and replace_active != map_sha256),
+                '--replace-active names the map a fresh lineage replaces, not the new one')
         # Once running, the controller owns every worker's map and `expected`;
         # a restart or prepare here would race it or regress the served map.
         require(not self.running('coordinator', CONTROLLER_UNIT),
@@ -1289,7 +1291,7 @@ class Poc:
         self.ex.mkdir(self.host('coordinator'), STATE + '/ssh', 0o700)
         transaction.change('coordinator', FLEET_JSON, files['fleet.json'], 0o600)
         for key in self.worker_keys:
-            self.worker(transaction, key, files['unit:' + key], source, map_sha256)
+            self.worker(transaction, key, files['unit:' + key], source, map_sha256, replace_active)
         if self.former_recent:
             self.retire_former_recent(transaction)
 
@@ -1312,13 +1314,18 @@ class Poc:
         self.ex.systemctl(self.host(key), 'daemon-reload')
         transaction.event('%s: removed the recent-replica unit; %s and %s stay' % (key, WORKER_DATA, OPT))
 
-    def worker(self, transaction, key, unit_text, source, map_sha256):
+    def worker(self, transaction, key, unit_text, source, map_sha256, replace_active=None):
         """Install and start one worker; only a worker with no active map takes `map_sha256`.
 
         A worker that already serves a map (from an earlier deploy or the
         controller) restarts onto its own active record and keeps it, since the
         bootstrap candidate may be older; the controller advances it later.
         The unit restarts only when its bytes (and so the release) changed.
+
+        `replace_active` is the map of a lineage this deploy replaces, as a
+        re-layout's fresh lineage does: a worker serving it is stopped and its
+        active record removed (journaled, so a rollback puts it back), and it
+        then takes `map_sha256` as an empty worker would.
         """
         host = self.host(key)
         binary = self.request['release']['binaries']['transparent-txid-server']
@@ -1328,6 +1335,17 @@ class Poc:
             self.ex.mkdir(host, path, 0o700)
         record = self.read_json(key, ACTIVE_RECORD)
         serving = record.get('map_sha256') if isinstance(record, dict) else None
+        if replace_active is not None and serving is not None:
+            require(serving == replace_active,
+                    '%s serves %s, not the replaced %s' % (key, serving, replace_active))
+            self.stop_units(transaction, key, [WORKER_UNIT])
+            transaction.remove(key, ACTIVE_RECORD)
+            # The worker writes its own record again on activation; a rollback
+            # stops it first and puts the replaced record back over that.
+            transaction.data['changes'][-1]['worker_rewrites'] = True
+            transaction.save()
+            transaction.event('%s: removed the active record of %s' % (key, replace_active))
+            serving = None
         directory = '%s/%s' % (PUBLICATIONS, map_sha256)
         if serving is None:
             shipped = self.fleet(transaction, {'operation': 'ship', 'worker': key, 'kind': 'candidate',
@@ -1638,6 +1656,9 @@ class Poc:
             key = (entry['host'], entry['path'])
             if key not in current:
                 current[key] = self.ex.sha256(self.host(entry['host']), entry['path'])
+            if entry.get('worker_rewrites'):
+                current[key] = entry['previous_sha256']
+                continue
             if current[key] not in (entry['new_sha256'], entry['previous_sha256']):
                 problems.append('%s on %s changed since %s wrote it' % (entry['path'], entry['host'], transaction.id))
             current[key] = entry['previous_sha256']
@@ -1779,8 +1800,10 @@ class Poc:
 
     # ----------------------------------------------------------- entries
 
-    def deploy(self, phase, expected, archive=None, map_sha256=None, terraform_plan_sha256=None):
+    def deploy(self, phase, expected, archive=None, map_sha256=None, terraform_plan_sha256=None,
+               replace_active=None):
         require(phase in PHASES, 'unknown phase %r' % (phase,))
+        require(replace_active is None or phase == 'workers', '--replace-active belongs to the workers phase')
         if phase == 'firewall':
             return self.firewall(expected, terraform_plan_sha256)
         require(terraform_plan_sha256 is None, '--terraform-plan-sha256 belongs to the firewall phase')
@@ -1792,7 +1815,7 @@ class Poc:
             elif phase == 'router-hook':
                 self.router_hook(transaction)
             elif phase == 'workers':
-                self.workers(transaction, map_sha256)
+                self.workers(transaction, map_sha256, replace_active)
             elif phase == 'route':
                 self.route(transaction)
             else:
@@ -1903,7 +1926,8 @@ def main(args, inventory, out=print, executor=None, lock=None, **options):
     try:
         if command == 'deploy':
             poc.deploy(args.phase, args.expect_plan_sha256, archive=args.archive,
-                       map_sha256=args.publication_map_sha256, terraform_plan_sha256=args.terraform_plan_sha256)
+                       map_sha256=args.publication_map_sha256, terraform_plan_sha256=args.terraform_plan_sha256,
+                       replace_active=args.replace_active)
         elif command == 'rollback':
             poc.rollback(args.transaction, args.terraform_plan_sha256)
         elif command == 'retire':

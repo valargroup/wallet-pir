@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::path::Path;
 use transparent_events::{FeeState, TransactionMetadata, Txid};
 use transparent_filter::BlockHash;
-use transparent_shard::display::{DisplaySealParams, TXID_2K};
+use transparent_shard::display::{DisplaySealParams, TXID_2K8};
 use transparent_shard::txid::{DisplayOutput, DisplayRecord};
 use transparent_shard::txid_v1::TransparentDisplayRecord;
 use transparent_shard::txid_v2x::{DisplayInput, TransparentDisplayRecordV2x};
@@ -96,7 +96,7 @@ pub(crate) fn params() -> DisplaySealParams {
         n_archive: 1,
         n_recent: 1,
         archive_target: 10,
-        recent_floor: 5,
+        recent_window: 5,
         reorg_margin: 2,
     }
 }
@@ -118,7 +118,7 @@ pub(crate) fn write_journal(dir: &Path, start: u64, through: u64, tag: u8) {
 
 pub(crate) fn layout(store: &impl Journal, start: u64, max_archive_shards: u64) -> DisplayRoot {
     DisplayRoot {
-        geometry: TXID_2K.name.to_string(),
+        geometry: TXID_2K8.name.to_string(),
         seal: params(),
         max_archive_shards,
         network: transparent_filter::NETWORK.to_string(),

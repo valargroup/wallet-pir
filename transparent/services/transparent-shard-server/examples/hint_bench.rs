@@ -18,6 +18,10 @@
 //! with one build slot prewarms a tail revision, and nothing else, so that
 //! binaries from two sources can be compared by time, published masks and peak
 //! resident memory. One JSON line per table goes to stdout, then a summary.
+//!
+//! A display geometry's one table is `txdirectory`; `txdirectory=synthetic:N`
+//! builds a one-bucket display table of `N` synthetic entries in place of a
+//! file, as the publisher would lay them out.
 use serde_json::json;
 use std::time::Instant;
 use transparent_native::{self as native, D};
@@ -55,17 +59,29 @@ fn main() -> Result<(), String> {
             ),
         }
     }
-    let geometry = transparent_shard::layout::by_name(&geometry).ok_or("unknown geometry")?;
+    let geometry = transparent_shard::layout::by_name(&geometry)
+        .or_else(|| transparent_shard::display::display_by_name(&geometry))
+        .ok_or("unknown geometry")?;
     let threads = build_pool().current_num_threads();
     let mut inputs = Vec::new();
     for (name, path) in tables {
         let table = match name.as_str() {
             "directory" => Table::Directory,
             "pages" => Table::Pages,
+            "txdirectory" => Table::TxDirectory,
             _ => return Err(format!("unknown table {name}")),
         };
         let shared = SharedParams::build(geometry, table)?;
-        let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        let bytes = match path.strip_prefix("synthetic:") {
+            Some(count) => {
+                let count: usize = count.parse().map_err(|_| "synthetic entry count")?;
+                let records = transparent_shard_server::display::synth::records(count, 1);
+                let built = transparent_shard::display::build_shard(0, geometry, 1, &records)
+                    .map_err(|e| e.0)?;
+                built.buckets[0].directory[0].clone()
+            }
+            None => std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?,
+        };
         if bytes.len() != shared.profile.rows * shared.profile.row_bytes {
             return Err(format!("{path}: {} bytes", bytes.len()));
         }

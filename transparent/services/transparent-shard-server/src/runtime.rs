@@ -146,8 +146,8 @@ pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
 /// not a bound: a runtime whose matrix needs eight-byte words is charged its
 /// full reservation, and a plan made with this figure then comes up short and
 /// says so through overloads rather than through memory. `shard-residency`
-/// measured `txid-2k` at 40.3-41.3 MiB and `txid-4k` at 48.2-48.3 MiB per
-/// runtime against the 40.05 and 48.05 MiB given here.
+/// measured `txid-2k8` at 80.0-85.8 MiB per runtime against the 80.09 MiB
+/// given here.
 pub fn held_bytes(rows: u64, row_bytes: u32) -> u64 {
     let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
     reserved_bytes(rows, row_bytes)
@@ -323,12 +323,11 @@ impl Iterator for RowCoefficients<'_> {
 /// by [`native::batched_hint`]: the recent tails and the display tables, whose
 /// recent shard is rebuilt at every block. Every other geometry, the history
 /// archives included, keeps the reference product over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 5] = [
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 4] = [
     &transparent_shard::layout::RECENT_8K,
     &transparent_shard::layout::RECENT_4K,
     &transparent_shard::layout::RECENT_4K_8K,
-    &transparent_shard::display::TXID_2K,
-    &transparent_shard::display::TXID_4K,
+    &transparent_shard::display::TXID_2K8,
 ];
 
 fn uses_batched_hint(geometry: &Geometry) -> bool {
@@ -1211,7 +1210,7 @@ impl RuntimeCache {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
 
     #[test]
     fn runtime_builds_run_in_their_own_smaller_pool() {
@@ -1235,7 +1234,7 @@ mod tests {
     }
 
     use super::*;
-    use transparent_shard::display::TXID_2K;
+    use transparent_shard::display::TXID_2K8;
     use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
@@ -1257,36 +1256,35 @@ mod tests {
         ));
     }
 
-    /// `shard-residency` on roman-dev-2 (2026-10-07), steady per-runtime
-    /// increments after the allocator warmed up, in MiB: the lowest and
-    /// highest of runtimes 4-6 of each table.
-    /// `transparent/evidence/txid-display-backfill-sizing-2026-10-07/residency`.
-    const MEASURED_TXID_2K_MIB: (f64, f64) = (40.29, 41.34);
-    const MEASURED_TXID_4K_MIB: (f64, f64) = (48.21, 48.30);
+    /// `shard-residency` on a development host (2026-10-11), steady
+    /// per-runtime increments after the allocator warmed up, in MiB: the
+    /// lowest and highest of runtimes 7-12 of 12.
+    /// `transparent/evidence/txid-display-2k8-gates-2026-10-11/residency`.
+    const MEASURED_TXID_2K8_MIB: (f64, f64) = (80.04, 85.75);
 
     fn mib(bytes: u64) -> f64 {
         bytes as f64 / f64::from(1 << 20)
     }
 
     /// The planned built size is the four-byte-word size the residency
-    /// measurement found, and the reservation is the eight-byte bound: 72.05
-    /// against 40.05 MiB at `txid-2k`, 80.05 against 48.05 MiB at `txid-4k`.
-    /// The planned size sits just under each measured range, which carries
-    /// allocator overhead the formula leaves out.
+    /// measurement found, and the reservation is the eight-byte bound: 144.09
+    /// against 80.09 MiB at `txid-2k8`, whose two 4,096-byte blocks per row
+    /// each carry a compiled matrix. The planned size is the measured steady
+    /// increment to 0.05 MiB; the range's top carries allocator overhead the
+    /// formula leaves out.
     #[test]
     fn the_planned_built_size_is_the_measured_display_runtime() {
-        use transparent_shard::display::TXID_4K;
-        for (geometry, reserved, held, measured) in [
-            (&TXID_2K, 75_545_144, 41_990_712, MEASURED_TXID_2K_MIB),
-            (&TXID_4K, 83_933_752, 50_379_320, MEASURED_TXID_4K_MIB),
-        ] {
-            let shared = SharedParams::build(geometry, Table::TxDirectory).unwrap();
-            assert_eq!(shared.reserved_bytes(), reserved, "{}", geometry.name);
-            assert_eq!(shared.held_bytes(), held, "{}", geometry.name);
-            assert_eq!(reserved - held, 32 << 20, "half of one compiled matrix");
-            assert!(mib(held) <= measured.0, "{}", geometry.name);
-            assert!(measured.1 - mib(held) < 1.5, "{}", geometry.name);
-        }
+        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
+        assert_eq!((reserved, held), (151_090_272, 83_981_408));
+        assert_eq!(
+            reserved - held,
+            2 * (32 << 20),
+            "half of two compiled matrices"
+        );
+        let measured = MEASURED_TXID_2K8_MIB;
+        assert!((mib(held) - measured.0).abs() < 0.1);
+        assert!(measured.1 - mib(held) < 6.0);
     }
 
     /// A built runtime, history or display, holds no more than the planned
@@ -1298,11 +1296,11 @@ mod tests {
         let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
         for (geometry, table) in [
             (&RECENT_8K, Table::Directory),
-            (&TXID_2K, Table::TxDirectory),
-            (&transparent_shard::display::TXID_4K, Table::TxDirectory),
+            (&TXID_2K8, Table::TxDirectory),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;
+            let blocks = profile.blocks() as u64;
             let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
                 .map(|i| (i.wrapping_mul(2_654_435_761) >> 9) as u8)
                 .collect();
@@ -1317,7 +1315,7 @@ mod tests {
             );
             assert!(held <= shared.held_bytes(), "{}", geometry.name);
             assert!(
-                held >= shared.held_bytes() - (matrix_narrow - matrix_packed),
+                held >= shared.held_bytes() - blocks * (matrix_narrow - matrix_packed),
                 "{}",
                 geometry.name
             );
@@ -1332,7 +1330,7 @@ mod tests {
     /// charge fall, never rise, and eviction returns exactly what is charged.
     #[test]
     fn a_reservation_is_released_only_after_its_build_and_only_downward() {
-        let shared = SharedParams::build(&TXID_2K, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
         let (bound, held) = (shared.reserved_bytes(), shared.held_bytes());
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(bound + held, 2, metrics.clone());
@@ -1483,17 +1481,25 @@ mod tests {
         );
     }
 
-    /// The txid display genesis plan: 850 `txid-2k` runtimes hold 33.2 GiB at
-    /// their built size (33.4 GiB with four in flight at their bound), against
-    /// 59.8 GiB charged at the bound.
+    /// Runtimes a combined display worker holds at genesis coverage: 189
+    /// archives of 90,000 entries (17.05M entries at the 2026-10-11 tip), the
+    /// recent shard and one retired recent revision.
+    pub(crate) const GENESIS_RUNTIMES: usize = 191;
+
+    /// The txid display genesis plan: 191 `txid-2k8` runtimes hold 15.2 GiB
+    /// at their built size with four in flight at their bound, against
+    /// 26.9 GiB charged at the bound: well inside the display worker's 40G
+    /// `MemoryMax`.
     #[test]
     fn genesis_display_runtimes_fit_at_their_built_size() {
-        let shared = SharedParams::build(&TXID_2K, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
         let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
-        let runtimes = std::iter::repeat_n(&shared, 850);
+        let runtimes = std::iter::repeat_n(&shared, GENESIS_RUNTIMES);
         let needed = warm_bytes(runtimes, 4);
-        assert!((gib(needed) - 33.4).abs() < 0.1, "{}", gib(needed));
-        assert!((gib(850 * shared.reserved_bytes()) - 59.8).abs() < 0.1);
+        assert!((gib(needed) - 15.19).abs() < 0.1, "{}", gib(needed));
+        let reserved = GENESIS_RUNTIMES as u64 * shared.reserved_bytes();
+        assert!((gib(reserved) - 26.88).abs() < 0.1, "{}", gib(reserved));
+        assert!(needed < 36 << 30, "0.9 of a 40G MemoryMax");
     }
 
     /// The native reservation at the pinned geometry: a 32 MiB database, one
@@ -1606,8 +1612,8 @@ mod tests {
         for (geometry, table, filled) in [
             (&RECENT_8K, Table::Directory, 8_192),
             (&RECENT_8K, Table::Pages, 5_000),
-            (&TXID_2K, Table::TxDirectory, 2_048),
-            (&TXID_2K, Table::TxDirectory, 700),
+            (&TXID_2K8, Table::TxDirectory, 2_048),
+            (&TXID_2K8, Table::TxDirectory, 700),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
             let profile = &shared.profile;

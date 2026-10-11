@@ -1,11 +1,10 @@
 //! Bytes per txid display lookup: computed from the native lengths, and
 //! measured on the wire.
 //!
-//! - `formula`: body bytes of the fixed transcript, exactly two directory
-//!   queries whether the entry is found or not, per geometry, warm and cold,
-//!   for the display geometries and, for comparison, display tables at
-//!   history geometries' directory sizes. Header and metadata sizes are
-//!   estimates given on the command line; bodies are exact.
+//! - `formula`: body bytes of the fixed transcript, exactly one directory
+//!   query whether the entry is found or not, per display geometry, warm and
+//!   cold. Header and metadata sizes are estimates given on the command line;
+//!   bodies are exact.
 //! - `measure`: lookups through a TCP byte meter, cold (a fresh client and
 //!   connections), warm, and recent-stale (a warm client after the recent
 //!   revision moved on), with the client's computed bytes beside the
@@ -75,18 +74,18 @@ enum Command {
 }
 
 /// Body bytes of one 44-bit dithered query and of its answer, for a table of
-/// `rows` rows of 4,096 bytes answered by `segments` segments.
-fn query_bytes(rows: u64, segments: u64) -> (u64, u64) {
-    let cols = transparent_shard::txid::ROW_BYTES / 2;
+/// `geometry`'s rows answered by `segments` segments.
+fn query_bytes(geometry: &Geometry, segments: u64) -> (u64, u64) {
+    let cols = geometry.directory_row_bytes / 2;
     (
-        8 + transparent_native::dithered_request_len(rows as usize) as u64,
+        8 + transparent_native::dithered_request_len(geometry.directory_rows as usize) as u64,
         segments * (16 + transparent_native::response_len(cols) as u64),
     )
 }
 
 /// One segment's setup document: base64 masks plus JSON fields.
-fn setup_bytes(json: u64) -> u64 {
-    let public = transparent_native::public_len(transparent_shard::txid::ROW_BYTES / 2) as u64;
+fn setup_bytes(geometry: &Geometry, json: u64) -> u64 {
+    let public = transparent_native::public_len(geometry.directory_row_bytes / 2) as u64;
     4 * public.div_ceil(3) + json
 }
 
@@ -97,17 +96,11 @@ fn formula(
     header_bytes: u64,
     setup_json_bytes: u64,
 ) -> Vec<serde_json::Value> {
-    let geometries: [(&Geometry, &str); 4] = [
-        (&transparent_shard::display::TXID_2K, "display"),
-        (&transparent_shard::display::TXID_4K, "display"),
-        (&transparent_shard::layout::RECENT_4K_8K, "history-attached"),
-        (&transparent_shard::layout::ARCHIVE_WIDE, "history-attached"),
-    ];
-    let setup = setup_bytes(setup_json_bytes);
     let mut rows = Vec::new();
-    for (geometry, attachment) in geometries {
-        let (dir_up, dir_down) = query_bytes(geometry.directory_rows, directory_segments);
-        let queries = 2;
+    for geometry in transparent_shard::display::DISPLAY_PROFILES {
+        let setup = setup_bytes(geometry, setup_json_bytes);
+        let (dir_up, dir_down) = query_bytes(geometry, directory_segments);
+        let queries = 1;
         let (up, down) = (queries * dir_up, queries * dir_down);
         let warm = up + down;
         let setups = directory_segments;
@@ -123,8 +116,8 @@ fn formula(
             let total = warm + metadata + headers;
             rows.push(serde_json::json!({
                 "geometry": geometry.name,
-                "attachment": attachment,
                 "directory_rows": geometry.directory_rows,
+                "row_bytes": geometry.directory_row_bytes,
                 "state": state,
                 "queries": queries,
                 "query_up": up,
@@ -430,19 +423,15 @@ mod tests {
 
     /// The figures the design was argued from, reproduced from the native
     /// lengths: 38,920 B per dithered query at 2,048 rows (40,200 B at the 49
-    /// bits every server also accepts), and the warm transcripts, which are
-    /// two directory queries for every lookup.
+    /// bits every server also accepts), an 11,280 B answer of two 4,096-byte
+    /// blocks, and the warm transcript, one directory query for every lookup.
     #[test]
     fn warm_transcripts_match_the_native_lengths() {
-        assert_eq!(query_bytes(2_048, 1), (38_920, 5_648));
-        assert_eq!(query_bytes(4_096, 1).0, 50_184);
-        assert_eq!(query_bytes(32_768, 1).0, 207_880);
-        // The 49-bit lengths the design was first argued from.
-        let legacy = |rows: usize| 8 + transparent_native::request_len(rows) as u64;
-        assert_eq!(
-            (legacy(2_048), legacy(4_096), legacy(32_768)),
-            (40_200, 52_744, 228_360)
-        );
+        use transparent_shard::display::TXID_2K8;
+        assert_eq!(query_bytes(&TXID_2K8, 1), (38_920, 11_280));
+        assert_eq!(query_bytes(&TXID_2K8, 2).1, 22_560);
+        let legacy = 8 + transparent_native::request_len(2_048) as u64;
+        assert_eq!(legacy, 40_200);
         let rows = formula(1, 0, 0, 0, 0);
         let total = |geometry: &str, state: &str| {
             rows.iter()
@@ -451,14 +440,10 @@ mod tests {
                 .as_u64()
                 .unwrap()
         };
-        // Two dithered queries: 2,560, 5,120 and 40,960 B below the 49-bit
-        // totals of 91,696, 116,784 and 468,016.
-        assert_eq!(total("txid-2k", "warm"), 89_136);
-        assert_eq!(total("txid-4k", "warm"), 111_664);
-        assert_eq!(total("archive-wide", "warm"), 427_056);
-        assert_eq!(setup_bytes(0), 19_800);
+        assert_eq!(total("txid-2k8", "warm"), 50_200);
+        assert_eq!(setup_bytes(&TXID_2K8, 0), 39_596);
         // Cold adds one setup per directory segment, plus map and manifest.
-        assert_eq!(total("txid-2k", "cold"), 89_136 + 19_800);
-        assert!(rows.iter().all(|r| r["queries"] == 2));
+        assert_eq!(total("txid-2k8", "cold"), 50_200 + 39_596);
+        assert!(rows.iter().all(|r| r["queries"] == 1));
     }
 }

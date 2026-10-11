@@ -1,15 +1,21 @@
-//! Where display shards seal.
+//! Where display shards seal, and where the recent shard starts.
 //!
-//! The recent shard covers `[S, tip]`. Its oldest prefix `[S, h]` becomes an
-//! archive shard at the smallest `h` where every archive bucket holds at least
-//! `archive_target` real txids, but only once `[h+1, tip]` still leaves every
-//! recent bucket at least `recent_floor` txids and `h` is at least
-//! `reorg_margin` blocks below the tip.
+//! Archives are contiguous from the display start. The unsealed range
+//! `[U, tip]` seals its oldest prefix `[U, h]` as an archive at the smallest
+//! `h` where every archive bucket holds at least `archive_target` real txids,
+//! once `h` is at least `reorg_margin` blocks below the tip.
 //!
-//! Boundaries depend only on the start, the targets and the chain: both gates
-//! only become easier as the tip advances, so sealing incrementally block by
-//! block and sealing once over a long range give the same shards. That is what
-//! lets an archive be rebuilt later, from the journal, to the same digest.
+//! Boundaries depend only on the start, the target and the chain: the margin
+//! only becomes easier as the tip advances, so sealing incrementally block by
+//! block and sealing once over a long range give the same shards. That is
+//! what lets an archive be rebuilt later, from the journal, to the same
+//! digest.
+//!
+//! The recent shard is a sliding window over `[R, tip]`: `R` is the latest
+//! height at which every recent bucket of `[R, tip]` still holds
+//! `recent_window` txids, but never above `U`, so every unsealed height is
+//! covered, and never below the display start. It overlaps the newest
+//! archive or archives. Its start is not part of any archive's identity.
 
 use super::{bucket, MAX_BUCKETS};
 use crate::txid::DisplayEntry;
@@ -23,8 +29,9 @@ pub struct DisplaySealParams {
     pub n_recent: u32,
     /// Real txids every archive bucket must hold.
     pub archive_target: u64,
-    /// Real txids every recent bucket keeps after a seal.
-    pub recent_floor: u64,
+    /// Real txids every recent bucket holds once the chain from the display
+    /// start does.
+    pub recent_window: u64,
     /// Blocks a sealed range must lie below the tip.
     pub reorg_margin: u64,
 }
@@ -47,8 +54,8 @@ impl Default for DisplaySealParams {
         Self {
             n_archive: 1,
             n_recent: 1,
-            archive_target: 20_000,
-            recent_floor: 10_000,
+            archive_target: 90_000,
+            recent_window: 90_000,
             reorg_margin: 100,
         }
     }
@@ -105,33 +112,46 @@ pub fn plan_seals(
         return Vec::new();
     };
     let tip = start + last as u64;
-    // Recent counts of the suffix after h are totals minus the prefix through h.
-    let n_recent = params.n_recent as usize;
-    let mut prefix = vec![vec![0u64; n_recent]; counts.len() + 1];
-    for (i, block) in counts.iter().enumerate() {
-        let next: Vec<u64> = prefix[i]
-            .iter()
-            .zip(&block.recent)
-            .map(|(sum, count)| sum + u64::from(*count))
-            .collect();
-        prefix[i + 1] = next;
-    }
-    let total = &prefix[counts.len()];
     let mut seals = Vec::new();
     let mut from = 0usize;
     while from < counts.len() {
         let Some(h) = archive_boundary(params, start + from as u64, &counts[from..]) else {
             break;
         };
-        let after = (h - start) as usize + 1;
-        let recent_ok = (0..n_recent).all(|b| total[b] - prefix[after][b] >= params.recent_floor);
-        if h + params.reorg_margin > tip || !recent_ok {
+        if h + params.reorg_margin > tip {
             break;
         }
         seals.push(start + from as u64..=h);
-        from = after;
+        from = (h - start) as usize + 1;
     }
     seals
+}
+
+/// The latest `w ≥ floor` at which every recent bucket of `[w, end]` holds
+/// `recent_window` txids, or `floor` when none does, where `counts[i]` is
+/// height `floor + i` and `end` the last of them.
+pub fn window_start(params: &DisplaySealParams, floor: u64, counts: &[HeightCounts]) -> u64 {
+    let mut sums = vec![0u64; params.n_recent as usize];
+    for (i, block) in counts.iter().enumerate().rev() {
+        for (sum, count) in sums.iter_mut().zip(&block.recent) {
+            *sum += u64::from(*count);
+        }
+        if sums.iter().all(|s| *s >= params.recent_window) {
+            return floor + i as u64;
+        }
+    }
+    floor
+}
+
+/// The recent shard's start at the tip `counts` ends at: [`window_start`],
+/// but never above `unsealed`, the first height no archive holds.
+pub fn recent_start(
+    params: &DisplaySealParams,
+    floor: u64,
+    unsealed: u64,
+    counts: &[HeightCounts],
+) -> u64 {
+    window_start(params, floor, counts).min(unsealed).max(floor)
 }
 
 #[cfg(test)]
@@ -143,7 +163,7 @@ mod tests {
             n_archive: 2,
             n_recent: 1,
             archive_target: 10,
-            recent_floor: 6,
+            recent_window: 6,
             reorg_margin: 3,
         }
     }
@@ -166,14 +186,10 @@ mod tests {
     }
 
     #[test]
-    fn recent_floor_and_reorg_margin_gate_the_seal() {
+    fn only_the_reorg_margin_gates_a_seal() {
         let p = params();
-        // Boundary at height 101 (two blocks of 5+5).
-        let mut counts = vec![block([5, 5]); 2];
-        // Recent floor needs 6 txids after 101; margin needs tip >= 104.
-        counts.extend(vec![block([1, 0]); 6]);
-        assert!(plan_seals(&p, 100, &counts[..7]).is_empty(), "recent 5 < 6");
-        assert_eq!(plan_seals(&p, 100, &counts[..8]), vec![100..=101]);
+        // Boundary at height 101 (two blocks of 5+5); the margin needs a tip
+        // of at least 104, however few txids lie above the boundary.
         let mut sparse = vec![block([5, 5]); 2];
         sparse.push(block([3, 3]));
         assert!(plan_seals(&p, 100, &sparse).is_empty(), "101 + 3 > 102");
@@ -181,6 +197,25 @@ mod tests {
         assert!(plan_seals(&p, 100, &sparse).is_empty(), "101 + 3 > 103");
         sparse.push(block([0, 0]));
         assert_eq!(plan_seals(&p, 100, &sparse), vec![100..=101]);
+    }
+
+    #[test]
+    fn the_recent_window_slides_and_covers_every_unsealed_height() {
+        let p = params();
+        // Heights 100..=105 hold 4, 4, 4, 1, 1, 1 recent txids.
+        let mut counts = vec![block([2, 2]); 3];
+        counts.extend(vec![block([1, 0]); 3]);
+        // [102, 105] holds 7 >= 6; [103, 105] only 3.
+        assert_eq!(window_start(&p, 100, &counts), 102);
+        assert_eq!(recent_start(&p, 100, 106, &counts), 102);
+        // Never above the first unsealed height.
+        assert_eq!(recent_start(&p, 100, 101, &counts), 101);
+        // A chain shorter than the window starts at the floor.
+        assert_eq!(window_start(&p, 100, &counts[4..]), 100);
+        assert_eq!(recent_start(&p, 100, 106, &[]), 100);
+        // The window ends at the tip, so it moves up as blocks arrive.
+        counts.push(block([3, 3]));
+        assert_eq!(window_start(&p, 100, &counts), 106);
     }
 
     fn pseudo_chain(len: usize, seed: u64) -> Vec<HeightCounts> {

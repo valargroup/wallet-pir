@@ -93,8 +93,8 @@ def request():
                     'node_cache_dir': '/root/.cache/zakura'},
         'publication': {'root': '/srv/zakura/txid-display-poc/root'},
         'controller': {'mode': 'replay-then-live', 'blocks_per_step': 25, 'step_interval_ms': 2000,
-                       'geometry': 'txid-2k', 'n_archive': 1, 'n_recent': 1, 'archive_target': 20000,
-                       'recent_floor': 10000, 'reorg_margin': 100, 'max_archive_shards': 24, 'archives': 15,
+                       'geometry': 'txid-2k8', 'n_archive': 1, 'n_recent': 1, 'archive_target': 90000,
+                       'recent_window': 90000, 'reorg_margin': 100, 'max_archive_shards': 24, 'archives': 15,
                        'replay_seals': 4, 'rpc_url': 'http://127.0.0.1:8232',
                        'rpc_cookie': '/root/.cache/zakura/.cookie'},
         'router': {'import_glob': GLOB, 'live_fleet_sha256': sha256(OLD_ADAPTER)},
@@ -254,6 +254,14 @@ class Fake(Executor):
                 raise RemoteError('%s: unit %s not found' % (host, unit))
             state.update(load='loaded', active='active', sub='running',
                          fragment='/etc/systemd/system/' + unit)
+            if unit == P.WORKER_UNIT:
+                # A worker starts from its durable record, or serves nothing.
+                worker = next(key for key, name in HOSTS.items() if name == host and key in P.WORKERS)
+                record = self.text(host, P.ACTIVE_RECORD)
+                if record is None:
+                    self.active.pop(worker, None)
+                else:
+                    self.active[worker] = json.loads(record)['map_sha256']
             if unit == P.CONTROLLER_UNIT:
                 self.listen.setdefault(host, []).append('127.0.0.1:8099')
             if unit == 'transparent-replica-reconciler.service' and self.reconciler_renders:
@@ -489,7 +497,7 @@ class RequestTests(Base):
             (('publication', 'root'), '/srv/zakura/txid-display-poc/journal/root'),
             (('units', 'recent', 'cpu_weight'), 100), (('units', 'archive', 'nice'), 0),
             (('units', 'recent', 'oom_score_adjust'), 0), (('units', 'recent', 'cache_bytes'), 2 << 30),
-            (('controller', 'recent_floor'), 9999), (('controller', 'archive_target'), 5000),
+            (('controller', 'recent_window'), 9999), (('controller', 'archive_target'), 5000),
             (('controller', 'reorg_margin'), 99), (('controller', 'n_archive'), 65), (('controller', 'n_recent'), 0),
             (('controller', 'max_archive_shards'), 0), (('controller', 'archives'), 0),
             (('controller', 'max_archive_shards'), 1025), (('controller', 'archives'), 1025),
@@ -595,7 +603,7 @@ class PlanTests(Base):
         start = [line for line in controller.splitlines() if line.startswith('ExecStart=')][0]
         self.assertTrue(start.endswith('--rpc-cookie /root/.cache/zakura/.cookie --blocks-per-step 25 '
                                        '--step-interval-ms 2000'), start)
-        for flag in ('--geometry', '--n-', '--archive-target', '--recent-floor', '--t-archive', '--k-recent'):
+        for flag in ('--geometry', '--n-', '--archive-target', '--recent-window', '--t-archive', '--k-recent'):
             self.assertNotIn(flag, start)
         # The node's RPC cookie under /root stays readable.
         self.assertFalse([line for line in controller.splitlines() if line.startswith('ProtectHome')])
@@ -647,8 +655,8 @@ class PlanTests(Base):
                                       '/srv/zakura/txid-display-poc/journal.smoke'])
         self.assertIn('--property=MemoryMax=8G', transient['bootstrap'])
         # txid-display-controller's flags: DisplaySealParams plus the map window.
-        seal = ['--geometry', 'txid-2k', '--n-archive', '1', '--n-recent', '1', '--archive-target', '20000',
-                '--recent-floor', '10000', '--reorg-margin', '100', '--max-archive-shards', '24']
+        seal = ['--geometry', 'txid-2k8', '--n-archive', '1', '--n-recent', '1', '--archive-target', '90000',
+                '--recent-window', '90000', '--reorg-margin', '100', '--max-archive-shards', '24']
         controller = '/opt/transparent-txid-display/releases/%s/txid-display-controller' % SHA
         plan_start = transient['plan-start']
         self.assertEqual(plan_start[plan_start.index(controller):], [
@@ -1001,6 +1009,34 @@ class WorkerTests(DeployedFleet):
         self.assertIn('archive: unit unchanged; the worker keeps running', events)
         self.assertIn('recent: keeps serving %s, not the requested %s' % (newer, self.map), events)
         self.assertIn('recent: serving %s warm' % newer, events)
+
+    def test_a_fresh_lineage_replaces_each_workers_active_map_and_rolls_back(self):
+        self.deploy('workers', map_sha256=self.map)
+        old = 'e' * 64
+        for key in P.WORKERS:
+            self.fake.serve(key, old)
+        records = {key: self.fake.text(HOSTS[key], P.ACTIVE_RECORD) for key in P.WORKERS}
+        poc = self.poc()
+        with self.assertRaisesRegex(P.PocError, 'not the new one'):
+            poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map, replace_active=self.map)
+        with self.assertRaisesRegex(P.PocError, 'serves %s, not the replaced' % old):
+            poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map, replace_active='f' * 64)
+        self.assertEqual(self.fake.active, {'archive': old, 'recent': old})
+        poc = self.deploy('workers', map_sha256=self.map, replace_active=old)
+        # Each worker is stopped, loses its record, then ships, verifies,
+        # prepares and activates the new lineage as an empty worker would.
+        self.assertEqual(self.fake.active, {'archive': self.map, 'recent': self.map})
+        events = [event['message'] for event in self.journal(poc.transaction.id)['events']]
+        for key in P.WORKERS:
+            self.assertIn('%s: removed the active record of %s' % (key, old), events)
+            self.assertIn('%s: shipped candidate %s' % (key, self.map), events)
+            self.assertIn('stopped %s on %s' % (P.WORKER_UNIT, key), events)
+        poc.rollback(poc.transaction.id)
+        for key in P.WORKERS:
+            self.assertEqual(self.fake.text(HOSTS[key], P.ACTIVE_RECORD), records[key])
+            self.assertEqual(self.fake.unit(HOSTS[key], P.WORKER_UNIT)['active'], 'active')
+        with self.assertRaisesRegex(P.PocError, 'belongs to the workers phase'):
+            poc.deploy('route', poc.plan_sha256(), replace_active=old)
 
     def test_a_prepare_longer_than_one_control_call_is_polled_to_completion(self):
         self.fake.slow_prepares = 2

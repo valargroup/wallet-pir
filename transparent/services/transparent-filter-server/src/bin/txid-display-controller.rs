@@ -25,18 +25,19 @@ struct Cli {
 
 #[derive(Args, Clone)]
 struct SealArgs {
-    #[arg(long, default_value = "txid-2k")]
+    #[arg(long, default_value = "txid-2k8")]
     geometry: String,
     #[arg(long, default_value_t = 1)]
     n_archive: u32,
     #[arg(long, default_value_t = 1)]
     n_recent: u32,
     /// Real txids every archive bucket must hold before it seals.
-    #[arg(long, default_value_t = 20_000)]
+    #[arg(long, default_value_t = 90_000)]
     archive_target: u64,
-    /// Real txids every recent bucket keeps after a seal.
-    #[arg(long, default_value_t = 10_000)]
-    recent_floor: u64,
+    /// Real txids every recent bucket holds: the recent shard reaches back
+    /// over the newest archives until it does.
+    #[arg(long, default_value_t = 90_000)]
+    recent_window: u64,
     /// Blocks a sealed range must lie below the tip.
     #[arg(long, default_value_t = 100)]
     reorg_margin: u64,
@@ -51,7 +52,7 @@ impl SealArgs {
             n_archive: self.n_archive,
             n_recent: self.n_recent,
             archive_target: self.archive_target,
-            recent_floor: self.recent_floor,
+            recent_window: self.recent_window,
             reorg_margin: self.reorg_margin,
         }
     }
@@ -67,7 +68,8 @@ enum Mode {
 #[derive(Subcommand)]
 enum Command {
     /// Publish a fresh root from the journal: every seal through `--through`,
-    /// the recent shard after it, candidate 0 and `active.json`. No serving.
+    /// the recent shard over its window, candidate 0 and `active.json`. No
+    /// serving.
     Bootstrap {
         #[arg(long)]
         root: PathBuf,
@@ -169,7 +171,7 @@ enum Command {
             default_value = "10000,20000,30000,40000,50000,60000,70000"
         )]
         records: Vec<u64>,
-        #[arg(long, default_value = "txid-2k")]
+        #[arg(long, default_value = "txid-2k8")]
         geometry: String,
         #[arg(long, default_value_os_t = std::env::temp_dir())]
         scratch: PathBuf,

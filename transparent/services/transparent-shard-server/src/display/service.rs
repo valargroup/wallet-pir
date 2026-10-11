@@ -1241,44 +1241,48 @@ async fn query_inner(
 #[cfg(test)]
 mod tests {
     use crate::memory::WorkMemory;
+    use crate::runtime::tests::GENESIS_RUNTIMES;
     use crate::runtime::SharedParams;
     use crate::shardset::Table;
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K;
+    use transparent_shard::display::TXID_2K8;
 
-    /// recent-01 runs the replica under `MemoryMax=1.5G`. Admission allows
+    /// The combined display worker runs under `MemoryMax=40G` and holds every
+    /// archive runtime and the recent one. Admission allows
     /// `current + held + new <= 0.9 * max`; a cold build holds four times a
-    /// table's reservation and each query twice. Two concurrent directory
-    /// queries during a recent rebuild must be admitted, or every rebuild
-    /// would refuse lookups with 503.
+    /// table's reservation and each query twice. While the recent table is
+    /// rebuilt with every genesis runtime resident, a burst of concurrent
+    /// lookups, one query each, must be admitted, or every rebuild would
+    /// refuse lookups with 503.
     #[test]
-    fn a_recent_rebuild_admits_two_concurrent_queries_under_recent_01_limits() {
-        let reserved = SharedParams::build(&TXID_2K, Table::TxDirectory)
-            .unwrap()
-            .reserved_bytes();
-        assert_eq!(reserved, 75_545_144, "a 2,048-row display table");
-        let limit = 1536 << 20;
-        // Charged memory with a build in flight: the process, the active and
-        // retired recent runtimes and the build's own allocation so far.
-        let current = 700 << 20;
+    fn a_recent_rebuild_admits_concurrent_lookups_on_the_combined_worker() {
+        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let reserved = shared.reserved_bytes();
+        assert_eq!(
+            reserved, 151_090_272,
+            "a 2,048-row, two-block display table"
+        );
+        let limit = 40u64 << 30;
+        // Charged memory with a build in flight: every resident runtime at its
+        // built size and 1 GiB for the process.
+        let current = GENESIS_RUNTIMES as u64 * shared.held_bytes() + (1 << 30);
         let memory = Arc::new(WorkMemory::default());
         let sample = Some((current, Some(limit)));
         let build = memory.reserve_at(4 * reserved, sample).expect("build");
-        let first = memory
-            .reserve_at(2 * reserved, sample)
-            .expect("first query");
-        let second = memory
-            .reserve_at(2 * reserved, sample)
-            .expect("second query");
-        // The headroom is real but not unbounded: a third query waits.
-        assert!(memory.reserve_at(2 * reserved, sample).is_none());
-        drop((build, first, second));
+        let queries: Vec<_> = (0..16)
+            .map(|i| {
+                memory
+                    .reserve_at(2 * reserved, sample)
+                    .unwrap_or_else(|| panic!("query {i}"))
+            })
+            .collect();
+        drop((build, queries));
         assert_eq!(memory.reserved_bytes(), 0);
-        // The 900M limit first proposed for recent-01 refuses the second
-        // query even at a steady-state charge.
-        let tight = Some((350 << 20, Some(900 << 20)));
-        let _build = memory.reserve_at(4 * reserved, tight).expect("build");
-        let _first = memory.reserve_at(2 * reserved, tight).expect("first query");
-        assert!(memory.reserve_at(2 * reserved, tight).is_none());
+        // The headroom is real but not unbounded.
+        let mut held = Vec::new();
+        while let Some(query) = memory.reserve_at(2 * reserved, sample) {
+            held.push(query);
+            assert!(held.len() < 1_000, "admission never refuses");
+        }
     }
 }

@@ -89,6 +89,7 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
   txid-display-{plan,preflight,status,ingest-status} --request F --request-sha256 H
   txid-display-deploy --request F --request-sha256 H --expect-plan-sha256 H
       --phase stage|firewall|router-hook|workers|route|controller
+      [workers: --publication-map-sha256 H [--replace-active H]]
   txid-display-{ingest-start,bootstrap,verify,measure-start,retire} ... --expect-plan-sha256 H
   txid-display-{ingest-stop,measure-stop,stop} --request F --request-sha256 H
   txid-display-rollback --request F --request-sha256 H [--transaction ID]
@@ -386,6 +387,8 @@ def parser():
             command.add_argument('--phase', choices=TXID_DISPLAY_PHASES, required=True)
             command.add_argument('--archive', help='stage: the CI transparent-txid-display bundle')
             command.add_argument('--publication-map-sha256', help='workers: the bootstrap candidate map')
+            command.add_argument('--replace-active',
+                                 help='workers: the map of the lineage a fresh one replaces on each worker')
         elif name == 'plan':
             command.add_argument('--render-dir', help='also write every rendered file here for review')
         elif name == 'rollback':

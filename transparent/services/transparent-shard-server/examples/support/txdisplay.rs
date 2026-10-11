@@ -2,12 +2,12 @@
 //! tests only, with no wallet scheduling, persistence or authority.
 //!
 //! A lookup is the map, the shard's manifest, the bucket's setup (all cached),
-//! then a fixed transcript: exactly two directory queries, even when both
-//! candidate rows coincide, found or absent. Every entry has the same size,
-//! so found and absent send the same requests with the same body sizes.
-//! Decoded rows are deduplicated by (segment, row) before the entry is found
-//! by its tag. Any failure is an error, never `Absent`; a 409 refreshes the
-//! map and retries the lookup once.
+//! then a fixed transcript: exactly one directory query for the entry's one
+//! row, found or absent, answered by every segment of the bucket's table.
+//! Every entry has the same size, so found and absent send the same requests
+//! with the same body sizes. Every entry in the decoded rows must be placed
+//! in that row before the entry is found by its tag. Any failure is an error,
+//! never `Absent`; a 409 refreshes the map and retries the lookup once.
 //!
 //! Every request's header and body bytes are computed from what HTTP/1.1
 //! puts on the wire, and the client sets every request header itself so the
@@ -17,7 +17,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -758,47 +758,6 @@ impl DisplayClient {
         Ok((rows, trace))
     }
 
-    /// Sends one query per row, all at once, and returns the decoded rows by
-    /// (segment, row).
-    async fn queries(
-        &self,
-        target: &Target,
-        rows: &[u64],
-        accounting: &Arc<Mutex<Accounting>>,
-        report: &mut LookupReport,
-    ) -> Result<BTreeMap<(usize, u64), Vec<u8>>, LookupError> {
-        let mut tasks = tokio::task::JoinSet::new();
-        for (index, row) in rows.iter().copied().enumerate() {
-            let (client, target, accounting) = (self.clone(), target.clone(), accounting.clone());
-            tasks.spawn(async move { (index, client.query(target, row, accounting).await) });
-        }
-        let mut done = Vec::with_capacity(rows.len());
-        while let Some(joined) = tasks.join_next().await {
-            done.push(joined.map_err(protocol)?);
-        }
-        done.sort_by_key(|(index, _)| *index);
-        // Coincident rows come back once per query; keep one copy of each.
-        let mut unique = BTreeMap::new();
-        let mut first_error = None;
-        for (_, result) in done {
-            match result {
-                Ok((segments, trace)) => {
-                    for (segment, bytes) in segments.into_iter().enumerate() {
-                        unique.insert((segment, trace.row), bytes);
-                    }
-                    report.queries.push(trace);
-                }
-                Err(error) => {
-                    first_error.get_or_insert(error);
-                }
-            }
-        }
-        match first_error {
-            Some(error) => Err(error),
-            None => Ok(unique),
-        }
-    }
-
     /// Looks up `txid` mined at `height`, which the caller's accepted chain
     /// supplies: placement is never discovered by asking.
     pub async fn lookup(
@@ -827,73 +786,6 @@ impl DisplayClient {
                     report.set(result);
                     report.total_s = started.elapsed().as_secs_f64();
                     return Ok(report);
-                }
-                Err(error) if error.status() == Some(409) && !refresh => {
-                    refresh = true;
-                    report.stale_retries += 1;
-                }
-                Err(error) => return Err(error),
-            }
-        }
-    }
-
-    /// One directory query, the history reference's unit of load: candidate
-    /// row `choice` (0 or 1) of `txid`'s bucket in the shard `height` names.
-    /// Returns the report and whether that row holds `txid`; a report whose
-    /// outcome is not `queried` is a placement or support result.
-    pub async fn directory_query(
-        &self,
-        txid: Txid,
-        height: u64,
-        choice: usize,
-    ) -> Result<(LookupReport, bool), LookupError> {
-        let started = Instant::now();
-        let mut report = LookupReport::new();
-        let accounting = Arc::new(Mutex::new(Accounting::default()));
-        let mut refresh = false;
-        loop {
-            report.queries.clear();
-            let attempt = async {
-                let located = match self
-                    .locate(txid, height, &accounting, refresh, &mut report)
-                    .await?
-                {
-                    Ok(located) => located,
-                    Err(result) => return Ok(Err(result)),
-                };
-                let rows = display::candidate_rows(
-                    &Tag::of(&txid),
-                    located.entry.shard_id,
-                    located.bucket,
-                    located.geometry.directory_rows,
-                );
-                let decoded = self
-                    .directory(
-                        &located,
-                        &rows[choice % 2..choice % 2 + 1],
-                        &accounting,
-                        &mut report,
-                    )
-                    .await?;
-                let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-                let contains = txid::find_entry(&rows, &txid).map_err(protocol)?.is_some();
-                Ok::<_, LookupError>(Ok(contains))
-            }
-            .await;
-            let accounted = accounting.lock().unwrap();
-            report.bytes = accounted.bytes;
-            report.cold = accounted.cold.clone();
-            drop(accounted);
-            report.total_s = started.elapsed().as_secs_f64();
-            match attempt {
-                Ok(Ok(contains)) => {
-                    report.outcome = "queried";
-                    report.class = "query".into();
-                    return Ok((report, contains));
-                }
-                Ok(Err(result)) => {
-                    report.set(result);
-                    return Ok((report, false));
                 }
                 Err(error) if error.status() == Some(409) && !refresh => {
                     refresh = true;
@@ -981,18 +873,21 @@ impl DisplayClient {
         })
     }
 
-    /// Setup for the bucket's directory, then one query per row in `rows`.
+    /// Setup for the bucket's directory, then one query for `row`; returns
+    /// that row of every segment.
     async fn directory(
         &self,
         located: &Located,
-        rows: &[u64],
+        row: u64,
         accounting: &Arc<Mutex<Accounting>>,
         report: &mut LookupReport,
-    ) -> Result<BTreeMap<(usize, u64), Vec<u8>>, LookupError> {
+    ) -> Result<Vec<Vec<u8>>, LookupError> {
         let segments = located.entry.directory_segments[located.bucket as usize];
         let table = DisplayTable::Directory(located.bucket);
         let target = self.target(located, table, segments, accounting).await?;
-        self.queries(&target, rows, accounting, report).await
+        let (copies, trace) = self.query(target, row, accounting.clone()).await?;
+        report.queries.push(trace);
+        Ok(copies)
     }
 
     async fn attempt(
@@ -1010,16 +905,17 @@ impl DisplayClient {
             Ok(located) => located,
             Err(result) => return Ok(result),
         };
-        // Exactly two queries, whether or not they coincide, found or not.
-        let rows = display::candidate_rows(
-            &Tag::of(&txid),
+        // Exactly one query, found or not: the entry's one row.
+        let (shard_id, bucket, rows) = (
             located.entry.shard_id,
             located.bucket,
             located.geometry.directory_rows,
         );
-        let decoded = self.directory(&located, &rows, accounting, report).await?;
-        let rows: Vec<Vec<u8>> = decoded.into_values().collect();
-        match txid::find_entry(&rows, &txid).map_err(protocol)? {
+        let seed = located.entry.placement_seeds[bucket as usize];
+        let row = display::placement_row(&Tag::of(&txid), seed, shard_id, bucket, rows);
+        let copies = self.directory(&located, row, accounting, report).await?;
+        let in_row = |tag: &Tag| display::placement_row(tag, seed, shard_id, bucket, rows) == row;
+        match txid::find_entry(&copies, &txid, in_row).map_err(protocol)? {
             Some(entry) => {
                 report.class = entry_class(&entry).into();
                 Ok(LookupResult::Found(entry))

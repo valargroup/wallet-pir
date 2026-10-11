@@ -69,13 +69,15 @@ This is separate from script history discovery.
 
 The extractor writes the entries into block-hash-addressed sidecars under the
 existing event checkpoint. The tiered `txid-display-controller` publishes them
-as sealed archive shards and one per-block recent shard. Inside a shard, each
-hash bucket is one table of 36-entry rows. A lookup is always two row queries,
-so the server learns the range, tier, bucket and timing, but never the size of
-the transaction.
+as sealed archive shards of 90,000 entries and one per-block recent shard, a
+window of the newest 90,000 entries that may overlap the newest archives.
+Inside a shard, each hash bucket is one `txid-2k8` table of 72-entry,
+8,192-byte rows, and an entry has one row under the bucket's published
+placement seed. A lookup is always one row query, so the server learns the
+range, tier, bucket and timing, but never the size of the transaction.
 
-`transparent-txid-server` serves the tables in archive-owner and
-recent-replica roles. It shares the native runtime, cache and admission code
+`transparent-txid-server` serves the tables in archive-owner, recent-replica
+and combined roles. It shares the native runtime, cache and admission code
 with history serving, but not `ShardSet`. History manifests and serving carry
 no display tables.
 
@@ -397,9 +399,9 @@ the runtime holds (`TableRuntime::held_bytes`): the same terms with the compiled
 its real width, four-byte words so far, or 27/28-bit packed on CPUs with AVX-512 VBMI. The
 charge only falls, the release happens before any waiter receives the runtime, and eviction
 returns exactly the lowered charge, so builds in flight together cannot be admitted past
-the budget on sizes they have not reached. `txid-2k` reserves 72.05 MiB and is charged
-40.05 MiB built; `txid-4k` 80.05 and 48.05 MiB; `shard-residency` measured 40.3–41.3 and
-48.2–48.3 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
+the budget on sizes they have not reached. `txid-2k8`, whose rows are two blocks,
+reserves 144.09 MiB and is charged 80.09 MiB built; `shard-residency` measured
+80.0–85.8 MiB. Warm-mode fit checks (history and display) plan with the four-byte size plus
 one bound's excess per runtime the prewarm can have in flight, which never exceeds the sum
 of bounds they used to demand. The disk cache works the same way: a write reserves the
 largest valid entry under its directory lock, a written entry counts at its file length,

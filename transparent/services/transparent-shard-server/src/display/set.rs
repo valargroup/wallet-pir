@@ -31,7 +31,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use transparent_shard::display::{self, DisplayManifest, DisplayMap, DisplayTable, SplitMap};
 use transparent_shard::layout::Geometry;
-use transparent_shard::txid::{self, ROW_BYTES};
+use transparent_shard::txid;
 
 /// The map file of a publication directory.
 pub const MAP_FILE: &str = "txid-shards.json";
@@ -193,8 +193,8 @@ impl DisplayRevision {
             buckets.push(sources);
         }
 
-        // Canonical rows, bucket membership, candidate rows, duplicates and
-        // counts, one row at a time.
+        // Canonical rows, bucket membership, each entry's one row,
+        // duplicates and counts, one row at a time.
         let open = |sources: &[SegmentSource]| {
             sources
                 .iter()
@@ -212,19 +212,22 @@ impl DisplayRevision {
             .collect::<Result<Vec<_>, _>>()?;
         let directory_segments: Vec<usize> = buckets.iter().map(Vec::len).collect();
         let records: Vec<u64> = self.manifest.buckets.iter().map(|b| b.records).collect();
+        let seeds = self.manifest.placement_seeds();
+        let width = geometry.directory_row_bytes;
         display::verify_rows(
             shard_id,
             geometry,
             &directory_segments,
             &records,
+            &seeds,
             |table, segment, row| {
                 let file = directory_files
                     .get_mut(table.bucket() as usize)
                     .and_then(|files| files.get_mut(segment))
                     .ok_or_else(|| txid::Error("display segment out of range".into()))?;
-                file.seek(SeekFrom::Start((row * ROW_BYTES) as u64))
+                file.seek(SeekFrom::Start((row * width) as u64))
                     .map_err(|error| txid::Error(error.to_string()))?;
-                let mut bytes = vec![0; ROW_BYTES];
+                let mut bytes = vec![0; width];
                 file.read_exact(&mut bytes)
                     .map_err(|error| txid::Error(error.to_string()))?;
                 Ok(bytes)
@@ -533,7 +536,7 @@ impl DisplaySet {
 mod tests {
     use super::super::synth::{self, ShardSpec};
     use super::*;
-    use transparent_shard::display::{DisplaySealParams, TXID_2K};
+    use transparent_shard::display::{DisplaySealParams, TXID_2K8};
 
     fn spec(shard_id: u64, start: u64, end: u64, sealed: bool) -> ShardSpec {
         ShardSpec {
@@ -546,7 +549,7 @@ mod tests {
             parent_manifest_digest: String::new(),
             n_buckets: 1,
             archive_target: 1,
-            geometry: &TXID_2K,
+            geometry: &TXID_2K8,
         }
     }
 
@@ -555,7 +558,7 @@ mod tests {
             n_archive: 1,
             n_recent: 1,
             archive_target: 1,
-            recent_floor: 1,
+            recent_window: 1,
             reorg_margin: 1,
         }
     }
