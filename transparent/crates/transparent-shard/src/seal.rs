@@ -50,6 +50,13 @@ use std::collections::{HashMap, HashSet};
 use transparent_events::{TransparentEvent, Txid};
 use transparent_filter::ScriptBytes;
 
+mod displacement;
+pub use displacement::{
+    ChildOccupancy, DecoupledPolicy, DirectoryOccupancy, DisplacementSealer, SealedChild,
+    SealedDirectory, WatchedChain, WatchedRun, DECOUPLED_PAGE_ENTRY_HEADER_BYTES,
+    MAX_PAGE_CHILDREN,
+};
+
 /// How full a shard is allowed to get.
 ///
 /// `capacity` is what the pinned tables hold and is a hard limit. `target` is
@@ -276,6 +283,11 @@ pub enum SealReason {
     /// does not read a half-empty shard at the cutoff as evidence about the
     /// seal thresholds.
     GeometryChanged,
+    /// Decoupled layout: the directory shard holds as many page shards as it
+    /// may, so it closes with its last one.
+    ChildLimit,
+    /// Decoupled layout: a page shard closed because its directory shard did.
+    DirectorySealed,
 }
 
 /// Streams blocks in height order and emits shard boundaries.

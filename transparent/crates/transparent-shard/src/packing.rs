@@ -24,6 +24,12 @@ pub struct HistoryLayout {
 
 impl HistoryLayout {
     pub fn push(&mut self, event: TransparentEvent, inline: u32) {
+        self.push_with_payload(event, inline, FRAGMENT_PAYLOAD);
+    }
+
+    /// [`Self::push`] for a page entry whose header leaves `payload` bytes of
+    /// a row for events: the decoupled layout's 40-byte header leaves fewer.
+    pub fn push_with_payload(&mut self, event: TransparentEvent, inline: u32, payload: usize) {
         self.events = self
             .events
             .checked_add(1)
@@ -34,7 +40,7 @@ impl HistoryLayout {
         }
         let older = self.inline.remove(0);
         let mut len = compact::event_len(&older, self.last_paged.as_ref());
-        if self.fragments == 0 || self.tail_bytes + len > FRAGMENT_PAYLOAD {
+        if self.fragments == 0 || self.tail_bytes + len > payload {
             self.fragments += 1;
             self.tail_bytes = 0;
             len = compact::event_len(&older, None);
@@ -123,7 +129,7 @@ fn change(map: &mut BTreeMap<usize, u64>, key: usize, add: bool) {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PackedDemand {
     /// Complete single-fragment entries, including their header, by byte length.
     short: BTreeMap<usize, u64>,
@@ -132,7 +138,15 @@ pub struct PackedDemand {
     long_rows: u64,
     long_scripts: u64,
     event_bytes: u64,
+    /// Page entry header bytes, which decide a fragment's event payload.
+    entry_header: usize,
     cached_rows: std::cell::OnceCell<(u64, u64)>,
+}
+
+impl Default for PackedDemand {
+    fn default() -> Self {
+        Self::with_entry_header(PAGE_ENTRY_HEADER_BYTES)
+    }
 }
 
 impl PartialEq for PackedDemand {
@@ -142,11 +156,38 @@ impl PartialEq for PackedDemand {
             && self.long_rows == other.long_rows
             && self.long_scripts == other.long_scripts
             && self.event_bytes == other.event_bytes
+            && self.entry_header == other.entry_header
     }
 }
 impl Eq for PackedDemand {}
 
 impl PackedDemand {
+    /// Demand for page entries with an `entry_header`-byte header.
+    pub fn with_entry_header(entry_header: usize) -> Self {
+        assert!(
+            entry_header < ROW_PAYLOAD,
+            "a header must leave room for events"
+        );
+        Self {
+            short: BTreeMap::new(),
+            tails: BTreeMap::new(),
+            long_rows: 0,
+            long_scripts: 0,
+            event_bytes: 0,
+            entry_header,
+            cached_rows: std::cell::OnceCell::new(),
+        }
+    }
+
+    /// Event bytes one fragment holds under this header.
+    pub fn fragment_payload(&self) -> usize {
+        ROW_PAYLOAD - self.entry_header
+    }
+
+    pub fn entry_header(&self) -> usize {
+        self.entry_header
+    }
+
     pub fn shift(&mut self, old: &HistoryLayout, new: &HistoryLayout) {
         self.cached_rows.take();
         self.update(old, false);
@@ -163,13 +204,10 @@ impl PackedDemand {
             self.event_bytes -= history.paged_bytes;
         }
         if history.fragments == 1 {
-            change(
-                &mut self.short,
-                PAGE_ENTRY_HEADER_BYTES + history.tail_bytes,
-                add,
-            );
+            change(&mut self.short, self.entry_header + history.tail_bytes, add);
         } else {
-            change(&mut self.tails, FRAGMENT_PAYLOAD - history.tail_bytes, add);
+            let payload = self.fragment_payload();
+            change(&mut self.tails, payload - history.tail_bytes, add);
             if add {
                 self.long_rows += u64::from(history.fragments);
                 self.long_scripts += 1;
