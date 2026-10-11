@@ -14,6 +14,7 @@
 //! directory the caller names and removes them when it has merged them.
 
 use clap::Parser;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use transparent_filter_server::events::EventStore;
 use transparent_filter_server::shard_matches::MatchCounter;
@@ -21,7 +22,8 @@ use transparent_shard::layout::{
     by_name as geometry_by_name, Geometry, PAGE_ROW_BYTES, PAGE_ROW_HEADER_BYTES,
 };
 use transparent_shard::seal::{
-    ChoiceMeasure, Limit, PageBasis, SealPolicy, SealReason, SealedShard, Sealer,
+    ChoiceMeasure, DecoupledPolicy, DisplacementSealer, Limit, PageBasis, SealPolicy, SealReason,
+    SealedDirectory, SealedShard, Sealer,
 };
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -179,6 +181,33 @@ struct Cli {
     /// set.
     #[arg(long)]
     compare_map: Option<PathBuf>,
+
+    /// Score the decoupled layout: directory shards sized by
+    /// `--directory-rows`, each holding up to `--max-page-children` page
+    /// shards of `--page-rows` rows that seal on page rows alone.
+    ///
+    /// Single tier, one layout per run. Reports directory and page-shard
+    /// seal reasons, fill, chain lengths and pinned bytes, and with
+    /// `--sample` every sampled script's chain per directory shard.
+    #[arg(long, requires_all = ["directory_rows", "page_rows"], conflicts_with_all = ["archive_geometry", "unpacked", "bulk_long"])]
+    decoupled: bool,
+    /// Directory rows of a decoupled directory shard.
+    #[arg(long)]
+    directory_rows: Option<u64>,
+    /// Page rows of each decoupled page shard.
+    #[arg(long)]
+    page_rows: Option<u64>,
+    /// Page shards one decoupled directory shard may hold.
+    #[arg(long, default_value_t = transparent_shard::seal::MAX_PAGE_CHILDREN)]
+    max_page_children: u32,
+    /// Page entry header bytes in the decoupled layout. 40 carries the chain
+    /// fields; 34 prices the same content without them.
+    #[arg(long, default_value_t = transparent_shard::seal::DECOUPLED_PAGE_ENTRY_HEADER_BYTES)]
+    page_entry_header: usize,
+    /// A workload sample (`sample.json`): print each sampled script's per-shard
+    /// page cost, for the first policy only, as `sample` rows.
+    #[arg(long)]
+    sample: Option<PathBuf>,
 }
 
 /// Bytes one private row query uploads at this table shape.
@@ -719,6 +748,7 @@ fn report(
             // A census sweeps one geometry at a time, so nothing here forces a
             // boundary; only the publisher's two-tier mode does.
             Some(SealReason::GeometryChanged) => "geometry change".to_string(),
+            Some(other) => format!("{other:?}"),
             None => unreachable!(),
         };
         *by_reason.entry(key).or_default() += 1;
@@ -731,17 +761,18 @@ fn report(
         // Tab separated and prefixed, so the rows can be lifted out of a run's
         // log with a grep and fed to anything, without the surrounding report
         // needing a machine-readable format of its own.
-        println!("  per_shard\tshard_id\tstart\tend\tblocks\tscripts\tpage_rows\tfragments\tevents\treason");
+        println!("  per_shard\tshard_id\tstart\tend\tblocks\tscripts\tpage_rows\tfragments\tevents\treason\tdirectory_bytes\tdirectory_segments\tpage_segments");
         for shard in &sealed {
             let reason = match shard.reason {
                 Some(SealReason::ReachedTarget(q)) => format!("target:{q}"),
                 Some(SealReason::WouldExceedCapacity(q)) => format!("capacity:{q}"),
                 Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized:{q}"),
                 Some(SealReason::GeometryChanged) => "geometry-change".to_string(),
+                Some(other) => format!("{other:?}"),
                 None => unreachable!("sealed shards all carry a reason"),
             };
             println!(
-                "  per_shard\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                "  per_shard\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
                 shard.shard_id,
                 shard.start_height,
                 shard.end_height,
@@ -751,8 +782,36 @@ fn report(
                 shard.occupancy.fragments,
                 shard.occupancy.events,
                 reason.replace(' ', "_"),
+                shard.occupancy.directory_bytes,
+                directory_segments(shard, geometry),
+                transparent_shard::layout::segments_for(
+                    shard.occupancy.packed_page_rows,
+                    geometry.page_rows
+                ),
             );
         }
+        // The unsealed tail, on a line of its own so readers of `per_shard`
+        // keep seeing sealed shards only.
+        for shard in shards.iter().filter(|s| s.reason.is_none()) {
+            println!(
+                "  per_shard_tail\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\ttail\t{}\t{}\t{}",
+                shard.shard_id,
+                shard.start_height,
+                shard.end_height,
+                shard.occupancy.blocks,
+                shard.occupancy.scripts,
+                shard.occupancy.page_rows,
+                shard.occupancy.fragments,
+                shard.occupancy.events,
+                shard.occupancy.directory_bytes,
+                directory_segments(shard, geometry),
+                transparent_shard::layout::segments_for(
+                    shard.occupancy.packed_page_rows,
+                    geometry.page_rows
+                ),
+            );
+        }
+        prices(geometry.directory_rows, geometry.page_rows);
     }
 
     describe(
@@ -884,6 +943,10 @@ fn main() -> Result<(), BoxError> {
     }
     if cli.compare_map.is_some() {
         return Err("--compare-map applies to the two-tier census".into());
+    }
+    let sample = cli.sample.as_deref().map(load_sample).transpose()?;
+    if cli.decoupled {
+        return decoupled(&cli, &store, first, covered, sample.unwrap_or_default());
     }
 
     let compiled = *geometry_by_name(&cli.geometry)
@@ -1031,7 +1094,7 @@ choose parameters for a set that will be published"
                 );
                 sealer.measure_placement(cli.placement || cli.single_lookup);
                 sealer.measure_choice(cli.single_lookup);
-                sealer.retain_scripts(spill.is_some());
+                sealer.retain_scripts(spill.is_some() || sample.is_some());
                 sealer
             },
             matches: spill.map(|dir| MatchCounter::new(dir, &name)),
@@ -1065,14 +1128,20 @@ choose parameters for a set that will be published"
             bucket_blocks = 0;
         }
 
-        for run in &mut runs {
+        for (index, run) in runs.iter_mut().enumerate() {
             let sealed = run.sealer.push_block(height, &events)?;
+            if index == 0 {
+                print_sample(&sealed, sample.as_ref());
+            }
             drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
         }
     }
 
     for (index, run) in runs.iter_mut().enumerate() {
         let sealed: Vec<SealedShard> = run.sealer.finish().into_iter().collect();
+        if index == 0 {
+            print_sample(&sealed, sample.as_ref());
+        }
         drain_scripts(&mut run.matches, sealed, &mut run.shards)?;
         // Only the first policy: the rows are per shard, and a full sweep
         // would bury the report under thousands of them.
@@ -1369,6 +1438,291 @@ scripts, page rows and seal state",
             path.display()
         );
     }
+    Ok(())
+}
+
+/// The scripts of a workload sample (`sample.json`), as raw bytes.
+fn load_sample(path: &std::path::Path) -> Result<HashSet<Vec<u8>>, BoxError> {
+    let sample: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    let mut scripts = HashSet::new();
+    for client in sample["clients"]
+        .as_array()
+        .ok_or("sample has no clients")?
+    {
+        for script in client["scripts"]
+            .as_array()
+            .ok_or("client has no scripts")?
+        {
+            scripts.insert(hex::decode(script.as_str().ok_or("script is not hex")?)?);
+        }
+    }
+    Ok(scripts)
+}
+
+/// `sample` rows: each sampled script's page fragments in each shard it is
+/// active in. Sealed shards and the tail alike; zero fragments means every
+/// event was inline.
+fn print_sample(shards: &[SealedShard], sample: Option<&HashSet<Vec<u8>>>) {
+    let Some(sample) = sample else { return };
+    for shard in shards {
+        for (script, fragments) in shard.scripts.iter().flatten() {
+            if sample.contains(script) {
+                println!(
+                    "sample\t{}\t{}\t{fragments}",
+                    shard.shard_id,
+                    hex::encode(script)
+                );
+            }
+        }
+    }
+}
+
+/// What one query costs at a table of `rows` rows: upload, response and
+/// published setup per segment, at the native profile wallets use.
+fn prices(directory_rows: u64, page_rows: u64) {
+    println!(
+        "prices\tdirectory_rows\t{directory_rows}\tdirectory_query\t{}\tpage_rows\t{page_rows}\tpage_query\t{}\tresponse\t{}\tsetup\t{}",
+        query_bytes(directory_rows, transparent_shard::DIRECTORY_ROW_BYTES),
+        query_bytes(page_rows, PAGE_ROW_BYTES),
+        16 + transparent_native::BLOCK_RESPONSE_BYTES,
+        transparent_native::BLOCK_PUBLIC_BYTES,
+    );
+}
+
+fn reason_label(reason: Option<SealReason>) -> String {
+    match reason {
+        None => "tail".to_string(),
+        Some(SealReason::ReachedTarget(q)) => format!("target:{q}"),
+        Some(SealReason::WouldExceedCapacity(q)) => format!("capacity:{q}"),
+        Some(SealReason::BlockExceedsCapacity(q)) => format!("oversized:{q}"),
+        Some(SealReason::GeometryChanged) => "geometry-change".to_string(),
+        Some(SealReason::ChildLimit) => "child-limit".to_string(),
+        Some(SealReason::DirectorySealed) => "directory-sealed".to_string(),
+    }
+    .replace(' ', "_")
+}
+
+/// The decoupled census: directory shards with their own page shards.
+fn decoupled(
+    cli: &Cli,
+    store: &EventStore,
+    first: u64,
+    covered: u64,
+    sample: HashSet<Vec<u8>>,
+) -> Result<(), BoxError> {
+    if cli.unpacked
+        || cli.page_rows_per_segment.is_some()
+        || cli.directory_rows_per_segment.is_some()
+        || cli.directory_row_bytes.is_some()
+        || cli.inline_events.is_some()
+        || !cli.policies.is_empty()
+        || cli.shard_matches.is_some()
+        || cli.single_lookup
+    {
+        return Err(
+            "the decoupled census takes only --directory-rows, --page-rows, \
+--max-page-children, --page-entry-header, --placement and --sample"
+                .into(),
+        );
+    }
+    let directory_rows = cli.directory_rows.expect("required by clap");
+    let page_rows = cli.page_rows.expect("required by clap");
+    let geometry = Geometry {
+        name: "decoupled",
+        directory_rows,
+        page_rows,
+        ..transparent_shard::layout::RECENT_8K
+    };
+    geometry.validate()?;
+    if cli.max_page_children == 0 || cli.max_page_children > 32 {
+        return Err("--max-page-children must be 1 to 32 (five bits in the entry)".into());
+    }
+    let policy =
+        DecoupledPolicy::for_geometry(&geometry, cli.max_page_children, cli.page_entry_header);
+    println!(
+        "\ndecoupled: directory {directory_rows} rows, page shards {page_rows} rows, at most {} \
+page shards, {}-byte page entry header; {policy:?}",
+        cli.max_page_children, cli.page_entry_header
+    );
+    let mut sealer =
+        DisplacementSealer::new(policy, geometry, first, cli.first_shard_id.unwrap_or(0));
+    sealer.measure_placement(cli.placement);
+    sealer.watch(sample);
+    let mut shards: Vec<SealedDirectory> = Vec::new();
+    let keep = |mut shard: SealedDirectory, shards: &mut Vec<SealedDirectory>| {
+        for chain in std::mem::take(&mut shard.watched) {
+            let runs: Vec<String> = chain
+                .runs
+                .iter()
+                .map(|run| format!("{}:{}:{}", run.child, run.fragments, run.events))
+                .collect();
+            println!(
+                "sample_chain\t{}\t{}\t{}\t{}",
+                shard.shard_id,
+                hex::encode(&chain.script),
+                chain.events,
+                runs.join(",")
+            );
+        }
+        shards.push(shard);
+    };
+    for height in first..=covered {
+        let events = store
+            .events_at(height)?
+            .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+        for shard in sealer.push_block(height, &events)? {
+            keep(shard, &mut shards);
+        }
+    }
+    if let Some(shard) = sealer.finish() {
+        keep(shard, &mut shards);
+    }
+
+    let directory_payload = (geometry.directory_row_bytes - 4) as u64;
+    let directory_segments = |shard: &SealedDirectory| -> u64 {
+        shard.placement.map_or_else(
+            || {
+                u64::from(transparent_shard::layout::segments_for(
+                    shard.occupancy.directory_bytes.div_ceil(directory_payload),
+                    directory_rows,
+                ))
+            },
+            |p| u64::from(p.segments),
+        )
+    };
+    let sealed = shards.iter().filter(|s| s.reason.is_some()).count();
+    println!(
+        "\n=== decoupled {directory_rows}/{page_rows} ===\n  directory shards {} ({sealed} sealed, {} tail)",
+        shards.len(),
+        shards.len() - sealed
+    );
+    let mut by_reason: std::collections::BTreeMap<String, usize> = Default::default();
+    let mut child_reasons: std::collections::BTreeMap<String, usize> = Default::default();
+    for shard in &shards {
+        *by_reason.entry(reason_label(shard.reason)).or_default() += 1;
+        for child in &shard.children {
+            *child_reasons.entry(reason_label(child.reason)).or_default() += 1;
+        }
+    }
+    for (reason, count) in &by_reason {
+        println!("  directory sealed by {reason:<28} {count}");
+    }
+    for (reason, count) in &child_reasons {
+        println!("  page shard sealed by {reason:<27} {count}");
+    }
+    println!(
+        "  per_directory\tshard_id\tstart\tend\tblocks\tscripts\tdirectory_bytes\tscript_fill\tbyte_fill\tchildren\tpaged_scripts\tdirectory_segments\treason"
+    );
+    for shard in &shards {
+        println!(
+            "  per_directory\t{}\t{}\t{}\t{}\t{}\t{}\t{:.4}\t{:.4}\t{}\t{}\t{}\t{}",
+            shard.shard_id,
+            shard.start_height,
+            shard.end_height,
+            shard.occupancy.blocks,
+            shard.occupancy.scripts,
+            shard.occupancy.directory_bytes,
+            shard.occupancy.scripts as f64 / policy.scripts.capacity as f64,
+            shard.occupancy.directory_bytes as f64 / policy.directory_bytes.capacity as f64,
+            shard.children.len(),
+            shard.occupancy.paged_scripts,
+            directory_segments(shard),
+            reason_label(shard.reason),
+        );
+    }
+    println!(
+        "  per_child\tshard_id\tchild\tstart\tend\tblocks\tpage_rows\tfragments\truns\tpaged_events\tevent_bytes\tpage_segments\treason"
+    );
+    let row_payload = transparent_shard::packing::ROW_PAYLOAD as u64;
+    let (mut rows, mut fragments, mut event_bytes, mut page_segments) = (0u64, 0u64, 0u64, 0u64);
+    let mut child_rows: Vec<u64> = Vec::new();
+    for shard in &shards {
+        for child in &shard.children {
+            let segments = u64::from(transparent_shard::layout::segments_for(
+                child.occupancy.page_rows,
+                page_rows,
+            ));
+            println!(
+                "  per_child\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+                shard.shard_id,
+                child.index,
+                child.start_height,
+                child.end_height,
+                child.occupancy.blocks,
+                child.occupancy.page_rows,
+                child.occupancy.fragments,
+                child.occupancy.runs,
+                child.occupancy.paged_events,
+                child.occupancy.demand.event_bytes(),
+                segments,
+                reason_label(child.reason),
+            );
+            rows += child.occupancy.page_rows;
+            fragments += child.occupancy.fragments;
+            event_bytes += child.occupancy.demand.event_bytes();
+            page_segments += segments;
+            if child.reason.is_some() {
+                child_rows.push(child.occupancy.page_rows);
+            }
+        }
+    }
+    let mut children: Vec<u64> = shards.iter().map(|s| s.children.len() as u64).collect();
+    describe("children", &mut children);
+    describe("sealed child rows", &mut child_rows);
+    let header = cli.page_entry_header as u64;
+    println!(
+        "  page fill   rows {:.1}% of {page_segments} segments; row bytes {:.1}% \
+({} B entry headers, of which {} B are the chain fields beyond 34)",
+        rows as f64 / (page_segments * page_rows) as f64 * 100.0,
+        if rows == 0 {
+            0.0
+        } else {
+            (fragments * header + event_bytes) as f64 / (rows * row_payload) as f64 * 100.0
+        },
+        fragments * header,
+        fragments * header.saturating_sub(34),
+    );
+    let mut chains = vec![0u64; cli.max_page_children as usize + 1];
+    for shard in &shards {
+        for (runs, count) in shard.occupancy.chain_lengths.iter().enumerate() {
+            chains[runs] += count;
+        }
+    }
+    let paged: u64 = chains[1..].iter().sum();
+    let at = |p: f64| -> usize {
+        let wanted = (p / 100.0 * paged as f64).ceil() as u64;
+        let mut seen = 0;
+        for (runs, count) in chains.iter().enumerate().skip(1) {
+            seen += count;
+            if seen >= wanted {
+                return runs;
+            }
+        }
+        0
+    };
+    println!(
+        "  chains      {paged} paged script-shard pairs of {}; runs p50 {} p95 {} p99 {} max {}",
+        chains.iter().sum::<u64>(),
+        at(50.0),
+        at(95.0),
+        at(99.0),
+        chains.iter().rposition(|c| *c > 0).unwrap_or(0),
+    );
+    for (runs, count) in chains.iter().enumerate().filter(|(_, c)| **c > 0) {
+        println!("  chain_length\t{runs}\t{count}");
+    }
+    let directory_pinned: u64 = shards
+        .iter()
+        .map(|s| directory_segments(s) * geometry.directory_bytes_per_segment())
+        .sum();
+    let page_pinned = page_segments * geometry.page_bytes_per_segment();
+    println!(
+        "  pinned      directory {:.2} GB, pages {:.2} GB, total {:.2} GB",
+        directory_pinned as f64 / 1e9,
+        page_pinned as f64 / 1e9,
+        (directory_pinned + page_pinned) as f64 / 1e9
+    );
+    prices(directory_rows, page_rows);
     Ok(())
 }
 
