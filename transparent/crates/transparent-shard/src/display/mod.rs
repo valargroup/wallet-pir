@@ -220,14 +220,10 @@ mod tests {
     /// Seeds are published by every running server; they must never move.
     #[test]
     fn setup_seeds_are_golden() {
-        for (geometry, seed) in [(&TXID_2K8, 0xd56b_6038_d7ca_811f)] {
-            assert_eq!(
-                setup_seed(geometry, DisplayKind::TxDirectory),
-                seed,
-                "{}",
-                geometry.name
-            );
-        }
+        assert_eq!(
+            setup_seed(&TXID_2K8, DisplayKind::TxDirectory),
+            0xd56b_6038_d7ca_811f
+        );
         assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
     }
 
