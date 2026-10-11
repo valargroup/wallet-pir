@@ -44,11 +44,13 @@ with history there ([txid display](txid-display.md#tiered-display-publication-pr
       `/v1/txid/recent/` and got 200 for every request.
 
     Both uploaded 77,840 B.
-  - recent-01 has no display unit. Its data in `/srv/transparent-txid-display`
-    and `/opt/transparent-txid-display` is kept.
+  - recent-01 has no display unit. With Roman's approval, its display data
+    (`/srv/transparent-txid-display`, 3.5 GB, and `/opt/transparent-txid-display`)
+    was deleted the same day; recent-01 keeps serving history.
 - **Rollback.** Roll back the `controller`, `route` and `workers`
-  transactions with `txid-display-rollback`. This puts recent-01's unit back
-  and starts it, and restores the archive-owner unit.
+  transactions with `txid-display-rollback`. This restores the archive-owner
+  unit. recent-01's release and data are deleted, so a split layout needs a
+  fresh `stage` and `workers` there.
 
 ## Tail-pages prefix uploads live, 2026-10-10
 
