@@ -3,7 +3,9 @@
 Draft-branch prototype of the [decoupled pages design](../../docs/decoupled-pages-design.md).
 **No results yet.** The simulation needs a read-only slice of the v11 journal,
 which this hub cannot read: the coordinator refuses the hub's SSH key. Nothing
-here has run against production data.
+here has run against production data. [fetch-slices.sh](fetch-slices.sh), run
+from Roman's Mac, stages the windows on the coordinator, copies them to the hub,
+verifies their checksums there and removes the staging copy.
 
 ## Method (planned)
 
