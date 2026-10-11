@@ -26,6 +26,8 @@ Transparent schema recipes run on the pinned coordinator under the same lock.
 
   plan SERVICE (--binary F | --archive F --sha REV | --sha256 H)
       Read-only: per-target action, drop-in handling and unit drift.
+      Targets whose inventory entry names another artifact_kind (the GPU
+      worker) need --extra-archive KIND=FILE and roll in their own transaction.
   preflight SERVICE (...same...) [--stage]
       Read-only unless --stage: identity on every host, baseline, drift,
       disk space and, where the release is staged, its self-check.
@@ -132,6 +134,91 @@ def target_binary(args, service, state_dir):
     load_release().extract(Path(args.archive), destination, args.sha, kind)
     path = destination / service.binary
     return file_sha256(path), path, {'archive': str(Path(args.archive).resolve()), 'revision': args.sha, 'kind': kind}
+
+
+def artifact_groups(args, service, inventory):
+    """Split the selected targets by the release artifact each one runs, in rollout order.
+
+    A target whose inventory entry names an `artifact_kind` (a GPU worker's
+    CUDA build) cannot take the transaction's binary. It is deployed in its own
+    transaction from `--extra-archive KIND=FILE`, with the same `--sha`. Without
+    that archive the command refuses, so a regular deploy never skips such a
+    target silently; `--only` excludes it deliberately.
+    Returns `[(args for that group, target keys)]`, one entry per transaction.
+    """
+    selected = descriptors.select(descriptors.targets(service, inventory), getattr(args, 'only', None))
+    main_kind = (args.kind or (service.artifact_kinds[0] if service.artifact_kinds else None)) if args.archive else None
+    extra = {}
+    for item in getattr(args, 'extra_archive', None) or ():
+        kind, sep, path = item.partition('=')
+        if not sep or kind not in service.artifact_kinds or kind in extra or kind == main_kind:
+            raise DeployError('--extra-archive is KIND=FILE, once per kind other than the main one; kinds are %s'
+                              % list(service.artifact_kinds))
+        extra[kind] = path
+    groups = {}
+    for target in selected:
+        kind = target.artifact_kind if target.artifact_kind not in (None, main_kind) else None
+        groups.setdefault(kind, []).append(target.key)
+    missing = [k for k in groups if k is not None and k not in extra]
+    if missing:
+        raise DeployError('%s run the %s artifact: add --extra-archive %s=FILE with the same --sha, '
+                          'or leave them out with --only'
+                          % ([key for k in missing for key in groups[k]], missing[0], missing[0]))
+    unused = set(extra) - set(groups)
+    if unused:
+        raise DeployError('no selected target runs %s' % sorted(unused))
+    if any(k is not None for k in groups) and not args.sha:
+        raise DeployError('--extra-archive requires --sha, the full source revision')
+    order = [t.key for t in selected]
+    result = []
+    for kind, keys in sorted(groups.items(), key=lambda item: order.index(item[1][0])):
+        group = argparse.Namespace(**vars(args))
+        if kind is not None:
+            group.binary, group.sha256, group.archive, group.kind = None, None, extra[kind], kind
+        result.append((group, keys))
+    return result
+
+
+def run_release(command, args, service, inventory, executor, deployer, out):
+    """plan, preflight or deploy one artifact group; returns the exit code."""
+    if command == 'deploy':
+        sha, binary, source = target_binary(args, service, args.state_dir)
+        deployer.deploy(sha, binary, source, args.allow_unit_drift, args.retire_historical, args.skip_exact_check)
+    else:
+        sha, binary, _ = target_binary(args, service, args.state_dir)
+        deployer.check_identities([inventory.lock.get('host')])
+        if command == 'preflight' and args.stage:
+            with deployer.lock_factory() as held:
+                deployer.lock = held
+                try:
+                    deployer.schema_fence()
+                    plans, _ = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
+                                               require_baseline=False)
+                    deployer.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')),
+                                   sha, binary)
+                finally:
+                    deployer.lock = None
+        plans, problems = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
+                                          require_baseline=command == 'preflight')
+        deployer.describe(plans, sha)
+        if command == 'preflight':
+            for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
+                path = service.release_binary(sha)
+                if executor.sha256(host, path) != sha:
+                    out('%s: release not staged yet; deploy uploads it' % host)
+                    continue
+                code, output = executor.run(host, [path, *service.self_check], 60)
+                if code:
+                    problems.append('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-300:]))
+                else:
+                    out('%s: staged release runs' % host)
+        for problem in problems:
+            out('problem: ' + problem)
+        if problems and command == 'preflight':
+            return 1
+        out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
+                                                       sum(p.action == 'skip' for p in plans)))
+    return 0
 
 
 def parser():
@@ -315,6 +402,9 @@ def parser():
         command.add_argument('--archive', help='release bundle from tools/ci/release.py')
         command.add_argument('--sha', help='full source revision of --archive')
         command.add_argument('--kind', help='artifact kind of --archive')
+        command.add_argument('--extra-archive', action='append', metavar='KIND=FILE',
+                             help='bundle for inventory targets that declare another artifact_kind '
+                                  '(e.g. a GPU worker), deployed in their own transaction')
         command.add_argument('--sha256', help='binary digest only; for a no-op check or an already staged release')
         command.add_argument('--allow-unit-drift', action='store_true',
                              help='accept a new unit that differs from the live one beyond the binary')
@@ -613,6 +703,18 @@ def main(argv=None, executor=None, out=print, **options):
         service = services[args.service]
         inventory = descriptors.load_inventory(args.inventory)
         executor = executor or SSHExecutor(inventory)
+        if args.command in ('plan', 'preflight', 'deploy'):
+            groups = artifact_groups(args, service, inventory)
+            for group, keys in groups:
+                if len(groups) > 1:
+                    label = (group.kind or 'default artifact') if group.archive else 'given binary'
+                    out('== %s: %s' % (label, ', '.join(keys)))
+                deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out,
+                                    only=keys, **options)
+                code = run_release(args.command, group, service, inventory, executor, deployer, out)
+                if code:
+                    return code
+            return 0
         deployer = Deployer(service, inventory, executor, args.state_dir, args.baseline, out=out,
                             only=getattr(args, 'only', None), **options)
         if args.command == 'capture-baseline':
@@ -621,43 +723,6 @@ def main(argv=None, executor=None, out=print, **options):
             deployer.status()
         elif args.command == 'rollback':
             deployer.rollback(args.transaction, args.force)
-        elif args.command == 'deploy':
-            sha, binary, source = target_binary(args, service, args.state_dir)
-            deployer.deploy(sha, binary, source, args.allow_unit_drift, args.retire_historical, args.skip_exact_check)
-        else:
-            sha, binary, _ = target_binary(args, service, args.state_dir)
-            deployer.check_identities([inventory.lock.get('host')])
-            if args.command == 'preflight' and args.stage:
-                with deployer.lock_factory() as held:
-                    deployer.lock = held
-                    try:
-                        deployer.schema_fence()
-                        plans, _ = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                                   require_baseline=False)
-                        deployer.stage(list(dict.fromkeys(p.target.host for p in plans if p.action == 'restart')),
-                                       sha, binary)
-                    finally:
-                        deployer.lock = None
-            plans, problems = deployer.assess(sha, binary, args.allow_unit_drift, args.retire_historical,
-                                              require_baseline=args.command == 'preflight')
-            deployer.describe(plans, sha)
-            if args.command == 'preflight':
-                for host in dict.fromkeys(p.target.host for p in plans if p.action == 'restart'):
-                    path = service.release_binary(sha)
-                    if executor.sha256(host, path) != sha:
-                        out('%s: release not staged yet; deploy uploads it' % host)
-                        continue
-                    code, output = executor.run(host, [path, *service.self_check], 60)
-                    if code:
-                        problems.append('%s: staged binary failed its self-check (exit %d): %s' % (host, code, output[-300:]))
-                    else:
-                        out('%s: staged release runs' % host)
-            for problem in problems:
-                out('problem: ' + problem)
-            if problems and args.command == 'preflight':
-                return 1
-            out('%d target(s) to restart, %d unchanged' % (sum(p.action == 'restart' for p in plans),
-                                                           sum(p.action == 'skip' for p in plans)))
     except subprocess.TimeoutExpired:
         out('error: command timed out; reconcile the recorded transaction and inspect its private logs')
         return 75 if args.command.startswith('schema-') else 1

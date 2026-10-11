@@ -12,6 +12,7 @@
     "worker-01": {"address": "192.0.2.15"},
     "worker-02": {"address": "192.0.2.16"},
     "router-01": {"address": "192.0.2.14"},
+    "enhance-pir-gpu-01": {"address": "192.0.2.19", "user": "paperspace", "sudo": true, "jump": "coordinator"},
     "status-01": {"address": "192.0.2.17"},
     "receiver-01": {"address": "192.0.2.18"}
   },
@@ -20,7 +21,10 @@
       "roles": {
         "worker": [
           {"host": "worker-01", "vars": {"listen": "192.0.2.15:8091"}},
-          {"host": "worker-02", "vars": {"listen": "192.0.2.16:8091"}}
+          {"host": "worker-02", "vars": {"listen": "192.0.2.16:8091"}},
+          {"host": "enhance-pir-gpu-01", "unit": "enhance-pir-gpu-worker.service",
+           "artifact_kind": "enhance-pir-native-cuda", "vars": {"listen": "192.0.2.19:8091"},
+           "health_equals": {"matvec.matvec_backend": "cuda", "matvec.cuda_device": 0}}
         ],
         "packing-router": [{"host": "router-01", "vars": {"control_listen": "192.0.2.14:8093"}}],
         "query-ingress": [{"host": "coordinator"}],

@@ -80,6 +80,9 @@ class Target:
     unit: str
     vars: dict = field(default_factory=dict)
     health_equals: dict = field(default_factory=dict)
+    # A release artifact kind other than the transaction's, e.g. a CUDA build
+    # for a GPU worker. None means the binary given to the transaction.
+    artifact_kind: str = None
 
     @property
     def key(self):
@@ -203,7 +206,11 @@ def targets(service, inventory):
                 isinstance(key, str) and re.fullmatch(r'[A-Za-z0-9_]+(?:\.[A-Za-z0-9_]+)*', key)
                 and isinstance(value, (str, int, bool)) for key, value in expected.items()),
                 'inventory: health_equals maps dotted fields to scalar expectations')
-            result.append(Target(role, host, unit, values, expected))
+            kind = entry.get('artifact_kind')
+            require(kind is None or kind in service.artifact_kinds,
+                    '%s.%s@%s: artifact_kind must be one of %s'
+                    % (service.name, role_name, host, list(service.artifact_kinds)))
+            result.append(Target(role, host, unit, values, expected, kind))
     require(result, 'inventory lists no %s hosts' % service.name)
     return result
 

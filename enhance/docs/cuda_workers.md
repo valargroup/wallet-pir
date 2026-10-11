@@ -50,6 +50,13 @@ reported as whole-request PIR speedups. CPU capacity qualification does not qual
 a GPU worker. The optional-worker pool policy lets a GPU mirror a CPU worker's
 domains without making GPU availability part of the publication quorum.
 
+## Deployment
+
+The GPU worker is part of every regular Enhance release. The deploy inventory
+lists it with `"artifact_kind": "enhance-pir-native-cuda"`, and
+`wallet-pir-deploy.py deploy enhance` takes the full-CI CUDA bundle through
+`--extra-archive`; see [deployment](deployment.md#deploy-cli).
+
 ## Optional pool assignment
 
 The coordinator accepts `--pool-policy /etc/enhance-pir/pool-policy.json` alongside
