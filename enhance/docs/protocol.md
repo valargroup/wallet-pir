@@ -27,7 +27,9 @@ Each Ironwood action occupies 653 bytes at its commitment-tree position:
 Reserved flag bits must be zero. Expiry must be below 500,000,000. An absent fee
 has a zero payload; a present fee cannot exceed 21,000,000 × 100,000,000.
 Expiry zero disables expiry. These fields and the transparent flags are trusted
-indexer metadata; note decryption does not authenticate them.
+indexer metadata; note decryption does not authenticate them. A wallet must never
+let the transparent flags choose a public data source; see
+[wallet integration](integration.md#transparent-flags).
 
 The wallet retains the ephemeral key and first 52 ciphertext bytes from the
 same compact-scanned action. It concatenates that prefix with the 528-byte PIR

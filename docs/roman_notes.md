@@ -181,6 +181,11 @@ For Ironwood-only transactions and mixed Ironwood + Transparent, use Ironwood En
 For mixed Ironwood + Other Pools, fallback to today's LWD enhacement. The case should
 be rare enough for it to not matter.
 
+> Superseded: never route a transaction to lightwalletd because of an Enhance PIR
+> record's transparent flags. They are unauthenticated server assertions, so this
+> fallback would let the server turn private enhancement into public txid fetches.
+> See [Transparent flags](../enhance/docs/integration.md#transparent-flags).
+
 #### Handling Transparent
 
 1. **vin/vout in Compact Block**

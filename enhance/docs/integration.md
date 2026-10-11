@@ -43,6 +43,32 @@ Fee, expiry and transparent flags remain indexer assertions. Successful note
 decryption does not authenticate those fields. Send-only association can require
 server trust when decryption cannot authenticate the action.
 
+### Transparent flags
+
+The transparent flags must never select a public data source. If a set flag sent
+the wallet to lightwalletd to fetch the transaction by txid, a server that set it
+on every record would turn private enhancement into public fetches for every
+wallet, and an operator who runs or can observe that lightwalletd would learn
+every queried txid without any search.
+
+- Under private queries, a set flag only marks the transaction's transparent
+  details as unavailable. The wallet never queues a public txid, address, script
+  or outpoint lookup for it. Received memos still come from Enhance PIR, and the
+  wallet's own transparent effects are recovered separately through Transparent
+  PIR.
+- A public fetch is allowed only when the wallet already has public transparent
+  authority (private queries off), where every transaction is fetched publicly
+  regardless of the flag.
+
+The wallet-libraries reference wallet follows this rule: in `zcash_client_sqlite`
+`wallet/enhance_pir.rs`, every call to `require_lwd` is gated on public authority
+(`apply` and `require_transparent_details`).
+
+Because the flags are unauthenticated, a dishonest server can still mark a purely
+shielded transaction as having transparent parts. The reference wallet then shows
+its transparent details as unavailable and can skip recovering its sent outputs.
+That degrades history but discloses nothing.
+
 ## Optional cover traffic
 
 Cover is off by default. `query_positions_with_cover` takes target positions and

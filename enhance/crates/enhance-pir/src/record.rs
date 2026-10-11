@@ -170,6 +170,10 @@ impl EnhanceRecord {
     }
 
     /// Reports trusted server metadata, not cryptographically authenticated transaction shape.
+    ///
+    /// Never use it to choose a public data source, such as fetching the transaction by txid
+    /// from lightwalletd: a server that sets it on every record would turn private enhancement
+    /// into public fetches. See `enhance/docs/integration.md` (Transparent flags).
     pub fn has_transparent(&self) -> bool {
         self.has_transparent_inputs() || self.has_transparent_outputs()
     }
