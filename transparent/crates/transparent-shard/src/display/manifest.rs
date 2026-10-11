@@ -14,8 +14,8 @@
 use super::seal::DisplaySealParams;
 use super::tables::BuiltDisplay;
 use super::{
-    display_by_name, DisplayTable, BUCKET_DOMAIN, DISPLAY_SCHEMA, MAX_BUCKETS,
-    MAX_PLACEMENT_SEEDS, PLACEMENT_DOMAIN,
+    display_by_name, DisplayTable, BUCKET_DOMAIN, DISPLAY_SCHEMA, MAX_BUCKETS, MAX_PLACEMENT_SEEDS,
+    PLACEMENT_DOMAIN,
 };
 use crate::layout::Geometry;
 use crate::manifest::TableGeometry;
@@ -769,7 +769,10 @@ mod tests {
             m.check_shape().unwrap();
             // Heights the archives hold go to them, the rest to recent.
             assert_eq!(m.unsealed_start(), 300);
-            assert_eq!(m.shard_for_height(start).unwrap().shard_id, 7 + (start / 100 - 1));
+            assert_eq!(
+                m.shard_for_height(start).unwrap().shard_id,
+                7 + (start / 100 - 1)
+            );
             assert_eq!(m.shard_for_height(299).unwrap().shard_id, 8);
             assert_eq!(m.shard_for_height(300).unwrap().shard_id, 9);
             assert!(m.shard_for_height(400).is_none());

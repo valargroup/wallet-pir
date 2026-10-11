@@ -200,9 +200,7 @@ async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
     check_maps(&run.maps, &last);
     check_windows(&run.maps, 25, forked);
     let moved = run.maps.last().unwrap().clone();
-    assert!(
-        moved.shards.last().unwrap().start_height < last.shards.last().unwrap().start_height
-    );
+    assert!(moved.shards.last().unwrap().start_height < last.shards.last().unwrap().start_height);
 
     // A restart reloads the cache from the window's floor and goes on.
     let steps = vec![ScriptStep::Extend(fork(9, tip + 1, tip + 12))];
@@ -1067,7 +1065,10 @@ async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     for map in &maps {
         let recent = map.shards.last().unwrap();
         assert!(map.unsealed_start() + params.reorg_margin <= recent.end_height + 1);
-        assert!(recent.min_bucket_records >= params.recent_window, "{recent:?}");
+        assert!(
+            recent.min_bucket_records >= params.recent_window,
+            "{recent:?}"
+        );
     }
 }
 

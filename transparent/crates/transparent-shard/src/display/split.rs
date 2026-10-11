@@ -23,7 +23,9 @@
 //! so the full map and the split never disagree. Their canonical encoding is
 //! compact JSON in declaration order.
 
-use super::manifest::{check_chain, check_entry, check_recent, check_recent_parent, find_by_height};
+use super::manifest::{
+    check_chain, check_entry, check_recent, check_recent_parent, find_by_height,
+};
 use super::seal::DisplaySealParams;
 use super::{DisplayMap, DisplayMapEntry, DISPLAY_SCHEMA};
 use serde::{Deserialize, Serialize};
@@ -628,7 +630,10 @@ mod tests {
             map.check_chunk(index, chunk).unwrap();
         }
         assert_eq!(map.chunk_for_height(last.end_height + 1), None);
-        assert_eq!(full.shard_for_height(last.end_height + 1), full.shards.last());
+        assert_eq!(
+            full.shard_for_height(last.end_height + 1),
+            full.shards.last()
+        );
         // Starting where the last archive starts, the parent is that
         // archive's parent; a wrong one is refused with that chunk.
         let mut full = map_at_archive_start(&last, "98".repeat(32));

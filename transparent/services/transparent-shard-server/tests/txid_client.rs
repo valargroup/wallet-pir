@@ -415,12 +415,7 @@ fn a_recent_shard_below_the_floor_is_not_queried() {
     );
     assert_eq!(
         routes(&http.take_log()),
-        [
-            Route::MapChunk,
-            Route::Manifest,
-            Route::Setup,
-            Route::Query
-        ]
+        [Route::MapChunk, Route::Manifest, Route::Setup, Route::Query]
     );
 
     let mut client = TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(floor);
@@ -1195,7 +1190,11 @@ fn setup_seed_golden_matches_server() {
             DisplayTable::Directory(0),
             0xd56b_6038_d7ca_811f_u64,
         ),
-        ("txid-2k8", DisplayTable::Directory(3), 0xd56b_6038_d7ca_811f),
+        (
+            "txid-2k8",
+            DisplayTable::Directory(3),
+            0xd56b_6038_d7ca_811f,
+        ),
     ];
     for (name, table, seed) in golden {
         let geometry = display::display_by_name(name).unwrap();

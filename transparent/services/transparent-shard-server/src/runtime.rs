@@ -1277,7 +1277,11 @@ pub(crate) mod tests {
         let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
         let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
         assert_eq!((reserved, held), (151_090_272, 83_981_408));
-        assert_eq!(reserved - held, 2 * (32 << 20), "half of two compiled matrices");
+        assert_eq!(
+            reserved - held,
+            2 * (32 << 20),
+            "half of two compiled matrices"
+        );
         let measured = MEASURED_TXID_2K8_MIB;
         assert!((mib(held) - measured.0).abs() < 0.1);
         assert!(measured.1 - mib(held) < 6.0);

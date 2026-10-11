@@ -1258,7 +1258,10 @@ mod tests {
     fn a_recent_rebuild_admits_concurrent_lookups_on_the_combined_worker() {
         let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
         let reserved = shared.reserved_bytes();
-        assert_eq!(reserved, 151_090_272, "a 2,048-row, two-block display table");
+        assert_eq!(
+            reserved, 151_090_272,
+            "a 2,048-row, two-block display table"
+        );
         let limit = 40u64 << 30;
         // Charged memory with a build in flight: every resident runtime at its
         // built size and 1 GiB for the process.

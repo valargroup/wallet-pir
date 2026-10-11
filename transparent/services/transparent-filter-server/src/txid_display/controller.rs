@@ -426,8 +426,8 @@ impl Controller {
             .seals
             .last()
             .map_or(layout.start_height, |s| s.end_height + 1);
-        let floor = cache_floor(&store, &layout.seal, map.start_height, unsealed)?
-            .min(recent.start_height);
+        let floor =
+            cache_floor(&store, &layout.seal, map.start_height, unsealed)?.min(recent.start_height);
         let cache = DisplayCache::load(&store, layout.seal, floor, through, now_ms())?;
         let index = HeightIndex::open(root)?;
         let mut fleet = Fleet::new(workers);
@@ -1735,8 +1735,7 @@ pub fn plan_start(
     let per_seal = seal.archive_target * u64::from(seal.n_archive);
     let mut reversed = Vec::new();
     let mut records = 0u64;
-    let mut target =
-        per_seal * (wanted as u64 + 1) + seal.recent_window * u64::from(seal.n_recent);
+    let mut target = per_seal * (wanted as u64 + 1) + seal.recent_window * u64::from(seal.n_recent);
     let (start, seals) = loop {
         while records < target && end + 1 - reversed.len() as u64 > first {
             let height = end - reversed.len() as u64;

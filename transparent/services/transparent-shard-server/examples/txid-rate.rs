@@ -170,13 +170,7 @@ fn emit_queries(sequence: u64, report: &LookupReport, cold: bool) {
     }
 }
 
-async fn run_unit(
-    client: DisplayClient,
-    sample: Sample,
-    sequence: u64,
-    due: Instant,
-    cold: bool,
-) {
+async fn run_unit(client: DisplayClient, sample: Sample, sequence: u64, due: Instant, cold: bool) {
     let started = Instant::now();
     let unix = now();
     let lag = started.saturating_duration_since(due).as_secs_f64();
@@ -194,9 +188,7 @@ async fn run_unit(
     match client.lookup(txid, Some(sample.height)).await {
         Ok(report) => {
             let exact = match (&report.result, &sample.entry_sha256) {
-                (LookupResult::Found(entry), Some(sha)) => {
-                    txdisplay::entry_sha256(entry) == *sha
-                }
+                (LookupResult::Found(entry), Some(sha)) => txdisplay::entry_sha256(entry) == *sha,
                 (LookupResult::Absent, None) => true,
                 _ => false,
             };
@@ -322,15 +314,14 @@ async fn main() -> Result<(), Error> {
         };
         let current = map.read().unwrap().0.clone();
         let archive = !is_recent(sequence, share);
-        let sample = if args.absent_every > 0
-            && sequence % args.absent_every == args.absent_every - 1
-        {
-            pick(&fixture.absent, &current, archive, &mut absent_cursor).cloned()
-        } else if archive {
-            pick(&fixture.samples, &current, true, &mut archive_cursor).cloned()
-        } else {
-            pick(&fixture.samples, &current, false, &mut recent_cursor).cloned()
-        };
+        let sample =
+            if args.absent_every > 0 && sequence % args.absent_every == args.absent_every - 1 {
+                pick(&fixture.absent, &current, archive, &mut absent_cursor).cloned()
+            } else if archive {
+                pick(&fixture.samples, &current, true, &mut archive_cursor).cloned()
+            } else {
+                pick(&fixture.samples, &current, false, &mut recent_cursor).cloned()
+            };
         let Some(sample) = sample else {
             emit(
                 serde_json::json!({"event":"missed_slot","unix":now(),"sequence":sequence,"reason":"no fixture sample in this tier"}),

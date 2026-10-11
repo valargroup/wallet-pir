@@ -286,10 +286,7 @@ impl Rows {
         txid: &Txid,
     ) -> Result<Option<DisplayEntry>, Error> {
         let tag = Tag::of(txid);
-        let (shard_id, rows) = (
-            revision.manifest.shard_id,
-            revision.geometry.directory_rows,
-        );
+        let (shard_id, rows) = (revision.manifest.shard_id, revision.geometry.directory_rows);
         let bucket = display::bucket(&tag, revision.manifest.n_buckets);
         let seed = revision.manifest.buckets[bucket as usize].placement_seed;
         let table = DisplayTable::Directory(bucket);

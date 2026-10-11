@@ -251,8 +251,8 @@ async fn an_overlapping_recent_shard_is_served_beside_its_archive() {
         &spec(1, 150, 260, false, &a0.digest),
         &r0_records,
     );
-    let p0 = synth::write_candidate(root.path(), &params(1), &[a0.clone(), r0.clone()], "p0")
-        .unwrap();
+    let p0 =
+        synth::write_candidate(root.path(), &params(1), &[a0.clone(), r0.clone()], "p0").unwrap();
     let worker = Worker::new(
         root.path(),
         DisplayRole::Combined,
@@ -280,7 +280,10 @@ async fn an_overlapping_recent_shard_is_served_beside_its_archive() {
         (&r0_records[CLASSES], 230, Tier::Recent, &r0.digest),
     ] {
         let (provenance, log) = wallet.found(record, height);
-        assert_eq!((provenance.tier, &provenance.manifest_digest), (tier, digest));
+        assert_eq!(
+            (provenance.tier, &provenance.manifest_digest),
+            (tier, digest)
+        );
         assert_eq!(posts(&log), 1);
     }
     assert_eq!(
@@ -640,12 +643,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     let (provenance, log) = held.found(&world.a0_records[CLASSES + 2], 150);
     assert_eq!(
         routes(&log),
-        [
-            Route::MapChunk,
-            Route::Manifest,
-            Route::Setup,
-            Route::Query
-        ]
+        [Route::MapChunk, Route::Manifest, Route::Setup, Route::Query]
     );
     assert_eq!(
         (provenance.shard_id, &provenance.manifest_digest),
@@ -654,14 +652,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     // Below the old start, in the new archive 0, through the chunk the new
     // map already named.
     let (provenance, log) = held.found(&older[CLASSES], 60);
-    assert_eq!(
-        routes(&log),
-        [
-            Route::Manifest,
-            Route::Setup,
-            Route::Query
-        ]
-    );
+    assert_eq!(routes(&log), [Route::Manifest, Route::Setup, Route::Query]);
     assert_uploads(&log, QUERY_BYTES);
     assert_eq!(
         (provenance.shard_id, &provenance.manifest_digest),

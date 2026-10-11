@@ -1516,9 +1516,7 @@ mod tests {
         );
         assert_eq!(sent(&mut transport), [Route::Init, Route::Map]);
         for _ in 0..2 {
-            transport
-                .replies
-                .extend([Ok(init_with(&[])), served(&map)]);
+            transport.replies.extend([Ok(init_with(&[])), served(&map)]);
             assert_eq!(
                 client.lookup(&mut transport, [1; 32], 150, &never),
                 Ok(TxidLookup::Unsupported)
@@ -1546,10 +1544,7 @@ mod tests {
             client.lookup(&mut transport, [1; 32], 150, &never),
             Ok(TxidLookup::Unsupported)
         );
-        assert_eq!(
-            sent(&mut transport),
-            [Route::Map, Route::Init, Route::Map]
-        );
+        assert_eq!(sent(&mut transport), [Route::Map, Route::Init, Route::Map]);
     }
 
     #[test]

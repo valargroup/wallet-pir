@@ -46,7 +46,9 @@ fn args() -> Result<Args, Error> {
         target: 90_000,
         window: 90_000,
         trials: 200,
-        sizes: vec![90_000, 92_000, 94_000, 96_000, 98_000, 100_000, 105_000, 110_000],
+        sizes: vec![
+            90_000, 92_000, 94_000, 96_000, 98_000, 100_000, 105_000, 110_000,
+        ],
         seed: 1,
     };
     let mut args = std::env::args().skip(1);
@@ -59,10 +61,7 @@ fn args() -> Result<Args, Error> {
             "--trials" => parsed.trials = value.parse()?,
             "--seed" => parsed.seed = value.parse()?,
             "--sizes" => {
-                parsed.sizes = value
-                    .split(',')
-                    .map(str::parse)
-                    .collect::<Result<_, _>>()?
+                parsed.sizes = value.split(',').map(str::parse).collect::<Result<_, _>>()?
             }
             other => return Err(format!("unknown flag {other}").into()),
         }
@@ -114,7 +113,9 @@ fn quantile(sorted: &[u32], q: f64) -> u32 {
 fn main() -> Result<(), Error> {
     let args = args()?;
     let map: Value = serde_json::from_slice(&std::fs::read(&args.map)?)?;
-    let old_target = map["seal"]["archive_target"].as_u64().ok_or("seal.archive_target")?;
+    let old_target = map["seal"]["archive_target"]
+        .as_u64()
+        .ok_or("seal.archive_target")?;
     let shards = map["shards"].as_array().ok_or("shards")?;
     let records = |s: &Value| s["records"].as_u64().unwrap_or(0);
     let total: u64 = shards.iter().map(records).sum();
@@ -141,7 +142,13 @@ fn main() -> Result<(), Error> {
     let placed: Vec<(u64, u64, Placement)> = sizes
         .par_iter()
         .enumerate()
-        .map(|(id, size)| (id as u64, *size, place(args.seed, id as u64, id as u64, *size)))
+        .map(|(id, size)| {
+            (
+                id as u64,
+                *size,
+                place(args.seed, id as u64, id as u64, *size),
+            )
+        })
         .chain(rayon::iter::once((
             archives,
             recent,
