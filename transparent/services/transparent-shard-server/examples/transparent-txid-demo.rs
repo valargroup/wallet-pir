@@ -559,7 +559,8 @@ async fn run_range(
                 log: Vec::new(),
             };
             let never = || false;
-            let mut client = TxidDisplayClient::new();
+            // The demo's recent shard holds far fewer txids than production.
+            let mut client = TxidDisplayClient::new().with_min_recent_floor(1);
             let mut counts = BTreeMap::<&str, usize>::new();
             let mut found_shapes = Vec::new();
             let mut lookups = Vec::new();

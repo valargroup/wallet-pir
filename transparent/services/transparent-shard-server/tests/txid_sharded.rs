@@ -527,8 +527,9 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     assert_eq!(held.client.cached_revisions(), sorted(&[a0, r0]));
     // `aged` counts any map it did not fetch in the same lookup as stale.
     let mut aged = world.wallet();
-    aged.client =
-        TxidDisplayClient::with_profiles(profiles()).with_placement_refresh_age(Duration::ZERO);
+    aged.client = TxidDisplayClient::with_profiles(profiles())
+        .with_min_recent_floor(1)
+        .with_placement_refresh_age(Duration::ZERO);
     aged.found(&world.a0_records[CLASSES + 1], 150);
 
     // The fresh lineage, from height 50, over the same transactions.
