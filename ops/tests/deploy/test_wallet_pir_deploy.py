@@ -5,6 +5,7 @@ Uses the repository's own descriptors and unit templates; only hosts are fake.
 import dataclasses
 import hashlib
 import http.server
+import io
 import json
 import os
 import re
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / 'ops/lib'))
@@ -898,6 +900,55 @@ class LocalExecutor(SSHExecutor):
 
     def transport(self, host):
         return ['sh', '-c']
+
+
+class MultiplexTests(unittest.TestCase):
+    def test_helper_calls_share_one_connection_and_the_lock_has_its_own(self):
+        executor = SSHExecutor(None)
+        ssh = ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', 'root@10.0.0.1']
+        argv = executor.multiplexed(ssh)
+        self.assertEqual(argv[0], 'ssh')
+        self.assertEqual(argv[-1], 'root@10.0.0.1')
+        options = dict(argv[i + 1].split('=', 1) for i, a in enumerate(argv[:-1]) if a == '-o')
+        self.assertEqual(options['ControlMaster'], 'auto')
+        self.assertTrue(options['ControlPath'].startswith(executor.control_dir + '/'))
+        self.assertLess(len(options['ControlPath'].replace('%C', 'c' * 40)), 100)
+        self.assertEqual(options['ServerAliveInterval'], '15')
+        self.assertEqual(os.stat(executor.control_dir).st_mode & 0o777, 0o700)
+        # One private directory per executor, reused by every call.
+        self.assertEqual(executor.multiplexed(ssh), argv)
+        # A lock keeper in front of ssh still gets the options before the host.
+        kept = executor.multiplexed(['python3', 'keeper.py', *ssh])
+        self.assertEqual(kept[:2], ['python3', 'keeper.py'])
+        self.assertEqual(kept[-1], 'root@10.0.0.1')
+        self.assertIn('ControlMaster=auto', kept)
+        # Anything that is not SSH runs unchanged.
+        self.assertEqual(executor.multiplexed(['sh', '-c']), ['sh', '-c'])
+
+        class Recording(SSHExecutor):
+            def transport(self, host):
+                return list(ssh)
+        lock = Recording(None)
+        started = []
+
+        class Process:
+            def __init__(self, argv, **_):
+                started.append(argv)
+                self.stdout, self.stdin = io.BytesIO(b'locked\n'), io.BytesIO()
+
+            def poll(self):
+                return None
+
+            def wait(self, timeout=None):
+                return 0
+        with mock.patch.object(subprocess, 'Popen', Process):
+            with lock.hold_lock('h', '/run/lock/x') as held:
+                held.verify()
+        argv = started[0]
+        self.assertIn('ControlMaster=no', argv)
+        self.assertIn('ControlPath=none', argv)
+        self.assertIn('ServerAliveInterval=15', argv)
+        self.assertEqual(argv[argv.index('root@10.0.0.1') + 1:][0].split()[0], 'flock')
 
 
 class HelperTests(unittest.TestCase):

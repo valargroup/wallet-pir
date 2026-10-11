@@ -4,15 +4,24 @@
 call of `host_helper.py` over SSH; tests substitute a fake that models files
 and systemd. Nothing else in the package opens a connection.
 """
+import atexit
 import contextlib
 import json
 from pathlib import Path
 import shlex
+import shutil
 import subprocess
+import tempfile
 
 from .. import hostlock, inherited_lock, pinned_ssh, ancillary_baseline
 from . import host_helper
 from .descriptors import LOCK_PATH
+
+# Probes every 15 s; a session silent for a minute is dropped. The probes also
+# keep an idle session open through NAT, so its close still reaches the host.
+KEEPALIVE = ['-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4']
+# How long a reused connection outlives its last helper call.
+PERSIST_SECONDS = 30
 
 HELPER = "import types\n_ANCILLARY=types.ModuleType('_ANCILLARY')\nexec("+repr(Path(ancillary_baseline.__file__).read_text())+",_ANCILLARY.__dict__)\n"+Path(host_helper.__file__).read_text()
 
@@ -96,6 +105,7 @@ class SSHExecutor(Executor):
     def __init__(self, inventory):
         self.inventory = inventory
         self.pinned = {}
+        self.control_dir = None
 
     def transport(self, host):
         return inherited_lock.transport_command(self.raw_transport(host))
@@ -121,11 +131,31 @@ class SSHExecutor(Executor):
             options += ['-o', 'ProxyCommand=' + shlex.join(jump[:-1] + ['-W', '%h:%p', jump[-1]])]
         return ['ssh', *options, client.user + '@' + client.host]
 
+    def multiplexed(self, argv):
+        """`argv` reusing one SSH connection per host for helper calls.
+
+        A deploy makes dozens of helper calls per host; each fresh connection
+        costs a full handshake (seconds from a distant workstation), and bursts
+        of them can exceed the host's sshd `MaxStartups`. The first call opens a
+        master connection in a private directory and later calls ride it until
+        it has been idle for PERSIST_SECONDS. Host keys are still checked when
+        the master is opened. Anything that is not SSH is returned unchanged.
+        """
+        if not argv or not any(Path(part).name == 'ssh' for part in argv[:3]):
+            return argv
+        if self.control_dir is None:
+            # Under /tmp: a socket path must fit in about 100 bytes.
+            self.control_dir = tempfile.mkdtemp(prefix='wpd-ssh-', dir='/tmp')
+            atexit.register(shutil.rmtree, self.control_dir, True)
+        options = ['-o', 'ControlMaster=auto', '-o', 'ControlPath=%s/%%C' % self.control_dir,
+                   '-o', 'ControlPersist=%d' % PERSIST_SECONDS, *KEEPALIVE]
+        return [*argv[:-1], *options, argv[-1]]
+
     def call(self, host, op, stdin=b'', deadline=120, **arguments):
         """Run one helper operation; `deadline` bounds the whole SSH call."""
         prefix = ['sudo', '-n', '--'] if self.inventory and self.inventory.hosts[host].get('sudo') else []
         command = shlex.join([*prefix, 'python3', '-c', HELPER, json.dumps({'op': op, **arguments})])
-        argv = self.transport(host) + [command]
+        argv = self.multiplexed(self.transport(host)) + [command]
         if isinstance(stdin, Path):
             with open(stdin, 'rb') as handle:
                 result = subprocess.run(argv, stdin=handle, capture_output=True, timeout=deadline, **inherited_lock.options())
@@ -188,8 +218,15 @@ class SSHExecutor(Executor):
         # The lock lives as long as this SSH session: flock holds it while `cat`
         # waits on our stdin, and closing stdin (or losing the connection)
         # releases it. `verify` notices a lost session before each side effect.
+        # The session has a connection of its own, never a shared master, and
+        # keepalives: an idle session dropped by NAT would otherwise leave the
+        # host holding the lock after this process is gone.
         command = shlex.join(['flock', '-n', path, 'sh', '-c', 'echo locked; exec cat >/dev/null'])
-        process = subprocess.Popen(self.transport(host) + [command], stdin=subprocess.PIPE,
+        transport = self.transport(host)
+        if transport and any(Path(part).name == 'ssh' for part in transport[:3]):
+            transport = [*transport[:-1], '-o', 'ControlMaster=no', '-o', 'ControlPath=none', *KEEPALIVE,
+                         transport[-1]]
+        process = subprocess.Popen(transport + [command], stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **inherited_lock.options())
         try:
             if process.stdout.readline() != b'locked\n':
