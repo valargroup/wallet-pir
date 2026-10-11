@@ -330,14 +330,15 @@ reference it is tested against.
     the txid in internal byte order and the height from the wallet's accepted
     chain. It returns `Found { entry, provenance }`, where provenance is the
     recent map's SHA-256, shard id, revision, manifest digest and tier.
-    Otherwise it returns `Absent`, `PlacementUnknown(Below | Above)` or
-    `Unsupported`.
+    Otherwise it returns `Absent`, `PlacementUnknown(Below | Above)`,
+    `RecentBelowFloor` or `Unsupported`.
   - The client caches native profiles, init, the recent map, index chunks by
     digest, manifests and setups. `refresh_map(transport, cancel)` fetches and
     validates only the recent map.
   - With the `testing` feature, `with_placement_refresh_age` and
-    `cached_revisions` let tests make a map stale and inspect the cache.
-    Wallets do not enable it.
+    `cached_revisions` let tests make a map stale and inspect the cache, and
+    `with_min_recent_floor` lowers the client's recent floor for fixtures
+    holding a handful of txids. Wallets do not enable it.
 - **Transcript.** Requests are sent one at a time:
   1. init, the recent map, and the index chunk covering an archive height;
   2. the manifest and the bucket's setups, when not cached;
@@ -346,14 +347,25 @@ reference it is tested against.
   Under the placement and cache rules below, init or the map can be fetched
   again after the map or a chunk, for example `Map, MapChunk, Init, Manifest,
   Setup, Query, Query`. A lookup sends at most 2 map, 3 init and 4 query
-  requests. `Absent` sends the same two queries. Placement and support
-  results send no query. `cancel` is polled before every request.
+  requests. `Absent` sends the same two queries. Placement, recent floor and
+  support results send no query. `cancel` is polled before every request.
 - **Placement.** A height below the map's start or above its tip is
   `PlacementUnknown(Below | Above)` straight from a map the lookup fetched,
   or one less than 30 s old by the wall clock. A lookup holding an older map
   fetches it once more and places the height again on the new map. The wall
   clock is used because a monotonic clock stops while a phone sleeps; a clock
   that went back counts as old.
+- **Recent floor.** A query names the shard and bucket it reads, so the txid
+  hides only among that bucket's txids. Sealed shards hold `archive_target`
+  per bucket, checked with the map. The recent shard is queried only when its
+  map entry's `min_bucket_records` reaches the larger of the map's
+  `recent_floor` and the client's own floor (`MIN_RECENT_FLOOR`, 10,000), so
+  a server publishing a low `recent_floor` does not lower it. Otherwise the
+  lookup returns `RecentBelowFloor` with no manifest, setup or query: not
+  privately available, and never `Absent`. A reorg can leave an honest recent
+  shard under the floor until blocks arrive, and a lineage that does not start
+  at genesis starts with a small one. Archive lookups are unaffected. A map
+  older than 30 s is fetched once more before this result, as for a placement.
 - **Caches.**
   - Init is fetched on first use.
   - A map whose schema or seal parameters differ from the last map's is a new

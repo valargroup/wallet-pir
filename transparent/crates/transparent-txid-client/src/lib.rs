@@ -18,6 +18,8 @@
 //! either way every query of one client has the same size. Placement comes from the
 //! caller's mined height; nothing
 //! is asked to discover it, so placement and support results send no query.
+//! Neither does a height in a recent shard holding fewer txids per bucket
+//! than the floor ([`TxidLookup::RecentBelowFloor`]), decided from the map.
 //!
 //! The map is split (see `transparent_shard::display::split`): a small
 //! recent map, refetched after every 409, and immutable index chunks of 32
@@ -35,7 +37,7 @@
 
 mod client;
 
-pub use client::{ProfileCache, TxidDisplayClient, PLACEMENT_REFRESH_AGE};
+pub use client::{ProfileCache, TxidDisplayClient, MIN_RECENT_FLOOR, PLACEMENT_REFRESH_AGE};
 pub use transparent_shard::txid::{
     flags, Address, AddressKind, DisplayEntry, EntryOutput, Tag, OUTPUT_SLOTS,
 };
@@ -241,6 +243,13 @@ pub enum TxidLookup {
     Absent,
     /// No shard covers the height; nothing was queried.
     PlacementUnknown(Placement),
+    /// The recent shard covers the height but one of its buckets holds
+    /// fewer txids than the floor (the larger of the map's `recent_floor`
+    /// and the client's [`MIN_RECENT_FLOOR`]), so a query would narrow the
+    /// txid to those few: not privately available. Nothing was queried. Not
+    /// a statement about the txid; the shard may grow past the floor as
+    /// blocks arrive.
+    RecentBelowFloor,
     /// The server publishes a schema, codec or geometry this client does not
     /// know, or the map names a geometry init does not list although this
     /// lookup fetched both; nothing was queried.

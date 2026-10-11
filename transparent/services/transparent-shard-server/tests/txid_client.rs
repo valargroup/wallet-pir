@@ -60,8 +60,10 @@ fn env() -> &'static Env {
 }
 
 impl Env {
+    /// A client that queries the fixture's recent shard, which holds a few
+    /// dozen txids.
     fn client(&self) -> TxidDisplayClient {
-        TxidDisplayClient::with_profiles(profiles())
+        TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(1)
     }
 
     fn http(&self) -> Http {
@@ -380,6 +382,57 @@ fn placement_below_or_above_no_post() {
             TxidLookup::Found { .. } | TxidLookup::Absent
         ));
     }
+}
+
+/// A recent shard holding fewer txids per bucket than the client's floor is
+/// not queried: a query would say the txid is one of those few. The recent
+/// map alone decides it, so nothing past it is sent, and sealed archives are
+/// still looked up. At exactly the floor the recent shard is queried.
+#[test]
+fn a_recent_shard_below_the_floor_is_not_queried() {
+    let _serial = serial();
+    let env = env();
+    let floor = env.world.r0.entry().min_bucket_records;
+    assert!(floor > 1);
+    let recent = &env.world.r0_records[CLASSES];
+    let archive = &env.world.a0_records[CLASSES];
+
+    // The map advertises `recent_floor` 1; the client's own floor holds.
+    let mut client = TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(floor + 1);
+    let mut http = env.http();
+    for txid in [recent.txid.0, ABSENT] {
+        assert_eq!(
+            client.lookup(&mut http, txid, 230, &never).unwrap(),
+            TxidLookup::RecentBelowFloor
+        );
+    }
+    assert_eq!(routes(&http.take_log()), [Route::Init, Route::Map]);
+    found(
+        client
+            .lookup(&mut http, archive.txid.0, 150, &never)
+            .unwrap(),
+        archive,
+    );
+    assert_eq!(
+        routes(&http.take_log()),
+        [
+            Route::MapChunk,
+            Route::Manifest,
+            Route::Setup,
+            Route::Query,
+            Route::Query
+        ]
+    );
+
+    let mut client = TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(floor);
+    let provenance = found(
+        client
+            .lookup(&mut http, recent.txid.0, 230, &never)
+            .unwrap(),
+        recent,
+    );
+    assert_eq!(provenance.tier, Tier::Recent);
+    assert_eq!(posts(&http.take_log()), 2);
 }
 
 #[test]

@@ -479,7 +479,8 @@ pub struct Wallet {
 impl Wallet {
     pub fn at(base: &str) -> Self {
         tokio::task::block_in_place(|| Self {
-            client: TxidDisplayClient::with_profiles(profiles()),
+            // The fixture's recent shard holds a few dozen txids.
+            client: TxidDisplayClient::with_profiles(profiles()).with_min_recent_floor(1),
             http: Http::new(base),
         })
     }
