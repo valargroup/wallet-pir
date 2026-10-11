@@ -144,6 +144,14 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         matches!(quality_mode.as_str(), "shadow" | "active"),
         "PIR_APM_QUALITY_ALERT_MODE must be shadow or active"
     );
+    let mut capacity_store = Store::open(&path)?.with_family("capacity");
+    let capacity_mode =
+        std::env::var(crate::capacity_alerts::MODE_VAR).unwrap_or_else(|_| "shadow".into());
+    anyhow::ensure!(
+        matches!(capacity_mode.as_str(), "shadow" | "active"),
+        "{} must be shadow or active",
+        crate::capacity_alerts::MODE_VAR
+    );
     // Optional and independent: absent PIR_APM_SCALER_STATUS opens nothing.
     let mut scaling = scaling
         .map(|settings| crate::scaling::Family::open(settings, &path))
@@ -164,6 +172,7 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
     tokio::spawn(async move {
         let mut store = store;
         let mut router_history = BTreeMap::new();
+        let mut capacity_history = crate::capacity_alerts::CounterHistory::new();
         let mut interval = tokio::time::interval(Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -182,6 +191,8 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             snapshot.monitoring.publication = publication(&snapshot, now);
             update_router_rates(&mut snapshot, &mut router_history, now);
             let mut conditions = conditions(&snapshot, now, &policy);
+            let mut capacity_conditions =
+                crate::capacity_alerts::conditions(&snapshot, now, &mut capacity_history);
             if snapshot.placement.is_some()
                 && !snapshot.placement_error
                 && fresh(epoch(snapshot.placement_success), now)
@@ -200,6 +211,17 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                             retired.retired = true;
                             retired.sample = now;
                             conditions.push(retired);
+                        }
+                        // A worker or router removed from the inventories ends its memory incidents.
+                        if c.key.starts_with("capacity_")
+                            && (c.resource.starts_with("worker_")
+                                || c.resource.starts_with("router_"))
+                            && !capacity_conditions.iter().any(|n| n.key == c.key)
+                        {
+                            let mut retired = c.clone();
+                            retired.retired = true;
+                            retired.sample = now;
+                            capacity_conditions.push(retired);
                         }
                     }
                 }
@@ -232,6 +254,13 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
                     quality_mode != "active",
                     &config.environment,
                     &transparent_url,
+                )?;
+                capacity_store.evaluate(
+                    &capacity_conditions,
+                    now,
+                    capacity_mode != "active",
+                    &config.environment,
+                    &url,
                 )?;
                 if let Some(family) = scaling.as_mut() {
                     family.evaluate(now, &config.environment, &transparent_url)?;

@@ -487,6 +487,7 @@ async fn metrics(State(r): State<PackingRouter>) -> impl IntoResponse {
         .into_iter()
         .map(|(name, value)| format!("enhance_packing_router_{name} {value}\n"))
         .collect::<String>();
+    text.push_str(&crate::memory_observation::observe().render("enhance_packing_router_"));
     text.push_str(&r.timing.render());
     text.push_str(&crate::prepared_packing::metrics());
     ([("content-type", "text/plain; version=0.0.4")], text)

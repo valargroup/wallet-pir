@@ -1,4 +1,5 @@
 mod alerts;
+mod capacity_alerts;
 mod charts;
 mod config;
 mod dashboard;

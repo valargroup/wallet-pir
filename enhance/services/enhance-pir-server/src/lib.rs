@@ -26,6 +26,7 @@ mod packing_budget;
 pub use packing_budget::PackingBudget;
 
 pub mod matvec;
+mod memory_observation;
 mod response_body;
 
 pub mod packing_router;

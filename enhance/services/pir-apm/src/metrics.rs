@@ -833,6 +833,7 @@ pub fn parse_prometheus(
                     "enhance_last_publication_",
                     "enhance_registered_groups",
                     "enhance_pending_",
+                    "enhance_rows_before_next_carveout",
                 ]
                 .iter()
                 .any(|prefix| name.starts_with(prefix)))

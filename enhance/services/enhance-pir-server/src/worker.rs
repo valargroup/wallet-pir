@@ -685,6 +685,7 @@ async fn metrics(
         metrics.number("enhance_worker_memory_model_available", 0);
     }
     let mut output = metrics.finish();
+    output.push_str(&crate::memory_observation::observe().render("enhance_worker_"));
     let mut encoded = Vec::new();
     TextEncoder::new()
         .encode(&w.matvec_latency.collect(), &mut encoded)

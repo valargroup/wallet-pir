@@ -415,3 +415,51 @@ samples: distinct `updated_unix` values, or distinct heartbeats for
 Roll out with the same gates as the quality families: 24 hours in shadow, then 24
 hours active. Removing `PIR_APM_SCALER_STATUS` stops evaluation and leaves any
 open `scaling_*` incident as it was.
+
+## Enhance memory and growth alerts
+
+The `capacity` family watches Enhance worker and packing-router memory and
+warns before the database outgrows its placement. It shares the incident
+database and Slack outbox. `PIR_APM_CAPACITY_ALERT_MODE` is `shadow` (default)
+or `active`, independent of the other families.
+
+Workers and the packing router append their host memory and their own systemd
+cgroup's memory to `/internal/metrics`: `<prefix>host_memory_available_bytes`,
+`host_memory_total_bytes`, `cgroup_memory_bytes`, `cgroup_swap_bytes`,
+`cgroup_memory_high_events_total` (times the service crossed `MemoryHigh` and
+was pushed into reclaim), `cgroup_memory_max_events_total` and
+`cgroup_oom_kills_total`. The prefix is `enhance_worker_` or
+`enhance_packing_router_`. A field that cannot be read is omitted, never zero.
+These are the signals the focused memory gate fails on; process RSS alone does
+not show them. Workers also report the modelled resident need of their current
+assignment (`model_total_bytes` against `model_limit_bytes`). The coordinator
+reports `enhance_capacity_remaining_rows`, the rows left before placement needs
+more workers, and `enhance_rows_before_next_carveout`, the rows left before the
+growing shard fills.
+
+Resources are `worker_<name>`, `router_<name>` and `placement`.
+
+| Key | Severity | Fires when | Hold |
+| --- | --- | --- | --- |
+| `capacity_coverage_<resource>` | warning | role unreachable, stale, or missing a memory field | 120 s |
+| `capacity_memory_<resource>` | warning | host memory available < 15% | 120 s |
+| `capacity_swap_warning_<resource>` | warning | cgroup swap > 64 MiB | 300 s |
+| `capacity_swap_critical_<resource>` | critical | cgroup swap > 512 MiB | 120 s |
+| `capacity_reclaim_<resource>` | warning | `memory.high` events increased in the last 5 minutes | – |
+| `capacity_oom_<resource>` | critical | OOM kills increased in the last 5 minutes | – |
+| `capacity_model_worker_<name>` | warning | assignment modelled at ≥ 85% of the resident limit | 300 s |
+| `capacity_model_limit_worker_<name>` | critical | assignment modelled over the resident limit | 120 s |
+| `capacity_placement_warning` | warning | < 32,768 placement rows (one shard) left | – |
+| `capacity_placement_critical` | critical | < 8,192 placement rows left | – |
+| `capacity_shard_rollover` | warning | < 4,096 rows before the growing shard fills | – |
+
+At the October 2026 growth rate of roughly 200 rows a day, the placement
+warning gives about five months and the rollover warning about three weeks.
+Both are row counts rather than forecasts, so a growth burst shortens the
+notice. A counter that decreases is a service restart and starts a new window.
+Stale or missing samples are unknown and never recover an incident. Workers or
+routers removed from a valid inventory retire their incidents.
+
+Deploy the worker and router binaries first, so coverage is already healthy
+when the APM starts evaluating. Then follow the quality-family gates: 24 hours
+in shadow, review every candidate, then activate.
