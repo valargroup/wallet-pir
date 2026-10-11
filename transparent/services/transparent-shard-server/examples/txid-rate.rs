@@ -3,13 +3,11 @@
 //! Units are dispatched at fixed due times, `start + i / rate`, whatever the
 //! service does: a slot with no free worker is reported as `missed_slot`, and
 //! a dispatcher that falls behind skips the slots it missed instead of
-//! bursting to catch up. Two units:
-//!
-//! - `lookup`: the client's whole transcript (map, manifest, setup, then
-//!   exactly two directory queries, found or absent), checked against the
-//!   fixture's `entry_sha256`, or `Absent` for controls.
-//! - `query`: one directory query, like for like with the history reference
-//!   load, which sends single-row queries.
+//! bursting to catch up. A unit is one lookup: the client's whole transcript
+//! (map, manifest, setup, then exactly one directory query, found or absent),
+//! checked against the fixture's `entry_sha256`, or `Absent` for controls.
+//! It is like for like with the history reference load, which also sends
+//! single-row queries.
 //!
 //! The tier of each sample is decided at dispatch from the latest polled map,
 //! so a recent sample that has since sealed is counted as archive traffic.
@@ -18,7 +16,7 @@
 #[path = "support/txdisplay.rs"]
 mod txdisplay;
 
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -31,12 +29,6 @@ use txdisplay::{DisplayClient, LookupReport, LookupResult};
 const FIXTURE_SCHEMA: &str = "transparent-txid-display-fixture-v2";
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-enum Unit {
-    Lookup,
-    Query,
-}
 
 #[derive(Parser)]
 struct Args {
@@ -56,8 +48,6 @@ struct Args {
     seconds: u64,
     #[arg(long)]
     permit: PathBuf,
-    #[arg(long, value_enum, default_value_t = Unit::Lookup)]
-    unit: Unit,
     /// Tier shares, e.g. `recent=0.8,archive=0.2`.
     #[arg(long, default_value = "recent=0.8,archive=0.2")]
     mix: String,
@@ -182,7 +172,6 @@ fn emit_queries(sequence: u64, report: &LookupReport, cold: bool) {
 
 async fn run_unit(
     client: DisplayClient,
-    unit: Unit,
     sample: Sample,
     sequence: u64,
     due: Instant,
@@ -202,67 +191,39 @@ async fn run_unit(
     } else {
         "absent"
     };
-    match unit {
-        Unit::Lookup => match client.lookup(txid, Some(sample.height)).await {
-            Ok(report) => {
-                let exact = match (&report.result, &sample.entry_sha256) {
-                    (LookupResult::Found(entry), Some(sha)) => {
-                        txdisplay::entry_sha256(entry) == *sha
-                    }
-                    (LookupResult::Absent, None) => true,
-                    _ => false,
-                };
-                emit_queries(sequence, &report, cold);
-                emit(serde_json::json!({
-                    "event": "lookup", "unix": unix, "sequence": sequence,
-                    "schedule_lag_seconds": lag, "total_seconds": report.total_s,
-                    "prepare_seconds": report.queries.iter().map(|q| q.prepare_s).sum::<f64>(),
-                    "decode_seconds": report.queries.iter().map(|q| q.decode_s).sum::<f64>(),
-                    "http_seconds": http_seconds(&report),
-                    "class": report.class, "fixture_class": sample.class,
-                    "control": sample.kind,
-                    "shard_id": report.shard_id, "sealed": report.sealed,
-                    "bucket": report.bucket, "digest": report.digest,
-                    "map_sha256": report.map_sha256,
-                    "queries": report.queries.len(),
-                    "up": report.bytes.up(), "down": report.bytes.down(),
-                    "bytes": report.bytes, "cold": cold, "fetched": report.cold,
-                    "exact": exact, "outcome": report.outcome, "expected": expected,
-                    "stale_retries": report.stale_retries,
-                }));
-            }
-            Err(error) => emit(serde_json::json!({
-                "event": "error", "unix": unix, "sequence": sequence, "kind": "lookup",
-                "cold": cold, "status": error.status(), "error": error.to_string(),
-                "seconds": started.elapsed().as_secs_f64(),
-            })),
-        },
-        Unit::Query => {
-            let choice = (sequence % 2) as usize;
-            match client.directory_query(txid, sample.height, choice).await {
-                Ok((report, contains)) => {
-                    emit_queries(sequence, &report, cold);
-                    emit(serde_json::json!({
-                        "event": "lookup", "unit": "query", "unix": unix, "sequence": sequence,
-                        "schedule_lag_seconds": lag, "total_seconds": report.total_s,
-                        "http_seconds": http_seconds(&report),
-                        "shard_id": report.shard_id, "sealed": report.sealed,
-                        "bucket": report.bucket, "choice": choice,
-                        // A single row has no entry to compare; exactness is
-                        // the binding and epoch checks and a well-formed row.
-                        "outcome": report.outcome, "contains": contains,
-                        "expected": expected,
-                        "exact": report.outcome == "queried",
-                        "up": report.bytes.up(), "down": report.bytes.down(),
-                        "cold": cold, "stale_retries": report.stale_retries,
-                    }));
+    match client.lookup(txid, Some(sample.height)).await {
+        Ok(report) => {
+            let exact = match (&report.result, &sample.entry_sha256) {
+                (LookupResult::Found(entry), Some(sha)) => {
+                    txdisplay::entry_sha256(entry) == *sha
                 }
-                Err(error) => emit(serde_json::json!({
-                    "event": "error", "unix": unix, "sequence": sequence, "kind": "query",
-                    "cold": cold, "status": error.status(), "error": error.to_string(),
-                })),
-            }
+                (LookupResult::Absent, None) => true,
+                _ => false,
+            };
+            emit_queries(sequence, &report, cold);
+            emit(serde_json::json!({
+                "event": "lookup", "unix": unix, "sequence": sequence,
+                "schedule_lag_seconds": lag, "total_seconds": report.total_s,
+                "prepare_seconds": report.queries.iter().map(|q| q.prepare_s).sum::<f64>(),
+                "decode_seconds": report.queries.iter().map(|q| q.decode_s).sum::<f64>(),
+                "http_seconds": http_seconds(&report),
+                "class": report.class, "fixture_class": sample.class,
+                "control": sample.kind,
+                "shard_id": report.shard_id, "sealed": report.sealed,
+                "bucket": report.bucket, "digest": report.digest,
+                "map_sha256": report.map_sha256,
+                "queries": report.queries.len(),
+                "up": report.bytes.up(), "down": report.bytes.down(),
+                "bytes": report.bytes, "cold": cold, "fetched": report.cold,
+                "exact": exact, "outcome": report.outcome, "expected": expected,
+                "stale_retries": report.stale_retries,
+            }));
         }
+        Err(error) => emit(serde_json::json!({
+            "event": "error", "unix": unix, "sequence": sequence, "kind": "lookup",
+            "cold": cold, "status": error.status(), "error": error.to_string(),
+            "seconds": started.elapsed().as_secs_f64(),
+        })),
     }
 }
 
@@ -314,7 +275,7 @@ async fn main() -> Result<(), Error> {
         });
     }
     emit(serde_json::json!({
-        "event": "ready", "unix": now(), "unit": format!("{:?}", args.unit).to_lowercase(),
+        "event": "ready", "unix": now(), "unit": "lookup",
         "rate": args.rate, "workers": args.workers, "mix": args.mix,
         "cold_every": args.cold_every, "absent_every": args.absent_every,
         "samples": fixture.samples.len(), "absent": fixture.absent.len(),
@@ -361,8 +322,7 @@ async fn main() -> Result<(), Error> {
         };
         let current = map.read().unwrap().0.clone();
         let archive = !is_recent(sequence, share);
-        let sample = if args.unit == Unit::Lookup
-            && args.absent_every > 0
+        let sample = if args.absent_every > 0
             && sequence % args.absent_every == args.absent_every - 1
         {
             pick(&fixture.absent, &current, archive, &mut absent_cursor).cloned()
@@ -384,9 +344,8 @@ async fn main() -> Result<(), Error> {
         } else {
             client.clone()
         };
-        let unit = args.unit;
         tokio::spawn(async move {
-            run_unit(unit_client, unit, sample, sequence, due, cold).await;
+            run_unit(unit_client, sample, sequence, due, cold).await;
             drop(permit);
         });
         sequence += 1;

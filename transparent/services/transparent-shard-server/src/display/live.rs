@@ -1008,7 +1008,7 @@ mod tests {
                 parent_manifest_digest: String::new(),
                 n_buckets: 1,
                 archive_target: 1,
-                geometry: &transparent_shard::display::TXID_2K,
+                geometry: &transparent_shard::display::TXID_2K8,
             };
             let records = synth::records(3, shard_id);
             let published = synth::write_shard(store.path(), &spec, &records).unwrap();

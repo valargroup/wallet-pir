@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplaySealParams, TXID_2K};
+use transparent_shard::display::{self, DisplaySealParams, TXID_2K8};
 use transparent_shard::txid::{DisplayEntry, DisplayFacts, DisplayOutput, DisplayRecord, Tag};
 use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
 use transparent_shard_server::display::service::DisplayRuntime;
@@ -34,15 +34,16 @@ pub const QUERY_BYTES: u64 = 38_920;
 /// The same query at the 49 bits a client sends when init advertises no
 /// dithered scheme it reproduces, and that every server still accepts.
 pub const LEGACY_QUERY_BYTES: u64 = 40_200;
-/// A one-segment directory reply: the binding, the epoch and one response.
-pub const REPLY_BYTES: u64 = 5_648;
+/// A one-segment directory reply: the binding, the epoch and one response
+/// of two 4,096-byte blocks.
+pub const REPLY_BYTES: u64 = 11_280;
 
 pub fn params(buckets: u32) -> DisplaySealParams {
     DisplaySealParams {
         n_archive: buckets,
         n_recent: buckets,
         archive_target: 1,
-        recent_floor: 1,
+        recent_window: 1,
         reorg_margin: 1,
     }
 }
@@ -58,7 +59,7 @@ pub fn spec(shard_id: u64, start: u64, end: u64, sealed: bool, parent: &str) -> 
         parent_manifest_digest: parent.to_string(),
         n_buckets: 1,
         archive_target: 1,
-        geometry: &TXID_2K,
+        geometry: &TXID_2K8,
     }
 }
 
@@ -113,16 +114,10 @@ pub fn classes(seed: u64) -> Vec<DisplayRecord> {
 /// Index of the first class in [`records`].
 pub const CLASSES: usize = 40;
 
-/// A record of `seed` whose two candidate rows coincide in `shard_id`.
-pub fn coincident(seed: u64, shard_id: u64) -> DisplayRecord {
-    let index = (1_000u64..)
-        .find(|index| {
-            let tag = Tag::of(&synth::txid(seed, *index));
-            let [a, b] = display::candidate_rows(&tag, shard_id, 0, 2_048);
-            a == b
-        })
-        .unwrap();
-    pair(seed, index, synth::record(seed, index, 25, 0))
+/// A record of `seed` outside [`records`]' indices, for the recent shard's
+/// last entry.
+pub fn last_record(seed: u64) -> DisplayRecord {
+    pair(seed, 1_000, synth::record(seed, 1_000, 25, 0))
 }
 
 /// Forty mixed entries, then [`classes`], then `extra`.
@@ -292,7 +287,7 @@ impl World {
     pub async fn start_with(config: ServiceConfig) -> Self {
         let root = tempfile::tempdir().unwrap();
         let a0_records = records(10, &[]);
-        let r0_records = records(20, &[coincident(20, 1)]);
+        let r0_records = records(20, &[last_record(20)]);
         let a0 = write_shard(root.path(), &spec(0, 100, 199, true, ""), &a0_records);
         let r0 = write_shard(
             root.path(),
@@ -526,12 +521,11 @@ pub fn body_bytes(log: &[Sent]) -> (usize, usize) {
     )
 }
 
-/// A lookup's private queries: exactly two, both to the directory of
-/// `bucket`, each a fixed upload answered 200 with one frame per segment of
-/// that table.
+/// A lookup's private query: exactly one, to the directory of `bucket`, a
+/// fixed upload answered 200 with one frame per segment of that table.
 pub fn assert_queries(log: &[Sent], bucket: u32) {
     let posts: Vec<&Sent> = log.iter().filter(|s| s.method == Method::Post).collect();
-    assert_eq!(posts.len(), 2, "{:?}", routes(log));
+    assert_eq!(posts.len(), 1, "{:?}", routes(log));
     for post in posts {
         assert_eq!(post.route, Route::Query);
         assert!(

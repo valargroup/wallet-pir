@@ -4,9 +4,10 @@
 //! runs over the cache and queues every seal it makes; queued seals are built
 //! one at a time in the background (each chains its predecessor's digest)
 //! and staged on every archive owner. A cycle then publishes: the staged
-//! prefix of the queue becomes archives, the recent shard is rebuilt over
-//! what remains, a candidate is written, and workers are activated archive
-//! owners first. A map therefore never names an archive its owners are not
+//! prefix of the queue becomes archives, the recent shard is rebuilt over its
+//! window (every unsealed block, reaching back over the newest archives until
+//! it holds `recent_window` txids), a candidate is written, and workers are
+//! activated archive owners first. A map therefore never names an archive its owners are not
 //! already serving.
 //!
 //! Sealed content never changes. A fork below the sealed floor, bytes that
@@ -41,7 +42,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use transparent_filter::BlockHash;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
-use transparent_shard::display::{plan_seals, DisplayManifest, DisplayMap, DisplayMapEntry};
+use transparent_shard::display::{
+    height_counts, plan_seals, recent_start, window_start, DisplayManifest, DisplayMap,
+    DisplayMapEntry, DisplaySealParams,
+};
 use transparent_shard::manifest::PublishedRevision;
 use transparent_shard_server::display::prebuild::Shipped;
 use transparent_shard_server::runtime::disk::ShippedRuntimes;
@@ -277,6 +281,31 @@ pub fn check_sealed_continuity(
     Ok(())
 }
 
+/// The lowest height the cache must hold so the recent window can be filled
+/// at any tip: the latest start at which the sealed blocks
+/// `[start, unsealed - 1]` alone hold the window, or `floor`, the map's start,
+/// when they never do. Read backwards from the journal.
+pub fn cache_floor(
+    store: &impl Journal,
+    seal: &DisplaySealParams,
+    floor: u64,
+    unsealed: u64,
+) -> Result<u64, BoxError> {
+    let mut reversed = Vec::new();
+    let mut sums = vec![0u64; seal.n_recent as usize];
+    let mut height = unsealed;
+    while height > floor && sums.iter().any(|s| *s < seal.recent_window) {
+        height -= 1;
+        let counts = height_counts(seal, &store.display_at(height)?);
+        for (sum, count) in sums.iter_mut().zip(&counts.recent) {
+            *sum += u64::from(*count);
+        }
+        reversed.push(counts);
+    }
+    reversed.reverse();
+    Ok(window_start(seal, height, &reversed))
+}
+
 pub struct Controller {
     root: PathBuf,
     layout: DisplayRoot,
@@ -318,8 +347,8 @@ impl Controller {
     ///
     /// Sealed terminals must still be the journal's blocks, and sealed
     /// revisions must verify from disk (unless trusted). The cache is reloaded
-    /// from the recent shard's start through the activated tip; queued seals
-    /// are planned again from it and reproduce the same digests. Undelivered
+    /// from its window floor (see [`cache_floor`]) through the activated tip;
+    /// queued seals are planned again from it and reproduce the same digests. Undelivered
     /// invalidations are restored. A journal that no longer holds the
     /// activated tip, unless a recorded rollback accounts for it, owes every
     /// recent replica an invalidation from the recent start.
@@ -393,8 +422,13 @@ impl Controller {
         // A journal rolled back below the activated tip (a crash mid-reorg)
         // reloads what it still has; the next cycle publishes from there.
         let through = active.tip.min(store.covered_through().unwrap_or(0));
-        let cache =
-            DisplayCache::load(&store, layout.seal, recent.start_height, through, now_ms())?;
+        let unsealed = active
+            .seals
+            .last()
+            .map_or(layout.start_height, |s| s.end_height + 1);
+        let floor = cache_floor(&store, &layout.seal, map.start_height, unsealed)?
+            .min(recent.start_height);
+        let cache = DisplayCache::load(&store, layout.seal, floor, through, now_ms())?;
         let index = HeightIndex::open(root)?;
         let mut fleet = Fleet::new(workers);
         let saved_invalidations = Invalidations::load(root)?;
@@ -576,6 +610,14 @@ impl Controller {
         self.update_status();
     }
 
+    /// The first height no published archive holds.
+    fn unsealed_start(&self) -> u64 {
+        self.active
+            .seals
+            .last()
+            .map_or(self.layout.start_height, |s| s.end_height + 1)
+    }
+
     /// The highest height a fork may not reach below: the last published or
     /// queued seal's end, or the display start's parent.
     fn sealed_floor(&self) -> u64 {
@@ -588,8 +630,8 @@ impl Controller {
 
     /// Staged seals at the queue's head that the rule still makes at the
     /// cache tip. A rollback inside the margin can undo a decision: such a
-    /// seal keeps its range and digest but waits, so publishing it never
-    /// leaves the recent shard below its floor.
+    /// seal keeps its range and digest but waits, so a published archive
+    /// always ends at least the reorg margin below the tip.
     fn publishable(&self) -> usize {
         let staged = self
             .queue
@@ -599,8 +641,8 @@ impl Controller {
         if staged == 0 {
             return 0;
         }
-        // The queue starts at the cache start, so ranges line up.
-        let start = self.cache.start();
+        // The queue starts at the first unsealed height, so ranges line up.
+        let start = self.unsealed_start();
         staged.min(plan_seals(&self.layout.seal, start, self.cache.counts_from(start)).len())
     }
 
@@ -831,7 +873,7 @@ impl Controller {
         let Some(max) = self.settings.max_recent_records else {
             return;
         };
-        let records = self.cache.record_count();
+        let records = self.cache.record_count_from(self.unsealed_start());
         if records <= max {
             self.lag_alerted = None;
             return;
@@ -862,7 +904,10 @@ impl Controller {
         let Some((tip, _)) = self.cache.tip() else {
             return;
         };
-        let from = self.queue.back().map_or(self.cache.start(), |j| j.end + 1);
+        let from = self
+            .queue
+            .back()
+            .map_or_else(|| self.unsealed_start(), |j| j.end + 1);
         let next_id = self.queue.back().map_or_else(
             || self.active.seals.last().map_or(0, |s| s.shard_id + 1),
             |j| j.shard_id + 1,
@@ -1148,30 +1193,54 @@ impl Controller {
 
         let last = new_seals.last().or(self.active.seals.last());
         let recent_id = last.map_or(0, |s| s.shard_id + 1);
-        let recent_start = last.map_or(self.layout.start_height, |s| s.end_height + 1);
-        if recent_start
-            != self.cache.start()
+        let unsealed = last.map_or(self.layout.start_height, |s| s.end_height + 1);
+        if unsealed
+            != self.unsealed_start()
                 + new_seals
                     .iter()
                     .map(|s| s.end_height + 1 - s.start_height)
                     .sum::<u64>()
         {
-            return Err(retry("queued seals are not contiguous with the cache"));
+            return Err(retry("queued seals are not contiguous with the archives"));
         }
+        // The recent window reaches back over the newest archives, but never
+        // below the map's start or the cache's.
+        let floor = archives
+            .first()
+            .map_or(self.layout.start_height, |a| a.start_height)
+            .max(self.cache.start());
+        let recent_start = recent_start(
+            &self.layout.seal,
+            floor,
+            unsealed,
+            self.cache.counts_from(floor),
+        );
+        // The block before the window lies at or below the sealed floor, so
+        // the journal's hash for it never changes.
+        let parent_block_hash = match last {
+            Some(seal) if seal.end_height + 1 == recent_start => seal.terminal_block_hash.clone(),
+            _ if recent_start == self.layout.start_height => self.layout.base_parent.clone(),
+            _ => self
+                .store
+                .block_at(recent_start - 1)
+                .ok_or_else(|| retry(format!("journal has no block at {}", recent_start - 1)))?
+                .block_hash
+                .to_display_hex(),
+        };
         let spec = ShardSpec {
             shard_id: recent_id,
             start: recent_start,
             end: tip,
-            parent_block_hash: last.map_or(self.layout.base_parent.clone(), |s| {
-                s.terminal_block_hash.clone()
-            }),
+            parent_block_hash,
             terminal_block_hash: tip_hash.clone(),
             parent_manifest_digest: last.map_or(String::new(), |s| s.digest.clone()),
             sealed: false,
+            // The recent shard keeps one revision lineage per shard id while
+            // its window slides.
             previous: self
                 .recent_previous
                 .as_ref()
-                .filter(|(id, start, _)| (*id, *start) == (recent_id, recent_start))
+                .filter(|(id, _, _)| *id == recent_id)
                 .map(|(_, _, p)| p.clone()),
         };
         let parts = self.cache.records(recent_start..=tip);
@@ -1213,7 +1282,14 @@ impl Controller {
         // Committed: workers serve the new map.
         self.queue.drain(..new_seals.len());
         self.active.seals.extend(new_seals.iter().cloned());
-        self.cache.drop_through(recent_start - 1);
+        // Keep enough sealed blocks to fill the window from the sealed floor,
+        // so a rollback above it can always move the window back.
+        let keep_from = window_start(
+            &self.layout.seal,
+            floor,
+            &self.cache.counts_from(floor)[..(unsealed - floor) as usize],
+        );
+        self.cache.drop_through(keep_from.min(recent_start) - 1);
         self.recent_previous = Some((recent_id, recent_start, recent.revision()));
         self.active.directory = candidate;
         self.active.map_sha256 = sha.clone();
@@ -1453,6 +1529,8 @@ fn seal_event(job: &SealJob) -> Value {
     json!({
         "shard_id": job.shard_id, "start": job.start, "end": job.end,
         "decided_tip": job.decided_tip, "bucket_counts": job.bucket_counts,
+        "placement_seeds": shard.entry.placement_seeds, "seed_tries": shard.seed_tries,
+        "dir_segments": shard.entry.directory_segments,
         "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
         "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
         "stage_s": job.stage_s, "digest": shard.digest,
@@ -1657,8 +1735,9 @@ pub fn plan_start(
     let per_seal = seal.archive_target * u64::from(seal.n_archive);
     let mut reversed = Vec::new();
     let mut records = 0u64;
-    let mut target = per_seal * (wanted as u64 + 1) + seal.recent_floor * u64::from(seal.n_recent);
-    let (start, counts, seals) = loop {
+    let mut target =
+        per_seal * (wanted as u64 + 1) + seal.recent_window * u64::from(seal.n_recent);
+    let (start, seals) = loop {
         while records < target && end + 1 - reversed.len() as u64 > first {
             let height = end - reversed.len() as u64;
             let block = store.display_at(height)?;
@@ -1669,7 +1748,7 @@ pub fn plan_start(
         let counts: Vec<_> = reversed.iter().rev().cloned().collect();
         let seals = plan_seals(seal, start, &counts);
         if seals.len() >= wanted || start <= first {
-            break (start, counts, seals);
+            break (start, seals);
         }
         target += target / 4 + per_seal;
     };
@@ -1680,24 +1759,9 @@ pub fn plan_start(
         )
         .into());
     }
-    // The first tip at which seal j (0-based) is decided.
-    let decided = |j: usize| -> u64 {
-        let h = *seals[j].end();
-        let mut sums = vec![0u64; seal.n_recent as usize];
-        let mut t = h;
-        loop {
-            if t + 1 > end {
-                return end;
-            }
-            t += 1;
-            for (sum, count) in sums.iter_mut().zip(&counts[(t - start) as usize].recent) {
-                *sum += u64::from(*count);
-            }
-            if t >= h + seal.reorg_margin && sums.iter().all(|s| *s >= seal.recent_floor) {
-                return t;
-            }
-        }
-    };
+    // The first tip at which seal j (0-based) is decided: the reorg margin
+    // above its end.
+    let decided = |j: usize| -> u64 { (*seals[j].end() + seal.reorg_margin).min(end) };
     let through = if (archives as usize) < seals.len() {
         decided(archives as usize) - 1
     } else {
@@ -1750,7 +1814,9 @@ pub fn bench_recent(
         };
         let shard = super::publisher::publish_shard(temp.path(), &layout, &spec, &records)?;
         let segments = shard.entry.directory_segments.iter().sum::<u32>() as u64;
-        let slots = segments * g.directory_rows * transparent_shard::txid::SLOTS_PER_ROW as u64;
+        let slots = segments
+            * g.directory_rows
+            * transparent_shard::txid::slots_per_row(g.directory_row_bytes) as u64;
         out.push(json!({
             "geometry": geometry, "records": size,
             "directory_segments": shard.entry.directory_segments,

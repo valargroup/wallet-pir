@@ -33,12 +33,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 use transparent_shard::display::split::{index_file, RECENT_MAP_FILE};
 use transparent_shard::display::{
-    build_shard, display_by_name, plan_seals, verify, verify_rows, DisplayManifest, DisplayMap,
-    DisplayMapEntry, DisplaySealParams, DisplayTable, ManifestHeader, DISPLAY_SCHEMA, MAX_BUCKETS,
+    build_shard, display_by_name, plan_seals, recent_start, verify, verify_rows, DisplayManifest,
+    DisplayMap, DisplayMapEntry, DisplaySealParams, DisplayTable, ManifestHeader, DISPLAY_SCHEMA,
+    MAX_BUCKETS,
 };
 use transparent_shard::layout::Geometry;
 use transparent_shard::manifest::{PublishedRevision, RevisionError};
-use transparent_shard::txid::{DisplayRecord, ROW_BYTES};
+use transparent_shard::txid::DisplayRecord;
 
 pub const MAP_FILE: &str = "txid-shards.json";
 pub const MANIFEST_FILE: &str = "manifest.json";
@@ -114,6 +115,8 @@ impl DisplayRoot {
             .map_err(|e| format!("display root parameters differ from {ROOT_FILE}: {e}").into())
     }
 
+    /// The map of `archives`, contiguous from the window's start, and the
+    /// recent shard, which may start inside them.
     pub fn map(&self, archives: &[DisplayMapEntry], recent: DisplayMapEntry) -> DisplayMap {
         let mut shards = archives.to_vec();
         shards.push(recent);
@@ -226,6 +229,8 @@ pub struct PublishedShard {
     pub timings: Timings,
     /// Directory row bytes before zero padding, every bucket and segment.
     pub used_bytes: u64,
+    /// Placement seeds tried per bucket before one was kept.
+    pub seed_tries: Vec<u32>,
 }
 
 impl PublishedShard {
@@ -245,6 +250,8 @@ impl PublishedShard {
             "end": self.manifest.end_height,
             "records": self.manifest.records,
             "dir_segments": self.entry.directory_segments,
+            "placement_seeds": self.entry.placement_seeds,
+            "seed_tries": self.seed_tries,
             "used_bytes": self.used_bytes,
             "digest": self.digest,
             "revision": self.manifest.revision,
@@ -293,6 +300,22 @@ pub fn publish_shard(
     let started = Instant::now();
     let built = build_shard(spec.shard_id, geometry, n_buckets, records).map_err(other)?;
     let build_s = started.elapsed().as_secs_f64();
+    if built.overflowed() {
+        // Every placement seed left a row over capacity, as after a burst of
+        // transactions: the shard still serves, but each lookup in an
+        // overflowed bucket is answered by more segments. Segment counts are
+        // public in the map.
+        tracing::error!(
+            alert = "txid_display_overflow",
+            shard_id = spec.shard_id,
+            sealed = spec.sealed,
+            start = spec.start,
+            end = spec.end,
+            records = built.records,
+            segments = ?built.buckets.iter().map(|b| b.directory.len()).collect::<Vec<_>>(),
+            "no placement seed fits the display shard; it overflows into more segments"
+        );
+    }
     let started = Instant::now();
     verify(spec.shard_id, geometry, &built).map_err(other)?;
     let verify_s = started.elapsed().as_secs_f64();
@@ -365,6 +388,7 @@ pub fn publish_shard(
     Ok(PublishedShard {
         entry: DisplayMapEntry::from_manifest(&manifest, &digest),
         used_bytes: built.records * transparent_shard::txid::ENTRY_BYTES as u64,
+        seed_tries: built.buckets.iter().map(|b| b.seed_tries).collect(),
         manifest,
         digest,
         directory,
@@ -535,7 +559,7 @@ pub fn probe_hard_links(root: &Path) -> Result<(), BoxError> {
 /// The manifest must hash to `digest` and be in canonical form, the directory
 /// must hold exactly its files, every segment must hash to its recorded
 /// SHA-256, and the rows must pass the display verifier: bucket membership,
-/// candidate placement, duplicates, page extents and orphan fragments.
+/// each entry's one row, duplicates and counts.
 pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, BoxError> {
     let bytes = std::fs::read(directory.join(MANIFEST_FILE))?;
     if hex::encode(Sha256::digest(&bytes)) != digest {
@@ -562,12 +586,13 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
     if present != expected {
         return Err(format!("{} files differ from its manifest", directory.display()).into());
     }
+    let width = geometry.directory_row_bytes;
     let mut files = std::collections::BTreeMap::new();
     for table in manifest.tables() {
         for (segment, recorded) in manifest.segments(table).unwrap_or(&[]).iter().enumerate() {
             let path = directory.join(table.file_name(segment));
             let mut file = std::fs::File::open(&path)?;
-            if file.metadata()?.len() != recorded.rows * ROW_BYTES as u64 {
+            if file.metadata()?.len() != recorded.rows * width as u64 {
                 return Err(format!("{} length", path.display()).into());
             }
             let mut hasher = Sha256::new();
@@ -596,12 +621,13 @@ pub fn verify_dir(directory: &Path, digest: &str) -> Result<DisplayManifest, Box
         geometry,
         &segments,
         &records,
+        &manifest.placement_seeds(),
         |table: DisplayTable, segment, row| {
             let file = files
                 .get(&(table, segment))
                 .ok_or_else(|| transparent_shard::txid::Error("segment out of range".into()))?;
-            let mut bytes = vec![0u8; ROW_BYTES];
-            file.read_exact_at(&mut bytes, (row * ROW_BYTES) as u64)
+            let mut bytes = vec![0u8; width];
+            file.read_exact_at(&mut bytes, (row * width) as u64)
                 .map_err(|e| transparent_shard::txid::Error(e.to_string()))?;
             Ok(bytes)
         },
@@ -639,8 +665,8 @@ fn hash_at(store: &impl Journal, height: u64) -> Result<String, BoxError> {
 }
 
 /// Publishes a fresh root from the journal through `through`: every seal the
-/// rule makes over `[start, through]`, the recent shard after the last one,
-/// and candidate 0 with `active.json`. No worker is involved.
+/// rule makes over `[start, through]`, the recent shard over its window, and
+/// candidate 0 with `active.json`. No worker is involved.
 ///
 /// Seals depend only on the start, the targets and the chain, so this is also
 /// how `verify` reproduces a running root's archives.
@@ -719,6 +745,8 @@ pub fn bootstrap(
                 "shard_id": spec.shard_id, "start": spec.start, "end": spec.end,
                 "decided_tip": through, "bootstrap": true,
                 "bucket_counts": shard.manifest.buckets.iter().map(|b| b.records).collect::<Vec<_>>(),
+                "placement_seeds": shard.entry.placement_seeds, "seed_tries": shard.seed_tries,
+                "dir_segments": shard.entry.directory_segments,
                 "build_s": shard.timings.build_s, "verify_s": shard.timings.verify_s,
                 "digest_s": shard.timings.digest_s, "write_s": shard.timings.write_s,
                 "stage_s": null, "digest": shard.digest,
@@ -735,14 +763,24 @@ pub fn bootstrap(
         entries.push(shard.entry);
     }
 
-    let recent_start = seals.last().map_or(start, |s| s.end_height + 1);
+    let window = entries
+        .len()
+        .saturating_sub(layout.max_archive_shards as usize);
+    // The recent shard reaches back over the newest archives to its window,
+    // but never below the map's start.
+    let unsealed = seals.last().map_or(start, |s| s.end_height + 1);
+    let floor = entries.get(window).map_or(start, |e| e.start_height);
+    let recent_start = recent_start(
+        &layout.seal,
+        floor,
+        unsealed,
+        &counts[(floor - start) as usize..],
+    );
     let spec = ShardSpec {
         shard_id: seals.len() as u64,
         start: recent_start,
         end: through,
-        parent_block_hash: seals.last().map_or(layout.base_parent.clone(), |s| {
-            s.terminal_block_hash.clone()
-        }),
+        parent_block_hash: hash_at(store, recent_start - 1)?,
         terminal_block_hash: hash_at(store, through)?,
         parent_manifest_digest: seals.last().map_or(String::new(), |s| s.digest.clone()),
         sealed: false,
@@ -754,9 +792,6 @@ pub fn bootstrap(
         &spec,
         &read_range(store, recent_start, through)?,
     )?;
-    let window = entries
-        .len()
-        .saturating_sub(layout.max_archive_shards as usize);
     for dropped in &entries[..window] {
         timeline.record(
             "drop",
@@ -873,7 +908,7 @@ mod tests {
     fn verification_refuses_tampering_and_strays() {
         let temp = tempfile::tempdir().unwrap();
         let layout = DisplayRoot {
-            geometry: "txid-2k".into(),
+            geometry: "txid-2k8".into(),
             seal: fixture::params(),
             max_archive_shards: 4,
             network: transparent_filter::NETWORK.into(),
@@ -918,7 +953,7 @@ mod tests {
             .directory
             .join(DisplayTable::Directory(0).file_name(0));
         let mut bytes = std::fs::read(&table).unwrap();
-        bytes[ROW_BYTES + 100] ^= 1;
+        bytes[8_192 + 100] ^= 1;
         std::fs::remove_file(&table).unwrap();
         std::fs::write(&table, &bytes).unwrap();
         assert!(verify_dir(&shard.directory, &shard.digest).is_err());

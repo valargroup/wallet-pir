@@ -200,9 +200,8 @@ impl Table {
     /// Bytes in one row of this table, at `geometry`.
     pub fn row_bytes(self, geometry: &Geometry) -> u32 {
         match self {
-            Table::Directory => geometry.directory_row_bytes as u32,
+            Table::Directory | Table::TxDirectory => geometry.directory_row_bytes as u32,
             Table::Pages => geometry.page_row_bytes as u32,
-            Table::TxDirectory => transparent_shard::txid::ROW_BYTES as u32,
         }
     }
 }

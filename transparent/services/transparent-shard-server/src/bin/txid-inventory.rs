@@ -23,7 +23,7 @@ use transparent_events::Txid;
 use transparent_shard::display::{
     self, display_by_name, DisplayMap, DisplaySealParams, DisplayTable,
 };
-use transparent_shard::txid::{self, AddressKind, DisplayEntry, Tag, ROW_BYTES};
+use transparent_shard::txid::{self, AddressKind, DisplayEntry, Tag};
 use transparent_shard_server::display::set::{DisplayRevision, MAP_FILE};
 use transparent_shard_server::display::synth::{self, ShardSpec};
 use transparent_shard_server::display::tier;
@@ -95,7 +95,7 @@ enum Command {
         shards: u64,
         #[arg(long, default_value_t = 1)]
         n_buckets: u32,
-        #[arg(long, default_value = "txid-2k")]
+        #[arg(long, default_value = "txid-2k8")]
         geometry: String,
         #[arg(long, default_value_t = 1)]
         seed: u64,
@@ -223,6 +223,7 @@ fn load_map(dir: &Path) -> Result<DisplayMap, Error> {
 /// Reads one row of a held revision's table.
 struct Rows {
     files: BTreeMap<(DisplayTable, usize), std::fs::File>,
+    row_bytes: usize,
 }
 
 impl Rows {
@@ -235,7 +236,10 @@ impl Rows {
                 std::fs::File::open(&source.path)?,
             );
         }
-        Ok(Self { files })
+        Ok(Self {
+            files,
+            row_bytes: revision.geometry.directory_row_bytes,
+        })
     }
 
     fn row(&mut self, table: DisplayTable, segment: usize, row: u64) -> Result<Vec<u8>, Error> {
@@ -243,8 +247,8 @@ impl Rows {
             .files
             .get_mut(&(table, segment))
             .ok_or("segment out of range")?;
-        file.seek(SeekFrom::Start(row * ROW_BYTES as u64))?;
-        let mut bytes = vec![0; ROW_BYTES];
+        file.seek(SeekFrom::Start(row * self.row_bytes as u64))?;
+        let mut bytes = vec![0; self.row_bytes];
         file.read_exact(&mut bytes)?;
         Ok(bytes)
     }
@@ -259,9 +263,7 @@ impl Rows {
         let mut out = Vec::new();
         for segment in 0..revision.segments(table).unwrap_or(0) as usize {
             for row in 0..revision.geometry.directory_rows {
-                for entry in
-                    display::row_entries(&self.row(table, segment, row)?).map_err(|e| e.0)?
-                {
+                for entry in txid::row_entries(&self.row(table, segment, row)?).map_err(|e| e.0)? {
                     if display::bucket(&entry.tag, revision.manifest.n_buckets) != bucket {
                         return Err(format!(
                             "shard {} bucket {bucket} holds an entry of another bucket",
@@ -276,28 +278,28 @@ impl Rows {
         Ok(out)
     }
 
-    /// What a client's two queries find for `txid` in this revision: both
-    /// candidate rows of its bucket, in every segment of that bucket's table.
+    /// What a client's one query finds for `txid` in this revision: its row
+    /// in every segment of its bucket's table.
     fn lookup(
         &mut self,
         revision: &DisplayRevision,
         txid: &Txid,
     ) -> Result<Option<DisplayEntry>, Error> {
         let tag = Tag::of(txid);
-        let bucket = display::bucket(&tag, revision.manifest.n_buckets);
-        let table = DisplayTable::Directory(bucket);
-        let mut rows = Vec::new();
-        for row in display::candidate_rows(
-            &tag,
+        let (shard_id, rows) = (
             revision.manifest.shard_id,
-            bucket,
             revision.geometry.directory_rows,
-        ) {
-            for segment in 0..revision.segments(table).unwrap_or(0) as usize {
-                rows.push(self.row(table, segment, row)?);
-            }
+        );
+        let bucket = display::bucket(&tag, revision.manifest.n_buckets);
+        let seed = revision.manifest.buckets[bucket as usize].placement_seed;
+        let table = DisplayTable::Directory(bucket);
+        let row = display::placement_row(&tag, seed, shard_id, bucket, rows);
+        let mut copies = Vec::new();
+        for segment in 0..revision.segments(table).unwrap_or(0) as usize {
+            copies.push(self.row(table, segment, row)?);
         }
-        Ok(txid::find_entry(&rows, txid).map_err(|e| e.0)?)
+        let in_row = |t: &Tag| display::placement_row(t, seed, shard_id, bucket, rows) == row;
+        Ok(txid::find_entry(&copies, txid, in_row).map_err(|e| e.0)?)
     }
 }
 
@@ -670,10 +672,10 @@ fn fixture(
         for candidate in pool.iter().take(take) {
             let revision = &revisions[candidate.revision];
             let entry = &candidate.entry;
-            // What the client's two queries return must be this entry.
+            // What the client's one query returns must be this entry.
             if lookup(revision, &candidate.txid)? != Some(*entry) {
                 return Err(format!(
-                    "txid {} is not found at its candidate rows in shard {}",
+                    "txid {} is not found at its row in shard {}",
                     candidate.txid.to_display_hex(),
                     revision.manifest.shard_id
                 )
@@ -732,7 +734,7 @@ fn fixture(
         let shard = map
             .shard_for_height(height)
             .ok_or("height outside the map")?;
-        // A control is kept only if the client's two queries in that shard
+        // A control is kept only if the client's query in that shard
         // find nothing, so `expect` is what the tables say.
         let revision = revisions
             .iter()
@@ -941,7 +943,7 @@ fn synthesize(
         n_archive: n_buckets,
         n_recent: n_buckets,
         archive_target,
-        recent_floor: bucket_min(parts[parts.len() - 1]),
+        recent_window: bucket_min(parts[parts.len() - 1]),
         reorg_margin: 100,
     };
     let mut published: Vec<synth::Published> = Vec::new();
@@ -1014,7 +1016,7 @@ mod tests {
     fn synth_census_fixture_and_audit_agree() {
         let root = tempfile::tempdir().unwrap();
         let out = root.path().join("publication");
-        let report = synthesize(&out, 600, 3, 2, &display::TXID_2K, 5, 100, 50, 4).unwrap();
+        let report = synthesize(&out, 600, 3, 2, &display::TXID_2K8, 5, 100, 50, 4).unwrap();
         let candidate = PathBuf::from(report["candidate"].as_str().unwrap());
         assert_eq!(candidate_dir(&out).unwrap(), candidate);
 

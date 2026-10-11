@@ -2,9 +2,11 @@
 //!
 //! The recent shard is rebuilt on every block, and re-reading sidecars for it
 //! would read each one twice per rebuild (`display_at` validates against the
-//! event journal). The controller instead keeps `[S, tip]` here: every block
-//! not yet inside a published archive. Queued seal ranges always lie inside
-//! it too, so archive builds never touch the journal either.
+//! event journal). The controller instead keeps `[C, tip]` here: every block
+//! not yet inside a published archive, and below them enough sealed blocks to
+//! fill the recent window whatever happens above the sealed floor. Queued
+//! seal ranges always lie inside it too, so archive builds never touch the
+//! journal either.
 
 use crate::publication::{BoxError, Journal};
 use std::ops::RangeInclusive;
@@ -126,9 +128,13 @@ impl DisplayCache {
         self.start = height + 1;
     }
 
-    /// Records from the start through the tip.
-    pub fn record_count(&self) -> u64 {
-        self.blocks.iter().map(|b| b.records.len() as u64).sum()
+    /// Records from `height` through the tip.
+    pub fn record_count_from(&self, height: u64) -> u64 {
+        let from = (height.saturating_sub(self.start) as usize).min(self.blocks.len());
+        self.blocks[from..]
+            .iter()
+            .map(|b| b.records.len() as u64)
+            .sum()
     }
 
     /// Seal-rule counts from `height` to the tip.
@@ -187,7 +193,8 @@ mod tests {
         assert_eq!(cache.counts_from(12).len(), 3);
         assert_eq!(cache.records(11..=13).len(), 3);
         assert_eq!(cache.archive_counts(10..=14), vec![5]);
-        assert_eq!(cache.record_count(), 5);
+        assert_eq!(cache.record_count_from(0), 5);
+        assert_eq!(cache.record_count_from(13), 2);
         cache.truncate_after(12);
         assert_eq!(cache.tip().unwrap().0, 12);
         cache.drop_through(10);

@@ -1111,7 +1111,7 @@ mod shipped_tests {
     use crate::runtime::{Produced, RuntimeCache};
     use crate::shardset::{SegmentSource, Table};
     use std::sync::Arc;
-    use transparent_shard::display::TXID_2K;
+    use transparent_shard::display::TXID_2K8;
 
     struct Segment {
         shared: Arc<SharedParams>,
@@ -1120,10 +1120,10 @@ mod shipped_tests {
         key: RuntimeKey,
     }
 
-    /// A `txid-2k` segment of `table` whose first `filled` rows hold bytes
+    /// A `txid-2k8` segment of `table` whose first `filled` rows hold bytes
     /// drawn from `seed`, written under `dir`.
     fn segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
-        let shared = Arc::new(SharedParams::build(&TXID_2K, table).unwrap());
+        let shared = Arc::new(SharedParams::build(&TXID_2K8, table).unwrap());
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {

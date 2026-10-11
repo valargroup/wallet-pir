@@ -136,6 +136,81 @@ fn check_maps(maps: &[DisplayMap], first: &DisplayMap) {
     }
 }
 
+/// Checks each map's recent shard is the window ending at its tip: the
+/// latest start whose blocks hold `window` txids (`held` counts a height's),
+/// capped at the first unsealed height and floored at the map's start.
+/// Returns how many maps' recent shards overlap an archive.
+fn check_windows(maps: &[DisplayMap], window: u64, held: impl Fn(u64) -> u64) -> usize {
+    let mut overlapping = 0;
+    for map in maps {
+        let recent = map.shards.last().unwrap();
+        let (mut start, mut sum) = (recent.end_height + 1, 0u64);
+        while sum < window && start > map.start_height {
+            start -= 1;
+            sum += held(start);
+        }
+        assert_eq!(
+            recent.start_height,
+            start.min(map.sealed_through() + 1),
+            "{recent:?}"
+        );
+        overlapping += usize::from(recent.start_height <= map.sealed_through());
+    }
+    overlapping
+}
+
+/// A window of about eight blocks, against archives of three or four: the
+/// recent shard reaches over several archives, moves back when a rollback
+/// empties the tip, and is the same after a restart, whose cache must reach
+/// back as far.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_recent_window_overlaps_archives_through_reorgs_and_restarts() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 130, 0);
+    let mut layout = layout(&journal, 100);
+    layout.seal.recent_window = 25;
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let first = active_map(&root);
+    let run = run_script(&root, &journal, advance(112, 130, 2), vec![], settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    check_maps(&run.maps, &first);
+    let original = |h: u64| chain_records(0, h).len() as u64;
+    let overlapping = check_windows(&run.maps, 25, original);
+    assert_eq!(overlapping, run.maps.len());
+    let last = run.maps.last().unwrap().clone();
+    assert!(last.sealed_through() + 1 - last.shards.last().unwrap().start_height > 3);
+
+    // The tip block is replaced by an empty one: the window reaches back.
+    let tip = 130;
+    let forked = move |h: u64| match h {
+        h if h < tip => original(h),
+        h if h == tip => 0,
+        h => chain_records(9, h).len() as u64,
+    };
+    let steps = vec![ScriptStep::Reorg {
+        ancestor: tip - 1,
+        blocks: vec![(block_hash(9, tip), vec![])],
+    }];
+    let run = run_script(&root, &journal, steps, vec![], settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    check_maps(&run.maps, &last);
+    check_windows(&run.maps, 25, forked);
+    let moved = run.maps.last().unwrap().clone();
+    assert!(
+        moved.shards.last().unwrap().start_height < last.shards.last().unwrap().start_height
+    );
+
+    // A restart reloads the cache from the window's floor and goes on.
+    let steps = vec![ScriptStep::Extend(fork(9, tip + 1, tip + 12))];
+    let run = run_script(&root, &journal, steps, vec![], settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    check_maps(&run.maps, &moved);
+    check_windows(&run.maps, 25, forked);
+    assert!(sealed_count(run.maps.last().unwrap()) > sealed_count(&moved));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn incremental_stepping_reproduces_bootstrap() {
     let temp = tempfile::tempdir().unwrap();
@@ -173,6 +248,9 @@ async fn incremental_stepping_reproduces_bootstrap() {
         assert!(run.maps.len() >= (13 / step) as usize);
         check_maps(&run.maps, &first);
         assert_eq!(run.maps.last().unwrap().covered_through(), Some(125));
+        check_windows(&run.maps, fixture::params().recent_window, |h| {
+            chain_records(0, h).len() as u64
+        });
         // Retention: the active candidate and three others at most.
         let candidates = listing(&root)
             .into_iter()
@@ -923,7 +1001,7 @@ async fn a_restart_after_a_rollback_still_invalidates() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
+async fn a_seal_a_rollback_undoes_waits_for_the_reorg_margin() {
     use transparent_shard::display::height_counts;
     let temp = tempfile::tempdir().unwrap();
     let journal = temp.path().join("journal");
@@ -933,7 +1011,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
     let started = bootstrap_at(&journal, &root, &layout, 112).len();
     let first = active_map(&root);
     // The first tip that decides more seals; the last of them is undone when
-    // that tip's block is replaced by an empty one.
+    // that tip's block is rolled back, which puts it inside the margin again.
     let params = fixture::params();
     let mut counts: Vec<_> = (101..=130)
         .map(|h| height_counts(&params, &chain_records(0, h)))
@@ -945,8 +1023,7 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
         .unwrap();
     let before = decided(&counts, tip);
     counts.truncate((tip - 101) as usize);
-    counts.push(height_counts(&params, &[] as &[DisplayRecord]));
-    let after = decided(&counts, tip);
+    let after = decided(&counts, tip - 1);
     assert_eq!(after, before - 1);
     let (log, states) = spawn_fakes(
         temp.path(),
@@ -958,12 +1035,12 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
         socket_worker(temp.path(), "archive", WorkerRole::ArchiveOwner),
         socket_worker(temp.path(), "recent", WorkerRole::RecentReplica),
     ];
-    // The block that met the recent floor is replaced by an empty one.
+    // The block that put the seal a margin below the tip is rolled back.
     let steps = vec![
         ScriptStep::Advance(tip),
         ScriptStep::Reorg {
             ancestor: tip - 1,
-            blocks: vec![(block_hash(9, tip), vec![])],
+            blocks: vec![],
         },
     ];
     let run = run_script(&root, &journal, steps, workers.clone(), settings()).await;
@@ -976,20 +1053,19 @@ async fn a_seal_a_rollback_undoes_waits_for_the_recent_floor() {
     assert_eq!(staged, before - started);
     let mut maps = run.maps;
     states["archive"].lock().unwrap().stage_delay = Duration::ZERO;
-    // The same seal publishes once the floor holds again.
-    let steps = vec![ScriptStep::Extend(fork(3, tip + 1, tip + 4))];
+    // The same seal publishes once the margin holds again.
+    let steps = vec![ScriptStep::Extend(fork(3, tip, tip + 3))];
     let run = run_script(&root, &journal, steps, workers, settings()).await;
     assert_eq!(run.outcome, Outcome::Idle);
     assert!(run.active.seals.len() >= before);
     maps.extend(run.maps);
     check_maps(&maps, &first);
-    let mut sealed = sealed_count(&first);
+    // Every published archive ends at least the margin below its map's tip,
+    // and every recent shard fills the window.
     for map in &maps {
-        if sealed_count(map) > sealed {
-            let recent = map.shards.last().unwrap();
-            assert!(recent.records >= params.recent_floor, "{recent:?}");
-        }
-        sealed = sealed_count(map);
+        let recent = map.shards.last().unwrap();
+        assert!(map.sealed_through() + params.reorg_margin <= recent.end_height);
+        assert!(recent.min_bucket_records >= params.recent_window, "{recent:?}");
     }
 }
 
@@ -1248,15 +1324,12 @@ fn verify_reproduces_a_running_root() {
     assert_eq!(report["queued"], 0);
     assert!(!listing(&root).iter().any(|n| n.starts_with(".verify-")));
 
-    // A reorg after the last seal replaces the blocks that met its recent
-    // floor: the journal no longer makes it, so it is rebuilt on its own.
+    // A rollback after the last seal leaves its end inside the reorg margin:
+    // the journal no longer makes it, so it is rebuilt on its own.
     let last = run.active.seals.last().unwrap().clone();
     {
         let mut store = open_writer(&journal).unwrap();
         store.rollback_to(Some(last.end_height + 1)).unwrap();
-        store
-            .append_block_with_display(last.end_height + 2, block_hash(9, 0), &[], &[])
-            .unwrap();
         store.commit().unwrap();
     }
     let report = verify(&root, &journal, None).unwrap();
@@ -1313,7 +1386,7 @@ fn bench_records_follow_the_requested_case_mix() {
         DisplayRecord::new(record.txid, record.entry).unwrap();
     }
     let temp = tempfile::tempdir().unwrap();
-    let lines = bench_recent(&[500], "txid-2k", temp.path(), 7).unwrap();
+    let lines = bench_recent(&[500], "txid-2k8", temp.path(), 7).unwrap();
     assert_eq!(lines[0]["records"], 500);
     assert_eq!(lines[0]["directory_segments"], json!([1]));
     assert!(lines[0]["fill"].as_f64().unwrap() > 0.0);
