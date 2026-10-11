@@ -10,9 +10,10 @@
 //! A lookup sends, in order and one at a time: init, the recent map, the
 //! archive index chunk covering the height (archive heights only), the
 //! shard's manifest and the bucket's directory setups when they are not
-//! cached, then exactly two directory queries (even when both candidate rows
-//! coincide). Entries are fixed-size, so a found txid and an absent one send
-//! the same requests with the same body sizes. Each query carries a 44-bit
+//! cached, then exactly one directory query for the entry's one row, which
+//! every segment of the bucket's table answers. Entries are fixed-size, so a
+//! found txid and an absent one send the same requests with the same body
+//! sizes. Each query carries a 44-bit
 //! dithered selection when init advertises the dithered scheme and it
 //! reproduces locally, and the 49-bit one every service accepts otherwise;
 //! either way every query of one client has the same size. Placement comes from the
@@ -30,7 +31,7 @@
 //! stale map fetches it again, a geometry init lacks fetches init and the map
 //! again, and each new map keeps only the manifests and setups of revisions
 //! it names. A map of another chain (network or genesis hash) is refused.
-//! A lookup sends at most 2 map, 3 init and 4 query requests.
+//! A lookup sends at most 2 map, 3 init and 2 query requests.
 //!
 //! Any validation failure is [`TxidError::Protocol`], never
 //! [`TxidLookup::Absent`].
@@ -244,7 +245,7 @@ pub enum TxidLookup {
     /// No shard covers the height; nothing was queried.
     PlacementUnknown(Placement),
     /// The recent shard covers the height but one of its buckets holds
-    /// fewer txids than the floor (the larger of the map's `recent_floor`
+    /// fewer txids than the floor (the larger of the map's `recent_window`
     /// and the client's [`MIN_RECENT_FLOOR`]), so a query would narrow the
     /// txid to those few: not privately available. Nothing was queried. Not
     /// a statement about the txid; the shard may grow past the floor as
@@ -282,7 +283,8 @@ pub enum ProtocolKind {
     Epoch,
     /// A response body has the wrong length.
     Length,
-    /// A row or entry does not decode, or the same entry is in two rows.
+    /// A row or entry does not decode, an entry sits outside the row its
+    /// placement names, or the same entry is in two segments.
     Decode,
     /// An unexpected status code (not 200 nor one with defined semantics).
     Status(u16),

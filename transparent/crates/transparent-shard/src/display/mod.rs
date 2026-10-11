@@ -5,8 +5,9 @@
 //! shard covering the tip that is rebuilt as blocks arrive. Inside a shard,
 //! every entry belongs to exactly one bucket, `H(domain, tag) mod N`, and each
 //! bucket is a separate native table of fixed-size entries, so a lookup scans
-//! and downloads only its own bucket. Both candidate rows lie inside that
-//! bucket's table, and a lookup is always exactly those two rows.
+//! and downloads only its own bucket. Inside that table an entry has exactly
+//! one row, chosen by a hash keyed with the bucket's published placement
+//! seed, and a lookup is always exactly one query for that row.
 //!
 //! The entry codec and row format are the ones in [`crate::txid`]; only
 //! placement, table identity and the manifest are here. The bucket a lookup
@@ -20,24 +21,30 @@ pub mod seal;
 pub mod split;
 pub mod tables;
 
-pub use geometry::{display_by_name, DISPLAY_PROFILES, TXID_2K, TXID_4K};
+pub use geometry::{display_by_name, DISPLAY_PROFILES, TXID_2K8};
 pub use manifest::{
     DisplayBucket, DisplayLayout, DisplayManifest, DisplayMap, DisplayMapEntry, ManifestHeader,
 };
-pub use seal::{archive_boundary, height_counts, plan_seals, DisplaySealParams, HeightCounts};
+pub use seal::{
+    archive_boundary, height_counts, plan_seals, recent_start, window_start, DisplaySealParams,
+    HeightCounts,
+};
 pub use split::{
     chunk_base, DisplayChunkRef, DisplayIndexChunk, DisplayRecentMap, SplitChunk, SplitMap,
     INDEX_CHUNK_SHARDS,
 };
-pub use tables::{build_shard, rows_for, verify, verify_rows, BuiltBucket, BuiltDisplay};
+pub use tables::{
+    build_shard, place_bucket, row_for, verify, verify_rows, BuiltBucket, BuiltDisplay, Placement,
+};
 
 use crate::layout::Geometry;
-use crate::txid::{self, Tag};
+use crate::txid::Tag;
 use sha2::{Digest, Sha256};
 
 /// Identifies the display shard layout: one bucketed table of fixed-size
-/// entries per bucket, with the `txid` entry codec inside.
-pub const DISPLAY_SCHEMA: &str = "transparent-txid-display-shard-v2";
+/// entries per bucket, each entry in the one row its seeded hash names, with
+/// the `txid` entry codec inside.
+pub const DISPLAY_SCHEMA: &str = "transparent-txid-display-shard-v3";
 /// Domain of the bucket hash. Shard-independent, so an entry's bucket is the
 /// same whichever shard its height selects.
 pub const BUCKET_DOMAIN: &[u8] = b"transparent-txid-display/bucket/v2";
@@ -54,19 +61,24 @@ pub fn bucket(tag: &Tag, n_buckets: u32) -> u32 {
     (u64::from_le_bytes(digest[..8].try_into().unwrap()) % u64::from(n_buckets)) as u32
 }
 
-/// The two candidate rows of the entry tagged `tag` inside its bucket's table.
-pub fn candidate_rows(tag: &Tag, shard_id: u64, bucket: u32, rows: u64) -> [u64; 2] {
-    std::array::from_fn(|choice| {
-        let digest = Sha256::new()
-            .chain_update(DISPLAY_SCHEMA)
-            .chain_update(b"/directory/")
-            .chain_update([choice as u8])
-            .chain_update(shard_id.to_le_bytes())
-            .chain_update(bucket.to_le_bytes())
-            .chain_update(tag.0)
-            .finalize();
-        u64::from_le_bytes(digest[..8].try_into().unwrap()) % rows
-    })
+/// Domain of the row hash.
+pub const PLACEMENT_DOMAIN: &[u8] = b"transparent-txid-display/row/v3";
+/// Placement seeds a publisher tries per bucket, `0..MAX_PLACEMENT_SEEDS`.
+/// The smallest seed that leaves no row over capacity is kept; when none
+/// does, the bucket overflows into further segments (see [`tables`]).
+pub const MAX_PLACEMENT_SEEDS: u32 = 64;
+
+/// The one row of the entry tagged `tag` in its bucket's table, under the
+/// bucket's placement seed.
+pub fn placement_row(tag: &Tag, seed: u32, shard_id: u64, bucket: u32, rows: u64) -> u64 {
+    let digest = Sha256::new()
+        .chain_update(PLACEMENT_DOMAIN)
+        .chain_update(seed.to_le_bytes())
+        .chain_update(shard_id.to_le_bytes())
+        .chain_update(bucket.to_le_bytes())
+        .chain_update(tag.0)
+        .finalize();
+    u64::from_le_bytes(digest[..8].try_into().unwrap()) % rows
 }
 
 /// One private table of a display shard: the entries of one bucket.
@@ -114,9 +126,9 @@ impl DisplayTable {
     }
 }
 
-/// The history table kind whose native parameters, row count and row width
-/// a display table uses. Seeds are derived from the history schema and this
-/// kind's name, so the parameters are exactly the history display tables'.
+/// The history table kind whose native parameters a display table uses. Seeds
+/// are derived from the history schema, this kind's name and the display
+/// geometry's name; rows and row width are the display geometry's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DisplayKind {
     TxDirectory,
@@ -135,9 +147,9 @@ impl DisplayKind {
         geometry.directory_rows
     }
 
-    /// Bytes in one row of this table, at any geometry.
-    pub fn row_bytes(self, _geometry: &Geometry) -> u32 {
-        txid::ROW_BYTES as u32
+    /// Bytes in one row of this table, at `geometry`.
+    pub fn row_bytes(self, geometry: &Geometry) -> u32 {
+        geometry.directory_row_bytes as u32
     }
 }
 
@@ -176,11 +188,6 @@ pub fn query_binding(manifest_digest: &str, table: DisplayTable) -> [u8; 8] {
     crate::manifest::query_binding_for_schema(DISPLAY_SCHEMA, manifest_digest, &table.label())
 }
 
-/// Decodes every entry of one row.
-pub fn row_entries(row: &[u8]) -> Result<Vec<txid::DisplayEntry>, txid::Error> {
-    txid::row_entries(row)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,10 +219,7 @@ mod tests {
     /// Seeds are published by every running server; they must never move.
     #[test]
     fn setup_seeds_are_golden() {
-        for (geometry, seed) in [
-            (&TXID_2K, 0x57a7_3ced_5e98_120a),
-            (&geometry::TXID_4K, 0x28bc_e699_56cc_2d7e),
-        ] {
+        for (geometry, seed) in [(&TXID_2K8, 0xd56b_6038_d7ca_811f)] {
             assert_eq!(
                 setup_seed(geometry, DisplayKind::TxDirectory),
                 seed,
@@ -255,8 +259,31 @@ mod tests {
         }
         let tag = Tag::of(&Txid([9; 32]));
         assert_eq!(bucket(&tag, 1), 0);
-        let rows = candidate_rows(&tag, 3, bucket(&tag, 4), 2048);
-        assert!(rows.iter().all(|r| *r < 2048));
-        assert_ne!(rows, candidate_rows(&tag, 4, bucket(&tag, 4), 2048));
+    }
+
+    /// The row moves with every input: seed, shard, bucket and tag.
+    #[test]
+    fn placement_depends_on_seed_shard_bucket_and_tag() {
+        let tag = Tag::of(&Txid([9; 32]));
+        let other = Tag::of(&Txid([10; 32]));
+        let row = placement_row(&tag, 0, 3, 1, 2048);
+        assert!(row < 2048);
+        // Any one input changing moves most rows; count over many tags.
+        let moved = |f: &dyn Fn(&Tag) -> (u64, u64)| {
+            (0u32..256)
+                .map(|i| Tag::of(&Txid(Sha256::digest(i.to_le_bytes()).into())))
+                .filter(|t| {
+                    let (a, b) = f(t);
+                    a != b
+                })
+                .count()
+        };
+        let base = |t: &Tag| placement_row(t, 0, 3, 1, 2048);
+        assert!(moved(&|t| (base(t), placement_row(t, 1, 3, 1, 2048))) > 250);
+        assert!(moved(&|t| (base(t), placement_row(t, 0, 4, 1, 2048))) > 250);
+        assert!(moved(&|t| (base(t), placement_row(t, 0, 3, 2, 2048))) > 250);
+        assert_ne!(row, placement_row(&other, 0, 3, 1, 2048));
+        // Golden: clients and publishers must agree on every row.
+        assert_eq!(placement_row(&tag, 0, 3, 1, 2048), 170);
     }
 }

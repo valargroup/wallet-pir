@@ -14,9 +14,6 @@ use transparent_events::{Txid, MAX_MONEY};
 pub const CODEC: &str = "transparent-txid-display-v2";
 /// Bytes of one encoded entry.
 pub const ENTRY_BYTES: usize = 113;
-pub const ROW_BYTES: usize = 4096;
-/// Entries in one row; the remaining 28 bytes of a row are zero.
-pub const SLOTS_PER_ROW: usize = ROW_BYTES / ENTRY_BYTES;
 pub const TAG_BYTES: usize = 16;
 /// Domain of the entry tag.
 pub const TAG_DOMAIN: &[u8] = b"transparent-txid-display/tag/v2";
@@ -443,16 +440,22 @@ impl DisplayFacts {
     }
 }
 
-/// The candidate entries of one row, in slot order, after checking the row
-/// is canonical: occupied slots first in ascending tag order, then empty
-/// (all-zero) slots, then zero padding.
+/// Entries in one row of `row_bytes`; the rest of the row is zero padding.
+pub const fn slots_per_row(row_bytes: usize) -> usize {
+    row_bytes / ENTRY_BYTES
+}
+
+/// The entries of one row, in slot order, after checking the row is
+/// canonical: occupied slots first in ascending tag order, then empty
+/// (all-zero) slots, then zero padding. The row's length is its width.
 pub fn row_entries(row: &[u8]) -> Result<Vec<DisplayEntry>, Error> {
-    if row.len() != ROW_BYTES {
+    let slots = slots_per_row(row.len());
+    if slots == 0 {
         return Err(bad("row width"));
     }
     let mut out: Vec<DisplayEntry> = Vec::new();
     let mut empty = false;
-    for slot in row[..SLOTS_PER_ROW * ENTRY_BYTES].chunks(ENTRY_BYTES) {
+    for slot in row[..slots * ENTRY_BYTES].chunks(ENTRY_BYTES) {
         if slot.iter().all(|b| *b == 0) {
             empty = true;
             continue;
@@ -463,15 +466,15 @@ pub fn row_entries(row: &[u8]) -> Result<Vec<DisplayEntry>, Error> {
         }
         out.push(entry);
     }
-    if row[SLOTS_PER_ROW * ENTRY_BYTES..].iter().any(|b| *b != 0) {
+    if row[slots * ENTRY_BYTES..].iter().any(|b| *b != 0) {
         return Err(bad("nonzero row padding"));
     }
     Ok(out)
 }
 
-/// One canonical row from at most [`SLOTS_PER_ROW`] entries.
-pub fn encode_row(entries: &[DisplayEntry]) -> Result<Vec<u8>, Error> {
-    if entries.len() > SLOTS_PER_ROW {
+/// One canonical row of `row_bytes` from at most [`slots_per_row`] entries.
+pub fn encode_row(entries: &[DisplayEntry], row_bytes: usize) -> Result<Vec<u8>, Error> {
+    if entries.len() > slots_per_row(row_bytes) {
         return Err(bad("row capacity"));
     }
     let mut sorted = entries.to_vec();
@@ -479,24 +482,30 @@ pub fn encode_row(entries: &[DisplayEntry]) -> Result<Vec<u8>, Error> {
     if sorted.windows(2).any(|w| w[0].tag == w[1].tag) {
         return Err(bad("duplicate tag in row"));
     }
-    let mut row = Vec::with_capacity(ROW_BYTES);
+    let mut row = Vec::with_capacity(row_bytes);
     for entry in &sorted {
         row.extend(entry.encode()?);
     }
-    row.resize(ROW_BYTES, 0);
+    row.resize(row_bytes, 0);
     Ok(row)
 }
 
-/// The entry for `txid` in fetched rows. The same row may be fetched twice
-/// (coincident candidates); the same entry in two distinct rows is refused.
-pub fn find_entry(rows: &[Vec<u8>], txid: &Txid) -> Result<Option<DisplayEntry>, Error> {
+/// The entry for `txid` in the fetched copies of one row: the same row index
+/// of every segment of a table. Every entry in them must be placed in that
+/// row, which `in_row` decides from its tag, and the same entry in two
+/// segments is refused.
+pub fn find_entry(
+    rows: &[Vec<u8>],
+    txid: &Txid,
+    in_row: impl Fn(&Tag) -> bool,
+) -> Result<Option<DisplayEntry>, Error> {
     let tag = Tag::of(txid);
-    let mut unique: Vec<&Vec<u8>> = rows.iter().collect();
-    unique.sort();
-    unique.dedup();
     let mut found = None;
-    for row in unique {
+    for row in rows {
         for entry in row_entries(row)? {
+            if !in_row(&entry.tag) {
+                return Err(bad("entry outside its row"));
+            }
             if entry.tag == tag {
                 if found.is_some() {
                     return Err(bad("duplicate tag"));
@@ -539,7 +548,8 @@ mod tests {
 
     #[test]
     fn layout_constants() {
-        assert_eq!(SLOTS_PER_ROW, 36);
+        assert_eq!(slots_per_row(4096), 36);
+        assert_eq!(slots_per_row(8192), 72);
         assert_eq!(16 + 2 + 8 + 4 + 4 + 21 + 29 * OUTPUT_SLOTS, ENTRY_BYTES);
     }
 
@@ -750,38 +760,52 @@ mod tests {
                 f.entry().unwrap()
             })
             .collect();
-        let row = encode_row(&entries).unwrap();
-        assert_eq!(row.len(), ROW_BYTES);
+        const ROW: usize = 4096;
+        let anywhere = |_: &Tag| true;
+        let row = encode_row(&entries, ROW).unwrap();
+        assert_eq!(row.len(), ROW);
         let decoded = row_entries(&row).unwrap();
         assert_eq!(decoded.len(), 36);
         assert!(decoded.windows(2).all(|w| w[0].tag < w[1].tag));
         for i in [0u8, 17, 35] {
-            let found = find_entry(&[row.clone(), row.clone()], &Txid([i; 32])).unwrap();
+            let found = find_entry(std::slice::from_ref(&row), &Txid([i; 32]), anywhere).unwrap();
             assert_eq!(found.unwrap().tag, Tag::of(&Txid([i; 32])));
         }
         assert_eq!(
-            find_entry(std::slice::from_ref(&row), &Txid([99; 32])).unwrap(),
+            find_entry(std::slice::from_ref(&row), &Txid([99; 32]), anywhere).unwrap(),
             None
         );
-        assert!(encode_row(&[entries.clone(), vec![entries[0]]].concat()).is_err());
-        assert!(encode_row(&[entries[0], entries[0]]).is_err());
+        // An entry the placement puts in another row is refused.
+        let elsewhere = Tag::of(&Txid([5; 32]));
+        assert!(find_entry(
+            std::slice::from_ref(&row),
+            &Txid([99; 32]),
+            |tag: &Tag| *tag != elsewhere
+        )
+        .is_err());
+        assert!(encode_row(&[entries.clone(), vec![entries[0]]].concat(), ROW).is_err());
+        assert!(encode_row(&[entries[0], entries[0]], ROW).is_err());
+        // A wider row holds twice the entries.
+        let wide = encode_row(&[entries.clone(), entries.clone()].concat()[..36], 8192).unwrap();
+        assert_eq!((wide.len(), row_entries(&wide).unwrap().len()), (8192, 36));
+        assert!(row_entries(&wide[..100]).is_err(), "narrower than an entry");
 
         // Order, gaps and padding are part of the format.
-        let short = encode_row(&entries[..3]).unwrap();
+        let short = encode_row(&entries[..3], ROW).unwrap();
         let mut pair = entries[..2].to_vec();
         pair.sort_by_key(|e| e.tag);
         let mut swapped = [pair[1].encode().unwrap(), pair[0].encode().unwrap()].concat();
-        swapped.resize(ROW_BYTES, 0);
+        swapped.resize(ROW, 0);
         assert!(row_entries(&swapped).is_err(), "out of order");
         let mut gap = short.clone();
         gap[..ENTRY_BYTES].fill(0);
         assert!(row_entries(&gap).is_err(), "entry after an empty slot");
         let mut padded = short.clone();
-        padded[ROW_BYTES - 1] = 1;
+        padded[ROW - 1] = 1;
         assert!(row_entries(&padded).is_err(), "padding");
-        // The same entry in two distinct rows is a contradiction.
-        let other = encode_row(&[entries[0], entries[1]]).unwrap();
-        assert!(find_entry(&[short, other], &Txid([0; 32])).is_err());
+        // The same entry in two segments is a contradiction.
+        let other = encode_row(&[entries[0], entries[1]], ROW).unwrap();
+        assert!(find_entry(&[short, other], &Txid([0; 32]), anywhere).is_err());
     }
 
     /// The tag is the only identity an entry carries: a publisher pair is
@@ -797,8 +821,12 @@ mod tests {
         );
         let other = Txid([8; 32]);
         assert!(DisplayRecord::new(other, record.entry).is_err());
-        let rows = [encode_row(&[record.entry]).unwrap()];
-        assert_eq!(find_entry(&rows, &record.txid).unwrap(), Some(record.entry));
-        assert_eq!(find_entry(&rows, &other).unwrap(), None);
+        let rows = [encode_row(&[record.entry], 8192).unwrap()];
+        let anywhere = |_: &Tag| true;
+        assert_eq!(
+            find_entry(&rows, &record.txid, anywhere).unwrap(),
+            Some(record.entry)
+        );
+        assert_eq!(find_entry(&rows, &other, anywhere).unwrap(), None);
     }
 }
