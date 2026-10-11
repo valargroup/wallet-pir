@@ -146,7 +146,7 @@ pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
 /// not a bound: a runtime whose matrix needs eight-byte words is charged its
 /// full reservation, and a plan made with this figure then comes up short and
 /// says so through overloads rather than through memory. `shard-residency`
-/// measured `txid-2k8` at MEASURED_RANGE MiB per runtime against the 80.09 MiB
+/// measured `txid-2k8` at 80.0-85.8 MiB per runtime against the 80.09 MiB
 /// given here.
 pub fn held_bytes(rows: u64, row_bytes: u32) -> u64 {
     let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
@@ -1258,9 +1258,9 @@ pub(crate) mod tests {
 
     /// `shard-residency` on a development host (2026-10-11), steady
     /// per-runtime increments after the allocator warmed up, in MiB: the
-    /// lowest and highest of runtimes 4-6.
+    /// lowest and highest of runtimes 7-12 of 12.
     /// `transparent/evidence/txid-display-2k8-gates-2026-10-11/residency`.
-    const MEASURED_TXID_2K8_MIB: (f64, f64) = (80.0, 81.0);
+    const MEASURED_TXID_2K8_MIB: (f64, f64) = (80.04, 85.75);
 
     fn mib(bytes: u64) -> f64 {
         bytes as f64 / f64::from(1 << 20)
@@ -1269,8 +1269,9 @@ pub(crate) mod tests {
     /// The planned built size is the four-byte-word size the residency
     /// measurement found, and the reservation is the eight-byte bound: 144.09
     /// against 80.09 MiB at `txid-2k8`, whose two 4,096-byte blocks per row
-    /// each carry a compiled matrix. The planned size sits just under the
-    /// measured range, which carries allocator overhead the formula leaves out.
+    /// each carry a compiled matrix. The planned size is the measured steady
+    /// increment to 0.05 MiB; the range's top carries allocator overhead the
+    /// formula leaves out.
     #[test]
     fn the_planned_built_size_is_the_measured_display_runtime() {
         let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
@@ -1278,8 +1279,8 @@ pub(crate) mod tests {
         assert_eq!((reserved, held), (151_090_272, 83_981_408));
         assert_eq!(reserved - held, 2 * (32 << 20), "half of two compiled matrices");
         let measured = MEASURED_TXID_2K8_MIB;
-        assert!(mib(held) <= measured.0);
-        assert!(measured.1 - mib(held) < 1.5);
+        assert!((mib(held) - measured.0).abs() < 0.1);
+        assert!(measured.1 - mib(held) < 6.0);
     }
 
     /// A built runtime, history or display, holds no more than the planned

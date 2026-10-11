@@ -150,30 +150,51 @@ removed; none was in production use:
 
 Display is published only by the tiered controller below.
 
-## Lookup: one table per bucket
+## Lookup: one row of one table per bucket
 
-Every bucket of a display shard is one native table of 2,048 rows of 4,096
-bytes. A row holds 36 entries in ascending tag order, then all-zero empty
-slots, then 28 zero bytes. A server checks that rows are canonical when it
-loads them, and a client checks again when it decodes them.
+Every bucket of a display shard is one native table of the `txid-2k8`
+geometry: 2,048 rows of 8,192 bytes, two 4,096-byte instances per row. A row
+holds 72 entries in ascending tag order, then all-zero empty slots, then 56
+zero bytes. A server checks that rows are canonical when it loads them, and a
+client checks again when it decodes them.
 
-An entry has two candidate rows, derived from its tag, the shard id and its
-bucket. The publisher places it by cuckoo insertion with bounded evictions,
-which keeps about 95% of slots filled in one segment. A table that still
-overflows opens another segment, and a query asks every segment.
+An entry has exactly one row:
+`SHA-256("transparent-txid-display/row/v3" ‖ seed ‖ shard id ‖ bucket ‖ tag) mod 2,048`,
+with the seed as 4 bytes and the shard id and bucket as 8 and 4 bytes, little
+endian. The publisher tries seeds 0, 1, 2, … below 64 for each bucket and
+keeps the smallest that leaves no row over 72 entries, so rebuilding a range
+from the journal reproduces its seed and digest. The seed is in the
+digest-bound manifest (`buckets[b].placement_seed`) and in the map entry
+(`placement_seeds`).
+
+When no seed fits, as after a burst of transactions, the publisher keeps the
+seed whose fullest row is emptiest and spills each row's overflow, in tag
+order, into the same row of further segments. It logs
+`alert=txid_display_overflow`. Segment counts are public in the map, and a
+query is answered by every segment of its table.
+
+At 90,000 entries a table is 61% full and the first seed fits about 93% of
+the time ([census](../evidence/txid-display-2k8-gates-2026-10-11/README.md)).
 
 A lookup always sends the same transcript:
 1. the map, manifest and setups, when not cached;
-2. exactly two row queries, whether the txid is found or absent.
+2. exactly one row query, whether the txid is found or absent.
 
-Request and reply sizes depend only on the geometry and segment count. The
-server learns the range, tier, bucket and shard, and the timing. Unlike v1, it
-learns nothing about the transaction's size: there are no pages and no
-page-count classes.
+The server, the publisher and the client each check that every entry they
+read sits in its bucket and at its one row under that bucket's seed. A row
+holding an entry placed elsewhere is refused, so a server cannot move an
+entry between rows without the client noticing.
 
-The native parameters are the history `txdirectory` kind's: the same rows, row
-width and setup seeds as before. Bindings and table names are display-specific
-(`directory-{b}`).
+Request and reply sizes depend only on the geometry and segment count: a
+38,920 B dithered query (40,200 B at the 49 bits every server also accepts)
+and an 11,280 B reply per segment. A cold lookup adds the bucket's setup,
+39.6 KB per segment as served. The server learns the range, tier, bucket and
+shard, and the timing. It learns nothing about the transaction's size: there
+are no pages and no page-count classes.
+
+The native parameters are the history `txdirectory` kind's, at the display
+geometry's rows and row width; setup seeds are derived from the geometry and
+table names. Bindings and table names are display-specific (`directory-{b}`).
 
 ## Tiered display publication (proof of concept)
 
@@ -181,22 +202,38 @@ This proof of concept is not adopted. It publishes display tables apart from
 history shards, so the anonymity set and query size do not follow history
 geometry.
 
-- **Time tiers.** Sealed archive shards are immutable and never rebuilt. One
-  recent shard covers `[S, tip]` and is rebuilt per block. The client picks the
-  shard from the transaction's height.
-  - A seal takes the smallest oldest range in which every bucket holds
-    `archive_target` real entries. The remainder must keep `recent_floor`, and
-    the range must end at least `reorg_margin` blocks below the tip.
+- **Time tiers.** Sealed archive shards are immutable and never rebuilt. They
+  are contiguous from the display start. One recent shard is rebuilt per
+  block.
+  - A seal takes the smallest oldest unsealed range in which every bucket
+    holds `archive_target` real entries, once it ends at least `reorg_margin`
+    blocks below the tip. Nothing else gates it.
   - The rule is monotone, so bootstrap and incremental sealing produce
     identical shards.
+  - The recent shard is a sliding window `[R, tip]`: `R` is the latest height
+    at which every recent bucket still holds `recent_window` entries, but
+    never above the first unsealed height, so every unsealed block is
+    covered, and never below the map's start. It therefore overlaps the
+    newest archive or archives, and its parent block is the one before `R`.
+    The window's start is not part of any archive's identity.
+  - The client picks the shard from the transaction's height: a height at or
+    below the last archive's end goes to its archive, anything above to the
+    recent shard. Entries of the overlap are in both, but each height has one
+    shard.
+  - A map, and a client, refuse a recent shard holding fewer than
+    `recent_window` entries in a bucket, unless it starts at the map's start.
+  - The controller keeps in memory every block from the latest start at
+    which the sealed blocks alone fill the window, so a rollback above the
+    sealed floor can always move the window back, and reloads from there on
+    restart.
   - A bounded window drops the oldest archive from the map.
 - **Buckets.** `H("transparent-txid-display/bucket/v2" ‖ tag) mod N` selects a
   bucket, which is a separate table. N is a manifest parameter.
 - **Publication.** A separate map (`txid-shards.json`), content-pure sealed
   manifests with absolute shard ids, and a recent revision lineage.
-  - The `txid-2k` geometry (2,048 rows × 4,096 B, 38,920 B per dithered
+  - The `txid-2k8` geometry (2,048 rows × 8,192 B, 38,920 B per dithered
     query upload, or 40,200 B at the 49 bits every server also accepts)
-    lives in a display-only registry.
+    lives in a display-only registry; it is the only display geometry.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay
   bounded as the archive window grows (below).
@@ -218,7 +255,11 @@ geometry.
   `hosts.former_recent` names the host of a split deployment's recent replica,
   and the `workers` phase then stops and removes that worker's unit there. The
   worker's data on that host is kept.
-- **Leakage** is the range, tier, shard, bucket and timing.
+- **Leakage** is the range, tier, shard, bucket and timing. With
+  `archive_target` and `recent_window` both 90,000 and one bucket, every
+  lookup's anonymity set is at least 90,000 entries: archives hold
+  90,000–90,200, and the recent shard 90,000 plus at most one block, or every
+  unsealed entry when there are more.
 
 Source:
 - `transparent-shard/src/display/` (format, placement and seal rule);
@@ -289,8 +330,9 @@ the same entries as two kinds of document, derived from the full map
 (`transparent-shard/src/display/split.rs`):
 
 - **Recent map** (`GET /v1/txid/map`, `txid-map.json`): the seal parameters,
-  the start, the archive count, one reference (start height and SHA-256) per
-  index chunk, and the recent shard's entry. Compact canonical JSON, served
+  the start, the archive count, the last height an archive holds
+  (`sealed_through`), one reference (start height and SHA-256) per index
+  chunk, and the recent shard's entry. Compact canonical JSON, served
   with `X-Txid-Map-Sha256` and `Cache-Control: no-cache`.
 - **Index chunks** (`GET /v1/txid/map/{base}/{sha256}`,
   `txid-index-<sha256>.json`): the listed archives with absolute shard ids in
@@ -342,14 +384,16 @@ reference it is tested against.
 - **Transcript.** Requests are sent one at a time:
   1. init, the recent map, and the index chunk covering an archive height;
   2. the manifest and the bucket's setups, when not cached;
-  3. exactly two row queries, even when the rows coincide.
+  3. exactly one row query.
 
   Under the placement and cache rules below, init or the map can be fetched
   again after the map or a chunk, for example `Map, MapChunk, Init, Manifest,
-  Setup, Query, Query`. A lookup sends at most 2 map, 3 init and 4 query
-  requests. `Absent` sends the same two queries. Placement, recent floor and
-  support results send no query. `cancel` is polled before every request.
-- **Placement.** A height below the map's start or above its tip is
+  Setup, Query`. A lookup sends at most 2 map, 3 init and 2 query requests.
+  `Absent` sends the same query. Placement, recent floor and support results
+  send no query. `cancel` is polled before every request.
+- **Placement.** A height at or below the recent map's `sealed_through`, the
+  last archive's end, is looked up in its archive through the index chunk
+  covering it; a height above it in the recent shard. A height below the map's start or above its tip is
   `PlacementUnknown(Below | Above)` straight from a map the lookup fetched,
   or one less than 30 s old by the wall clock. A lookup holding an older map
   fetches it once more and places the height again on the new map. The wall
@@ -359,12 +403,14 @@ reference it is tested against.
   hides only among that bucket's txids. Sealed shards hold `archive_target`
   per bucket, checked with the map. The recent shard is queried only when its
   map entry's `min_bucket_records` reaches the larger of the map's
-  `recent_floor` and the client's own floor (`MIN_RECENT_FLOOR`, 10,000), so
-  a server publishing a low `recent_floor` does not lower it. Otherwise the
+  `recent_window` and the client's own floor (`MIN_RECENT_FLOOR`, 10,000), so
+  a server publishing a low `recent_window` does not lower it. Otherwise the
   lookup returns `RecentBelowFloor` with no manifest, setup or query: not
   privately available, and never `Absent`. A reorg can leave an honest recent
   shard under the floor until blocks arrive, and a lineage that does not start
-  at genesis starts with a small one. Archive lookups are unaffected. A map
+  at genesis starts with a small one. The map check also refuses a recent
+  shard below `recent_window` that does not start at the map's start (see
+  the time tiers above). Archive lookups are unaffected. A map
   older than 30 s is fetched once more before this result, as for a placement.
 - **Caches.**
   - Init is fetched on first use.
@@ -412,8 +458,8 @@ reference it is tested against.
   - Any validation failure returns `Protocol(kind)`, never `Absent`.
     Validation covers the map, chunks, manifest, init parameters, setups,
     per-frame binding, epoch and response length. It also covers rows: a
-    noncanonical row, an undecodable entry, or the same tag in two distinct
-    rows.
+    noncanonical row, an undecodable entry, an entry outside the row its
+    placement names, or the same tag in two segments.
   - Transport failures return `Transport`.
 
 ### A fresh publication
@@ -422,8 +468,7 @@ A display re-cut or re-layout cannot extend the live map: the controller halts
 on a changed sealed entry. It is published as a fresh lineage instead, built
 from its own root:
 - its start may be lower;
-- shard ids restart at 0, and every digest is new;
-- shards may use another registered geometry, such as `txid-4k`.
+- shard ids restart at 0, and every digest is new.
 
 Network, genesis hash and seal parameters stay the same, because a worker
 refuses a candidate that changes them. Each worker prepares the new candidate
@@ -471,8 +516,11 @@ transactions per range still sizes shard counts.
 
 What remains to measure for v2 is in [remaining work](remaining-work.md):
 - the share of entries carrying an omission, against the usage figures above;
-- placement load and segments at the chosen `archive_target`;
 - source-sidecar bytes from genesis.
+
+Placement at 90,000-entry tables, the recent rebuild time and runtime memory
+of `txid-2k8` are in the
+[gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md).
 
 The journal census in `transparent/tools/txid-sizing` measured v2x journals.
 It builds against the last pre-v2 source, `a368f19b`.

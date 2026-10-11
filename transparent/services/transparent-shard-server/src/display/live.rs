@@ -1088,6 +1088,7 @@ mod tests {
             geometry: String::new(),
             n_buckets: 1,
             directory_segments: vec![1],
+            placement_seeds: vec![0],
             records: 1,
             min_bucket_records: 1,
             manifest_digest: String::new(),

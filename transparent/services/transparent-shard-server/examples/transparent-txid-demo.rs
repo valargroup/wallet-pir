@@ -31,7 +31,7 @@ use transparent_filter_server::{
     extract::{extract_block, PreviousOutputs},
     txid_display::publisher::{publish_shard, write_candidate, DisplayRoot, ShardSpec},
 };
-use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K};
+use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K8};
 use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};
 use transparent_shard_server::{
     display::{
@@ -314,7 +314,7 @@ fn packing(directory: &Path) -> Result<Vec<Value>, Error> {
         let bytes = std::fs::read(&file)?;
         let mut entries = 0usize;
         let mut occupied = 0usize;
-        for row in bytes.chunks_exact(transparent_shard::txid::ROW_BYTES) {
+        for row in bytes.chunks_exact(TXID_2K8.directory_row_bytes) {
             let n = transparent_shard::txid::row_entries(row)?.len();
             entries += n;
             occupied += usize::from(n > 0);
@@ -448,11 +448,11 @@ async fn run_range(
         n_archive: 1,
         n_recent: 1,
         archive_target: 1,
-        recent_floor: 1,
+        recent_window: 1,
         reorg_margin: 1,
     };
     let layout = DisplayRoot {
-        geometry: TXID_2K.name.to_string(),
+        geometry: TXID_2K8.name.to_string(),
         seal,
         max_archive_shards: 4,
         network: transparent_filter::NETWORK.to_string(),
@@ -656,10 +656,13 @@ async fn run_range(
                 return Err("missing txid not distinguished".into());
             }
             let absent = shape(&http.log);
-            if recent_shapes.iter().any(|s| *s != absent)
-                || absent.iter().filter(|s| s.0 == Route::Query).count() != 2
-                || absent.len() != 2
-            {
+            // A warm lookup, found or absent, is exactly one query.
+            let one_query =
+                |s: &Vec<(Route, usize, u16, usize)>| s.len() == 1 && s[0].0 == Route::Query;
+            if let Some(other) = found_shapes.iter().find(|s| !one_query(s)) {
+                return Err(format!("a found lookup sent {other:?}, not one query").into());
+            }
+            if recent_shapes.iter().any(|s| *s != absent) || !one_query(&absent) {
                 return Err(format!(
                     "found and absent transcripts differ: {recent_shapes:?} vs {absent:?}"
                 )
@@ -689,10 +692,10 @@ async fn run_range(
             // A query bound to another revision is refused.
             let profile = transparent_native::TableProfile::new(
                 transparent_shard::manifest::SCHEMA,
-                TXID_2K.name,
+                TXID_2K8.name,
                 "txdirectory",
-                TXID_2K.directory_rows,
-                transparent_shard::txid::ROW_BYTES as u32,
+                TXID_2K8.directory_rows,
+                TXID_2K8.directory_row_bytes as u32,
             )?;
             let (_, upload) = profile.prepare(0)?;
             let mut body =

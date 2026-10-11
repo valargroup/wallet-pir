@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayRecentMap, DisplayTable, TXID_2K};
+use transparent_shard::display::{self, DisplayRecentMap, DisplayTable, TXID_2K8};
 use transparent_shard::txid::{self, flags, AddressKind, DisplayEntry, DisplayRecord, Tag};
 use transparent_shard_server::display::synth::{self, Published};
 use transparent_txid_client::{
@@ -186,16 +186,16 @@ fn found_exact_transcript() {
         );
         let log = http.take_log();
         // Cold: init, the recent map, the index chunk for an archive, the
-        // manifest, the bucket's one directory setup, then exactly two
-        // directory queries.
+        // manifest, the bucket's one directory setup, then exactly one
+        // directory query.
         let expected: Vec<Route> = [Route::Init, Route::Map]
             .into_iter()
             .chain(chunk.iter().copied())
-            .chain([Route::Manifest, Route::Setup, Route::Query, Route::Query])
+            .chain([Route::Manifest, Route::Setup, Route::Query])
             .collect();
         assert_eq!(routes(&log), expected);
         assert_queries(&log, 0);
-        assert!(log[log.len() - 3].path.ends_with("/setup/directory-0/0"));
+        assert!(log[log.len() - 2].path.ends_with("/setup/directory-0/0"));
         assert_eq!(provenance.shard_id, shard_id);
         assert_eq!(&provenance.manifest_digest, digest);
         assert_eq!(provenance.tier, tier);
@@ -204,7 +204,7 @@ fn found_exact_transcript() {
         assert_eq!(provenance.map_sha256, recent_sha256(&env.world));
         let (up, down) = body_bytes(&log);
         eprintln!("bandwidth cold {tier:?}: up {up} B, down {down} B");
-        // Warm: the same two queries only.
+        // Warm: the same one query only.
         found(
             client
                 .lookup(&mut http, record.txid.0, height, &never)
@@ -212,10 +212,10 @@ fn found_exact_transcript() {
             record,
         );
         let log = http.take_log();
-        assert_eq!(routes(&log), [Route::Query, Route::Query]);
+        assert_eq!(routes(&log), [Route::Query]);
         assert_queries(&log, 0);
         let (up, down) = body_bytes(&log);
-        assert_eq!((up as u64, down as u64), (2 * QUERY_BYTES, 2 * REPLY_BYTES));
+        assert_eq!((up as u64, down as u64), (QUERY_BYTES, REPLY_BYTES));
         eprintln!("bandwidth warm {tier:?}: up {up} B, down {down} B");
     }
 }
@@ -253,7 +253,7 @@ fn queries_fall_back_to_49_bits_without_a_reproducible_dithered_scheme() {
         );
         let log = http.take_log();
         let posts: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Query).collect();
-        assert_eq!(posts.len(), 2);
+        assert_eq!(posts.len(), 1);
         assert!(posts
             .iter()
             .all(|post| post.status == 200 && post.body.len() as u64 == LEGACY_QUERY_BYTES));
@@ -282,7 +282,7 @@ fn every_case_is_the_published_entry_through_the_absent_transcript() {
         let warm_absent = warm_http.take_log();
         assert_queries(&warm_absent, 0);
         let warm_absent = shape(&warm_absent);
-        assert_eq!(warm_absent.len(), 2);
+        assert_eq!(warm_absent.len(), 1);
         for (class, record) in classes_of(records).iter().enumerate() {
             let mut http = env.http();
             let lookup = env
@@ -335,7 +335,7 @@ fn absent_sends_same_transcript_shape() {
     assert_eq!(shape(&absent), shape(&present));
     let (up, down) = body_bytes(&absent);
     eprintln!("bandwidth absent cold: up {up} B, down {down} B");
-    // Warm absent: two queries only, as warm found.
+    // Warm absent: one query only, as warm found.
     found(
         client
             .lookup(&mut http, record.txid.0, 150, &never)
@@ -348,7 +348,7 @@ fn absent_sends_same_transcript_shape() {
         TxidLookup::Absent
     );
     let absent = http.take_log();
-    assert_eq!(routes(&absent), [Route::Query, Route::Query]);
+    assert_eq!(routes(&absent), [Route::Query]);
     assert_eq!(shape(&absent), shape(&present));
     assert_eq!(body_bytes(&absent), body_bytes(&present));
 }
@@ -463,7 +463,7 @@ fn unsupported_schema_codec() {
     http.tamper = Some(Box::new(|request, reply| {
         if request.route == Route::Map {
             let mut map: DisplayRecentMap = serde_json::from_slice(&reply.body).unwrap();
-            map.schema = "transparent-txid-display-shard-v3".into();
+            map.schema = "transparent-txid-display-shard-v4".into();
             reply.body = map.to_bytes();
             reply.map_sha256 = Some(map.sha256());
         }
@@ -516,7 +516,6 @@ fn stale_409_refresh_retry_once_then_stale() {
             Route::Setup,
             Route::Query,
             Route::Map,
-            Route::Query,
             Route::Query
         ]
     );
@@ -564,10 +563,10 @@ fn stale_409_refresh_retry_once_then_stale() {
 
 /// The most one lookup sends, all in one transcript: a cached init lacking
 /// the geometry and a cached map refetch init and the map; each map fetched
-/// changes the seal parameters, so init follows it; and a 409 on the second
-/// query retries once. Two map, three init and four query requests.
+/// changes the seal parameters, so init follows it; and a 409 on the query
+/// retries once. Two map, three init and two query requests.
 #[test]
-fn a_lookup_sends_at_most_two_maps_three_inits_and_four_queries() {
+fn a_lookup_sends_at_most_two_maps_three_inits_and_two_queries() {
     let _serial = serial();
     let env = env();
     let record = &env.world.a0_records[CLASSES];
@@ -596,7 +595,7 @@ fn a_lookup_sends_at_most_two_maps_three_inits_and_four_queries() {
     let mut queries = 0;
     http.intercept = Some(Box::new(move |request| {
         queries += usize::from(request.route == Route::Query);
-        (request.route == Route::Query && queries == 2).then(stale)
+        (request.route == Route::Query && queries == 1).then(stale)
     }));
     let mut client = env.client();
     // Fetched together, an init without the geometry and the map are final.
@@ -626,17 +625,15 @@ fn a_lookup_sends_at_most_two_maps_three_inits_and_four_queries() {
             Route::Manifest,
             Route::Setup,
             Route::Query,
-            Route::Query,
             Route::Map,
             Route::Init,
-            Route::Query,
             Route::Query
         ]
     );
     let count = |route| log.iter().filter(|s| s.route == route).count();
     assert_eq!(
         (count(Route::Map), count(Route::Init), count(Route::Query)),
-        (2, 3, 4)
+        (2, 3, 2)
     );
 }
 
@@ -658,6 +655,7 @@ fn a_retry_under_another_bucket_count_is_stale() {
                 let recent = map.recent.as_mut().unwrap();
                 recent.n_buckets = 2;
                 recent.directory_segments = vec![1, 1];
+                recent.placement_seeds = vec![0, 0];
                 reply.body = map.to_bytes();
                 reply.map_sha256 = Some(map.sha256());
             }
@@ -694,12 +692,10 @@ fn overloaded_503_retry_after_no_internal_retry() {
     let record = &env.world.a0_records[CLASSES + 2];
     let mut client = env.client();
     let mut http = env.http();
-    // The second directory query is shed: the lookup fails rather than
-    // deciding from one row.
-    let mut queries = 0;
+    // The directory query is shed: the lookup fails rather than deciding
+    // without its row.
     http.intercept = Some(Box::new(move |request| {
-        queries += usize::from(request.route == Route::Query);
-        (request.route == Route::Query && queries == 2).then(|| TxidReply {
+        (request.route == Route::Query).then(|| TxidReply {
             status: 503,
             retry_after: Some("7".into()),
             body: br#"{"error":"busy"}"#.to_vec(),
@@ -713,7 +709,7 @@ fn overloaded_503_retry_after_no_internal_retry() {
         })
     );
     let log = http.take_log();
-    assert_eq!(posts(&log), 2);
+    assert_eq!(posts(&log), 1);
     assert_eq!(log.last().unwrap().status, 503);
     // Without a usable hint, still no retry.
     http.intercept = Some(Box::new(|request| {
@@ -736,8 +732,8 @@ fn overloaded_503_retry_after_no_internal_retry() {
             .unwrap(),
         record,
     );
-    assert_eq!(posts(&http.log), 2);
-    assert_eq!(http.take_log().len(), 2);
+    assert_eq!(posts(&http.log), 1);
+    assert_eq!(http.take_log().len(), 1);
 }
 
 #[test]
@@ -836,7 +832,7 @@ fn tampered_setup_protocol_never_absent() {
         ("bucket", 1.into()),
         ("table", "directory-1".into()),
         ("table", "pages".into()),
-        ("geometry", "txid-4k".into()),
+        ("geometry", "txid-2k".into()),
         ("manifest_digest", "aa".repeat(32).into()),
         ("public_params_epoch", "00".into()),
     ] {
@@ -978,8 +974,8 @@ fn cancel_stops_before_next_request() {
     let _serial = serial();
     let env = env();
     let record = &env.world.a0_records[CLASSES + 2];
-    // Cold archive lookup: init, map, chunk, manifest, setup, 2 queries.
-    for allowed in 0..7 {
+    // Cold archive lookup: init, map, chunk, manifest, setup, 1 query.
+    for allowed in 0..6 {
         let mut http = env.http();
         let sent = Cell::new(0usize);
         let cancel = || {
@@ -1078,7 +1074,7 @@ fn caches_reused_second_lookup_only_posts() {
         &records[CLASSES + 2],
     );
     let cold = http.take_log();
-    assert_eq!(posts(&cold), 2);
+    assert_eq!(posts(&cold), 1);
     assert!(cold.iter().any(|s| s.route == Route::Init));
     for record in classes_of(records) {
         found(
@@ -1105,32 +1101,30 @@ fn caches_reused_second_lookup_only_posts() {
     );
     assert_eq!(
         routes(&http.take_log()),
-        [Route::Manifest, Route::Setup, Route::Query, Route::Query]
+        [Route::Manifest, Route::Setup, Route::Query]
     );
 }
 
 /// The entry for `txid` in `shard` as its published table files hold it,
-/// read directly: both candidate rows of the txid's bucket in every segment.
+/// read directly: the txid's one row of its bucket in every segment.
 fn published_entry(shard: &Published, txid: &Txid) -> Option<DisplayEntry> {
     let manifest = &shard.manifest;
     let geometry = manifest.display_geometry().unwrap();
+    let (rows, width) = (geometry.directory_rows, geometry.directory_row_bytes);
     let tag = Tag::of(txid);
     let table = DisplayTable::Directory(display::bucket(&tag, manifest.n_buckets));
+    let (shard_id, bucket) = (manifest.shard_id, table.bucket());
+    let seed = manifest.buckets[bucket as usize].placement_seed;
+    let row = display::placement_row(&tag, seed, shard_id, bucket, rows);
     let segments = manifest.segments(table).unwrap().len();
-    let mut rows = Vec::new();
-    for row in display::candidate_rows(
-        &tag,
-        manifest.shard_id,
-        table.bucket(),
-        geometry.directory_rows,
-    ) {
-        for segment in 0..segments {
-            let bytes = std::fs::read(shard.dir.join(table.file_name(segment))).unwrap();
-            let at = row as usize * txid::ROW_BYTES;
-            rows.push(bytes[at..at + txid::ROW_BYTES].to_vec());
-        }
+    let mut copies = Vec::new();
+    for segment in 0..segments {
+        let bytes = std::fs::read(shard.dir.join(table.file_name(segment))).unwrap();
+        let at = row as usize * width;
+        copies.push(bytes[at..at + width].to_vec());
     }
-    txid::find_entry(&rows, txid).unwrap()
+    let in_row = |t: &Tag| display::placement_row(t, seed, shard_id, bucket, rows) == row;
+    txid::find_entry(&copies, txid, in_row).unwrap()
 }
 
 /// Every lookup agrees with the published files read directly, and with the
@@ -1142,7 +1136,7 @@ fn differential_vs_published_tables() {
     let world = &env.world;
     let mut client = env.client();
     let mut http = env.http();
-    let coincident = world.r0_records.last().unwrap();
+    let last = world.r0_records.last().unwrap();
     let mut cases: Vec<(Txid, u64, Option<DisplayEntry>)> = Vec::new();
     for record in &world.a0_records {
         cases.push((record.txid, 150, Some(record.entry)));
@@ -1153,9 +1147,9 @@ fn differential_vs_published_tables() {
     cases.extend([
         (Txid(ABSENT), 150, None),
         (Txid(ABSENT), 230, None),
-        (coincident.txid, 255, Some(coincident.entry)),
-        (coincident.txid, 99, None),
-        (coincident.txid, 261, None),
+        (last.txid, 255, Some(last.entry)),
+        (last.txid, 99, None),
+        (last.txid, 261, None),
         // Published, but in the other shard than its height names.
         (world.a0_records[CLASSES].txid, 230, None),
     ]);
@@ -1176,12 +1170,12 @@ fn differential_vs_published_tables() {
                 assert_eq!(provenance.shard_id, shard.manifest.shard_id);
                 assert_eq!(provenance.manifest_digest, shard.digest);
                 assert_eq!(provenance.map_sha256, recent_sha256(world));
-                assert_eq!(queries, 2);
+                assert_eq!(queries, 1);
             }
             (Some(shard), TxidLookup::Absent) => {
                 assert_eq!(published_entry(shard, &txid), None);
                 assert_eq!(published, None);
-                assert_eq!(queries, 2);
+                assert_eq!(queries, 1);
             }
             (None, TxidLookup::PlacementUnknown(_)) => assert_eq!(queries, 0),
             (shard, actual) => panic!("{:?}: {actual:?}", shard.map(|s| &s.digest)),
@@ -1198,11 +1192,11 @@ fn setup_seed_golden_matches_server() {
     use transparent_shard_server::shardset::setup_seed;
     let golden = [
         (
-            "txid-2k",
+            "txid-2k8",
             DisplayTable::Directory(0),
-            0x57a7_3ced_5e98_120a_u64,
+            0xd56b_6038_d7ca_811f_u64,
         ),
-        ("txid-4k", DisplayTable::Directory(3), 0x28bc_e699_56cc_2d7e),
+        ("txid-2k8", DisplayTable::Directory(3), 0xd56b_6038_d7ca_811f),
     ];
     for (name, table, seed) in golden {
         let geometry = display::display_by_name(name).unwrap();
@@ -1223,13 +1217,13 @@ fn setup_seed_golden_matches_server() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|g| g["name"] == TXID_2K.name)
+        .find(|g| g["name"] == TXID_2K8.name)
         .unwrap();
     assert_eq!(
         geometry["txdirectory"]["setup_seed"],
-        0x57a7_3ced_5e98_120a_u64
+        0xd56b_6038_d7ca_811f_u64
     );
-    assert_eq!(geometry["txdirectory"]["row_bytes"], txid::ROW_BYTES);
+    assert_eq!(geometry["txdirectory"]["row_bytes"], 8_192);
     assert!(geometry.get("txpages").is_none(), "{geometry}");
 }
 
@@ -1274,13 +1268,13 @@ fn txid_live_lookup() {
         &DisplayRecord::new(txid, entry).unwrap(),
     );
     let warm = shape(&http.take_log());
-    // Absent at the same height: the same two queries.
+    // Absent at the same height: the same one query.
     assert_eq!(
         client.lookup(&mut http, ABSENT, 3_410_000, &never).unwrap(),
         TxidLookup::Absent
     );
     let absent = http.take_log();
-    assert_eq!(routes(&absent), [Route::Query, Route::Query]);
+    assert_eq!(routes(&absent), [Route::Query]);
     assert_eq!(shape(&absent), warm);
 }
 

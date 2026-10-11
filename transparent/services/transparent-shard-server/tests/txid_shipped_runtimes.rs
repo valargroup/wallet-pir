@@ -9,7 +9,7 @@
 
 use std::path::{Path, PathBuf};
 use transparent_filter_server::txid_display::publisher::verify_dir;
-use transparent_shard::display::{DisplaySealParams, TXID_2K};
+use transparent_shard::display::{DisplaySealParams, TXID_2K8};
 use transparent_shard_server::display::live::{
     DisplayCommand, DisplayLive, DisplayPublication, Reply,
 };
@@ -34,7 +34,7 @@ fn spec(shard_id: u64, start: u64, end: u64, sealed: bool, n_buckets: u32) -> Sh
         parent_manifest_digest: String::new(),
         n_buckets,
         archive_target: 1,
-        geometry: &TXID_2K,
+        geometry: &TXID_2K8,
     }
 }
 
@@ -43,7 +43,7 @@ fn params() -> DisplaySealParams {
         n_archive: 1,
         n_recent: 2,
         archive_target: 1,
-        recent_floor: 1,
+        recent_window: 1,
         reorg_margin: 1,
     }
 }
@@ -128,7 +128,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     let revision = set.held(&recent.digest).unwrap();
     let view = ShippedRuntimes::new(dir.clone());
     for (table, segment) in &targets {
-        let shared = SharedParams::build(&TXID_2K, kind(*table)).unwrap();
+        let shared = SharedParams::build(&TXID_2K8, kind(*table)).unwrap();
         let source = revision.segment(*table, *segment).unwrap();
         let rows = source.load().unwrap();
         let local = TableRuntime::build(&shared, &rows).unwrap();

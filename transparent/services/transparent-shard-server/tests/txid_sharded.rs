@@ -14,7 +14,7 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tower::ServiceExt;
 use transparent_events::Txid;
-use transparent_shard::display::{self, DisplayTable, TXID_4K};
+use transparent_shard::display::{self, DisplayTable};
 use transparent_shard::txid::{DisplayRecord, Tag};
 use transparent_shard_server::display::live::DisplayCommand;
 use transparent_shard_server::display::service::{router, DisplayRuntime, DisplayState};
@@ -40,33 +40,30 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
         (&world.a0_records, 150, Tier::Archive),
         (&world.r0_records, 230, Tier::Recent),
     ] {
-        // Once the shard's metadata is cached, every lookup is the same two
-        // directory queries: each case the format distinguishes, and absence.
+        // Once the shard's metadata is cached, every lookup is the same one
+        // directory query: each case the format distinguishes, and absence.
         assert_eq!(wallet.lookup(ABSENT, height).unwrap(), TxidLookup::Absent);
         wallet.http.take_log();
         for record in &records[CLASSES..CLASSES + 6] {
             let (provenance, log) = wallet.found(record, height);
             assert_eq!(provenance.tier, tier);
-            assert_eq!(routes(&log), [Route::Query, Route::Query]);
+            assert_eq!(routes(&log), [Route::Query]);
             assert_queries(&log, 0);
         }
         assert_eq!(wallet.lookup(ABSENT, height).unwrap(), TxidLookup::Absent);
         assert_queries(&wallet.http.take_log(), 0);
     }
 
-    // Coinciding candidate rows still cost two queries, and the duplicate
-    // decoded row is dropped before the entry is found.
-    let coincident = world.r0_records.last().unwrap();
-    let [a, b] = display::candidate_rows(&Tag::of(&coincident.txid), 1, 0, 2_048);
-    assert_eq!(a, b);
-    let (_, log) = wallet.found(coincident, 255);
-    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    // The recent shard's last entry, at the tip, is one query too.
+    let last = world.r0_records.last().unwrap();
+    let (_, log) = wallet.found(last, 255);
+    assert_eq!(routes(&log), [Route::Query]);
     assert_queries(&log, 0);
 
     // Placement comes from the caller; nothing is asked to discover it.
     for (height, placement) in [(99, Placement::Below), (261, Placement::Above)] {
         assert_eq!(
-            wallet.lookup(coincident.txid, height).unwrap(),
+            wallet.lookup(last.txid, height).unwrap(),
             TxidLookup::PlacementUnknown(placement)
         );
         assert_eq!(posts(&wallet.http.take_log()), 0);
@@ -76,7 +73,7 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
     world.faults.foreign_codec.store(true, Ordering::Release);
     let mut foreign = world.wallet();
     assert_eq!(
-        foreign.lookup(coincident.txid, 255).unwrap(),
+        foreign.lookup(last.txid, 255).unwrap(),
         TxidLookup::Unsupported
     );
     assert_eq!(posts(&foreign.http.take_log()), 0);
@@ -89,7 +86,7 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
     };
     let mut unreachable = Wallet::at(&format!("http://{closed}"));
     assert!(matches!(
-        unreachable.lookup(coincident.txid, 255),
+        unreachable.lookup(last.txid, 255),
         Err(TxidError::Transport(_))
     ));
     world.faults.queries.store(1, Ordering::Release);
@@ -99,13 +96,11 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
     );
     wallet.http.take_log();
 
-    // A lookup whose second query is shed fails rather than deciding from
-    // one row; the retry finds the entry.
+    // A lookup whose query is shed fails rather than deciding without its
+    // row; the retry finds the entry.
     let record = &world.a0_records[CLASSES + 2];
-    let mut queries = 0;
     wallet.http.intercept = Some(Box::new(move |request| {
-        queries += usize::from(request.route == Route::Query);
-        (request.route == Route::Query && queries == 2).then(|| TxidReply {
+        (request.route == Route::Query).then(|| TxidReply {
             status: 503,
             ..TxidReply::default()
         })
@@ -114,13 +109,13 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
         wallet.lookup(record.txid, 150),
         Err(TxidError::Unavailable { retry_after: None })
     );
-    assert_eq!(posts(&wallet.http.take_log()), 2);
+    assert_eq!(posts(&wallet.http.take_log()), 1);
     wallet.http.intercept = None;
     wallet.found(record, 150);
 
     // On the wire, a warm found lookup and a warm absent one are the same
-    // bytes each way, whatever the entry holds: two requests of one size,
-    // two responses of one size.
+    // bytes each way, whatever the entry holds: one request of one size, one
+    // response of one size.
     let upstream: std::net::SocketAddr = world.url.trim_start_matches("http://").parse().unwrap();
     let meter = bytemeter::ByteMeter::start(upstream).await.unwrap();
     let mut metered = Wallet::at(&format!("http://{}", meter.addr));
@@ -142,9 +137,9 @@ async fn lookups_follow_the_fixed_transcript_in_both_tiers() {
             TxidLookup::Found { .. } | TxidLookup::Absent
         ));
         let log = metered.http.take_log();
-        assert_eq!(routes(&log), [Route::Query, Route::Query]);
+        assert_eq!(routes(&log), [Route::Query]);
         let (up, down) = body_bytes(&log);
-        assert_eq!((up as u64, down as u64), (2 * QUERY_BYTES, 2 * REPLY_BYTES));
+        assert_eq!((up as u64, down as u64), (QUERY_BYTES, REPLY_BYTES));
         let measured = (after.0 - before.0, after.1 - before.1);
         assert!(measured.0 > up as u64 && measured.1 > down as u64);
         wire.push(measured);
@@ -195,7 +190,7 @@ impl Seal {
 
 /// One combined worker holds both tiers: the edge sends archive and recent
 /// routes to the same worker, which builds both tables and answers lookups in
-/// each tier with the same two-query transcript.
+/// each tier with the same one-query transcript.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_combined_worker_serves_both_tiers() {
     let root = tempfile::tempdir().unwrap();
@@ -236,8 +231,62 @@ async fn a_combined_worker_serves_both_tiers() {
         wallet.http.take_log();
         let (provenance, log) = wallet.found(&records[CLASSES], height);
         assert_eq!(provenance.tier, tier);
-        assert_eq!(routes(&log), [Route::Query, Route::Query]);
+        assert_eq!(routes(&log), [Route::Query]);
     }
+    server.abort();
+}
+
+/// The recent shard's window may start inside the newest archive. Heights
+/// the archive holds are looked up there and the rest in the recent shard,
+/// which also holds the archive's newest entries.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_overlapping_recent_shard_is_served_beside_its_archive() {
+    let root = tempfile::tempdir().unwrap();
+    let a0_records = records(10, &[]);
+    let mut r0_records = records(20, &[]);
+    r0_records.extend_from_slice(&a0_records[CLASSES..CLASSES + 3]);
+    let a0 = write_shard(root.path(), &spec(0, 100, 199, true, ""), &a0_records);
+    let r0 = write_shard(
+        root.path(),
+        &spec(1, 150, 260, false, &a0.digest),
+        &r0_records,
+    );
+    let p0 = synth::write_candidate(root.path(), &params(1), &[a0.clone(), r0.clone()], "p0")
+        .unwrap();
+    let worker = Worker::new(
+        root.path(),
+        DisplayRole::Combined,
+        config(),
+        vec![root.path().join("sealed")],
+    );
+    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 2);
+    let app = Router::new().fallback(edge).with_state(Edge {
+        archive: worker.live.router(),
+        recent: worker.live.router(),
+        faults: Faults::default(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut wallet = Wallet::at(&url);
+    // At 150..=199 the archive answers, even though the recent shard starts
+    // at 150; above it, the recent shard does.
+    for (record, height, tier, digest) in [
+        (&a0_records[CLASSES], 150, Tier::Archive, &a0.digest),
+        (&a0_records[CLASSES + 1], 199, Tier::Archive, &a0.digest),
+        (&a0_records[CLASSES + 2], 200, Tier::Recent, &r0.digest),
+        (&r0_records[CLASSES], 230, Tier::Recent, &r0.digest),
+    ] {
+        let (provenance, log) = wallet.found(record, height);
+        assert_eq!((provenance.tier, &provenance.manifest_digest), (tier, digest));
+        assert_eq!(posts(&log), 1);
+    }
+    assert_eq!(
+        wallet.lookup(r0_records[CLASSES].txid, 199).unwrap(),
+        TxidLookup::Absent
+    );
     server.abort();
 }
 
@@ -312,7 +361,7 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     let (provenance, log) = stale.found(moved, 210);
     assert_eq!(provenance.manifest_digest, world.r0.digest);
     assert_eq!(stale_retries(&log), 0);
-    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    assert_eq!(routes(&log), [Route::Query]);
     // A fresh wallet reaches the same entry in the new archive.
     let mut fresh = world.wallet();
     let (provenance, _) = fresh.found(moved, 210);
@@ -482,25 +531,20 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
     world.wallet().found(&world.r0_records[CLASSES], 230);
 }
 
-/// Every query of a transcript uploads `bytes`.
+/// The query of a transcript uploads `bytes`.
 fn assert_uploads(log: &[Sent], bytes: u64) {
     let posts: Vec<&Sent> = log.iter().filter(|s| s.route == Route::Query).collect();
-    assert_eq!(posts.len(), 2);
+    assert_eq!(posts.len(), 1);
     assert!(posts
         .iter()
         .all(|post| post.status == 200 && post.body.len() as u64 == bytes));
 }
 
-/// A txid-4k query: the 8-byte binding, the `K_g` key and the 4,096-row
-/// native selection at 44 dithered bits (52,744 B at 49 bits).
-const QUERY_BYTES_4K: u64 = 50_184;
-
 /// A fresh lineage replaces the publication behind the same edge, as a
-/// display re-cut or re-layout does: a lower start, shard ids restarted from
-/// 0, every digest new, and an archive of another registered geometry.
-/// Wallets holding the old map are answered from the retired snapshot while
-/// it is resident, then sent to refresh once; they follow the new map with
-/// one init refetch for the new geometry and keep nothing of the old lineage.
+/// display re-cut does: a lower start, shard ids restarted from 0 and every
+/// digest new. Wallets holding the old map are answered from the retired
+/// snapshot while it is resident, then sent to refresh once; they follow the
+/// new map and keep nothing of the old lineage.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn wallets_follow_a_fresh_lineage_without_downtime() {
     let world = World::start().await;
@@ -534,9 +578,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
 
     // The fresh lineage, from height 50, over the same transactions.
     let root = world.root.path();
-    let mut first = spec(0, 50, 139, true, "");
-    first.geometry = &TXID_4K;
-    let b0 = write_shard(root, &first, &older);
+    let b0 = write_shard(root, &spec(0, 50, 139, true, ""), &older);
     let b1 = write_shard(
         root,
         &spec(1, 140, 209, true, &b0.digest),
@@ -558,7 +600,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     assert_eq!(world.archive.publish(&fresh.0, &fresh.1).await["built"], 2);
     assert_eq!(world.recent.publish(&fresh.0, &fresh.1).await["built"], 1);
     let (_, init) = world.get("/v1/txid/init").await;
-    assert_eq!(init["geometries"].as_array().unwrap().len(), 2, "{init}");
+    assert_eq!(init["geometries"].as_array().unwrap().len(), 1, "{init}");
 
     // The old map's archive is answered from the retired snapshot while its
     // runtime is resident.
@@ -567,7 +609,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
         (&provenance.manifest_digest, &provenance.map_sha256),
         (a0, &old_map)
     );
-    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    assert_eq!(routes(&log), [Route::Query]);
 
     // Once evicted, the old revision is refused with a 409: the wallet
     // refreshes its map once and finds the entry in the new recent shard.
@@ -584,7 +626,6 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
             Route::Map,
             Route::Manifest,
             Route::Setup,
-            Route::Query,
             Route::Query
         ]
     );
@@ -603,7 +644,6 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
             Route::MapChunk,
             Route::Manifest,
             Route::Setup,
-            Route::Query,
             Route::Query
         ]
     );
@@ -611,22 +651,18 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
         (provenance.shard_id, &provenance.manifest_digest),
         (1, &b1.digest)
     );
-    // Below the old start, in the txid-4k archive: init, cached from the old
-    // publication, lacks the geometry, so it and the map, which this lookup
-    // had not fetched, are fetched once more.
+    // Below the old start, in the new archive 0, through the chunk the new
+    // map already named.
     let (provenance, log) = held.found(&older[CLASSES], 60);
     assert_eq!(
         routes(&log),
         [
-            Route::Init,
-            Route::Map,
             Route::Manifest,
             Route::Setup,
-            Route::Query,
             Route::Query
         ]
     );
-    assert_uploads(&log, QUERY_BYTES_4K);
+    assert_uploads(&log, QUERY_BYTES);
     assert_eq!(
         (provenance.shard_id, &provenance.manifest_digest),
         (0, &b0.digest)
@@ -635,27 +671,25 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
         held.client.cached_revisions(),
         sorted(&[&b0.digest, &b1.digest, &b2.digest])
     );
-    // Warm: two queries only.
+    // Warm: one query only.
     let (_, log) = held.found(&older[CLASSES + 1], 61);
-    assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    assert_eq!(routes(&log), [Route::Query]);
 
     // `aged` still holds the old map, which places 60 below it. That map is
     // stale, so it is fetched again first, and the lookup reaches the new
-    // archive with one map, chunk and init request.
+    // archive with one map and chunk request.
     let (provenance, log) = aged.found(&older[CLASSES + 2], 60);
     assert_eq!(
         routes(&log),
         [
             Route::Map,
             Route::MapChunk,
-            Route::Init,
             Route::Manifest,
             Route::Setup,
-            Route::Query,
             Route::Query
         ]
     );
-    assert_uploads(&log, QUERY_BYTES_4K);
+    assert_uploads(&log, QUERY_BYTES);
     assert_eq!(provenance.manifest_digest, b0.digest);
     assert_eq!(aged.client.cached_revisions(), [b0.digest.as_str()]);
     // Below the new start: one refresh, then placed below.
@@ -737,10 +771,10 @@ async fn the_transcript_depends_on_the_bucket_label_alone() {
         let mut lookups = Vec::new();
         for record in [first, second, first, second] {
             let (_, log) = wallet.found(record, 150);
-            assert_eq!(posts(&log), 2);
+            assert_eq!(posts(&log), 1);
             lookups.push(seen(&log));
         }
-        // A 409 on the first query: one map refresh, then the same retry.
+        // A 409 on the query: one map refresh, then the same retry.
         let mut queries = 0;
         wallet.http.intercept = Some(Box::new(move |request| {
             queries += usize::from(request.route == Route::Query);

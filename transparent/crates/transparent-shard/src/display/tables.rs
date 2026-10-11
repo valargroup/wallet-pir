@@ -177,7 +177,9 @@ pub fn build_shard(
 ///
 /// Every row must be canonical, each entry must sit in its own bucket at its
 /// one row under that bucket's seed, no tag may appear twice in the shard,
-/// and the per-bucket counts must match. Returns those counts.
+/// the per-bucket counts must match, and an overflow segment must hold an
+/// entry: an empty one would only add a reply frame to every query of its
+/// table. Returns the counts.
 pub fn verify_rows(
     shard_id: u64,
     geometry: &Geometry,
@@ -203,6 +205,7 @@ pub fn verify_rows(
         let table = DisplayTable::Directory(b as u32);
         let seed = placement_seeds[b];
         for segment in 0..*segments {
+            let before = counts[b];
             for row in 0..rows as usize {
                 let bytes = row_at(table, segment, row)?;
                 if bytes.len() != geometry.directory_row_bytes {
@@ -217,6 +220,9 @@ pub fn verify_rows(
                     }
                     counts[b] += 1;
                 }
+            }
+            if segment > 0 && counts[b] == before {
+                return Err(bad("empty overflow segment"));
             }
         }
     }
@@ -442,6 +448,12 @@ mod tests {
         let mut miscounted = built.clone();
         miscounted.buckets[0].records += 1;
         assert!(verify(1, &g, &miscounted).is_err());
+
+        // An empty overflow segment, which the builder never writes.
+        let mut padded_out = built.clone();
+        let empty = vec![0; padded_out.buckets[0].directory[0].len()];
+        padded_out.buckets[0].directory.push(empty);
+        assert!(verify(1, &g, &padded_out).is_err());
 
         // An extra copy of a segment duplicates every entry in it.
         let mut duplicated = built.clone();

@@ -403,7 +403,8 @@ Design: [txid display](txid-display.md). Roman's decisions:
   - extraction from resolved spent outputs;
   - v2x source sidecars that entries derive from, so an entry change is a
     republish;
-  - one table per bucket with cuckoo placement;
+  - one table per bucket with cuckoo placement (replaced on 2026-10-11 by
+    one-row seeded placement, [below](#txid-display-one-query-layout-2026-10-11));
   - the worker, controller and wallet client;
   - the history-attached path removed.
 - [x] Independent oracle: `verify_fixture.py` derives every expected entry
@@ -420,9 +421,9 @@ Design: [txid display](txid-display.md). Roman's decisions:
   (bit 16) and one with several source scripts. Add a transaction with
   transparent inputs and a positive shielded value balance, so Rust and the
   Python oracle agree on it by bytes, not only by reading.
-- [ ] Worker `verify_rows` accepts trailing all-empty segments that the
-  builder never emits. Refuse them, since each adds a reply frame to every
-  query of that bucket.
+- [x] Worker `verify_rows` accepts trailing all-empty segments that the
+  builder never emits. It refuses an empty overflow segment since the
+  one-query layout.
 - [x] v2 cutover, 2026-10-08: production serves v2 from height 1 on a dedicated
   archive host; v1 is retired and its data deleted
   ([status](status.md#txid-display-v2-in-production-from-genesis-2026-10-08)).
@@ -433,14 +434,42 @@ Design: [txid display](txid-display.md). Roman's decisions:
     spot-check it, and derive entries from it with this code;
   - the share of entries with each omission, against Roman's six-month usage
     figures (gate: at least 90% complete);
-  - cuckoo load and segments at the chosen `archive_target`, either 40,000
-    or about 60,000 now that one table per bucket halves memory;
+  - placement load and segments at the chosen `archive_target`: superseded
+    by the [one-query layout's census](#txid-display-one-query-layout-2026-10-11);
   - source-sidecar bytes from genesis against the 150 GB volume, with 20%
     headroom.
 - [x] G, Roman: approved a direct v2 deploy (no clients), the 64 GB host and
   v1's retirement on 2026-10-08.
 - [ ] Re-enable shipped runtimes for v2 once the ship copy no longer worsens
   block-to-serving p95 under the coordinator's I/O load.
+
+## Txid display one-query layout (2026-10-11)
+
+Design: [txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket).
+A direct cutover: `txid-2k8` tables (2,048 rows of 8,192 bytes, 72 entries a
+row), one row per entry under a per-bucket placement seed, one query per
+lookup, 90,000-entry archives and a 90,000-entry sliding recent window.
+`txid-2k`, `txid-4k`, two-choice placement and `recent_floor` are gone; no
+client or map of the old layout is supported.
+
+- [x] Code on `main`: format, placement, seal rule and window, controller,
+  worker, wallet client, tooling and ops request keys (`recent_window`).
+- [x] Gates measured on a development host
+  ([evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md)):
+  placement census from the live map, recent rebuild time against
+  `txid-2k`, runtime memory, and the native demo with one query per lookup.
+- [ ] Placement census over the v2x genesis journal itself: run
+  `txid-display-controller bootstrap` into a scratch root on a development
+  copy of the journal and read the seal records' `seed_tries` and
+  `dir_segments` from the timeline. Gate: every archive one segment, median
+  seed tries at most 2. No development copy was reachable from the task's
+  worker; the live-map census stands in for it.
+- [ ] Repin `transparent-txid-client` in wallet-libraries and update its
+  fixtures (`recent_window`, one query).
+- [ ] G, Roman: approve and run the fresh-lineage cutover (request and phases
+  in [deployment](deployment.md#txid-display-one-query-cutover-prepared-2026-10-11)).
+- [ ] After the cutover: a found and an absent live lookup each send one
+  query, and the recent shard holds at least 90,000 entries.
 
 ## Tiered txid display proof of concept (2026-10-05)
 
