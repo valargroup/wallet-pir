@@ -1,6 +1,6 @@
 # Enhance PIR deployment
 
-The most recent production change is the [October 10 deploy of `9d2cbda0`](../evidence/production-deploy-9d2cbda0-2026-10-10/README.md): every Enhance and Status role moved to that full-CI release through the deploy CLI, which adds acceptance of a growing domain's query-row prefix. It followed the [October 9 deploy of `06a972db`](../evidence/production-deploy-06a972db-2026-10-09/README.md), which added acceptance of 44-bit dithered selections without advertising them. Before them, the [October 6 mixed-transaction fee repair](../evidence/mixed-fee-production-2026-10-06/README.md) was a coordinator-only deploy of `2474cdbb` (native v9), with historical records rebuilt from chain and adopted. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
+The most recent production change is the [October 11 deploy of `eae5641a`](../evidence/production-deploy-eae5641a-2026-10-11/README.md): every Enhance role, now including the GPU worker on its CUDA build, moved to that release, which adds worker and router memory reporting and the shadow `capacity` alerts. Before it came the [October 10 deploy of `9d2cbda0`](../evidence/production-deploy-9d2cbda0-2026-10-10/README.md): every Enhance and Status role moved to that full-CI release through the deploy CLI, which adds acceptance of a growing domain's query-row prefix. It followed the [October 9 deploy of `06a972db`](../evidence/production-deploy-06a972db-2026-10-09/README.md), which added acceptance of 44-bit dithered selections without advertising them. Before them, the [October 6 mixed-transaction fee repair](../evidence/mixed-fee-production-2026-10-06/README.md) was a coordinator-only deploy of `2474cdbb` (native v9), with historical records rebuilt from chain and adopted. The record includes rollback for the binary, the data and the pinned oracles. An earlier full release was the [September 24 cleanup deployment](../evidence/production-cleanup-2026-09-24/README.md), built from `71be21f` (PR #111). All five server roles use the same verified binary; existing v7 state, runtime arguments, and the APM sidecar were preserved. The record includes exact-answer checks and guarded rollback instructions.
 
 The initial v7 SSH rollout used `/opt/enhance-pir-v7/releases/2a83c21` and fresh state
 under `/srv/enhance-pir-v7`. The [dated evidence](../evidence/immutable-v7-2026-09-24/README.md)
@@ -148,6 +148,14 @@ which is enough for a no-op check or an already staged release.
 - `--only ROLE[@HOST]` (repeatable) limits a plan, preflight or deploy to those
   targets, so the replicated workers can roll while single-instance roles keep
   running.
+- The GPU worker runs the `enhance-pir-native-cuda` build, a different binary
+  from the CPU roles. Its inventory entry names `"artifact_kind":
+  "enhance-pir-native-cuda"`, and every plan, preflight or deploy that selects it
+  needs `--extra-archive enhance-pir-native-cuda=<bundle>` with the same `--sha`;
+  without it the command refuses rather than skipping the GPU. The GPU then rolls
+  in its own transaction, in rollout order, with its own exact-answer check. Leave
+  it out deliberately with `--only`. The GPU is the packing router's preferred
+  worker, so a release is not complete until it runs too.
 - A worker built from `main` after 2026-09-30 stops gracefully on SIGTERM: it
   closes its listener, so the packing router retries new evaluations once on
   the other replica, and it finishes and delivers the evaluations it already
