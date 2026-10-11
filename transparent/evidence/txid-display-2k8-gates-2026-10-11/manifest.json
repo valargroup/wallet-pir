@@ -1,0 +1,44 @@
+{
+  "run": "txid-display-2k8-gates-2026-10-11",
+  "kind": "development-host gate measurements before a production step",
+  "utc": "2026-10-11T19:25Z/2026-10-11T21:30Z",
+  "source": {
+    "base_commit": "3b23148d74c6c7c5e11ee17a20b500d328084d4b",
+    "branch": "ai-dev/t-2cef2a026c314a7a/a1/wallet-pir",
+    "evidence_commit": "a887b004",
+    "note": "The census, residency and new bench binaries were built from the branch's working tree before its rebase onto 7d35a8fc; the rebase changed neither the placement nor the runtime build. binaries.sha256 records the binaries."
+  },
+  "toolchain": {"rustc": "1.97.1", "profile": "release-fast", "rustflags": "repository default, target-cpu=native"},
+  "host": {
+    "provider": "DigitalOcean development worker",
+    "cpu": "Intel Xeon Platinum 8280, 8 vCPU, AVX-512, no SHA extensions",
+    "ram_gib": 31,
+    "os": "Linux 6.8.0-142-generic",
+    "sharing": "shared with other agents' tasks; this task's cgroup cpu.max 300000/100000 (3 CPUs)"
+  },
+  "geometry": {"name": "txid-2k8", "rows": 2048, "row_bytes": 8192, "slots_per_row": 72, "max_placement_seeds": 64},
+  "seal": {"n_archive": 1, "n_recent": 1, "archive_target": 90000, "recent_window": 90000, "reorg_margin": 100},
+  "inputs": {
+    "live_map": {
+      "file": "inputs/live-txid-shards-2026-10-11.json",
+      "url": "https://transparent-pir.valargroup.dev/v1/txid/shards",
+      "sha256": "4c6d0e6265a8f3d8635ebebf3f0bbfb33bae7988b8c9ac742db303ca309935e7",
+      "schema": "transparent-txid-display-shard-v2",
+      "archives": 426, "entries": 17053658, "start_height": 1, "tip": 3514373
+    }
+  },
+  "commands": {
+    "census": "txid-placement-census --map inputs/live-txid-shards-2026-10-11.json --trials 100",
+    "rebuild_new": "TRANSPARENT_BUILD_THREADS=4 hint_bench --runtime-only --geometry txid-2k8 --repeats 10 txdirectory=synthetic:90000",
+    "rebuild_base": "TRANSPARENT_BUILD_THREADS=4 hint_bench --runtime-only --geometry txid-2k --repeats 10 txdirectory=synthetic:40000 (3b23148d plus rebuild/hint_bench-base-3b23148d.patch)",
+    "residency": "shard-residency --geometry txid-2k8 --table txdirectory --runtimes 12",
+    "demo": "make transparent-txid-demo REPORT=demo/report.json"
+  },
+  "results": {
+    "census": {"archives": 189, "archive_entries": [90000, 90185], "single_segment": true, "seed_tries_p50": 1, "seed_tries_max": 2, "recent_entries": 90017, "unsealed_at_tip": 41508},
+    "rebuild_seconds": {"txid-2k8": {"n": 30, "p50": 2.359, "p95": 3.079}, "txid-2k": {"n": 30, "p50": 1.512, "p95": 1.624}, "ratio_p50": 1.56, "ratio_p95": 1.90},
+    "runtime_mib": {"steady": 80.04, "max_increment": 85.75, "planned": 80.09, "reserved": 144.09},
+    "genesis_runtimes": {"count": 191, "held_gib_with_4_in_flight": 15.19, "reserved_gib": 26.88, "memory_max": "40G"}
+  },
+  "limits": "The census uses the live map's per-archive counts and pseudorandom tags, not the journal's txids; build times ran 4 threads under a 3-CPU quota on a shared host; nothing was deployed."
+}

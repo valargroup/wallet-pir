@@ -14,7 +14,7 @@ public display map, fetched read-only over HTTPS.
 | Placement census | Every archive one segment; median seed tries at most 2 | 189 archives of 90,000–90,185 entries; all one segment; seed tries p50 1, p95 2, max 2 (178 on the first seed); recent shard 90,017 entries, first seed | Pass, on the live-map census below, not on the journal itself |
 | Recent rebuild, one table at 4 build threads | p95 at most 2× `txid-2k`, well under the ~75 s block interval | `txid-2k8` p50 2.36 s, p95 3.08 s; `txid-2k` p50 1.51 s, p95 1.62 s (30 builds each, interleaved): 1.56× at p50, 1.90× at p95 | Pass, with little margin at p95; see the host note |
 | Runtime memory | Per table and total against the display unit's 40G `MemoryMax` | 80.04 MiB steady per runtime (85.75 MiB once in six), planned 80.09 MiB; 191 runtimes hold 15.2 GiB with four builds in flight (26.9 GiB if all were charged at the bound) | Pass: 38% of 40G |
-| Native demo | Exact on found and absent txids, one query each | See [the demo](#native-demo) | See below |
+| Native demo | Exact on found and absent txids, one query each | 14 entries match the Python oracle; every warm lookup, found or absent, is one 38,920 B query and one 11,280 B reply; the corrupted oracle is refused | Pass |
 
 The real-journal census is still open: no copy of the v2x genesis journal was
 reachable from the task's worker, which has no production credentials.
@@ -119,7 +119,19 @@ at 40,000 entries, adds about 28 archives and 2.2 GiB.
 
 ## Native demo
 
-Filled in below from `make transparent-txid-demo` on the final source.
+`make transparent-txid-demo` ([`demo/report.json`](demo/report.json),
+[`demo/demo.log`](demo/demo.log)) at `a887b004`; the report marks the tree
+dirty because this README and `manifest.json` were not committed yet.
+
+- Mainnet blocks 347,499–347,501 (an archive and a recent shard) and genesis
+  (a recent shard starting at height 0): 14 transactions, every case the
+  fixture distinguishes, each entry equal to the independent Python oracle's.
+- Each warm lookup sent exactly one request: one query, 38,920 B up and
+  11,280 B down. The absent txid's transcript is identical.
+- The run with a corrupted oracle exits nonzero, as it must.
+- The first attempt failed: a publication starting at height 0 has no last
+  sealed height, and the recent map's `sealed_through` underflowed. The map
+  now names `unsealed_start`, the first height no archive holds, instead.
 
 ## Host and provenance
 
