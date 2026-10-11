@@ -5,12 +5,12 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use tower_http::limit::RequestBodyLimitLayer;
 use tracing_subscriber::EnvFilter;
-use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::{DisplayLive, DisplayPublication};
 use transparent_shard_server::display::service::{
     body_limit, router, DisplayRuntime, DisplayState,
 };
 use transparent_shard_server::display::set::DisplaySet;
+use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::display::{parse_role, serves};
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
 use transparent_shard_server::shardset::DEFAULT_RETAIN_REVISIONS;
@@ -24,9 +24,10 @@ struct Cli {
     /// Loopback by default; a worker binds its private address.
     #[arg(long, default_value = "127.0.0.1:8095")]
     listen: SocketAddr,
-    /// `archive-owner` serves sealed shards, `recent-replica` the recent one.
+    /// `archive-owner` serves sealed shards, `recent-replica` the recent one,
+    /// `combined` both.
     #[arg(long, value_parser = role)]
-    role: WorkerRole,
+    role: DisplayRole,
     /// A publication directory to serve at start. With a control socket, the
     /// active record takes precedence; without either, the worker waits for
     /// its first prepare and activation.
@@ -77,8 +78,9 @@ struct Cli {
     collect_root: Vec<PathBuf>,
 }
 
-fn role(text: &str) -> Result<WorkerRole, String> {
-    parse_role(text).ok_or_else(|| format!("{text} is not recent-replica or archive-owner"))
+fn role(text: &str) -> Result<DisplayRole, String> {
+    parse_role(text)
+        .ok_or_else(|| format!("{text} is not recent-replica, archive-owner or combined"))
 }
 
 #[tokio::main]

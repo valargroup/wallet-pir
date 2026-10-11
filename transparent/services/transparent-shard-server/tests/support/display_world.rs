@@ -17,10 +17,10 @@ use tower::ServiceExt;
 use transparent_events::Txid;
 use transparent_shard::display::{self, DisplaySealParams, TXID_2K};
 use transparent_shard::txid::{DisplayEntry, DisplayFacts, DisplayOutput, DisplayRecord, Tag};
-use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::{DisplayCommand, DisplayLive, DisplayPublication};
 use transparent_shard_server::display::service::DisplayRuntime;
 use transparent_shard_server::display::synth::{self, Published, ShardSpec};
+use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
 pub use transparent_txid_client::Provenance;
 use transparent_txid_client::{
@@ -216,7 +216,7 @@ pub struct Worker {
 impl Worker {
     pub fn new(
         root: &Path,
-        role: WorkerRole,
+        role: DisplayRole,
         config: ServiceConfig,
         collect: Vec<PathBuf>,
     ) -> Self {
@@ -303,11 +303,11 @@ impl World {
             .unwrap();
         let archive = Worker::new(
             root.path(),
-            WorkerRole::ArchiveOwner,
+            DisplayRole::ArchiveOwner,
             config,
             vec![root.path().join("sealed")],
         );
-        let recent = Worker::new(root.path(), WorkerRole::RecentReplica, config, Vec::new());
+        let recent = Worker::new(root.path(), DisplayRole::RecentReplica, config, Vec::new());
         // Both start empty and take the publication through control, as a
         // freshly deployed worker does: one table each, the shard's bucket.
         assert_eq!(archive.publish(&p0.0, &p0.1).await["built"], 1);

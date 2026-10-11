@@ -34,10 +34,10 @@ use transparent_filter_server::{
 use transparent_shard::display::{self, DisplaySealParams, DisplayTable, TXID_2K};
 use transparent_shard::txid::{AddressKind, DisplayEntry, DisplayRecord, Tag};
 use transparent_shard_server::{
-    assignment::WorkerRole,
     display::{
         live::{DisplayCommand, DisplayLive, DisplayPublication},
         service::DisplayRuntime,
+        DisplayRole,
     },
     service::{ReadinessMode, ServiceConfig},
 };
@@ -262,7 +262,7 @@ fn source_sha() -> String {
 /// deployed worker does.
 async fn worker(
     root: &Path,
-    role: WorkerRole,
+    role: DisplayRole,
     candidate: &Path,
     map_sha256: &str,
 ) -> Result<DisplayLive, Error> {
@@ -273,8 +273,8 @@ async fn worker(
     };
     let runtime = DisplayRuntime::new(config, None);
     let collect = match role {
-        WorkerRole::ArchiveOwner => vec![root.join("sealed")],
-        WorkerRole::RecentReplica => Vec::new(),
+        DisplayRole::ArchiveOwner | DisplayRole::Combined => vec![root.join("sealed")],
+        DisplayRole::RecentReplica => Vec::new(),
     };
     let live = DisplayLive::new(
         runtime,
@@ -513,8 +513,8 @@ async fn run_range(
     let (candidate, map_sha256) = write_candidate(&root, &map)?;
 
     // Two workers behind an edge, as deployed.
-    let archive = worker(&root, WorkerRole::ArchiveOwner, &candidate, &map_sha256).await?;
-    let replica = worker(&root, WorkerRole::RecentReplica, &candidate, &map_sha256).await?;
+    let archive = worker(&root, DisplayRole::ArchiveOwner, &candidate, &map_sha256).await?;
+    let replica = worker(&root, DisplayRole::RecentReplica, &candidate, &map_sha256).await?;
     let mut tokens = Vec::new();
     for (_, facts) in &expected {
         let txid = identity(&facts.txid)?;

@@ -10,7 +10,6 @@
 use std::path::{Path, PathBuf};
 use transparent_filter_server::txid_display::publisher::verify_dir;
 use transparent_shard::display::{DisplaySealParams, TXID_2K};
-use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::{
     DisplayCommand, DisplayLive, DisplayPublication, Reply,
 };
@@ -18,6 +17,7 @@ use transparent_shard_server::display::prebuild::build_shipped;
 use transparent_shard_server::display::service::DisplayRuntime;
 use transparent_shard_server::display::set::{DisplaySet, MAP_FILE};
 use transparent_shard_server::display::synth::{self, Published, ShardSpec};
+use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::display::{kind, runtime_key};
 use transparent_shard_server::runtime::disk::ShippedRuntimes;
 use transparent_shard_server::runtime::{SharedParams, TableRuntime};
@@ -71,7 +71,7 @@ fn runtime_files(dir: &Path) -> Vec<PathBuf> {
 fn worker(root: &Path) -> DisplayLive {
     DisplayLive::new(
         DisplayRuntime::new(ServiceConfig::default(), None),
-        WorkerRole::RecentReplica,
+        DisplayRole::RecentReplica,
         3,
         root.join("worker/active.json"),
         vec![root.to_path_buf()],
@@ -101,7 +101,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     let recent = &shards[1];
     let (dir, sha) = synth::write_candidate(root, &params(), &shards, "shipped").unwrap();
     let files = build_shipped(&dir.join(&recent.digest), &dir).unwrap();
-    let set = DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).unwrap();
+    let set = DisplaySet::open(&dir, 3, DisplayRole::RecentReplica).unwrap();
     let targets = set.held(&recent.digest).unwrap().targets();
     // The two buckets' tables, each one segment.
     assert_eq!(targets.len(), 2);
@@ -113,7 +113,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     for shard in &shards {
         verify_dir(&dir.join(&shard.digest), &shard.digest).unwrap();
     }
-    let archive_owner = DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).unwrap();
+    let archive_owner = DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap();
     assert!(archive_owner.held(&shards[0].digest).is_some());
 
     let live = worker(root);

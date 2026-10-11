@@ -492,7 +492,8 @@ fn fake_reply(state: &mut Fake, role: &str, command: &mut Value) -> Value {
                 state.staged.clear();
                 return fail("worker restarted".into());
             }
-            if let (true, Some((_, _, served))) = (role == "archive-owner", &state.active) {
+            let holds_sealed = role == "archive-owner" || role == "combined";
+            if let (true, Some((_, _, served))) = (holds_sealed, &state.active) {
                 if let Some(new) = sealed
                     .iter()
                     .find(|d| !served.contains(d) && !state.staged.contains(*d))
@@ -678,6 +679,82 @@ async fn archive_owners_stage_before_any_map_names_a_seal() {
         .join("txid-shards.json")
         .exists());
     assert!(archive.staged.is_empty());
+}
+
+/// One combined worker serves the whole publication: every seal is staged on
+/// it before any prepare names it, it takes every map like a recent replica,
+/// and a reorg is delivered to it before anything newer.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_combined_worker_is_staged_follows_every_map_and_is_invalidated() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 128, 0);
+    let root = temp.path().join("root");
+    let bootstrapped = bootstrap_at(&journal, &root, &layout(&journal, 100), 112);
+    let (log, states) = spawn_fakes(temp.path(), &[("display", "combined")]);
+    let workers = vec![socket_worker(temp.path(), "display", WorkerRole::Combined)];
+    let run = run_script(&root, &journal, advance(112, 128, 4), workers, settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let ops = commands(&log, "display");
+    let new_seals = &run.active.seals[bootstrapped.len()..];
+    assert!(new_seals.len() >= 2, "{} seals", new_seals.len());
+    for seal in new_seals {
+        let staged = ops
+            .iter()
+            .position(|c| {
+                c["operation"] == "stage"
+                    && c["directory"].as_str().unwrap().ends_with(&seal.digest)
+            })
+            .expect("every seal is staged");
+        let named = ops
+            .iter()
+            .position(|c| {
+                c["operation"] == "prepare"
+                    && c["sealed"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|d| d == &seal.digest)
+            })
+            .unwrap();
+        assert!(staged < named, "{seal:?}");
+    }
+    let prepares = ops.iter().filter(|c| c["operation"] == "prepare").count();
+    assert_eq!(prepares, run.maps.len() + 1);
+    {
+        let display = states["display"].lock().unwrap();
+        assert_eq!(display.active.as_ref().unwrap().0, run.active.map_sha256);
+        assert!(display.staged.is_empty());
+    }
+
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 125, 0);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout(&journal, 100), 118);
+    let (log, states) = spawn_fakes(temp.path(), &[("display", "combined")]);
+    let workers = vec![socket_worker(temp.path(), "display", WorkerRole::Combined)];
+    let steps = vec![
+        ScriptStep::Advance(119),
+        ScriptStep::Reorg {
+            ancestor: 118,
+            blocks: fork(1, 119, 121),
+        },
+    ];
+    let run = run_script(&root, &journal, steps, workers, settings()).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let invalidations: Vec<u64> = commands(&log, "display")
+        .iter()
+        .filter(|c| c["operation"] == "invalidate")
+        .map(|c| c["from_height"].as_u64().unwrap())
+        .collect();
+    assert_eq!(invalidations, vec![119]);
+    assert_eq!(run.active.tip, 121);
+    assert_eq!(
+        states["display"].lock().unwrap().active.as_ref().unwrap().0,
+        run.active.map_sha256
+    );
+    assert_eq!(pending_invalidations(&root), json!({}));
 }
 
 fn commands(log: &Log, worker: &str) -> Vec<Value> {

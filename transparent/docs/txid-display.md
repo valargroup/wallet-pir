@@ -200,6 +200,24 @@ geometry.
   - One table per bucket halves a shard's tables and runtimes compared with v1.
 - **Split map.** The map is also published split, so a client's map bytes stay
   bounded as the archive window grows (below).
+- **Workers.** `transparent-txid-server --role` picks which tables a worker
+  holds:
+  - `archive-owner`: the sealed archives;
+  - `recent-replica`: the recent shard;
+  - `combined`: both.
+
+  The controller stages seals on any worker that holds archives, before a map
+  names them. It hands every new map and every reorg invalidation to any
+  worker that holds the recent shard. A combined worker gets both, so one
+  host can serve the whole publication. The edge route keeps its two
+  prefixes, `/v1/txid/archive/*` and `/v1/txid/*`, and both may name the same
+  worker.
+
+  The deploy request picks the layout. A request without a `recent` host runs
+  one combined worker on the archive host. Its optional
+  `hosts.former_recent` names the host of a split deployment's recent replica,
+  and the `workers` phase then stops and removes that worker's unit there. The
+  worker's data on that host is kept.
 - **Leakage** is the range, tier, shard, bucket and timing.
 
 Source:

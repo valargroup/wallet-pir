@@ -16,11 +16,11 @@ use tower::ServiceExt;
 use transparent_events::Txid;
 use transparent_shard::display::{self, DisplayTable, TXID_4K};
 use transparent_shard::txid::{DisplayRecord, Tag};
-use transparent_shard_server::assignment::WorkerRole;
 use transparent_shard_server::display::live::DisplayCommand;
 use transparent_shard_server::display::service::{router, DisplayRuntime, DisplayState};
 use transparent_shard_server::display::set::DisplaySet;
 use transparent_shard_server::display::synth::{self, Published};
+use transparent_shard_server::display::DisplayRole;
 use transparent_shard_server::service::{ReadinessMode, ServiceConfig};
 use transparent_txid_client::{
     Placement, Route, Tier, TxidDisplayClient, TxidError, TxidLookup, TxidReply,
@@ -191,6 +191,54 @@ impl Seal {
             p2,
         }
     }
+}
+
+/// One combined worker holds both tiers: the edge sends archive and recent
+/// routes to the same worker, which builds both tables and answers lookups in
+/// each tier with the same two-query transcript.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_combined_worker_serves_both_tiers() {
+    let root = tempfile::tempdir().unwrap();
+    let a0_records = records(10, &[]);
+    let r0_records = records(20, &[]);
+    let a0 = write_shard(root.path(), &spec(0, 100, 199, true, ""), &a0_records);
+    let r0 = write_shard(
+        root.path(),
+        &spec(1, 200, 260, false, &a0.digest),
+        &r0_records,
+    );
+    let p0 = synth::write_candidate(root.path(), &params(1), &[a0, r0], "p0").unwrap();
+    let worker = Worker::new(
+        root.path(),
+        DisplayRole::Combined,
+        config(),
+        vec![root.path().join("sealed")],
+    );
+    assert_eq!(worker.publish(&p0.0, &p0.1).await["built"], 2);
+    let status = worker.command(DisplayCommand::Status).await.unwrap();
+    assert_eq!(status["role"], "combined");
+    let app = Router::new().fallback(edge).with_state(Edge {
+        archive: worker.live.router(),
+        recent: worker.live.router(),
+        faults: Faults::default(),
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut wallet = Wallet::at(&url);
+    for (records, height, tier) in [
+        (&a0_records, 150, Tier::Archive),
+        (&r0_records, 230, Tier::Recent),
+    ] {
+        assert_eq!(wallet.lookup(ABSENT, height).unwrap(), TxidLookup::Absent);
+        wallet.http.take_log();
+        let (provenance, log) = wallet.found(&records[CLASSES], height);
+        assert_eq!(provenance.tier, tier);
+        assert_eq!(routes(&log), [Route::Query, Route::Query]);
+    }
+    server.abort();
 }
 
 async fn collect(worker: &Worker) -> serde_json::Value {
@@ -644,8 +692,13 @@ async fn the_transcript_depends_on_the_bucket_label_alone() {
     let r0 = write_shard(root.path(), &r, &records(60, &[]));
     let (dir, map_sha256) =
         synth::write_candidate(root.path(), &params(2), &[a0, r0], "n2").unwrap();
-    let archive = Worker::new(root.path(), WorkerRole::ArchiveOwner, config(), Vec::new());
-    let recent = Worker::new(root.path(), WorkerRole::RecentReplica, config(), Vec::new());
+    let archive = Worker::new(root.path(), DisplayRole::ArchiveOwner, config(), Vec::new());
+    let recent = Worker::new(
+        root.path(),
+        DisplayRole::RecentReplica,
+        config(),
+        Vec::new(),
+    );
     assert_eq!(archive.publish(&dir, &map_sha256).await["built"], 2);
     assert_eq!(recent.publish(&dir, &map_sha256).await["built"], 2);
     let app = Router::new().fallback(edge).with_state(Edge {
@@ -811,14 +864,14 @@ async fn misaddressed_requests_are_refused() {
     };
     let owner = router(
         DisplayState::build(
-            DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).unwrap(),
+            DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap(),
             &DisplayRuntime::new(config, None),
         )
         .unwrap(),
     );
     let replica = router(
         DisplayState::build(
-            DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).unwrap(),
+            DisplaySet::open(&dir, 3, DisplayRole::RecentReplica).unwrap(),
             &DisplayRuntime::new(config, None),
         )
         .unwrap(),

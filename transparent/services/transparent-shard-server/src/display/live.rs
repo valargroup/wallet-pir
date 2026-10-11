@@ -17,10 +17,9 @@
 //! reaches a sealed revision is refused and changes nothing; sealed shards
 //! are never rewritten.
 
-use super::serves;
 use super::service::{self, json, DisplayRuntime, DisplayState};
 use super::set::{DisplayRevision, DisplaySet, MAP_FILE};
-use crate::assignment::WorkerRole;
+use super::{serves, DisplayRole};
 use crate::metrics::Snapshot;
 use crate::runtime::RuntimeHandle;
 use axum::extract::{Request, State};
@@ -127,7 +126,7 @@ struct Staged {
 
 struct Inner {
     runtime: Arc<DisplayRuntime>,
-    role: WorkerRole,
+    role: DisplayRole,
     retain: usize,
     record: PathBuf,
     /// Where collection may delete unused shipped directories: candidates
@@ -166,7 +165,7 @@ static NOT_CANCELLED: AtomicBool = AtomicBool::new(false);
 impl DisplayLive {
     pub fn new(
         runtime: Arc<DisplayRuntime>,
-        role: WorkerRole,
+        role: DisplayRole,
         retain: usize,
         record: PathBuf,
         collect_roots: Vec<PathBuf>,
@@ -1058,7 +1057,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let live = DisplayLive::new(
             DisplayRuntime::new(ServiceConfig::default(), None),
-            WorkerRole::ArchiveOwner,
+            DisplayRole::ArchiveOwner,
             3,
             root.path().join("active.json"),
             vec![root.path().to_path_buf()],

@@ -8,9 +8,11 @@
 //! one JSON request on the adapter's stdin, one reply on its stdout.
 //!
 //! Archive owners hold the sealed shards; recent replicas hold the recent
-//! shard and serve the map. A map may only name archives its archive owners
-//! already serve, so a publication activates archive owners first, and only
-//! when the sealed set changed, and recent replicas after them.
+//! shard and serve the map; a combined worker holds both and is driven as an
+//! archive owner for staging and as a recent replica for everything else. A
+//! map may only name archives its archive owners already serve, so a
+//! publication activates archive owners first, and only when the sealed set
+//! changed, and workers holding the recent shard after them.
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -27,6 +29,8 @@ const STAGE_TIMEOUT: Duration = Duration::from_secs(600);
 pub enum WorkerRole {
     RecentReplica,
     ArchiveOwner,
+    /// Both tiers on one worker.
+    Combined,
 }
 
 impl WorkerRole {
@@ -34,7 +38,18 @@ impl WorkerRole {
         match self {
             Self::RecentReplica => "recent-replica",
             Self::ArchiveOwner => "archive-owner",
+            Self::Combined => "combined",
         }
+    }
+
+    /// Holds sealed archives, so seals are staged on it ahead of the map.
+    pub fn holds_sealed(self) -> bool {
+        matches!(self, Self::ArchiveOwner | Self::Combined)
+    }
+
+    /// Holds the recent shard, so it follows every map and every reorg.
+    pub fn holds_recent(self) -> bool {
+        matches!(self, Self::RecentReplica | Self::Combined)
     }
 }
 
@@ -214,7 +229,7 @@ pub struct Worker {
     /// Sealed digests the active map names, when the controller knows them.
     pub sealed: Option<Vec<String>>,
     pub staged: BTreeSet<String>,
-    /// A recent replica's undelivered invalidation: the lowest height a
+    /// A recent-holding worker's undelivered invalidation: the lowest height a
     /// rollback replaced since it last acknowledged one. It is delivered
     /// before the replica is offered anything newer, so it never withdraws a
     /// revision built after the rollback.
@@ -270,10 +285,9 @@ impl Fleet {
         }
     }
 
+    /// Workers holding sealed archives: archive owners and combined workers.
     pub fn archive_owners(&self) -> impl Iterator<Item = &Worker> {
-        self.workers
-            .iter()
-            .filter(|w| w.config.role == WorkerRole::ArchiveOwner)
+        self.workers.iter().filter(|w| w.config.role.holds_sealed())
     }
 
     /// Reads each unknown worker's state. `current` is the controller's active
@@ -291,21 +305,25 @@ impl Fleet {
         errors
     }
 
-    /// Whether any worker is behind `map`: a recent replica not serving it or
-    /// owed an invalidation, or an archive owner not serving its sealed set.
+    /// Whether any worker is behind `map`: a worker holding the recent shard
+    /// not serving it or owed an invalidation, or an archive owner not serving
+    /// its sealed set.
     pub fn stale(&self, sha: &str, map: &transparent_shard::display::DisplayMap) -> bool {
         let sealed = sealed_digests(map);
-        self.workers.iter().any(|w| match w.config.role {
-            WorkerRole::RecentReplica => w.expected != sha || w.invalidate_from.is_some(),
-            WorkerRole::ArchiveOwner => w.sealed.as_ref() != Some(&sealed),
+        self.workers.iter().any(|w| {
+            if w.config.role.holds_recent() {
+                w.expected != sha || w.invalidate_from.is_some()
+            } else {
+                w.sealed.as_ref() != Some(&sealed)
+            }
         })
     }
 
     /// Publishes a candidate: archive owners whose sealed set differs first,
-    /// then, when `recent`, every recent replica not already serving it. An
-    /// archive failure leaves recent replicas untouched, and so does an
-    /// invalidation a recent replica has not acknowledged yet
-    /// ([`Fleet::invalidate`] goes first).
+    /// then, when `recent`, every worker holding the recent shard (recent
+    /// replicas and combined workers) not already serving it. An archive
+    /// failure leaves those untouched, and so does an invalidation one has not
+    /// acknowledged yet ([`Fleet::invalidate`] goes first).
     pub async fn activate(
         &mut self,
         candidate: &Path,
@@ -315,13 +333,14 @@ impl Fleet {
     ) -> Result<ActivationReport, String> {
         let sealed = sealed_digests(map);
         let mut report = ActivationReport::default();
-        let roles: &[WorkerRole] = if recent {
-            &[WorkerRole::ArchiveOwner, WorkerRole::RecentReplica]
-        } else {
-            &[WorkerRole::ArchiveOwner]
-        };
-        for &role in roles {
-            for worker in self.workers.iter_mut().filter(|w| w.config.role == role) {
+        let groups: &[bool] = if recent { &[false, true] } else { &[false] };
+        for &holds_recent in groups {
+            for worker in self
+                .workers
+                .iter_mut()
+                .filter(|w| w.config.role.holds_recent() == holds_recent)
+            {
+                let role = worker.config.role;
                 if let Some(from) = worker.invalidate_from {
                     return Err(format!(
                         "{} {}: invalidation from {from} is not acknowledged",
@@ -329,9 +348,10 @@ impl Fleet {
                         worker.config.name
                     ));
                 }
-                let current = match role {
-                    WorkerRole::ArchiveOwner => worker.sealed.as_ref() == Some(&sealed),
-                    WorkerRole::RecentReplica => worker.expected == sha,
+                let current = if holds_recent {
+                    worker.expected == sha
+                } else {
+                    worker.sealed.as_ref() == Some(&sealed)
                 };
                 if current {
                     continue;
@@ -348,14 +368,14 @@ impl Fleet {
         Ok(report)
     }
 
-    /// Owes every recent replica an invalidation from `from_height`, merged
-    /// with any it still owes. Archive owners keep serving: nothing sealed can
-    /// be affected.
+    /// Owes every worker holding the recent shard an invalidation from
+    /// `from_height`, merged with any it still owes. Archive owners keep
+    /// serving: nothing sealed can be affected.
     pub fn queue_invalidation(&mut self, from_height: u64) {
         for worker in self
             .workers
             .iter_mut()
-            .filter(|w| w.config.role == WorkerRole::RecentReplica)
+            .filter(|w| w.config.role.holds_recent())
         {
             worker.invalidate_from = Some(
                 worker
@@ -378,7 +398,7 @@ impl Fleet {
         for worker in self
             .workers
             .iter_mut()
-            .filter(|w| w.config.role == WorkerRole::RecentReplica)
+            .filter(|w| w.config.role.holds_recent())
         {
             if let Some(from) = pending.get(&worker.config.name) {
                 worker.invalidate_from = Some(*from);

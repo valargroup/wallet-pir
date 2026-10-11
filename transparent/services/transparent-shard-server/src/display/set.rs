@@ -21,8 +21,7 @@
 //! hard-links the same files (device, inode and length). Claiming the same
 //! digest never skips verification.
 
-use super::{kind, runtime_key, serves};
-use crate::assignment::WorkerRole;
+use super::{kind, runtime_key, serves, DisplayRole};
 use crate::runtime::disk::ShippedRuntimes;
 use crate::shardset::{LoadError, SegmentSource};
 use sha2::{Digest, Sha256};
@@ -268,7 +267,7 @@ pub struct DisplaySet {
     pub split: SplitMap,
     /// Index chunk positions in `split.chunks`, by digest.
     chunks: BTreeMap<String, usize>,
-    pub role: WorkerRole,
+    pub role: DisplayRole,
     /// The map's revisions in map order, then retained superseded recent
     /// revisions, newest first.
     revisions: Vec<DisplayRevision>,
@@ -281,7 +280,7 @@ pub struct DisplaySet {
 }
 
 impl DisplaySet {
-    pub fn open(dir: &Path, retain: usize, role: WorkerRole) -> Result<Self, LoadError> {
+    pub fn open(dir: &Path, retain: usize, role: DisplayRole) -> Result<Self, LoadError> {
         Self::open_reusing(dir, retain, None, &[], role)
     }
 
@@ -292,7 +291,7 @@ impl DisplaySet {
         retain: usize,
         previous: Option<&Self>,
         staged: &[&DisplayRevision],
-        role: WorkerRole,
+        role: DisplayRole,
     ) -> Result<Self, LoadError> {
         let map_path = dir.join(MAP_FILE);
         let raw = read(&map_path)?;
@@ -485,12 +484,13 @@ impl DisplaySet {
         &self.revisions
     }
 
-    /// Every runtime this worker keeps warm, in build order: the recent shard
-    /// for a replica, archives oldest first for an owner. Retained superseded
-    /// revisions are built on demand only.
+    /// Every runtime this worker keeps warm, in build order: archives oldest
+    /// first for an owner; the recent shard first, then archives newest first,
+    /// for a worker that holds the recent shard. Retained superseded revisions
+    /// are built on demand only.
     pub fn warm_targets(&self) -> Vec<(String, DisplayTable, u32)> {
         let mut held: Vec<&DisplayRevision> = self.current().iter().filter(|r| r.held()).collect();
-        if self.role == WorkerRole::RecentReplica {
+        if serves(self.role, false) {
             held.reverse();
         }
         held.into_iter()
@@ -576,24 +576,30 @@ mod tests {
     fn roles_hold_only_their_tier_and_relink_by_inode() {
         let root = tempfile::tempdir().unwrap();
         let (dir, shards) = publication(root.path());
-        let owner = DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).unwrap();
+        let owner = DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap();
         assert!(owner.held(&shards[0].digest).is_some());
         assert!(owner.revision(&shards[1].digest).is_some());
         assert!(owner.held(&shards[1].digest).is_none());
         // One bucket, so one table of one segment.
         assert_eq!(owner.warm_targets().len(), 1);
-        let replica = DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).unwrap();
+        let replica = DisplaySet::open(&dir, 3, DisplayRole::RecentReplica).unwrap();
         assert!(replica.held(&shards[0].digest).is_none());
         assert!(replica.held(&shards[1].digest).is_some());
         assert_eq!(
             replica.runtime_key_strings(),
             HashSet::from([format!("{}/directory-0", shards[1].digest)])
         );
+        // A combined worker holds both tiers and warms the recent shard first.
+        let combined = DisplaySet::open(&dir, 3, DisplayRole::Combined).unwrap();
+        assert!(combined.held(&shards[0].digest).is_some());
+        assert!(combined.held(&shards[1].digest).is_some());
+        let order: Vec<String> = combined.warm_targets().into_iter().map(|t| t.0).collect();
+        assert_eq!(order, [shards[1].digest.clone(), shards[0].digest.clone()]);
 
         // A second candidate linking the same files takes the sources over.
         let (next, _) = synth::write_candidate(root.path(), &params(), &shards, "c1").unwrap();
         let reused =
-            DisplaySet::open_reusing(&next, 3, Some(&owner), &[], WorkerRole::ArchiveOwner)
+            DisplaySet::open_reusing(&next, 3, Some(&owner), &[], DisplayRole::ArchiveOwner)
                 .unwrap();
         let held = reused.held(&shards[0].digest).unwrap();
         assert!(held.buckets[0][0].path.starts_with(&next));
@@ -607,7 +613,7 @@ mod tests {
         let map_path = dir.join(MAP_FILE);
         let canonical = std::fs::read(&map_path).unwrap();
         std::fs::write(&map_path, [canonical.as_slice(), b"\n"].concat()).unwrap();
-        assert!(DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).is_err());
+        assert!(DisplaySet::open(&dir, 3, DisplayRole::RecentReplica).is_err());
         std::fs::write(&map_path, &canonical).unwrap();
 
         // A segment changed after publication. The candidate shares inodes
@@ -617,9 +623,9 @@ mod tests {
         bytes[100] ^= 1;
         std::fs::remove_file(&segment).unwrap();
         std::fs::write(&segment, &bytes).unwrap();
-        assert!(DisplaySet::open(&dir, 3, WorkerRole::RecentReplica).is_err());
+        assert!(DisplaySet::open(&dir, 3, DisplayRole::RecentReplica).is_err());
         // The owner never reads the recent tables, so it still loads.
-        DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).unwrap();
+        DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).unwrap();
 
         // A sealed revision the map does not name.
         let root = tempfile::tempdir().unwrap();
@@ -627,7 +633,7 @@ mod tests {
         let stray = synth::write_shard(root.path(), &spec(5, 40, 49, true), &synth::records(3, 99))
             .unwrap();
         synth::link_revision(&stray.dir, &dir.join(&stray.digest)).unwrap();
-        assert!(DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).is_err());
+        assert!(DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).is_err());
         std::fs::remove_dir_all(dir.join(&stray.digest)).unwrap();
 
         // A broken manifest chain.
@@ -642,7 +648,7 @@ mod tests {
             "chain",
         )
         .unwrap();
-        assert!(DisplaySet::open(&dir, 3, WorkerRole::ArchiveOwner).is_err());
+        assert!(DisplaySet::open(&dir, 3, DisplayRole::ArchiveOwner).is_err());
     }
 
     #[test]
@@ -675,14 +681,14 @@ mod tests {
         for old in &recents[..3] {
             synth::link_revision(&old.dir, &dir.join(&old.digest)).unwrap();
         }
-        let set = DisplaySet::open(&dir, 2, WorkerRole::RecentReplica).unwrap();
+        let set = DisplaySet::open(&dir, 2, DisplayRole::RecentReplica).unwrap();
         assert_eq!(set.revisions().len(), 4, "two current plus two retained");
         assert!(set.held(&recents[2].digest).is_some());
         assert!(set.held(&recents[1].digest).is_some());
         assert!(set.revision(&recents[0].digest).is_none());
         assert_eq!(set.excess.len(), 1);
         // An owner ignores superseded recent revisions altogether.
-        let owner = DisplaySet::open(&dir, 2, WorkerRole::ArchiveOwner).unwrap();
+        let owner = DisplaySet::open(&dir, 2, DisplayRole::ArchiveOwner).unwrap();
         assert_eq!(owner.revisions().len(), 2);
     }
 }

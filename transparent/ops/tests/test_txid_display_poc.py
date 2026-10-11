@@ -106,6 +106,14 @@ def request():
     }
 
 
+def combined_request():
+    """The combined layout: no recent host, one combined worker on the archive host."""
+    value = request()
+    for field in ('hosts', 'units', 'baseline'):
+        del value[field]['recent']
+    return value
+
+
 class Lock:
     def __init__(self, fake):
         self.fake = fake
@@ -138,6 +146,8 @@ class Fake(Executor):
         self.history = {'freshness_seconds': 3, 'ready_replicas': 2}
         self.worker_binary = sha256(binary_bytes('transparent-txid-server'))
         self.reconciler_renders = True
+        # The role each worker reports; the combined layout overrides it.
+        self.roles = dict(P.ROLES)
 
     # ------------------------------------------------------------ helpers
 
@@ -274,7 +284,7 @@ class Fake(Executor):
                 active = self.unit(HOSTS[key], P.WORKER_UNIT)['active'] == 'active'
                 if not active or key not in self.active:
                     return 503, '{}'
-                return 200, json.dumps({'ready': True, 'role': P.ROLES[key], 'map_sha256': self.active[key],
+                return 200, json.dumps({'ready': True, 'role': self.roles[key], 'map_sha256': self.active[key],
                                         'warm': True})
         if url == 'https://pir.example/v1/txid/map':
             routed = self.text('router-01', '/etc/caddy/txid-display/routes.caddy')
@@ -300,7 +310,7 @@ class Fake(Executor):
         operation = command['operation']
         if operation == 'status':
             active = self.active.get(worker)
-            reply = {'ok': True, 'role': P.ROLES[worker], 'warm': active is not None, 'staged': [],
+            reply = {'ok': True, 'role': self.roles[worker], 'warm': active is not None, 'staged': [],
                      'binary_sha256': self.worker_binary,
                      'active': {'directory': '%s/%s' % (P.PUBLICATIONS, active), 'map_sha256': active}
                      if active else None,
@@ -1053,6 +1063,112 @@ class RouteTests(DeployedFleet):
         poc = self.poc()
         with self.assertRaisesRegex(P.PocError, 'deploy router-hook first'):
             poc.deploy('route', poc.plan_sha256())
+
+
+class CombinedLayoutTests(DeployedFleet):
+    """A request without a recent host runs one combined worker on the archive host."""
+
+    def setUp(self):
+        super().setUp()
+        self.request = combined_request()
+        self.fake.roles = dict(P.COMBINED_ROLES)
+
+    def test_a_combined_request_validates_and_partial_recent_keys_are_refused(self):
+        P.validate(self.request, inventory())
+        for field in ('hosts', 'units', 'baseline'):
+            partial = request()
+            del partial[field]['recent']
+            with self.assertRaisesRegex(P.PocError, 'all present .split layout. or all absent'):
+                P.validate(partial, inventory())
+            partial = combined_request()
+            partial[field]['recent'] = request()[field]['recent']
+            with self.assertRaisesRegex(P.PocError, 'all present .split layout. or all absent'):
+                P.validate(partial, inventory())
+        shared = combined_request()
+        shared['hosts']['router']['inventory'] = 'archive-03'
+        with self.assertRaisesRegex(P.PocError, 'coordinator, archive and router must be distinct hosts'):
+            P.validate(shared, inventory())
+
+    def test_plan_renders_one_combined_worker_and_routes_everything_to_it(self):
+        poc = self.poc()
+        files = poc.render()
+        self.assertNotIn('unit:recent', files)
+        self.assertIn('--listen 10.142.0.5:8095 --role combined ', files['unit:archive'])
+        self.assertEqual([(w['name'], w['role']) for w in json.loads(files['workers.json'])['workers']],
+                         [('archive', 'combined')])
+        self.assertEqual(sorted(json.loads(files['fleet.json'])['workers']), ['archive'])
+        snippet = files['routes.caddy']
+        archive, rest = snippet.index('handle /v1/txid/archive/* {'), snippet.index('handle /v1/txid/* {')
+        self.assertIn('reverse_proxy 10.142.0.5:8095 {', snippet[archive:rest])
+        self.assertIn('reverse_proxy 10.142.0.5:8095 {', snippet[rest:])
+        self.assertNotIn('10.142.0.6', snippet)
+        plan = poc.plan()
+        self.assertEqual(sorted(plan['hosts']), ['archive', 'coordinator', 'router'])
+        self.assertEqual(sorted(plan['release']), ['archive', 'coordinator'])
+        self.assertNotIn('unit:recent', plan['files'])
+        # The split layout's plan is a different review token.
+        self.assertNotEqual(poc.plan_sha256(), self.poc(request()).plan_sha256())
+
+    def test_workers_and_status_touch_no_recent_host(self):
+        poc = self.deploy('workers', map_sha256=self.map)
+        self.assertEqual(self.fake.active, {'archive': self.map})
+        self.assertEqual(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT),
+                         poc.render()['unit:archive'])
+        verify = [argv for argv in self.fake.commands('archive-03') if argv[0] == 'systemd-run']
+        self.assertEqual(verify[0][-7:-5], ['--role', 'combined'])
+        self.assertEqual({worker for worker, _ in self.fake.calls}, {'archive'})
+        self.assertEqual(json.loads(self.fake.text('coordinator', P.FLEET_JSON))['workers'].keys(), {'archive'})
+        status = poc.status()
+        self.assertEqual(list(status['workers']), ['archive'])
+        self.assertEqual(status['workers']['archive']['ready']['role'], 'combined')
+        self.assertFalse([key for key in status['units'] if 'recent' in key])
+        self.assertEqual(self.poc().preflight(), [])
+        self.assertEqual(self.fake.mutations('recent-01'), [])
+        self.assertEqual(self.fake.commands('recent-01'), [])
+        poc.rollback(poc.transaction.id)
+        self.assertIsNone(self.fake.text('archive-03', '/etc/systemd/system/' + P.WORKER_UNIT))
+        self.assertEqual(self.fake.mutations('recent-01'), [])
+
+    def test_controller_writes_one_combined_worker(self):
+        self.deploy('workers', map_sha256=self.map)
+        self.deploy('controller')
+        workers = json.loads(self.fake.text('coordinator', P.WORKERS_JSON))['workers']
+        self.assertEqual([(w['name'], w['role']) for w in workers], [('archive', 'combined')])
+        self.assertEqual(self.fake.mutations('recent-01'), [])
+
+    def test_switching_from_split_retires_the_former_recent_worker(self):
+        self.fake.roles = dict(P.ROLES)
+        split = self.poc(request())
+        split.deploy('workers', split.plan_sha256(), map_sha256=self.map)
+        self.fake.roles = dict(P.ROLES, **P.COMBINED_ROLES)
+        unit = '/etc/systemd/system/' + P.WORKER_UNIT
+        previous = self.fake.text('recent-01', unit)
+        self.assertEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
+        # Validation: only the combined layout may name a former recent host,
+        # and it must be a distinct inventory host.
+        wrong = request()
+        wrong['hosts'][P.FORMER_RECENT] = {'inventory': 'recent-01'}
+        with self.assertRaisesRegex(P.PocError, 'combined layout only'):
+            P.validate(wrong, inventory())
+        wrong = combined_request()
+        wrong['hosts'][P.FORMER_RECENT] = {'inventory': 'archive-03'}
+        with self.assertRaisesRegex(P.PocError, 'must be distinct hosts'):
+            P.validate(wrong, inventory())
+
+        self.request['hosts'][P.FORMER_RECENT] = {'inventory': 'recent-01'}
+        poc = self.poc()
+        self.assertEqual(poc.plan()['retires'], {P.FORMER_RECENT: 'recent-01'})
+        self.assertNotEqual(poc.plan_sha256(), self.poc(combined_request()).plan_sha256())
+        poc.deploy('workers', poc.plan_sha256(), map_sha256=self.map)
+        self.assertIn('--role combined ', self.fake.text('archive-03', unit))
+        self.assertEqual(self.fake.unit('archive-03', P.WORKER_UNIT)['active'], 'active')
+        self.assertIsNone(self.fake.text('recent-01', unit))
+        self.assertNotEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
+        self.assertIn(['systemctl', 'disable', P.WORKER_UNIT], self.fake.commands('recent-01'))
+
+        poc.rollback(poc.transaction.id)
+        self.assertEqual(self.fake.text('recent-01', unit), previous)
+        self.assertEqual(self.fake.unit('recent-01', P.WORKER_UNIT)['active'], 'active')
 
 
 class ControllerTests(DeployedFleet):

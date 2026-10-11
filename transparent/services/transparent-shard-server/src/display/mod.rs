@@ -9,12 +9,13 @@
 //! shared native parameters, admission, work-memory accounting, metrics and
 //! the disk cache.
 //!
-//! **Roles.** A worker either owns the sealed archive shards or replicates the
-//! recent shard, never both. It reads every manifest of a publication, so any
-//! worker can answer the map and manifest routes, but it verifies, builds and
-//! serves only the tables of its own role's revisions. A request for another
-//! role's revision is refused with 421, as a history worker refuses an
-//! unassigned shard.
+//! **Roles.** An archive owner holds the sealed archive shards, a recent
+//! replica holds the recent shard, and a combined worker holds both, so one
+//! host can serve the whole publication. A worker reads every manifest of a
+//! publication, so any worker can answer the map and manifest routes, but it
+//! verifies, builds and serves only the tables of its own role's revisions. A
+//! request for another role's revision is refused with 421, as a history
+//! worker refuses an unassigned shard.
 //!
 //! **The split map.** Besides the full map (`/v1/txid/shards`, kept for
 //! clients built before the split), every worker serves the recent map
@@ -40,7 +41,6 @@ pub mod service;
 pub mod set;
 pub mod synth;
 
-use crate::assignment::WorkerRole;
 use crate::runtime::RuntimeKey;
 use crate::shardset::Table;
 use transparent_shard::display::{DisplayKind, DisplayTable};
@@ -67,19 +67,46 @@ pub fn runtime_key(digest: &str, table: DisplayTable, segment: u32) -> RuntimeKe
     )
 }
 
-/// Parses a role by the names history assignments use.
-pub fn parse_role(text: &str) -> Option<WorkerRole> {
-    [WorkerRole::RecentReplica, WorkerRole::ArchiveOwner]
+/// Which tiers of a display publication a worker holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisplayRole {
+    /// The unsealed recent shard only.
+    RecentReplica,
+    /// The sealed archive shards only.
+    ArchiveOwner,
+    /// Both: the sealed archives and the recent shard.
+    Combined,
+}
+
+impl DisplayRole {
+    pub const ALL: [Self; 3] = [Self::RecentReplica, Self::ArchiveOwner, Self::Combined];
+
+    /// The name on the command line, in status replies and in the
+    /// controller's worker list. The first two are history's role names.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::RecentReplica => "recent-replica",
+            Self::ArchiveOwner => "archive-owner",
+            Self::Combined => "combined",
+        }
+    }
+}
+
+/// Parses a role by its [`DisplayRole::as_str`] name.
+pub fn parse_role(text: &str) -> Option<DisplayRole> {
+    DisplayRole::ALL
         .into_iter()
         .find(|role| role.as_str() == text)
 }
 
 /// Whether a worker of `role` holds the tables of a revision with this sealed
-/// flag: owners hold sealed archives, replicas hold the unsealed recent shard.
-pub fn serves(role: WorkerRole, sealed: bool) -> bool {
+/// flag: owners hold sealed archives, replicas hold the unsealed recent shard,
+/// and a combined worker holds both.
+pub fn serves(role: DisplayRole, sealed: bool) -> bool {
     match role {
-        WorkerRole::ArchiveOwner => sealed,
-        WorkerRole::RecentReplica => !sealed,
+        DisplayRole::ArchiveOwner => sealed,
+        DisplayRole::RecentReplica => !sealed,
+        DisplayRole::Combined => true,
     }
 }
 
@@ -118,15 +145,17 @@ mod tests {
     }
 
     #[test]
-    fn roles_parse_by_history_names_and_split_tiers() {
-        for role in [WorkerRole::RecentReplica, WorkerRole::ArchiveOwner] {
+    fn roles_parse_by_name_and_split_tiers() {
+        for role in DisplayRole::ALL {
             assert_eq!(parse_role(role.as_str()), Some(role));
         }
         assert_eq!(parse_role("archive"), None);
-        assert!(serves(WorkerRole::ArchiveOwner, true));
-        assert!(!serves(WorkerRole::ArchiveOwner, false));
-        assert!(serves(WorkerRole::RecentReplica, false));
-        assert!(!serves(WorkerRole::RecentReplica, true));
+        assert!(serves(DisplayRole::ArchiveOwner, true));
+        assert!(!serves(DisplayRole::ArchiveOwner, false));
+        assert!(serves(DisplayRole::RecentReplica, false));
+        assert!(!serves(DisplayRole::RecentReplica, true));
+        assert!(serves(DisplayRole::Combined, true));
+        assert!(serves(DisplayRole::Combined, false));
         assert_eq!(tier(true), "archive");
         assert_eq!(tier(false), "recent");
     }

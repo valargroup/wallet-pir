@@ -1,10 +1,15 @@
 """The `wallet-pir-deploy.py txid-display-*` command family.
 
 Runs the tiered txid display proof of concept side by side with history on
-production: a controller and a fresh display journal on the coordinator, an
-archive-owner worker, a recent-replica worker and a `/v1/txid/` route on the
-history router. History units and data are never changed; the only
-history-adjacent change is the router import hook (`router-hook`).
+production: a controller and a fresh display journal on the coordinator, the
+display workers and a `/v1/txid/` route on the history router. A request picks
+the worker layout. The split layout names a `recent` host and runs an
+archive-owner worker on the archive host and a recent-replica worker on the
+recent host. The combined layout omits `recent` from `hosts`, `units` and
+`baseline`, and runs one worker with role `combined` on the archive host,
+holding both the sealed archives and the recent shard; the route then sends
+every `/v1/txid/` request to it. History units and data are never changed; the
+only history-adjacent change is the router import hook (`router-hook`).
 
 Every command takes the reviewed request and its sha256. `plan` is read-only
 and deterministic: rendered units, configs and snippets come from the request
@@ -56,9 +61,14 @@ HOST_RELEASE = {
     'archive': ('transparent-txid-server', 'txid-control'),
     'recent': ('transparent-txid-server', 'txid-control'),
 }
+# The split layout's workers; the combined layout runs only COMBINED_ROLES.
 WORKERS = ('archive', 'recent')
 ROLES = {'archive': 'archive-owner', 'recent': 'recent-replica'}
+COMBINED_ROLES = {'archive': 'combined'}
 HOST_KEYS = ('coordinator', 'archive', 'recent', 'router')
+# A combined request may name the host a split deployment ran its recent
+# replica on; the workers phase stops and removes that worker's unit there.
+FORMER_RECENT = 'former_recent'
 PHASES = ('stage', 'firewall', 'router-hook', 'workers', 'route', 'controller')
 ACTIONS = ('ingest-start', 'ingest-stop', 'bootstrap', 'verify', 'measure-start', 'measure-stop', 'stop')
 MODES = ('live', 'replay', 'replay-then-live')
@@ -194,10 +204,25 @@ def inside(path, root):
     return path == root or path.startswith(root.rstrip('/') + '/')
 
 
+def layout(request):
+    """`(worker keys, role by worker key)` of a validated request.
+
+    A request without a recent host runs one combined worker on the archive host.
+    """
+    return (WORKERS, ROLES) if 'recent' in request['hosts'] else (tuple(COMBINED_ROLES), COMBINED_ROLES)
+
+
 def validate(request, inventory):
     """The reviewed request, or PocError. Closed key sets throughout."""
     exact(request, ('schema', 'source_sha', 'release', 'hosts', 'ports', 'units', 'journal', 'publication',
                     'controller', 'router', 'terraform', 'history', 'measure', 'baseline'), 'request')
+    recent = [isinstance(request[field], dict) and 'recent' in request[field]
+              for field in ('hosts', 'units', 'baseline')]
+    require(all(recent) or not any(recent),
+            'hosts.recent, units.recent and baseline.recent must be all present (split layout) '
+            'or all absent (combined layout)')
+    workers, _ = layout(request) if isinstance(request['hosts'], dict) else (WORKERS, ROLES)
+    host_keys = tuple(key for key in HOST_KEYS if key in workers or key not in WORKERS)
     require(request['schema'] == SCHEMA, 'request schema must be %s' % SCHEMA)
     require(isinstance(request['source_sha'], str) and HEX40.fullmatch(request['source_sha']),
             'source_sha must be a full lowercase commit')
@@ -211,9 +236,14 @@ def validate(request, inventory):
         require(all(isinstance(v, str) and HEX64.fullmatch(v) for v in release[field].values()),
                 'release.%s values must be sha256 digests' % field)
 
-    hosts = exact(request['hosts'], HOST_KEYS, 'hosts')
-    names = []
-    for key in HOST_KEYS:
+    former = isinstance(request['hosts'], dict) and FORMER_RECENT in request['hosts']
+    require(not (former and 'recent' in workers), 'hosts.%s belongs to the combined layout only' % FORMER_RECENT)
+    hosts = exact(request['hosts'], host_keys + ((FORMER_RECENT,) if former else ()), 'hosts')
+    if former:
+        exact(hosts[FORMER_RECENT], ('inventory',), 'hosts.' + FORMER_RECENT)
+        require(hosts[FORMER_RECENT]['inventory'] in inventory.hosts, 'hosts.%s names no inventory host' % FORMER_RECENT)
+    names = [hosts[FORMER_RECENT]['inventory']] if former else []
+    for key in host_keys:
         exact(hosts[key], ('inventory', 'vpc_ip') if key in WORKERS else ('inventory',), 'hosts.' + key)
         require(hosts[key]['inventory'] in inventory.hosts, 'hosts.%s names no inventory host' % key)
         names.append(hosts[key]['inventory'])
@@ -223,7 +253,8 @@ def validate(request, inventory):
             except (ipaddress.AddressValueError, TypeError):
                 raise PocError('hosts.%s.vpc_ip must be an IPv4 address' % key) from None
             require(address.is_private and not address.is_loopback, 'hosts.%s.vpc_ip must be a VPC address' % key)
-    require(len(set(names)) == len(names), 'coordinator, archive, recent and router must be distinct hosts')
+    keys = host_keys + ((FORMER_RECENT,) if former else ())
+    require(len(set(names)) == len(names), '%s and %s must be distinct hosts' % (', '.join(keys[:-1]), keys[-1]))
     if inventory.lock.get('type') == 'remote':
         require(inventory.lock['host'] == hosts['coordinator']['inventory'],
                 'the production lock host must be the coordinator')
@@ -235,8 +266,8 @@ def validate(request, inventory):
     require(ports['worker'] == WORKER_PORT, 'ports.worker must be %d, the port the firewall rule opens' % WORKER_PORT)
     require(ports['worker'] != ports['controller_status'], 'ports must differ')
 
-    limits = exact(request['units'], ('archive', 'recent', 'controller', 'ingest', 'bootstrap'), 'units')
-    for key in WORKERS:
+    limits = exact(request['units'], (*workers, 'controller', 'ingest', 'bootstrap'), 'units')
+    for key in workers:
         spec = exact(limits[key], ('cache_bytes', 'memory_max', 'cpu_quota', 'cpu_weight', 'nice',
                                    'oom_score_adjust', 'build_threads', 'build_slots', 'query_slots',
                                    'retain_revisions', 'disk_cache_bytes', 'ready_timeout_seconds'), 'units.' + key)
@@ -314,7 +345,7 @@ def validate(request, inventory):
     data = [journal['data_dir'], journal['data_dir'] + '.smoke', publication['root'], measure['output']]
     require(not any(inside(a, b) for i, a in enumerate(data) for j, b in enumerate(data) if i != j),
             'journal, publication and measure directories must not nest')
-    baseline = exact(request['baseline'], ('coordinator', 'archive', 'recent'), 'baseline')
+    baseline = exact(request['baseline'], ('coordinator', *workers), 'baseline')
     for key, value in baseline.items():
         exact(value, ('mem_available_bytes',), 'baseline.' + key)
         integer(value['mem_available_bytes'], 1, 1 << 44, 'baseline.%s.mem_available_bytes' % key)
@@ -471,6 +502,13 @@ class Poc:
         self.inventory = inventory
         self.request = validate(request, inventory)
         self.request_sha256 = request_sha256
+        # Only the workers and hosts this request's layout names; see layout().
+        self.worker_keys, self.roles = layout(self.request)
+        self.host_keys = tuple(key for key in HOST_KEYS if key in self.request['hosts'])
+        self.former_recent = FORMER_RECENT in self.request['hosts']
+        self.host_release = {key: names for key, names in HOST_RELEASE.items() if key in self.host_keys}
+        # The worker that serves the map and every non-archive /v1/txid/ path.
+        self.map_worker = 'recent' if 'recent' in self.roles else 'archive'
         self.journal_dir = Path(state_dir)
         self.ex = executor or SSHExecutor(inventory)
         self.lock_factory = lock or (lambda: production_lock(inventory, self.ex))
@@ -535,13 +573,13 @@ class Poc:
         """Every file the deploy writes, from the request and this checkout only."""
         r = self.request
         files = {}
-        for key in WORKERS:
+        for key in self.worker_keys:
             spec = r['units'][key]
             extra = ''
             if spec['disk_cache_bytes']:
                 extra = ' --runtime-cache-dir %s --runtime-cache-max-bytes %d' % (RUNTIME_CACHE, spec['disk_cache_bytes'])
             files['unit:' + key] = units.render(self.template('transparent-txid-display-worker.service.in'), {
-                'RELEASE': self.release_dir, 'LISTEN': self.upstream(key), 'ROLE': ROLES[key],
+                'RELEASE': self.release_dir, 'LISTEN': self.upstream(key), 'ROLE': self.roles[key],
                 'COLLECT_ROOT': PUBLICATIONS, 'STAGED_ROOT': STAGED,
                 'CACHE_BYTES': str(spec['cache_bytes']), 'BUILD_SLOTS': str(spec['build_slots']),
                 'QUERY_SLOTS': str(spec['query_slots']), 'RETAIN_REVISIONS': str(spec['retain_revisions']),
@@ -560,23 +598,24 @@ class Poc:
             'RPC_URL': controller['rpc_url'], 'RPC_COOKIE': controller['rpc_cookie'], 'EXTRA_ARGS': extra,
             'MEMORY_MAX': limits['memory_max'], 'CPU_QUOTA': limits['cpu_quota'],
             'CPU_WEIGHT': str(limits['cpu_weight']), 'NICE': str(limits['nice'])})
-        for name in ('unit:archive', 'unit:recent', 'unit:controller'):
+        for name in ['unit:' + key for key in self.worker_keys] + ['unit:controller']:
             starts = [value for _, key, value in units.entries(files[name]) if key == 'ExecStart']
             require(len(starts) == 1, '%s must have exactly one ExecStart' % name)
         transport = {'command': self.binary('txid-display-fleet.py'), 'config': FLEET_JSON}
         # Archive owners first: the controller stages and prepares them before
-        # the recent replica, which serves the map.
+        # the recent replica, which serves the map. A combined worker does both.
         files['workers.json'] = json.dumps({'workers': [
-            {'name': key, 'role': ROLES[key], 'transport': transport} for key in WORKERS]}, indent=2) + '\n'
+            {'name': key, 'role': self.roles[key], 'transport': transport} for key in self.worker_keys]},
+            indent=2) + '\n'
         files['fleet.json'] = json.dumps({
             'schema': FLEET_SCHEMA, 'ssh_key': DEPLOY_KEY, 'known_hosts': KNOWN_HOSTS,
             'control_dir': STATE + '/ssh',
             'workers': {key: {'ssh_host': r['hosts'][key]['vpc_ip'], 'user': 'root', 'publications': PUBLICATIONS,
                               'staged': STAGED, 'control_socket': CONTROL_SOCKET,
-                              'control_binary': self.binary('txid-control')} for key in WORKERS},
+                              'control_binary': self.binary('txid-control')} for key in self.worker_keys},
         }, indent=2, sort_keys=True) + '\n'
         files['routes.caddy'] = units.render(self.template('txid-display-routes.caddy.in'), {
-            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream('recent')})
+            'ARCHIVE_UPSTREAM': self.upstream('archive'), 'RECENT_UPSTREAM': self.upstream(self.map_worker)})
         files['withdrawn.caddy'] = WITHDRAWN
         files['tfvars'] = '# txid display proof of concept; removed by txid-display-retire.\n%s = true\n' % TF_VARIABLE
         return files
@@ -584,8 +623,7 @@ class Poc:
     def targets(self):
         """`name -> (host key, path, mode)` of every rendered file."""
         return {
-            'unit:archive': ('archive', '%s/%s' % (SYSTEM, WORKER_UNIT), 0o644),
-            'unit:recent': ('recent', '%s/%s' % (SYSTEM, WORKER_UNIT), 0o644),
+            **{'unit:' + key: (key, '%s/%s' % (SYSTEM, WORKER_UNIT), 0o644) for key in self.worker_keys},
             'unit:controller': ('coordinator', '%s/%s' % (SYSTEM, CONTROLLER_UNIT), 0o644),
             'workers.json': ('coordinator', WORKERS_JSON, 0o600),
             'fleet.json': ('coordinator', FLEET_JSON, 0o600),
@@ -654,7 +692,7 @@ class Poc:
     def verify_only(self, key, directory):
         spec = self.request['units'][key]
         return self.systemd_run('transparent-txid-display-verify-only.service', self.unit_limits(key), [
-            self.binary('transparent-txid-server'), '--role', ROLES[key], '--publication-dir', directory,
+            self.binary('transparent-txid-server'), '--role', self.roles[key], '--publication-dir', directory,
             '--cache-bytes', str(spec['cache_bytes']), '--verify-only'],
             wait=True, environment=('TRANSPARENT_BUILD_THREADS=%d' % spec['build_threads'],))
 
@@ -671,12 +709,13 @@ class Poc:
             self._plan = {
                 'schema': PLAN_SCHEMA, 'request_sha256': self.request_sha256,
                 'source_sha': self.request['source_sha'], 'release_dir': self.release_dir,
-                'hosts': {key: self.host(key) for key in HOST_KEYS},
+                'hosts': {key: self.host(key) for key in self.host_keys},
+                'retires': {FORMER_RECENT: self.host(FORMER_RECENT)} if self.former_recent else {},
                 'phases': list(PHASES),
                 'files': {name: {'host': targets[name][0], 'path': targets[name][1],
                                  'mode': '%04o' % targets[name][2], 'sha256': sha256(text)}
                           for name, text in sorted(files.items())},
-                'release': {key: list(names) for key, names in HOST_RELEASE.items()},
+                'release': {key: list(names) for key, names in self.host_release.items()},
                 'templates': {name: file_sha256(self.root / path) for name, path in sorted(RELEASE_FILES.items())},
                 'router_hook': {
                     'host': 'coordinator', 'script': self.live_fleet,
@@ -864,7 +903,7 @@ class Poc:
         r = self.request['units']
         if action == 'workers':
             return {key: 0 if self.running(key, WORKER_UNIT) else memory_bytes(r[key]['memory_max'])
-                    for key in WORKERS}
+                    for key in self.worker_keys}
         starts = {'controller': (CONTROLLER_UNIT, 'controller'), 'ingest-start': (INGEST_UNIT, 'ingest'),
                   'ingest-smoke': (SMOKE_UNIT, 'ingest'), 'bootstrap': (BOOTSTRAP_UNIT, 'bootstrap'),
                   'verify': (None, 'controller')}
@@ -907,14 +946,14 @@ class Poc:
         """Memory, disk, port and input checks of one forward action."""
         r = self.request
         problems = self.memory_problems(self.reservations(action))
-        paths = {'stage': [(key, OPT) for key in HOST_RELEASE],
-                 'workers': [(key, WORKER_DATA) for key in WORKERS],
+        paths = {'stage': [(key, OPT) for key in self.host_release],
+                 'workers': [(key, WORKER_DATA) for key in self.worker_keys],
                  'route': [('router', '/etc/caddy')], 'router-hook': [('router', '/etc/caddy')],
                  'measure-start': [('coordinator', r['measure']['output'])]}
         default = [('coordinator', p) for p in (r['journal']['data_dir'], r['publication']['root'], OPT)]
         problems += self.disk_problems(paths.get(action, default))
         if action == 'workers':
-            for key in WORKERS:
+            for key in self.worker_keys:
                 problems += self.port_problems(key, r['ports']['worker'], WORKER_UNIT)
         if action == 'controller':
             problems += self.port_problems('coordinator', r['ports']['controller_status'], CONTROLLER_UNIT)
@@ -958,7 +997,7 @@ class Poc:
             for name, path in RELEASE_FILES.items():
                 require(file_sha256(bundle / name) == file_sha256(self.root / path),
                         'release %s differs from this checkout; deploy from the release revision' % name)
-            for key, names in HOST_RELEASE.items():
+            for key, names in self.host_release.items():
                 self.stage_host(transaction, key, bundle, names)
 
     def stage_host(self, transaction, key, bundle, names):
@@ -1249,8 +1288,29 @@ class Poc:
         self.guard()
         self.ex.mkdir(self.host('coordinator'), STATE + '/ssh', 0o700)
         transaction.change('coordinator', FLEET_JSON, files['fleet.json'], 0o600)
-        for key in WORKERS:
+        for key in self.worker_keys:
             self.worker(transaction, key, files['unit:' + key], source, map_sha256)
+        if self.former_recent:
+            self.retire_former_recent(transaction)
+
+    def retire_former_recent(self, transaction):
+        """Stop, disable and remove the split layout's recent-replica unit; its data stays.
+
+        Runs after the combined worker serves warm. A rollback puts the unit
+        file back and starts it again if it was running.
+        """
+        key, path = FORMER_RECENT, '%s/%s' % (SYSTEM, WORKER_UNIT)
+        self.stop_units(transaction, key, [WORKER_UNIT])
+        if self.ex.read(self.host(key), path) is None:
+            transaction.event('%s: no worker unit to remove' % key)
+            return
+        transaction.undo('post', key, 'systemctl', args=['daemon-reload'])
+        self.guard()
+        # Disable while the unit file still names its install links.
+        self.run(key, ['systemctl', 'disable', WORKER_UNIT], 120, check=False)
+        transaction.remove(key, path)
+        self.ex.systemctl(self.host(key), 'daemon-reload')
+        transaction.event('%s: removed the recent-replica unit; %s and %s stay' % (key, WORKER_DATA, OPT))
 
     def worker(self, transaction, key, unit_text, source, map_sha256):
         """Install and start one worker; only a worker with no active map takes `map_sha256`.
@@ -1294,7 +1354,7 @@ class Poc:
             self.ex.systemctl(host, 'restart', WORKER_UNIT)
         status = self.wait('%s control socket' % key, lambda: self.control(transaction, key, {'operation': 'status'}),
                            300)
-        require(status.get('role') == ROLES[key], '%s reports role %s' % (key, status.get('role')))
+        require(status.get('role') == self.roles[key], '%s reports role %s' % (key, status.get('role')))
         require(status.get('binary_sha256') == binary, '%s runs %s, not the release' % (key, status.get('binary_sha256')))
         active = (status.get('active') or {}).get('map_sha256')
         require(active == serving, '%s serves %s, but its active record names %s' % (key, active, serving))
@@ -1337,7 +1397,7 @@ class Poc:
         if status != 200:
             return False
         ready = json.loads(body)
-        return ready.get('role') == ROLES[key] and ready.get('map_sha256') == map_sha256 and ready.get('warm') is True
+        return ready.get('role') == self.roles[key] and ready.get('map_sha256') == map_sha256 and ready.get('warm') is True
 
     # ------------------------------------------------------------- route
 
@@ -1386,7 +1446,7 @@ class Poc:
         for unit in JOURNAL_WRITERS:
             require(self.unit_state('coordinator', unit)['sub'] not in ('running', 'start'),
                     '%s still runs; the controller must be the only journal writer' % unit)
-        for key in WORKERS:
+        for key in self.worker_keys:
             require(self.running(key, WORKER_UNIT), '%s worker is not running; deploy workers first' % key)
         files = self.render()
         coordinator = self.host('coordinator')
@@ -1627,9 +1687,9 @@ class Poc:
             self.print_data()
             return
         with self.locked('retire') as transaction:
-            persistent = (('coordinator', CONTROLLER_UNIT), ('archive', WORKER_UNIT), ('recent', WORKER_UNIT))
+            persistent = (('coordinator', CONTROLLER_UNIT), *((key, WORKER_UNIT) for key in self.worker_keys))
             self.stop_units(transaction, 'coordinator', [CONTROLLER_UNIT, *TRANSIENT])
-            for key in WORKERS:
+            for key in self.worker_keys:
                 self.stop_units(transaction, key, [WORKER_UNIT])
             for key, unit in persistent:
                 path = '%s/%s' % (SYSTEM, unit)
@@ -1678,7 +1738,7 @@ class Poc:
         self.out('retained data; deleting it needs separate approval:')
         paths = [('coordinator', r['journal']['data_dir']), ('coordinator', r['journal']['data_dir'] + '.smoke'),
                  ('coordinator', r['publication']['root']), ('coordinator', r['measure']['output'])]
-        paths += [(key, OPT) for key in HOST_KEYS] + [(key, WORKER_DATA) for key in WORKERS]
+        paths += [(key, OPT) for key in self.host_keys] + [(key, WORKER_DATA) for key in self.worker_keys]
         for key, path in paths:
             self.out('  %s:%s' % (self.host(key), path))
 
@@ -1695,11 +1755,11 @@ class Poc:
                               else 'withdrawn' if digest == sha256(WITHDRAWN) else 'differs')
         result = {'request_sha256': self.request_sha256, 'plan_sha256': self.plan_sha256(), 'files': deployed,
                   'units': {}, 'workers': {}}
-        for key, unit in [('coordinator', u) for u in (CONTROLLER_UNIT, *TRANSIENT)] + [(k, WORKER_UNIT) for k in WORKERS]:
+        for key, unit in [('coordinator', u) for u in (CONTROLLER_UNIT, *TRANSIENT)] + [(k, WORKER_UNIT) for k in self.worker_keys]:
             state = self.unit_state(key, unit)
             result['units']['%s@%s' % (unit, key)] = {k: state[k] for k in ('load', 'active', 'sub', 'result',
                                                                             'restarts')}
-        for key in WORKERS:
+        for key in self.worker_keys:
             status, body = self.ex.http_get(self.host(key), self.ready_url(key), 5)
             try:
                 ready = json.loads(body) if status == 200 else None
