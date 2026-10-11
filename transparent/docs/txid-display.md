@@ -159,7 +159,7 @@ zero bytes. A server checks that rows are canonical when it loads them, and a
 client checks again when it decodes them.
 
 An entry has exactly one row:
-`SHA-256("transparent-txid-display/row/v3" ‖ seed ‖ shard id ‖ bucket ‖ tag) mod 2,048`,
+`SHA-256("txid-display/row/v3" ‖ seed ‖ shard id ‖ bucket ‖ tag) mod 2,048`,
 with the seed as 4 bytes and the shard id and bucket as 8 and 4 bytes, little
 endian. The publisher tries seeds 0, 1, 2, … below 64 for each bucket and
 keeps the smallest that leaves no row over 72 entries, so rebuilding a range

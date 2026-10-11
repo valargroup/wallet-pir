@@ -25,6 +25,7 @@
 use rayon::prelude::*;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::time::Instant;
 use transparent_shard::display::{place_bucket, Placement, MAX_PLACEMENT_SEEDS, TXID_2K8};
 use transparent_shard::txid::{slots_per_row, Tag};
 
@@ -158,12 +159,18 @@ fn main() -> Result<(), Error> {
         .map(|p| p.0)
         .collect();
 
-    // Per table size: how often the first seed fits, and the tries kept.
+    // Per table size: how often the first seed fits, the tries kept, and the
+    // time one seed's pass over every tag takes on one thread.
     let grid: Vec<Value> = args
         .sizes
-        .par_iter()
+        .iter()
         .map(|&size| {
+            let tags = tags(args.seed ^ 0x7e57, size, size);
+            let started = Instant::now();
+            let one = place_bucket(&tags, size, 0, &TXID_2K8);
+            let pass_s = started.elapsed().as_secs_f64() / f64::from(one.tries);
             let mut tries: Vec<u32> = (0..args.trials)
+                .into_par_iter()
                 .map(|t| place(args.seed ^ 0x5eed, size * 1_000_000 + t, t, size).tries)
                 .collect();
             tries.sort_unstable();
@@ -178,6 +185,8 @@ fn main() -> Result<(), Error> {
                 "tries_p95": quantile(&tries, 0.95),
                 "tries_max": tries.last(),
                 "overflowed": tries.iter().filter(|t| **t == MAX_PLACEMENT_SEEDS).count(),
+                "seed_pass_seconds": pass_s,
+                "worst_placement_seconds": pass_s * f64::from(MAX_PLACEMENT_SEEDS),
             })
         })
         .collect();

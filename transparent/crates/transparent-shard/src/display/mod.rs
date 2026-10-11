@@ -61,8 +61,9 @@ pub fn bucket(tag: &Tag, n_buckets: u32) -> u32 {
     (u64::from_le_bytes(digest[..8].try_into().unwrap()) % u64::from(n_buckets)) as u32
 }
 
-/// Domain of the row hash.
-pub const PLACEMENT_DOMAIN: &[u8] = b"transparent-txid-display/row/v3";
+/// Domain of the row hash. Short enough that the whole hash input, 51 bytes,
+/// is one SHA-256 block: the publisher hashes every tag once per seed tried.
+pub const PLACEMENT_DOMAIN: &[u8] = b"txid-display/row/v3";
 /// Placement seeds a publisher tries per bucket, `0..MAX_PLACEMENT_SEEDS`.
 /// The smallest seed that leaves no row over capacity is kept; when none
 /// does, the bucket overflows into further segments (see [`tables`]).
@@ -284,6 +285,8 @@ mod tests {
         assert!(moved(&|t| (base(t), placement_row(t, 0, 3, 2, 2048))) > 250);
         assert_ne!(row, placement_row(&other, 0, 3, 1, 2048));
         // Golden: clients and publishers must agree on every row.
-        assert_eq!(placement_row(&tag, 0, 3, 1, 2048), 170);
+        assert_eq!(placement_row(&tag, 0, 3, 1, 2048), 54);
+        // One SHA-256 block: at most 55 bytes before the padding.
+        assert!(PLACEMENT_DOMAIN.len() + 4 + 8 + 4 + 16 <= 55);
     }
 }

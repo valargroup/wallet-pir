@@ -3221,7 +3221,87 @@ fails. All original rollback phase budgets remain 60/140/300/100/140 seconds
 through the guarded deployment wrapper and retain their actual raw evidence.
 The lifecycle gate remains open until those executions and reinspection pass.
 
+## Txid display one-query cutover (prepared 2026-10-11)
+
+Prepared, not run: Roman approves and runs it. Nothing below is deployed until
+[status](status.md) records it. The layout and its gates are in
+[txid display](txid-display.md#lookup-one-row-of-one-table-per-bucket) and the
+[gate evidence](../evidence/txid-display-2k8-gates-2026-10-11/README.md).
+
+**Target.** A fresh display lineage from height 1, bootstrapped from the v2x
+genesis journal (`/srv/txid-display-genesis/journal-v2x`) into a new root,
+`/srv/txid-display-genesis/v3/root`:
+
+- `txid-2k8`, one bucket, `archive_target` 90,000, `recent_window` 90,000,
+  `reorg_margin` 100, `max_archive_shards` 1,000;
+- about 189 archives plus the recent shard at the 2026-10-11 tip, 191
+  runtimes of 80.09 MiB held (15.2 GiB with four builds in flight);
+- one combined worker on `transparent-pir-txid-display-01` (`m-8vcpu-64gb`),
+  unchanged limits: 40G `MemoryMax`, 24 GiB cache, 32 GiB disk cache, 4 build
+  threads, 2 build slots;
+- the controller on the coordinator, `replay-then-live`.
+
+This is a direct cutover: the fleet has no users, so no client of the
+`txid-2k` layout is kept working and the old lineage is not served beside the
+new one.
+
+**Request.** `request-v6.json` in the
+[evidence](../evidence/txid-display-2k8-gates-2026-10-11/deploy/README.md) is
+the combined request with the new controller keys and paths. Its `release`,
+`source_sha` and `baseline` are filled from the CI run of the merged commit
+and from `txid-display-preflight`, as for the previous requests.
+
+**Phases**, each through `wallet-pir-deploy.py txid-display-*` with the v6
+request and its digest:
+
+| Step | Command | Effect | Expected duration |
+|---|---|---|---|
+| 1 | `plan`, `preflight` | Review token; read-only checks | minutes |
+| 2 | `deploy --phase stage --archive <bundle>` | Installs the release on the coordinator and display-01; nothing restarts | minutes |
+| 3 | `stop` | `/v1/txid/` answers 503 and the old controller stops. **Outage starts** | under 1 min |
+| 4 | `bootstrap --start-height 1 --through-height <journal end>` | Publishes about 189 archives and the recent window into the new root | 30–45 min (a count pass over 3.51M sidecars, then the builds) |
+| 5 | `deploy --phase workers --publication-map-sha256 <new map> --replace-active <old map>` | Stops the worker, removes its active record (journaled), ships and verifies the new candidate, restarts it on the new release and prepares 191 runtimes cold | 10–20 min |
+| 6 | `deploy --phase route` | Restores the display route. **Outage ends** | under 1 min |
+| 7 | `deploy --phase controller` | Starts the controller on the new root; it replays to the tip | minutes |
+| 8 | `verify`, then `status` | Rebuilds every seal from the journal into a scratch root and compares digests | 30–45 min, while serving |
+
+Expected outage: about 40–65 minutes of display 503, from step 3 to step 6.
+History is untouched.
+
+**Checks after step 7.**
+- The public recent map has schema `transparent-txid-display-shard-v3`,
+  `recent_window` 90,000, a recent shard holding at least 90,000 entries that
+  starts at or before `sealed_through + 1`, and every archive one segment.
+- A found and an absent lookup with `transparent-txid-client` at the merged
+  commit each send exactly one query to the right tier.
+- The worker is ready and warm on 191 runtimes, at or above 20% available
+  memory.
+
+**Rollback material**, all kept until acceptance:
+- the old root `/srv/txid-display-genesis/v2/root` and its active candidate,
+  whose map digest `status` records before step 3;
+- the v5 combined request and its staged release;
+- the journaled `workers`, `route` and `controller` transactions of steps 5–7.
+
+To roll back: `stop` with the v6 request, then `rollback` the controller,
+route and workers transactions, newest first. That restores the old units and
+the worker's old active record. If the worker has already collected the old
+publication, run the v5 request's `workers` phase instead with
+`--publication-map-sha256 <old active map> --replace-active <new map>`, which
+ships the old candidate again, then its `route` and `controller` phases.
+
+**What gets deleted.** The deploy deletes nothing. After the swap the worker's
+own collection removes the old lineage's publication on display-01, and its
+disk cache evicts old runtimes as new ones are written. Deleting the old root
+on the coordinator, about 3.6 GB, needs Roman's separate approval after
+acceptance.
+
 ## Txid display backfill below 3,407,001 (proposed)
+
+Superseded on 2026-10-11 by the
+[one-query cutover](#txid-display-one-query-cutover-prepared-2026-10-11): the
+display layout is `txid-2k8` with 90,000-entry archives and a 90,000-entry
+recent window. The figures below are the `txid-2k` proposal as made.
 
 Proposed on 2026-10-07; nothing here is approved or deployed. The serving
 target stays as recorded in
