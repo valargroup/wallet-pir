@@ -6,6 +6,50 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Txid display served by one combined worker, 2026-10-11
+
+`/v1/txid/` is served by a single worker with role `combined` on
+`transparent-pir-txid-display-01`. It holds the sealed archives and the recent
+shard. recent-01 no longer runs a display worker, so display stops competing
+with history there ([txid display](txid-display.md#tiered-display-publication-proof-of-concept)).
+
+- **Release.** `main` at `4bf32869`. The bundle was built on roman-dev-2 at
+  that commit with the CI release profile and flags (rustc 1.97.1), not taken
+  from CI: the single build runner had two full runs queued. The request
+  records `ci_run: null` and bundle `e3e450ed…`. Full CI on `4bf32869` was
+  still queued at deploy time.
+- **Deploy.** `txid-display-*` phases `stage`, `stop`, `workers`, `route` and
+  `controller` with a combined request that names recent-01 as
+  `former_recent`.
+  - `/v1/txid/` returned 503 from about 18:16 to 18:43 UTC.
+  - The worker restart took about 4 minutes of that: all 427 tables restored
+    from the disk cache, with no rebuilds.
+  - The rest was deploy-tool overhead: each step opens a fresh SSH connection
+    from the operator's Mac for every lock and schema check, about 3.5 s
+    each, or 5.3 s through the jump host.
+  - The first `workers` run failed on an SSH connection timeout to recent-01,
+    after the combined worker was serving and recent-01's worker was stopped.
+    A rerun removed the unit.
+  - After each step, the tool's lock session stayed open on the coordinator
+    and was ended by PID.
+- **Verified.**
+  - The worker is ready with 427 of 427 runtimes warm.
+  - The controller follows the tip: the public map's recent shard ends at the
+    node's height, 3,514,355. The first cycle took 1.5 s, against about 4 s
+    before.
+  - Live lookups from roman-dev-2 with `transparent-txid-client` at
+    `4bf32869`:
+    - `txid_live_lookup` found its archive transaction, shard 411;
+    - an absent lookup at height 3,514,300 sent its two queries to
+      `/v1/txid/recent/` and got 200 for every request.
+
+    Both uploaded 77,840 B.
+  - recent-01 has no display unit. Its data in `/srv/transparent-txid-display`
+    and `/opt/transparent-txid-display` is kept.
+- **Rollback.** Roll back the `controller`, `route` and `workers`
+  transactions with `txid-display-rollback`. This puts recent-01's unit back
+  and starts it, and restores the archive-owner unit.
+
 ## Tail-pages prefix uploads live, 2026-10-10
 
 History, its publish controller and txid display run `main` at `9d2cbda0` (full CI
