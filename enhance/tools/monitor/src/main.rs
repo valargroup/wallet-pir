@@ -82,7 +82,7 @@ fn condition(
         sample,
     }
 }
-/// Evaluates the service probes' conditions. They cover Status, Transparent and receiver, not
+/// Evaluates the service probes' conditions. They cover Status, Transparent, receiver and txid, not
 /// one APM, so their incidents link to this monitor's public status at `status_url`.
 fn evaluate_services(
     store: &mut Store,
@@ -425,7 +425,7 @@ mod tests {
             .unwrap();
         assert!(caddy.starts_with(&format!("{host} {{")));
         assert!(caddy.contains(&format!("handle /{path} {{")));
-        let services = ["receiver", "status", "transparent"];
+        let services = ["receiver", "status", "transparent", "txid"];
         let probes: std::collections::BTreeMap<_, _> = services
             .iter()
             .map(|service| {

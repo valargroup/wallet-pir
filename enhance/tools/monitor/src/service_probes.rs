@@ -1,4 +1,6 @@
-//! Separate native binaries avoid unifying Enhance and Transparent PIR backends.
+//! Independent canaries for Status, Transparent history (v12), the receiver directory and
+//! the one-query txid display. Separate native binaries avoid unifying Enhance and
+//! Transparent PIR backends.
 use anyhow::Result;
 use pir_apm::incidents::{unix_time, Condition};
 use serde::{Deserialize, Serialize};
@@ -28,25 +30,32 @@ pub struct Probe {
     pub category: String,
 }
 pub type Shared = Arc<RwLock<BTreeMap<String, Probe>>>;
-pub fn start() -> Result<Shared> {
-    let shared = Shared::default();
-    let Some(path) = std::env::var_os("PIR_MONITOR_SERVICE_PROBES_CONFIG") else {
-        return Ok(shared);
-    };
-    let configs: Vec<Config> = serde_json::from_slice(&std::fs::read(path)?)?;
+/// Services a probe may report: Status, the v12 Transparent history, the receiver
+/// directory and the one-query txid display (`txid`).
+pub const SERVICES: [&str; 4] = ["status", "transparent", "receiver", "txid"];
+/// Parses the probe config: each service at most once, an absolute command, a
+/// 1–45 second timeout.
+fn parse(bytes: &[u8]) -> Result<Vec<Config>> {
+    let configs: Vec<Config> = serde_json::from_slice(bytes)?;
     let mut names = std::collections::BTreeSet::new();
     for config in &configs {
         anyhow::ensure!(
-            matches!(
-                config.service.as_str(),
-                "status" | "transparent" | "receiver"
-            ) && names.insert(config.service.clone())
+            SERVICES.contains(&config.service.as_str())
+                && names.insert(config.service.clone())
                 && !config.command.is_empty()
                 && PathBuf::from(&config.command[0]).is_absolute()
                 && (1..=45).contains(&config.timeout_seconds),
             "invalid service probe config"
         );
     }
+    Ok(configs)
+}
+pub fn start() -> Result<Shared> {
+    let shared = Shared::default();
+    let Some(path) = std::env::var_os("PIR_MONITOR_SERVICE_PROBES_CONFIG") else {
+        return Ok(shared);
+    };
+    let configs = parse(&std::fs::read(path)?)?;
     for config in configs {
         let output = shared.clone();
         tokio::spawn(async move {
@@ -214,6 +223,49 @@ pub fn conditions(probes: &BTreeMap<String, Probe>, now: u64) -> Vec<Condition> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn config_accepts_each_known_service_once() {
+        let probe = |service: &str| serde_json::json!({"service": service, "command": ["/usr/local/bin/canary"], "timeout_seconds": 30});
+        let all: Vec<_> = SERVICES.iter().map(|s| probe(s)).collect();
+        let parsed = parse(&serde_json::to_vec(&all).unwrap()).unwrap();
+        assert_eq!(
+            parsed
+                .iter()
+                .map(|c| c.service.as_str())
+                .collect::<Vec<_>>(),
+            SERVICES
+        );
+        for bad in [
+            vec![probe("enhance")],
+            vec![probe("txid"), probe("txid")],
+            vec![
+                serde_json::json!({"service": "txid", "command": ["canary"], "timeout_seconds": 30}),
+            ],
+            vec![
+                serde_json::json!({"service": "txid", "command": ["/bin/c"], "timeout_seconds": 46}),
+            ],
+        ] {
+            assert!(parse(&serde_json::to_vec(&bad).unwrap()).is_err());
+        }
+    }
+    #[test]
+    fn txid_probe_conditions_are_keyed_by_service() {
+        let data = BTreeMap::from([(
+            "txid".to_string(),
+            Probe {
+                sampled_at: 100,
+                category: "answer_mismatch".into(),
+                ..Default::default()
+            },
+        )]);
+        let c = conditions(&data, 110);
+        let correctness = c
+            .iter()
+            .find(|c| c.key == "service_canary_txid_correctness")
+            .unwrap();
+        assert_eq!(correctness.firing, Some(true));
+        assert_eq!(correctness.resource, "txid");
+    }
     #[test]
     fn unavailable_oracle_cannot_recover_correctness_incident() {
         let data = BTreeMap::from([(
