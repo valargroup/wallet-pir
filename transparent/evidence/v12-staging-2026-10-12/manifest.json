@@ -69,6 +69,16 @@
    "timed_out": 1,
    "queries": 22279,
    "query_failures": 0
+  },
+  {
+   "run": 4,
+   "controller_sha": "322c4f07",
+   "syncs": 3016,
+   "exact": 3015,
+   "init_503": 0,
+   "timed_out": 1,
+   "queries": 22333,
+   "query_failures": 0
   }
  ],
  "worker_rss_gib": {
@@ -77,7 +87,8 @@
  },
  "acceptance": {
   "regression": "passed",
-  "load": "not passed: init 503 at publication switches, one reused-tail wallet past the deadline",
+  "load": "init 503 fixed (run 4: 0); one reused-tail wallet past the 600 s deadline in every run",
   "query_gate": "not run"
- }
+ },
+ "controller_sha": "322c4f07"
 }
