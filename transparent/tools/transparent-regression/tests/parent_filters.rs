@@ -144,10 +144,10 @@ async fn parent_negatives_restart_import_and_corrupt_fallback_recover_exactly() 
     for c in &map.shards {
         let bytes = std::fs::read(dir.path().join(&c.manifest_digest).join("filter.bin")).unwrap();
         sizes.push((c.manifest_digest.clone(), bytes.len() as u64));
-        files.insert(format!("v1/filters/shards/{}/filter", c.shard_id), bytes);
+        files.insert(format!("v2/filters/shards/{}/filter", c.shard_id), bytes);
     }
     files.insert(
-        "v1/filters/shards".into(),
+        "v2/filters/shards".into(),
         serde_json::to_vec(&map).unwrap(),
     );
     let mut parents = Vec::new();

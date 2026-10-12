@@ -102,7 +102,7 @@ struct Inner {
     withdrawn: AtomicBool,
     epoch: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
-    /// The last `/v1/shards/init` answer assembled from the workers, with the
+    /// The last `/v2/shards/init` answer assembled from the workers, with the
     /// map it describes. Activation switches the workers to the next map a
     /// moment before the public pointer moves; in that window no worker
     /// answers for the active map, and this answer, built for that same map,
@@ -929,7 +929,7 @@ fn unavailable() -> Response {
         .into_response()
 }
 
-/// The last assembled `/v1/shards/init` answer, if it describes `map`.
+/// The last assembled `/v2/shards/init` answer, if it describes `map`.
 fn init_for_map(
     last: &Option<(String, serde_json::Value)>,
     map: &str,
@@ -1041,9 +1041,9 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
             .into_response();
     }
     let active = authority.0.active.read().unwrap().clone();
-    let body = if path == "/v1/shards" || path == "/v1/filters/shards" {
+    let body = if path == "/v2/shards" || path == "/v2/filters/shards" {
         Some(("application/json", active.filters.map_json().to_vec()))
-    } else if path == "/v1/shards/init" {
+    } else if path == "/v2/shards/init" {
         let expected: std::collections::BTreeSet<_> = active
             .filters
             .map()
@@ -1057,7 +1057,7 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
             if let Ok(response) = authority
                 .0
                 .http
-                .get(format!("http://{upstream}/v1/shards/init"))
+                .get(format!("http://{upstream}/v2/shards/init"))
                 .send()
                 .await
             {
@@ -1103,12 +1103,12 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
     } else {
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
         match parts.as_slice() {
-            ["v1", "filters", "shards", id, "filter"] => id
+            ["v2", "filters", "shards", id, "filter"] => id
                 .parse()
                 .ok()
                 .and_then(|id| active.filters.filter(id))
                 .map(|b| ("application/octet-stream", b.to_vec())),
-            ["v1", "shards", id, "revisions", digest, "manifest"]
+            ["v2", "shards", id, "revisions", digest, "manifest"]
                 if digest.len() == 64 && digest.bytes().all(|c| c.is_ascii_hexdigit()) =>
             {
                 if active
@@ -1473,7 +1473,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             let response = public_request(
                 State(authority.clone()),
                 Request::builder()
-                    .uri("/v1/shards")
+                    .uri("/v2/shards")
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )
@@ -1525,7 +1525,7 @@ print(json.dumps({'ok':True,'upstreams':[],'retained_publication':bool(r.get('re
             let response = public_request(
                 State(authority.clone()),
                 Request::builder()
-                    .uri("/v1/shards")
+                    .uri("/v2/shards")
                     .body(axum::body::Body::empty())
                     .unwrap(),
             )

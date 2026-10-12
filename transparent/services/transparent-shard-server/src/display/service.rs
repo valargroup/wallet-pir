@@ -185,7 +185,7 @@ pub struct DisplayState {
     inner: Arc<Inner>,
 }
 
-/// One geometry's table kind, as `GET /v1/txid/init` publishes it.
+/// One geometry's table kind, as `GET /v2/txid/init` publishes it.
 ///
 /// `scheme` is the 49-bit query, which clients deployed before dithering read
 /// and send; `scheme_dq44` is the 44-bit dithered query over the same setup.
@@ -205,7 +205,7 @@ pub struct GeometryInit {
     pub txdirectory: TableInit,
 }
 
-/// What `GET /v1/txid/init` returns.
+/// What `GET /v2/txid/init` returns.
 #[derive(Serialize)]
 pub struct InitResponse {
     pub schema: String,
@@ -689,18 +689,18 @@ pub fn router(state: DisplayState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/metrics", get(metrics))
-        .route("/v1/txid/init", get(init))
-        .route("/v1/txid/shards", get(shard_map))
-        .route("/v1/txid/map", get(recent_map))
-        .route("/v1/txid/map/:base/:digest", get(index_chunk))
+        .route("/v2/txid/init", get(init))
+        .route("/v2/txid/shards", get(shard_map))
+        .route("/v2/txid/map", get(recent_map))
+        .route("/v2/txid/map/:base/:digest", get(index_chunk))
         .route(
-            "/v1/txid/shards/:shard_id/revisions/:digest/manifest",
+            "/v2/txid/shards/:shard_id/revisions/:digest/manifest",
             get(manifest),
         )
-        .route(&format!("/v1/txid/archive/{SETUP}"), get(setup_archive))
-        .route(&format!("/v1/txid/recent/{SETUP}"), get(setup_recent))
-        .route(&format!("/v1/txid/archive/{QUERY}"), post(query_archive))
-        .route(&format!("/v1/txid/recent/{QUERY}"), post(query_recent))
+        .route(&format!("/v2/txid/archive/{SETUP}"), get(setup_archive))
+        .route(&format!("/v2/txid/recent/{SETUP}"), get(setup_recent))
+        .route(&format!("/v2/txid/archive/{QUERY}"), post(query_archive))
+        .route(&format!("/v2/txid/recent/{QUERY}"), post(query_recent))
         .with_state(state)
 }
 

@@ -343,7 +343,7 @@ it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
 
 Query masks and the packing setup are derived from 32-byte seeds per schema, geometry and
 table (labelled per profile), so one query is answered by every segment of every shard of
-that geometry. `/v1/shards/init` publishes each table's `NativeScheme` identity (bit
+that geometry. `/v2/shards/init` publishes each table's `NativeScheme` identity (bit
 widths, parameter encoding, mask seed, setup id and sizes); the wallet re-derives it and
 refuses any difference. Each history segment publishes its own 22,528 bytes of rounded
 masks (11,264 per block). A query is an 8-byte revision binding, the 13,824-byte key and a
@@ -408,6 +408,26 @@ skipped because an unrelated response happened to mention a watched script. Sour
 `transparent/crates/transparent-wallet/src/sync_ahead.rs`.
 
 ## Serving and publication
+
+### API versions
+
+Every wallet-facing path carries the protocol version, and one public origin,
+`https://transparent-pir.valargroup.dev`, serves each version under its own prefix. A
+version changes when the wire format does, and its servers and clients ship together:
+
+| Prefix | Serves | Source |
+|---|---|---|
+| `/v1/` | schema v11 history with 16-bit tables, the txid-2k display | released binaries; `main` no longer builds it |
+| `/v2/` | schema v12 history with the 8-bit history profile, the one-query txid-2k8 display | `main` |
+
+Under `/v2/` the shard server answers `/v2/shards`, `/v2/shards/init`, manifests,
+setup and query, and `/v2/filters/shards`; the display service answers `/v2/txid/*`.
+`/v1/health`, `/v1/ready` and `/v1/status` are operator probes, not wallet API, and keep
+their paths. The fleet adapter renders a fleet's routes for the prefix its configuration
+names (`api_version`, default `v1`), and the public router sends each prefix to that
+version's fleet. A new wire format takes the next prefix beside the live ones.
+
+### Runtime cache
 
 The current cache retains prepared runtimes by byte reservation, builds on demand, and keeps
 active handles pinned. Plaintext sources are verified files rather than permanent copies in

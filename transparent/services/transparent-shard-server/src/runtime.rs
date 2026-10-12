@@ -235,13 +235,13 @@ impl SharedParams {
         })
     }
 
-    /// What `/v1/shards/init` publishes for this table as its scheme: the
+    /// What `/v2/shards/init` publishes for this table as its scheme: the
     /// 49-bit nearest-rounded query. Also what keys the runtime disk cache.
     pub fn scheme(&self) -> &NativeScheme {
         &self.profile.scheme
     }
 
-    /// The 44-bit dithered scheme `/v1/shards/init` publishes beside a 16-bit
+    /// The 44-bit dithered scheme `/v2/shards/init` publishes beside a 16-bit
     /// table's; an 8-bit table's own scheme is its dithered one.
     pub fn dithered_scheme(&self) -> Option<&NativeScheme> {
         self.profile.dithered_scheme.as_ref()

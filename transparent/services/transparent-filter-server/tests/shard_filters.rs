@@ -140,7 +140,7 @@ async fn the_routes_serve_the_map_and_each_filter() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/filters/shards")
+                .uri("/v2/filters/shards")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -168,7 +168,7 @@ async fn the_routes_serve_the_map_and_each_filter() {
         .clone()
         .oneshot(
             Request::builder()
-                .uri("/v1/filters/shards/1/filter")
+                .uri("/v2/filters/shards/1/filter")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -183,7 +183,7 @@ async fn the_routes_serve_the_map_and_each_filter() {
     let response = app
         .oneshot(
             Request::builder()
-                .uri("/v1/filters/shards/9/filter")
+                .uri("/v2/filters/shards/9/filter")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -207,7 +207,7 @@ async fn without_a_set_the_shard_routes_are_not_found() {
     let app = transparent_filter_server::service::router(
         transparent_filter_server::service::ServiceState::new(store),
     );
-    for uri in ["/v1/filters/shards", "/v1/filters/shards/0/filter"] {
+    for uri in ["/v2/filters/shards", "/v2/filters/shards/0/filter"] {
         let response = app
             .clone()
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())

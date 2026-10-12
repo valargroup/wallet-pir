@@ -1,5 +1,5 @@
 //! Wallet client for the tiered txid display publication
-//! (`/v1/txid/`, see `transparent/docs/txid-display.md`).
+//! (`/v2/txid/`, see `transparent/docs/txid-display.md`).
 //!
 //! The client is synchronous and has no HTTP stack: the wallet supplies a
 //! [`TxidTransport`] that sends one [`TxidRequest`] and returns the raw
@@ -24,7 +24,7 @@
 //!
 //! The map is split (see `transparent_shard::display::split`): a small
 //! recent map, refetched after every 409, and immutable index chunks of 32
-//! archives, cached by digest. The full `/v1/txid/shards` listing is not read.
+//! archives, cached by digest. The full `/v2/txid/shards` listing is not read.
 //!
 //! The client follows a fresh publication (a re-cut or re-layout, with new
 //! shard ids and digests) through the same map: a 409 or a placement from a
@@ -88,14 +88,14 @@ impl Route {
     /// txid, so it can be logged.
     pub fn template(self) -> &'static str {
         match self {
-            Route::Init => "/v1/txid/init",
-            Route::Map => "/v1/txid/map",
-            Route::MapChunk => "/v1/txid/map/{shard}/{digest}",
-            Route::Manifest => "/v1/txid/shards/{shard}/revisions/{digest}/manifest",
+            Route::Init => "/v2/txid/init",
+            Route::Map => "/v2/txid/map",
+            Route::MapChunk => "/v2/txid/map/{shard}/{digest}",
+            Route::Manifest => "/v2/txid/shards/{shard}/revisions/{digest}/manifest",
             Route::Setup => {
-                "/v1/txid/{tier}/shards/{shard}/revisions/{digest}/setup/{table}/{segment}"
+                "/v2/txid/{tier}/shards/{shard}/revisions/{digest}/setup/{table}/{segment}"
             }
-            Route::Query => "/v1/txid/{tier}/shards/{shard}/revisions/{digest}/query/{table}",
+            Route::Query => "/v2/txid/{tier}/shards/{shard}/revisions/{digest}/query/{table}",
         }
     }
 
@@ -109,7 +109,7 @@ impl Route {
 
 /// One request the client asks the transport to send.
 ///
-/// The path is origin-relative (it starts with `/v1/txid/`); the transport
+/// The path is origin-relative (it starts with `/v2/txid/`); the transport
 /// prefixes its base URL. A `POST` body is `application/octet-stream` and its
 /// length must be declared (`Content-Length`). Neither path nor body carries
 /// the txid; the path carries shard id, revision digest, tier and table,

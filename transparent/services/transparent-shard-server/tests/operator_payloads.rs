@@ -262,7 +262,7 @@ async fn the_operator_payloads_match_what_ops_parses() {
     let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
     let state = ServiceState::build(set, ServiceConfig::default()).expect("state");
 
-    let (status, body) = get(&state, "/v1/shards/init").await;
+    let (status, body) = get(&state, "/v2/shards/init").await;
     assert_eq!(status, StatusCode::OK);
     let init: serde_json::Value = serde_json::from_slice(&body).unwrap();
 

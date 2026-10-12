@@ -132,7 +132,7 @@ pub struct ShardMapEntry {
     pub sealed: bool,
 }
 
-/// Response shape of `GET /v1/filters/shards`.
+/// Response shape of `GET /v2/filters/shards`.
 ///
 /// This is protocol data, not a convenience index. Shard boundaries are derived
 /// from chain content, so a wallet cannot recompute them arithmetically and an

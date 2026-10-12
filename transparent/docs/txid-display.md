@@ -247,7 +247,7 @@ geometry.
   names them. It hands every new map and every reorg invalidation to any
   worker that holds the recent shard. A combined worker gets both, so one
   host can serve the whole publication. The edge route keeps its two
-  prefixes, `/v1/txid/archive/*` and `/v1/txid/*`, and both may name the same
+  prefixes, `/v2/txid/archive/*` and `/v2/txid/*`, and both may name the same
   worker.
 
   A site request runs a second lineage beside the router's: one combined
@@ -328,18 +328,18 @@ the worker's build CPU and query interference went away as designed, and the
 
 ### Split map
 
-The full map (`GET /v1/txid/shards`, about 583 B per entry) costs about 248 KB at
+The full map (`GET /v2/txid/shards`, about 583 B per entry) costs about 248 KB at
 genesis coverage (426 entries). A client refetches it after every 409, and the
 recent rebuild causes one every block. The controller therefore also publishes
 the same entries as two kinds of document, derived from the full map
 (`transparent-shard/src/display/split.rs`):
 
-- **Recent map** (`GET /v1/txid/map`, `txid-map.json`): the seal parameters,
+- **Recent map** (`GET /v2/txid/map`, `txid-map.json`): the seal parameters,
   the start, the archive count, the first height no archive holds
   (`unsealed_start`), one reference (start height and SHA-256) per index
   chunk, and the recent shard's entry. Compact canonical JSON, served
   with `X-Txid-Map-Sha256` and `Cache-Control: no-cache`.
-- **Index chunks** (`GET /v1/txid/map/{base}/{sha256}`,
+- **Index chunks** (`GET /v2/txid/map/{base}/{sha256}`,
   `txid-index-<sha256>.json`): the listed archives with absolute shard ids in
   `[base, base + 32)`, where `base` is a multiple of 32. Served with
   `Cache-Control: public, max-age=31536000, immutable`.

@@ -456,7 +456,7 @@ impl DisplayClient {
             .init
             .get_or_try_init(|| async {
                 let exchange = self
-                    .fetch("/v1/txid/init", accounting, |b| &mut b.init)
+                    .fetch("/v2/txid/init", accounting, |b| &mut b.init)
                     .await?;
                 accounting.lock().unwrap().cold.init = true;
                 let document: InitDocument =
@@ -488,7 +488,7 @@ impl DisplayClient {
             return Ok(cached.clone());
         }
         let exchange = self
-            .fetch("/v1/txid/shards", accounting, |b| &mut b.map)
+            .fetch("/v2/txid/shards", accounting, |b| &mut b.map)
             .await?;
         accounting.lock().unwrap().cold.map = true;
         let sha256 = hex::encode(Sha256::digest(&exchange.body));
@@ -584,7 +584,7 @@ impl DisplayClient {
             .clone();
         cell.get_or_try_init(|| async {
             let path = format!(
-                "/v1/txid/shards/{}/revisions/{}/manifest",
+                "/v2/txid/shards/{}/revisions/{}/manifest",
                 entry.shard_id, entry.manifest_digest
             );
             let exchange = self.fetch(&path, accounting, |b| &mut b.manifest).await?;
@@ -621,7 +621,7 @@ impl DisplayClient {
             .clone();
         cell.get_or_try_init(|| async {
             let path = format!(
-                "/v1/txid/{}/shards/{}/revisions/{digest}/setup/{}/{segment}",
+                "/v2/txid/{}/shards/{}/revisions/{digest}/setup/{}/{segment}",
                 entry.tier(),
                 entry.shard_id,
                 table.label()
@@ -705,7 +705,7 @@ impl DisplayClient {
         let mut body = binding.to_vec();
         body.extend(upload);
         let path = format!(
-            "/v1/txid/{}/shards/{}/revisions/{}/query/{}",
+            "/v2/txid/{}/shards/{}/revisions/{}/query/{}",
             entry.tier(),
             entry.shard_id,
             entry.manifest_digest,

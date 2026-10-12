@@ -4,7 +4,7 @@
 //! A display publication is not a history shard set: it has its own map
 //! (`txid-shards.json`), its own manifests and its own revisions, and the
 //! history loader would refuse every one of them. It is therefore served by a
-//! separate process and a separate set of routes under `/v1/txid/`, which
+//! separate process and a separate set of routes under `/v2/txid/`, which
 //! reuse the history worker's machinery unchanged: the runtime cache, the
 //! shared native parameters, admission, work-memory accounting, metrics and
 //! the disk cache.
@@ -17,14 +17,14 @@
 //! request for another role's revision is refused with 421, as a history
 //! worker refuses an unassigned shard.
 //!
-//! **The split map.** Besides the full map (`/v1/txid/shards`, kept for
+//! **The split map.** Besides the full map (`/v2/txid/shards`, kept for
 //! clients built before the split), every worker serves the recent map
-//! (`/v1/txid/map`) and the archive index chunks
-//! (`/v1/txid/map/{base}/{sha256}`) derived from the same map; see
+//! (`/v2/txid/map`) and the archive index chunks
+//! (`/v2/txid/map/{base}/{sha256}`) derived from the same map; see
 //! `transparent_shard::display::split`.
 //!
 //! **Tiers in the path.** Data-plane routes name the tier,
-//! `/v1/txid/{archive|recent}/...`, so a static edge route can send archive
+//! `/v2/txid/{archive|recent}/...`, so a static edge route can send archive
 //! traffic to its owner without knowing which shard ids are sealed. The tier
 //! must equal the revision's sealed flag, which is what the map already
 //! publishes, so naming it discloses nothing beyond the shard id.

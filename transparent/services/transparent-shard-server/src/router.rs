@@ -426,7 +426,7 @@ fn render_routes(assignment: &Assignment) -> String {
             continue;
         }
         out.push_str(&format!(
-            "\t@{group} path_regexp ^/v1/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            "\t@{group} path_regexp ^/v2/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
             ids_pattern(shards)
         ));
         out.push_str(&format!(
@@ -440,7 +440,7 @@ fn render_routes(assignment: &Assignment) -> String {
         }
         let name = owner.id.replace(|c: char| !c.is_ascii_alphanumeric(), "_");
         out.push_str(&format!(
-            "\t@owner_{name} path_regexp ^/v1/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
+            "\t@owner_{name} path_regexp ^/v2/shards/({})/revisions/[0-9a-f]{{64}}/(setup|query)/\n",
             ids_pattern(&owner.shards)
         ));
         out.push_str(&format!(
@@ -458,17 +458,17 @@ fn render_routes(assignment: &Assignment) -> String {
         .unwrap_or_else(|| owners.iter().map(|o| o.upstream.as_str()).collect());
     let pool = public_pool.join(" ");
     out.push_str(&format!(
-        "\t@manifest path_regexp ^/v1/shards/[0-9]+/revisions/[0-9a-f]{{64}}/manifest$\n\
+        "\t@manifest path_regexp ^/v2/shards/[0-9]+/revisions/[0-9a-f]{{64}}/manifest$\n\
          \thandle @manifest {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
     ));
     out.push_str(&format!(
-        "\thandle /v1/shards/init {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\thandle /v2/shards/init {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
     ));
     out.push_str(&format!(
-        "\thandle /v1/shards {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\thandle /v2/shards {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
     ));
     out.push_str(&format!(
-        "\thandle /v1/filters/* {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
+        "\thandle /v2/filters/* {{\n\t\treverse_proxy {pool} {{\n\t\t\tlb_policy round_robin\n{health}\t\t}}\n\t}}\n\n"
     ));
     // Everything else, including any shard id no worker holds and every
     // operator route, is a 404 at the edge.
@@ -807,10 +807,10 @@ mod tests {
         let assignment = plan(&map, "ab", &roster(2, 2, 64 << 30), 4, 0.1, generated()).unwrap();
         let rendered = render_caddyfile(&assignment, "transparent.example");
         assert!(rendered.contains("transparent.example {"));
-        assert!(rendered.contains("@recent path_regexp ^/v1/shards/(4|5)/revisions/"));
+        assert!(rendered.contains("@recent path_regexp ^/v2/shards/(4|5)/revisions/"));
         assert!(rendered.contains("reverse_proxy 10.0.2.0:8093 10.0.2.1:8093 {"));
-        assert!(rendered.contains("@owner_archive_0 path_regexp ^/v1/shards/(0|1)/revisions/"));
-        assert!(rendered.contains("@owner_archive_1 path_regexp ^/v1/shards/(2|3)/revisions/"));
+        assert!(rendered.contains("@owner_archive_0 path_regexp ^/v2/shards/(0|1)/revisions/"));
+        assert!(rendered.contains("@owner_archive_1 path_regexp ^/v2/shards/(2|3)/revisions/"));
         assert!(rendered.contains("health_uri /v1/ready"));
         assert!(!rendered.contains("/metrics"));
         assert!(rendered.ends_with(&format!(

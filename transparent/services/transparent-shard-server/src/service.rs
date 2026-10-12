@@ -161,7 +161,7 @@ pub struct ServiceState {
     inner: Arc<Inner>,
 }
 
-/// One geometry's public parameters, as `GET /v1/shards/init` publishes them.
+/// One geometry's public parameters, as `GET /v2/shards/init` publishes them.
 ///
 /// The dimensions are published beside the derived native parameter identity,
 /// not instead of it. A client re-derives the identity — profile, bit widths,
@@ -192,7 +192,7 @@ pub struct GeometryInit {
     pub pages_setup_seed: u64,
 }
 
-/// What `GET /v1/shards/init` returns.
+/// What `GET /v2/shards/init` returns.
 #[derive(Serialize)]
 pub struct InitResponse {
     pub schema: String,
@@ -797,22 +797,22 @@ pub fn router(state: ServiceState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/metrics", get(metrics))
-        .route("/v1/shards", get(shard_map))
+        .route("/v2/shards", get(shard_map))
         // The same paths the filter service serves on its own host, so a wallet
         // can point at either origin without changing anything but the base URL.
-        .route("/v1/filters/shards", get(shard_map))
-        .route("/v1/filters/shards/:shard_id/filter", get(shard_filter))
-        .route("/v1/shards/init", get(init))
+        .route("/v2/filters/shards", get(shard_map))
+        .route("/v2/filters/shards/:shard_id/filter", get(shard_filter))
+        .route("/v2/shards/init", get(init))
         .route(
-            "/v1/shards/:shard_id/revisions/:digest/manifest",
+            "/v2/shards/:shard_id/revisions/:digest/manifest",
             get(manifest),
         )
         .route(
-            "/v1/shards/:shard_id/revisions/:digest/setup/:table/:segment",
+            "/v2/shards/:shard_id/revisions/:digest/setup/:table/:segment",
             get(setup),
         )
         .route(
-            "/v1/shards/:shard_id/revisions/:digest/query/:table",
+            "/v2/shards/:shard_id/revisions/:digest/query/:table",
             post(query),
         )
         .layer(axum::middleware::from_fn_with_state(

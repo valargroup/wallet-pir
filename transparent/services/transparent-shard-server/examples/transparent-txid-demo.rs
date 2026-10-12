@@ -197,7 +197,7 @@ struct Edge {
     capture: Capture,
 }
 
-/// Routes `/v1/txid/archive/` to the owner and the rest to the replica,
+/// Routes `/v2/txid/archive/` to the owner and the rest to the replica,
 /// keeping only public paths and header shapes, never bodies or keys.
 async fn edge(State(edge): State<Edge>, request: Request) -> Response {
     let state = &edge.capture;
@@ -231,13 +231,13 @@ async fn edge(State(edge): State<Edge>, request: Request) -> Response {
             .unwrap()
             .push(json!({"name": name.as_str(), "value_bytes": value.as_bytes().len()}));
     }
-    let target = if path.starts_with("/v1/txid/archive/") {
+    let target = if path.starts_with("/v2/txid/archive/") {
         edge.archive
     } else {
         edge.recent
     };
     let response = target.oneshot(request).await.unwrap();
-    if path == "/v1/txid/init" && state.foreign_codec.load(Ordering::Acquire) {
+    if path == "/v2/txid/init" && state.foreign_codec.load(Ordering::Acquire) {
         let (mut parts, body) = response.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         let mut init: Value = serde_json::from_slice(&bytes).unwrap();
@@ -704,7 +704,7 @@ async fn run_range(
             let status = http
                 .client
                 .post(format!(
-                    "{}/v1/txid/recent/shards/{recent_id}/revisions/{manifest_digest}/query/directory-0",
+                    "{}/v2/txid/recent/shards/{recent_id}/revisions/{manifest_digest}/query/directory-0",
                     http.base
                 ))
                 .header("content-type", "application/octet-stream")
@@ -717,7 +717,7 @@ async fn run_range(
             let status = http
                 .client
                 .get(format!(
-                    "{}/v1/txid/recent/shards/{recent_id}/revisions/{}/setup/directory-0/0",
+                    "{}/v2/txid/recent/shards/{recent_id}/revisions/{}/setup/directory-0/0",
                     http.base,
                     "00".repeat(32)
                 ))

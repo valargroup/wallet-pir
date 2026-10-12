@@ -739,7 +739,7 @@ fn misdirected_421_refused() {
     // The edge sends archive-tier paths to the archive owner, which refuses
     // the recent revision with 421.
     http.reroute = Some(Box::new(|path| {
-        path.replace("/v1/txid/recent/", "/v1/txid/archive/")
+        path.replace("/v2/txid/recent/", "/v2/txid/archive/")
     }));
     let mut client = env.client();
     assert_eq!(
@@ -1209,7 +1209,7 @@ fn setup_seed_golden_matches_server() {
     }
     // And what the running server publishes: one table kind, no pages.
     let env = env();
-    let init: serde_json::Value = env.rt.block_on(env.world.get("/v1/txid/init")).1;
+    let init: serde_json::Value = env.rt.block_on(env.world.get("/v2/txid/init")).1;
     assert_eq!(init["codec"], txid::CODEC);
     let geometry = init["geometries"]
         .as_array()

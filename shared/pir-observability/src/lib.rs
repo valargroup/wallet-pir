@@ -79,19 +79,19 @@ impl Default for HttpMetrics {
 
 /// Only a fixed endpoint category survives classification. No dynamic path segment is retained.
 pub fn endpoint(path: &str) -> Option<&'static str> {
-    if path == "/v1/shards/init" {
+    if path == "/v2/shards/init" {
         Some("init")
-    } else if path == "/v1/shards" || path == "/v1/filters/shards" {
+    } else if path == "/v2/shards" || path == "/v2/filters/shards" {
         Some("map")
-    } else if path.starts_with("/v1/filters/") {
+    } else if path.starts_with("/v2/filters/") || path.starts_with("/v1/filters/") {
         Some("filter")
-    } else if path.starts_with("/v1/shards/") && path.ends_with("/manifest") {
+    } else if path.starts_with("/v2/shards/") && path.ends_with("/manifest") {
         Some("manifest")
-    } else if path.starts_with("/v1/shards/") && path.contains("/setup/") {
+    } else if path.starts_with("/v2/shards/") && path.contains("/setup/") {
         Some("setup")
     } else if let Some(route) = path.strip_prefix("/v1/receiver/") {
         receiver_endpoint(route)
-    } else if path.starts_with("/v1/shards/") && path.contains("/query/") {
+    } else if path.starts_with("/v2/shards/") && path.contains("/query/") {
         if path.ends_with("/directory") {
             Some("query_directory")
         } else if path.ends_with("/pages") {
@@ -311,7 +311,7 @@ mod tests {
         let metrics = HttpMetrics::default();
         let app = Router::new()
             .route(
-                "/v1/shards/init",
+                "/v2/shards/init",
                 post(|| async { (StatusCode::SERVICE_UNAVAILABLE, "busy") }),
             )
             .layer(axum::middleware::from_fn_with_state(
@@ -322,7 +322,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v1/shards/init")
+                    .uri("/v2/shards/init")
                     .body(Body::from("unread"))
                     .unwrap(),
             )
@@ -340,7 +340,7 @@ mod tests {
     async fn nested_layers_count_once_and_unconsumed_response_is_incomplete() {
         let metrics = HttpMetrics::default();
         let app = Router::new()
-            .route("/v1/shards/init", post(|| async { "payload" }))
+            .route("/v2/shards/init", post(|| async { "payload" }))
             .layer(axum::middleware::from_fn_with_state(
                 metrics.clone(),
                 observe,
@@ -353,7 +353,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .method("POST")
-                    .uri("/v1/shards/init")
+                    .uri("/v2/shards/init")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -370,7 +370,7 @@ mod tests {
         let metrics = HttpMetrics::default();
         let app = Router::new()
             .route(
-                "/v1/shards/init",
+                "/v2/shards/init",
                 post(|| async {
                     std::future::pending::<()>().await;
                     "unreachable"
@@ -383,7 +383,7 @@ mod tests {
         let request = app.oneshot(
             Request::builder()
                 .method("POST")
-                .uri("/v1/shards/init")
+                .uri("/v2/shards/init")
                 .body(Body::empty())
                 .unwrap(),
         );
@@ -410,7 +410,7 @@ mod tests {
             .render()
             .contains("pir_http_cancelled_total{endpoint=\"init\"} 1"));
         assert_eq!(
-            endpoint("/v1/shards/123/revisions/private/query/pages"),
+            endpoint("/v2/shards/123/revisions/private/query/pages"),
             Some("query_pages")
         );
         assert_eq!(endpoint("/metrics"), None);

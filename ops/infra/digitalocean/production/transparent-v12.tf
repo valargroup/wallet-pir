@@ -72,10 +72,12 @@ resource "digitalocean_firewall" "transparent_v12" {
     source_addresses = ["0.0.0.0/0", "::/0"]
   }
 
+  # The production router serves /v2/ on transparent-pir.valargroup.dev
+  # through this listener.
   inbound_rule {
     protocol    = "tcp"
     port_range  = "8080"
-    source_tags = concat([digitalocean_tag.coordinator.name], digitalocean_tag.transparent_loadgen[*].name)
+    source_tags = concat([digitalocean_tag.coordinator.name, digitalocean_tag.transparent_router.name], digitalocean_tag.transparent_loadgen[*].name)
   }
 
   # The recent worker's shard port. The worker firewall opens only 8093, the

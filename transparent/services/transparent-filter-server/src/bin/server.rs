@@ -46,7 +46,7 @@ struct Cli {
     ///
     /// Optional: per-block filters and shard filters are independent products,
     /// and this service ingests and serves the former with or without a set.
-    /// Given one, it also answers `/v1/filters/shards` and each shard's range
+    /// Given one, it also answers `/v2/filters/shards` and each shard's range
     /// filter -- the public half a wallet needs before it can decide which
     /// shards are worth a private query. The private retrieval service holds
     /// the same filters and refuses to serve them, so that a wallet never

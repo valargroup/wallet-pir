@@ -177,7 +177,7 @@ pub fn setup_seed_named(geometry_name: &str, table: &str) -> u64 {
     u64::from_le_bytes(digest[..8].try_into().expect("eight bytes"))
 }
 
-/// The setup seed of a display table kind at `geometry`, as `/v1/txid/init`
+/// The setup seed of a display table kind at `geometry`, as `/v2/txid/init`
 /// publishes it.
 pub fn setup_seed(geometry: &Geometry, kind: DisplayKind) -> u64 {
     setup_seed_named(geometry.name, kind.as_str())

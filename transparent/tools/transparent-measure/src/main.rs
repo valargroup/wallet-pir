@@ -101,7 +101,7 @@ impl ShardTransport for HttpShards {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
-            .get(format!("{}/v1/shards/init", self.base))
+            .get(format!("{}/v2/shards/init", self.base))
             .send()?
             .error_for_status()?
             .bytes()?
@@ -114,7 +114,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/manifest",
                 self.base
             ))
             .send()?;
@@ -133,7 +133,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.name()
             ))
@@ -153,7 +153,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .post(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/query/{}",
                 self.base,
                 table.name()
             ))
@@ -400,7 +400,7 @@ async fn main() -> Result<(), BoxError> {
         let outcome = tokio::task::spawn_blocking(move || -> Result<_, String> {
             let client = reqwest::blocking::Client::new();
             let raw = client
-                .get(format!("{base_url}/v1/shards/init"))
+                .get(format!("{base_url}/v2/shards/init"))
                 .send()
                 .map_err(|e| e.to_string())?
                 .bytes()

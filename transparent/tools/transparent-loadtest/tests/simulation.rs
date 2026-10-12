@@ -56,7 +56,7 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
             let mut advanced_map = published_map.clone();
             async move {
                 let path = request.uri().path();
-                if matches!(fault, Fault::Advance) && path == "/v1/filters/shards" {
+                if matches!(fault, Fault::Advance) && path == "/v2/filters/shards" {
                     let n = calls.fetch_add(1, Ordering::SeqCst) as u64 + 1;
                     let tip = advanced_map["shards"]
                         .as_array_mut()
@@ -114,13 +114,13 @@ async fn service(dir: &Path, fault: Fault) -> (String, ServiceState) {
                         .into_response();
                 }
                 if matches!(fault, Fault::RetryMap)
-                    && path == "/v1/filters/shards"
+                    && path == "/v2/filters/shards"
                     && calls.fetch_add(1, Ordering::SeqCst) == 0
                 {
                     return (StatusCode::BAD_GATEWAY, "temporary gateway outage").into_response();
                 }
                 if matches!(fault, Fault::Drift)
-                    && path == "/v1/filters/shards"
+                    && path == "/v2/filters/shards"
                     && calls.fetch_add(1, Ordering::SeqCst) > 1
                 {
                     return (StatusCode::SERVICE_UNAVAILABLE, "publication unavailable")

@@ -71,7 +71,7 @@ ROUTER_PROXY_ERRORS = ('\n\thandle_errors {\n\t\theader Retry-After 1\n'
 OPERATIONAL_KEYS = ('control_sessions', 'status_socket_forwarding', 'headless_console', 'storage_nodiscard',
                     'manage_all_workers', 'managed_recent_workers', 'reconcile_workers',
                     'membership_failures', 'membership_failure_seconds', 'activation_grace_seconds',
-                    'activation_lock_seconds', 'prepare_grace_seconds', 'route_imports')
+                    'activation_lock_seconds', 'prepare_grace_seconds', 'route_imports', 'api_version')
 ASSIGNMENT_SCHEMA = 'transparent-assignment-v1'
 # Absolute Caddyfile import globs only: the value is spliced into both sites.
 ROUTE_IMPORT = re.compile(r'/[A-Za-z0-9_.*/-]+\.caddy')
@@ -93,6 +93,15 @@ def route_import_lines(config):
             isinstance(glob, str) and ROUTE_IMPORT.fullmatch(glob) and '..' not in glob for glob in imports):
         raise ValueError('invalid route imports')
     return ['\timport ' + glob for glob in imports]
+
+
+def api_version(config):
+    """The wallet API path version the fleet serves: production's v11 schema is
+    `v1` (the default), the v12 schema with 8-bit history is `v2`."""
+    version = config.get('api_version', 'v1')
+    if version not in ('v1', 'v2'):
+        raise ValueError('invalid api version')
+    return version
 
 
 def atomic_json(path, value):
@@ -683,6 +692,7 @@ class Fleet:
         authority = self.c['authority_upstream']
         if not re.fullmatch(r'[A-Za-z0-9_.:-]+', host) or not re.fullmatch(r'(https://)?[A-Za-z0-9_.:-]+', authority):
             raise ValueError('invalid router addresses')
+        api = api_version(self.c)
         body = ['\trequest_body {\n\t\tmax_size 1MB\n\t}']
         if workers:
             # Only serving sites import, so a bad key can never block withdrawal.
@@ -700,10 +710,10 @@ class Fleet:
                 if not ids:
                     continue
                 pattern = '|'.join(map(str,ids))
-                body += [f'\t@{name} path_regexp ^/v1/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
+                body += [f'\t@{name} path_regexp ^/{api}/shards/({pattern})/revisions/[0-9a-f]{{64}}/(setup|query)/',
                          f'\thandle @{name} {{\n\t\treverse_proxy {" ".join(upstreams)} {{\n\t\t\tlb_policy round_robin\n\t\t\tlb_try_duration 2s\n{ROUTER_HEALTH}\t\t}}\n\t}}']
             body += [*imports,
-                     '\t@metadata path /v1/shards /v1/shards/init /v1/filters/shards /v1/filters/shards/* /v1/shards/*/revisions/*/manifest',
+                     f'\t@metadata path /{api}/shards /{api}/shards/init /{api}/filters/shards /{api}/filters/shards/* /{api}/shards/*/revisions/*/manifest',
                      f'\thandle @metadata {{\n\t\treverse_proxy {authority} {{\n\t\t\theader_up Host {{upstream_hostport}}\n\t\t}}\n\t}}', '\thandle {\n\t\trespond 404\n\t}',
                      ROUTER_PROXY_ERRORS.rstrip('\n')]
         else:

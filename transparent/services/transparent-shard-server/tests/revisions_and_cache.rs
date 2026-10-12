@@ -298,7 +298,7 @@ async fn each_revision_is_answered_under_its_own_identity() {
     for revision in [&old, &new] {
         let (status, raw) = get(
             &state,
-            &format!("/v1/shards/0/revisions/{revision}/setup/directory/0"),
+            &format!("/v2/shards/0/revisions/{revision}/setup/directory/0"),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "revision {revision} must answer");
@@ -328,7 +328,7 @@ async fn a_pruned_revision_is_refused_with_the_current_map_digest() {
     let gone = "cc".repeat(32);
     let (status, raw) = get(
         &state,
-        &format!("/v1/shards/0/revisions/{gone}/setup/directory/0"),
+        &format!("/v2/shards/0/revisions/{gone}/setup/directory/0"),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -338,7 +338,7 @@ async fn a_pruned_revision_is_refused_with_the_current_map_digest() {
 
     // The digest of the map the wallet should refetch, so it can tell whether
     // refreshing will actually help.
-    let (_, raw) = get(&state, "/v1/shards").await;
+    let (_, raw) = get(&state, "/v2/shards").await;
     let served = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&raw));
     assert_eq!(body["map_sha256"].as_str().unwrap(), served);
     assert!(!new.is_empty());
@@ -360,7 +360,7 @@ async fn the_served_map_matches_its_advertised_digest() {
     let response = router(state.clone())
         .oneshot(
             Request::builder()
-                .uri("/v1/shards")
+                .uri("/v2/shards")
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -382,7 +382,7 @@ async fn the_served_map_matches_its_advertised_digest() {
     );
 
     // And the same bytes come back a second time.
-    let (_, again) = get(&state, "/v1/filters/shards").await;
+    let (_, again) = get(&state, "/v2/filters/shards").await;
     assert_eq!(body.to_vec(), again);
 }
 
@@ -397,7 +397,7 @@ async fn concurrent_cold_requests_build_once() {
     let (_, new) = two_revisions(dir.path());
     let state = state_with(dir.path(), ServiceConfig::default());
 
-    let path = format!("/v1/shards/0/revisions/{new}/setup/directory/0");
+    let path = format!("/v2/shards/0/revisions/{new}/setup/directory/0");
     let mut tasks = Vec::new();
     for _ in 0..8 {
         let state = state.clone();
@@ -442,7 +442,7 @@ async fn a_second_runtime_evicts_the_first_rather_than_exceeding_the_budget() {
     for table in ["directory", "pages-0"] {
         let (status, _) = get(
             &state,
-            &format!("/v1/shards/0/revisions/{new}/setup/{table}/0"),
+            &format!("/v2/shards/0/revisions/{new}/setup/{table}/0"),
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{table} must be servable");
@@ -483,7 +483,7 @@ async fn a_request_that_cannot_fit_the_budget_is_refused_retryably() {
     let response = router(state.clone())
         .oneshot(
             Request::builder()
-                .uri(format!("/v1/shards/0/revisions/{new}/setup/directory/0"))
+                .uri(format!("/v2/shards/0/revisions/{new}/setup/directory/0"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -525,7 +525,7 @@ async fn a_segment_corrupted_after_loading_fails_its_build() {
 
     let (status, _) = get(
         &state,
-        &format!("/v1/shards/0/revisions/{new}/setup/directory/0"),
+        &format!("/v2/shards/0/revisions/{new}/setup/directory/0"),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -1168,7 +1168,7 @@ async fn live_prepare_activate_and_invalidate() {
     .unwrap();
     let before = live
         .router()
-        .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(before.headers()["x-shard-map-sha256"], old_map);
@@ -1212,7 +1212,7 @@ async fn live_prepare_activate_and_invalidate() {
     .unwrap();
     let after = live
         .router()
-        .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+        .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
         .await
         .unwrap();
     assert_eq!(after.headers()["x-shard-map-sha256"], new_map);
@@ -1227,7 +1227,7 @@ async fn live_prepare_activate_and_invalidate() {
     let response = live
         .router()
         .oneshot(
-            Request::get(format!("/v1/shards/0/revisions/{new}/manifest"))
+            Request::get(format!("/v2/shards/0/revisions/{new}/manifest"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -1236,7 +1236,7 @@ async fn live_prepare_activate_and_invalidate() {
     assert_eq!(response.status(), StatusCode::CONFLICT);
     assert_eq!(
         live.router()
-            .oneshot(Request::get("/v1/shards").body(Body::empty()).unwrap())
+            .oneshot(Request::get("/v2/shards").body(Body::empty()).unwrap())
             .await
             .unwrap()
             .status(),
@@ -1297,7 +1297,7 @@ async fn live_prepare_activate_and_invalidate() {
         restarted
             .router()
             .oneshot(
-                Request::get(format!("/v1/shards/0/revisions/{old}/manifest"))
+                Request::get(format!("/v2/shards/0/revisions/{old}/manifest"))
                     .body(Body::empty())
                     .unwrap()
             )

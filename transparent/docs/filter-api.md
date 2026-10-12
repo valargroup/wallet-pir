@@ -62,7 +62,7 @@ A wallet that just downloaded the filters can compute these itself. The endpoint
 exists for the case where it has not: comparing what independent operators
 publish for the same blocks without downloading both sets of filters.
 
-### `GET /v1/filters/shards`
+### `GET /v2/filters/shards`
 
 The published height-to-shard map: the ordered, gapless list of shards, each
 with its height range, terminal block hash, filter digest, occupancy counts,
@@ -80,7 +80,7 @@ Returns 404 when the service was not given a published set. Per-block filters
 and shard filters are independent products, and this service serves the former
 with or without the latter.
 
-### `GET /v1/filters/shards/{shard_id}/filter`
+### `GET /v2/filters/shards/{shard_id}/filter`
 
 One shard's range filter, as published. Globally identical bytes for every
 wallet, immutable once published, and served with a one-year `immutable`

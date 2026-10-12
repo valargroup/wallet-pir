@@ -23,7 +23,7 @@ pub struct StageTotals {
 /// Every shard id the recorded routes addressed, across all stages.
 ///
 /// Read back out of the routes the report already carries rather than tracked
-/// separately, so this can never disagree with the evidence. `/v1/shards/init`
+/// separately, so this can never disagree with the evidence. `/v2/shards/init`
 /// and the filter routes have no shard id in that position and drop out.
 pub fn addressed_shards(stages: &BTreeMap<&'static str, StageTotals>) -> BTreeSet<u64> {
     stages
@@ -31,7 +31,7 @@ pub fn addressed_shards(stages: &BTreeMap<&'static str, StageTotals>) -> BTreeSe
         .flat_map(|totals| totals.routes.iter())
         .filter_map(|route| {
             route
-                .strip_prefix("/v1/shards/")?
+                .strip_prefix("/v2/shards/")?
                 .split('/')
                 .next()?
                 .parse()
@@ -95,7 +95,7 @@ impl<T> Counting<T> {
 impl<T: ShardTransport> ShardTransport for Counting<T> {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         let started = Instant::now();
-        self.route("init", "/v1/shards/init".into());
+        self.route("init", "/v2/shards/init".into());
         let result = self.inner.init();
         self.record("init", 0, sized(&result), started.elapsed());
         result
@@ -104,7 +104,7 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
         let started = Instant::now();
         self.route(
             "manifest",
-            format!("/v1/shards/{shard_id}/revisions/{revision}/manifest"),
+            format!("/v2/shards/{shard_id}/revisions/{revision}/manifest"),
         );
         let result = self.inner.manifest(shard_id, revision);
         self.record("manifest", 0, sized(&result), started.elapsed());
@@ -124,7 +124,7 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
                 Table::Pages(_) => "setup_pages",
             },
             format!(
-                "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
+                "/v2/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 table.name()
             ),
         );
@@ -154,7 +154,7 @@ impl<T: ShardTransport> ShardTransport for Counting<T> {
                 Table::Pages(_) => "query_pages",
             },
             format!(
-                "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                "/v2/shards/{shard_id}/revisions/{revision}/query/{}",
                 table.name()
             ),
         );
@@ -211,7 +211,7 @@ impl<F: FilterSource> FilterSource for CountingFilters<F> {
         let result = self.inner.shard_map();
         let mut stages = self.stages.lock().unwrap();
         let entry = stages.entry("map").or_default();
-        entry.routes.push("/v1/filters/shards".into());
+        entry.routes.push("/v2/filters/shards".into());
         entry.calls += 1;
         entry.micros += started.elapsed().as_micros() as u64;
         match sized(&result) {
@@ -237,7 +237,7 @@ impl<F: FilterSource> FilterSource for CountingFilters<F> {
         let entry = stages.entry("filters").or_default();
         entry
             .routes
-            .push(format!("/v1/filters/shards/{shard_id}/filter"));
+            .push(format!("/v2/filters/shards/{shard_id}/filter"));
         entry.calls += 1;
         entry.micros += started.elapsed().as_micros() as u64;
         match sized(&result) {

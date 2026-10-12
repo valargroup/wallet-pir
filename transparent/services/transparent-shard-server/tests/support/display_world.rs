@@ -1,6 +1,6 @@
 //! The in-process tiered display deployment the txid tests share: an
 //! archive-owner and a recent-replica worker behind an edge that routes
-//! `/v1/txid/archive/` to the owner, the published fixtures, and the wallet
+//! `/v2/txid/archive/` to the owner, the published fixtures, and the wallet
 //! client (`transparent-txid-client`) over a blocking HTTP transport that
 //! logs, and on request rewrites, every exchange.
 #![allow(dead_code)]
@@ -185,13 +185,13 @@ pub async fn edge(State(edge): State<Edge>, request: Request) -> Response {
         let _ = axum::body::to_bytes(request.into_body(), usize::MAX).await;
         return (StatusCode::SERVICE_UNAVAILABLE, "injected").into_response();
     }
-    let target = if path.starts_with("/v1/txid/archive/") {
+    let target = if path.starts_with("/v2/txid/archive/") {
         edge.archive
     } else {
         edge.recent
     };
     let response = target.oneshot(request).await.unwrap();
-    if path == "/v1/txid/init" && edge.faults.foreign_codec.load(Ordering::Acquire) {
+    if path == "/v2/txid/init" && edge.faults.foreign_codec.load(Ordering::Acquire) {
         let (parts, body) = response.into_parts();
         let bytes = axum::body::to_bytes(body, usize::MAX).await.unwrap();
         let mut init: serde_json::Value = serde_json::from_slice(&bytes).unwrap();

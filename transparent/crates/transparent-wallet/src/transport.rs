@@ -551,7 +551,7 @@ impl ShardRequest<'_> {
     pub fn route(&self) -> String {
         match *self {
             ShardRequest::Manifest { shard_id, revision } => {
-                format!("/v1/shards/{shard_id}/revisions/{revision}/manifest")
+                format!("/v2/shards/{shard_id}/revisions/{revision}/manifest")
             }
             ShardRequest::Setup {
                 shard_id,
@@ -559,7 +559,7 @@ impl ShardRequest<'_> {
                 table,
                 segment,
             } => format!(
-                "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
+                "/v2/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 table.name()
             ),
             ShardRequest::Query {
@@ -568,7 +568,7 @@ impl ShardRequest<'_> {
                 table,
                 ..
             } => format!(
-                "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                "/v2/shards/{shard_id}/revisions/{revision}/query/{}",
                 table.name()
             ),
         }

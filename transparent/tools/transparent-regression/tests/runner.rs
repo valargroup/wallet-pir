@@ -24,13 +24,13 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
         .map(|h| (h, hash_at(h).to_display_hex()))
         .collect();
     let mut allowed = std::collections::BTreeSet::from([
-        "GET /v1/filters/shards".to_string(),
-        "GET /v1/shards/init".to_string(),
+        "GET /v2/filters/shards".to_string(),
+        "GET /v2/shards/init".to_string(),
     ]);
     for shard in map.shards.iter().filter(|s| s.start_height <= heights[2]) {
-        allowed.insert(format!("GET /v1/filters/shards/{}/filter", shard.shard_id));
+        allowed.insert(format!("GET /v2/filters/shards/{}/filter", shard.shard_id));
         let prefix = format!(
-            "/v1/shards/{}/revisions/{}",
+            "/v2/shards/{}/revisions/{}",
             shard.shard_id, shard.manifest_digest
         );
         allowed.insert(format!("GET {prefix}/manifest"));
@@ -282,7 +282,7 @@ async fn serve_traced_failures(
             let capture = capture.clone();
             let remaining = remaining.clone();
             async move {
-                if request.uri().path() == "/v1/shards/init"
+                if request.uri().path() == "/v2/shards/init"
                     && remaining
                         .fetch_update(
                             std::sync::atomic::Ordering::SeqCst,

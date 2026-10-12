@@ -1,0 +1,14 @@
+# Wallet API v2 on the public origin, imported by the v1 fleet's router
+# (route_imports). /v2/txid goes to the one-query txid display site; every
+# other /v2 path goes to the v12 fleet's router, whose site answers under its
+# own address. Caddy orders the longer path first.
+handle /v2/txid/* {
+	# Until the site's release serves /v2/txid itself.
+	uri replace /v2/txid/ /v1/txid/
+	reverse_proxy 10.142.0.18:8095
+}
+handle /v2/* {
+	reverse_proxy 10.142.0.9:8080 {
+		header_up Host {upstream_hostport}
+	}
+}

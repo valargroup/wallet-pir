@@ -502,7 +502,7 @@ impl HttpShardTransport {
 impl ShardTransport for HttpShardTransport {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = execute(
-            self.client.get(format!("{}/v1/shards/init", self.base)),
+            self.client.get(format!("{}/v2/shards/init", self.base)),
             "init",
             0,
             None,
@@ -722,7 +722,7 @@ impl FilterSource for HttpFilterSource {
         // The map about to be read may number its shards differently.
         self.prefetched.clear();
         let bytes = execute(
-            self.client.get(format!("{}/v1/filters/shards", self.base)),
+            self.client.get(format!("{}/v2/filters/shards", self.base)),
             "map",
             0,
             None,
@@ -758,7 +758,7 @@ impl FilterSource for HttpFilterSource {
                     let Some(&id) = wanted.get(at) else { break };
                     match execute(
                         self.client
-                            .get(format!("{}/v1/filters/shards/{id}/filter", self.base)),
+                            .get(format!("{}/v2/filters/shards/{id}/filter", self.base)),
                         "filters",
                         0,
                         None,
@@ -782,7 +782,7 @@ impl FilterSource for HttpFilterSource {
         }
         let bytes = execute(
             self.client
-                .get(format!("{}/v1/filters/shards/{shard_id}/filter", self.base)),
+                .get(format!("{}/v2/filters/shards/{shard_id}/filter", self.base)),
             "filters",
             0,
             None,
@@ -915,7 +915,7 @@ mod observation_tests {
             let (bytes, cost) = source.filter(id).unwrap();
             assert_eq!(
                 bytes,
-                format!("/v1/filters/shards/{id}/filter").into_bytes()
+                format!("/v2/filters/shards/{id}/filter").into_bytes()
             );
             assert_eq!(cost, bytes.len() as u64);
         }

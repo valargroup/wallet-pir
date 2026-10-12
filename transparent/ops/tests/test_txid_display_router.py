@@ -98,6 +98,24 @@ class RouterHookTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(withdrawn).hexdigest(), digests[1])
                 self.assertNotIn(b'import', withdrawn)
 
+    def test_a_v2_fleet_moves_only_the_wallet_paths(self):
+        for (internal, guarded), digests in GOLDEN.items():
+            with self.subTest(internal=internal, guarded=guarded):
+                v1, withdrawn = render(internal, guarded, api_version='v1')
+                self.assertEqual(hashlib.sha256(v1).hexdigest(), digests[0])
+                v2, withdrawn_v2 = render(internal, guarded, api_version='v2')
+                moved = v1.decode().replace('/v1/shards', '/v2/shards').replace('/v1/filters/shards', '/v2/filters/shards')
+                self.assertEqual(v2.decode(), moved)
+                # Probes are operational, not wallet API, and keep their path.
+                if not guarded or internal:
+                    self.assertIn('health_uri /v1/ready', v2.decode())
+                self.assertEqual(withdrawn_v2, withdrawn)
+
+    def test_an_unknown_api_version_refuses(self):
+        for version in ('v3', '2', ''):
+            with self.subTest(version=version), self.assertRaises(ValueError):
+                render(False, False, api_version=version)
+
     def test_invalid_imports_refuse_before_any_router_change(self):
         for value in ('/etc/caddy/x/*.caddy', ['/etc/caddy/x/*.conf'], ['relative/*.caddy'],
                       ['/etc/caddy/x/*.caddy\n\trespond 200'], ['/etc/caddy/../Caddyfile.caddy'], [7]):

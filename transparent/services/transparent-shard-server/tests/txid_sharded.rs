@@ -1,6 +1,6 @@
 //! The tiered, bucketed txid display publication over real HTTP: an
 //! archive-owner and a recent-replica worker behind an edge that routes
-//! `/v1/txid/archive/` to the owner, as the deployment's static route does,
+//! `/v2/txid/archive/` to the owner, as the deployment's static route does,
 //! and the wallet client (`transparent-txid-client`).
 #[path = "../examples/support/bytemeter.rs"]
 mod bytemeter;
@@ -372,14 +372,14 @@ async fn a_seal_is_staged_then_published_without_rebuilding_archives() {
     assert_eq!(provenance.tier, Tier::Archive);
     fresh.found(&r1_records[CLASSES + 2], 290);
     // The archive that was already sealed did not change.
-    let (_, map) = world.get("/v1/txid/shards").await;
+    let (_, map) = world.get("/v2/txid/shards").await;
     assert_eq!(map["shards"][0]["manifest_digest"], world.a0.digest);
 
     // The window drops the oldest archive: shard ids are not renumbered and
     // the remaining digests are unchanged.
     assert_eq!(world.archive.publish(&p2.0, &p2.1).await["built"], 0);
     assert_eq!(world.recent.publish(&p2.0, &p2.1).await["built"], 0);
-    let (_, map) = world.get("/v1/txid/shards").await;
+    let (_, map) = world.get("/v2/txid/shards").await;
     assert_eq!(map["first_shard_id"], 1);
     assert_eq!(map["shards"][0]["manifest_digest"], a1.digest);
     let old = &world.a0_records[CLASSES];
@@ -457,7 +457,7 @@ async fn relinked_revisions_rebuild_after_their_first_directories_are_removed() 
             let segments = revision.manifest.segments(table).unwrap().len();
             for segment in 0..segments {
                 let path = format!(
-                    "/v1/txid/{tier}/shards/{shard_id}/revisions/{}/setup/{}/{segment}",
+                    "/v2/txid/{tier}/shards/{shard_id}/revisions/{}/setup/{}/{segment}",
                     revision.digest,
                     table.label()
                 );
@@ -509,7 +509,7 @@ async fn a_reorg_invalidates_only_the_recent_shard() {
     // The map and readiness keep serving; the recent revision does not, so
     // the wallet refreshes its map once, is refused again, and says stale.
     assert_eq!(world.get("/v1/ready").await.0, 200);
-    assert_eq!(world.get("/v1/txid/shards").await.0, 200);
+    assert_eq!(world.get("/v2/txid/shards").await.0, 200);
     assert_eq!(
         wallet.lookup(world.r0_records[CLASSES].txid, 230),
         Err(TxidError::Stale)
@@ -602,7 +602,7 @@ async fn wallets_follow_a_fresh_lineage_without_downtime() {
     // Each worker prepares it beside the old publication, then swaps.
     assert_eq!(world.archive.publish(&fresh.0, &fresh.1).await["built"], 2);
     assert_eq!(world.recent.publish(&fresh.0, &fresh.1).await["built"], 1);
-    let (_, init) = world.get("/v1/txid/init").await;
+    let (_, init) = world.get("/v2/txid/init").await;
     assert_eq!(init["geometries"].as_array().unwrap().len(), 1, "{init}");
 
     // The old map's archive is answered from the retired snapshot while its
@@ -806,12 +806,12 @@ async fn the_split_map_is_served_beside_the_unchanged_full_map() {
     let world = World::start().await;
     let file = |dir: &Path, name: &str| std::fs::read(dir.join(name)).unwrap();
 
-    let (status, headers, full) = raw(&world, "/v1/txid/shards").await;
+    let (status, headers, full) = raw(&world, "/v2/txid/shards").await;
     assert_eq!(status, 200);
     assert_eq!(full, file(&world.p0.0, "txid-shards.json"));
     assert_eq!(header(&headers, "x-txid-map-sha256"), world.p0.1);
 
-    let (status, headers, recent) = raw(&world, "/v1/txid/map").await;
+    let (status, headers, recent) = raw(&world, "/v2/txid/map").await;
     assert_eq!(status, 200);
     assert_eq!(recent, file(&world.p0.0, RECENT_MAP_FILE));
     assert_eq!(
@@ -842,12 +842,12 @@ async fn the_split_map_is_served_beside_the_unchanged_full_map() {
     // The right digest under another base is a bad request; an unknown
     // digest is stale.
     assert_eq!(
-        raw(&world, &format!("/v1/txid/map/32/{digest}")).await.0,
+        raw(&world, &format!("/v2/txid/map/32/{digest}")).await.0,
         400
     );
     let unknown = "ab".repeat(32);
     assert_eq!(
-        raw(&world, &format!("/v1/txid/map/0/{unknown}")).await.0,
+        raw(&world, &format!("/v2/txid/map/0/{unknown}")).await.0,
         409
     );
 
@@ -855,9 +855,9 @@ async fn the_split_map_is_served_beside_the_unchanged_full_map() {
     let Seal { a1, r1, p1, .. } = Seal::write(&world);
     world.archive.publish(&p1.0, &p1.1).await;
     world.recent.publish(&p1.0, &p1.1).await;
-    let (_, _, full) = raw(&world, "/v1/txid/shards").await;
+    let (_, _, full) = raw(&world, "/v2/txid/shards").await;
     assert_eq!(full, file(&p1.0, "txid-shards.json"));
-    let (_, _, moved) = raw(&world, "/v1/txid/map").await;
+    let (_, _, moved) = raw(&world, "/v2/txid/map").await;
     let moved: DisplayRecentMap = serde_json::from_slice(&moved).unwrap();
     assert_eq!((moved.archives, moved.chunks.len()), (2, 1));
     assert_ne!(moved.chunks[0].sha256, digest);
@@ -925,7 +925,7 @@ async fn misaddressed_requests_are_refused() {
         body
     };
     let archive =
-        |digest: &str, tail: &str| format!("/v1/txid/archive/shards/0/revisions/{digest}/{tail}");
+        |digest: &str, tail: &str| format!("/v2/txid/archive/shards/0/revisions/{digest}/{tail}");
     let a = &a0.digest;
 
     // A body bound to bucket 1 is refused by bucket 0's table.
@@ -957,7 +957,7 @@ async fn misaddressed_requests_are_refused() {
     }
     // The tier is the revision's own, and the role must hold it.
     let recent_path =
-        |digest: &str| format!("/v1/txid/recent/shards/0/revisions/{digest}/setup/directory-0/0");
+        |digest: &str| format!("/v2/txid/recent/shards/0/revisions/{digest}/setup/directory-0/0");
     assert_eq!(
         send(&owner, &recent_path(a), None).await.0,
         StatusCode::MISDIRECTED_REQUEST
@@ -972,7 +972,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(
         send(
             &owner,
-            &format!("/v1/txid/recent/shards/1/revisions/{r_digest}/setup/directory-0/0"),
+            &format!("/v2/txid/recent/shards/1/revisions/{r_digest}/setup/directory-0/0"),
             None
         )
         .await
@@ -982,7 +982,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(
         send(
             &replica,
-            &format!("/v1/txid/archive/shards/1/revisions/{r_digest}/setup/directory-0/0"),
+            &format!("/v2/txid/archive/shards/1/revisions/{r_digest}/setup/directory-0/0"),
             None
         )
         .await
@@ -993,7 +993,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(
         send(
             &owner,
-            &format!("/v1/txid/archive/shards/3/revisions/{a}/setup/directory-0/0"),
+            &format!("/v2/txid/archive/shards/3/revisions/{a}/setup/directory-0/0"),
             None
         )
         .await
@@ -1007,7 +1007,7 @@ async fn misaddressed_requests_are_refused() {
     assert_eq!(body["map_sha256"], map_sha256);
     let (status, _) = send(
         &replica,
-        &format!("/v1/txid/shards/0/revisions/{unknown}/manifest"),
+        &format!("/v2/txid/shards/0/revisions/{unknown}/manifest"),
         None,
     )
     .await;
@@ -1017,14 +1017,14 @@ async fn misaddressed_requests_are_refused() {
         for (id, digest) in [(0, a), (1, r_digest)] {
             let (status, body) = send(
                 app,
-                &format!("/v1/txid/shards/{id}/revisions/{digest}/manifest"),
+                &format!("/v2/txid/shards/{id}/revisions/{digest}/manifest"),
                 None,
             )
             .await;
             assert_eq!(status, StatusCode::OK);
             assert_eq!(hex::encode(Sha256::digest(body.as_bytes())), *digest);
         }
-        let (status, init) = send(app, "/v1/txid/init", None).await;
+        let (status, init) = send(app, "/v2/txid/init", None).await;
         assert_eq!(status, StatusCode::OK);
         let init: serde_json::Value = serde_json::from_str(&init).unwrap();
         assert_eq!(init["map_sha256"], map_sha256);

@@ -321,7 +321,7 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     let other = &map.shards[3].manifest_digest;
     let (status, body) = get(
         &state,
-        &format!("/v1/shards/3/revisions/{other}/setup/directory/0"),
+        &format!("/v2/shards/3/revisions/{other}/setup/directory/0"),
     )
     .await;
     assert_eq!(status, StatusCode::MISDIRECTED_REQUEST);
@@ -331,13 +331,13 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
         .unwrap()
         .contains("not assigned to worker archive-01"));
     // But its filter and manifest are served, as every worker holds them.
-    let (status, filter) = get(&state, "/v1/filters/shards/3/filter").await;
+    let (status, filter) = get(&state, "/v2/filters/shards/3/filter").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         filter,
         std::fs::read(dir.path().join(other).join("filter.bin")).unwrap()
     );
-    let (status, manifest) = get(&state, &format!("/v1/shards/3/revisions/{other}/manifest")).await;
+    let (status, manifest) = get(&state, &format!("/v2/shards/3/revisions/{other}/manifest")).await;
     assert_eq!(status, StatusCode::OK);
     let manifest: ShardManifest = serde_json::from_slice(&manifest).unwrap();
     assert_eq!(&manifest.digest(), other);
@@ -345,7 +345,7 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     let mine = &map.shards[0].manifest_digest;
     let (status, _) = get(
         &state,
-        &format!("/v1/shards/0/revisions/{mine}/setup/directory/0"),
+        &format!("/v2/shards/0/revisions/{mine}/setup/directory/0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -353,14 +353,14 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
     let (status, _) = get(
         &state,
         &format!(
-            "/v1/shards/0/revisions/{}/setup/directory/0",
+            "/v2/shards/0/revisions/{}/setup/directory/0",
             "aa".repeat(32)
         ),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
     // init and health carry the identity.
-    let (_, init) = get(&state, "/v1/shards/init").await;
+    let (_, init) = get(&state, "/v2/shards/init").await;
     let init: serde_json::Value = serde_json::from_slice(&init).unwrap();
     assert_eq!(init["shards"], 6);
     assert_eq!(init["assigned_shards"], 2);

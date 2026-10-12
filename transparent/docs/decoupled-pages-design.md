@@ -144,7 +144,7 @@ rows.
 - Page tags use a per-child salt `page_tag_salt(D id, j, P end height,
   P terminal, counter)`, because D's terminal changes every block while D is open
   and would otherwise re-tag sealed children.
-- Queries go to `/v1/shards/:d/revisions/:d_digest/{setup,query}/pages-<j>`,
+- Queries go to `/v2/shards/:d/revisions/:d_digest/{setup,query}/pages-<j>`,
   reusing the `:table` parameter. Only D revisions go stale, so 409 handling and
   worker assignment stay per D. `ShardMapEntry` is unchanged; `page_segments`
   becomes k. The server keys page runtimes by child identity, so a sealed child's

@@ -348,7 +348,7 @@ impl ShardTransport for HttpShards {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         let bytes = self
             .client
-            .get(format!("{}/v1/shards/init", self.base))
+            .get(format!("{}/v2/shards/init", self.base))
             .send()?
             .error_for_status()?
             .bytes()?
@@ -361,7 +361,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/manifest",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/manifest",
                 self.base
             ))
             .send()?;
@@ -380,7 +380,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .get(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/setup/{}/{segment}",
                 self.base,
                 table.name()
             ))
@@ -400,7 +400,7 @@ impl ShardTransport for HttpShards {
         let response = self
             .client
             .post(format!(
-                "{}/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                "{}/v2/shards/{shard_id}/revisions/{revision}/query/{}",
                 self.base,
                 table.name()
             ))
@@ -559,7 +559,7 @@ async fn run_sync_with_init(
         // The geometry is taken from init and then re-derived by the client,
         // which refuses it if it does not match this build's pinned constants.
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -677,7 +677,7 @@ async fn a_service_serving_another_schema_is_refused() {
             client: client.clone(),
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -979,7 +979,7 @@ async fn coverage_does_not_advance_when_a_segment_is_missing() {
     let error = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1079,7 +1079,7 @@ async fn a_wallet_refuses_a_manifest_that_does_not_digest_to_the_map() {
     let (error, queries) = tokio::task::spawn_blocking(move || {
         let client = reqwest::blocking::Client::new();
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1386,7 +1386,7 @@ async fn init_declares_one_parameter_set_per_geometry() {
     let base = serve(dir.path()).await;
 
     let raw = tokio::task::spawn_blocking(move || {
-        reqwest::blocking::get(format!("{base}/v1/shards/init"))
+        reqwest::blocking::get(format!("{base}/v2/shards/init"))
             .unwrap()
             .bytes()
             .unwrap()
@@ -1460,7 +1460,7 @@ async fn a_shard_naming_an_unknown_geometry_stops_the_sync() {
             client: client.clone(),
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1623,7 +1623,7 @@ async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
         let client = reqwest::blocking::Client::new();
         let mut transport = shards_at(&base, &client, concurrency);
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1797,7 +1797,7 @@ async fn overloaded_then_recovers(concurrency: usize) {
             concurrency,
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1864,7 +1864,7 @@ async fn unrelenting_overload_stops(concurrency: usize) {
             concurrency,
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -1925,7 +1925,7 @@ async fn a_503_that_names_no_delay_is_not_retried() {
             concurrency: 1,
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -2050,7 +2050,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
         let client = reqwest::blocking::Client::new();
         let mut transport = shards_at(&base, &client, concurrency);
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()
@@ -2709,7 +2709,7 @@ async fn an_unknown_range_profile_stops_the_sync_before_matching() {
             client: client.clone(),
         };
         let raw = client
-            .get(format!("{base}/v1/shards/init"))
+            .get(format!("{base}/v2/shards/init"))
             .send()
             .unwrap()
             .bytes()

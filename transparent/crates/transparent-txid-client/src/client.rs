@@ -303,7 +303,7 @@ impl TxidDisplayClient {
     /// [`ProtocolKind::Map`]. On any error the previously cached map is
     /// kept. Once a map is accepted, a cached init naming a schema or codec
     /// this client does not support is dropped, so the next lookup asks
-    /// again. Sends exactly one `GET /v1/txid/map` unless `cancel` returns
+    /// again. Sends exactly one `GET /v2/txid/map` unless `cancel` returns
     /// true first; statuses map to errors as in [`Self::lookup`], with no
     /// retry.
     pub fn refresh_map(
@@ -690,7 +690,7 @@ impl TxidDisplayClient {
             return Ok(manifest.clone());
         }
         let path = format!(
-            "/v1/txid/shards/{}/revisions/{}/manifest",
+            "/v2/txid/shards/{}/revisions/{}/manifest",
             entry.shard_id, entry.manifest_digest
         );
         let reply = send(
@@ -787,7 +787,7 @@ impl TxidDisplayClient {
             return Ok(setup.clone());
         }
         let path = format!(
-            "/v1/txid/{}/shards/{}/revisions/{digest}/setup/{}/{segment}",
+            "/v2/txid/{}/shards/{}/revisions/{digest}/setup/{}/{segment}",
             entry.tier(),
             entry.shard_id,
             table.label()
@@ -878,7 +878,7 @@ impl TxidDisplayClient {
         let binding = display::query_binding(&entry.manifest_digest, target.table);
         let stride = 16 + target.profile.scheme.response_bytes;
         let path = format!(
-            "/v1/txid/{}/shards/{}/revisions/{}/query/{}",
+            "/v2/txid/{}/shards/{}/revisions/{}/query/{}",
             entry.tier(),
             entry.shard_id,
             entry.manifest_digest,
@@ -1031,7 +1031,7 @@ mod tests {
         assert_eq!(transport.sent.len(), 1);
         assert_eq!(transport.sent[0].route, Route::Init);
         assert_eq!(transport.sent[0].method, Method::Get);
-        assert_eq!(transport.sent[0].path(), "/v1/txid/init");
+        assert_eq!(transport.sent[0].path(), "/v2/txid/init");
         assert!(transport.sent[0].body.is_empty());
     }
 
@@ -1169,7 +1169,7 @@ mod tests {
     fn templates_carry_no_identifiers() {
         for route in Route::ALL {
             let template = route.template();
-            assert!(template.starts_with("/v1/txid/"));
+            assert!(template.starts_with("/v2/txid/"));
             assert!(!template["/v1".len()..].contains(|c: char| c.is_ascii_digit()));
             assert_eq!(route.method() == Method::Post, route == Route::Query);
         }

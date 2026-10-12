@@ -188,7 +188,7 @@ fn revision_of(f: &Fixture, shard_id: u64) -> String {
 /// Builds a client for one table and retrieves `row` from `shard_id` with the
 /// 8-bit profile's 28-bit query, the only one the history tables accept.
 async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Vec<u8> {
-    let (status, raw) = get(&f.state, "/v1/shards/init").await;
+    let (status, raw) = get(&f.state, "/v2/shards/init").await;
     assert_eq!(status, StatusCode::OK);
     let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     let geometries = init["geometries"].as_array().unwrap();
@@ -212,7 +212,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Ve
     let (status, raw) = get(
         &f.state,
         &format!(
-            "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/0",
+            "/v2/shards/{shard_id}/revisions/{revision}/setup/{}/0",
             table.name()
         ),
     )
@@ -252,7 +252,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Ve
     let (status, response) = post(
         &f.state,
         &format!(
-            "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+            "/v2/shards/{shard_id}/revisions/{revision}/query/{}",
             table.name()
         ),
         body,
@@ -338,7 +338,7 @@ async fn only_the_query_length_is_accepted() {
     for request in refused {
         let (status, raw) = post(
             &f.state,
-            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            &format!("/v2/shards/0/revisions/{revision}/query/directory"),
             padded_body_of(&revision, TableRef::Directory, request),
         )
         .await;
@@ -371,7 +371,7 @@ async fn a_query_built_for_one_shard_is_refused_by_another() {
     let body = padded_body(&zero, TableRef::Directory);
     let (status, _) = post(
         &f.state,
-        &format!("/v1/shards/1/revisions/{one}/query/directory"),
+        &format!("/v2/shards/1/revisions/{one}/query/directory"),
         body,
     )
     .await;
@@ -387,7 +387,7 @@ async fn a_query_built_for_one_table_is_refused_by_the_other() {
     let body = padded_body(&revision, TableRef::Pages(0));
     let (status, _) = post(
         &f.state,
-        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        &format!("/v2/shards/0/revisions/{revision}/query/directory"),
         body,
     )
     .await;
@@ -401,7 +401,7 @@ async fn a_truncated_query_is_refused_rather_than_padded() {
     let body = query_binding(&revision, "directory").to_vec();
     let (status, _) = post(
         &f.state,
-        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        &format!("/v2/shards/0/revisions/{revision}/query/directory"),
         body,
     )
     .await;
@@ -419,7 +419,7 @@ async fn an_oversized_query_is_refused_before_any_work() {
     body.push(0);
     let (status, raw) = post(
         &f.state,
-        &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+        &format!("/v2/shards/0/revisions/{revision}/query/directory"),
         body,
     )
     .await;
@@ -472,7 +472,7 @@ async fn a_query_without_a_declared_length_is_refused() {
     let revision = revision_of(&f, 0);
     let response = router(f.state.clone())
         .oneshot(streaming_request(
-            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            &format!("/v2/shards/0/revisions/{revision}/query/directory"),
             None,
         ))
         .await
@@ -499,7 +499,7 @@ async fn a_slow_upload_times_out_without_holding_a_place() {
     let expected = padded_body(&revision, TableRef::Directory).len();
     let response = router(state.clone())
         .oneshot(streaming_request(
-            &format!("/v1/shards/0/revisions/{revision}/query/directory"),
+            &format!("/v2/shards/0/revisions/{revision}/query/directory"),
             Some(expected),
         ))
         .await
@@ -553,7 +553,7 @@ async fn a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place()
     )
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
-    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let path = format!("/v2/shards/0/revisions/{revision}/query/directory");
     let body = padded_body(&revision, TableRef::Directory);
 
     // The only slot is busy.
@@ -645,7 +645,7 @@ async fn a_capacity_refusal_reads_the_upload_and_keeps_the_connection() {
     )
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
-    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let path = format!("/v2/shards/0/revisions/{revision}/query/directory");
     let body = padded_body(&revision, TableRef::Directory);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -726,7 +726,7 @@ async fn a_request_that_outwaits_its_deadline_is_refused_retryably() {
     )
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
-    let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
+    let path = format!("/v2/shards/0/revisions/{revision}/query/directory");
     let body = padded_body(&revision, TableRef::Directory);
     let _held = state.hold_query_slot().await;
     let (status, _) = post(&state, &path, body).await;
@@ -746,7 +746,7 @@ async fn the_manifest_route_serves_canonical_bytes_that_digest_to_the_path() {
         let revision = revision_of(&f, shard_id);
         let (status, raw) = get(
             &f.state,
-            &format!("/v1/shards/{shard_id}/revisions/{revision}/manifest"),
+            &format!("/v2/shards/{shard_id}/revisions/{revision}/manifest"),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -758,11 +758,11 @@ async fn the_manifest_route_serves_canonical_bytes_that_digest_to_the_path() {
     // A revision of another shard is a routing error; an unknown digest is a
     // stale client, exactly as for setup and query.
     let zero = revision_of(&f, 0);
-    let (status, _) = get(&f.state, &format!("/v1/shards/1/revisions/{zero}/manifest")).await;
+    let (status, _) = get(&f.state, &format!("/v2/shards/1/revisions/{zero}/manifest")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, raw) = get(
         &f.state,
-        &format!("/v1/shards/0/revisions/{}/manifest", "bb".repeat(32)),
+        &format!("/v2/shards/0/revisions/{}/manifest", "bb".repeat(32)),
     )
     .await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -779,7 +779,7 @@ async fn unknown_shards_and_tables_are_refused() {
     let (status, _) = get(
         &f.state,
         &format!(
-            "/v1/shards/99/revisions/{}/setup/directory/0",
+            "/v2/shards/99/revisions/{}/setup/directory/0",
             "aa".repeat(32)
         ),
     )
@@ -789,13 +789,13 @@ async fn unknown_shards_and_tables_are_refused() {
     // service must not confuse the two.
     let (status, _) = get(
         &f.state,
-        &format!("/v1/shards/1/revisions/{revision}/setup/directory/0"),
+        &format!("/v2/shards/1/revisions/{revision}/setup/directory/0"),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = get(
         &f.state,
-        &format!("/v1/shards/0/revisions/{revision}/setup/nonsense/0"),
+        &format!("/v2/shards/0/revisions/{revision}/setup/nonsense/0"),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -803,7 +803,7 @@ async fn unknown_shards_and_tables_are_refused() {
     // one it does not have is a mistake, not an empty answer.
     let (status, _) = get(
         &f.state,
-        &format!("/v1/shards/0/revisions/{revision}/setup/directory/7"),
+        &format!("/v2/shards/0/revisions/{revision}/setup/directory/7"),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -814,7 +814,7 @@ async fn unknown_shards_and_tables_are_refused() {
 #[tokio::test]
 async fn every_shard_reports_the_same_scheme_but_its_own_setup() {
     let f = fixture();
-    let (_, raw) = get(&f.state, "/v1/shards/init").await;
+    let (_, raw) = get(&f.state, "/v2/shards/init").await;
     let init: serde_json::Value = serde_json::from_slice(&raw).unwrap();
     assert_eq!(init["shards"], SHARDS);
 
@@ -823,7 +823,7 @@ async fn every_shard_reports_the_same_scheme_but_its_own_setup() {
         let revision = revision_of(&f, shard_id);
         let (_, raw) = get(
             &f.state,
-            &format!("/v1/shards/{shard_id}/revisions/{revision}/setup/directory/0"),
+            &format!("/v2/shards/{shard_id}/revisions/{revision}/setup/directory/0"),
         )
         .await;
         let setup: serde_json::Value = serde_json::from_slice(&raw).unwrap();
@@ -889,7 +889,7 @@ async fn a_tampered_table_is_refused_at_load() {
 async fn each_shards_published_filter_is_served_verbatim() {
     let f = fixture();
     for shard_id in 0..SHARDS {
-        let (status, body) = get(&f.state, &format!("/v1/filters/shards/{shard_id}/filter")).await;
+        let (status, body) = get(&f.state, &format!("/v2/filters/shards/{shard_id}/filter")).await;
         assert_eq!(status, StatusCode::OK, "shard {shard_id}");
         let published = &f.set.get(shard_id).expect("shard is in the set").filter;
         assert_eq!(&body, published, "shard {shard_id} filter differs");
@@ -900,20 +900,20 @@ async fn each_shards_published_filter_is_served_verbatim() {
 #[tokio::test]
 async fn a_filter_for_a_shard_outside_the_set_is_refused() {
     let f = fixture();
-    let (status, _) = get(&f.state, &format!("/v1/filters/shards/{SHARDS}/filter")).await;
+    let (status, _) = get(&f.state, &format!("/v2/filters/shards/{SHARDS}/filter")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
 /// The map is reachable under both names, and is the same map.
 ///
-/// `/v1/filters/shards` exists so a wallet can point at this host or at the
+/// `/v2/filters/shards` exists so a wallet can point at this host or at the
 /// filter service by changing only the base URL. If the two paths ever answered
 /// differently, that substitution would silently stop being safe.
 #[tokio::test]
 async fn the_map_is_identical_under_both_paths() {
     let f = fixture();
-    let (private_status, private_body) = get(&f.state, "/v1/shards").await;
-    let (public_status, public_body) = get(&f.state, "/v1/filters/shards").await;
+    let (private_status, private_body) = get(&f.state, "/v2/shards").await;
+    let (public_status, public_body) = get(&f.state, "/v2/filters/shards").await;
     assert_eq!(private_status, StatusCode::OK);
     assert_eq!(public_status, StatusCode::OK);
     assert_eq!(private_body, public_body);
@@ -946,7 +946,7 @@ async fn a_page_shards_prefix_query_is_answered_as_its_full_one() {
     )
     .unwrap();
     let revision = revision_of(&f, tail);
-    let path = format!("/v1/shards/{tail}/revisions/{revision}/query/pages-0");
+    let path = format!("/v2/shards/{tail}/revisions/{revision}/query/pages-0");
     let binding = query_binding(&revision, "pages-0");
     let (_, upload) = profile.prepare(3).unwrap();
     let mut full = binding.to_vec();
@@ -960,7 +960,7 @@ async fn a_page_shards_prefix_query_is_answered_as_its_full_one() {
 
     let (status, raw) = get(
         &f.state,
-        &format!("/v1/shards/{tail}/revisions/{revision}/setup/pages-0/0"),
+        &format!("/v2/shards/{tail}/revisions/{revision}/setup/pages-0/0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1013,7 +1013,7 @@ async fn only_page_shards_take_a_prefix_and_only_their_own() {
         let (status, raw) = post(
             &f.state,
             &format!(
-                "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
+                "/v2/shards/{shard_id}/revisions/{revision}/query/{}",
                 table.name()
             ),
             short(revision, table, rows),
