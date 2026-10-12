@@ -14,11 +14,11 @@ path = "src/lib.rs"
 # ipir-sp behaviour. This crate has no features of its own, so depending on it
 # never switches the q48 Enhance binaries: only `enhance-pir/native-reinspiring`
 # does that, and nothing here enables it.
-ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6", features = ["native-reinspiring"] }
+ipir-sp = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.7", features = ["native-reinspiring"] }
 rand = "0.8"
 rand_chacha = "0.3"
 rayon = "1"
-reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
+reinspiring = { git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.7" }
 
 [dev-dependencies]
 hex = "0.4"

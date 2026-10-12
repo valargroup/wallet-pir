@@ -27,7 +27,7 @@ cli = ["dep:clap", "dep:tokio"]
 base64 = "0.22"
 clap = { version = "4", features = ["derive"], optional = true }
 hex = "0.4"
-ipir-sp = { version = "=0.1.0-rc.6", git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.6" }
+ipir-sp = { version = "=0.1.0-rc.7", git = "https://github.com/valargroup/ipir-sp.git", tag = "v0.1.0-rc.7" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
@@ -36,6 +36,6 @@ sha2 = "0.10"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"], optional = true }
 
-reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.6", optional=true}
+reinspiring = {git="https://github.com/valargroup/ipir-sp.git",tag = "v0.1.0-rc.7", optional=true}
 rand_chacha = {version="0.3", optional=true}
 pir-native = { path = "../../../shared/pir-native", optional = true }
