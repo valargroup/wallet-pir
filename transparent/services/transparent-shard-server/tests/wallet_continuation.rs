@@ -284,7 +284,8 @@ async fn a_query_budget_stops_between_pages_and_resumes_exactly() {
 }
 
 /// The spend cannot reference the receive across a fragment boundary. After
-/// reopening, the wallet still needs that receive to check the greedy split.
+/// reopening, the wallet still needs that receive to check the greedy split,
+/// and takes it from the first fragment it saved before the restart.
 #[tokio::test(flavor = "multi_thread")]
 async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let mut events = Vec::new();
@@ -371,6 +372,8 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
         .carried
         .iter()
         .all(|event| *event != last_receive));
+    // The first fragment was read and checked, so it is saved with the cursor.
+    assert_eq!(pending[0].fragments.len(), 1);
     let (store, report) = run(
         store,
         base,
@@ -385,9 +388,9 @@ async fn compact_outpoint_context_resets_across_a_sqlite_restart() {
     let report = report.unwrap();
     complete(&report);
     assert_eq!(report.charges.directory.queries, 0);
-    // A run commits whole, so the interrupted run is read again from its
-    // first row: both fragments, with the greedy split checked across them.
-    assert_eq!(report.charges.pages.queries, 2);
+    // The saved first fragment is checked again from the store, so only the
+    // second is fetched; the greedy split is still checked across both.
+    assert_eq!(report.charges.pages.queries, 1);
     assert!(store.pending().unwrap().is_empty());
     compare(&report.ledger, &traverse(&all, &wallet(&[1]), 0));
     assert_eq!(report.ledger.confirmed_balance(), 80 * 123);
