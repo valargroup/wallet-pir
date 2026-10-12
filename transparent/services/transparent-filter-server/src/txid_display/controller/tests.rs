@@ -1772,6 +1772,7 @@ async fn metrics_report_cycles_stages_and_freshness() {
     assert_eq!(series(&text, "txid_display_oldest_unpublished_seconds"), 0.);
     assert_eq!(series(&text, "txid_display_stalled"), 0.);
     assert_eq!(series(&text, "txid_display_halted"), 0.);
+    assert!(series(&text, "txid_display_process_start_time_seconds") > 0.);
     assert_eq!(series(&text, "txid_display_consecutive_failures"), 0.);
     assert!(series(&text, "txid_display_last_success_timestamp_seconds") > 1e9);
     // A cycle that only waited for a seal records no cycle event.

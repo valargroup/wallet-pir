@@ -35,14 +35,30 @@ pub struct Gauges {
     pub last_seal_ms: u64,
 }
 
-#[derive(Default)]
 pub struct Metrics {
+    /// When this process created its metrics, in Unix milliseconds; a change
+    /// tells a scraper the counters and histograms restarted from zero.
+    started_ms: u64,
     gauges: Mutex<Gauges>,
     cycles: AtomicU64,
     cycle_failures: AtomicU64,
     cycle_seconds: Distribution,
     freshness_seconds: Distribution,
     stage_seconds: [Distribution; STAGES.len()],
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self {
+            started_ms: now_ms(),
+            gauges: Mutex::default(),
+            cycles: AtomicU64::default(),
+            cycle_failures: AtomicU64::default(),
+            cycle_seconds: Distribution::default(),
+            freshness_seconds: Distribution::default(),
+            stage_seconds: Default::default(),
+        }
+    }
 }
 
 impl Metrics {
@@ -102,6 +118,7 @@ impl Metrics {
                 seconds(gauges.last_success_ms),
             ),
             ("last_seal_timestamp_seconds", seconds(gauges.last_seal_ms)),
+            ("process_start_time_seconds", seconds(self.started_ms)),
         ] {
             out.push_str(&format!(
                 "# TYPE txid_display_{name} gauge\ntxid_display_{name} {value}\n"
