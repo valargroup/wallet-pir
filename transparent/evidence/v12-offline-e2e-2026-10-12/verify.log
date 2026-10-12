@@ -1,0 +1,15 @@
+ok   load: 8 shards, 8 revisions held, every manifest, table segment and filter verified in 3.4s
+ok   coverage-contiguous: 3262749-3473686 across 8 shards
+ok   coverage-start: map starts at 3262749, expected 3262749
+ok   coverage-through: last shard ends at Some(3473686), expected 3473686
+ok   anchor-hash: terminal block Some("0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d"), expected 0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d
+ok   tiers: single-tier set using {"decoupled-2k-8k"}
+     served map digest (compact serialization): 2438d9719a19ef1afa41e86da1abd52b11d5bdcccdaa73682154a0754aa77ca8
+     multi-segment shards: []
+ok   rebuild-0: 3262749-3293447 602946 events, filter same, directory same, pages same, 2.8s
+ok   rebuild-2: 3327142-3343619 497071 events, filter same, directory same, pages same, 2.1s
+ok   rebuild-3: 3343620-3359296 534972 events, filter same, directory same, pages same, 2.0s
+ok   rebuild-4: 3359297-3389930 490974 events, filter same, directory same, pages same, 2.1s
+ok   rebuild-5: 3389931-3424324 513095 events, filter same, directory same, pages same, 2.2s
+ok   rebuild-7: 3460189-3473686 346256 events, filter same, directory same, pages same, 1.5s
+every check passed

@@ -1,0 +1,139 @@
+{
+  "checks": [
+    {
+      "check": "load",
+      "detail": "8 shards, 8 revisions held, every manifest, table segment and filter verified in 3.4s",
+      "ok": true
+    },
+    {
+      "check": "coverage-contiguous",
+      "detail": "3262749-3473686 across 8 shards",
+      "ok": true
+    },
+    {
+      "check": "coverage-start",
+      "detail": "map starts at 3262749, expected 3262749",
+      "ok": true
+    },
+    {
+      "check": "coverage-through",
+      "detail": "last shard ends at Some(3473686), expected 3473686",
+      "ok": true
+    },
+    {
+      "check": "anchor-hash",
+      "detail": "terminal block Some(\"0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d\"), expected 0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+      "ok": true
+    },
+    {
+      "check": "tiers",
+      "detail": "single-tier set using {\"decoupled-2k-8k\"}",
+      "ok": true
+    },
+    {
+      "check": "rebuild-0",
+      "detail": "3262749-3293447 602946 events, filter same, directory same, pages same, 2.8s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-2",
+      "detail": "3327142-3343619 497071 events, filter same, directory same, pages same, 2.1s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-3",
+      "detail": "3343620-3359296 534972 events, filter same, directory same, pages same, 2.0s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-4",
+      "detail": "3359297-3389930 490974 events, filter same, directory same, pages same, 2.1s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-5",
+      "detail": "3389931-3424324 513095 events, filter same, directory same, pages same, 2.2s",
+      "ok": true
+    },
+    {
+      "check": "rebuild-7",
+      "detail": "3460189-3473686 346256 events, filter same, directory same, pages same, 1.5s",
+      "ok": true
+    }
+  ],
+  "failures": 0,
+  "generated_at": "2026-10-12T07:15:42.200913878+00:00",
+  "publication": null,
+  "schema": "transparent-shard-verify-v1",
+  "set": {
+    "geometries": [
+      "decoupled-2k-8k"
+    ],
+    "map_file_sha256": "2175528dbbf33a5cdce7a3760751c95c561f9c74eb346c199b801e87a345a1ab",
+    "map_served_sha256": "2438d9719a19ef1afa41e86da1abd52b11d5bdcccdaa73682154a0754aa77ca8",
+    "multi_segment_shards": [],
+    "rebuilt": [
+      {
+        "directory": true,
+        "events": 602946,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 2.815456485,
+        "shard_id": 0
+      },
+      {
+        "directory": true,
+        "events": 497071,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 2.087713565,
+        "shard_id": 2
+      },
+      {
+        "directory": true,
+        "events": 534972,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 2.012066476,
+        "shard_id": 3
+      },
+      {
+        "directory": true,
+        "events": 490974,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 2.127460662,
+        "shard_id": 4
+      },
+      {
+        "directory": true,
+        "events": 513095,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 2.160796363,
+        "shard_id": 5
+      },
+      {
+        "directory": true,
+        "events": 346256,
+        "filter": true,
+        "geometry": "decoupled-2k-8k",
+        "pages": true,
+        "seconds": 1.531748929,
+        "shard_id": 7
+      }
+    ],
+    "revisions_held": 8,
+    "shards": 8,
+    "start_height": 3262749,
+    "terminal_block_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "through": 3473686
+  },
+  "shard_dir": "/mnt/roman-dev-2-data/ai-dev/cache/t-c362e44596f5488f/e2e/set",
+  "tool_sha": null
+}
