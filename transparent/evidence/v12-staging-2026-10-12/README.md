@@ -39,7 +39,7 @@ with cases in [mainnet-cases-v12.json](raw/coordinator/transparent-publisher/v12
 The served map was `dbdcc27e…`, with 33 sealed shards in the prefix
 ([report.json.gz](raw/regression/report.json.gz), [junit.xml](raw/regression/junit.xml)).
 
-**Sustained load (20 wallets, three runs).** `transparent-loadtest` from
+**Sustained load (20 wallets, four runs).** `transparent-loadtest` from
 roman-dev-2 over HTTPS, scenario [mixed-20-sustained-v12.json](raw/load/mixed-20-sustained-v12.json):
 20 concurrent wallets from the frozen 2026-09-08 sample (1,080 wallets, digests
 re-derived from the live journal by `sample-redigest`: 960 digests changed, every
@@ -54,8 +54,9 @@ gzipped on the development hub at
 | 1, 13:20–13:30, before the firewall fix | 3,009 | 2,996 | 12 | 1 | 22,304 (0) | 4.96 |
 | 2, 13:36–13:47, fix applied at 13:38 | 3,038 | 3,030 | 7 | 1 | 22,518 (0) | 5.02 |
 | 3, 15:50–16:01 | 3,015 | 3,007 | 7 | 1 | 22,279 (0) | 4.98 |
+| 4, 16:30–16:41, controller `322c4f07` | 3,016 | 3,015 | 0 | 1 | 22,333 (0) | 5.00 |
 
-Run 3 mean request times: directory query 0.239 s, page query 0.203 s, `init`
+Run 3 mean request times (run 4 within 0.002 s of each): directory query 0.239 s, page query 0.203 s, `init`
 0.456 s, filters 0.558 s. Recovery time per wallet, p50 / p99: small-active 2.83 /
 5.09 s, catch-up-1d 3.01 / 3.91 s, catch-up-7d 2.57 / 3.51 s, catch-up-30d 2.95 /
 5.27 s, restore-6m 3.75 / 6.23 s, unused 4.27 / 6.31 s, restore-old 6.61 / 50.1 s,
@@ -77,13 +78,20 @@ on `main` (`857b1710`) opens 8193 to the coordinator and load generators; the
 saved plan changed only the v12 firewall (0 added, 1 changed, 0 destroyed) and
 was applied with the coordinator wrapper under the production lock.
 
-**Open: `init` 503 at publication switches.** Every 503 in runs 2 and 3 started
-within about one second before the controller activated the next block's
-publication (for example 15:53:41 against 15:53:43, 15:59:12 against
-15:59:13). A request that spans an activation is answered 503 and asked to
-retry; the load tool does not retry `init`, so each counts as a failed sync.
-Whether the wallet retries it, and how often v11 sees the same, is not yet
-checked.
+**Fixed: `init` 503 at publication switches.** Every 503 in runs 2 and 3
+started within about one second before the controller activated the next
+block's publication (for example 15:53:41 against 15:53:43, 15:59:12 against
+15:59:13). Activation moves the workers to the next map before the
+controller's public pointer follows, so in that window no worker answered for
+the active map and `init` returned a bare 503, which the wallet does not retry.
+The controller at `322c4f07` keeps the last `init` it assembled with the map it
+describes and serves it in that window, and any remaining `init` 503 carries
+`retry-after: 1`; the transparent-filter-server library tests passed (102).
+[s4-controller-322c4f07.sh](raw/coordinator/transparent-publisher/v12/deploy-20261012/s4-controller-322c4f07.sh)
+replaced only the v12 controller at 16:29 UTC under the production lock
+([s4.log](raw/coordinator/transparent-publisher/v12/deploy-20261012/s4.log),
+binary sha256 `d9b6271f…`); v11's units kept their PIDs. Run 4 then crossed 8
+publication switches with no `init` 503.
 
 **v11 not regressed.** Checked against [v11-baseline.txt](raw/coordinator/transparent-publisher/v12/deploy-20261012/v11-baseline.txt),
 taken before any v12 step, and again after the load run ([v11-after.txt](raw/v11-after.txt)):
