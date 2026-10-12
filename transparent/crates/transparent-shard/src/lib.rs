@@ -33,7 +33,8 @@ pub mod txid_v1;
 pub mod txid_v2x;
 
 pub use build::{
-    candidate_rows, choice_table, place_scripts, placement_order, verify_choice, Block, BuildError,
+    build_directory_shard, candidate_rows, choice_table, place_scripts, placement_order,
+    verify_choice, Block, BuildError,
     Built, BuiltChild, BuiltDirectory, DirectoryBuilder, Placement, ShardStream,
 };
 pub use choice::{ChoiceError, ChoiceTable};

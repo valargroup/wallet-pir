@@ -271,11 +271,11 @@ impl SharedParams {
     /// Checks the binding and length, then parses the key and selection once
     /// for every segment that will answer them.
     ///
-    /// `query_rows` is the revision's [`pages_query_rows`] for pages and every
+    /// `query_rows` is the page shard's [`query_rows`] for pages and every
     /// row otherwise. A body selecting over only those rows is zero-filled to
     /// the full selection; the rows it omits are zero in every segment.
     ///
-    /// [`pages_query_rows`]: transparent_shard::manifest::ShardManifest::pages_query_rows
+    /// [`query_rows`]: transparent_shard::manifest::PageChild::query_rows
     pub fn parse(
         &self,
         binding: [u8; 8],
@@ -323,10 +323,8 @@ impl Iterator for RowCoefficients<'_> {
 /// by [`native::batched_hint`]: the recent tails and the display tables, whose
 /// recent shard is rebuilt at every block. Every other geometry, the history
 /// archives included, keeps the reference product over every block.
-const BATCHED_HINT_GEOMETRIES: [&Geometry; 4] = [
-    &transparent_shard::layout::RECENT_8K,
-    &transparent_shard::layout::RECENT_4K,
-    &transparent_shard::layout::RECENT_4K_8K,
+const BATCHED_HINT_GEOMETRIES: [&Geometry; 2] = [
+    &transparent_shard::layout::DECOUPLED_2K_8K,
     &transparent_shard::display::TXID_2K8,
 ];
 

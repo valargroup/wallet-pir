@@ -194,10 +194,10 @@ fn main() -> Result<(), BoxError> {
             Table::Pages
         };
         let index = match (f.geometry.as_str(), table) {
-            ("recent-4k-8k", Table::Directory) => 0,
-            ("recent-4k-8k", Table::Pages) => 1,
-            ("archive-wide", Table::Directory) => 2,
-            ("archive-wide", Table::Pages) => 3,
+            ("decoupled-2k-8k", Table::Directory) => 0,
+            ("decoupled-2k-8k", Table::Pages) => 1,
+            ("decoupled-32k-32k", Table::Directory) => 2,
+            ("decoupled-32k-32k", Table::Pages) => 3,
             _ => return Err("unsupported load geometry".into()),
         };
         let client = clients[&(f.geometry.clone(), table)].clone();

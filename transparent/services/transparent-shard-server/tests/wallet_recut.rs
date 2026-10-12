@@ -1,8 +1,8 @@
 //! A declared re-cut, as a wallet holding history meets it.
 //!
-//! The first publication has five sealed `recent-4k` shards and an unsealed
+//! The first publication has five sealed `decoupled-2k-8k` shards and an unsealed
 //! tail. The second keeps the first shard byte for byte, merges the next
-//! three into one `recent-8k` shard (standing in for `archive-wide`, which is
+//! three into one `decoupled-2k-8k` shard (standing in for `decoupled-32k-32k`, which is
 //! hundreds of megabytes a shard), renumbers the sealed shard above them at a
 //! higher revision, renumbers and lengthens the tail, and declares every entry
 //! it replaced. Each is served on its own over real HTTP PIR, and a SQLite
@@ -105,7 +105,7 @@ fn sealed(start: u64, end: u64, geometry: &'static transparent_shard::layout::Ge
     }
 }
 
-/// Five sealed `recent-4k` shards and a tail at revision 0.
+/// Five sealed `decoupled-2k-8k` shards and a tail at revision 0.
 fn before_layout() -> Vec<Laid> {
     let mut shards: Vec<Laid> = (0..5)
         .map(|k| sealed(FIRST + k * SPAN, FIRST + (k + 1) * SPAN - 1, &RECENT_4K))
@@ -120,7 +120,7 @@ fn before_layout() -> Vec<Laid> {
     shards
 }
 
-/// Shards 1–3 merged into one `recent-8k` shard; shard 4 renumbered 2 at
+/// Shards 1–3 merged into one `decoupled-2k-8k` shard; shard 4 renumbered 2 at
 /// revision 1; the tail renumbered 3, longer, at revision 1.
 fn after_layout() -> Vec<Laid> {
     vec![

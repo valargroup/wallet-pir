@@ -1387,7 +1387,7 @@ async fn an_unused_wallet_pays_only_the_public_floor() {
 ///
 /// This is the deployment plan's two-tier shape: archive geometry for old, dense
 /// history and a narrower geometry for the recent window. The pair used here is
-/// `recent-4k` and `recent-8k` rather than a true archive geometry, because the
+/// `decoupled-2k-8k` and `decoupled-2k-8k` rather than a true archive geometry, because the
 /// mechanism under test is *two row counts in one set* and a 32,768-row table
 /// costs 117 MB per segment to build for no additional coverage.
 ///

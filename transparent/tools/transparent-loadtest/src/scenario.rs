@@ -249,7 +249,7 @@ impl Config {
         if self
             .experimental_parent_manifests
             .keys()
-            .any(|g| !["recent-8k", "archive-wide"].contains(&g.as_str()))
+            .any(|g| !["decoupled-2k-8k", "decoupled-32k-32k"].contains(&g.as_str()))
         {
             bail!("invalid parent experiment geometry");
         }

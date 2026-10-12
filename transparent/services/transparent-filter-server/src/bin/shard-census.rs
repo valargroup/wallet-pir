@@ -134,7 +134,7 @@ struct Cli {
     /// The baseline every reported figure is relative to. The individual
     /// overrides still apply on top, so a sweep can hold a registry shape and
     /// vary one dimension of it.
-    #[arg(long, default_value = "recent-8k")]
+    #[arg(long, default_value = "decoupled-2k-8k")]
     geometry: String,
     /// First height to census, inclusive. Defaults to the journal's first.
     ///

@@ -131,6 +131,33 @@ impl BuiltChild {
         bytes
     }
 
+    /// The manifest entry describing this page shard, at `geometry`.
+    pub fn describe(&self, geometry: &Geometry) -> crate::manifest::PageChild {
+        crate::manifest::PageChild {
+            index: self.index,
+            start_height: self.start_height,
+            end_height: self.end_height,
+            terminal_block_hash: self.terminal_block_hash.to_display_hex(),
+            tag_salt_counter: self.tag_salt_counter,
+            sealed: self.sealed,
+            page_segments: self
+                .segment_digests(geometry)
+                .iter()
+                .map(|digest| crate::manifest::TableGeometry {
+                    rows: geometry.page_rows,
+                    row_bytes: geometry.page_row_bytes as u32,
+                    sha256: hex::encode(digest),
+                })
+                .collect(),
+            occupancy: crate::manifest::PageChildOccupancy {
+                page_rows: self.page_rows,
+                fragments: self.fragments,
+                runs: self.runs,
+                events: self.events,
+            },
+        }
+    }
+
     /// SHA-256 of each published segment, computed over the zero padding
     /// without materialising it.
     pub fn segment_digests(&self, geometry: &Geometry) -> Vec<[u8; 32]> {
@@ -152,6 +179,46 @@ impl BuiltChild {
             })
             .collect()
     }
+}
+
+/// Builds one directory shard over `blocks` with page shards ending at the
+/// heights in `child_ends`, without a sealer deciding where they close.
+///
+/// For tools and tests that lay shards out by hand. `blocks` must be
+/// consecutive, empty ones included; `child_ends` ascends and ends on the
+/// last block. Every page shard but the last is sealed; the last, and the
+/// directory shard, are sealed when `sealed` is.
+#[allow(clippy::too_many_arguments)]
+pub fn build_directory_shard(
+    shard_id: u64,
+    geometry: &'static Geometry,
+    genesis: BlockHash,
+    profile: &str,
+    blocks: Vec<Block>,
+    child_ends: &[u64],
+    terminal: &dyn Fn(u64) -> BlockHash,
+    sealed: bool,
+) -> Result<(BuiltDirectory, Vec<BuiltChild>), BuildError> {
+    let end = blocks
+        .last()
+        .map(|(height, _)| *height)
+        .ok_or_else(|| BuildError::Invalid("a directory shard holds no block".into()))?;
+    if child_ends.last() != Some(&end) || child_ends.windows(2).any(|w| w[0] >= w[1]) {
+        return Err(BuildError::Invalid(format!(
+            "page shards ending at {child_ends:?} do not tile a shard ending at {end}"
+        )));
+    }
+    let mut builder = DirectoryBuilder::new(shard_id, geometry, genesis, profile)?;
+    for block in blocks {
+        builder.push_block(block)?;
+    }
+    let mut children = Vec::with_capacity(child_ends.len());
+    for (index, child_end) in child_ends.iter().enumerate() {
+        let last = index + 1 == child_ends.len();
+        children.push(builder.close_child(*child_end, terminal(*child_end), !last || sealed)?);
+    }
+    let (built, _) = builder.finish(end, terminal(end), sealed)?;
+    Ok((built, children))
 }
 
 /// A directory shard's directory and filter, once its page shards are built.

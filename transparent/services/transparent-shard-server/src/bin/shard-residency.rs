@@ -59,7 +59,7 @@ struct Cli {
     /// and this is what checks it against a real process. Measure every
     /// geometry the fleet will actually hold before sizing a cache budget from
     /// the formula alone.
-    #[arg(long, default_value = "recent-8k")]
+    #[arg(long, default_value = "decoupled-2k-8k")]
     geometry: String,
 }
 
@@ -165,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // A shard holds one segment of each table. Doubling the measured one was
-    // right only while every geometry had square tables: at archive-wide the
+    // right only while every geometry had square tables: at decoupled-32k-32k the
     // directory is 32,768 rows and the pages 65,536, so doubling the pages
     // overstates a shard by about 20% -- in the direction that makes a fleet
     // look more expensive than it is, which is still a wrong number to size on.
@@ -201,9 +201,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // a sizing tool is for. These counts were measured under the v7 14-slot
     // directory row; v8's 16-slot row has not been re-censused.
     let full_chain = match geometry.name {
-        "recent-8k" => 1_091u64,
+        "decoupled-2k-8k" => 1_091u64,
         "archive-32k" => 314,
-        "archive-wide" => 162,
+        "decoupled-32k-32k" => 162,
         // Not censused. Say so rather than borrowing another geometry's count.
         _ => 0,
     };

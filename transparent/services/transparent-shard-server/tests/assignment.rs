@@ -464,7 +464,7 @@ async fn a_query_for_an_unassigned_shard_is_misdirected_and_public_bytes_are_ser
         .map(|g| g["name"].as_str().unwrap())
         .collect();
     declared.sort_unstable();
-    assert_eq!(declared, ["recent-4k", "recent-8k"]);
+    assert_eq!(declared, ["decoupled-2k-8k", "decoupled-2k-8k"]);
     assert_eq!(
         init["geometries"].as_array().unwrap().len(),
         2,

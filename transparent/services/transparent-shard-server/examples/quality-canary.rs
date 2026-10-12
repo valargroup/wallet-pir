@@ -87,10 +87,10 @@ fn probe(args: &Args) -> Result<&'static str, BoxError> {
     }
     let minute = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 60;
     let wanted = match minute % 4 {
-        0 => ("recent-4k-8k", "directory"),
-        1 => ("recent-4k-8k", "pages"),
-        2 => ("archive-wide", "directory"),
-        _ => ("archive-wide", "pages"),
+        0 => ("decoupled-2k-8k", "directory"),
+        1 => ("decoupled-2k-8k", "pages"),
+        2 => ("decoupled-32k-32k", "directory"),
+        _ => ("decoupled-32k-32k", "pages"),
     };
     let tables: Vec<_> = fixture
         .tables

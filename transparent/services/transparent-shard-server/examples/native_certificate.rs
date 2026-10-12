@@ -14,7 +14,7 @@
 //!
 //! ```text
 //! cargo run --release -p transparent-shard-server --example native_certificate -- \
-//!   segment --geometry recent-8k --table directory --rows-bin directory.0.bin \
+//!   segment --geometry decoupled-2k-8k --table directory --rows-bin directory.0.bin \
 //!   [--public-sha256 <hex> | --public <file>] [--worst-case-query true]
 //! ```
 //!
@@ -25,7 +25,7 @@
 //!
 //! ```text
 //! ... --example native_certificate -- synthetic --rows 65536 [--seed 1] [--fill random|max]
-//! ... --example native_certificate -- synthetic --geometry archive-wide --table pages [...]
+//! ... --example native_certificate -- synthetic --geometry decoupled-32k-32k --table pages [...]
 //! ```
 //!
 //! Uses the worst-case query term for any u16 database of `rows` rows, which

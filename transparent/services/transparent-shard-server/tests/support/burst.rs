@@ -23,7 +23,7 @@ async fn drain_persistence(metrics: &Arc<transparent_shard_server::metrics::Metr
 /// Run each configuration in its own process so allocator retention does not
 /// contaminate the comparison. Timings are measurements, not normal CI asserts.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "manual recent-8k burst benchmark; use make transparent-burst"]
+#[ignore = "manual decoupled-2k-8k burst benchmark; use make transparent-burst"]
 async fn publication_burst_under_exact_load() {
     let _ = tracing_subscriber::fmt()
         .with_ansi(false)
@@ -348,7 +348,7 @@ async fn publication_burst_under_exact_load() {
             .all(|a| a["worker_visibility_seconds"].as_f64().unwrap() <= 30.0);
     let value = serde_json::json!({"schema":"transparent-worker-burst-v6","build_slots":slots,
         "client_shutdown_complete":client_shutdown_complete,
-        "geometry":"recent-8k","query_clients":2,"cache_bytes":config.cache_bytes,
+        "geometry":"decoupled-2k-8k","query_clients":2,"cache_bytes":config.cache_bytes,
         "scope":"isolated worker stage; not fleet acceptance", "external_clients":external.is_some(),
         "kernel_policy":transparent_shard_server::runtime::KERNEL_POLICY,
         "cold_persistence_complete":cold_persistence_complete,"cold_persistence_drain_seconds":cold_persistence_drain_seconds,
