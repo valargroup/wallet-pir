@@ -215,8 +215,10 @@ across the chain it checks that page shard numbers strictly decrease, that
 `older_runs` drops by one per hop and is zero exactly where the chain ends, that
 events strictly increase into the inline events, and that every paged event's
 second successor lies in the range of the page shard it was pushed into. Runs in
-sealed page shards are cached by page-shard identity and script, so a tip catch-up
-stops at the first cached run. Pending work holds a run cursor and the events the
+sealed page shards are cached by page-shard identity and script, each with its own
+events and a link to the script's previous cached run, so a tip catch-up stops at
+the first cached run and rebuilds the older history from the cache. Covering a
+script over a whole sealed directory shard drops its cached runs there. Pending work holds a run cursor and the events the
 placement check carries; a run commits whole. SQLite schema 5 holds the cursor and
 the run cache, with no migration from earlier schemas.
 

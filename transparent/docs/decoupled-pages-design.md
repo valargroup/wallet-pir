@@ -1,8 +1,15 @@
-# Design: directory shards with their own page shards (prototype)
+# Design: directory shards with their own page shards
 
-Handoff for the planning agent. This replaces the earlier "run list in the
-directory entry" draft. The directory entry stays lean and points to one place
-in the pages; the pages link back to older history themselves.
+This replaces the earlier "run list in the directory entry" draft. The directory
+entry stays lean and points to one place in the pages; the pages link back to
+older history themselves.
+
+Status: implemented as schema v12 on `v12/decoupled-pages` (PR #150) and
+deployed to staging next to production v11
+([status](status.md#schema-v12-in-staging-next-to-v11-2026-10-12)). The branch
+merges to `main` only at the switch from v11 to v12, so `main` stays
+redeployable for v11 until then. The constraints below governed the prototype
+phase and are kept as its record.
 
 ## Goal
 
@@ -10,9 +17,9 @@ Decide, with measured numbers, whether sizing the directory and page tables
 independently lowers what a wallet pays to recover its history. Prototype it
 end to end (wallet-pir, then wallet-libraries) on draft branches.
 
-Constraints:
-- Draft branches and draft PRs only. Never merge to `main`, never deploy. This
-  overrides wallet-pir's usual commit-to-main rule.
+Prototype-phase constraints (superseded by the staging deployment above):
+- Draft branches and draft PRs only, with no merge to `main` before the switch.
+  This overrides wallet-pir's usual commit-to-main rule.
 - No production publication, fleet, Caddy, router, assignment or scaler changes.
 - Reuse the hub's seeded build cache: keep `CARGO_TARGET_DIR`, run Cargo through
   the repository's iteration profile, never `cargo clean`, build the census with
@@ -166,9 +173,12 @@ rows.
 5. Coverage commits per D. Pending work is keyed by D revision only, since D's
    digest commits to every child.
 
-**Run cache**, keyed by (page shard digest, address): the run's events plus
-everything older. The walk stops at the first cached run, because nothing older
-can change. Tip catch-up becomes one directory query, plus the head run's
+**Run cache**, keyed by (page shard digest, address): the run's own events and
+the page shard digest of the address's previous run, so the history is rebuilt
+by following those links and no event is stored twice. The walk stops at the
+first cached run, because nothing older can change. Once the wallet covers an
+address over a sealed directory shard it drops that address's cached runs
+there, so the cache holds runs of directory shards still being caught up. Tip catch-up becomes one directory query, plus the head run's
 fragments only if the head is in the open page shard.
 
 **Pending-work state**: a cursor `(child, row, older_runs)` plus the two events
