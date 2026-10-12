@@ -18,12 +18,15 @@ The `roster` block may also carry `size`, applied to every derived target, and
 `role_units`, a map from a roster member's `role` to the unit to sample
 instead of `unit`. A derived target's `host_id` is its worker id.
 
-Each output entry keeps the original fields and adds `host_id`, `size` (when
+Each output entry keeps the original fields and adds `unit` (the main unit,
+whose OOM kills are the entry's `oom_kills`), `host_id`, `size` (when
 configured), `swap_total_bytes`, `swap_free_bytes` and `units`:
-`{"<unit>": {"memory_current_bytes", "memory_peak_bytes", "memory_max_bytes"
-(null when unlimited), "oom_kills"}}` for `unit` and every name in `units`. A
-property the host does not report, or a unit systemd has not loaded, is left
-out, never filled in.
+`{"<unit>": {"memory_current_bytes", "memory_anon_bytes", "memory_peak_bytes",
+"memory_max_bytes" (null when unlimited), "oom_kills"}}` for `unit` and every
+name in `units`. `memory_anon_bytes` is the cgroup's `anon` plus `shmem` from
+`memory.stat`: memory the unit cannot hand back, unlike the page cache counted
+in its current use and peak. A property the host does not report, or a unit
+systemd has not loaded, is left out, never filled in.
 """
 import argparse
 import concurrent.futures
@@ -39,7 +42,7 @@ REMOTE = r'''
 import json, os, pathlib, subprocess, sys, time, urllib.request
 unit, directory, mode = sys.argv[1:4]
 extra = sys.argv[4:]
-out = {'at': int(time.time())}
+out = {'at': int(time.time()), 'unit': unit}
 memory = {}
 for line in pathlib.Path('/proc/meminfo').read_text().splitlines():
     key, value = line.split(':', 1)
@@ -84,6 +87,12 @@ for name in [unit] + [u for u in extra if u != unit]:
         elif cgroup_name:
             text = cgroup_file(group, cgroup_name)
             if text is not None and text.strip().isdigit(): entry[field] = int(text.strip())
+    stat = cgroup_file(group, 'memory.stat')
+    if stat is not None:
+        stat = dict(line.split() for line in stat.splitlines() if len(line.split()) == 2)
+        if stat.get('anon', '').isdigit():
+            shmem = stat.get('shmem', '')
+            entry['memory_anon_bytes'] = int(stat['anon']) + (int(shmem) if shmem.isdigit() else 0)
     events = cgroup_file(group, 'memory.events')
     if events is not None:
         events = dict(line.split() for line in events.splitlines())
@@ -153,7 +162,8 @@ def roster_targets(spec):
     return targets
 
 
-HOST_ID = re.compile(r'[A-Za-z0-9_.-]{1,128}')
+# The APM's limit for host and unit names; a longer or other name would be dropped there.
+HOST_ID = re.compile(r'[A-Za-z0-9_.@-]{1,80}')
 SIZE = re.compile(r'[a-z0-9-]{1,64}')
 
 

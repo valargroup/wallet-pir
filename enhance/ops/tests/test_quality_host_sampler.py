@@ -104,6 +104,13 @@ class OutputIdentityTest(unittest.TestCase):
         # A malformed host_id or size never reaches the snapshot.
         self.assertEqual(written['bad-config'], {'at': 5, 'memory_total_bytes': 1, 'host_id': 'bad-config'})
 
+    def test_host_id_limit_matches_the_apm(self):
+        target = {'sources': ['fallback'], 'unit': 'x.service', 'data_dir': '/'}
+        for host_id in ('a' * 80, 'pir@host_01.example-1'):
+            self.assertEqual(sampler.identity(dict(target, host_id=host_id))['host_id'], host_id)
+        # The APM drops a name longer than 80 characters, so it falls back here, visibly.
+        self.assertEqual(sampler.identity(dict(target, host_id='a' * 81))['host_id'], 'fallback')
+
     def test_example_config_targets_are_valid(self):
         config = json.loads((ROOT / 'deploy/pir-quality-hosts.example.json').read_text())
         for target in config['targets']:
@@ -137,6 +144,8 @@ class RemoteScriptTest(unittest.TestCase):
         '/sys/fs/cgroup/system.slice/worker.service/memory.events': 'low 0\nhigh 0\nmax 1\noom 1\noom_kill 1\n',
         '/sys/fs/cgroup/system.slice/controller.service/memory.events': 'oom 0\noom_kill 0\n',
         '/sys/fs/cgroup/system.slice/controller.service/memory.peak': '2048\n',
+        '/sys/fs/cgroup/system.slice/worker.service/memory.stat': 'anon 1000\nfile 3000\nfile_dirty 10\nshmem 24\n',
+        '/sys/fs/cgroup/system.slice/controller.service/memory.stat': 'anon 512\nfile 100\n',
     }
 
     def run_remote(self, *argv):
@@ -161,12 +170,16 @@ class RemoteScriptTest(unittest.TestCase):
         # The existing per-host fields are unchanged.
         self.assertEqual((value['restarts'], value['cgroup_memory_bytes'], value['cpu_seconds'], value['oom_kills']),
                          (2, 4096, 3, 1))
+        # The main unit is named, so its OOM kills are not counted twice.
+        self.assertEqual(value['unit'], 'worker.service')
         self.assertEqual(value['units'], {
-            'worker.service': {'memory_current_bytes': 4096, 'memory_peak_bytes': 8192,
+            # Anonymous memory is anon plus shmem, never the page cache.
+            'worker.service': {'memory_current_bytes': 4096, 'memory_anon_bytes': 1024, 'memory_peak_bytes': 8192,
                                'memory_max_bytes': 16384, 'oom_kills': 1},
             # No MemoryPeak property: the cgroup's own peak. No MemoryCurrent: left out.
-            # A unit systemd has not loaded is not reported at all.
-            'controller.service': {'memory_peak_bytes': 2048, 'memory_max_bytes': None, 'oom_kills': 0},
+            # No shmem line: anon alone. A unit systemd has not loaded is not reported at all.
+            'controller.service': {'memory_anon_bytes': 512, 'memory_peak_bytes': 2048, 'memory_max_bytes': None,
+                                   'oom_kills': 0},
         })
         self.assertNotIn('edge_metrics', value)
 

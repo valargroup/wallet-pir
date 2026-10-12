@@ -138,6 +138,14 @@ fn quantile(h: &super::data::Histogram, q: f64) -> String {
         None => "—".into(),
     }
 }
+/// Shown while a bad Transparent config keeps Transparent monitoring off.
+fn config_warning(view: &super::View) -> &'static str {
+    if view.transparent_config_error {
+        " <p class=\"warn\">The Transparent config (PIR_APM_TRANSPARENT_CONFIG) failed to load at start, so Transparent services are not monitored. Enhance and Status are unaffected. See the pir-apm journal for the error.</p>"
+    } else {
+        ""
+    }
+}
 pub fn summary(view: &super::View, service: &str) -> String {
     if !view.enabled {
         return String::new();
@@ -149,7 +157,7 @@ pub fn summary(view: &super::View, service: &str) -> String {
         .filter(|s| s.service == service)
         .collect();
     let fresh = sources.iter().filter(|s| s.fresh(now)).count();
-    format!("<section class=\"notice\"><a href=\"/apm/quality/?service={}\">Service quality · seven-day history</a> · {fresh}/{} sources fresh · history {}.</section>",escape(service),sources.len(),if view.storage_error{"unavailable"}else{"enabled"})
+    format!("<section class=\"notice\"><a href=\"/apm/quality/?service={}\">Service quality · seven-day history</a> · {fresh}/{} sources fresh · history {}.{}</section>",escape(service),sources.len(),if view.storage_error{"unavailable"}else{"enabled"},config_warning(view))
 }
 fn counters(point: &Point) -> String {
     let mut rows = String::new();
@@ -615,6 +623,7 @@ async fn render(
     if !d.quality.enabled {
         out.push_str("<p>Quality collection is not configured.</p>");
     }
+    out.push_str(config_warning(&d.quality));
     if d.quality.storage_error || h.is_err() {
         out.push_str("<p class=\"warn\">History storage is unavailable. Live data may still be collected.</p>");
     }

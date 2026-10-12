@@ -10,7 +10,7 @@ use pir_apm::incidents::{Condition, Incident};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-/// Rebuild and prepare percentiles are taken over this window.
+/// Rebuild and prepare timings are judged over this window.
 pub const LONG_WINDOW: u64 = 900;
 
 /// Transparent thresholds, read from the `quality` object of `PIR_APM_ALERT_POLICY`.
@@ -24,6 +24,7 @@ pub struct Policy {
     pub lag_hold_seconds: u64,
     pub last_success_warning_seconds: f64,
     pub last_success_critical_seconds: f64,
+    pub last_success_hold_seconds: u64,
     pub history_rebuild_warning_seconds: f64,
     pub txid_rebuild_warning_seconds: f64,
     pub rebuild_critical_seconds: f64,
@@ -46,11 +47,14 @@ impl Default for Policy {
             lag_hold_seconds: 300,
             last_success_warning_seconds: 300.,
             last_success_critical_seconds: 900.,
-            history_rebuild_warning_seconds: 45.,
-            txid_rebuild_warning_seconds: 20.,
-            rebuild_critical_seconds: 75.,
-            prepare_warning_seconds: 30.,
-            prepare_critical_seconds: 60.,
+            last_success_hold_seconds: 120,
+            // Bucket edges of the cycle (…10, 30, 60, 120, 600 s) and prepare
+            // (…16, 32, 64, 128, 300 s) histograms, so a limit means what it says.
+            history_rebuild_warning_seconds: 60.,
+            txid_rebuild_warning_seconds: 30.,
+            rebuild_critical_seconds: 120.,
+            prepare_warning_seconds: 32.,
+            prepare_critical_seconds: 64.,
             capacity_warning_days: 30.,
             capacity_critical_days: 7.,
             host_floor_ratio: 0.20,
@@ -223,6 +227,20 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Families {
         "Enhance fleet inventory",
         "invalid inventory for 45s",
     );
+    shared.add(
+        "transparent_config",
+        "transparent-config",
+        Some(view.transparent_config_error),
+        "warning",
+        0,
+        now,
+        if view.transparent_config_error {
+            "PIR_APM_TRANSPARENT_CONFIG invalid; Transparent monitoring disabled"
+        } else {
+            "valid or not configured"
+        },
+        "the Transparent config must read, parse and validate at start",
+    );
     for (name, s) in &view.sources {
         if view.service(&s.service).is_none() {
             source_rules(&mut shared, name, s, now);
@@ -245,6 +263,9 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Families {
     families.capacity = super::capacity::conditions(&view.capacity, now, p);
     families
 }
+
+/// Per-unit OOM kill gauges a source carries from the host snapshot.
+pub const UNIT_OOM: &str = "pir_host_unit_oom_kills|unit=";
 
 /// Coverage, host resources and OOM kills: every source, whatever its service.
 fn source_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
@@ -323,18 +344,46 @@ fn source_rules(a: &mut Adder, name: &str, s: &Source, now: u64) {
         "OOM kill counter change",
         "new OOM kills in the observation window",
     );
+    // Every other unit the host sampler reports beside the main one.
+    for (key, new) in &s.current.gauges {
+        let Some(unit) = key.strip_prefix(UNIT_OOM) else {
+            continue;
+        };
+        let oom = s
+            .recent
+            .front()
+            .and_then(|p| p.values.gauges.get(key))
+            .copied()
+            .zip(fresh.then_some(*new))
+            .map(|(old, new)| new > old);
+        a.add(
+            format!("oom_{name}_{unit}"),
+            name,
+            oom,
+            "critical",
+            0,
+            s.sampled_at,
+            format!("OOM kill counter change of {unit}"),
+            "new OOM kills in the observation window",
+        );
+    }
 }
 
-/// p95 over the fifteen-minute window: unknown without a sample, and an
-/// overflow beyond the last finite bucket counts as over every limit.
-fn p95(s: &Source, key: &str, now: u64) -> Option<(Option<f64>, f64)> {
+/// Share of a fifteen-minute window's samples that may lie above a limit.
+const EXCEEDANCE: f64 = 0.05;
+
+/// The fifteen-minute histogram; None (unknown) without a fresh sample.
+fn long_histogram(s: &Source, key: &str, now: u64) -> Option<super::data::Histogram> {
     let h = s.long_window(now).remove(key)?;
-    let count = h.counts.last().copied().unwrap_or(0.);
-    (s.fresh(now) && count > 0.).then(|| (h.quantile(0.95), count))
+    (s.fresh(now) && h.counts.last().is_some_and(|n| *n > 0.)).then_some(h)
 }
 
+/// A limit fires when more than 5% of the fifteen-minute window's samples lie
+/// above the smallest bucket edge at or above it; the overflow bucket counts as
+/// above. Interpolating a percentile inside a bucket would fire far below the
+/// limit, since the buckets double.
 #[allow(clippy::too_many_arguments)]
-fn p95_rules(
+fn exceedance_rules(
     a: &mut Adder,
     key: &str,
     resource: &str,
@@ -344,22 +393,32 @@ fn p95_rules(
     limits: [f64; 2],
     now: u64,
 ) {
-    let observed = p95(s, histogram, now);
+    let h = long_histogram(s, histogram, now);
     for (level, limit) in [("warning", limits[0]), ("critical", limits[1])] {
+        let verdict = h.as_ref().map(|h| {
+            let total = h.counts.last().copied().unwrap_or(0.);
+            match h.above(limit) {
+                Some((edge, above)) => (
+                    above / total > EXCEEDANCE,
+                    format!("{what}: {above:.0} of {total:.0} samples above {edge}s over 15m"),
+                ),
+                None => (
+                    true,
+                    format!("{what}: {total:.0} samples beyond the last bucket over 15m"),
+                ),
+            }
+        });
         a.add(
             format!("{key}_{level}"),
             resource,
-            observed.map(|(q, _)| q.is_none_or(|q| q > limit)),
+            verdict.as_ref().map(|(firing, _)| *firing),
             level,
             60,
             s.sampled_at,
-            observed
-                .map(|(q, n)| match q {
-                    Some(q) => format!("{what} p95 {q:.1}s over 15m ({n:.0} samples)"),
-                    None => format!("{what} p95 beyond the last bucket ({n:.0} samples)"),
-                })
+            verdict
+                .map(|(_, observed)| observed)
                 .unwrap_or_else(|| "no samples in 15m".into()),
-            format!("{what} p95 over 15m >{limit}s"),
+            format!("{what}: more than 5% of 15m samples above {limit}s"),
         );
     }
 }
@@ -449,7 +508,7 @@ fn service_rules(a: &mut Adder, svc: &ServiceView, view: &View, now: u64, p: &Po
             );
         }
         if worker_roles.contains(&s.role.as_str()) {
-            p95_rules(
+            exceedance_rules(
                 a,
                 &format!("prepare_{source_name}"),
                 source_name,
@@ -642,7 +701,9 @@ fn publication_rules(a: &mut Adder, kind: Kind, name: &str, s: &Source, now: u64
     // An idle chain publishes nothing, so age alone is not a failure: only
     // count it while the node is ahead of what was last published.
     // A coordinator reports 0 until its first success after a restart: unknown,
-    // so the lag and unpublished-age rules cover that window.
+    // so the lag and unpublished-age rules cover that window. After a quiet
+    // chain the first new block is already "late", so both levels hold until
+    // the coordinator has had time to publish it.
     let since = gauge(c.last_success)
         .filter(|t| *t > 0.)
         .map(|t| (now as f64 - t).max(0.));
@@ -658,19 +719,22 @@ fn publication_rules(a: &mut Adder, kind: Kind, name: &str, s: &Source, now: u64
             name,
             since.and_then(|age| if age <= budget { Some(false) } else { behind }),
             level,
-            0,
+            p.last_success_hold_seconds,
             sample,
             since
                 .map(|v| format!("last successful publication {v:.0}s ago"))
                 .unwrap_or_else(|| "unknown".into()),
-            format!("no successful publication for {budget}s while the node is ahead"),
+            format!(
+                "no successful publication for {budget}s while the node is ahead for {}s",
+                p.last_success_hold_seconds
+            ),
         );
     }
     let rebuild_warning = match kind {
         Kind::History => p.history_rebuild_warning_seconds,
         Kind::Txid => p.txid_rebuild_warning_seconds,
     };
-    p95_rules(
+    exceedance_rules(
         a,
         "rebuild",
         name,
@@ -717,7 +781,10 @@ fn publication_rules(a: &mut Adder, kind: Kind, name: &str, s: &Source, now: u64
 }
 
 /// Ends incidents whose resource is gone: a source dropped from its service,
-/// a service no longer configured, or a host that left the capacity view.
+/// a service no longer configured, or a host or unit the capacity alerts no
+/// longer evaluate (gone, or unobserved for an hour). While the Transparent
+/// config is invalid nothing of the Transparent services is retired: they are
+/// unmonitored, not gone.
 pub fn retire(view: &View, incidents: &[Incident], now: u64, f: &mut Families) {
     if !view.enabled || now.saturating_sub(view.collected_at) > 45 {
         return;
@@ -728,6 +795,9 @@ pub fn retire(view: &View, incidents: &[Incident], now: u64, f: &mut Families) {
         let Some(c) = &incident.condition else {
             continue;
         };
+        if view.transparent_config_error && c.key.starts_with("quality.") {
+            continue;
+        }
         let mut retired = c.clone();
         retired.retired = true;
         retired.sample = now;
@@ -759,7 +829,6 @@ pub fn retire(view: &View, incidents: &[Incident], now: u64, f: &mut Families) {
             }
         } else if c.key.starts_with(super::capacity::KEY_PREFIX)
             && capacity_fresh
-            && !view.capacity.rows.iter().any(|r| r.host == c.resource)
             && !f.capacity.iter().any(|n| n.key == c.key)
         {
             f.capacity.push(retired);
@@ -1021,26 +1090,170 @@ mod tests {
         assert_eq!(firing(&f, "txid", "last_success_critical"), None);
     }
 
-    fn timed(role: &str, service: &str, key: &str, seconds: f64, n: f64, at: u64) -> Source {
+    #[test]
+    fn last_success_holds_past_the_first_block_after_a_quiet_chain() {
+        let p = Policy::default();
+        let start = 10_000u64;
+        // Height 10 published at `start`; the chain is quiet for six minutes.
+        let run = |publish_at: Option<u64>| {
+            let mut store =
+                pir_apm::incidents::Store::open(std::path::Path::new(":memory:")).unwrap();
+            for t in (start + 360..=start + 600).step_by(5) {
+                let published = publish_at.filter(|at| t >= *at);
+                let v = view(
+                    vec![service("txid", Kind::Txid)],
+                    vec![(
+                        "txid-controller",
+                        source(
+                            "txid",
+                            "display-controller",
+                            t,
+                            &[
+                                (
+                                    "txid_display_last_success_timestamp_seconds",
+                                    published.unwrap_or(start) as f64,
+                                ),
+                                ("txid_display_node_height", 11.),
+                                (
+                                    "txid_display_published_height",
+                                    if published.is_some() { 11. } else { 10. },
+                                ),
+                            ],
+                        ),
+                    )],
+                );
+                store
+                    .evaluate(
+                        &conditions(&v, t, &p).services["txid"],
+                        t,
+                        false,
+                        "test",
+                        "",
+                    )
+                    .unwrap();
+            }
+            store
+                .incidents()
+                .unwrap()
+                .into_iter()
+                .any(|i| i.active && i.id.starts_with("quality.txid.last_success_warning"))
+        };
+        // Block 11 arrives after the gap and is published 60 s later: no incident.
+        assert!(!run(Some(start + 420)));
+        // Nothing is published: a real stall fires once the hold has passed.
+        assert!(run(None));
+    }
+
+    #[test]
+    fn invalid_transparent_config_warns_and_keeps_transparent_incidents() {
+        let mut v = view(
+            vec![],
+            vec![("enhance-init", source("enhance", "init", 100, &[]))],
+        );
+        v.collected_at = 100;
+        let shared = |f: &Families| {
+            f.shared
+                .iter()
+                .find(|c| c.key == "quality_transparent_config")
+                .unwrap()
+                .firing
+        };
+        assert_eq!(
+            shared(&conditions(&v, 100, &Policy::default())),
+            Some(false)
+        );
+        v.transparent_config_error = true;
+        let mut f = conditions(&v, 100, &Policy::default());
+        assert_eq!(shared(&f), Some(true));
+        // Enhance rules still run.
+        assert!(f
+            .shared
+            .iter()
+            .any(|c| c.key == "quality_coverage_enhance-init"));
+        // Unmonitored, not gone: the Transparent services' incidents stay open.
+        let incident = Incident {
+            active: true,
+            condition: Some(Condition {
+                retired: false,
+                key: "quality.txid.stalled".into(),
+                resource: "txid".into(),
+                severity: "critical".into(),
+                firing: Some(true),
+                observed: String::new(),
+                threshold: String::new(),
+                hold_seconds: 0,
+                sample: 90,
+            }),
+            ..Default::default()
+        };
+        retire(&v, std::slice::from_ref(&incident), 100, &mut f);
+        assert!(f.shared.iter().all(|c| !c.retired));
+        v.transparent_config_error = false;
+        let mut f = conditions(&v, 100, &Policy::default());
+        retire(&v, &[incident], 100, &mut f);
+        assert!(f.shared.iter().any(|c| c.retired));
+    }
+
+    #[test]
+    fn every_reported_unit_has_its_own_oom_rule() {
+        let key = format!("{UNIT_OOM}pir-apm.service");
+        let mut s = source("transparent", "publisher", 100, &[(&key, 2.)]);
+        let mut old = Point {
+            at: 50,
+            ..Default::default()
+        };
+        old.values.gauges.insert(key.clone(), 1.);
+        s.recent.push_back(old);
+        let v = view(
+            vec![service("transparent", Kind::History)],
+            vec![("transparent-publisher", s)],
+        );
+        let f = conditions(&v, 105, &Policy::default());
+        assert_eq!(
+            firing(
+                &f,
+                "transparent",
+                "oom_transparent-publisher_pir-apm.service"
+            ),
+            Some(true)
+        );
+        // Stale: unknown.
+        let f = conditions(&v, 200, &Policy::default());
+        assert_eq!(
+            firing(
+                &f,
+                "transparent",
+                "oom_transparent-publisher_pir-apm.service"
+            ),
+            None
+        );
+    }
+
+    /// The deployed bucket edges: coordinator cycles use the shared
+    /// observability bounds, worker prepare the shard server's.
+    fn bounds(key: &str) -> Vec<Option<f64>> {
+        let finite: &[f64] = if key.contains("prepare") {
+            &[0.1, 0.25, 0.5, 1., 2., 4., 8., 16., 32., 64., 128., 300.]
+        } else {
+            &[
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1., 2., 5., 10., 30., 60., 120.,
+                600.,
+            ]
+        };
+        finite.iter().copied().map(Some).chain([None]).collect()
+    }
+    /// `n` samples of each listed duration in seconds, as one fresh source.
+    fn timed_mix(role: &str, service: &str, key: &str, samples: &[(f64, f64)], at: u64) -> Source {
         let mut s = source(service, role, at, &[]);
-        let bounds = vec![
-            Some(10.),
-            Some(20.),
-            Some(30.),
-            Some(45.),
-            Some(60.),
-            Some(75.),
-            Some(120.),
-            None,
-        ];
+        let bounds = bounds(key);
         let counts = bounds
             .iter()
             .map(|b| {
-                if b.is_none_or(|b| b >= seconds) {
-                    n
-                } else {
-                    0.
-                }
+                samples
+                    .iter()
+                    .filter(|(seconds, _)| b.is_none_or(|b| b >= *seconds))
+                    .map(|(_, n)| n)
+                    .sum()
             })
             .collect();
         s.long.push_back((
@@ -1049,97 +1262,72 @@ mod tests {
         ));
         s
     }
+    fn timed(role: &str, service: &str, key: &str, seconds: f64, n: f64, at: u64) -> Source {
+        timed_mix(role, service, key, &[(seconds, n)], at)
+    }
 
     #[test]
-    fn rebuild_and_prepare_percentiles_use_kind_thresholds() {
+    fn rebuild_and_prepare_fire_on_exceedance_at_bucket_edges() {
         let p = Policy::default();
         let at = 5_000;
-        // A 25 s txid cycle warns (limit 20 s); the same history cycle does not (45 s).
-        let txid = view(
-            vec![service("txid", Kind::Txid)],
-            vec![(
-                "c",
-                timed(
-                    "display-controller",
-                    "txid",
-                    "txid_display_cycle_seconds",
-                    25.,
-                    10.,
-                    at,
-                ),
-            )],
-        );
-        let f = conditions(&txid, at, &p);
+        let cycle = |kind, name: &str, seconds| {
+            let (role, key) = match kind {
+                Kind::History => ("publisher", "transparent_publication_cycle_seconds"),
+                Kind::Txid => ("display-controller", "txid_display_cycle_seconds"),
+            };
+            view(
+                vec![service(name, kind)],
+                vec![("c", timed(role, name, key, seconds, 10., at))],
+            )
+        };
+        // A 31 s cycle is past the txid 30 s edge but well inside the history
+        // 60 s warning; interpolating in the 30–60 s bucket used to fire it.
+        let f = conditions(&cycle(Kind::History, "transparent", 31.), at, &p);
+        assert_eq!(firing(&f, "transparent", "rebuild_warning"), Some(false));
+        let f = conditions(&cycle(Kind::Txid, "txid", 31.), at, &p);
         assert_eq!(firing(&f, "txid", "rebuild_warning"), Some(true));
         assert_eq!(firing(&f, "txid", "rebuild_critical"), Some(false));
-        let history = view(
-            vec![service("transparent", Kind::History)],
-            vec![(
-                "c",
-                timed(
-                    "publisher",
-                    "transparent",
-                    "transparent_publication_cycle_seconds",
-                    25.,
-                    10.,
-                    at,
-                ),
-            )],
-        );
-        let f = conditions(&history, at, &p);
-        assert_eq!(firing(&f, "transparent", "rebuild_warning"), Some(false));
-        // 80 s pages for both kinds.
-        let history = view(
-            vec![service("transparent", Kind::History)],
-            vec![(
-                "c",
-                timed(
-                    "publisher",
-                    "transparent",
-                    "transparent_publication_cycle_seconds",
-                    80.,
-                    10.,
-                    at,
-                ),
-            )],
-        );
-        assert_eq!(
-            firing(
-                &conditions(&history, at, &p),
-                "transparent",
-                "rebuild_critical"
-            ),
-            Some(true)
-        );
-        // Worker prepare: 40 s warns, 70 s pages; history reads the total phase.
-        let worker = |seconds| {
+        let f = conditions(&cycle(Kind::Txid, "txid", 25.), at, &p);
+        assert_eq!(firing(&f, "txid", "rebuild_warning"), Some(false));
+        // Past 120 s pages for both kinds.
+        let f = conditions(&cycle(Kind::History, "transparent", 130.), at, &p);
+        assert_eq!(firing(&f, "transparent", "rebuild_critical"), Some(true));
+        let f = conditions(&cycle(Kind::History, "transparent", 80.), at, &p);
+        assert_eq!(firing(&f, "transparent", "rebuild_critical"), Some(false));
+        // Worker prepare warns past 32 s and pages past 64 s; history reads the
+        // total phase. A 34 s prepare used to page at the old 60 s limit.
+        let worker = |samples: &[(f64, f64)]| {
             view(
                 vec![service("transparent", Kind::History)],
                 vec![(
                     "w",
-                    timed(
+                    timed_mix(
                         "recent-replica",
                         "transparent",
                         "transparent_shard_prepare_seconds|phase=total",
-                        seconds,
-                        3.,
+                        samples,
                         at,
                     ),
                 )],
             )
         };
-        let f = conditions(&worker(40.), at, &p);
+        let f = conditions(&worker(&[(34., 3.)]), at, &p);
         assert_eq!(firing(&f, "transparent", "prepare_w_warning"), Some(true));
         assert_eq!(firing(&f, "transparent", "prepare_w_critical"), Some(false));
-        let f = conditions(&worker(70.), at, &p);
+        let f = conditions(&worker(&[(70., 3.)]), at, &p);
         assert_eq!(firing(&f, "transparent", "prepare_w_critical"), Some(true));
-        let f = conditions(&worker(10.), at, &p);
+        let f = conditions(&worker(&[(10., 3.)]), at, &p);
         assert_eq!(firing(&f, "transparent", "prepare_w_warning"), Some(false));
+        // Up to 5% of the window may exceed; more fires.
+        let f = conditions(&worker(&[(10., 95.), (70., 5.)]), at, &p);
+        assert_eq!(firing(&f, "transparent", "prepare_w_critical"), Some(false));
+        let f = conditions(&worker(&[(10., 94.), (70., 6.)]), at, &p);
+        assert_eq!(firing(&f, "transparent", "prepare_w_critical"), Some(true));
         // Overflow beyond the last bucket exceeds every limit.
-        let f = conditions(&worker(500.), at, &p);
+        let f = conditions(&worker(&[(500., 3.)]), at, &p);
         assert_eq!(firing(&f, "transparent", "prepare_w_critical"), Some(true));
         // After fifteen minutes without a prepare it is unknown, never recovered.
-        let f = conditions(&worker(70.), at + LONG_WINDOW + 1, &p);
+        let f = conditions(&worker(&[(70., 3.)]), at + LONG_WINDOW + 1, &p);
         assert_eq!(firing(&f, "transparent", "prepare_w_critical"), None);
         let display = view(
             vec![service("txid", Kind::Txid)],
@@ -1239,9 +1427,57 @@ mod tests {
     }
 
     #[test]
+    fn capacity_incidents_retire_once_their_row_leaves_the_alerts() {
+        let p = Policy::default();
+        let now = 100 * super::super::capacity::DAY;
+        let mut v = view(vec![], vec![]);
+        v.collected_at = now;
+        // One host seen a minute ago, one last seen two hours ago (still listed).
+        let daily = |host: &str, at: u64| super::super::capacity::Daily {
+            host: host.into(),
+            day: at / super::super::capacity::DAY,
+            at,
+            memory_total: Some(100.),
+            min_available: Some(50.),
+            ..Default::default()
+        };
+        v.capacity = super::super::capacity::build(
+            &[daily("gone", now - 7200), daily("here", now - 60)],
+            &Default::default(),
+            now,
+            &p,
+        );
+        assert_eq!(v.capacity.rows.len(), 2);
+        let incident = |host: &str| Incident {
+            active: true,
+            condition: Some(Condition {
+                retired: false,
+                key: format!("transparent_capacity_floor_warning_{host}"),
+                resource: host.into(),
+                severity: "warning".into(),
+                firing: Some(true),
+                observed: String::new(),
+                threshold: String::new(),
+                hold_seconds: 0,
+                sample: now - 7200,
+            }),
+            ..Default::default()
+        };
+        let mut f = conditions(&v, now, &p);
+        retire(&v, &[incident("gone"), incident("here")], now, &mut f);
+        let retired: Vec<_> = f
+            .capacity
+            .iter()
+            .filter(|c| c.retired)
+            .map(|c| c.key.as_str())
+            .collect();
+        assert_eq!(retired, ["transparent_capacity_floor_warning_gone"]);
+    }
+
+    #[test]
     fn policy_defaults_are_valid_and_reject_inverted_limits() {
         assert!(Policy::default().valid());
-        let p: Policy = serde_json::from_str(r#"{"txid_rebuild_warning_seconds": 80}"#).unwrap();
+        let p: Policy = serde_json::from_str(r#"{"txid_rebuild_warning_seconds": 130}"#).unwrap();
         assert!(!p.valid());
         assert!(serde_json::from_str::<Policy>(r#"{"unknown": 1}"#).is_err());
     }

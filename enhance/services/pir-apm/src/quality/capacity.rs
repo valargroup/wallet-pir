@@ -3,8 +3,11 @@
 //! and the `transparent_capacity` alert family.
 //!
 //! The host sampler reports, per source, the host's available and total memory
-//! and each unit's current, peak and maximum memory. Every observation is folded
-//! into a daily row (kept 180 days). A least-squares line through the daily peaks
+//! and each unit's anonymous, current, peak and maximum memory. A unit's use is
+//! its anonymous (plus shared) memory: the cgroup's current use and recorded
+//! peak include page cache the kernel reclaims under pressure, and the recorded
+//! peak spans the unit's whole run. Every observation is folded into a daily
+//! row (kept 180 days). A least-squares line through the daily peaks
 //! of the last 14 and 30 days says how many days remain until a host's available
 //! memory falls below 20% of its total, or a unit's peak passes 90% of its
 //! MemoryMax. Fewer than three days of rows is unknown, not safe.
@@ -18,6 +21,10 @@ use std::collections::{BTreeMap, VecDeque};
 
 pub const DAY: u64 = 86400;
 pub const KEY_PREFIX: &str = "transparent_capacity_";
+/// A host or unit unobserved this long leaves the alerts, retiring its incidents.
+pub const ALERT_STALE: u64 = 3600;
+/// ... and this long, the page and the in-memory 24-hour peaks.
+pub const PAGE_STALE: u64 = DAY;
 /// DigitalOcean sizes in upgrade order with their monthly USD price.
 pub const LADDER: [(&str, u32); 7] = [
     ("s-2vcpu-4gb", 24),
@@ -51,6 +58,25 @@ pub fn host_id<'a>(entry: &'a Value, source: &'a str) -> &'a str {
         .unwrap_or(source)
 }
 
+/// OOM kill counters of every unit beside the snapshot entry's main `unit`
+/// (whose counter is the entry's own `oom_kills`), as gauges keyed by unit.
+pub fn unit_ooms(entry: &Value) -> Vec<(String, f64)> {
+    let main = entry["unit"].as_str();
+    entry["units"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(unit, _)| valid_id(unit) && Some(unit.as_str()) != main)
+        .take(16)
+        .filter_map(|(unit, u)| {
+            Some((
+                format!("{}{unit}", super::rules::UNIT_OOM),
+                u["oom_kills"].as_u64()? as f64,
+            ))
+        })
+        .collect()
+}
+
 /// One host (`unit` empty) or unit observation.
 #[derive(Clone, Debug, Default)]
 pub struct Sample {
@@ -60,23 +86,30 @@ pub struct Sample {
     pub size: Option<String>,
     pub memory_total: Option<f64>,
     pub memory_available: Option<f64>,
+    /// The cgroup's current use, page cache included; shown, never alerted on.
     pub unit_current: Option<f64>,
-    /// The larger of the unit's recorded peak and its current use.
-    pub unit_peak: Option<f64>,
+    /// Anonymous plus shared memory: what the unit cannot give back.
+    pub unit_anon: Option<f64>,
+    /// The cgroup's recorded peak since the unit started; shown only.
+    pub unit_lifetime_peak: Option<f64>,
     pub unit_max: Option<f64>,
     pub cache_resident: Option<f64>,
 }
 impl Sample {
-    fn used(&self) -> Option<f64> {
+    /// Host memory in use, or a unit's anonymous memory (its current use only
+    /// when the host does not report anonymous memory).
+    pub fn used(&self) -> Option<f64> {
         if self.unit.is_empty() {
             Some(self.memory_total? - self.memory_available?)
         } else {
-            self.unit_current
+            self.unit_anon.or(self.unit_current)
         }
     }
 }
 
-/// Fresh host and unit observations from the host snapshot. Absent fields are
+/// Fresh host and unit observations from the host snapshot, one per host and
+/// unit. Several sources can share a host: the newest observation wins and
+/// the host keeps the largest cache residency of its sources. Absent fields are
 /// unknown; malformed names are skipped.
 pub fn samples(
     hosts: &BTreeMap<String, Value>,
@@ -84,7 +117,25 @@ pub fn samples(
     now: u64,
 ) -> Vec<Sample> {
     let number = |v: &Value| v.as_f64().filter(|n| n.is_finite() && *n >= 0.);
-    let mut out = Vec::new();
+    let mut out: BTreeMap<(String, String), Sample> = BTreeMap::new();
+    let mut push = |s: Sample| {
+        let key = (s.host.clone(), s.unit.clone());
+        match out.get_mut(&key) {
+            Some(old) => {
+                let cache = match (old.cache_resident, s.cache_resident) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    (a, b) => a.or(b),
+                };
+                if s.at >= old.at {
+                    *old = s;
+                }
+                old.cache_resident = cache;
+            }
+            None => {
+                out.insert(key, s);
+            }
+        }
+    };
     for (name, entry) in hosts {
         let Some(at) = entry["at"]
             .as_u64()
@@ -100,7 +151,7 @@ pub fn samples(
             .as_str()
             .filter(|s| valid_id(s))
             .map(String::from);
-        out.push(Sample {
+        push(Sample {
             host: host.clone(),
             at,
             size: size.clone(),
@@ -113,24 +164,20 @@ pub fn samples(
             if !valid_id(unit) {
                 continue;
             }
-            let current = number(&u["memory_current_bytes"]);
-            let peak = number(&u["memory_peak_bytes"]);
-            out.push(Sample {
+            push(Sample {
                 host: host.clone(),
                 unit: unit.clone(),
                 at,
                 size: size.clone(),
-                unit_current: current,
-                unit_peak: match (peak, current) {
-                    (Some(a), Some(b)) => Some(a.max(b)),
-                    (a, b) => a.or(b),
-                },
+                unit_current: number(&u["memory_current_bytes"]),
+                unit_anon: number(&u["memory_anon_bytes"]),
+                unit_lifetime_peak: number(&u["memory_peak_bytes"]),
                 unit_max: number(&u["memory_max_bytes"]),
                 ..Default::default()
             });
         }
     }
-    out
+    out.into_values().collect()
 }
 
 /// One UTC day of a host or unit, as stored.
@@ -170,6 +217,13 @@ impl Recent {
             }
         }
         self.live.insert(key, s.clone());
+    }
+    /// Forgets hosts and units unobserved for a day.
+    pub fn prune(&mut self, now: u64) {
+        let cutoff = now.saturating_sub(PAGE_STALE);
+        self.live.retain(|_, s| s.at > cutoff);
+        let live = &self.live;
+        self.peaks.retain(|key, _| live.contains_key(key));
     }
     fn peak(&self, key: &(String, String), now: u64) -> Option<f64> {
         self.peaks
@@ -246,12 +300,16 @@ pub struct Row {
     pub size: Option<String>,
     pub memory_total: Option<f64>,
     pub unit_max: Option<f64>,
-    /// Latest daily unit peak (recorded peak or current, whichever is larger).
+    /// Latest daily unit peak of anonymous memory.
     pub unit_peak: Option<f64>,
+    /// The cgroup's current use (page cache included) and recorded peak since
+    /// the unit started, for reference only.
+    pub unit_current: Option<f64>,
+    pub unit_lifetime_peak: Option<f64>,
     pub cache_peak: Option<f64>,
     /// Highest use in the last 24 hours: host memory in use, or unit memory.
     pub peak_24h: Option<f64>,
-    /// Current use and when it was observed.
+    /// Current use (a unit's anonymous memory) and when it was observed.
     pub current: Option<f64>,
     pub live_at: u64,
     /// Bytes in use at which the row reaches its floor.
@@ -292,7 +350,8 @@ pub struct View {
     pub rows: Vec<Row>,
 }
 
-/// Rows for every host and unit with stored days, merged with live observations.
+/// Rows for every host and unit with stored days, merged with live
+/// observations; one unobserved for a day is left out.
 pub fn build(daily: &[Daily], recent: &Recent, now: u64, p: &Policy) -> View {
     let mut groups: BTreeMap<(String, String), Vec<&Daily>> = BTreeMap::new();
     for d in daily {
@@ -307,6 +366,10 @@ pub fn build(daily: &[Daily], recent: &Recent, now: u64, p: &Policy) -> View {
             continue;
         };
         let live = recent.live.get(&key);
+        let sample = last.at.max(live.map(|l| l.at).unwrap_or(0));
+        if now.saturating_sub(sample) > PAGE_STALE {
+            continue;
+        }
         let host_row = key.1.is_empty();
         let (threshold, points): (Option<f64>, Vec<(u64, f64)>) = if host_row {
             let total = live.and_then(|l| l.memory_total).or(last.memory_total);
@@ -343,12 +406,14 @@ pub fn build(daily: &[Daily], recent: &Recent, now: u64, p: &Policy) -> View {
             },
             unit_max: live.and_then(|l| l.unit_max).or(last.unit_max),
             unit_peak: last.unit_peak,
+            unit_current: live.and_then(|l| l.unit_current),
+            unit_lifetime_peak: live.and_then(|l| l.unit_lifetime_peak),
             cache_peak: last.cache_peak,
             peak_24h: recent.peak(&key, now),
             current: live.and_then(Sample::used),
             live_at: live.map(|l| l.at).unwrap_or(0),
             threshold,
-            sample: last.at.max(live.map(|l| l.at).unwrap_or(0)),
+            sample,
             forecast_14: window(14),
             forecast_30: window(30),
             reprovision: false,
@@ -379,6 +444,10 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Vec<Condition> {
     let current =
         !view.error && view.computed_at > 0 && now.saturating_sub(view.computed_at) <= 900;
     for row in &view.rows {
+        // Unobserved for an hour: gone from the alerts, so its incidents retire.
+        if now.saturating_sub(row.sample) > ALERT_STALE {
+            continue;
+        }
         let id = row.id();
         let (what, floor) = match &row.unit {
             Some(_) => (
@@ -432,7 +501,7 @@ pub fn conditions(view: &View, now: u64, p: &Policy) -> Vec<Condition> {
                     .map(|r| format!("{:.1}% of MemoryMax", r * 100.))
                     .unwrap_or_else(|| "unavailable".into()),
                 threshold: format!(
-                    "unit memory >{:.0}% of MemoryMax for {}s",
+                    "unit anonymous memory >{:.0}% of MemoryMax for {}s",
                     p.unit_memory_ratio * 100.,
                     p.unit_memory_hold_seconds
                 ),
@@ -475,7 +544,7 @@ pub fn render(view: &super::View) -> String {
     if c.rows.is_empty() {
         out.push_str("<p>No host memory observations yet. The host sampler writes them to the configured host snapshot.</p>");
     }
-    out.push_str("<div class=\"table-wrap\"><table><thead><tr><th>Host / unit</th><th>Size</th><th>RAM / MemoryMax</th><th>24 h peak use</th><th>Unit peak vs MemoryMax</th><th>Headroom to floor</th><th>Growth / week</th><th>Days to floor (14 d)</th><th>Days to floor (30 d)</th><th>Next size</th><th>Action</th></tr></thead><tbody>");
+    out.push_str("<div class=\"table-wrap\"><table><thead><tr><th>Host / unit</th><th>Size</th><th>RAM / MemoryMax</th><th>24 h peak use</th><th>Unit peak vs MemoryMax</th><th>Unit current / lifetime peak</th><th>Headroom to floor</th><th>Growth / week</th><th>Days to floor (14 d)</th><th>Days to floor (30 d)</th><th>Next size</th><th>Action</th></tr></thead><tbody>");
     for row in &c.rows {
         let limit = if row.unit.is_some() {
             row.unit_max
@@ -495,7 +564,7 @@ pub fn render(view: &super::View) -> String {
             .unwrap_or_else(|| "—".into());
         let stale = now.saturating_sub(row.sample) > 900;
         out.push_str(&format!(
-            "<tr><th>{}{}</th><td>{}</td><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>",
+            "<tr><th>{}{}</th><td>{}</td><td>{}</td><td>{}{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td class=\"{}\">{}</td></tr>",
             escape(&row.host),
             row.unit
                 .as_ref()
@@ -507,6 +576,11 @@ pub fn render(view: &super::View) -> String {
             percent(row.peak_24h, limit),
             if row.unit.is_some() {
                 format!("{}{}", gib(row.unit_peak), percent(row.unit_peak, row.unit_max))
+            } else {
+                "—".into()
+            },
+            if row.unit.is_some() {
+                format!("{} / {}", gib(row.unit_current), gib(row.unit_lifetime_peak))
             } else {
                 "—".into()
             },
@@ -527,7 +601,7 @@ pub fn render(view: &super::View) -> String {
             }
         ));
     }
-    out.push_str("</tbody></table></div><p>Peak use is memory in use (total minus available) for a host and the unit's own memory for a unit. Headroom is how much more can be used before the floor, measured from the 24-hour peak. Next size follows the DigitalOcean ladder s-2vcpu-4gb → s-4vcpu-8gb → s-8vcpu-16gb → m-4vcpu-32gb → m-8vcpu-64gb → m-16vcpu-128gb → m-32vcpu-256gb; Intel variants move to the same next tier. A row is marked reprovision when either forecast reaches the floor within 30 days.</p></main></body></html>");
+    out.push_str("</tbody></table></div><p>Peak use is memory in use (total minus available) for a host and the unit's anonymous and shared memory for a unit. A unit's current use and lifetime peak include page cache the kernel reclaims under pressure and are shown for reference only. Rows unobserved for 15 minutes are stale, leave the alerts after an hour and the page after a day. Headroom is how much more can be used before the floor, measured from the 24-hour peak. Next size follows the DigitalOcean ladder s-2vcpu-4gb → s-4vcpu-8gb → s-8vcpu-16gb → m-4vcpu-32gb → m-8vcpu-64gb → m-16vcpu-128gb → m-32vcpu-256gb; Intel variants move to the same next tier. A row is marked reprovision when either forecast reaches the floor within 30 days.</p></main></body></html>");
     out
 }
 
@@ -609,16 +683,22 @@ mod tests {
             r#"{
             "transparent-pir-txid-k8-01": {"at": 100, "host_id": "txid-host", "size": "m-8vcpu-64gb-intel",
               "memory_total_bytes": 1000, "memory_available_bytes": 400,
-              "units": {"transparent-display.service": {"memory_current_bytes": 300, "memory_peak_bytes": 350, "memory_max_bytes": null, "oom_kills": 0}}},
+              "units": {"transparent-display.service": {"memory_current_bytes": 300, "memory_anon_bytes": 120, "memory_peak_bytes": 350, "memory_max_bytes": null, "oom_kills": 0}}},
+            "transparent-pir-txid-k8-02": {"at": 100, "host_id": "txid-host", "memory_total_bytes": 1000, "memory_available_bytes": 400},
             "transparent-coordinator": {"at": 100, "memory_total_bytes": 500},
             "stale": {"at": 10, "memory_total_bytes": 1},
             "bad name!": {"at": 100}
         }"#,
         )
         .unwrap();
+        // Two sources on one host: one host row with the larger cache residency.
         let s = samples(
             &hosts,
-            |n| (n == "transparent-pir-txid-k8-01").then_some(7.),
+            |n| match n {
+                "transparent-pir-txid-k8-01" => Some(7.),
+                "transparent-pir-txid-k8-02" => Some(9.),
+                _ => None,
+            },
             110,
         );
         assert_eq!(s.len(), 3);
@@ -627,11 +707,16 @@ mod tests {
             .find(|s| s.host == "txid-host" && s.unit.is_empty())
             .unwrap();
         assert_eq!(host.used(), Some(600.));
-        assert_eq!(host.cache_resident, Some(7.));
+        assert_eq!(host.cache_resident, Some(9.));
         let unit = s.iter().find(|s| !s.unit.is_empty()).unwrap();
         assert_eq!(
-            (unit.unit_peak, unit.unit_max, unit.unit_current),
-            (Some(350.), None, Some(300.))
+            (
+                unit.unit_lifetime_peak,
+                unit.unit_max,
+                unit.unit_current,
+                unit.used()
+            ),
+            (Some(350.), None, Some(300.), Some(120.))
         );
         let coordinator = s
             .iter()
@@ -662,8 +747,8 @@ mod tests {
             host: "h".into(),
             unit: "worker.service".into(),
             at: now - 5,
-            unit_current: Some(90.),
-            unit_peak: Some(90.),
+            unit_current: Some(95.),
+            unit_anon: Some(90.),
             unit_max: Some(100.),
             ..Default::default()
         });
@@ -689,8 +774,29 @@ mod tests {
             Some(true)
         );
         // A stale view knows nothing.
-        let c = conditions(&view, now + 3600, &p);
+        let c = conditions(&view, now + 1800, &p);
         assert!(c.iter().all(|c| c.firing.is_none()));
+        // High current use of mostly page cache, low anonymous memory: no alert.
+        recent.observe(&Sample {
+            host: "h".into(),
+            unit: "worker.service".into(),
+            at: now,
+            unit_current: Some(99.),
+            unit_lifetime_peak: Some(99.),
+            unit_anon: Some(30.),
+            unit_max: Some(100.),
+            ..Default::default()
+        });
+        let view = build(&rows, &recent, now, &p);
+        assert_eq!(view.rows[1].unit_current, Some(99.));
+        let c = conditions(&view, now, &p);
+        assert_eq!(
+            c.iter()
+                .find(|c| c.key == "transparent_capacity_unit_memory_h_worker.service")
+                .unwrap()
+                .firing,
+            Some(false)
+        );
         // Flat use recovers.
         let flat: Vec<_> = (90..=100).map(|d| daily(d, 30.)).collect();
         let c = conditions(&build(&flat, &Recent::default(), now, &p), now, &p);
@@ -700,6 +806,68 @@ mod tests {
                 .unwrap()
                 .firing,
             Some(false)
+        );
+    }
+
+    #[test]
+    fn departed_hosts_leave_the_alerts_after_an_hour_and_the_page_after_a_day() {
+        let p = Policy::default();
+        let now = 100 * DAY + 3600;
+        let gone = |seconds_ago: u64| Daily {
+            host: "gone".into(),
+            day: (now - seconds_ago) / DAY,
+            at: now - seconds_ago,
+            memory_total: Some(100.),
+            min_available: Some(50.),
+            ..Default::default()
+        };
+        let view = build(&[gone(1800)], &Recent::default(), now, &p);
+        assert!(!conditions(&view, now, &p).is_empty());
+        // Over an hour: still listed (stale), no longer evaluated.
+        let view = build(&[gone(3700)], &Recent::default(), now, &p);
+        assert_eq!(view.rows.len(), 1);
+        assert!(conditions(&view, now, &p).is_empty());
+        // Over a day: gone from the page too.
+        assert!(build(&[gone(DAY + 1)], &Recent::default(), now, &p)
+            .rows
+            .is_empty());
+        // The in-memory peaks and live samples forget it after a day.
+        let mut recent = Recent::default();
+        for (host, at) in [("gone", now - DAY - 1), ("here", now)] {
+            recent.observe(&Sample {
+                host: host.into(),
+                at,
+                memory_total: Some(100.),
+                memory_available: Some(50.),
+                ..Default::default()
+            });
+        }
+        recent.prune(now);
+        assert_eq!(
+            recent.live.keys().map(|k| k.0.as_str()).collect::<Vec<_>>(),
+            ["here"]
+        );
+        assert_eq!(
+            recent
+                .peaks
+                .keys()
+                .map(|k| k.0.as_str())
+                .collect::<Vec<_>>(),
+            ["here"]
+        );
+    }
+
+    #[test]
+    fn unit_oom_counters_skip_the_main_unit() {
+        let entry = serde_json::json!({"unit": "main.service", "oom_kills": 1, "units": {
+            "main.service": {"oom_kills": 1}, "pir-apm.service": {"oom_kills": 2},
+            "bad name": {"oom_kills": 3}, "no-counter.service": {}}});
+        assert_eq!(
+            unit_ooms(&entry),
+            [(
+                "pir_host_unit_oom_kills|unit=pir-apm.service".to_string(),
+                2.
+            )]
         );
     }
 

@@ -116,6 +116,9 @@ pub struct View {
     pub last_dropped_at: u64,
     /// The Enhance worker and packing-router inventories.
     pub inventory_error: bool,
+    /// `PIR_APM_TRANSPARENT_CONFIG` failed to read, parse or validate at start,
+    /// so Transparent monitoring is off while Enhance and Status continue.
+    pub transparent_config_error: bool,
     pub sources: BTreeMap<String, Source>,
     pub capacity: capacity::View,
     #[serde(skip)]
@@ -355,6 +358,30 @@ fn refresh(
     errors
 }
 
+type Inventory = BTreeMap<String, Vec<Target>>;
+
+/// The Transparent config at `path` and each service's first inventory; None
+/// without a path. Any failure to read, parse or validate is an error.
+fn load_transparent(
+    path: Option<std::ffi::OsString>,
+) -> Result<Option<(services::Config, Inventory)>> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let config = services::Config::parse(&std::fs::read(path)?)?;
+    let mut inventory = BTreeMap::new();
+    for s in &config.services {
+        inventory.insert(s.service.clone(), s.targets()?);
+    }
+    anyhow::ensure!(
+        !refresh(&config.services, &mut inventory)
+            .values()
+            .any(|e| *e),
+        "Transparent services must not share worker ids"
+    );
+    Ok(Some((config, inventory)))
+}
+
 pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
     let path = std::env::var_os("PIR_APM_HISTORY_PATH")
         .map(PathBuf::from)
@@ -366,12 +393,26 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
     let Some(path) = path else {
         return Ok(());
     };
-    let transparent = std::env::var_os("PIR_APM_TRANSPARENT_CONFIG")
-        .map(|p| -> Result<services::Config> {
-            services::Config::parse(&std::fs::read(p)?)
-                .context("reading PIR_APM_TRANSPARENT_CONFIG")
-        })
-        .transpose()?;
+    // A bad Transparent config disables only Transparent monitoring: Enhance and
+    // Status keep their alerts, and the shared family raises a warning.
+    let (transparent, mut service_inventory, transparent_config_error) =
+        match load_transparent(std::env::var_os("PIR_APM_TRANSPARENT_CONFIG")) {
+            Ok(Some((c, inventory))) => (Some(c), inventory, false),
+            Ok(None) => (None, BTreeMap::new(), false),
+            Err(error) => {
+                // Messages name fields and services, never file contents or URLs.
+                eprintln!(
+                    "{}",
+                    serde_json::json!({
+                        "event": "transparent_config_invalid",
+                        "variable": "PIR_APM_TRANSPARENT_CONFIG",
+                        "error": format!("{error:#}"),
+                        "effect": "Transparent monitoring disabled; Enhance and Status continue",
+                    })
+                );
+                (None, BTreeMap::new(), true)
+            }
+        };
     let configured = transparent
         .as_ref()
         .map(|c| c.services.clone())
@@ -381,16 +422,6 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         .as_ref()
         .is_none_or(|c| c.capacity_alert_mode == services::Mode::Shadow);
     let policy = crate::monitoring::Policy::load()?.quality;
-    let mut service_inventory = BTreeMap::new();
-    for s in &configured {
-        service_inventory.insert(s.service.clone(), s.targets()?);
-    }
-    anyhow::ensure!(
-        !refresh(&configured, &mut service_inventory)
-            .values()
-            .any(|e| *e),
-        "Transparent services must not share worker ids"
-    );
     let mut targets = vec![Target {
         id: "enhance-init".into(),
         service: "enhance".into(),
@@ -516,6 +547,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         {
             let mut d = dashboard.write().await;
             d.quality.enabled = true;
+            d.quality.transparent_config_error = transparent_config_error;
             d.quality.path = Some(path.clone());
             d.quality.capacity.shadow = capacity_shadow;
             d.quality.services = configured
@@ -659,6 +691,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                                             .insert(format!("pir_host_{key}"), n as f64);
                                     }
                                 }
+                                reading.values.gauges.extend(capacity::unit_ooms(host));
                             }
                         }
                         Ok::<_, &'static str>(reading)
@@ -837,6 +870,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
             for s in &samples {
                 recent_capacity.observe(s);
             }
+            recent_capacity.prune(now);
             let mut d = dashboard.write().await;
             if sender.try_send((batch, samples)).is_err() {
                 d.quality.dropped_batches += 1;
@@ -953,6 +987,27 @@ mod tests {
             .unwrap()
             .contains("private_row"));
         assert!(probe_read(bytes, "transparent", 200).is_err());
+    }
+    #[test]
+    fn a_bad_transparent_config_is_an_error_start_reports_and_survives() {
+        assert!(load_transparent(None).unwrap().is_none());
+        let path = std::env::temp_dir().join(format!(
+            "pir-apm-bad-transparent-{}.json",
+            std::process::id()
+        ));
+        for bad in [&b"{not json"[..], br#"{"services": []}"#] {
+            std::fs::write(&path, bad).unwrap();
+            assert!(load_transparent(Some(path.clone().into())).is_err());
+        }
+        std::fs::remove_file(&path).unwrap();
+        assert!(load_transparent(Some(path.into())).is_err());
+        // What start does with the error: Transparent off, a visible warning.
+        let view = View {
+            enabled: true,
+            transparent_config_error: true,
+            ..Default::default()
+        };
+        assert!(summary(&view, "enhance").contains("Transparent services are not monitored"));
     }
     #[test]
     fn long_window_merges_fifteen_minutes_and_drops_changed_buckets() {

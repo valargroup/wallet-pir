@@ -118,11 +118,12 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
     "lag_hold_seconds": 300,
     "last_success_warning_seconds": 300,
     "last_success_critical_seconds": 900,
-    "history_rebuild_warning_seconds": 45,
-    "txid_rebuild_warning_seconds": 20,
-    "rebuild_critical_seconds": 75,
-    "prepare_warning_seconds": 30,
-    "prepare_critical_seconds": 60,
+    "last_success_hold_seconds": 120,
+    "history_rebuild_warning_seconds": 60,
+    "txid_rebuild_warning_seconds": 30,
+    "rebuild_critical_seconds": 120,
+    "prepare_warning_seconds": 32,
+    "prepare_critical_seconds": 64,
     "capacity_warning_days": 30,
     "capacity_critical_days": 7,
     "host_floor_ratio": 0.2,
@@ -346,6 +347,16 @@ Source ids are `<service>-publisher`, `<service>-controller`, `<service>-edge`
 and `<service>-synthetic`, plus each worker's id; worker ids must be unique across
 services. The old single-service object is refused.
 
+The config is read once at start, so swap the APM binary and this file
+together and restart. A file that cannot be read, parsed or validated (including
+an unreadable history roster or a worker id shared by two services) disables
+only Transparent monitoring: APM logs one `transparent_config_invalid` JSON line
+(field and service names, never file contents or URLs), keeps Enhance and Status
+monitoring and alerting, shows a warning on the Enhance and quality pages, and
+raises the `quality_transparent_config` warning in the shared `quality` family.
+Open Transparent incidents are left as they are, not retired, until a valid
+config is back.
+
 The existing fleet roster is authoritative. No public metrics route is added.
 The host sampler uses explicitly configured private SSH targets and loopback
 Caddy metrics. Its output contains resource numbers and fixed source names.
@@ -358,9 +369,12 @@ An explicit target may also name its machine (`host_id`, default its first
 source), its DigitalOcean size slug (`size`) and up to eight more systemd
 `units` to report beside `unit`; the `roster` block accepts `size` for every
 derived target and `role_units` (roster `role` to unit), and a derived target's
-`host_id` is its worker id. Each snapshot entry then adds `host_id`, `size`,
+`host_id` is its worker id (at most 80 letters, digits, `_`, `.`, `@` or `-`,
+the APM's own limit; anything else falls back to the first source). Each
+snapshot entry then adds `unit` (the main unit), `host_id`, `size`,
 `swap_total_bytes`, `swap_free_bytes` and `units`, a map from unit name to
-`memory_current_bytes`, `memory_peak_bytes`, `memory_max_bytes` (null when
+`memory_current_bytes`, `memory_anon_bytes` (`anon` plus `shmem` from the
+cgroup's `memory.stat`), `memory_peak_bytes`, `memory_max_bytes` (null when
 unlimited) and `oom_kills`. A value the host does not report, or a unit systemd
 has not loaded, is left out. The existing fields are unchanged.
 [`pir-quality-hosts.example.json`](../ops/deploy/pir-quality-hosts.example.json)
@@ -573,13 +587,13 @@ txid display controller.
 | `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
 | `publication_critical` | txid | critical | oldest unpublished block > 180 s | – |
 | `publication_lag` | both | warning | coordinator ≥ 2 blocks behind its node | 5 min |
-| `last_success_warning` | both | warning | no successful publication for 5 min while the node is ahead | – |
-| `last_success_critical` | both | critical | the same for 15 min | – |
+| `last_success_warning` | both | warning | no successful publication for 5 min while the node is ahead | 2 min |
+| `last_success_critical` | both | critical | the same for 15 min | 2 min |
 | `stalled`, `halted` | txid | critical | controller reports stalled or halted | – |
 | `withdrawn` | history | critical | public coverage withdrawn | 60 s |
-| `rebuild_warning` | both | warning | 15-min p95 of the coordinator cycle > 45 s (history) or > 20 s (txid) | 60 s |
-| `rebuild_critical` | both | critical | 15-min p95 of the coordinator cycle > 75 s | 60 s |
-| `prepare_<worker>_warning`, `_critical` | both | warning / critical | 15-min p95 of revision prepare > 30 s / > 60 s | 60 s |
+| `rebuild_warning` | both | warning | > 5% of 15-min coordinator cycles above 60 s (history) or 30 s (txid) | 60 s |
+| `rebuild_critical` | both | critical | > 5% of 15-min coordinator cycles above 120 s | 60 s |
+| `prepare_<worker>_warning`, `_critical` | both | warning / critical | > 5% of 15-min revision prepares above 32 s / 64 s | 60 s |
 | `ready_<worker>` | archive owner, display worker | critical | not ready on the published map | 60 s |
 | `recent_availability` | history | critical | no recent replica ready on the published map | 60 s |
 | `recent_redundancy` | history | warning | fewer than two ready recent replicas | 120 s |
@@ -588,17 +602,27 @@ txid display controller.
 | `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |
 | `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples | 120 s |
 | `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
-| `oom_<source>` | both | critical | new OOM kills | – |
+| `oom_<source>` | both | critical | new OOM kills of the source's main unit | – |
+| `oom_<source>_<unit>` | both | critical | new OOM kills of another unit the host sampler reports | – |
 
 History keeps its 30 s and 60 s unpublished-age rules, which already page
 earlier than 180 s; the txid display seals every block, so it has only the 180 s
 page and relies on the lag rule for its warning. Time since the last success
 counts only while the node's height is above the published height, so an idle
 chain does not fire it, and a coordinator that reports 0 (no success since its
-restart) is unknown. The cycle is `transparent_publication_cycle_seconds`
+restart) is unknown. Both levels hold 2 minutes
+(`last_success_hold_seconds`): after a quiet chain the first new block is
+already older than 5 minutes since the last success, and the hold gives the
+coordinator time to publish it. The cycle is `transparent_publication_cycle_seconds`
 (history) or `txid_display_cycle_seconds` (txid); prepare is
 `transparent_shard_prepare_seconds{phase="total"}` (history workers) or
-`transparent_display_prepare_seconds` (display workers). A 15-minute window
+`transparent_display_prepare_seconds` (display workers). A limit fires when
+more than 5% of the window's samples lie above the smallest bucket edge at or
+above it; samples beyond the last finite edge count as above. The cycle
+histograms have edges at …10, 30, 60, 120, 600 s and prepare at …16, 32, 64,
+128, 300 s, so the defaults sit on edges; a limit between edges acts as the
+next edge up. A percentile interpolated inside a bucket would fire far below
+its limit (a steady 34 s prepare read as a 62 s p95). A 15-minute window
 without a cycle or prepare is unknown. Display workers have no outer HTTP layer
 yet, so their 5xx and latency rules stay unknown until they export `pir_http_*`.
 Histogram deltas need a `*process_start_time_seconds` gauge on each scraped
@@ -614,15 +638,20 @@ The host sampler's snapshot (`host_snapshot`) has one entry per source with
 `at`, memory, disk, restarts, `cgroup_memory_bytes`, `cpu_seconds` and
 `oom_kills`, and may add `host_id` (stable host name; several sources may share
 a host), `size` (DigitalOcean size), `swap_total_bytes`, `swap_free_bytes` and
-`units`: `{"<unit>": {"memory_current_bytes", "memory_peak_bytes",
-"memory_max_bytes" (null when unlimited), "oom_kills"}}`. Hosts with no worker,
+`units`: `{"<unit>": {"memory_current_bytes", "memory_anon_bytes",
+"memory_peak_bytes", "memory_max_bytes" (null when unlimited), "oom_kills"}}`.
+When several sources share a host, the host row takes the newest observation
+and the largest worker cache residency among them. Hosts with no worker,
 such as the coordinator and router, appear under their host id. Absent fields
 are unknown.
 
 Every fresh observation is folded into a daily row per host and per unit (UTC
 days, kept 180 days, in the quality history database): the lowest available
-memory, the highest unit use (its recorded peak or current use, whichever is
-larger), its MemoryMax, the highest worker cache residency and the latest size.
+memory, the highest sampled unit anonymous memory (current use only when the
+host does not report it), its MemoryMax, the highest worker cache residency and
+the latest size. A unit's current use and `memory.peak` include page cache the
+kernel reclaims under pressure, and `memory.peak` covers the unit's whole run,
+so neither feeds a forecast or alert; the page shows both for reference.
 Minute history stays seven days.
 
 A straight-line least-squares fit through the daily peaks of the last 14 days
@@ -633,7 +662,8 @@ trend never reaches the floor; a peak already past the floor is 0 days. Alerts
 use the sooner of the two known forecasts.
 
 `/apm/capacity/` lists one row per host and per unit: size, RAM (or MemoryMax),
-the 24-hour peak, the unit's peak against MemoryMax, headroom from the 24-hour
+the 24-hour peak, the unit's peak against MemoryMax, its current use and
+lifetime peak (page cache included, for reference), headroom from the 24-hour
 peak to the floor, growth per week, days to floor on each window, the next size
 and its monthly price, and **reprovision** when either forecast is under 30
 days. The next size follows s-2vcpu-4gb ($24) → s-4vcpu-8gb ($48) →
@@ -651,7 +681,8 @@ The host memory below 15% and new-OOM rules stay in each service family.
 | `transparent_capacity_floor_critical_<host>` | critical | sooner forecast < 7 days | 30 min |
 | `transparent_capacity_unit_warning_<host>_<unit>` | warning | sooner forecast < 30 days to 90% of MemoryMax | 30 min |
 | `transparent_capacity_unit_critical_<host>_<unit>` | critical | sooner forecast < 7 days | 30 min |
-| `transparent_capacity_unit_memory_<host>_<unit>` | warning | unit memory > 85% of MemoryMax | 10 min |
+| `transparent_capacity_unit_memory_<host>_<unit>` | warning | unit anonymous memory > 85% of MemoryMax | 10 min |
 
 Forecasts older than 15 minutes, or for a host not observed in 15 minutes, are
-unknown. A host that leaves the capacity view retires its incidents.
+unknown. A host or unit not observed for an hour leaves the alerts, which
+retires its incidents; the page lists it as stale for up to a day, then drops it.

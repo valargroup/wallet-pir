@@ -47,6 +47,26 @@ impl Histogram {
         }
         None
     }
+    /// The smallest finite bucket edge at or above `limit` and how many samples
+    /// lie above it. Past the last finite edge only the overflow is known, so the
+    /// last finite edge stands in. None for an invalid histogram or one with no
+    /// finite edge.
+    pub fn above(&self, limit: f64) -> Option<(f64, f64)> {
+        if !self.valid() {
+            return None;
+        }
+        let total = *self.counts.last()?;
+        let mut finite = self
+            .bounds
+            .iter()
+            .zip(&self.counts)
+            .filter_map(|(b, n)| Some(((*b)?, *n)));
+        let (edge, within) = finite
+            .clone()
+            .find(|(b, _)| *b >= limit)
+            .or_else(|| finite.next_back())?;
+        Some((edge, total - within))
+    }
     fn difference(&self, old: &Self) -> Option<Self> {
         if self.bounds != old.bounds || !self.valid() || !old.valid() {
             return None;
@@ -505,6 +525,11 @@ mod tests {
             counts: vec![90., 90., 90.]
         }));
         assert!(h.quantile(0.95).unwrap() < 1.);
+        // A limit inside a bucket rounds up to that bucket's upper edge.
+        assert_eq!(h.above(3.), Some((5., 1.)));
+        assert_eq!(h.above(1.), Some((1., 2.)));
+        // Past the last finite edge only the overflow is known.
+        assert_eq!(h.above(50.), Some((5., 1.)));
         assert!(!Histogram {
             bounds: vec![Some(1.), None],
             counts: vec![3., 2.]

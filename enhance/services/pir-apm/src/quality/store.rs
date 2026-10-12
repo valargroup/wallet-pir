@@ -23,7 +23,8 @@ impl Store {
         Ok(Self { db })
     }
     /// Folds one host or unit observation into its UTC day: the lowest available
-    /// memory, the highest unit and cache use, and the latest size and limits.
+    /// memory, the highest unit use (anonymous memory) and cache residency, and
+    /// the latest size and limits.
     pub fn record_capacity(&mut self, s: &Sample) -> Result<()> {
         self.db.execute(
             "INSERT INTO capacity_daily VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(host,unit,day) DO UPDATE SET
@@ -42,7 +43,7 @@ impl Store {
                 s.size,
                 s.memory_total,
                 s.memory_available,
-                s.unit_peak,
+                if s.unit.is_empty() { None } else { s.used() },
                 s.unit_max,
                 s.cache_resident
             ],
@@ -188,37 +189,56 @@ mod tests {
             pir_apm::incidents::unix_time()
         ));
         let mut store = Store::open(&path).unwrap();
-        let sample = |at, available, peak: Option<f64>| Sample {
+        let sample = |at, available| Sample {
             host: "h".into(),
             unit: String::new(),
             at,
             size: Some("s-4vcpu-8gb".into()),
             memory_total: Some(100.),
             memory_available: Some(available),
-            unit_peak: peak,
             ..Default::default()
         };
-        store
-            .record_capacity(&sample(DAY + 10, 60., Some(5.)))
-            .unwrap();
-        store.record_capacity(&sample(DAY + 20, 40., None)).unwrap();
-        store
-            .record_capacity(&sample(DAY + 30, 50., Some(3.)))
-            .unwrap();
-        store
-            .record_capacity(&sample(2 * DAY + 5, 70., None))
-            .unwrap();
+        // A unit's daily peak is the day's highest anonymous memory, never its
+        // current use (page cache) or its recorded lifetime peak.
+        let unit = |at, anon: Option<f64>| Sample {
+            host: "h".into(),
+            unit: "worker.service".into(),
+            at,
+            unit_current: Some(90.),
+            unit_lifetime_peak: Some(95.),
+            unit_anon: anon,
+            ..Default::default()
+        };
+        store.record_capacity(&sample(DAY + 10, 60.)).unwrap();
+        store.record_capacity(&sample(DAY + 20, 40.)).unwrap();
+        store.record_capacity(&sample(DAY + 30, 50.)).unwrap();
+        store.record_capacity(&sample(2 * DAY + 5, 70.)).unwrap();
+        for (at, anon) in [
+            (DAY + 10, 5.),
+            (DAY + 20, 12.),
+            (DAY + 30, 3.),
+            (2 * DAY + 5, 4.),
+        ] {
+            store.record_capacity(&unit(at, Some(anon))).unwrap();
+        }
         let rows = store.capacity(0).unwrap();
-        assert_eq!(rows.len(), 2);
+        assert_eq!(rows.len(), 4);
         assert_eq!(rows[0].min_available, Some(40.));
-        assert_eq!(rows[0].unit_peak, Some(5.));
+        assert_eq!(rows[0].unit_peak, None);
         assert_eq!(rows[0].at, DAY + 30);
         assert_eq!(rows[1].min_available, Some(70.));
-        assert_eq!(rows[1].unit_peak, None);
+        assert_eq!(
+            (rows[2].unit.as_str(), rows[2].unit_peak),
+            ("worker.service", Some(12.))
+        );
+        assert_eq!(rows[3].unit_peak, Some(4.));
+        // Without anonymous memory the current use stands in.
+        store.record_capacity(&unit(2 * DAY + 6, None)).unwrap();
+        assert_eq!(store.capacity(0).unwrap()[3].unit_peak, Some(90.));
         store.prune(CAPACITY_RETENTION + DAY + 10).unwrap();
-        assert_eq!(store.capacity(0).unwrap().len(), 2);
+        assert_eq!(store.capacity(0).unwrap().len(), 4);
         store.prune(CAPACITY_RETENTION + 2 * DAY + 10).unwrap();
-        assert_eq!(store.capacity(0).unwrap().len(), 1);
+        assert_eq!(store.capacity(0).unwrap().len(), 2);
         drop(store);
         let _ = std::fs::remove_file(path);
     }

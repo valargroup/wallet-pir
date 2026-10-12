@@ -252,14 +252,11 @@ impl Store {
             }
             if let Some(event) = event {
                 let closing = matches!(event, "RECOVERED" | "RETIRED");
-                // Deliver in active mode, except the end of an incident that was never
-                // announced; always deliver the end of one that was announced, even in
-                // shadow, so no Slack incident is left open.
-                let deliver = if closing {
-                    i.notified || (!shadow && !i.announce_pending)
-                } else {
-                    !shadow
-                };
+                // Deliver in active mode. The end of an incident is delivered exactly
+                // when its start was, even in shadow, so no Slack incident is left
+                // open and Slack never hears of one it was not told about (such as
+                // a shadow incident retired by an active family).
+                let deliver = if closing { i.notified } else { !shadow };
                 if closing {
                     i.notified = false;
                     i.announce_pending = false;
@@ -601,6 +598,35 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(s.health(true, 170).unwrap().pending, 2);
+    }
+    #[test]
+    fn endings_are_delivered_only_for_announced_incidents() {
+        // Raised in shadow, then retired by an active family: Slack never saw it.
+        let mut s = Store::open(Path::new(":memory:")).unwrap();
+        for t in [100, 110] {
+            s.evaluate(&[condition(Some(true), t)], t, true, "test", "")
+                .unwrap();
+        }
+        let mut retired = condition(Some(true), 120);
+        retired.retired = true;
+        s.evaluate(&[retired], 120, false, "test", "").unwrap();
+        assert!(s.incidents().unwrap().is_empty());
+        assert_eq!(s.health(true, 120).unwrap().pending, 0);
+        // Enhance in active mode: announced, so its recovery and retirement are sent.
+        for end in ["recovered", "retired"] {
+            let mut s = Store::open(Path::new(":memory:")).unwrap();
+            for t in [100, 110] {
+                s.evaluate(&[condition(Some(true), t)], t, false, "test", "")
+                    .unwrap();
+            }
+            assert_eq!(s.health(true, 110).unwrap().pending, 1);
+            for t in [120, 130] {
+                let mut c = condition(Some(false), t);
+                c.retired = end == "retired";
+                s.evaluate(&[c], t, false, "test", "").unwrap();
+            }
+            assert_eq!(s.health(true, 130).unwrap().pending, 2, "{end}");
+        }
     }
     #[test]
     fn independent_family_promotion_does_not_change_existing_mode() {
