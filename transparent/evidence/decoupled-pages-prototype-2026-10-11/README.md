@@ -8,29 +8,77 @@ output), not wallet measurements.
 
 ## Gate result
 
-The gate asks for a decoupled option that beats both today's one-shot bill and
-bulk isolation without a worse tip catch-up bill.
+The headline metric, set by Roman on 2026-10-12, is the bill for
+**directory-only wallets**: wallets whose addresses never need a page query in
+the evaluated range. Their bill is filters, setups, choice tables and directory
+queries. Roman's figures for the last ~3 months of the recent slice: about 85%
+of active addresses never touch pages, and >2 events in a shard affects 18.8% of
+address-shard pairs today and 17.8% under decoupled 4k/8k. Wallets that need
+pages are reported only as a bounded tail, not as an optimization target.
 
-- **Archive tier: it passes.** Two options qualify, with the recent tier left as
-  today: decoupled 32k directory with 64k pages, and with 32k pages. The tip
-  catch-up bill is then unchanged, because catch-up only touches the recent tier.
-  - restore-old one-shot, mean MB per wallet: 7.9 (32k/64k) and 7.8 (32k/32k),
-    against 16.1 today and 10.6 under bulk isolation.
-  - restore-old p99: 25.4 and 23.9 MB, against 37.7 today and 90.4 under bulk.
-  - The cost is round trips. p99 is 12 (32k/64k) or 22 (32k/32k), against 2.
-- **Recent tier: it fails.** One-shot bills fall slightly, by 3–6%, but tip
-  catch-up rises by about 50%.
-  - Pooled over 8 anchors, mean catch-up MB for 1 / 7 / 30 days is
-    0.29 / 0.29 / 0.43 with decoupled 4k/8k. Today's `recent-4k-8k` costs
-    0.19 / 0.20 / 0.35.
-- **The win is filters, not pages.**
-  - In the archive window, ≈8.0 of the ≈8.2 MB saved per restore-old wallet is
-    filter bytes. Two large directory shards repeat far fewer scripts across
-    their filters than 26 page-bound shards do: 6.73 vs 14.76 MB.
-  - Private query bytes barely move: 0.94–1.11 vs 1.21 MB.
-  - In the recent tier the same effect works against catch-up. The open
-    directory shard is larger, so its filter costs more to download again:
-    0.245 vs 0.162 MB of the mean catch-up bill. Query bytes are 0.072 vs 0.070 MB.
+To compare like with like, each class uses the wallets that are directory-only
+in *every* compared layout (n below). Each cell is the mean MB per wallet, then
+p50 / p95 / p99.
+
+- **Archive tier: passes.** restore-old (clipped to the window, n = 100):
+
+  | Layout | Mean | p50 / p95 / p99 |
+  |---|---:|---|
+  | decoupled 32k/64k and 32k/32k | 6.76 | 6.73 / 7.11 / 7.11 |
+  | bulk isolation | 6.76 | 6.73 / 7.11 / 7.11 |
+  | today (`archive-wide`) | 14.78 | 14.76 / 15.01 / 15.03 |
+  | coupled 16k/64k | 14.77 | — |
+  | coupled 8k/64k | 15.70 | — |
+
+  - The saving is all filters: 2 directory shards over the window instead of 26.
+  - Decoupled matches bulk isolation for these wallets, but its paged tail stays
+    within bound. Bulk's paged tail is 8.9× today's bytes.
+  - Tip catch-up does not change, because the recent tier stays as today.
+- **Recent tier: fails, and a smaller coupled directory does better.** Tip
+  catch-up for directory-only wallets, pooled over 8 anchors, 1d / 7d / 30d
+  (n = 509 / 726 / 786 wallet-anchor pairs):
+
+  | Layout | 1d | 7d | 30d |
+  |---|---|---|---|
+  | coupled 2k/8k (new) | **0.085**; 0.075 / 0.250 / 0.250 | **0.125**; 0.110 / 0.250 / 0.250 | **0.258**; 0.241 / 0.414 / 0.414 |
+  | today (`recent-4k-8k`) | 0.113; 0.118 / 0.179 / 0.236 | 0.152; 0.136 / 0.352 / 0.369 | 0.295; 0.285 / 0.507 / 0.532 |
+  | decoupled 4k/8k | 0.206; 0.241 / 0.345 / 0.380 | 0.243; 0.258 / 0.321 / 0.380 | 0.372; 0.321 / 0.613 / 0.646 |
+  | decoupled 8k/8k | 0.311; 0.277 / 0.616 / 0.616 | 0.311; 0.277 / 0.616 / 0.616 | 0.344; 0.277 / 0.616 / 0.616 |
+  | bulk isolation | same as decoupled 4k/8k | | |
+
+  - One-shot restore-6m, directory-only (n = 44): decoupled 4k/8k 1.44,
+    coupled 2k/8k 1.48, decoupled 8k/8k 1.48, today 1.54 MB mean.
+  - Decoupled makes the recent tier's open directory shard larger, so its filter
+    costs more to download again. Coupled 2k/8k makes it smaller.
+- **Paged tail: within the sanity bound for every decoupled layout.**
+  The bound is chosen for this note: paged-wallet bytes p99 and max at most
+  1.25× today's in the same window, and round trips at most 34
+  (`MAX_PAGE_CHILDREN` + 2).
+  - Archive: decoupled 32k/64k gives 0.99× today's bytes at 13 round trips max;
+    32k/32k gives 0.54× at 23; 32k/16k gives 0.33× at 34, which is at the bound.
+  - Recent one-shot: decoupled 4k/8k is 0.99× / 1.00× at 5 round trips.
+  - Recent tip catch-up: decoupled 4k/8k is 1.04× / 1.05× at 4.
+  - Bulk isolation fails the bound in both windows (2.5× and 8.9× bytes).
+
+[results-directory-only-archive.md](results-directory-only-archive.md) and
+[results-directory-only-recent.md](results-directory-only-recent.md) hold every
+class, each layout's directory-only share, and the paged-tail tables.
+
+**Previous headline: all wallets.** The archive tier also passes on all-wallet
+bills.
+- restore-old one-shot mean: 7.9 MB (32k/64k) and 7.8 MB (32k/32k), against 16.1
+  today and 10.6 under bulk.
+- restore-old p99: 25.4 and 23.9 MB, against 37.7 today and 90.4 under bulk.
+- Round trips p99: 12 or 22, against 2.
+
+In the recent tier, all-wallet tip catch-up (mean MB, 1d / 7d / 30d) is
+0.29 / 0.29 / 0.43 under decoupled 4k/8k, 0.19 / 0.20 / 0.35 today and
+0.16 / 0.17 / 0.30 under coupled 2k/8k.
+
+In both tiers the difference is filter bytes, not page placement.
+- Archive filters: 6.73 against 14.76 MB.
+- Archive private queries: 0.94–1.11 against 1.21 MB.
+- Recent catch-up filters: 0.245 against 0.162 MB; private queries 0.072 against 0.070 MB.
 
 Roman decides whether to pursue the decoupled layout (steps 2–6).
 
@@ -41,8 +89,8 @@ Roman decides whether to pursue the decoupled layout (steps 2–6).
 | Input | Two read-only windows of `/srv/transparent-activity/full-v3/journal` (v3 journal, schema v11 events, genesis `00040fe8…dce08`, source covered to 3,514,563 at checkpoint `[42721185853, 168699072]`). **recent** 3,262,749–3,473,686: 210,938 blocks, 4,185,700 events, anchor `0000000000755137…0be1d`, the frozen sample's cutoff to anchor. **archive** 200,000–419,999: 220,000 blocks, 112,314,589 events, anchor `00000000001f9bca…a9777`, which contains the chain's densest stretch. The windows carry no display sidecars, because the source journal has no sidecar directories. Provenance is in [raw/journal-provenance.json](raw/journal-provenance.json). |
 | Transfer | [fetch-slices.sh](fetch-slices.sh) at `9d240446`, run by Roman from his Mac. It streamed read-only from the coordinator through the Mac, with `nice`/`ionice` and nothing written on the coordinator. [slice-hub.py](slice-hub.py) then rebased the offsets and wrote checkpoints and checksums on the hub. **Deviation:** the relay ran at about 1.2 MB/s, so Roman copied the archive window's `events.bin` tail directly from the coordinator to the hub in 8 parallel byte ranges instead. Both windows' `events.bin` ranges were hashed on the coordinator and match the hub byte for byte. The source block records were re-read and were unchanged, and `SHA256SUMS` passes. |
 | Workload | The [frozen 1,080-wallet sample](../workload-sample-2026-09-08/README.md). Wallet ranges are clipped to each window; clipped classes are labelled "(clipped)". In the recent window the catch-up, restore-6m, multi-script and most small-active wallets are unclipped. In the archive window only reused-tail wallets that start inside it are unclipped. restore-old and unused are clipped to the window. |
-| Tool | `shard-census`, built with `release-fast` (no LTO) from `9d240446`, binary sha256 `0c85e8a9…0715`, Rust 1.97.1. Runs: [run-census.sh](run-census.sh) for 11 layouts × 2 windows, and [catch-up-anchors.sh](catch-up-anchors.sh) for 4 recent-tier layouts × 8 anchors. Coupled layouts pass the publisher's derived policy explicitly: capacity minus 1/7 scripts, minus 1/32 page rows, at 58 minimal entries per 4,096-byte row. Directory bytes seal at 6/7 of rows × 4,092. |
-| Pricing | [pairs.py](pairs.py), whose model is in its docstring: filters at ~2.5 B per script of every overlapping shard, choice tables at ~1.245 bits per script, one setup per (shard, table, segment), and the census `prices` row per query. Tables come from [bill-table.py](bill-table.py) and [catch-up-summary.py](catch-up-summary.py), shard tables from [summarize.py](summarize.py). |
+| Tool | `shard-census`, built with `release-fast` (no LTO) from `9d240446`, binary sha256 `0c85e8a9…0715`, Rust 1.97.1. Runs: [run-census.sh](run-census.sh) for 11 layouts × 2 windows, plus coupled 2k/8k (`--directory-rows-per-segment 2048`, inline events unchanged) on the recent window only. [catch-up-anchors.sh](catch-up-anchors.sh) runs 5 recent-tier layouts × 8 anchors. Coupled layouts pass the publisher's derived policy explicitly: capacity minus 1/7 scripts, minus 1/32 page rows, at 58 minimal entries per 4,096-byte row. Directory bytes seal at 6/7 of rows × 4,092. |
+| Pricing | [pairs.py](pairs.py), whose model is in its docstring: filters at ~2.5 B per script of every overlapping shard, choice tables at ~1.245 bits per script, one setup per (shard, table, segment), and the census `prices` row per query. Tables come from [bill-table.py](bill-table.py), [catch-up-summary.py](catch-up-summary.py) and [directory-only.py](directory-only.py), shard tables from [summarize.py](summarize.py). |
 | Host | Development hub, DigitalOcean `DO-Premium-Intel`, 8 vCPU (this task's quota is about 3 CPUs), 31 GiB RAM, Ubuntu 24.04.3, 2026-10-12 00:29–01:14 UTC |
 | Cost | Recent window: 1–3.5 min per run, peak RSS ≤ 0.4 GB. Archive window: coupled runs 16–37 min, decoupled runs 18–42 min, peak RSS ≤ 1.03 GB. |
 | Raw | `raw/<run>/*.txt.gz` (full census logs), `*.time.gz` (`/usr/bin/time -v`), `jobs.txt.gz`, `sample-<anchor>.json.gz` (shifted catch-up samples); checksums in [SHA256SUMS](SHA256SUMS) |
@@ -51,7 +99,9 @@ Derived outputs: [results-shards-recent.tsv](results-shards-recent.tsv),
 [results-shards-archive.tsv](results-shards-archive.tsv),
 [results-bills-recent.md](results-bills-recent.md),
 [results-bills-archive.md](results-bills-archive.md),
-[results-catch-up.md](results-catch-up.md) and
+[results-catch-up.md](results-catch-up.md),
+[results-directory-only-recent.md](results-directory-only-recent.md),
+[results-directory-only-archive.md](results-directory-only-archive.md) and
 [results-pairs.txt](results-pairs.txt), which holds every class with means and
 query counts.
 
@@ -81,6 +131,7 @@ estimate.
 | archive, decoupled 32k/32k | 2 + 1 | 57 (≤ 21) | directory bytes 2 | 85.7% / 85.7% | 5 / 20 / 21 / 21 | 8.05 GB |
 | archive, decoupled 32k/16k | 3 + 1 | 116 (32 at p50) | **child limit 3** | 72.5% / 84.6% | 7 / 32 / 32 / 32 | 8.32 GB |
 | recent, `recent-4k-8k` (today) | 7 + 1 | — | page rows 7 | 45.6% / 50.4% | — | 0.40 GB |
+| recent, coupled 2k/8k | 7 + 1 | — | directory bytes 4, page rows 3 | 85.7% / 87.0% | — | 0.3 GB |
 | recent, bulk `recent-4k-8k` | 3 + 1 | — | directory bytes 3 | 85.7% / 85.7% | — | 0.2 GB + bulk table |
 | recent, decoupled 4k/8k | 3 + 1 | 9 | directory bytes 3 | 85.7% / 85.7% | 1 / 3 / 3 / 3 | 0.37 GB |
 | recent, decoupled 8k/8k | 1 + 1 | 8 | directory bytes 1 | 85.7% | 1 / 3 / 5 / 5 | 0.34 GB |
@@ -123,6 +174,7 @@ Recent window:
 | Layout | restore-6m | multi-script | multi-script round trips p50 / p99 | reused-tail mean (120) |
 |---|---|---|---|---:|
 | `recent-4k-8k` (today) | 1.66; 1.61 / 2.08 / 2.38 | 5.87; 5.09 / 6.67 / 11.85 | 2 / 2 | 17.27 |
+| coupled 2k/8k | 1.60; 1.55 / 1.97 / 2.25 | 5.36; 4.52 / 6.10 / 10.98 | 2 / 2 | 17.23 |
 | bulk `recent-4k-8k` | 1.69; 1.67 / 2.22 / 2.54 | 7.94; 5.92 / 8.33 / 17.49 | 2 / 2 | 39.61 |
 | decoupled 4k/8k | 1.56; 1.52 / 1.94 / 2.14 | 5.64; 4.83 / 6.42 / 11.38 | 3 / 5 | 17.12 |
 | decoupled 8k/8k | 1.60; 1.57 / 1.93 / 2.18 | 6.37; 5.56 / 6.93 / 11.78 | 4 / 7 | 17.03 |
@@ -146,6 +198,7 @@ p50 / p95 / p99; the range of per-anchor means.
 | Layout | catch-up-1d | catch-up-7d | catch-up-30d | Round trips p99 |
 |---|---|---|---|---:|
 | `recent-4k-8k` (today) | 0.193; 0.17 / 0.36 / 0.54; 0.087–0.254 | 0.204; 0.16 / 0.48 / 0.61; 0.079–0.438 | 0.349; 0.30 / 0.65 / 0.94; 0.183–0.603 | 2 |
+| coupled 2k/8k | 0.162; 0.11 / 0.36 / 0.50; 0.088–0.331 | 0.169; 0.16 / 0.40 / 0.54; 0.079–0.303 | 0.304; 0.26 / 0.55 / 0.72; 0.207–0.475 | 2 |
 | bulk `recent-4k-8k` | 0.344; 0.28 / 0.72 / 1.65; 0.087–0.511 | 0.314; 0.29 / 0.71 / 1.00; 0.122–0.458 | 0.450; 0.38 / 0.91 / 1.39; 0.275–0.740 | 2 |
 | decoupled 4k/8k | 0.291; 0.28 / 0.49 / 0.67; 0.087–0.407 | 0.289; 0.29 / 0.50 / 0.67; 0.122–0.383 | 0.430; 0.38 / 0.76 / 0.98; 0.269–0.708 | 3 |
 | decoupled 8k/8k | 0.425; 0.41 / 0.71 / 0.94; 0.307–0.707 | 0.370; 0.33 / 0.71 / 0.79; 0.251–0.673 | 0.399; 0.35 / 0.71 / 0.88; 0.239–0.685 | 3 |
