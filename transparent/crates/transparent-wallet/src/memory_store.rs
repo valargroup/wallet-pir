@@ -3,9 +3,9 @@
 
 use crate::ledger::LedgerError;
 use crate::store::{
-    merge_coverage, receive_key, spend_key, Anchor, CoverageKind, CoverageRange, PendingPages,
-    ScriptEntry, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent,
-    WalletStore,
+    merge_coverage, receive_key, spend_key, Anchor, CachedRun, CoverageKind, CoverageRange,
+    PendingPages, ScriptEntry, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError,
+    StoredEvent, WalletStore,
 };
 use std::collections::BTreeMap;
 use transparent_events::{TransparentEvent, Txid};
@@ -32,7 +32,7 @@ struct State {
     next_pending: u64,
     setups: BTreeMap<SetupKey, SetupBlob>,
     /// Run histories by page shard identity and script.
-    runs: BTreeMap<(String, Vec<u8>), Vec<TransparentEvent>>,
+    runs: BTreeMap<(String, Vec<u8>), CachedRun>,
     filters: BTreeMap<String, (String, bool, Vec<u8>)>,
     commits: u64,
 }
@@ -222,7 +222,7 @@ impl WalletStore for MemoryStore {
                 .state
                 .runs
                 .get(&(run.child_digest.clone(), run.script.clone()))
-                .is_some_and(|held| *held != run.events)
+                .is_some_and(|held| held != run)
             {
                 return Err(StoreError::Corrupt(format!(
                     "page shard {} holds two histories for one script",
@@ -284,10 +284,16 @@ impl WalletStore for MemoryStore {
         for id in &commit.pending_complete {
             self.state.pending.remove(id);
         }
+        let finishes_shard = commit.finishes_shard();
         for run in commit.cached_runs {
             self.state
                 .runs
-                .insert((run.child_digest, run.script), run.events);
+                .insert((run.child_digest.clone(), run.script.clone()), run);
+        }
+        if finishes_shard {
+            self.state.runs.retain(|(_, script), run| {
+                run.shard_id != commit.shard_id || !commit.covered_scripts.contains(script)
+            });
         }
         for mut pending in commit.pending_upsert {
             let id = match pending.id {
@@ -400,7 +406,7 @@ impl WalletStore for MemoryStore {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<Vec<TransparentEvent>>, StoreError> {
+    ) -> Result<Option<CachedRun>, StoreError> {
         Ok(self
             .state
             .runs

@@ -19,9 +19,9 @@ use std::path::{Path, PathBuf};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid, EVENT_BYTES};
 use transparent_wallet::ledger::LedgerError;
 use transparent_wallet::store::{
-    merge_coverage, Anchor, CoverageKind, CoverageRange, PendingPages, RunCursor, ScriptEntry,
-    ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError, StoredEvent,
-    WalletStore,
+    merge_coverage, Anchor, CachedRun, CoverageKind, CoverageRange, PendingPages, RunCursor,
+    ScriptEntry, ScriptOrigin, SetIdentity, SetupBlob, SetupKey, ShardCommit, StoreError,
+    StoredEvent, WalletStore,
 };
 
 /// Versioned persistence. Schema 5 holds schema-v12 chain walks and the run
@@ -98,10 +98,12 @@ CREATE TABLE IF NOT EXISTS pending_work (
 CREATE TABLE IF NOT EXISTS run_cache (
     child_digest TEXT NOT NULL,
     script BLOB NOT NULL,
-    max_height INTEGER NOT NULL,
+    shard_id INTEGER NOT NULL,
     events BLOB NOT NULL,
+    older TEXT,
     PRIMARY KEY (child_digest, script)
 );
+CREATE INDEX IF NOT EXISTS run_cache_by_shard ON run_cache(shard_id, script);
 CREATE TABLE IF NOT EXISTS setup_cache (
     set_digest TEXT NOT NULL,
     revision_digest TEXT NOT NULL,
@@ -226,6 +228,33 @@ impl SqliteStore {
         )
         .map_err(io)?;
         Ok(conn.last_insert_rowid() as u64)
+    }
+
+    fn cached_run_in(
+        conn: &Connection,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<CachedRun>, StoreError> {
+        let held: Option<(i64, Vec<u8>, Option<String>)> = conn
+            .query_row(
+                "SELECT shard_id, events, older FROM run_cache WHERE child_digest = ?1 AND script = ?2",
+                params![child_digest, script],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()
+            .map_err(io)?;
+        held.map(|(shard_id, events, older)| {
+            Ok(CachedRun {
+                child_digest: child_digest.to_string(),
+                script: script.to_vec(),
+                shard_id: u64::try_from(shard_id).map_err(|_| {
+                    StoreError::Corrupt("a cached run's shard id is negative".into())
+                })?,
+                events: decode_events(&events, usize::MAX)?,
+                older,
+            })
+        })
+        .transpose()
     }
 
     fn coverage_of(conn: &Connection, script: &[u8]) -> Result<Vec<CoverageRange>, StoreError> {
@@ -605,15 +634,8 @@ impl WalletStore for SqliteStore {
             });
         }
         for run in &commit.cached_runs {
-            let held: Option<Vec<u8>> = tx
-                .query_row(
-                    "SELECT events FROM run_cache WHERE child_digest = ?1 AND script = ?2",
-                    params![run.child_digest, run.script],
-                    |row| row.get(0),
-                )
-                .optional()
-                .map_err(io)?;
-            if held.is_some_and(|held| held != encode_events(&run.events)) {
+            let held = Self::cached_run_in(&tx, &run.child_digest, &run.script)?;
+            if held.is_some_and(|held| held != *run) {
                 return Err(StoreError::Corrupt(format!(
                     "page shard {} holds two histories for one script",
                     run.child_digest
@@ -754,22 +776,27 @@ impl WalletStore for SqliteStore {
             }
         }
         for run in &commit.cached_runs {
-            let max_height = run
-                .events
-                .iter()
-                .map(|event| i64::from(event_height(event)))
-                .max()
-                .unwrap_or(0);
             tx.execute(
-                "INSERT OR IGNORE INTO run_cache (child_digest, script, max_height, events) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO run_cache (child_digest, script, shard_id, events, older) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     run.child_digest,
                     run.script,
-                    max_height,
-                    encode_events(&run.events)
+                    run.shard_id as i64,
+                    encode_events(&run.events),
+                    run.older,
                 ],
             )
             .map_err(io)?;
+        }
+        if commit.finishes_shard() {
+            for script in &commit.covered_scripts {
+                tx.execute(
+                    "DELETE FROM run_cache WHERE shard_id = ?1 AND script = ?2",
+                    params![commit.shard_id as i64, script],
+                )
+                .map_err(io)?;
+            }
         }
         let id = Self::record_commit(
             &tx,
@@ -971,18 +998,8 @@ impl WalletStore for SqliteStore {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<Vec<TransparentEvent>>, StoreError> {
-        let held: Option<Vec<u8>> = self
-            .conn
-            .query_row(
-                "SELECT events FROM run_cache WHERE child_digest = ?1 AND script = ?2",
-                params![child_digest, script],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(io)?;
-        held.map(|bytes| decode_events(&bytes, usize::MAX))
-            .transpose()
+    ) -> Result<Option<CachedRun>, StoreError> {
+        Self::cached_run_in(&self.conn, child_digest, script)
     }
 
     fn pending_limit(&self) -> usize {
@@ -1067,13 +1084,6 @@ impl WalletStore for SqliteStore {
             })
             .map(|id| id as u64)
             .map_err(io)
-    }
-}
-
-fn event_height(event: &TransparentEvent) -> u32 {
-    match event {
-        TransparentEvent::Receive(receive) => receive.height,
-        TransparentEvent::Spend(spend) => spend.height,
     }
 }
 

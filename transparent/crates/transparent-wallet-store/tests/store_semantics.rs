@@ -150,7 +150,12 @@ fn a_walk_cursor_and_the_run_cache_survive_reopening() {
     store.bind_set(&identity()).unwrap();
     let mut c = commit(1, "r0", true, (0, 99), vec![], vec![]);
     c.pending_upsert.push(pending(1, "r0"));
-    c.cached_runs.push(cached_run("child", 1, &[10, 20]));
+    let run = transparent_wallet::store::CachedRun {
+        shard_id: 1,
+        older: Some("older-child".into()),
+        ..cached_run("child", 1, &[10, 20])
+    };
+    c.cached_runs.push(run.clone());
     store.commit_shard(c).unwrap();
     drop(store);
     let mut store = SqliteStore::open(&path).unwrap();
@@ -162,10 +167,7 @@ fn a_walk_cursor_and_the_run_cache_survive_reopening() {
             ..pending(1, "r0")
         }
     );
-    assert_eq!(
-        store.cached_run("child", &script(1)).unwrap(),
-        Some(cached_run("child", 1, &[10, 20]).events)
-    );
+    assert_eq!(store.cached_run("child", &script(1)).unwrap(), Some(run));
     restored.cursor = RunCursor {
         child: 2,
         row: 70_000,

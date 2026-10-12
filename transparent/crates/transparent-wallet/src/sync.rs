@@ -2498,6 +2498,10 @@ impl<T: ShardTransport> RowSource for PirRows<'_, T> {
     }
 }
 
+/// The history cached below a run, and the page shard of the cached run it
+/// starts from.
+type CachedBelow = (u8, Vec<TransparentEvent>);
+
 /// One script's chain walk in progress.
 struct Walk {
     item: PendingPages,
@@ -2570,8 +2574,9 @@ fn walk_chains<S: WalletStore, R: RowSource>(
     loop {
         // A walk at a run the store holds history for stops there.
         for walk in walks.iter_mut().filter(|w| !w.done && w.head.is_none()) {
-            if let Some(older) = walker.cached(store, &walk.item.script, walk.item.cursor.child)? {
-                walker.finish(store, walk, Vec::new(), older)?;
+            let child = walk.item.cursor.child;
+            if let Some(older) = walker.cached(store, &walk.item.script, child)? {
+                walker.finish(store, walk, Vec::new(), Some((child, older)))?;
             }
         }
         if walks.iter().all(|walk| walk.done) {
@@ -2586,7 +2591,7 @@ fn walk_chains<S: WalletStore, R: RowSource>(
 
         // This round's rows, every walk's together.
         let mut requests: Vec<RowRequest> = Vec::new();
-        let mut spans: Vec<(usize, usize, Option<Vec<TransparentEvent>>)> = Vec::new();
+        let mut spans: Vec<(usize, usize, Option<CachedBelow>)> = Vec::new();
         for walk in &walks {
             let start = requests.len();
             let mut older = None;
@@ -2600,7 +2605,9 @@ fn walk_chains<S: WalletStore, R: RowSource>(
                             requests.push(walker.locate(cursor.child, row)?);
                         }
                         if let Some((child, row)) = head.link.previous() {
-                            older = walker.cached(store, &walk.item.script, child)?;
+                            older = walker
+                                .cached(store, &walk.item.script, child)?
+                                .map(|events| (child, events));
                             if older.is_none() {
                                 requests.push(walker.locate(child, u64::from(row))?);
                             }
@@ -2668,25 +2675,51 @@ impl Walker<'_> {
         })
     }
 
-    /// The history cached for `script` from its run in page shard `child`,
-    /// when that page shard is sealed.
+    /// The history cached for `script` from its run in page shard `child`
+    /// back to the start of the directory shard, when that page shard is
+    /// sealed. Each cached run holds only its own events and names the cached
+    /// run below it, so the history is put back together by following those
+    /// names; a missing run anywhere along the way is a miss.
     fn cached<S: WalletStore>(
         &self,
         store: &S,
         script: &[u8],
         child: u8,
     ) -> Result<Option<Vec<TransparentEvent>>, SyncError> {
-        let page = self.child(child)?;
-        if !page.sealed {
+        if !self.child(child)?.sealed {
             return Ok(None);
         }
-        let held = store.cached_run(&self.identities[usize::from(child)], script)?;
-        if held.as_ref().is_some_and(Vec::is_empty) {
-            return Err(SyncError::Store(StoreError::Corrupt(
-                "a cached run holds no events".into(),
-            )));
+        let corrupt = |why: &str| SyncError::Store(StoreError::Corrupt(why.into()));
+        let mut index = usize::from(child);
+        let mut runs = Vec::new();
+        loop {
+            let Some(run) = store.cached_run(&self.identities[index], script)? else {
+                return Ok(None);
+            };
+            if run.events.is_empty() {
+                return Err(corrupt("a cached run holds no events"));
+            }
+            runs.push(run.events);
+            let Some(older) = run.older else { break };
+            // The identity of a page shard covers every older one, so the run
+            // below must be in an earlier page shard of this directory shard.
+            index = self.identities[..index]
+                .iter()
+                .position(|identity| *identity == older)
+                .ok_or_else(|| {
+                    corrupt("a cached run names a run outside the page shards below it")
+                })?;
         }
-        Ok(held)
+        let mut history: Vec<TransparentEvent> = Vec::new();
+        for run in runs.into_iter().rev() {
+            if let (Some(last), Some(first)) = (history.last(), run.first()) {
+                if last.sort_key() >= first.sort_key() {
+                    return Err(corrupt("cached runs are not in order"));
+                }
+            }
+            history.extend(run);
+        }
+        Ok(Some(history))
     }
 
     /// The one fragment of `script`'s run in page shard `child` with this
@@ -2739,7 +2772,7 @@ impl Walker<'_> {
         store: &mut S,
         walk: &mut Walk,
         answers: &[Vec<Vec<u8>>],
-        older: Option<Vec<TransparentEvent>>,
+        older: Option<CachedBelow>,
     ) -> Result<(), SyncError> {
         let cursor = walk.item.cursor;
         let script = walk.item.script.clone();
@@ -2779,9 +2812,9 @@ impl Walker<'_> {
                 if !next.is_empty() {
                     return Err(SyncError::Invalid("a round lost an answer".into()));
                 }
-                self.finish(store, walk, run, Vec::new())
+                self.finish(store, walk, run, None)
             }
-            Some(_) if older.is_some() => self.finish(store, walk, run, older.expect("checked")),
+            Some(_) if older.is_some() => self.finish(store, walk, run, older),
             Some((child, row)) => {
                 let [answer] = next else {
                     return Err(SyncError::Invalid("a round lost an answer".into()));
@@ -2815,16 +2848,21 @@ impl Walker<'_> {
         }
     }
 
-    /// Ends a walk: `run` is the last run read, `older` the history cached
-    /// below it, if the walk stopped at a cached run. Fills the run cache for
-    /// every run this call read in a sealed page shard.
+    /// Ends a walk: `run` is the last run read, `older` the page shard and
+    /// history cached below it, if the walk stopped at a cached run. Fills the
+    /// run cache for every run this call read in a sealed page shard: each
+    /// with its own events and the name of the cached run below it.
     fn finish<S: WalletStore>(
         &self,
         store: &mut S,
         walk: &mut Walk,
         run: Vec<TransparentEvent>,
-        older: Vec<TransparentEvent>,
+        older: Option<CachedBelow>,
     ) -> Result<(), SyncError> {
+        let (mut below, older) = match older {
+            Some((child, events)) => (Some(self.identities[usize::from(child)].clone()), events),
+            None => (None, Vec::new()),
+        };
         let newer = run.first().or(walk.item.carried.first());
         if let (Some(last), Some(first)) = (older.last(), newer) {
             if last.sort_key() >= first.sort_key() {
@@ -2833,17 +2871,21 @@ impl Walker<'_> {
                 ));
             }
         }
-        let mut history = older.clone();
         let mut cached_runs = Vec::new();
         for (child, events) in walk.walked.iter().rev() {
-            history.extend(events.iter().copied());
-            if self.child(*child)?.sealed {
-                cached_runs.push(CachedRun {
-                    child_digest: self.identities[usize::from(*child)].clone(),
-                    script: walk.item.script.clone(),
-                    events: history.clone(),
-                });
+            // Only the newest run can be in the open page shard, so every run
+            // below a cached one is cached too.
+            if !self.child(*child)?.sealed {
+                break;
             }
+            let identity = self.identities[usize::from(*child)].clone();
+            cached_runs.push(CachedRun {
+                child_digest: identity.clone(),
+                script: walk.item.script.clone(),
+                shard_id: self.entry.shard_id,
+                events: events.clone(),
+                older: below.replace(identity),
+            });
         }
         let mut events = older;
         events.extend(run);
@@ -4487,8 +4529,9 @@ mod walk_tests {
 
     /// Every paged script's history comes back exactly, all walks sharing
     /// rounds, in one round per run plus one; and the run cache is filled
-    /// for every run in a sealed page shard with that run's history back to
-    /// the directory shard's start.
+    /// for every run in a sealed page shard with that run's own events and
+    /// the run below it, which together rebuild the history back to the
+    /// directory shard's start.
     #[test]
     fn walking_every_chain_recovers_each_history_in_one_round_per_run() {
         let (blocks, directories) = fixture();
@@ -4512,13 +4555,24 @@ mod walk_tests {
             let expected = history(blocks, directory, script);
             assert_eq!(stored(&store, script), expected);
             assert_eq!(store.coverage(script).unwrap().len(), 1);
-            for (child, _) in runs_of(directory, script) {
+            // Oldest run first: each cached run holds its own events and
+            // names the run below it, and together they rebuild the history.
+            let runs = runs_of(directory, script);
+            let mut rebuilt = Vec::new();
+            for (index, (child, _)) in runs.iter().enumerate().rev() {
                 let cached = store
-                    .cached_run(&identities[usize::from(child)], script)
+                    .cached_run(&identities[usize::from(*child)], script)
                     .unwrap();
-                if manifest.page_children[usize::from(child)].sealed {
+                if manifest.page_children[usize::from(*child)].sealed {
                     let cached = cached.expect("a sealed run is cached");
-                    assert_eq!(cached[..], expected[..cached.len()]);
+                    assert_eq!(cached.shard_id, manifest.shard_id);
+                    assert_eq!(
+                        cached.older,
+                        runs.get(index + 1)
+                            .map(|(older, _)| identities[usize::from(*older)].clone())
+                    );
+                    rebuilt.extend(cached.events);
+                    assert_eq!(rebuilt[..], expected[..rebuilt.len()]);
                 } else {
                     assert_eq!(cached, None);
                 }

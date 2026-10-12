@@ -133,10 +133,13 @@ pub fn pending(script_tag: u8, revision: &str) -> PendingPages {
     }
 }
 
+/// A cached run of shard 0 with no run below it.
 pub fn cached_run(child: &str, script_tag: u8, heights: &[u32]) -> CachedRun {
     CachedRun {
         child_digest: child.into(),
         script: script(script_tag),
+        shard_id: 0,
+        older: None,
         events: heights
             .iter()
             .enumerate()
@@ -668,9 +671,10 @@ fn a_walk_cursor_and_its_carried_events_round_trip<S: WalletStore>(make: &impl F
     assert_eq!(store.pending().unwrap(), vec![advanced]);
 }
 
-/// A cached run history is written with the commit that carries it, read back
-/// by page shard identity and script, never changed by a differing repeat —
-/// which refuses the whole commit — and dropped by a rollback below it.
+/// A cached run is written with the commit that carries it, read back by page
+/// shard identity and script, never changed by a differing repeat — which
+/// refuses the whole commit — and kept through a rollback. A commit covering a
+/// script over its whole sealed shard drops that script's runs in the shard.
 fn the_run_cache_is_written_with_its_commit_and_never_rewritten<S: WalletStore>(
     make: &impl Fn() -> S,
 ) {
@@ -678,38 +682,55 @@ fn the_run_cache_is_written_with_its_commit_and_never_rewritten<S: WalletStore>(
     store.bind_set(&identity()).unwrap();
     assert_eq!(store.cached_run("child-a", &script(1)).unwrap(), None);
     let low = cached_run("child-a", 1, &[10, 20, 30]);
-    let high = cached_run("child-b", 1, &[10, 20, 30, 150]);
-    let mut first = commit(0, "r0", true, (0, 199), vec![], vec![script(1)]);
-    first.cached_runs = vec![low.clone(), high.clone()];
+    let high = CachedRun {
+        older: Some("child-a".into()),
+        ..cached_run("child-b", 1, &[150])
+    };
+    let other = cached_run("child-a", 2, &[40]);
+    let elsewhere = CachedRun {
+        shard_id: 1,
+        ..cached_run("child-x", 1, &[250])
+    };
+    // A walk still under way: the shard is open and nothing is covered.
+    let mut first = commit(0, "r0", false, (0, 199), vec![], vec![]);
+    first.cached_runs = vec![low.clone(), high.clone(), other.clone(), elsewhere.clone()];
     store.commit_shard(first.clone()).unwrap();
     assert_eq!(
         store.cached_run("child-a", &script(1)).unwrap(),
-        Some(low.events.clone())
+        Some(low.clone())
     );
-    assert_eq!(store.cached_run("child-a", &script(2)).unwrap(), None);
+    assert_eq!(store.cached_run("child-a", &script(3)).unwrap(), None);
     assert_eq!(store.cached_run("child-c", &script(1)).unwrap(), None);
     // The identical commit again changes nothing.
     store.commit_shard(first).unwrap();
     assert_eq!(
         store.cached_run("child-b", &script(1)).unwrap(),
-        Some(high.events.clone())
+        Some(high.clone())
     );
 
-    // A different history under the same key is refused, and nothing else
-    // the commit carried is written.
-    let mut differing = commit(
-        0,
-        "r0",
-        true,
-        (0, 199),
-        vec![receive(5, 0, 1, 50)],
-        vec![script(5)],
-    );
-    differing.cached_runs = vec![cached_run("child-a", 1, &[10, 20])];
-    assert!(store.commit_shard(differing).is_err());
+    // A different run, or a different run below it, under the same key is
+    // refused, and nothing else the commit carried is written.
+    for differing_run in [
+        cached_run("child-a", 1, &[10, 20]),
+        CachedRun {
+            older: Some("child-z".into()),
+            ..low.clone()
+        },
+    ] {
+        let mut differing = commit(
+            0,
+            "r0",
+            false,
+            (0, 199),
+            vec![receive(5, 0, 1, 50)],
+            vec![script(5)],
+        );
+        differing.cached_runs = vec![differing_run];
+        assert!(store.commit_shard(differing).is_err());
+    }
     assert_eq!(
         store.cached_run("child-a", &script(1)).unwrap(),
-        Some(low.events.clone())
+        Some(low.clone())
     );
     assert!(store.events().unwrap().is_empty());
     assert!(store.coverage(&script(5)).unwrap().is_empty());
@@ -724,13 +745,38 @@ fn the_run_cache_is_written_with_its_commit_and_never_rewritten<S: WalletStore>(
         )
         .unwrap();
     assert_eq!(
-        store.cached_run("child-a", &script(1)).unwrap(),
-        Some(low.events)
-    );
-    assert_eq!(
         store.cached_run("child-b", &script(1)).unwrap(),
-        Some(high.events),
+        Some(high),
         "a run keyed by its page shard's identity survives a rollback: the \
          identity only recurs on the chain it was published on"
+    );
+
+    // Coverage clipped to an anchor inside the sealed shard leaves the runs:
+    // the next sync carries on through the shard.
+    let mut clipped = commit(0, "r1", true, (0, 150), vec![], vec![script(1)]);
+    clipped.source_anchor = Some(Anchor {
+        height: 199,
+        hash: format!("{:064x}", 199),
+    });
+    store.commit_shard(clipped).unwrap();
+    assert_eq!(
+        store.cached_run("child-a", &script(1)).unwrap(),
+        Some(low.clone())
+    );
+
+    // Covering script 1 over the whole sealed shard 0 drops its runs there,
+    // and only those.
+    store
+        .commit_shard(commit(0, "r1", true, (0, 199), vec![], vec![script(1)]))
+        .unwrap();
+    assert_eq!(store.cached_run("child-a", &script(1)).unwrap(), None);
+    assert_eq!(store.cached_run("child-b", &script(1)).unwrap(), None);
+    assert_eq!(
+        store.cached_run("child-a", &script(2)).unwrap(),
+        Some(other)
+    );
+    assert_eq!(
+        store.cached_run("child-x", &script(1)).unwrap(),
+        Some(elsewhere)
     );
 }

@@ -515,7 +515,7 @@ impl<S: WalletStore> WalletStore for CrashAt<S> {
         &self,
         child_digest: &str,
         script: &[u8],
-    ) -> Result<Option<Vec<TransparentEvent>>, StoreError> {
+    ) -> Result<Option<transparent_wallet::store::CachedRun>, StoreError> {
         self.inner.cached_run(child_digest, script)
     }
     fn setup(&self, key: &SetupKey) -> Result<Option<SetupBlob>, StoreError> {
