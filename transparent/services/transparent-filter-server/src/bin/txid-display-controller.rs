@@ -301,7 +301,12 @@ async fn main() -> Result<(), BoxError> {
                 exit_when_idle,
                 ..Settings::default()
             };
-            controller::serve_status(status_listen, settings.status.clone()).await?;
+            controller::serve_status(
+                status_listen,
+                settings.status.clone(),
+                settings.metrics.clone(),
+            )
+            .await?;
             let mut controller = Controller::open(&root, store, source, workers, settings)?;
             match controller.run().await? {
                 Outcome::Idle => {}

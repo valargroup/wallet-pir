@@ -14,9 +14,11 @@
 //! - [`serving`] drives display workers over their control protocol.
 //! - [`controller`] is the loop that seals, rebuilds and publishes.
 //! - [`timeline`] records what happened and when, for measurement.
+//! - [`metrics`] is what the controller reports on `/metrics`.
 
 pub mod cache;
 pub mod controller;
+pub mod metrics;
 pub mod publisher;
 pub mod serving;
 pub mod source;

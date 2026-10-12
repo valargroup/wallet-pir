@@ -1696,3 +1696,99 @@ async fn a_failed_prebuild_still_publishes_without_runtimes() {
     );
     assert!(shipped_files(&run.active.directory).is_empty());
 }
+
+/// The value of one series in a Prometheus text rendering.
+fn series(text: &str, name: &str) -> f64 {
+    text.lines()
+        .find_map(|line| line.strip_prefix(name)?.strip_prefix(' ')?.parse().ok())
+        .unwrap_or_else(|| panic!("{name} is missing:\n{text}"))
+}
+
+/// Checks that one histogram's buckets are cumulative and end at its count,
+/// and returns `(count, sum)`.
+fn histogram(text: &str, name: &str, labels: &str) -> (f64, f64) {
+    let comma = if labels.is_empty() { "" } else { "," };
+    let prefix = format!("{name}_bucket{{{labels}{comma}le=");
+    let buckets: Vec<f64> = text
+        .lines()
+        .filter(|l| l.starts_with(&prefix))
+        .map(|l| l.rsplit(' ').next().unwrap().parse().unwrap())
+        .collect();
+    assert!(buckets.len() > 1, "{name} {labels}:\n{text}");
+    assert!(buckets.windows(2).all(|w| w[0] <= w[1]), "{buckets:?}");
+    let braces = if labels.is_empty() {
+        String::new()
+    } else {
+        format!("{{{labels}}}")
+    };
+    let count = series(text, &format!("{name}_count{braces}"));
+    let sum = series(text, &format!("{name}_sum{braces}"));
+    assert_eq!(*buckets.last().unwrap(), count, "{name} {labels}");
+    assert!(sum >= 0.);
+    (count, sum)
+}
+
+/// `/metrics` after scripted cycles: every family is present, each stage that
+/// ran has one observation per cycle, and each published block one freshness
+/// observation.
+#[tokio::test(flavor = "multi_thread")]
+async fn metrics_report_cycles_stages_and_freshness() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = temp.path().join("journal");
+    fixture::write_journal(&journal, 100, 118, 0);
+    let layout = layout(&journal, 100);
+    let root = temp.path().join("root");
+    bootstrap_at(&journal, &root, &layout, 112);
+    let settings = settings();
+    let metrics = settings.metrics.clone();
+    let run = run_script(&root, &journal, advance(112, 118, 3), vec![], settings).await;
+    assert_eq!(run.outcome, Outcome::Idle);
+    let cycles = read_timeline(&root)
+        .unwrap()
+        .into_iter()
+        .filter(|e| e["kind"] == "cycle")
+        .count() as f64;
+    assert!(cycles >= 2., "{cycles} cycles");
+
+    let text = metrics.render();
+    for gauge in [
+        "node_height",
+        "published_height",
+        "lag_blocks",
+        "oldest_unpublished_seconds",
+        "stalled",
+        "halted",
+        "consecutive_failures",
+        "seal_queue",
+        "last_success_timestamp_seconds",
+        "last_seal_timestamp_seconds",
+    ] {
+        let declared = format!("# TYPE txid_display_{gauge} gauge\n");
+        assert!(text.contains(&declared), "{gauge}");
+    }
+    assert_eq!(series(&text, "txid_display_node_height"), 118.);
+    assert_eq!(series(&text, "txid_display_published_height"), 118.);
+    assert_eq!(series(&text, "txid_display_lag_blocks"), 0.);
+    assert_eq!(series(&text, "txid_display_oldest_unpublished_seconds"), 0.);
+    assert_eq!(series(&text, "txid_display_stalled"), 0.);
+    assert_eq!(series(&text, "txid_display_halted"), 0.);
+    assert_eq!(series(&text, "txid_display_consecutive_failures"), 0.);
+    assert!(series(&text, "txid_display_last_success_timestamp_seconds") > 1e9);
+    // A cycle that only waited for a seal records no cycle event.
+    assert!(series(&text, "txid_display_cycles_total") >= cycles);
+    assert_eq!(series(&text, "txid_display_cycle_failures_total"), 0.);
+
+    let (count, sum) = histogram(&text, "txid_display_cycle_seconds", "");
+    assert_eq!(count, cycles);
+    assert!(sum > 0.);
+    let (count, _) = histogram(&text, "txid_display_freshness_seconds", "");
+    assert_eq!(count, 6., "one observation per block 113..=118");
+    assert!(text.contains("# TYPE txid_display_cycle_stage_seconds histogram\n"));
+    for stage in crate::txid_display::metrics::STAGES {
+        let labels = format!("stage=\"{stage}\"");
+        let (count, _) = histogram(&text, "txid_display_cycle_stage_seconds", &labels);
+        // Runtimes are not shipped here, so no prebuild stage runs.
+        let expected = if stage == "prebuild" { 0. } else { cycles };
+        assert_eq!(count, expected, "{stage}");
+    }
+}

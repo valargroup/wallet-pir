@@ -23,6 +23,7 @@
 //! record withdraws the whole recent range.
 
 use super::cache::DisplayCache;
+use super::metrics::{Gauges, Metrics};
 use super::now_ms;
 use super::publisher::{
     collect, probe_hard_links, publish_parts, read_map, verify_dir, write_candidate, ActiveRecord,
@@ -82,6 +83,8 @@ pub struct Settings {
     /// Keep every activated map in memory, for tests.
     pub record_maps: bool,
     pub status: Arc<RwLock<Value>>,
+    /// What `/metrics` renders; see [`super::metrics`].
+    pub metrics: Arc<Metrics>,
 }
 
 impl Default for Settings {
@@ -94,6 +97,7 @@ impl Default for Settings {
             exit_when_idle: false,
             record_maps: false,
             status: Arc::new(RwLock::new(json!({"phase": "starting"}))),
+            metrics: Arc::default(),
         }
     }
 }
@@ -338,6 +342,10 @@ pub struct Controller {
     /// Cycles whose runtime prebuild failed since this process started.
     prebuild_failures: u64,
     last_cycle: Value,
+    /// Unix milliseconds of the last activation by a cycle, and of the last
+    /// seal staged on its owners; 0 before the first since this start.
+    last_success_ms: u64,
+    last_seal_ms: u64,
     maps: Vec<DisplayMap>,
     _lock: std::fs::File,
 }
@@ -489,6 +497,8 @@ impl Controller {
             lag_alerted: None,
             prebuild_failures: 0,
             last_cycle: Value::Null,
+            last_success_ms: 0,
+            last_seal_ms: 0,
             maps: Vec::new(),
             _lock: lock,
         };
@@ -688,7 +698,9 @@ impl Controller {
             self.schedule();
             if self.retry_at.is_none_or(|t| Instant::now() >= t) {
                 let result = if self.needs_cycle() {
-                    Some(self.cycle().await)
+                    let result = self.cycle().await;
+                    self.settings.metrics.cycle_finished(result.is_ok());
+                    Some(result)
                 } else if self.fleet.stale(&self.active.map_sha256, &self.map) {
                     Some(self.sync_workers().await)
                 } else {
@@ -1046,6 +1058,7 @@ impl Controller {
                 job.state = JobState::Staged;
                 if !job.restaged {
                     self.timeline.record("seal", seal_event(job));
+                    self.last_seal_ms = now_ms();
                 }
                 return;
             }
@@ -1146,6 +1159,7 @@ impl Controller {
                     job.stage_s = seconds;
                     if !job.restaged {
                         self.timeline.record("seal", seal_event(job));
+                        self.last_seal_ms = now_ms();
                     }
                 }
             }
@@ -1278,6 +1292,7 @@ impl Controller {
             .await
             .map_err(CycleError::Retry)?;
         let activated_ms = now_ms();
+        self.last_success_ms = activated_ms;
 
         // Committed: workers serve the new map.
         self.queue.drain(..new_seals.len());
@@ -1341,6 +1356,26 @@ impl Controller {
             "workers": report.workers,
         });
         self.timeline.record("cycle", self.last_cycle.clone());
+        let stages = [
+            ("build", t.build_s),
+            ("verify", t.verify_s),
+            ("digest", t.digest_s),
+            ("write", t.write_s),
+        ]
+        .into_iter()
+        .chain(prebuild.as_ref().map(|p| ("prebuild", p.0 as f64 / 1e3)))
+        .chain([
+            ("ship", report.ship_ms as f64 / 1e3),
+            ("prepare", report.prepare_ms as f64 / 1e3),
+            ("activate", report.activate_ms as f64 / 1e3),
+        ]);
+        self.settings.metrics.observe_cycle(
+            started.elapsed().as_secs_f64(),
+            fresh
+                .iter()
+                .map(|f| activated_ms.saturating_sub(f.1) as f64 / 1e3),
+            stages,
+        );
         self.collect().await;
         Ok(())
     }
@@ -1506,6 +1541,27 @@ impl Controller {
             "updated_ms": now_ms(),
         });
         *self.settings.status.write().unwrap() = status;
+        let published_height = self.published_tip.0;
+        self.settings.metrics.set_gauges(Gauges {
+            node_height: self
+                .source
+                .node_tip()
+                .max(self.cache.tip().map(|t| t.0))
+                .unwrap_or(published_height),
+            published_height,
+            oldest_unpublished_ms: self
+                .observed
+                .values()
+                .copied()
+                .chain(self.source.oldest_unfetched_ms())
+                .min(),
+            stalled: self.failures >= STALL_FAILURES,
+            halted: self.halted.is_some(),
+            consecutive_failures: self.failures,
+            seal_queue: self.queue.len() as u64,
+            last_success_ms: self.last_success_ms,
+            last_seal_ms: self.last_seal_ms,
+        });
     }
 }
 
@@ -1537,20 +1593,32 @@ fn seal_event(job: &SealJob) -> Value {
     })
 }
 
-/// Serves the controller's status as JSON on a private address.
+/// Serves the controller's status as JSON, and its metrics in the
+/// Prometheus text format on `/metrics`, on a private address.
 pub async fn serve_status(
     listen: std::net::SocketAddr,
     status: Arc<RwLock<Value>>,
+    metrics: Arc<Metrics>,
 ) -> Result<(), BoxError> {
-    use axum::{extract::State, routing::get, Json, Router};
-    async fn current(State(status): State<Arc<RwLock<Value>>>) -> Json<Value> {
-        Json(status.read().unwrap().clone())
-    }
+    use axum::{routing::get, Json, Router};
+    let current = move || {
+        let status = status.clone();
+        async move { Json(status.read().unwrap().clone()) }
+    };
+    let rendered = move || {
+        let metrics = metrics.clone();
+        async move {
+            (
+                [("content-type", "text/plain; version=0.0.4")],
+                metrics.render(),
+            )
+        }
+    };
     let app = Router::new()
-        .route("/", get(current))
+        .route("/", get(current.clone()))
         .route("/v1/status", get(current))
         .route("/v1/health", get(|| async { "ok" }))
-        .with_state(status);
+        .route("/metrics", get(rendered));
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tokio::spawn(async move {
         if let Err(error) = axum::serve(listener, app).await {

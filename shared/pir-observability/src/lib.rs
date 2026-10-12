@@ -30,7 +30,17 @@ impl Distribution {
         value.1 += seconds;
     }
     pub fn render(&self, name: &str) -> String {
+        self.render_labeled(name, "")
+    }
+    /// Renders with `labels` (`key="value"` pairs, comma separated, or empty)
+    /// on every series.
+    pub fn render_labeled(&self, name: &str, labels: &str) -> String {
         let value = self.0.lock().unwrap();
+        let (comma, braces) = if labels.is_empty() {
+            ("", String::new())
+        } else {
+            (",", format!("{{{labels}}}"))
+        };
         let mut total = 0;
         let mut out = String::new();
         for (i, count) in value.0.iter().enumerate() {
@@ -39,9 +49,14 @@ impl Distribution {
                 .get(i)
                 .map(|n| n.to_string())
                 .unwrap_or_else(|| "+Inf".into());
-            out.push_str(&format!("{name}_bucket{{le=\"{bound}\"}} {total}\n"));
+            out.push_str(&format!(
+                "{name}_bucket{{{labels}{comma}le=\"{bound}\"}} {total}\n"
+            ));
         }
-        out.push_str(&format!("{name}_count {total}\n{name}_sum {}\n", value.1));
+        out.push_str(&format!(
+            "{name}_count{braces} {total}\n{name}_sum{braces} {}\n",
+            value.1
+        ));
         out
     }
 }
@@ -306,6 +321,19 @@ mod tests {
     use super::*;
     use axum::{http::StatusCode, routing::post, Router};
     use tower::ServiceExt;
+    #[test]
+    fn labels_reach_every_distribution_series() {
+        let distribution = Distribution::default();
+        distribution.observe(0.5);
+        distribution.observe(3.);
+        let text = distribution.render_labeled("d", "stage=\"build\"");
+        assert!(text.contains("d_bucket{stage=\"build\",le=\"0.5\"} 1\n"));
+        assert!(text.contains("d_bucket{stage=\"build\",le=\"+Inf\"} 2\n"));
+        assert!(text.contains("d_count{stage=\"build\"} 2\nd_sum{stage=\"build\"} 3.5\n"));
+        let bare = distribution.render("d");
+        assert!(bare.contains("d_bucket{le=\"0.5\"} 1\n"));
+        assert!(bare.contains("d_count 2\nd_sum 3.5\n"));
+    }
     #[tokio::test]
     async fn outcomes_include_early_rejections_and_actual_bytes() {
         let metrics = HttpMetrics::default();

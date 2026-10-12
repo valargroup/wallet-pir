@@ -128,6 +128,8 @@ pub struct LiveSource {
     outputs: OutputCache,
     /// When each height was first seen at or below the node's tip.
     first_seen: BTreeMap<u64, u64>,
+    /// The node's tip at the last poll that reached it.
+    node_tip: Option<u64>,
 }
 
 impl LiveSource {
@@ -138,6 +140,7 @@ impl LiveSource {
             last_poll: None,
             outputs: OutputCache::new(crate::prevout::DEFAULT_CACHE_OUTPUTS),
             first_seen: BTreeMap::new(),
+            node_tip: None,
         }
     }
 
@@ -175,6 +178,7 @@ impl LiveSource {
             });
         }
         let tip = self.rpc.tip_height().await.map_err(transient)?;
+        self.node_tip = Some(tip);
         if tip < floor {
             // A node that is behind is not a fork; nothing sealed is at stake.
             return Err(transient(format!(
@@ -461,6 +465,23 @@ impl Source {
             Self::Live(_) => false,
             Self::Replay(replay, live) => live.is_none() && replay.exhausted(cache),
             Self::Script(script) => script.steps.is_empty(),
+        }
+    }
+
+    /// The node's tip at the last live poll, if any.
+    pub fn node_tip(&self) -> Option<u64> {
+        match self {
+            Self::Live(live) => live.node_tip,
+            Self::Replay(..) | Self::Script(_) => None,
+        }
+    }
+
+    /// When the oldest block the node has shown but the journal does not
+    /// hold yet was first seen, in Unix milliseconds.
+    pub fn oldest_unfetched_ms(&self) -> Option<u64> {
+        match self {
+            Self::Live(live) => live.first_seen.values().min().copied(),
+            Self::Replay(..) | Self::Script(_) => None,
         }
     }
 
