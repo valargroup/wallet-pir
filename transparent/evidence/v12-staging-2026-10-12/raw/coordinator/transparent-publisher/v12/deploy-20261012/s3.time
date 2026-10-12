@@ -1,0 +1,23 @@
+	Command being timed: "/srv/wallet-pir-build-fb90519b/target/release-fast/regression-export --data-dir /srv/transparent-activity/full-v3/journal --map /opt/transparent-publisher/v12/deploy-20261012/s3-map.json --cases /opt/transparent-publisher/v12/deploy-20261012/mainnet-cases-v12.json --cutoff-height 3076108 --source-sha fb90519b --out /opt/transparent-publisher/v12/deploy-20261012/mainnet-v12.json"
+	User time (seconds): 52.52
+	System time (seconds): 15.74
+	Percent of CPU this job got: 35%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:14.29
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 332672
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 845679
+	Voluntary context switches: 177510
+	Involuntary context switches: 4103
+	Swaps: 0
+	File system inputs: 83666968
+	File system outputs: 19208
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

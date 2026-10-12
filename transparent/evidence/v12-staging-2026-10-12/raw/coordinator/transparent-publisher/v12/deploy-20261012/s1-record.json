@@ -1,0 +1,34 @@
+{
+  "data_dir": "/srv/transparent-activity/full-v12/journal-snapshot",
+  "elapsed_seconds": 2337.224256685,
+  "generated_at": "2026-10-12T07:53:04.182516547+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3514891,
+    "events_stored": 354145221,
+    "start_height": 0
+  },
+  "network": "main",
+  "output": "/srv/transparent-activity/full-v12/publications/initial",
+  "published": {
+    "anchor_hash": "0000000000156f83f39c08a59a3a6b335ede7d70a7a2a509b7982c02893ec8b2",
+    "archive_geometry": "decoupled-32k-32k",
+    "archive_policy": "DecoupledPolicy { scripts: Limit { target: 1629038, capacity: 1900544 }, directory_bytes: Limit { target: 114931420, capacity: 134086656 }, page_rows: Limit { target: 31744, capacity: 32768 }, max_children: 32, page_entry_header: 40 }",
+    "archive_shards": 12,
+    "map_bytes": 23528,
+    "map_sha256": "1261e06fb7aee008b41bebc3fe53c7007f1ff5d84bb4a7cd56065e7f43fa611f",
+    "multi_segment_shards": 0,
+    "page_shards": 201,
+    "recent_from": 3076108,
+    "recent_geometry": "decoupled-2k-8k",
+    "recent_policy": "DecoupledPolicy { scripts: Limit { target: 101815, capacity: 118784 }, directory_bytes: Limit { target: 7183214, capacity: 8380416 }, page_rows: Limit { target: 7936, capacity: 8192 }, max_children: 32, page_entry_header: 40 }",
+    "recent_shards": 22,
+    "shards": 34,
+    "start_height": 0,
+    "tail_revision": 0,
+    "through": 3514891
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v12",
+  "tool_sha": "fb90519b"
+}
