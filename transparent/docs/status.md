@@ -35,9 +35,14 @@ still use v11; the switch and v11's retirement are not done.
   and recent tiers serve from one worker; the recovery regression passed 11 of 11
   against a fixture exported from the live journal; three 10-minute runs of 20
   concurrent wallets each completed about 3,000 syncs at about 5 exact syncs/s.
-- **Open:** `init` answered 503 for requests spanning a publication switch during
-  the load runs; the v11 query latency gate (p99 under 2 s, p50 under 700 ms at
-  20 QPS) has not been run against v12; the v12 canary fixture is not built.
+- **Fixed:** `init` answered 503 for requests spanning a publication switch in
+  the first three runs. The controller at `322c4f07`, deployed to v12 only on
+  2026-10-12 at 16:29 UTC, serves the last `init` built for the active map
+  during a switch; a fourth run crossed 8 switches with no 503
+  ([evidence](../evidence/v12-staging-2026-10-12/README.md)).
+- **Open:** one reused-tail wallet exceeds the 600 s recovery deadline in every
+  run; the v11 query latency gate (p99 under 2 s, p50 under 700 ms at 20 QPS)
+  has not been run against v12; the v12 canary fixture is not built.
 
 ## Txid display one-query layout measured, not deployed, 2026-10-11
 
