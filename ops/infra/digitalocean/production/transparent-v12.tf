@@ -77,6 +77,15 @@ resource "digitalocean_firewall" "transparent_v12" {
     port_range  = "8080"
     source_tags = concat([digitalocean_tag.coordinator.name], digitalocean_tag.transparent_loadgen[*].name)
   }
+
+  # The recent worker's shard port. The worker firewall opens only 8093, the
+  # archive worker's port; the coordinator reads both workers' init and
+  # verifies deployments on each.
+  inbound_rule {
+    protocol    = "tcp"
+    port_range  = "8193"
+    source_tags = concat([digitalocean_tag.coordinator.name], digitalocean_tag.transparent_loadgen[*].name)
+  }
 }
 
 resource "digitalocean_project_resources" "transparent_v12" {
