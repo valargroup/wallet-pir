@@ -1,0 +1,34 @@
+{
+  "data_dir": "/mnt/roman-dev-2-data/ai-dev/cache/t-c362e44596f5488f/e2e/journal",
+  "elapsed_seconds": 37.965915585,
+  "generated_at": "2026-10-12T07:54:07.292049045+00:00",
+  "genesis_hash": "00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08",
+  "journal": {
+    "covered_through": 3473686,
+    "events_stored": 4185700,
+    "start_height": 3262749
+  },
+  "network": "main",
+  "output": "/mnt/roman-dev-2-data/ai-dev/cache/t-c362e44596f5488f/e2e/set-v2",
+  "published": {
+    "anchor_hash": "0000000000755137ff64d560a32b9190e62ae085923c9e69930c05550f50be1d",
+    "archive_geometry": null,
+    "archive_policy": null,
+    "archive_shards": null,
+    "map_bytes": 5763,
+    "map_sha256": "5991a062bab02db2c08566d70a54e762cf3018aaa8ebcac6c03e6435d93c5d27",
+    "multi_segment_shards": 0,
+    "page_shards": 11,
+    "recent_from": null,
+    "recent_geometry": "decoupled-2k-8k",
+    "recent_policy": "DecoupledPolicy { scripts: Limit { target: 101815, capacity: 118784 }, directory_bytes: Limit { target: 7183214, capacity: 8380416 }, page_rows: Limit { target: 7936, capacity: 8192 }, max_children: 32, page_entry_header: 40 }",
+    "recent_shards": 8,
+    "shards": 8,
+    "start_height": 3262749,
+    "tail_revision": 0,
+    "through": 3473686
+  },
+  "schema": "transparent-publication-v1",
+  "shard_schema": "transparent-shard-v12",
+  "tool_sha": "d89162abfc784fe52c98dbc0b159248d84d4d9e6"
+}

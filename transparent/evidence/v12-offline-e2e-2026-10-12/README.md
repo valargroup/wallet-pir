@@ -60,11 +60,33 @@ not price. These are one-shot recoveries from `required_from`; the run-cache
 catch-up is covered by `a_tip_catch_up_stops_at_the_first_cached_run` in the
 server suite, not measured here.
 
+## Range profile v2
+
+Production publishes under `zcash-transparent-range-v2`, while `shard-publish`
+defaults to v1. The same slice was republished with `--range-profile
+zcash-transparent-range-v2` (otherwise as `run.sh`) and recovered the same way
+by the same binaries at the same commit ([v2/](v2/)): **716 of 716 wallets
+exact**, the map and every manifest naming the v2 profile. Bills fall with the
+smaller filters, MB p50 / p95 / p99:
+
+| Class | v1 | v2 |
+|---|---|---|
+| catch-up-1d | 0.34 / 0.41 / 0.54 | 0.28 / 0.35 / 0.48 |
+| catch-up-7d | 0.25 / 0.41 / 0.41 | 0.19 / 0.35 / 0.35 |
+| catch-up-30d | 0.44 / 0.74 / 1.16 | 0.32 / 0.61 / 1.03 |
+| restore-6m | 1.66 / 2.26 / 2.43 | 1.12 / 1.72 / 1.89 |
+| multi-script | 4.75 / 6.46 / 10.47 | 4.21 / 5.92 / 9.96 |
+| small-active | 0.83 / 1.29 / 1.38 | 0.49 / 0.76 / 0.84 |
+| reused-tail | 6.35 / 54.29 / 75.51 | 5.94 / 54.02 / 75.24 |
+
+The census bills above assume v1 filters, so the comparison is made at v1.
+
 ## Limits
 
 - One slice, one local server, no load: this establishes correctness and
   per-wallet bytes, not latency or capacity.
 - The archive tier is not exercised: the archive slice (heights
   200,000–419,999) starts mid-chain and holds no sample wallet.
-- The v12 regression and canary fixtures were not exported: `regression-export`
-  requires a journal from genesis, which only the coordinator holds.
+- The v12 regression and canary fixtures are not exported here:
+  `regression-export` requires a journal from genesis, which only the
+  coordinator holds; they are exported there.
