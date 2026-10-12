@@ -6,6 +6,29 @@ M4–M6 are open.** This records observed progress, not a new live fleet health
 check. [Remaining work](remaining-work.md) is the authoritative outstanding
 checklist; [deployment](deployment.md) owns operating targets.
 
+## Schema v12 built on `v12/decoupled-pages`, not deployed, 2026-10-12
+
+Branch `v12/decoupled-pages` (draft PR #150, not merged) carries schema
+`transparent-shard-v12`: directory shards with up to 32 page shards, at
+`decoupled-2k-8k` (recent) and `decoupled-32k-32k` (archive)
+([design](decoupled-pages-design.md), [architecture](architecture.md#identity-and-geometry)).
+The publisher, controller (which can follow a journal another process writes),
+shard server and wallet chain walk with its run cache are ported; wallet-libraries
+follows on its own `v12/decoupled-pages` (draft PR zakura-core/wallet-libraries#156).
+Production still serves v11.
+
+- **Tests:** full CI on PR #150 green; `make check-fast` from the branch base green.
+  New acceptance tests: block-by-block publication equals a fresh build, sealed page
+  and directory shards survive tail growth and reorgs at both boundaries, a history
+  across three page shards recovers an exact ledger, and a tip catch-up stops at the
+  first cached run.
+- **Certificates:** all four v12 tables meet 128 bits at both query widths, lowest
+  163 ([evidence](../evidence/v12-native-certificates-2026-10-12/README.md)).
+- **Offline end to end** on the hub's recent journal slice: 716 of 716 covered sample
+  wallets recovered exactly over HTTP, bills within about 7% of the census
+  ([evidence](../evidence/v12-offline-e2e-2026-10-12/README.md)). Archive tier,
+  load and the regression and canary fixtures are not yet exercised.
+
 ## Txid display one-query layout measured, not deployed, 2026-10-11
 
 `main` carries the `txid-2k8` layout: one query per lookup, 90,000-entry
