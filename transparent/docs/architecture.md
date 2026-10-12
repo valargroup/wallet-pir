@@ -326,57 +326,69 @@ the table's key count equals the entry count.
 
 ## PIR scheme
 
-Both tables use the native ReinspiRING two-mask m29 profile that Enhance and Status deploy:
-d = 2,048, q = 2^54, p = 2^16, a two-limb Gaussian `K_g` packing key with 19-bit limbs, and
-two public masks rounded to 29 bits. One 4,096-byte row is one 2,048-coefficient block.
-The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; its
-golden test pins their bytes. It has no Cargo features, so depending on it cannot switch the
-q48 Enhance binaries, which only `enhance-pir/native-reinspiring` does.
-`transparent/crates/transparent-native` re-exports it and adds Transparent's per-geometry
-seeds, `NativeScheme` and `TableProfile`.
+Both history tables use the native ReinspiRING two-mask **8-bit** profile from ipir-sp
+`v0.1.0-rc.7`: d = 2,048, q = 2^54, p = 2^8, a one-digit Gaussian `K_g` packing key with a
+27-bit digit, two public masks rounded to 22 bits, 28-bit dithered queries and 10-bit
+responses (profile `reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1`). Each coefficient
+carries one plaintext byte, so one 4,096-byte row is two 2,048-coefficient blocks. The
+txid display tables keep the 16-bit m29 profile that Enhance and Status deploy (p = 2^16, a
+two-digit key with 19-bit digits, 29-bit masks, 44-bit dithered or 49-bit nearest queries,
+22-bit responses), which the second half of this section describes.
+The helpers are the root `shared/pir-native` crate, which Enhance and Status use too; it
+defines both profiles (`P8`, `P16`) and its golden test pins the 16-bit bytes. It has no
+Cargo features, so depending on it cannot switch the q48 Enhance binaries, which only
+`enhance-pir/native-reinspiring` does. `transparent/crates/transparent-native` re-exports
+it and adds Transparent's per-geometry seeds, `NativeScheme`, `TableProfile` and
+`profile_for`, which picks the profile from the table name.
 
 Query masks and the packing setup are derived from 32-byte seeds per schema, geometry and
-table, so one query is answered by every segment of every shard of that geometry.
-`/v1/shards/init` publishes each table's `NativeScheme` identity (bit widths, parameter
-encoding, mask seed, setup id and sizes); the wallet re-derives it and refuses any
-difference. Each segment publishes its own 14,848 bytes of rounded masks. A query is an
-8-byte revision binding, the 27,648-byte key and a selection at one of two widths:
+table (labelled per profile), so one query is answered by every segment of every shard of
+that geometry. `/v1/shards/init` publishes each table's `NativeScheme` identity (bit
+widths, parameter encoding, mask seed, setup id and sizes); the wallet re-derives it and
+refuses any difference. Each history segment publishes its own 22,528 bytes of rounded
+masks (11,264 per block). A query is an 8-byte revision binding, the 13,824-byte key and a
+28-bit dithered selection (`rows * 28 / 8` bytes): 21,000 bytes at 2,048 rows, 42,504 at
+8,192 and 128,520 at 32,768. The client rounds each coefficient up with probability equal
+to the fraction it drops, using fresh coins, so the rounding errors are independent and
+zero mean. Init publishes this one scheme as `directory_scheme` and `pages_scheme` and
+omits `*_scheme_dq44`; the server accepts exactly the 28-bit lengths and refuses any other
+before reading the body. Each segment answers with the binding, an 8-byte mask epoch and a
+5,120-byte body (two blocks of 2,560).
 
-- 44 bits with dithered rounding (`rows * 44 / 8` bytes): 72,712 bytes at 8,192 rows and
-  207,880 at 32,768. The client rounds each coefficient up with probability equal to the
-  fraction it drops, using fresh coins, so the rounding errors are independent and zero
-  mean. Init publishes this scheme beside the other as `directory_scheme_dq44`,
-  `pages_scheme_dq44` and, for display tables, `scheme_dq44` (profile
-  `reinspiring-two-mask-m29-dq44-v1`).
-- 49 bits rounded to nearest (`rows * 49 / 8` bytes): 77,832 and 228,360 bytes. This is the
-  `*_scheme` every wallet built before dithering reads and sends.
+The server keeps an 8-bit table's bytes in the byte kernel's interleaved layout
+(`reinspiring::native_kernel::PreparedU16Query::interleave_u8_columns`, 16-column bands of
+four-row groups) and scans them with `multiply_interleaved_u8`; the portable path scans the
+same layout, so a cache entry restores on any CPU. The hint is computed over the
+column-major bytes before interleaving, leaving out trailing all-zero row blocks as the
+16-bit runtime does. The compiled one-digit matrix needs eight-byte words on a table with
+data, so its runtime plans at its reservation; only a nearly empty table's matrix is written
+at four-byte words, and the disk cache accepts either.
 
-The setup, masks and responses are the same for both, so one runtime answers either. The
-server accepts exactly these two lengths, picks the width from the length, and refuses any
-other before reading the body; the body limit is the 49-bit length. A wallet sends 44 bits
-when init carries the dithered scheme and it reproduces locally, and 49 bits otherwise, so
-an older wallet, or a newer one against an older server, is unaffected. Each segment
-answers with the binding, an 8-byte mask epoch and a 5,632-byte body. The server parses a
-query once, scans each segment modulo 2^54 and packs against that segment's preprocessing.
-The runtime disk cache stays keyed by the 49-bit scheme, so existing caches still apply.
+A display table's query is the binding, the 27,648-byte key and a selection at one of two
+widths: 44 bits dithered (`scheme_dq44`, profile `reinspiring-two-mask-m29-dq44-v1`) or 49
+bits rounded to nearest (`scheme`). The setup, masks and responses are the same for both, so
+one runtime answers either; the server picks the width from the exact length, and a client
+sends 44 bits when init carries the dithered scheme and it reproduces locally. Each display
+segment publishes 14,848 bytes of masks per 4,096-byte block and answers 5,632 bytes per
+block.
 
 A query to a single-segment page shard, sealed or open, may select only its first
 `PageChild::query_rows`: the page rows it holds rounded up to 2,048-row blocks, every
 later row being zero, so the answer is unchanged. While a page shard holds at most
-2,048 rows that is 40,200 bytes at 49 bits and 38,920 at 44. The count comes from
-digest-bound manifest fields alone, so every query to that page shard has one length per
-width. Multi-segment page shards and the directory select every row, and servers also
-accept the full selection: four exact lengths for a page shard, two for the directory.
-Segment verification, at startup, on cache restore and before a runtime build, refuses a
-page shard whose rows past that count hold data.
+2,048 rows that is 21,000 bytes. The count comes from digest-bound manifest fields alone,
+so every query to that page shard has one length. Multi-segment page shards and the
+directory select every row, and servers also accept the full selection: two exact lengths
+for a page shard, one for the directory. Segment verification, at startup, on cache restore
+and before a runtime build, refuses a page shard whose rows past that count hold data.
 
-Correctness certificates for this mode are snapshot-specific, and a snapshot served at both
-widths needs a certificate for each. The shard server's `native_certificate` example exports
-the `certify_native.py` report for a segment, with `--query-rounding dithered` for the 44-bit
-query; see the [correctness screen](../evidence/native-certificate-2026-09-28/README.md) for
-the 49-bit shape results and the 65,536-row limit, and the
-[dithered query screen](../evidence/dithered-query-2026-10-09/README.md) for both widths at
-every geometry.
+Correctness certificates for this mode are snapshot-specific. The shard server's
+`native_certificate` example exports the `certify_native.py` report for a segment; for an
+8-bit table it is always the dithered 28-bit report. The
+[8-bit trial](../evidence/p8-trial-2026-10-12/README.md) certified every v12 staging table
+at 125 bits or more with the one-digit key, under trial seeds; the served seeds need their
+own certificates. For the display tables see the
+[correctness screen](../evidence/native-certificate-2026-09-28/README.md) and the
+[dithered query screen](../evidence/dithered-query-2026-10-09/README.md).
 
 ## The wallet's walk
 
@@ -451,10 +463,12 @@ and the preflight charges missing entries at their four-byte length plus one bou
 A runtime whose matrix needs eight-byte words keeps its full charge, so a plan made at the
 four-byte size comes up short through overloads, never through memory. The assignment
 planner (`router::plan`) still balances and checks owners at the bound.
-Runtime snapshots use format
-`transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2`: identity,
-checksum, column-major database, published masks, then `reinspiring::prepared_native`
-preprocessing, whose length is validated by range. A restore re-derives the masks from the
+Runtime snapshots of display tables use format
+`transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2`, and of history
+tables `transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1`:
+identity, checksum, the database (column-major u16 for display tables, the interleaved bytes
+for history tables), published masks, then `reinspiring::prepared_native` preprocessing,
+whose length is validated by range. A restore re-derives the masks from the
 preprocessing and refuses a snapshot whose stored masks differ. Writes keep the checksum,
 atomic rename and durability barriers.
 

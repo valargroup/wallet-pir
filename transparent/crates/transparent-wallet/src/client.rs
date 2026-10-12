@@ -24,11 +24,11 @@
 //! adopted the server's parameters would decode against whatever geometry the
 //! server chose, including one that leaks the selection.
 //!
-//! The query is sent at 44 dithered bits when the service advertises the
-//! dithered scheme and it reproduces exactly; otherwise at the 49 bits every
-//! service accepts. The fallback is what keeps a newer wallet working against
-//! a service that predates dithering, and it needs no trust: the 49-bit scheme
-//! is still checked whole.
+//! The directory and pages use the 8-bit profile, whose one scheme is a
+//! 28-bit dithered query. A 16-bit table publishes a 49-bit scheme and may
+//! advertise a 44-bit dithered one beside it; the query uses the 44 bits only
+//! when that scheme reproduces exactly, and otherwise the 49 bits, which are
+//! still checked whole.
 
 use crate::transport::{BoxError, ByteCharges, Overloaded, ShardTransport, StaleRevision};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
@@ -192,7 +192,10 @@ impl TableClient {
         }
         // Compared whole, like the 49-bit scheme. One that does not reproduce
         // is not adopted; the query falls back to the 49 bits checked above.
-        let dithered = served_dithered == Some(&profile.dithered_scheme);
+        let dithered = profile
+            .dithered_scheme
+            .as_ref()
+            .is_some_and(|scheme| served_dithered == Some(scheme));
         Ok(Self {
             schema: schema.to_string(),
             kind,
@@ -207,13 +210,13 @@ impl TableClient {
         self.profile.rows
     }
 
-    /// Bits each selection coefficient is sent at: 44 when the service
-    /// advertised the dithered scheme and it reproduced, otherwise 49.
+    /// Bits each selection coefficient is sent at: the scheme's own (28 for
+    /// the 8-bit tables, 49 for a 16-bit one), or 44 when a 16-bit table's
+    /// service advertised the dithered scheme and it reproduced.
     pub fn query_bits(&self) -> usize {
-        if self.dithered {
-            self.profile.dithered_scheme.query_bits
-        } else {
-            self.profile.scheme.query_bits
+        match &self.profile.dithered_scheme {
+            Some(scheme) if self.dithered => scheme.query_bits,
+            _ => self.profile.scheme.query_bits,
         }
     }
 
@@ -434,10 +437,10 @@ impl TableClient {
                 Some(stashed)
                     if stashed.row == row
                         && stashed.query.body.len()
-                            == 8 + transparent_native::request_len_bits(
-                                query_rows,
-                                self.query_bits(),
-                            ) =>
+                            == 8 + self
+                                .profile
+                                .native
+                                .request_len_bits(query_rows, self.query_bits()) =>
                 {
                     let response = match stashed.reply {
                         Ok(response) => response,
@@ -505,51 +508,39 @@ mod tests {
         TableClient::new(table, "recent-4k", 4_096, 4_096, &profile.scheme, dithered).unwrap()
     }
 
-    fn body_len(client: &TableClient) -> usize {
+    fn body_len(client: &TableClient, table: Table) -> usize {
         client
-            .prepare("revision", Table::Directory, 17)
+            .prepare("revision", table, 17)
             .unwrap()
             .body
             .len()
     }
 
-    /// A service advertising the dithered scheme gets 44-bit queries.
+    /// The directory and pages are queried at the 8-bit profile's 28 bits,
+    /// with its one-digit packing key.
     #[test]
-    fn a_reproduced_dithered_scheme_is_used() {
-        let profile = profile(Table::Directory);
-        let client = client(Table::Directory, Some(&profile.dithered_scheme));
-        assert_eq!(client.query_bits(), 44);
-        assert_eq!(body_len(&client), 8 + profile.dithered_scheme.request_bytes);
-        assert_eq!(body_len(&client), 8 + 27_648 + 22_528);
+    fn history_tables_send_the_28_bit_query() {
+        for table in [Table::Directory, Table::Pages(0)] {
+            let profile = profile(table);
+            let client = client(table, None);
+            assert_eq!(client.query_bits(), 28);
+            assert_eq!(body_len(&client, table), 8 + profile.scheme.request_bytes);
+            assert_eq!(body_len(&client, table), 8 + 13_824 + 4_096 * 28 / 8);
+        }
     }
 
-    /// A service that predates dithering, or advertises a dithered scheme this
-    /// build does not derive, gets the 49-bit query it has always accepted.
+    /// An 8-bit table has no second width: a dithered scheme a service
+    /// advertises beside it is ignored, here another table's.
     #[test]
-    fn anything_else_falls_back_to_the_49_bit_query() {
-        let profile = profile(Table::Directory);
-        let legacy = 8 + profile.scheme.request_bytes;
-        assert_eq!(legacy, 8 + 27_648 + 25_088);
-
-        let absent = client(Table::Directory, None);
-        assert_eq!((absent.query_bits(), body_len(&absent)), (49, legacy));
-
-        let mut moved = profile.dithered_scheme.clone();
-        moved.query_mask_seed = profile.scheme.packing_setup_id.clone();
-        let unknown = client(Table::Directory, Some(&moved));
-        assert_eq!((unknown.query_bits(), body_len(&unknown)), (49, legacy));
-
-        // Another table's dithered scheme is not this one's.
-        let other = self::profile(Table::Pages(0));
-        let crossed = client(Table::Directory, Some(&other.dithered_scheme));
-        assert_eq!(crossed.query_bits(), 49);
+    fn an_advertised_second_scheme_is_ignored() {
+        let pages = profile(Table::Pages(0));
+        let client = client(Table::Directory, Some(&pages.scheme));
+        assert_eq!(client.query_bits(), 28);
     }
 
-    /// The 49-bit scheme is checked whatever the dithered one says: a service
-    /// cannot get a wallet past a moved scheme by advertising a good dithered
-    /// one beside it.
+    /// The served scheme must reproduce whatever else the service advertises.
     #[test]
-    fn the_49_bit_scheme_must_still_reproduce() {
+    fn the_scheme_must_reproduce() {
         let profile = profile(Table::Directory);
         let mut moved = profile.scheme.clone();
         moved.rows = 8_192;
@@ -559,7 +550,7 @@ mod tests {
             4_096,
             4_096,
             &moved,
-            Some(&profile.dithered_scheme),
+            Some(&profile.scheme),
         );
         assert!(matches!(refused, Err(ClientError::Session(_))));
     }

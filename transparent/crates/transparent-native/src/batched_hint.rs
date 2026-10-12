@@ -94,7 +94,8 @@ const LOG_D: u32 = D.trailing_zeros();
 const PRIMES: [u32; 3] = [1_073_692_673, 1_073_668_097, 1_073_655_809];
 /// Columns transformed together.
 const LANES: usize = 32;
-/// The largest plaintext coefficient: a u16.
+/// The largest plaintext coefficient: a u16. Byte columns are bounded by it
+/// too, so the capacity check covers both.
 const DATA_BOUND: u128 = u16::MAX as u128;
 
 const _: () = assert!(D.is_power_of_two());
@@ -321,11 +322,11 @@ pub fn path(masks: &[Vec<u64>]) -> Result<Path, String> {
 
 /// The public hint `H = A * D` for one segment, byte for byte
 /// [`pir_native::hint`]'s, with its shape checks and arguments.
-pub fn hint<'a>(
+pub fn hint<'a, T: pir_native::Entry + 'a>(
     masks: &[Vec<u64>],
     rows: usize,
     cols: usize,
-    column: impl Fn(usize) -> &'a [u16] + Sync,
+    column: impl Fn(usize) -> &'a [T] + Sync,
 ) -> Result<Vec<Vec<Vec<u64>>>, String> {
     hint_within(masks, rows, cols, column, Crt::new().product).map(|(hint, _)| hint)
 }
@@ -333,11 +334,11 @@ pub fn hint<'a>(
 /// [`hint`] with reconstruction capacity `capacity` instead of the primes'
 /// product, and the path taken. Only tests pass a smaller one, to exercise
 /// the reference fallback without a multi-gigabyte table.
-fn hint_within<'a>(
+fn hint_within<'a, T: pir_native::Entry + 'a>(
     masks: &[Vec<u64>],
     rows: usize,
     cols: usize,
-    column: impl Fn(usize) -> &'a [u16] + Sync,
+    column: impl Fn(usize) -> &'a [T] + Sync,
     capacity: u128,
 ) -> Result<(Hint, Path), String> {
     if rows == 0 || !rows.is_multiple_of(D) || !cols.is_multiple_of(D) || masks.len() != rows / D {
@@ -381,7 +382,7 @@ fn hint_within<'a>(
         .into_par_iter()
         .map(|tile| -> Result<Vec<Vec<u64>>, String> {
             let first = tile * LANES;
-            let data: Vec<&[u16]> = (first..first + LANES).map(&column).collect();
+            let data: Vec<&[T]> = (first..first + LANES).map(&column).collect();
             if data.iter().any(|col| col.len() != rows) {
                 return Err("native hint column length".into());
             }
@@ -391,7 +392,7 @@ fn hint_within<'a>(
             for block in 0..blocks {
                 for (r, row) in plain.iter_mut().enumerate() {
                     for (lane, col) in data.iter().enumerate() {
-                        row[lane] = col[block * D + r] as u32;
+                        row[lane] = Into::<u64>::into(col[block * D + r]) as u32;
                     }
                 }
                 for ((prime, mask), sum) in primes.iter().zip(&masks).zip(&mut sums) {

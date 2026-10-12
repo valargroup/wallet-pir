@@ -219,7 +219,7 @@ fn state_with(dir: &Path, config: ServiceConfig) -> ServiceState {
 /// One runtime's reservation at the test geometry, so budgets can be expressed
 /// in runtimes rather than in bytes that would drift with the scheme.
 fn one_runtime(table: Table) -> u64 {
-    reserved_bytes(table.rows(&GEOMETRY), table.row_bytes(&GEOMETRY))
+    reserved_bytes(table, table.rows(&GEOMETRY), table.row_bytes(&GEOMETRY))
 }
 
 /// A republished tail leaves its predecessor on disk. That is what the
@@ -624,11 +624,11 @@ async fn a_built_runtime_returns_its_unused_reservation_to_the_budget() {
     let set = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("load");
     let shard = set.revision(&new).expect("the current revision");
     let shared = |table| Arc::new(SharedParams::build(shard.geometry, table).unwrap());
+    // The 8-bit history tables plan at their bound (a one-digit matrix is
+    // eight-byte words on a table with data), so here the budget is the two
+    // bounds; what is checked is that each is charged what it holds.
     let budget = shared(Table::Directory).held_bytes() + one_runtime(Table::Pages);
-    assert!(
-        budget < one_runtime(Table::Directory) + one_runtime(Table::Pages),
-        "charged at the bound, the second runtime would have been refused"
-    );
+    assert!(budget <= one_runtime(Table::Directory) + one_runtime(Table::Pages));
     let metrics = Arc::new(Metrics::default());
     let cache = RuntimeCache::new(budget, 1, metrics.clone());
     let mut handles = Vec::new();
@@ -675,10 +675,8 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
     // One restore and one build at a time, so one runtime can be in flight.
     let needed = warm_bytes(&tables, 1);
     let planned: u64 = tables.iter().map(SharedParams::held_bytes).sum();
-    assert!(
-        needed < one_runtime(Table::Directory) + one_runtime(Table::Pages),
-        "the reservation check refused this budget"
-    );
+    // Equal for the 8-bit history tables, which plan at their bound.
+    assert!(needed <= one_runtime(Table::Directory) + one_runtime(Table::Pages));
     let entries: u64 = tables.iter().map(DiskCache::planned_entry_bytes).sum();
     let excess = tables
         .iter()
@@ -738,11 +736,9 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
             .await;
     assert_eq!(metrics.builds.load(Ordering::Relaxed), 2);
     assert_eq!(metrics.disk_write_failures.load(Ordering::Relaxed), 0);
-    assert_eq!(
-        cold.used_bytes().unwrap(),
-        entries,
-        "both written at four-byte words"
-    );
+    // At most the plan: a nearly empty table's one-digit matrix may be
+    // written at four-byte words.
+    assert!(cold.used_bytes().unwrap() <= entries);
     drop(state);
 
     let (_state, metrics) =
@@ -750,8 +746,8 @@ async fn a_warm_worker_fits_its_runtimes_at_their_built_size() {
             .await;
     assert_eq!(metrics.builds.load(Ordering::Relaxed), 0);
     assert_eq!(metrics.disk_hits.load(Ordering::Relaxed), 2);
-    // A restored matrix is mapped at four-byte words: exactly the plan.
-    assert_eq!(metrics.resident_bytes.load(Ordering::Relaxed), planned);
+    // A restored matrix is mapped at the width it was written: at most the plan.
+    assert!(metrics.resident_bytes.load(Ordering::Relaxed) <= planned);
 }
 
 #[tokio::test(flavor = "multi_thread")]

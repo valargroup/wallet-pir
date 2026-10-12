@@ -766,7 +766,7 @@ impl TxidDisplayClient {
         {
             return Err(TxidError::Protocol(ProtocolKind::Profile));
         }
-        let dithered = served.scheme_dq44.as_ref() == Some(&profile.dithered_scheme);
+        let dithered = served.scheme_dq44.is_some() && served.scheme_dq44 == profile.dithered_scheme;
         Ok((profile, dithered))
     }
 

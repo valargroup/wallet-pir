@@ -120,6 +120,22 @@ the last two were found during the redeploy.
   that run only, through a logged wrapper (`raw/steps/roll-two-replica.py`, decision D2).
   Add an explicit, logged override, or bring up a temporary third replica for each roll.
 
+## 8-bit history profile
+
+The directory and pages use the 8-bit one-digit profile in source: 28-bit dithered
+queries only, no `*_scheme_dq44`, and a new runtime cache format
+([architecture](architecture.md#pir-scheme)). It replaces the 16-bit history profile with
+no compatibility path: a wallet built before it refuses the new schemes, and a wallet
+built from it refuses a 16-bit history service. Txid display tables keep the 16-bit
+profile. The [trial](../evidence/p8-trial-2026-10-12/README.md) sized it.
+
+- [ ] Serve it on v12 staging, with recent worker budgets raised for its +76% memory, and
+  pass the recovery regression and a load test there.
+- [ ] Certify every served segment under the served seeds with `native_certificate`
+  (always the dithered report for these tables), at the 50-bit floor.
+- [ ] Repin wallet-libraries and Vizor's v12 branch on it.
+- [ ] Decide production separately: v11 production and its wallets stay on 16 bits.
+
 ## Dithered 44-bit queries (deployed 2026-10-09)
 
 Servers in source accept a 49-bit or a 44-bit dithered selection, by exact length, and

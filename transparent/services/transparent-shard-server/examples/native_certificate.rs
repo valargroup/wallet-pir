@@ -46,6 +46,13 @@
 //! from each block's `query_l2_squared`, the largest per-column sum of squared
 //! entries. A snapshot served at both widths needs both certificates. The
 //! nearest report is byte-for-byte what this tool produced before dithering.
+//!
+//! The directory and pages use the 8-bit profile: one byte per coefficient,
+//! a one-digit packing key, 22-bit published masks and 28-bit dithered
+//! queries only. For those tables the report is always the dithered format,
+//! with the profile's `p_bits`, `ell`, gadget and response widths, every
+//! precision screen the analysis produces, and the byte column bound
+//! (255 per entry) as the worst-case query.
 use rayon::prelude::*;
 use reinspiring::noise::{gaussian_cdf_sha256, gaussian_counts, WeightNorms};
 use serde_json::{json, Value};
@@ -57,12 +64,12 @@ fn norms(w: WeightNorms) -> Value {
     json!({"l1": w.l1.to_string(), "l2_squared": w.l2_squared.to_string(), "max": w.max.to_string()})
 }
 
-fn worst(rows: usize) -> WeightNorms {
-    // Any u16 column: L1 <= 65535*rows, L2^2 <= 65535^2*rows.
+fn worst(rows: usize, max: u128) -> WeightNorms {
+    // Any column of entries at most `max`: L1 <= max*rows, L2^2 <= max^2*rows.
     WeightNorms {
-        l1: 65535 * rows as u128,
-        l2_squared: 65535u128 * 65535 * rows as u128,
-        max: 65535,
+        l1: max * rows as u128,
+        l2_squared: max * max * rows as u128,
+        max,
     }
 }
 
@@ -92,11 +99,7 @@ fn main() {
         .chunks_exact(2)
         .map(|kv| (kv[0].trim_start_matches("--").to_owned(), kv[1].clone()))
         .collect();
-    let dithered = match flags.get("query-rounding").map(String::as_str) {
-        None | Some("nearest") => false,
-        Some("dithered") => true,
-        Some(other) => panic!("unknown query rounding {other}"),
-    };
+    let rounding = flags.get("query-rounding").map(String::as_str);
     let (profile, columns, served, binding, worst_case) = match mode.as_str() {
         "segment" => {
             let profile = table_profile(&flags);
@@ -144,19 +147,20 @@ fn main() {
                 .unwrap()
             };
             let rows = profile.rows;
+            let entry_max = u16::MAX >> (16 - 8 * profile.native.entry_bytes());
             let mut state = seed;
             let columns: Vec<Vec<u16>> = (0..profile.cols)
                 .map(|_| {
                     (0..profile.rows)
                         .map(|_| match fill.as_str() {
-                            "max" => u16::MAX,
+                            "max" => entry_max,
                             "random" => {
                                 // splitmix64: deterministic, full-range, cheap.
                                 state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
                                 let mut z = state;
                                 z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
                                 z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                                (z ^ (z >> 31)) as u16
+                                (z ^ (z >> 31)) as u16 & entry_max
                             }
                             other => panic!("unknown fill {other}"),
                         })
@@ -176,6 +180,15 @@ fn main() {
         _ => panic!("mode must be segment or synthetic"),
     };
 
+    let native_profile = profile.native;
+    let eight_bit = native_profile.nearest_bits.is_none();
+    let dithered = match rounding {
+        None if eight_bit => true,
+        None | Some("nearest") if !eight_bit => false,
+        Some("dithered") => true,
+        Some(other) => panic!("query rounding {other} is not this table's"),
+        None => unreachable!(),
+    };
     let started = std::time::Instant::now();
     let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
     let analyzed: Vec<_> = hint
@@ -183,8 +196,8 @@ fn main() {
         .map(|block| NativePreprocessed::build_two_mask_analyzed(&profile.setup, block).unwrap())
         .collect();
     let pre: Vec<_> = analyzed.iter().map(|(p, _)| p).collect();
-    let public = native::publish(&pre).unwrap();
-    assert_eq!(public.len(), native::public_len(profile.cols));
+    let public = native_profile.publish(&pre).unwrap();
+    assert_eq!(public.len(), native_profile.public_len(profile.cols));
     let public_sha256: [u8; 32] = Sha256::digest(&public).into();
     if let Some(served) = served {
         assert!(
@@ -195,7 +208,7 @@ fn main() {
     let query: Vec<WeightNorms> = (0..profile.blocks())
         .map(|block| {
             if worst_case {
-                return worst(profile.rows);
+                return worst(profile.rows, (1u128 << native_profile.p_bits) - 1);
             }
             columns[block * D..(block + 1) * D]
                 .iter()
@@ -207,6 +220,27 @@ fn main() {
         .iter()
         .zip(&query)
         .map(|((_, a), &q)| {
+            if eight_bit {
+                let screens: Vec<Value> = a
+                    .public_mask_screens
+                    .iter()
+                    .map(|(bits, w)| json!({"bits": bits, "weights": norms(w.independent(q))}))
+                    .collect();
+                let selected = a
+                    .public_mask_screens
+                    .iter()
+                    .find(|(bits, _)| *bits as usize == native_profile.mask_bits)
+                    .expect("selected precision screen")
+                    .1;
+                return json!({
+                    "weights": norms(selected.independent(q)),
+                    "query_l1": q.l1.to_string(),
+                    "query_l2_squared": q.l2_squared.to_string(),
+                    "kh_l1": "0",
+                    "public_mask_screens": screens,
+                    "one_limb": [],
+                });
+            }
             let screens = a
                 .public_mask_screens
                 .iter()
@@ -263,19 +297,35 @@ fn main() {
         // budget the rounding as nearest, refuses the report.
         report["format"] = json!("native-noise-two-mask-rounded-dithered-v1");
         report["query_rounding"] = json!("dithered");
-        report["query_bits"] = json!(native::DITHERED_QUERY_BITS);
+        report["query_bits"] = json!(native_profile.dithered_bits);
+    }
+    if eight_bit {
+        let params = profile.setup.params();
+        report["p_bits"] = json!(native_profile.p_bits);
+        report["ell"] = json!(params.ell());
+        report["gadget_bits"] = json!(params.gadget_bits());
+        report["dropped_bits"] = json!(params.dropped_bits());
+        report["published_mask_bits"] = json!(native_profile.mask_bits);
+        report["response_bits"] = json!(native_profile.response_bits);
     }
     println!("{report}");
 }
 
-/// Column-major u16 coefficients of a row-major segment table, as the server
-/// encodes them.
+/// Column-major coefficients of a row-major segment table, as the server
+/// encodes them: u16 pairs for a 16-bit table, single bytes for an 8-bit one.
 fn columns_of(rows_bin: &[u8], profile: &TableProfile) -> Vec<Vec<u16>> {
+    let bytes = profile.native.entry_bytes() == 1;
     (0..profile.cols)
         .into_par_iter()
         .map(|col| {
             (0..profile.rows)
-                .map(|row| native::row_coefficient(rows_bin, profile.row_bytes, row, col))
+                .map(|row| {
+                    if bytes {
+                        u16::from(rows_bin[row * profile.row_bytes + col])
+                    } else {
+                        native::row_coefficient(rows_bin, profile.row_bytes, row, col)
+                    }
+                })
                 .collect()
         })
         .collect()

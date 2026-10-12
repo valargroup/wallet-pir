@@ -79,8 +79,11 @@ mod tests {
             "pages_setup_seed": 2,
         });
         if dithered {
-            entry["directory_scheme_dq44"] = serde_json::json!(directory.dithered_scheme);
-            entry["pages_scheme_dq44"] = serde_json::json!(pages.dithered_scheme);
+            // The history tables have no second width; a 16-bit table's
+            // dithered scheme stands in for one a service might advertise.
+            let wide = table("txdirectory").dithered_scheme;
+            entry["directory_scheme_dq44"] = serde_json::json!(wide);
+            entry["pages_scheme_dq44"] = serde_json::json!(wide);
         }
         entry
     }
@@ -99,7 +102,7 @@ mod tests {
         let g = &parsed.geometries[0];
         assert_eq!(g.directory_scheme_dq44.as_ref().unwrap().query_bits, 44);
         assert_eq!(g.pages_scheme_dq44.as_ref().unwrap().query_bits, 44);
-        assert_eq!(g.directory_scheme.query_bits, 49);
+        assert_eq!(g.directory_scheme.query_bits, 28);
     }
 
     #[test]

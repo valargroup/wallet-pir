@@ -776,7 +776,10 @@ async fn init(State(state): State<DisplayState>) -> Response {
             rows: kind.rows(geometry),
             row_bytes: kind.row_bytes(geometry),
             scheme: shared.scheme().clone(),
-            scheme_dq44: shared.dithered_scheme().clone(),
+            scheme_dq44: shared
+                .dithered_scheme()
+                .cloned()
+                .expect("txid display tables keep the 16-bit profile"),
             setup_seed: shared.setup_seed,
         }
     };
@@ -1088,10 +1091,9 @@ async fn query_inner(
     else {
         Metrics::incr(&metrics.query_length_rejections);
         let refused = RequestError::Bad(format!(
-            "a {label} query for geometry {} must be exactly {} or {} bytes, not {declared}",
+            "a {label} query for geometry {} must be exactly {} bytes, not {declared}",
             shared.geometry.name,
-            shared.query_bytes(),
-            shared.dithered_query_bytes(),
+            shared.query_lengths(shared.profile.rows),
         ))
         .into_response(&map_digest);
         return state.refuse_unread(request, refused).await;

@@ -57,8 +57,10 @@ use ipir_sp::YpirSchemeParams;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use rayon::prelude::*;
+use reinspiring::native_kernel::PreparedU16Query;
 use transparent_native::{
-    self as native, NativeKeys, NativePreprocessed, NativeScheme, TableProfile,
+    self as native, NativeKeys, NativePreprocessed, NativeScheme, Profile, TableProfile,
 };
 use transparent_shard::layout::Geometry;
 
@@ -78,11 +80,12 @@ pub(crate) fn database_server(
     coefficients: impl Iterator<Item = u16>,
     transposed: bool,
 ) -> IPIRServer<u16> {
+    let transport = shared.transport.clone().expect("a 16-bit table");
     #[cfg(feature = "portable-kernel")]
-    let server = IPIRServer::<u16>::new(shared.transport.clone(), coefficients, transposed, true);
+    let server = IPIRServer::<u16>::new(transport, coefficients, transposed, true);
     #[cfg(not(feature = "portable-kernel"))]
     let server = IPIRServer::<u16>::new_auto_kernel(
-        shared.transport.clone(),
+        transport,
         coefficients,
         transposed,
         true,
@@ -90,7 +93,7 @@ pub(crate) fn database_server(
     server
 }
 
-/// The first-dimension scan shape for one table: full 16-bit plaintexts, one
+/// The first-dimension scan shape for one 16-bit table: full 16-bit plaintexts, one
 /// column per coefficient, and the native transport's 49-bit query and 22-bit
 /// response widths. The scan itself runs modulo the native `q` = 2^54, on the
 /// selection already lifted back to `q`, so it is the same for a 44-bit
@@ -108,19 +111,24 @@ pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, S
     Ok(params)
 }
 
-/// Bytes one prepared runtime reserves for a `rows` by `row_bytes` segment.
+/// Bytes one prepared runtime reserves for a `rows` by `row_bytes` segment of
+/// a `table`, under that table's native profile.
 ///
 /// Three terms, all derived rather than measured:
 ///
-/// - the **encoded database**, `rows * row_bytes / 2` coefficients of `u16`,
-///   which is the only term that follows the row count;
-/// - the **published masks**, 14,848 bytes per 4,096-byte instance; and
+/// - the **encoded database**, `rows * row_bytes` bytes under either profile
+///   (u16 coefficients or one byte each), which is the only term that follows
+///   the row count;
+/// - the **published masks**, per instance: 14,848 bytes per 4,096-byte
+///   16-bit instance, 11,264 per 2,048-byte 8-bit one; and
 /// - the **two-mask preprocessing** at its upper bound: per block both masks
-///   and a `d x d*ell` compiled matrix at eight-byte words (64 MiB). The
-///   compiled matrix is stored at four-byte words when every entry fits, so a
-///   real runtime may hold half of that term; the reservation takes the bound
+///   and a `d x d*ell` compiled matrix at eight-byte words (64 MiB for the
+///   two-digit 16-bit key, 32 MiB for the one-digit 8-bit key). A two-digit
+///   matrix is stored at four-byte words when every entry fits, so a real
+///   runtime may hold half of that term; the reservation takes the bound
 ///   because it is made before the build that decides it, and the cache
-///   releases the difference once the build is done.
+///   releases the difference once the build is done. A one-digit matrix
+///   needs eight-byte words unless its table is nearly empty.
 ///
 /// `shard-scaling --geometry-sweep` and the router price the same terms, so a
 /// sweep's projection and a running worker's budget cannot drift apart.
@@ -130,16 +138,19 @@ pub fn transport_params(rows: u64, row_bytes: u32) -> Result<YpirSchemeParams, S
 /// reads, the shared parameters, and anything a request allocates. A cache
 /// budget is therefore always set below the host's real headroom, and
 /// re-checked with `shard-residency` whenever the scheme moves.
-pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
-    let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
+pub fn reserved_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
+    let profile = native::profile_for(table.as_str());
+    let blocks = (row_bytes as usize / profile.instance_bytes()) as u64;
     rows * row_bytes as u64
-        + blocks * native::BLOCK_PUBLIC_BYTES as u64
+        + blocks * profile.block_public_bytes() as u64
         + native::PREPARED_HEADER_BYTES
-        + blocks * native::PREPARED_BLOCK_MAX_BYTES
+        + blocks * profile.prepared_block_max_bytes()
 }
 
-/// Bytes a prepared runtime holds once built with its compiled matrix at
-/// four-byte words: [`reserved_bytes`] less half of the matrix term.
+/// Bytes a prepared runtime plans to hold once built: [`reserved_bytes`] less
+/// half of the matrix term for a two-digit key, whose matrix fits four-byte
+/// words, and the reservation itself for a one-digit key, whose matrix needs
+/// eight-byte words on any table with data.
 ///
 /// This is the size the cache charges a built runtime in practice, so it is
 /// what warm-fit and disk preflight checks plan with. It is a planning figure,
@@ -148,10 +159,11 @@ pub fn reserved_bytes(rows: u64, row_bytes: u32) -> u64 {
 /// says so through overloads rather than through memory. `shard-residency`
 /// measured `txid-2k8` at 80.0-85.8 MiB per runtime against the 80.09 MiB
 /// given here.
-pub fn held_bytes(rows: u64, row_bytes: u32) -> u64 {
-    let blocks = (row_bytes as usize / native::INSTANCE_BYTES) as u64;
-    reserved_bytes(rows, row_bytes)
-        - blocks * (native::PREPARED_BLOCK_MAX_BYTES - native::PREPARED_BLOCK_MIN_BYTES)
+pub fn held_bytes(table: Table, rows: u64, row_bytes: u32) -> u64 {
+    let profile = native::profile_for(table.as_str());
+    let blocks = (row_bytes as usize / profile.instance_bytes()) as u64;
+    reserved_bytes(table, rows, row_bytes)
+        - blocks * (profile.prepared_block_max_bytes() - profile.prepared_block_planned_bytes())
 }
 
 /// Bytes a warm worker's cache needs to build or restore every runtime in
@@ -188,8 +200,9 @@ pub struct SharedParams {
     pub geometry: &'static Geometry,
     pub table: Table,
     pub profile: TableProfile,
-    /// The first-dimension scan shape.
-    pub transport: YpirSchemeParams,
+    /// The first-dimension scan shape of a 16-bit table; an 8-bit table is
+    /// scanned by the byte kernel and has none.
+    pub transport: Option<YpirSchemeParams>,
     pub setup_seed: u64,
 }
 
@@ -213,7 +226,11 @@ impl SharedParams {
                 rows,
                 row_bytes,
             )?,
-            transport: transport_params(rows, row_bytes)?,
+            transport: if native::profile_for(table.as_str()) == native::P16 {
+                Some(transport_params(rows, row_bytes)?)
+            } else {
+                None
+            },
             setup_seed: crate::shardset::setup_seed(geometry, table),
         })
     }
@@ -224,9 +241,10 @@ impl SharedParams {
         &self.profile.scheme
     }
 
-    /// The 44-bit dithered scheme `/v1/shards/init` publishes beside it.
-    pub fn dithered_scheme(&self) -> &NativeScheme {
-        &self.profile.dithered_scheme
+    /// The 44-bit dithered scheme `/v1/shards/init` publishes beside a 16-bit
+    /// table's; an 8-bit table's own scheme is its dithered one.
+    pub fn dithered_scheme(&self) -> Option<&NativeScheme> {
+        self.profile.dithered_scheme.as_ref()
     }
 
     /// The length of a 49-bit query body: the 8-byte binding, the `K_g`
@@ -236,9 +254,9 @@ impl SharedParams {
         8 + self.profile.scheme.request_bytes
     }
 
-    /// The length of a 44-bit dithered query body.
-    pub fn dithered_query_bytes(&self) -> usize {
-        8 + self.profile.dithered_scheme.request_bytes
+    /// The length of a 16-bit table's 44-bit dithered query body.
+    pub fn dithered_query_bytes(&self) -> Option<usize> {
+        self.dithered_scheme().map(|scheme| 8 + scheme.request_bytes)
     }
 
     /// Whether `len` is one of the exact lengths a query body may have: the
@@ -254,18 +272,51 @@ impl SharedParams {
             .is_some_and(|len| self.profile.accepts_selection_len(query_rows, len))
     }
 
+    /// Every exact length a query body to this table may have, for refusals:
+    /// each accepted width over every row and, when `query_rows` is fewer,
+    /// over only those rows.
+    pub fn query_lengths(&self, query_rows: usize) -> String {
+        let native = self.profile.native;
+        let widths: Vec<usize> = native
+            .nearest_bits
+            .into_iter()
+            .chain([native.dithered_bits])
+            .collect();
+        let mut lengths: Vec<String> = widths
+            .iter()
+            .map(|&bits| (8 + native.request_len_bits(self.profile.rows, bits)).to_string())
+            .collect();
+        if query_rows < self.profile.rows {
+            lengths.extend(widths.iter().map(|&bits| {
+                format!(
+                    "{} over its first {query_rows} rows",
+                    8 + native.request_len_bits(query_rows, bits)
+                )
+            }));
+        }
+        lengths.join(" or ")
+    }
+
     /// Bytes one segment's answer carries: binding, epoch and body.
     pub fn response_bytes(&self) -> usize {
         16 + self.profile.scheme.response_bytes
     }
 
     pub fn reserved_bytes(&self) -> u64 {
-        reserved_bytes(self.profile.rows as u64, self.profile.row_bytes as u32)
+        reserved_bytes(
+            self.table,
+            self.profile.rows as u64,
+            self.profile.row_bytes as u32,
+        )
     }
 
     /// See [`held_bytes`].
     pub fn held_bytes(&self) -> u64 {
-        held_bytes(self.profile.rows as u64, self.profile.row_bytes as u32)
+        held_bytes(
+            self.table,
+            self.profile.rows as u64,
+            self.profile.row_bytes as u32,
+        )
     }
 
     /// Checks the binding and length, then parses the key and selection once
@@ -356,10 +407,59 @@ fn sample_row(rows: &[u8], row_bytes: usize, table_rows: usize) -> usize {
     (random % used as u64) as usize
 }
 
+/// A runtime's encoded database.
+pub(crate) enum Database {
+    /// A 16-bit table's coefficients, scanned by ipir-sp's server.
+    Wide(IPIRServer<u16>),
+    /// An 8-bit table's bytes, one per coefficient, in the byte kernel's
+    /// interleaved layout ([`interleave`]).
+    Bytes(Vec<u8>),
+}
+
+#[cfg(test)]
+impl Database {
+    /// The stored database as bytes, to compare two runtimes'.
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        match self {
+            Database::Wide(server) => server.db().iter().flat_map(|c| c.to_le_bytes()).collect(),
+            Database::Bytes(db) => db.clone(),
+        }
+    }
+}
+
+/// An 8-bit table's bytes in column-major order: entry `c` of row `r` is byte
+/// `c` of that row.
+fn column_major_bytes(rows: &[u8], row_count: usize, row_bytes: usize) -> Vec<u8> {
+    let mut db = vec![0u8; row_count * row_bytes];
+    db.par_chunks_mut(row_count)
+        .enumerate()
+        .for_each(|(col, column)| {
+            for (row, entry) in column.iter_mut().enumerate() {
+                *entry = rows[row * row_bytes + col];
+            }
+        });
+    db
+}
+
+/// Rearranges column-major bytes into the byte kernel's tiles, band by band
+/// of 16 columns. The layout is the same on every CPU: the kernel's portable
+/// path scans it too, so a disk-cache entry restores anywhere.
+pub(crate) fn interleave(db: &mut [u8], rows: usize) {
+    db.par_chunks_mut(rows * 16)
+        .for_each(|band| PreparedU16Query::interleave_u8_columns(band, rows));
+}
+
+/// Where entry (`col`, `row`) of a `rows`-row table sits in [`interleave`]'s
+/// layout: its 16-column band, then four rows of each of the band's columns.
+pub(crate) fn interleaved_index(rows: usize, col: usize, row: usize) -> usize {
+    (col / 16) * rows * 16 + (row - row % 4) * 16 + (col % 16) * 4 + row % 4
+}
+
 /// One segment of one shard revision's table, prepared to answer queries.
 pub struct TableRuntime {
+    pub(crate) native: Profile,
     pub(crate) preprocessed: Vec<NativePreprocessed>,
-    pub(crate) server: IPIRServer<u16>,
+    pub(crate) db: Database,
     pub public_params: Vec<u8>,
     pub public_params_sha256: String,
     pub public_params_epoch: [u8; 8],
@@ -418,6 +518,9 @@ impl TableRuntime {
     /// plaintext beside it would double the resident cost of every shard for no
     /// benefit.
     pub fn build(shared: &SharedParams, rows: &[u8]) -> Result<Self, String> {
+        if shared.profile.native == native::P8 {
+            return Self::build_bytes(shared, rows);
+        }
         let profile = &shared.profile;
         let mut phase = std::time::Instant::now();
         let server = database_server(
@@ -480,7 +583,33 @@ impl TableRuntime {
             stage = "pack_preprocessing",
             "construction stage"
         );
-        Self::assemble(server, preprocessed)
+        Self::assemble(profile.native, Database::Wide(server), preprocessed)
+    }
+
+    /// [`Self::build`] for an 8-bit table: the hint over the column-major
+    /// bytes, leaving out trailing all-zero row blocks where the geometry
+    /// allows, then the bytes rearranged for the byte kernel.
+    fn build_bytes(shared: &SharedParams, rows: &[u8]) -> Result<Self, String> {
+        let profile = &shared.profile;
+        let row_count = profile.rows;
+        let mut db = column_major_bytes(rows, row_count, profile.row_bytes);
+        let hint = if uses_batched_hint(shared.geometry) {
+            let used = used_blocks(rows, profile.row_bytes, row_count);
+            native::batched_hint::hint(
+                &profile.masks[..used],
+                used * native::D,
+                profile.cols,
+                |col| &db[col * row_count..col * row_count + used * native::D],
+            )?
+        } else {
+            native::hint(&profile.masks, row_count, profile.cols, |col| {
+                &db[col * row_count..(col + 1) * row_count]
+            })?
+        };
+        let preprocessed = native::preprocess(&profile.setup, &hint)?;
+        drop(hint);
+        interleave(&mut db, row_count);
+        Self::assemble(profile.native, Database::Bytes(db), preprocessed)
     }
 
     /// Bytes this runtime holds, priced by the same terms as
@@ -493,7 +622,11 @@ impl TableRuntime {
     /// charged the same.
     pub fn held_bytes(&self) -> u64 {
         const BLOCK_ID_AND_WIDTH_BYTES: u64 = 32 + 8;
-        self.server.db().len() as u64 * 2
+        let database = match &self.db {
+            Database::Wide(server) => server.db().len() as u64 * 2,
+            Database::Bytes(db) => db.len() as u64,
+        };
+        database
             + self.public_params.len() as u64
             + native::PREPARED_HEADER_BYTES
             + self
@@ -505,16 +638,18 @@ impl TableRuntime {
 
     /// Publishes the masks of prepared blocks and derives their epoch.
     pub(crate) fn assemble(
-        server: IPIRServer<u16>,
+        native: Profile,
+        db: Database,
         preprocessed: Vec<NativePreprocessed>,
     ) -> Result<Self, String> {
-        let public_params = native::publish(&preprocessed)?;
+        let public_params = native.publish(&preprocessed)?;
         let digest = Sha256::digest(&public_params);
         let mut epoch = [0u8; 8];
         epoch.copy_from_slice(&digest[..8]);
         Ok(Self {
+            native,
             preprocessed,
-            server,
+            db,
             public_params,
             public_params_sha256: hex::encode(digest),
             public_params_epoch: epoch,
@@ -551,14 +686,31 @@ impl TableRuntime {
         if rows.len() != profile.rows * profile.row_bytes {
             return Err("self-check rows have the wrong length".into());
         }
-        let padded = self.server.db_rows_padded();
-        let db = self.server.db();
-        for col in 0..profile.cols {
-            let column = &db[col * padded..col * padded + profile.rows];
-            if (0..profile.rows).any(|row| {
-                column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
-            }) {
-                return Err(format!("database column {col} differs from the segment"));
+        match &self.db {
+            Database::Wide(server) => {
+                let padded = server.db_rows_padded();
+                let db = server.db();
+                for col in 0..profile.cols {
+                    let column = &db[col * padded..col * padded + profile.rows];
+                    if (0..profile.rows).any(|row| {
+                        column[row] != native::row_coefficient(rows, profile.row_bytes, row, col)
+                    }) {
+                        return Err(format!("database column {col} differs from the segment"));
+                    }
+                }
+            }
+            Database::Bytes(db) => {
+                if db.len() != rows.len() {
+                    return Err("database length differs from the segment".into());
+                }
+                for col in 0..profile.cols {
+                    if (0..profile.rows).any(|row| {
+                        db[interleaved_index(profile.rows, col, row)]
+                            != rows[row * profile.row_bytes + col]
+                    }) {
+                        return Err(format!("database column {col} differs from the segment"));
+                    }
+                }
             }
         }
         let row = sample_row(rows, profile.row_bytes, profile.rows);
@@ -577,11 +729,28 @@ impl TableRuntime {
 
     /// Answers a query already parsed by [`SharedParams::parse`].
     pub fn answer(&self, binding: [u8; 8], query: &ParsedQuery) -> Result<Vec<u8>, String> {
-        let intermediate = self
-            .server
-            .try_multiply_power_of_two(native::Q, &query.query)
-            .map_err(|error| error.to_string())?;
-        let body = native::pack(&self.preprocessed, &query.keys, &intermediate)?;
+        let intermediate = match &self.db {
+            Database::Wide(server) => server
+                .try_multiply_power_of_two(native::Q, &query.query)
+                .map_err(|error| error.to_string())?,
+            Database::Bytes(db) => {
+                let rows = query.query.len();
+                let prepared =
+                    PreparedU16Query::new(&query.query, native::Q).map_err(|e| e.to_string())?;
+                let mut intermediate = vec![0u64; self.preprocessed.len() * native::D];
+                if db.len() != rows * intermediate.len() {
+                    return Err("query rows do not match the database".into());
+                }
+                intermediate
+                    .par_chunks_mut(16)
+                    .zip(db.par_chunks(rows * 16))
+                    .for_each(|(out, band)| prepared.multiply_interleaved_u8(band, out));
+                intermediate
+            }
+        };
+        let body = self
+            .native
+            .pack(&self.preprocessed, &query.keys, &intermediate)?;
         let mut response = Vec::with_capacity(16 + body.len());
         response.extend_from_slice(&binding);
         response.extend_from_slice(&self.public_params_epoch);
@@ -1235,8 +1404,39 @@ pub(crate) mod tests {
     use transparent_shard::display::TXID_2K8;
     use transparent_shard::layout::{DECOUPLED_2K_8K, DECOUPLED_32K_32K};
 
-    fn reservation(rows: u64, row_bytes: usize) -> u64 {
-        reserved_bytes(rows, row_bytes as u32)
+    /// The masks a table's rows publish, from the whole-table hint over the
+    /// columns the profile encodes (single bytes for an 8-bit table, u16
+    /// pairs for a 16-bit one), without the scan server: what the certificate
+    /// tool rebuilds.
+    fn reference_masks(profile: &native::TableProfile, rows: &[u8]) -> Vec<u8> {
+        let hint = if profile.native.entry_bytes() == 1 {
+            let columns: Vec<Vec<u8>> = (0..profile.cols)
+                .map(|col| {
+                    (0..profile.rows)
+                        .map(|row| rows[row * profile.row_bytes + col])
+                        .collect()
+                })
+                .collect();
+            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c])
+        } else {
+            let columns: Vec<Vec<u16>> = (0..profile.cols)
+                .map(|col| {
+                    (0..profile.rows)
+                        .map(|row| native::row_coefficient(rows, profile.row_bytes, row, col))
+                        .collect()
+                })
+                .collect();
+            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c])
+        }
+        .unwrap();
+        profile
+            .native
+            .publish(&native::preprocess(&profile.setup, &hint).unwrap())
+            .unwrap()
+    }
+
+    fn reservation(table: Table, rows: u64, row_bytes: usize) -> u64 {
+        reserved_bytes(table, rows, row_bytes as u32)
     }
 
     #[test]
@@ -1312,6 +1512,12 @@ pub(crate) mod tests {
                 mib(held)
             );
             assert!(held <= shared.held_bytes(), "{}", geometry.name);
+            if profile.native.ell == 1 {
+                // A one-digit matrix needs eight-byte words on a table with
+                // data: the 8-bit history tables hold their reservation.
+                assert_eq!(held, shared.reserved_bytes(), "{}", geometry.name);
+                continue;
+            }
             assert!(
                 held >= shared.held_bytes() - blocks * (matrix_narrow - matrix_packed),
                 "{}",
@@ -1380,16 +1586,19 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
         use std::io::Write;
-        let geometry = &transparent_shard::layout::DECOUPLED_2K_8K;
+        // A display table: its two-digit matrix is built narrower than its
+        // bound, which the 8-bit history tables' one-digit matrix is not.
+        let geometry = &TXID_2K8;
+        let table = Table::TxDirectory;
         let dir = tempfile::tempdir().unwrap();
-        let shared = Arc::new(SharedParams::build(geometry, Table::Directory).unwrap());
+        let shared = Arc::new(SharedParams::build(geometry, table).unwrap());
         let rows = vec![7u8; shared.profile.rows * shared.profile.row_bytes];
         let source = SegmentSource {
             path: dir.path().join("table.bin"),
-            rows: Table::Directory.rows(geometry),
-            row_bytes: Table::Directory.row_bytes(geometry),
+            rows: table.rows(geometry),
+            row_bytes: table.row_bytes(geometry),
             sha256: hex::encode(Sha256::digest(&rows)),
-            zero_from_row: Table::Directory.rows(geometry),
+            zero_from_row: table.rows(geometry),
         };
         assert!(std::process::Command::new("mkfifo")
             .arg(&source.path)
@@ -1410,7 +1619,7 @@ pub(crate) mod tests {
         let (bound, planned) = (shared.reserved_bytes(), shared.held_bytes());
         let metrics = Arc::new(Metrics::default());
         let cache = Arc::new(RuntimeCache::new(bound + planned, 2, metrics.clone()));
-        let key = |segment| ("ab".repeat(32), Table::Directory, segment);
+        let key = move |segment| ("ab".repeat(32), table, segment);
         let first = {
             let (cache, shared, source) = (cache.clone(), shared.clone(), source.clone());
             tokio::spawn(async move { cache.get(key(0), shared, source).await })
@@ -1471,8 +1680,10 @@ pub(crate) mod tests {
                 }
             }
         }
+        // Only the display tables' two-digit matrices have an excess over
+        // their built size; the 8-bit history tables hold their bound.
         let all = warm_bytes(&every, 4);
-        assert!(all < every.iter().map(SharedParams::reserved_bytes).sum::<u64>());
+        assert!(all <= every.iter().map(SharedParams::reserved_bytes).sum::<u64>());
         assert_eq!(
             warm_bytes(&every, every.len()),
             every.iter().map(SharedParams::reserved_bytes).sum::<u64>()
@@ -1500,9 +1711,12 @@ pub(crate) mod tests {
         assert!(needed < 36 << 30, "0.9 of a 40G MemoryMax");
     }
 
-    /// The native reservation at the pinned geometry: a 32 MiB database, one
-    /// block of published masks, and the eight-byte-word bound on one block of
-    /// two-mask preprocessing (64 MiB of compiled matrix plus both masks).
+    /// The native reservation at the pinned geometry. A recent page table
+    /// (8-bit): a 32 MiB database, two blocks of published masks, and the
+    /// bound on two blocks of one-digit preprocessing (32 MiB of compiled
+    /// matrix plus both masks each). A txid display table (16-bit): its
+    /// database, one block of masks per 4,096-byte row and the two-digit
+    /// bound (64 MiB of compiled matrix plus both masks) per block.
     ///
     /// If this fails, the cache budget is being computed against a different
     /// scheme than the one deployed, and every sizing decision downstream of it
@@ -1511,8 +1725,24 @@ pub(crate) mod tests {
     #[test]
     fn the_reservation_is_the_native_upper_bound() {
         assert_eq!(
-            reservation(DECOUPLED_2K_8K.page_rows, DECOUPLED_2K_8K.page_row_bytes),
-            (32 << 20) + 14_848 + 16 + (32 + 2 * 2_048 * 8 + 8) + (64 << 20)
+            reservation(
+                Table::Pages,
+                DECOUPLED_2K_8K.page_rows,
+                DECOUPLED_2K_8K.page_row_bytes
+            ),
+            (32 << 20) + 2 * 11_264 + 16 + 2 * ((32 + 2 * 2_048 * 8 + 8) + (32 << 20))
+        );
+        let (rows, row_bytes) = (
+            Table::TxDirectory.rows(&TXID_2K8),
+            Table::TxDirectory.row_bytes(&TXID_2K8),
+        );
+        let blocks = u64::from(row_bytes) / 4_096;
+        assert_eq!(
+            reservation(Table::TxDirectory, rows, row_bytes as usize),
+            rows * u64::from(row_bytes)
+                + blocks * 14_848
+                + 16
+                + blocks * ((32 + 2 * 2_048 * 8 + 8) + (64 << 20))
         );
     }
 
@@ -1522,8 +1752,13 @@ pub(crate) mod tests {
     /// the shard count, and it is the whole basis of the archive tier.
     #[test]
     fn only_the_database_term_follows_the_row_count() {
-        let narrow = reservation(DECOUPLED_2K_8K.page_rows, DECOUPLED_2K_8K.page_row_bytes);
+        let narrow = reservation(
+            Table::Pages,
+            DECOUPLED_2K_8K.page_rows,
+            DECOUPLED_2K_8K.page_row_bytes,
+        );
         let wide = reservation(
+            Table::Pages,
             DECOUPLED_32K_32K.page_rows,
             DECOUPLED_32K_32K.page_row_bytes,
         );
@@ -1543,16 +1778,7 @@ pub(crate) mod tests {
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
             .collect();
-        let columns: Vec<Vec<u16>> = (0..profile.cols)
-            .map(|col| {
-                (0..profile.rows)
-                    .map(|row| native::row_coefficient(&rows, profile.row_bytes, row, col))
-                    .collect()
-            })
-            .collect();
-        let hint =
-            native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
-        let rebuilt = native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap();
+        let rebuilt = reference_masks(profile, &rows);
         assert_eq!(
             rebuilt,
             TableRuntime::build(&shared, &rows).unwrap().public_params
@@ -1567,18 +1793,7 @@ pub(crate) mod tests {
         let shared =
             SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
         let profile = &shared.profile;
-        let full = |rows: &[u8]| {
-            let columns: Vec<Vec<u16>> = (0..profile.cols)
-                .map(|col| {
-                    (0..profile.rows)
-                        .map(|row| native::row_coefficient(rows, profile.row_bytes, row, col))
-                        .collect()
-                })
-                .collect();
-            let hint =
-                native::hint(&profile.masks, profile.rows, profile.cols, |c| &columns[c]).unwrap();
-            native::publish(&native::preprocess(&profile.setup, &hint).unwrap()).unwrap()
-        };
+        let full = |rows: &[u8]| reference_masks(profile, rows);
         let bytes = profile.rows * profile.row_bytes;
         for (filled, expected_blocks) in [
             (0, 1),
@@ -1623,25 +1838,37 @@ pub(crate) mod tests {
                 *byte = (i.wrapping_mul(2_654_435_761) >> 9) as u8;
             }
             let fast = TableRuntime::build(&shared, &rows).unwrap();
-            let server = database_server(
-                &shared,
-                (0..profile.rows * profile.cols).map(|i| {
-                    native::row_coefficient(
-                        &rows,
-                        profile.row_bytes,
-                        i / profile.cols,
-                        i % profile.cols,
-                    )
-                }),
-                false,
-            );
-            let (padded, db) = (server.db_rows_padded(), server.db());
-            let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
-                &db[c * padded..c * padded + profile.rows]
-            })
-            .unwrap();
-            let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
-            let reference = TableRuntime::assemble(server, preprocessed).unwrap();
+            let reference = if shared.transport.is_some() {
+                let server = database_server(
+                    &shared,
+                    (0..profile.rows * profile.cols).map(|i| {
+                        native::row_coefficient(
+                            &rows,
+                            profile.row_bytes,
+                            i / profile.cols,
+                            i % profile.cols,
+                        )
+                    }),
+                    false,
+                );
+                let (padded, db) = (server.db_rows_padded(), server.db());
+                let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                    &db[c * padded..c * padded + profile.rows]
+                })
+                .unwrap();
+                let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+                TableRuntime::assemble(profile.native, Database::Wide(server), preprocessed)
+                    .unwrap()
+            } else {
+                let mut db = column_major_bytes(&rows, profile.rows, profile.row_bytes);
+                let hint = native::hint(&profile.masks, profile.rows, profile.cols, |c| {
+                    &db[c * profile.rows..(c + 1) * profile.rows]
+                })
+                .unwrap();
+                let preprocessed = native::preprocess(&profile.setup, &hint).unwrap();
+                interleave(&mut db, profile.rows);
+                TableRuntime::assemble(profile.native, Database::Bytes(db), preprocessed).unwrap()
+            };
             assert_eq!(fast.public_params, reference.public_params);
             assert_eq!(fast.public_params_epoch, reference.public_params_epoch);
             let binding = [7u8; 8];
@@ -1718,7 +1945,8 @@ pub(crate) mod tests {
                     "{} reserves {bytes} bytes for one segment",
                     geometry.name
                 );
-                assert_eq!(shared.profile.blocks(), 1, "{}", geometry.name);
+                // One byte per coefficient: a 4,096-byte row is two blocks.
+                assert_eq!(shared.profile.blocks(), 2, "{}", geometry.name);
             }
         }
     }

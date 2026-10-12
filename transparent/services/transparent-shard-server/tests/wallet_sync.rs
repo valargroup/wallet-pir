@@ -712,12 +712,11 @@ async fn a_service_serving_another_schema_is_refused() {
     );
 }
 
-/// A wallet sends 44-bit dithered queries to a service advertising them, and
-/// the 49-bit queries every service accepts to one whose init carries no
-/// dithered schemes, as a service that predates them does not. Both answer
-/// over HTTP and reconstruct the same history.
+/// A wallet sends the 8-bit profile's 28-bit queries, the only width the
+/// history tables publish, and a 44-bit scheme a service advertises beside
+/// one (here a copy of the published scheme) changes nothing it sends.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
+async fn a_wallet_sends_the_published_28_bit_queries() {
     let dir = tempfile::tempdir().unwrap();
     let per_shard = chain();
     let map = publish(dir.path(), &per_shard);
@@ -728,22 +727,21 @@ async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
     // The directory has 2,048 rows, and every page shard here holds under
     // 2,048 rows, so its queries select that 2,048-row prefix: one length.
     let rows = DECOUPLED_2K_8K.directory_rows as usize;
-    let dithered = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
-    let legacy = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
+    let native = transparent_native::profile_for("directory");
+    let upload = 8 + native.request_len_bits(rows, 28);
+    let plain = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
+    let advertised = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
         for entry in init["geometries"].as_array_mut().unwrap() {
             let entry = entry.as_object_mut().unwrap();
-            assert!(entry.remove("directory_scheme_dq44").is_some());
-            assert!(entry.remove("pages_scheme_dq44").is_some());
+            assert!(entry.get("directory_scheme_dq44").is_none());
+            let directory = entry["directory_scheme"].clone();
+            let pages = entry["pages_scheme"].clone();
+            entry.insert("directory_scheme_dq44".into(), directory);
+            entry.insert("pages_scheme_dq44".into(), pages);
         }
     })
     .await;
-    for (outcome, upload) in [
-        (
-            &dithered,
-            8 + transparent_native::dithered_request_len(rows),
-        ),
-        (&legacy, 8 + transparent_native::request_len(rows)),
-    ] {
+    for outcome in [&plain, &advertised] {
         compare(&outcome.ledger, &expected);
         assert!(outcome.charges.queries() > 0);
         assert_eq!(
@@ -752,7 +750,7 @@ async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
             "every query is {upload} bytes"
         );
     }
-    assert_eq!(dithered.charges.queries(), legacy.charges.queries());
+    assert_eq!(plain.charges.queries(), advertised.charges.queries());
 }
 
 #[tokio::test(flavor = "multi_thread")]

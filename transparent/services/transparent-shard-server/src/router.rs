@@ -61,7 +61,7 @@ pub fn shard_reserved_bytes(entry: &ShardMapEntry) -> Result<u64, PlanError> {
         (Table::Pages, entry.page_segments),
     ] {
         total +=
-            reserved_bytes(table.rows(geometry), table.row_bytes(geometry)) * u64::from(segments);
+            reserved_bytes(table, table.rows(geometry), table.row_bytes(geometry)) * u64::from(segments);
     }
     Ok(total)
 }

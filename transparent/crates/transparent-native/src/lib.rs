@@ -1,10 +1,17 @@
-//! Transparent's native PIR profile: ReinspiRING packing with two public masks.
+//! Transparent's native PIR profiles: ReinspiRING packing with two public masks.
 //!
 //! The helpers themselves are the shared `pir-native` crate, which Enhance and
 //! Status use as well; this crate re-exports them and adds what is
-//! Transparent's own. One plaintext instance is one 2,048-coefficient
-//! polynomial of 16-bit values, so a 4,096-byte row is exactly one packing
-//! block.
+//! Transparent's own. Which parameters a table uses depends on its kind
+//! ([`profile_for`]):
+//!
+//! - History tables (`directory`, `pages`) use the 8-bit profile
+//!   [`HISTORY_PROFILE`]: one byte per coefficient, so a 4,096-byte row is two
+//!   2,048-coefficient packing blocks, a one-digit `K_g` key of 13,824 bytes,
+//!   22-bit masks, 28-bit dithered selections and 10-bit responses.
+//! - Every other table (the txid display tables) keeps the 16-bit profile
+//!   described below: one 16-bit coefficient per two bytes, so a 4,096-byte
+//!   row is exactly one packing block.
 //!
 //! Unlike Enhance, the setup is not bound to a shard: query masks and the
 //! packing setup are derived per geometry and table, so one query is answered
@@ -12,8 +19,8 @@
 //! snapshot id, so they are stable across publications; each segment's
 //! published masks follow from its own database.
 //!
-//! Every table publishes two schemes over the same setup and masks, differing
-//! only in how the selection is uploaded: [`PROFILE`] at 49 bits rounded to
+//! Every 16-bit table publishes two schemes over the same setup and masks,
+//! differing only in how the selection is uploaded: [`PROFILE`] at 49 bits rounded to
 //! nearest, which every wallet deployed before dithering sends, and
 //! [`DITHERED_PROFILE`] at 44 dithered bits (see `pir-native`). A server
 //! accepts both, telling them apart by the body's exact length, so a wallet
@@ -21,8 +28,10 @@
 //! re-derives the dithered scheme the service advertises sends 44 bits;
 //! otherwise it sends 49.
 //!
-//! Correctness certificates for this mode are snapshot-specific, and a
-//! snapshot is served at both widths, so it needs both: see
+//! An 8-bit table publishes one scheme, its 28-bit dithered query.
+//!
+//! Correctness certificates are snapshot-specific, and a 16-bit snapshot is
+//! served at both widths, so it needs both: see
 //! `examples/native_certificate.rs` in the shard server.
 
 use pir_native::hint as pir_hint;
@@ -39,8 +48,22 @@ pub const PROFILE: &str = "reinspiring-two-mask-m29-v1";
 /// the selection uploaded at [`DITHERED_QUERY_BITS`] dithered bits.
 pub const DITHERED_PROFILE: &str = "reinspiring-two-mask-m29-dq44-v1";
 
-/// Upload bytes a wallet sends to a `rows`-row table under the dithered
-/// scheme, after the 8-byte binding: `K_g` then the 44-bit selection.
+/// Name of the 8-bit history profile: p = 2^8, one 27-bit `K_g` digit, masks
+/// rounded to 22 bits, 28-bit dithered selections and 10-bit responses.
+pub const HISTORY_PROFILE: &str = "reinspiring-two-mask-p8-g27x1-m22-dq28-r10-v1";
+
+/// The native parameters a table of kind `table` is served with: [`P8`] for
+/// the history tables, [`P16`] for every other.
+pub fn profile_for(table: &str) -> Profile {
+    match table {
+        "directory" | "pages" => P8,
+        _ => P16,
+    }
+}
+
+/// Upload bytes a wallet sends to a 16-bit `rows`-row table under the
+/// dithered scheme, after the 8-byte binding: `K_g` then the 44-bit
+/// selection.
 pub const fn dithered_request_len(rows: usize) -> usize {
     request_len_bits(rows, DITHERED_QUERY_BITS)
 }
@@ -61,10 +84,17 @@ pub struct TableSeeds {
 /// them. Both sides derive them locally; the service's published identity is
 /// checked against the derivation, never adopted.
 pub fn table_seeds(schema: &str, geometry: &str, table: &str) -> TableSeeds {
+    // Each profile has its own label, so a table that changes profile gets
+    // new masks and setup; the 16-bit label is the one served before.
+    let label: &[u8] = if profile_for(table) == P8 {
+        b"/native-reinspiring-p8-g27x1/"
+    } else {
+        b"/native-reinspiring-m29/"
+    };
     let derive = |purpose: &[u8]| -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(schema.as_bytes());
-        hash.update(b"/native-reinspiring-m29/");
+        hash.update(label);
         hash.update(purpose);
         hash.update(b"\0");
         hash.update(geometry.as_bytes());
@@ -128,13 +158,18 @@ pub struct TableProfile {
     pub rows: usize,
     pub row_bytes: usize,
     pub cols: usize,
+    /// The native parameters: [`profile_for`] the table.
+    pub native: Profile,
     pub setup: NativeSetup,
     pub masks: Vec<Vec<u64>>,
-    /// The 49-bit nearest-rounded scheme, [`PROFILE`].
+    /// The table's own scheme: for a 16-bit table the 49-bit nearest-rounded
+    /// [`PROFILE`], for an 8-bit table its 28-bit dithered
+    /// [`HISTORY_PROFILE`].
     pub scheme: NativeScheme,
-    /// The 44-bit dithered scheme, [`DITHERED_PROFILE`]: `scheme` with only
-    /// the profile name, query width and request length changed.
-    pub dithered_scheme: NativeScheme,
+    /// A 16-bit table's 44-bit dithered scheme, [`DITHERED_PROFILE`]:
+    /// `scheme` with only the profile name, query width and request length
+    /// changed. An 8-bit table has none: its own scheme is dithered.
+    pub dithered_scheme: Option<NativeScheme>,
 }
 
 impl TableProfile {
@@ -148,51 +183,61 @@ impl TableProfile {
     ) -> Result<Self, String> {
         let rows_usize = usize::try_from(rows).map_err(|_| "native rows exceed usize")?;
         let row_bytes_usize = row_bytes as usize;
+        let native = profile_for(table);
         if rows_usize == 0 || !rows_usize.is_multiple_of(D) {
             return Err(format!(
                 "{rows} rows: the native profile needs a positive multiple of {D}"
             ));
         }
-        if row_bytes_usize == 0 || !row_bytes_usize.is_multiple_of(INSTANCE_BYTES) {
+        let instance = native.instance_bytes();
+        if row_bytes_usize == 0 || !row_bytes_usize.is_multiple_of(instance) {
             return Err(format!(
-                "{row_bytes}-byte rows: the native profile needs whole {INSTANCE_BYTES}-byte instances"
+                "{row_bytes}-byte rows: the native profile needs whole {instance}-byte instances"
             ));
         }
-        let cols = row_bytes_usize / 2;
+        let cols = row_bytes_usize / native.entry_bytes();
         let seeds = table_seeds(schema, geometry, table);
-        let setup = NativeSetup::new(params(), seeds.packing);
-        let masks = public_query_masks(seeds.query_masks, rows_usize, cols)?;
+        let params = native.params();
+        let setup = NativeSetup::new(params.clone(), seeds.packing);
+        let masks = native.public_query_masks(seeds.query_masks, rows_usize, cols)?;
+        let primary = native.primary_bits();
         let scheme = NativeScheme {
-            profile: PROFILE.to_string(),
+            profile: if native == P8 {
+                HISTORY_PROFILE
+            } else {
+                PROFILE
+            }
+            .to_string(),
             d: D,
             q_bits: Q_BITS,
-            p_bits: P_BITS,
-            gadget_bits: GADGET_BITS,
-            ell: ELL,
+            p_bits: native.p_bits,
+            gadget_bits: native.gadget_bits,
+            ell: native.ell,
             secret: "gaussian".to_string(),
-            mask_bits: MASK_BITS,
-            query_bits: QUERY_BITS,
-            response_bits: RESPONSE_BITS,
+            mask_bits: native.mask_bits,
+            query_bits: primary,
+            response_bits: native.response_bits,
             rows,
             row_bytes,
             cols,
-            native_encoding: hex::encode(params().encoding()),
+            native_encoding: hex::encode(params.encoding()),
             query_mask_seed: hex::encode(seeds.query_masks),
             packing_setup_id: hex::encode(setup.id()),
-            request_bytes: request_len(rows_usize),
-            public_bytes: public_len(cols),
-            response_bytes: response_len(cols),
+            request_bytes: native.request_len_bits(rows_usize, primary),
+            public_bytes: native.public_len(cols),
+            response_bytes: native.response_len(cols),
         };
-        let dithered_scheme = NativeScheme {
+        let dithered_scheme = native.nearest_bits.map(|_| NativeScheme {
             profile: DITHERED_PROFILE.to_string(),
-            query_bits: DITHERED_QUERY_BITS,
-            request_bytes: dithered_request_len(rows_usize),
+            query_bits: native.dithered_bits,
+            request_bytes: native.request_len_bits(rows_usize, native.dithered_bits),
             ..scheme.clone()
-        };
+        });
         Ok(Self {
             rows: rows_usize,
             row_bytes: row_bytes_usize,
             cols,
+            native,
             setup,
             masks,
             scheme,
@@ -204,14 +249,17 @@ impl TableProfile {
         self.cols / D
     }
 
-    /// Fresh secret and 49-bit upload selecting row `target`, under
-    /// [`Self::scheme`].
+    /// Fresh secret and upload selecting row `target` under [`Self::scheme`]:
+    /// 49 bits to nearest for a 16-bit table, 28 dithered bits for an 8-bit
+    /// one.
     pub fn prepare(&self, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
-        prepare_with(&self.setup, &self.masks, self.rows, target)
+        self.native
+            .prepare(&self.setup, &self.masks, self.rows, target)
     }
 
-    /// Fresh secret and 44-bit dithered upload selecting row `target`, under
-    /// [`Self::dithered_scheme`].
+    /// Fresh secret and dithered upload selecting row `target`: under
+    /// [`Self::dithered_scheme`] for a 16-bit table, and the same as
+    /// [`Self::prepare`] for an 8-bit one.
     pub fn prepare_dithered(&self, target: usize) -> Result<(NativeSecret, Vec<u8>), String> {
         self.prepare_dithered_prefix(self.rows, target)
     }
@@ -227,7 +275,8 @@ impl TableProfile {
         if query_rows > self.rows {
             return Err("native query shape".into());
         }
-        prepare_with(&self.setup, &self.masks, query_rows, target)
+        self.native
+            .prepare(&self.setup, &self.masks, query_rows, target)
     }
 
     /// [`Self::prepare_dithered`] selecting among only the first `query_rows`;
@@ -240,26 +289,29 @@ impl TableProfile {
         if query_rows > self.rows {
             return Err("native query shape".into());
         }
-        prepare_dithered(&self.setup, &self.masks, query_rows, target)
+        self.native
+            .prepare_dithered(&self.setup, &self.masks, query_rows, target)
     }
 
     /// Whether an upload of `len` bytes, after the binding, has one of the two
     /// lengths this table accepts.
     pub fn accepts_request_len(&self, len: usize) -> bool {
-        accepted_query_bits(self.rows, len).is_some()
+        self.native.accepted_query_bits(self.rows, len).is_some()
     }
 
     /// Whether an upload of `len` bytes, after the binding, selects every row
     /// or only the first `query_rows` at an accepted width.
     pub fn accepts_selection_len(&self, query_rows: usize, len: usize) -> bool {
-        accepted_query_shape(self.rows, query_rows, len).is_some()
+        self.native
+            .accepted_query_shape(self.rows, query_rows, len)
+            .is_some()
     }
 
     /// Parses an upload of either scheme into its key and lifted selection.
     /// The width is the one the exact length names; any other length is
     /// refused.
     pub fn parse(&self, bytes: &[u8]) -> Result<(NativeKeys, Vec<u64>), String> {
-        parse_accepted(&self.setup, bytes, self.rows)
+        self.native.parse_accepted(&self.setup, bytes, self.rows)
     }
 
     /// Parses an upload of either scheme over every row or over only the
@@ -270,7 +322,8 @@ impl TableProfile {
         bytes: &[u8],
         query_rows: usize,
     ) -> Result<(NativeKeys, Vec<u64>), String> {
-        parse_selection(&self.setup, bytes, query_rows, self.rows)
+        self.native
+            .parse_selection(&self.setup, bytes, query_rows, self.rows)
     }
 
     /// Decodes one segment's body under that segment's published masks,
@@ -281,24 +334,30 @@ impl TableProfile {
         public: &[u8],
         body: &[u8],
     ) -> Result<Vec<u8>, String> {
-        let mut row = decode_cols(secret, public, body, self.cols)?;
+        let mut row = self.native.decode_cols(secret, public, body, self.cols)?;
         row.truncate(self.row_bytes);
         Ok(row)
     }
 
-    /// Bytes one segment's database occupies as u16 coefficients.
+    /// Bytes one segment's database occupies: one coefficient per entry.
     pub fn database_bytes(&self) -> u64 {
-        self.rows as u64 * self.cols as u64 * 2
+        self.rows as u64 * self.cols as u64 * self.native.entry_bytes() as u64
     }
 
     /// Upper bound on one segment's `prepared_native` encoding.
     pub fn prepared_max_bytes(&self) -> u64 {
-        PREPARED_HEADER_BYTES + self.blocks() as u64 * PREPARED_BLOCK_MAX_BYTES
+        PREPARED_HEADER_BYTES + self.blocks() as u64 * self.native.prepared_block_max_bytes()
     }
 
     /// Lower bound on one segment's `prepared_native` encoding.
     pub fn prepared_min_bytes(&self) -> u64 {
-        PREPARED_HEADER_BYTES + self.blocks() as u64 * PREPARED_BLOCK_MIN_BYTES
+        PREPARED_HEADER_BYTES + self.blocks() as u64 * self.native.prepared_block_min_bytes()
+    }
+
+    /// What one segment's `prepared_native` encoding plans to take: four-byte
+    /// words for a two-digit key, eight-byte words for a one-digit key.
+    pub fn prepared_planned_bytes(&self) -> u64 {
+        PREPARED_HEADER_BYTES + self.blocks() as u64 * self.native.prepared_block_planned_bytes()
     }
 }
 
@@ -359,21 +418,19 @@ mod tests {
     #[test]
     fn the_dithered_scheme_differs_only_in_its_query() {
         let p = TableProfile::new("s", "g", "t", 8_192, 4_096).unwrap();
+        let dithered = p.dithered_scheme.clone().unwrap();
         assert_eq!(p.scheme.profile, PROFILE);
         assert_eq!(p.scheme.query_bits, 49);
         assert_eq!(p.scheme.request_bytes, 27_648 + 50_176);
-        assert_eq!(
-            p.dithered_scheme.profile,
-            "reinspiring-two-mask-m29-dq44-v1"
-        );
-        assert_eq!(p.dithered_scheme.query_bits, 44);
-        assert_eq!(p.dithered_scheme.request_bytes, 27_648 + 45_056);
-        let mut back = p.dithered_scheme.clone();
+        assert_eq!(dithered.profile, "reinspiring-two-mask-m29-dq44-v1");
+        assert_eq!(dithered.query_bits, 44);
+        assert_eq!(dithered.request_bytes, 27_648 + 45_056);
+        let mut back = dithered.clone();
         back.profile = p.scheme.profile.clone();
         back.query_bits = p.scheme.query_bits;
         back.request_bytes = p.scheme.request_bytes;
         assert_eq!(back, p.scheme);
-        assert_ne!(p.dithered_scheme.digest(), p.scheme.digest());
+        assert_ne!(dithered.digest(), p.scheme.digest());
     }
 
     #[test]
@@ -397,7 +454,7 @@ mod tests {
     /// End-to-end over the primitives the server and wallet use.
     #[test]
     fn two_mask_rounded_roundtrip() {
-        let profile = TableProfile::new("test", "g", "directory", 4_096, 4_096).unwrap();
+        let profile = TableProfile::new("test", "g", "txdirectory", 4_096, 4_096).unwrap();
         let (rows, cols) = (profile.rows, profile.cols);
         let db = database(rows, cols, 7);
         let hint = hint(&profile.masks, rows, cols, |c| {
@@ -422,7 +479,10 @@ mod tests {
         // The dithered query decodes the same rows, through the same parse.
         for target in [0, 2_047, rows - 1] {
             let (secret, body) = profile.prepare_dithered(target).unwrap();
-            assert_eq!(body.len(), profile.dithered_scheme.request_bytes);
+            assert_eq!(
+                body.len(),
+                profile.dithered_scheme.as_ref().unwrap().request_bytes
+            );
             assert!(profile.accepts_request_len(body.len()));
             let (keys, query) = profile.parse(&body).unwrap();
             let response = pack(&blocks, &keys, &scan(&db, rows, cols, &query)).unwrap();
@@ -436,17 +496,103 @@ mod tests {
         for len in [
             profile.scheme.request_bytes - 1,
             profile.scheme.request_bytes + 1,
-            profile.dithered_scheme.request_bytes - 1,
-            profile.dithered_scheme.request_bytes + 1,
+            profile.dithered_scheme.as_ref().unwrap().request_bytes - 1,
+            profile.dithered_scheme.as_ref().unwrap().request_bytes + 1,
         ] {
             assert!(!profile.accepts_request_len(len));
             assert!(profile.parse(&vec![0; len]).is_err(), "{len} bytes");
         }
         // A key from another table's setup is refused rather than packed.
-        let other = TableProfile::new("test", "g", "pages", 4_096, 4_096).unwrap();
+        let other = TableProfile::new("test", "g", "txother", 4_096, 4_096).unwrap();
         let (_, body) = other.prepare(0).unwrap();
         let (keys, query) = other.parse(&body).unwrap();
         assert!(pack(&blocks, &keys, &scan(&db, rows, cols, &query)).is_err());
+    }
+
+    /// History tables are 8-bit: one byte per coefficient, two blocks per
+    /// 4,096-byte row, one 28-bit dithered scheme and no second one.
+    #[test]
+    fn history_tables_use_the_8_bit_scheme() {
+        for table in ["directory", "pages"] {
+            let p = TableProfile::new("s", "g", table, 2_048, 4_096).unwrap();
+            assert_eq!(p.native, P8);
+            assert_eq!((p.cols, p.blocks()), (4_096, 2));
+            assert_eq!(p.scheme.profile, HISTORY_PROFILE);
+            assert_eq!(
+                (p.scheme.p_bits, p.scheme.gadget_bits, p.scheme.ell),
+                (8, 27, 1)
+            );
+            assert_eq!((p.scheme.mask_bits, p.scheme.query_bits), (22, 28));
+            assert_eq!(p.scheme.response_bits, 10);
+            assert_eq!(p.scheme.request_bytes, 13_824 + 7_168);
+            assert_eq!(p.scheme.public_bytes, 22_528);
+            assert_eq!(p.scheme.response_bytes, 5_120);
+            assert!(p.dithered_scheme.is_none());
+            assert_eq!(p.database_bytes(), 2_048 * 4_096);
+        }
+        assert_ne!(
+            table_seeds("s", "g", "directory"),
+            table_seeds("s", "g", "txdirectory")
+        );
+        assert_eq!(profile_for("txdirectory"), P16);
+    }
+
+    /// End to end over an 8-bit history table, full and prefix uploads.
+    #[test]
+    fn eight_bit_roundtrip() {
+        let profile = TableProfile::new("test", "g", "pages", 4_096, 4_096).unwrap();
+        let (rows, cols) = (profile.rows, profile.cols);
+        let mut rng = ChaCha20Rng::from_seed([9; 32]);
+        // Column-major bytes; rows from 2,048 on are zero, for the prefix.
+        let mut db = vec![0u8; rows * cols];
+        for c in 0..cols {
+            for r in 0..D {
+                db[c * rows + r] = rng.next_u32() as u8;
+            }
+        }
+        let hint = hint(&profile.masks, rows, cols, |c| {
+            &db[c * rows..(c + 1) * rows]
+        })
+        .unwrap();
+        assert_eq!(
+            hint,
+            batched_hint::hint(&profile.masks, rows, cols, |c| &db
+                [c * rows..(c + 1) * rows])
+            .unwrap()
+        );
+        let blocks = preprocess(&profile.setup, &hint).unwrap();
+        let published = profile.native.publish(&blocks).unwrap();
+        assert_eq!(published.len(), profile.scheme.public_bytes);
+        let scan = |query: &[u64]| -> Vec<u64> {
+            (0..cols)
+                .map(|c| {
+                    db[c * rows..(c + 1) * rows]
+                        .iter()
+                        .zip(query)
+                        .fold(0u64, |a, (&x, &q)| {
+                            a.wrapping_add((x as u64).wrapping_mul(q))
+                        })
+                        & (Q - 1)
+                })
+                .collect()
+        };
+        for target in [0, 1_234, D - 1] {
+            let expected: Vec<u8> = (0..cols).map(|c| db[c * rows + target]).collect();
+            for (secret, body) in [
+                profile.prepare(target).unwrap(),
+                profile.prepare_prefix(D, target).unwrap(),
+            ] {
+                assert!(profile.accepts_selection_len(D, body.len()));
+                let (keys, query) = profile.parse_selection(&body, D).unwrap();
+                let response = profile.native.pack(&blocks, &keys, &scan(&query)).unwrap();
+                assert_eq!(response.len(), profile.scheme.response_bytes);
+                let row = profile.decode(&secret, &published, &response).unwrap();
+                assert_eq!(row, expected, "target {target}");
+            }
+        }
+        // The 16-bit lengths are refused.
+        assert!(!profile.accepts_request_len(request_len(rows)));
+        assert!(!profile.accepts_request_len(dithered_request_len(rows)));
     }
 
     #[test]

@@ -214,16 +214,17 @@ struct Cli {
 ///
 /// The same formula the server bounds a request with, so a projection here and
 /// a measurement there cannot drift: the binding and the native `K_g` packing
-/// key, which the row count does not move, plus the 44-bit dithered selection
-/// a current wallet sends, which it does. Response and published setup follow
+/// key, which the row count does not move, plus the 8-bit profile's 28-bit
+/// dithered selection a wallet sends, which it does. Response and published setup follow
 /// the row *width* instead and so are equal across every candidate compared
 /// here, which is why only the query is priced.
 fn query_bytes(rows: u64, row_bytes: usize) -> u64 {
+    let native = transparent_native::profile_for("directory");
     assert!(
-        row_bytes.is_multiple_of(transparent_native::INSTANCE_BYTES),
+        row_bytes.is_multiple_of(native.instance_bytes()),
         "a validated geometry has whole instances"
     );
-    (8 + transparent_native::dithered_request_len(rows as usize)) as u64
+    (8 + native.request_len_bits(rows as usize, native.primary_bits())) as u64
 }
 
 fn parse_limit(text: &str) -> Result<Limit, BoxError> {
@@ -1480,12 +1481,14 @@ fn print_sample(shards: &[SealedShard], sample: Option<&HashSet<Vec<u8>>>) {
 /// What one query costs at a table of `rows` rows: upload, response and
 /// published setup per segment, at the native profile wallets use.
 fn prices(directory_rows: u64, page_rows: u64) {
+    let native = transparent_native::profile_for("pages");
+    let blocks = PAGE_ROW_BYTES / native.instance_bytes();
     println!(
         "prices\tdirectory_rows\t{directory_rows}\tdirectory_query\t{}\tpage_rows\t{page_rows}\tpage_query\t{}\tresponse\t{}\tsetup\t{}",
         query_bytes(directory_rows, transparent_shard::DIRECTORY_ROW_BYTES),
         query_bytes(page_rows, PAGE_ROW_BYTES),
-        16 + transparent_native::BLOCK_RESPONSE_BYTES,
-        transparent_native::BLOCK_PUBLIC_BYTES,
+        16 + blocks * native.block_response_bytes(),
+        blocks * native.block_public_bytes(),
     );
 }
 

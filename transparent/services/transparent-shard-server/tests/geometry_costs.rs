@@ -5,30 +5,36 @@
 //! reason the storage and bandwidth sides of a geometry choice can be weighed
 //! against each other at all.
 //!
-//! The numbers pinned below are the native ReinspiRING two-mask m29 profile
-//! (4,096-byte rows, unchanged by schema `transparent-shard-v9`): a 27,648-byte `K_g` packing key and a
-//! 44-bit dithered selection per query, 14,848 bytes of published masks per
-//! segment, and a 5,632-byte response body per segment behind a 16-byte
-//! header. The 49-bit selection that wallets deployed before dithering send,
-//! and that every server still accepts, is pinned beside it. The
-//! earlier SimplePIR P14 figures (96,264 bytes for a 2,048-row query, 14,336
-//! bytes of setup, 5,136 bytes of response) are recorded in
+//! The numbers pinned below are the native ReinspiRING two-mask 8-bit profile
+//! with a one-digit packing key, which the directory and pages use: one byte
+//! per coefficient, so a 4,096-byte row is two 2,048-byte blocks; a
+//! 13,824-byte `K_g` packing key and a 28-bit dithered selection per query,
+//! 11,264 bytes of published masks per block, and a 2,560-byte response body
+//! per block behind a 16-byte header. The 16-bit profile they replaced (a
+//! 27,648-byte key, 44- or 49-bit selections, 14,848 bytes of masks and a
+//! 5,648-byte response) is measured against this one in
+//! `transparent/evidence/p8-trial-2026-10-12/`. The earlier SimplePIR P14
+//! figures (96,264 bytes for a 2,048-row query, 14,336 bytes of setup, 5,136
+//! bytes of response) are recorded in
 //! `transparent/evidence/baselines/shard-utilisation/measurement-v4.json`.
 
-use transparent_native::{
-    dithered_request_len, request_len, BLOCK_PUBLIC_BYTES, BLOCK_RESPONSE_BYTES, KEY_BYTES,
-};
+use transparent_native::Profile;
 use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K, PROFILES};
 use transparent_shard::PAGE_ROW_BYTES;
 use transparent_shard_server::runtime::SharedParams;
 
+/// The profile every history table uses.
+fn native() -> Profile {
+    let profile = transparent_native::profile_for("directory");
+    assert!(profile == transparent_native::profile_for("pages"));
+    profile
+}
+
 /// One table's per-query and per-setup wire cost.
 struct Cost {
     setup: usize,
-    /// The 44-bit dithered query a current wallet sends.
+    /// The 28-bit dithered query a wallet sends.
     query: usize,
-    /// The 49-bit query a wallet deployed before dithering sends.
-    legacy_query: usize,
     response: usize,
     packing_keys: usize,
 }
@@ -50,22 +56,22 @@ fn table_cost(geometry: &Geometry, table: Table) -> Cost {
 }
 
 fn cost(rows: u64, row_bytes: u64) -> Cost {
-    let blocks = row_bytes as usize / transparent_native::INSTANCE_BYTES;
+    let native = native();
+    let blocks = row_bytes as usize / native.instance_bytes();
     Cost {
-        setup: blocks * BLOCK_PUBLIC_BYTES,
+        setup: blocks * native.block_public_bytes(),
         // The revision binding, the packing key, and the selection.
-        query: 8 + dithered_request_len(rows as usize),
-        legacy_query: 8 + request_len(rows as usize),
+        query: 8 + native.request_len_bits(rows as usize, native.primary_bits()),
         // The binding, the parameter epoch, and the response bodies.
-        response: 16 + blocks * BLOCK_RESPONSE_BYTES,
-        packing_keys: KEY_BYTES,
+        response: 16 + blocks * native.block_response_bytes(),
+        packing_keys: native.key_bytes(),
     }
 }
 
 /// Query size grows with the row count; setup and response do not.
 ///
 /// This is what decides the bandwidth half of a geometry choice. Setup is a
-/// function of the row width, so every candidate pays the same 14,848 bytes
+/// function of the row width, so every candidate pays the same 22,528 bytes
 /// per table per segment opened — halving a table buys nothing there. What it
 /// buys is a smaller query, and only for the table that shrank.
 #[test]
@@ -88,37 +94,33 @@ fn a_narrower_table_buys_a_smaller_query_and_nothing_else() {
         assert_eq!(pair[0].response, pair[1].response);
     }
 
-    assert_eq!(costs[0].query, 38_920);
-    assert_eq!(costs[1].query, 50_184);
-    assert_eq!(costs[2].query, 72_712);
-    assert_eq!(costs[0].legacy_query, 40_200);
-    assert_eq!(costs[1].legacy_query, 52_744);
-    assert_eq!(costs[2].legacy_query, 77_832);
-    assert_eq!(costs[0].setup, 14_848);
-    assert_eq!(costs[0].response, 5_648);
+    assert_eq!(costs[0].query, 21_000);
+    assert_eq!(costs[1].query, 28_168);
+    assert_eq!(costs[2].query, 42_504);
+    assert_eq!(costs[0].setup, 22_528);
+    assert_eq!(costs[0].response, 5_136);
 }
 
 /// The packing key is fixed and small; the selection is what the row count
 /// buys.
 ///
-/// 27,648 bytes of every query are the `K_g` key — 71% of a 2,048-row query but
-/// only 38% at 8,192 rows and 7% at 65,536. Unlike the P14 scheme, where 86,016
+/// 13,824 bytes of every query are the `K_g` key — 65% of a 2,048-row query but
+/// only 32% at 8,192 rows and 5% at 65,536. Unlike the P14 scheme, where 86,016
 /// bytes of evaluation keys dominated every geometry, the native profile makes
 /// row count the lever on query cost.
 #[test]
 fn the_selection_outgrows_the_packing_key_as_tables_grow() {
-    for (rows, share) in [(2_048u64, 71), (8_192, 38), (65_536, 7)] {
+    for (rows, share) in [(2_048u64, 65), (8_192, 32), (65_536, 5)] {
         let c = cost(rows, PAGE_ROW_BYTES as u64);
-        assert_eq!(c.packing_keys, 27_648);
+        assert_eq!(c.packing_keys, 13_824);
         assert_eq!(c.packing_keys * 100 / c.query, share, "{rows} rows");
     }
 }
 
 /// Pin the baseline geometry's per-query upload size.
 ///
-/// The decoupled-2k-8k directory has 2,048 rows and uploads 38,920 bytes per
-/// dithered query, or 40,200 per 49-bit one; its page shards have 8,192 rows
-/// and upload 72,712, or 77,832.
+/// The decoupled-2k-8k directory has 2,048 rows and uploads 21,000 bytes per
+/// query; its page shards have 8,192 rows and upload 42,504.
 /// This is a wire-size check, not a complete wallet-sync measurement; see
 /// `transparent/evidence/README.md` for dataset-scoped comparisons.
 #[test]
@@ -130,12 +132,10 @@ fn the_pinned_geometry_costs_what_it_did() {
     // wrong number.
     let directory = table_cost(&DECOUPLED_2K_8K, Table::Directory);
     let pages = table_cost(&DECOUPLED_2K_8K, Table::Pages);
-    assert_eq!(directory.query, 38_920, "directory query");
-    assert_eq!(pages.query, 72_712, "page query");
-    assert_eq!(directory.legacy_query, 40_200, "49-bit directory query");
-    assert_eq!(pages.legacy_query, 77_832, "49-bit page query");
-    assert_eq!(directory.setup, 14_848);
-    assert_eq!(pages.setup, 14_848);
+    assert_eq!(directory.query, 21_000, "directory query");
+    assert_eq!(pages.query, 42_504, "page query");
+    assert_eq!(directory.setup, 22_528);
+    assert_eq!(pages.setup, 22_528);
     // Setup follows the row width, which neither table changed, so widening
     // the row *count* left the per-shard setup exactly where it was.
     assert_eq!(directory.response, pages.response);
@@ -145,21 +145,16 @@ fn the_pinned_geometry_costs_what_it_did() {
 /// what the deployment plan says it does.
 ///
 /// The case for `decoupled-32k-32k` is that a narrower directory keeps
-/// directory-only restoration at 207,880 upload bytes (228,360 at 49 bits)
-/// rather than the 388,104 (429,064) a 65,536-row directory would cost, while
-/// the page table still absorbs dense old history.
+/// directory-only restoration at 128,520 upload bytes rather than the 243,208
+/// a 65,536-row directory would cost, while the page table still absorbs
+/// dense old history.
 #[test]
 fn the_archive_candidates_cost_what_the_plan_claims() {
     let wide = table_cost(&transparent_shard::DECOUPLED_32K_32K, Table::Directory);
-    assert_eq!(wide.query, 207_880, "decoupled-32k-32k directory query");
-    assert_eq!(wide.legacy_query, 228_360, "decoupled-32k-32k 49-bit query");
-    let square = table_cost(&transparent_shard::DECOUPLED_32K_32K, Table::Directory);
-    assert_eq!(square.query, 207_880, "archive-32k directory query");
-    assert_eq!(square.legacy_query, 228_360, "archive-32k 49-bit query");
-    // What a 65,536-row directory would have cost, and the reason neither
-    // candidate has one.
-    assert_eq!(cost(65_536, PAGE_ROW_BYTES as u64).query, 388_104);
-    assert_eq!(cost(65_536, PAGE_ROW_BYTES as u64).legacy_query, 429_064);
+    assert_eq!(wide.query, 128_520, "decoupled-32k-32k directory query");
+    // What a 65,536-row directory would have cost, and the reason the archive
+    // has none.
+    assert_eq!(cost(65_536, PAGE_ROW_BYTES as u64).query, 243_208);
 
     for geometry in PROFILES {
         for table in [Table::Directory, Table::Pages] {
@@ -167,9 +162,9 @@ fn the_archive_candidates_cost_what_the_plan_claims() {
             // Setup and response follow the row *width*, which the registry
             // holds constant, so every geometry pays the same for both and
             // differs only in the query it uploads.
-            assert_eq!(cost.setup, 14_848, "{}", geometry.name);
-            assert_eq!(cost.response, 5_648, "{}", geometry.name);
-            assert_eq!(cost.packing_keys, 27_648, "{}", geometry.name);
+            assert_eq!(cost.setup, 22_528, "{}", geometry.name);
+            assert_eq!(cost.response, 5_136, "{}", geometry.name);
+            assert_eq!(cost.packing_keys, 13_824, "{}", geometry.name);
         }
     }
 }
@@ -186,23 +181,10 @@ fn the_server_enforces_the_costed_sizes() {
         ] {
             let cost = table_cost(geometry, table);
             let shared = SharedParams::build(geometry, server).unwrap();
-            assert_eq!(
-                shared.dithered_query_bytes(),
-                cost.query,
-                "{}",
-                geometry.name
-            );
-            assert_eq!(shared.query_bytes(), cost.legacy_query, "{}", geometry.name);
-            assert_eq!(
-                shared.dithered_scheme().request_bytes + 8,
-                cost.query,
-                "{}",
-                geometry.name
-            );
-            assert!(
-                shared.accepts_query_bytes(shared.profile.rows, cost.query)
-                    && shared.accepts_query_bytes(shared.profile.rows, cost.legacy_query)
-            );
+            assert_eq!(shared.dithered_query_bytes(), None, "{}", geometry.name);
+            assert_eq!(shared.query_bytes(), cost.query, "{}", geometry.name);
+            assert!(shared.accepts_query_bytes(shared.profile.rows, cost.query));
+            assert!(!shared.accepts_query_bytes(shared.profile.rows, cost.query + 1));
             assert_eq!(shared.response_bytes(), cost.response, "{}", geometry.name);
             assert_eq!(
                 shared.scheme().public_bytes,

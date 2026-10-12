@@ -61,32 +61,32 @@ struct Cli {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     if cli.geometry_sweep {
-        // Resident cost is db_rows*db_cols*2 for the encoded database plus the
-        // native two-mask preprocessing (bounded at eight-byte words), which is
-        // d x d*ell per block and so does not follow the row count. With one
-        // block per row, a taller table is nearly free in memory while halving
-        // the shard count -- which is the opposite of how the geometry notes
-        // weigh storage.
+        // Resident cost is the directory's one byte per entry under the 8-bit
+        // profile plus the native two-mask preprocessing (bounded at
+        // eight-byte words), which is d x d*ell per block and so does not
+        // follow the row count. A taller table is nearly free in memory while
+        // halving the shard count -- which is the opposite of how the
+        // geometry notes weigh storage.
         println!(
             "{:>7} {:>8} {:>8} {:>10} {:>10} {:>10} {:>10}",
             "rows", "db_rows", "db_cols", "db MiB", "pack MiB", "total MiB", "query B"
         );
+        let native = transparent_native::profile_for(Table::Directory.as_str());
         for rows in [
             2_048u64, 4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144,
         ] {
             let row_bytes = Table::Directory.row_bytes(&DECOUPLED_2K_8K);
-            let sc = transport_params(rows, row_bytes)?;
-            let db = (sc.db_rows * sc.db_cols * 2) as f64 / 1048576.0;
-            let pack =
-                (reserved_bytes(rows, row_bytes) - rows * u64::from(row_bytes)) as f64 / 1048576.0;
+            let cols = row_bytes as usize / native.entry_bytes();
+            let database = rows * u64::from(row_bytes);
+            let db = database as f64 / 1048576.0;
+            let pack = (reserved_bytes(Table::Directory, rows, row_bytes) - database) as f64
+                / 1048576.0;
             // What a wallet uploads per query: the binding, the K_g key, and
-            // the 44-bit dithered first-dimension query, which is the only
-            // term that follows the row count.
-            let query = 8 + transparent_native::dithered_request_len(sc.db_rows);
+            // the first-dimension query, which is the only term that follows
+            // the row count.
+            let query = 8 + native.request_len_bits(rows as usize, native.primary_bits());
             println!(
-                "{rows:>7} {:>8} {:>8} {db:>10.1} {pack:>10.1} {:>10.1} {query:>10}",
-                sc.db_rows,
-                sc.db_cols,
+                "{rows:>7} {rows:>8} {cols:>8} {db:>10.1} {pack:>10.1} {:>10.1} {query:>10}",
                 db + pack
             );
         }

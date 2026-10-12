@@ -8,7 +8,8 @@
 //!
 //! ```text
 //! identity (32) | sha256 of everything after this header (32)
-//! database: rows u16 per column, column-major, little-endian
+//! database: 16-bit tables: rows u16 per column, column-major, little-endian;
+//!           8-bit tables: the byte kernel's interleaved layout, one byte per entry
 //! published masks: exactly what clients download
 //! reinspiring::prepared_native (RNMAP002), to the end of the file
 //! ```
@@ -34,6 +35,10 @@ use std::path::{Path, PathBuf};
 
 // ipir-sp 1f2aec6 is v0.1.0-rc.6, which pins reinspiring 0.1.2.
 const FORMAT: &[u8] = b"transparent-runtime-v2/native-two-mask-m29/ipir-1f2aec6/reinspiring-0.1.2";
+// The 8-bit tables' database is stored in the byte kernel's interleaved layout
+// of reinspiring 0.1.3-rc.1 (ipir-sp v0.1.0-rc.7).
+const FORMAT_BYTES: &[u8] =
+    b"transparent-runtime-v3/native-two-mask-p8-g27x1/interleaved-u8/ipir-35069f1/reinspiring-0.1.3-rc.1";
 
 /// Identity and checksum.
 const HEADER_BYTES: u64 = 64;
@@ -71,7 +76,11 @@ impl DiskCache {
 
     fn identity(key: &RuntimeKey, shared: &SharedParams, source_sha: &str) -> [u8; 32] {
         let mut hash = Sha256::new();
-        hash.update(FORMAT);
+        hash.update(if shared.transport.is_some() {
+            FORMAT
+        } else {
+            FORMAT_BYTES
+        });
         // These are trusted, locally derived values, serialized only to form a
         // key. The native scheme carries the parameter encoding, every bit
         // width and both setup seeds.
@@ -118,11 +127,13 @@ impl DiskCache {
         *Self::entry_bytes_range(shared).end()
     }
 
-    /// An entry's length with its compiled matrix at four-byte words, the
-    /// counterpart of [`SharedParams::held_bytes`] and what plans charge an
-    /// entry not yet written.
+    /// An entry's planned length: its compiled matrix at four-byte words for
+    /// a two-digit key, eight-byte words for a one-digit key. The counterpart
+    /// of [`SharedParams::held_bytes`] and what plans charge an entry not yet
+    /// written. A nearly empty one-digit table may write a shorter entry,
+    /// down to the range's start.
     pub fn planned_entry_bytes(shared: &SharedParams) -> u64 {
-        *Self::entry_bytes_range(shared).start()
+        Self::fixed_bytes(shared) + shared.profile.prepared_planned_bytes()
     }
 
     pub fn load(
@@ -150,30 +161,15 @@ impl DiskCache {
             },
         );
         let profile = &shared.profile;
-        let mut error = None;
-        let n = profile.rows * profile.cols;
-        // The constructor consumes exactly n logical column-major coefficients
-        // and recreates padding and the locally selected CPU kernel. I/O failures
-        // yield placeholders to satisfy its iterator contract, then fail below.
-        // Every u16 is a canonical plaintext at p = 2^16.
-        let mut buffer = [0u8; 8192];
-        let coefficients = (0..n).map(|index| {
-            let offset = index % (buffer.len() / 2);
-            if offset == 0 && error.is_none() {
-                let count = (n - index).min(buffer.len() / 2);
-                if let Err(e) = reader.read_exact(&mut buffer[..count * 2]) {
-                    error = Some(e);
-                }
-            }
-            if error.is_some() {
-                return 0;
-            }
-            u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]])
-        });
-        let server = super::database_server(shared, coefficients, true);
-        if let Some(error) = error {
-            return Err(error);
-        }
+        let db = if shared.transport.is_none() {
+            // Interleaved bytes, restored as stored; self_check and the
+            // checksum cover them.
+            let mut db = vec![0u8; profile.rows * profile.cols];
+            reader.read_exact(&mut db)?;
+            super::Database::Bytes(db)
+        } else {
+            super::Database::Wide(Self::read_wide(shared, &mut reader)?)
+        };
         let mut public = vec![0u8; shared.scheme().public_bytes];
         reader.read_exact(&mut public)?;
         let mut hash = reader.into_inner().hash;
@@ -196,7 +192,8 @@ impl DiskCache {
             profile.blocks(),
         )
         .map_err(|error| invalid(&error.to_string()))?;
-        let runtime = TableRuntime::assemble(server, preprocessed).map_err(|e| invalid(&e))?;
+        let runtime =
+            TableRuntime::assemble(profile.native, db, preprocessed).map_err(|e| invalid(&e))?;
         if runtime.public_params != public {
             return Err(invalid("runtime cache public mask binding"));
         }
@@ -204,6 +201,40 @@ impl DiskCache {
         // database and mask pages already copied into owned memory are.
         crate::filecache::consumed(&file);
         Ok(runtime)
+    }
+
+    /// A 16-bit table's column-major u16 database, fed straight into the
+    /// server so it is never held twice.
+    fn read_wide(
+        shared: &SharedParams,
+        reader: &mut impl Read,
+    ) -> io::Result<ipir_sp::server::IPIRServer<u16>> {
+        let profile = &shared.profile;
+        let mut error = None;
+        let n = profile.rows * profile.cols;
+        // The constructor consumes exactly n logical column-major coefficients
+        // and recreates padding and the locally selected CPU kernel. I/O failures
+        // yield placeholders to satisfy its iterator contract, then fail below.
+        // Every u16 is a canonical plaintext at p = 2^16.
+        let mut buffer = [0u8; 8192];
+        let coefficients = (0..n).map(|index| {
+            let offset = index % (buffer.len() / 2);
+            if offset == 0 && error.is_none() {
+                let count = (n - index).min(buffer.len() / 2);
+                if let Err(e) = reader.read_exact(&mut buffer[..count * 2]) {
+                    error = Some(e);
+                }
+            }
+            if error.is_some() {
+                return 0;
+            }
+            u16::from_le_bytes([buffer[offset * 2], buffer[offset * 2 + 1]])
+        });
+        let server = super::database_server(shared, coefficients, true);
+        match error {
+            Some(error) => Err(error),
+            None => Ok(server),
+        }
     }
 
     /// The cross-process lock bounds concurrent writes. No active/rollback entry
@@ -279,13 +310,18 @@ impl DiskCache {
                     },
                 ),
             };
-            let rows = shared.profile.rows;
-            let padded = runtime.server.db_rows_padded();
-            for column in 0..shared.profile.cols {
-                writer.words(
-                    &runtime.server.db()[column * padded..column * padded + rows],
-                    u16::to_le_bytes,
-                )?;
+            match &runtime.db {
+                super::Database::Wide(server) => {
+                    let rows = shared.profile.rows;
+                    let padded = server.db_rows_padded();
+                    for column in 0..shared.profile.cols {
+                        writer.words(
+                            &server.db()[column * padded..column * padded + rows],
+                            u16::to_le_bytes,
+                        )?;
+                    }
+                }
+                super::Database::Bytes(db) => writer.bytes(db)?,
             }
             writer.bytes(&runtime.public_params)?;
             reinspiring::prepared_native::write(&mut writer.output, &runtime.preprocessed)?;
@@ -777,10 +813,10 @@ mod tests {
                     start.elapsed(),
                 );
                 assert_eq!(cold.public_params, restored.public_params);
-                assert_eq!(cold.public_params.len(), 14_848);
+                assert_eq!(cold.public_params.len(), shared.scheme().public_bytes);
                 assert_eq!(cold.public_params_sha256, restored.public_params_sha256);
                 assert_eq!(cold.public_params_epoch, restored.public_params_epoch);
-                assert_eq!(cold.server.db(), restored.server.db());
+                assert_eq!(cold.db.to_bytes(), restored.db.to_bytes());
                 let binding = transparent_shard::manifest::query_binding(&key.0, table.as_str());
                 let width = table.row_bytes(geometry) as usize;
                 for selected in [0, table.rows(geometry) as usize - 1] {
@@ -936,7 +972,9 @@ mod cache_integration_tests {
         // The writer's work reservation keeps the bound for serialization
         // scratch; the cache charges the runtime what it holds.
         assert_eq!(cache.resident_bytes(), held);
-        assert!(held < shared.reserved_bytes());
+        // Equal for this 8-bit table of data, whose one-digit matrix needs
+        // eight-byte words.
+        assert!(held <= shared.reserved_bytes());
         assert_eq!(Metrics::get(&metrics.builds), 1);
         // RAII unlock also prevents a test failure from leaving a blocking task
         // stuck during runtime shutdown.
@@ -1348,8 +1386,8 @@ mod shipped_tests {
         let from_a = TableRuntime::build(&a.shared, &a.rows).unwrap();
         let expected = from_a.public_params.clone();
         let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
-        let TableRuntime { server, .. } = from_a;
-        let forged = TableRuntime::assemble(server, from_b.preprocessed).unwrap();
+        let TableRuntime { native, db, .. } = from_a;
+        let forged = TableRuntime::assemble(native, db, from_b.preprocessed).unwrap();
         let from_b = TableRuntime::build(&b.shared, &b.rows).unwrap();
         // The forged database is the segment's, so only its answer can fail.
         for (name, runtime, database_differs) in

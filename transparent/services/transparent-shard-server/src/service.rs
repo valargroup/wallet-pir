@@ -181,12 +181,14 @@ pub struct GeometryInit {
     pub directory_rows: u64,
     pub directory_row_bytes: u32,
     pub directory_scheme: transparent_native::NativeScheme,
-    pub directory_scheme_dq44: transparent_native::NativeScheme,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub directory_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub directory_setup_seed: u64,
     pub page_rows: u64,
     pub page_row_bytes: u32,
     pub pages_scheme: transparent_native::NativeScheme,
-    pub pages_scheme_dq44: transparent_native::NativeScheme,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pages_scheme_dq44: Option<transparent_native::NativeScheme>,
     pub pages_setup_seed: u64,
 }
 
@@ -1012,12 +1014,12 @@ async fn init(State(state): State<ServiceState>) -> Response {
                 directory_rows: geometry.directory_rows,
                 directory_row_bytes: geometry.directory_row_bytes as u32,
                 directory_scheme: directory.scheme().clone(),
-                directory_scheme_dq44: directory.dithered_scheme().clone(),
+                directory_scheme_dq44: directory.dithered_scheme().cloned(),
                 directory_setup_seed: directory.setup_seed,
                 page_rows: geometry.page_rows,
                 page_row_bytes: geometry.page_row_bytes as u32,
                 pages_scheme: pages.scheme().clone(),
-                pages_scheme_dq44: pages.dithered_scheme().clone(),
+                pages_scheme_dq44: pages.dithered_scheme().cloned(),
                 pages_setup_seed: pages.setup_seed,
             }
         })
@@ -1217,27 +1219,11 @@ async fn query_inner(
         .filter(|&len| shared.accepts_query_bytes(query_rows, len))
     else {
         Metrics::incr(&metrics.query_length_rejections);
-        let prefix = if query_rows < shared.profile.rows {
-            format!(
-                ", or {} or {} over its first {query_rows} rows",
-                8 + transparent_native::request_len_bits(
-                    query_rows,
-                    transparent_native::QUERY_BITS
-                ),
-                8 + transparent_native::request_len_bits(
-                    query_rows,
-                    transparent_native::DITHERED_QUERY_BITS
-                ),
-            )
-        } else {
-            String::new()
-        };
         let refused = RequestError::Bad(format!(
-            "a {} query for geometry {} must be exactly {} or {} bytes{prefix}, not {declared}",
+            "a {} query for geometry {} must be exactly {} bytes, not {declared}",
             table.name(),
             shared.geometry.name,
-            shared.query_bytes(),
-            shared.dithered_query_bytes(),
+            shared.query_lengths(query_rows),
         ))
         .into_response(&map_digest);
         return state.refuse_unread(request, refused).await;
