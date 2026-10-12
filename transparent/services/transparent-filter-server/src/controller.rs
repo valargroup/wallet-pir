@@ -102,6 +102,12 @@ struct Inner {
     withdrawn: AtomicBool,
     epoch: AtomicU64,
     publication_gate: std::sync::Mutex<()>,
+    /// The last `/v1/shards/init` answer assembled from the workers, with the
+    /// map it describes. Activation switches the workers to the next map a
+    /// moment before the public pointer moves; in that window no worker
+    /// answers for the active map, and this answer, built for that same map,
+    /// is served instead of a 503.
+    last_init: std::sync::Mutex<Option<(String, serde_json::Value)>>,
     status: RwLock<serde_json::Value>,
     http: reqwest::Client,
     observed: RwLock<BTreeMap<u64, std::time::Instant>>,
@@ -391,6 +397,7 @@ pub async fn run(config: Config) -> Result<(), BoxError> {
         withdrawn: AtomicBool::new(true),
         epoch: AtomicU64::new(0),
         publication_gate: std::sync::Mutex::new(()),
+        last_init: std::sync::Mutex::new(None),
         status: RwLock::new(serde_json::json!({"phase":"starting"})),
         observed: RwLock::new(BTreeMap::new()),
         http: reqwest::Client::builder()
@@ -912,6 +919,26 @@ async fn publish_once(
     Ok(())
 }
 
+/// A public request the authority cannot answer consistently right now. The
+/// `retry-after` makes wallets retry it shortly instead of failing the sync.
+fn unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [("retry-after", "1"), ("cache-control", "no-store")],
+    )
+        .into_response()
+}
+
+/// The last assembled `/v1/shards/init` answer, if it describes `map`.
+fn init_for_map(
+    last: &Option<(String, serde_json::Value)>,
+    map: &str,
+) -> Option<serde_json::Value> {
+    last.as_ref()
+        .filter(|(last_map, _)| last_map == map)
+        .map(|(_, value)| value.clone())
+}
+
 async fn public_request(State(authority): State<Authority>, request: Request) -> Response {
     let path = request.uri().path();
     let epoch = authority.0.epoch.load(Ordering::Acquire);
@@ -1042,7 +1069,7 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                         for geometry in entries {
                             if let Some(name) = geometry["name"].as_str() {
                                 if geometries.get(name).is_some_and(|old| old != geometry) {
-                                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                                    return unavailable();
                                 }
                                 geometries.insert(name.to_string(), geometry.clone());
                             }
@@ -1055,16 +1082,24 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
                 }
             }
         }
-        if expected.iter().all(|name| geometries.contains_key(name))
-            && !authority.0.withdrawn.load(Ordering::Acquire)
-            && authority.0.epoch.load(Ordering::Acquire) == epoch
+        if authority.0.withdrawn.load(Ordering::Acquire)
+            || authority.0.epoch.load(Ordering::Acquire) != epoch
         {
-            if let Some(mut value) = init {
-                value["geometries"] = serde_json::Value::Array(geometries.into_values().collect());
-                return ([("cache-control", "no-cache")], axum::Json(value)).into_response();
-            }
+            return unavailable();
         }
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        let map = active.publication.map_sha256.as_str();
+        let value = match init {
+            Some(mut value) if expected.iter().all(|name| geometries.contains_key(name)) => {
+                value["geometries"] = serde_json::Value::Array(geometries.into_values().collect());
+                *authority.0.last_init.lock().unwrap() = Some((map.to_owned(), value.clone()));
+                value
+            }
+            _ => match init_for_map(&authority.0.last_init.lock().unwrap(), map) {
+                Some(value) => value,
+                None => return unavailable(),
+            },
+        };
+        return ([("cache-control", "no-cache")], axum::Json(value)).into_response();
     } else {
         let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
         match parts.as_slice() {
@@ -1102,7 +1137,7 @@ async fn public_request(State(authority): State<Authority>, request: Request) ->
     if authority.0.withdrawn.load(Ordering::Acquire)
         || authority.0.epoch.load(Ordering::Acquire) != epoch
     {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        return unavailable();
     }
     match body {
         Some((content_type, body)) => (
@@ -1151,6 +1186,33 @@ fn collect_candidates(config: &Config, authority: &Authority) -> Result<(), BoxE
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn init_is_served_from_the_last_answer_only_for_the_same_map() {
+        let last = Some((
+            "old-map".to_owned(),
+            serde_json::json!({"map_sha256":"old-map"}),
+        ));
+        // Mid-activation the public pointer still names the old map, so the
+        // answer built for it stands in for the workers that moved on.
+        assert_eq!(
+            super::init_for_map(&last, "old-map"),
+            Some(serde_json::json!({"map_sha256":"old-map"}))
+        );
+        // Once the pointer moves, an answer for another map is never served.
+        assert_eq!(super::init_for_map(&last, "new-map"), None);
+        assert_eq!(super::init_for_map(&None, "old-map"), None);
+    }
+
+    #[test]
+    fn unavailable_asks_wallets_to_retry() {
+        let response = super::unavailable();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(response.headers()["retry-after"], "1");
+    }
 
     #[test]
     fn ready_replicas_follow_a_fresh_membership_record_only() {
