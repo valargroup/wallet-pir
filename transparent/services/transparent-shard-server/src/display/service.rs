@@ -82,7 +82,7 @@ impl DisplayRuntime {
         if let Some(shared) = params.get(&(geometry.name, table)) {
             return Ok(shared.clone());
         }
-        let shared = Arc::new(SharedParams::build(geometry, table)?);
+        let shared = Arc::new(SharedParams::build_display(geometry, table)?);
         params.insert((geometry.name, table), shared.clone());
         Ok(shared)
     }
@@ -787,7 +787,7 @@ async fn init(State(state): State<DisplayState>) -> Response {
         schema: display::DISPLAY_SCHEMA.into(),
         codec: transparent_shard::txid::CODEC.into(),
         bucket_domain: String::from_utf8_lossy(display::BUCKET_DOMAIN).into_owned(),
-        native_schema: transparent_shard::manifest::SCHEMA.into(),
+        native_schema: transparent_shard::display::NATIVE_SCHEMA.into(),
         network: set.map.network.clone(),
         genesis_hash: set.map.genesis_hash.clone(),
         map_sha256: set.map_digest.clone(),
@@ -1258,7 +1258,7 @@ mod tests {
     /// refuse lookups with 503.
     #[test]
     fn a_recent_rebuild_admits_concurrent_lookups_on_the_combined_worker() {
-        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let reserved = shared.reserved_bytes();
         assert_eq!(
             reserved, 151_090_272,

@@ -1183,22 +1183,28 @@ fn differential_vs_published_tables() {
 fn setup_seed_golden_matches_server() {
     let _serial = serial();
     use transparent_shard_server::display::kind;
-    use transparent_shard_server::shardset::setup_seed;
+    use transparent_shard_server::runtime::SharedParams;
     let golden = [
         (
             "txid-2k8",
             DisplayTable::Directory(0),
-            0x04fa_b978_5ce5_c875_u64,
+            0xd56b_6038_d7ca_811f_u64,
         ),
         (
             "txid-2k8",
             DisplayTable::Directory(3),
-            0x04fa_b978_5ce5_c875,
+            0xd56b_6038_d7ca_811f,
         ),
     ];
     for (name, table, seed) in golden {
         let geometry = display::display_by_name(name).unwrap();
-        assert_eq!(setup_seed(geometry, kind(table)), seed);
+        // The server's display parameters, under display's frozen native schema.
+        assert_eq!(
+            SharedParams::build_display(geometry, kind(table))
+                .unwrap()
+                .setup_seed,
+            seed
+        );
         assert_eq!(display::setup_seed(geometry, table.kind()), seed);
         assert_eq!(kind(table).as_str(), table.kind().as_str());
         assert_eq!(kind(table).rows(geometry), table.kind().rows(geometry));
@@ -1219,7 +1225,7 @@ fn setup_seed_golden_matches_server() {
         .unwrap();
     assert_eq!(
         geometry["txdirectory"]["setup_seed"],
-        0x04fa_b978_5ce5_c875_u64
+        0xd56b_6038_d7ca_811f_u64
     );
     assert_eq!(geometry["txdirectory"]["row_bytes"], 8_192);
     assert!(geometry.get("txpages").is_none(), "{geometry}");

@@ -213,25 +213,33 @@ pub struct ParsedQuery {
 }
 
 impl SharedParams {
+    /// A history table's parameters, under the history schema.
     pub fn build(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
+        Self::build_in(transparent_shard::manifest::SCHEMA, geometry, table)
+    }
+
+    /// A display table's parameters, under the frozen display native schema.
+    pub fn build_display(geometry: &'static Geometry, table: Table) -> Result<Self, String> {
+        Self::build_in(transparent_shard::display::NATIVE_SCHEMA, geometry, table)
+    }
+
+    fn build_in(schema: &str, geometry: &'static Geometry, table: Table) -> Result<Self, String> {
         let rows = table.rows(geometry);
         let row_bytes = table.row_bytes(geometry);
         Ok(Self {
             geometry,
             table,
-            profile: TableProfile::new(
-                transparent_shard::manifest::SCHEMA,
-                geometry.name,
-                table.as_str(),
-                rows,
-                row_bytes,
-            )?,
+            profile: TableProfile::new(schema, geometry.name, table.as_str(), rows, row_bytes)?,
             transport: if native::profile_for(table.as_str()) == native::P16 {
                 Some(transport_params(rows, row_bytes)?)
             } else {
                 None
             },
-            setup_seed: crate::shardset::setup_seed(geometry, table),
+            setup_seed: transparent_shard::display::setup_seed_in(
+                schema,
+                geometry.name,
+                table.as_str(),
+            ),
         })
     }
 
@@ -1472,7 +1480,7 @@ pub(crate) mod tests {
     /// formula leaves out.
     #[test]
     fn the_planned_built_size_is_the_measured_display_runtime() {
-        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let (reserved, held) = (shared.reserved_bytes(), shared.held_bytes());
         assert_eq!((reserved, held), (151_090_272, 83_981_408));
         assert_eq!(
@@ -1534,7 +1542,7 @@ pub(crate) mod tests {
     /// charge fall, never rise, and eviction returns exactly what is charged.
     #[test]
     fn a_reservation_is_released_only_after_its_build_and_only_downward() {
-        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let (bound, held) = (shared.reserved_bytes(), shared.held_bytes());
         let metrics = Arc::new(Metrics::default());
         let cache = RuntimeCache::new(bound + held, 2, metrics.clone());
@@ -1666,7 +1674,7 @@ pub(crate) mod tests {
             }
         }
         for geometry in DISPLAY_PROFILES {
-            every.push(SharedParams::build(geometry, Table::TxDirectory).unwrap());
+            every.push(SharedParams::build_display(geometry, Table::TxDirectory).unwrap());
         }
         for shared in &every {
             let excess = shared.reserved_bytes() - shared.held_bytes();
@@ -1701,7 +1709,7 @@ pub(crate) mod tests {
     /// `MemoryMax`.
     #[test]
     fn genesis_display_runtimes_fit_at_their_built_size() {
-        let shared = SharedParams::build(&TXID_2K8, Table::TxDirectory).unwrap();
+        let shared = SharedParams::build_display(&TXID_2K8, Table::TxDirectory).unwrap();
         let gib = |bytes: u64| bytes as f64 / f64::from(1 << 30);
         let runtimes = std::iter::repeat_n(&shared, GENESIS_RUNTIMES);
         let needed = warm_bytes(runtimes, 4);

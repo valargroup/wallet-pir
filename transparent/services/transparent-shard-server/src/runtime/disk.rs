@@ -1181,7 +1181,7 @@ mod shipped_tests {
     /// A `txid-2k8` segment of `table` whose first `filled` rows hold bytes
     /// drawn from `seed`, written under `dir`.
     fn segment(dir: &Path, table: Table, filled: usize, seed: usize) -> Segment {
-        let shared = Arc::new(SharedParams::build(&TXID_2K8, table).unwrap());
+        let shared = Arc::new(SharedParams::build_display(&TXID_2K8, table).unwrap());
         let profile = &shared.profile;
         let mut rows = vec![0u8; profile.rows * profile.row_bytes];
         for (i, byte) in rows[..filled * profile.row_bytes].iter_mut().enumerate() {

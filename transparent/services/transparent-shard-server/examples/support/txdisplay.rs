@@ -464,7 +464,7 @@ impl DisplayClient {
                 let supported = document.schema == display::DISPLAY_SCHEMA
                     && document.codec == txid::CODEC
                     && document.bucket_domain.as_bytes() == display::BUCKET_DOMAIN
-                    && document.native_schema == transparent_shard::manifest::SCHEMA;
+                    && document.native_schema == transparent_shard::display::NATIVE_SCHEMA;
                 Ok(Arc::new(Init {
                     supported,
                     geometries: document
@@ -531,7 +531,7 @@ impl DisplayClient {
                     // and table name. Only the binding is display-specific.
                     let profile = Arc::new(
                         TableProfile::new(
-                            transparent_shard::manifest::SCHEMA,
+                            transparent_shard::display::NATIVE_SCHEMA,
                             geometry.name,
                             table.as_str(),
                             table.rows(geometry),

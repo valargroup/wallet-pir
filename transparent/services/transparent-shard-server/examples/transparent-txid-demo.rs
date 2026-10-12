@@ -691,7 +691,7 @@ async fn run_range(
             }
             // A query bound to another revision is refused.
             let profile = transparent_native::TableProfile::new(
-                transparent_shard::manifest::SCHEMA,
+                transparent_shard::display::NATIVE_SCHEMA,
                 TXID_2K8.name,
                 "txdirectory",
                 TXID_2K8.directory_rows,

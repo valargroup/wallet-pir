@@ -128,7 +128,7 @@ async fn a_recent_replica_serves_shipped_runtimes_and_falls_back_per_file() {
     let revision = set.held(&recent.digest).unwrap();
     let view = ShippedRuntimes::new(dir.clone());
     for (table, segment) in &targets {
-        let shared = SharedParams::build(&TXID_2K8, kind(*table)).unwrap();
+        let shared = SharedParams::build_display(&TXID_2K8, kind(*table)).unwrap();
         let source = revision.segment(*table, *segment).unwrap();
         let rows = source.load().unwrap();
         let local = TableRuntime::build(&shared, &rows).unwrap();

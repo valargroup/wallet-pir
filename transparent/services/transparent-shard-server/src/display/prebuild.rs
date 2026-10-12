@@ -51,7 +51,7 @@ pub fn build_shipped(revision_dir: &Path, out_dir: &Path) -> Result<Vec<Shipped>
         let shared = match params.entry(kind) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
-                entry.insert(SharedParams::build(revision.geometry, kind)?)
+                entry.insert(SharedParams::build_display(revision.geometry, kind)?)
             }
         };
         let shared = &*shared;

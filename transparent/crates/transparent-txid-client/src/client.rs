@@ -559,7 +559,7 @@ impl TxidDisplayClient {
         let supported = document.schema == display::DISPLAY_SCHEMA
             && document.codec == txid::CODEC
             && document.bucket_domain.as_bytes() == display::BUCKET_DOMAIN
-            && document.native_schema == transparent_shard::manifest::SCHEMA;
+            && document.native_schema == display::NATIVE_SCHEMA;
         let init = Arc::new(Init {
             supported,
             geometries: document
@@ -733,11 +733,11 @@ impl TxidDisplayClient {
         let profile = match cached {
             Some(profile) => profile,
             None => {
-                // The native profile is the history kind's: history schema
-                // and table name. Only the binding is display-specific.
+                // The native profile is the history kind's at display's frozen
+                // native schema. Only the binding is display-specific.
                 let profile = Arc::new(
                     TableProfile::new(
-                        transparent_shard::manifest::SCHEMA,
+                        display::NATIVE_SCHEMA,
                         geometry.name,
                         kind.as_str(),
                         kind.rows(geometry),
@@ -955,7 +955,7 @@ mod tests {
                 "schema": display::DISPLAY_SCHEMA,
                 "codec": codec,
                 "bucket_domain": std::str::from_utf8(display::BUCKET_DOMAIN).unwrap(),
-                "native_schema": transparent_shard::manifest::SCHEMA,
+                "native_schema": display::NATIVE_SCHEMA,
                 "geometries": [],
             })
             .to_string()

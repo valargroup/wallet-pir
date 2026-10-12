@@ -106,7 +106,7 @@ fn init() -> Vec<u8> {
         "schema": DISPLAY_SCHEMA,
         "codec": transparent_shard::txid::CODEC,
         "bucket_domain": std::str::from_utf8(transparent_shard::display::BUCKET_DOMAIN).unwrap(),
-        "native_schema": transparent_shard::manifest::SCHEMA,
+        "native_schema": transparent_shard::display::NATIVE_SCHEMA,
         "geometries": [{
             "name": "txid-2k8",
             "txdirectory": {"rows": 0, "row_bytes": 0, "scheme": scheme, "setup_seed": 0},

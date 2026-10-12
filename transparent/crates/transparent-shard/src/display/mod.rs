@@ -50,6 +50,13 @@ pub const DISPLAY_SCHEMA: &str = "transparent-txid-display-shard-v3";
 pub const BUCKET_DOMAIN: &[u8] = b"transparent-txid-display/bucket/v2";
 /// Upper bound on buckets per shard; a decoder bound, not a target.
 pub const MAX_BUCKETS: u32 = 64;
+/// The native profile and setup seeds of every display table are derived
+/// under this name, frozen at the history schema display was first published
+/// with. History schema changes move history's native parameters, never
+/// display's: wallets pinned to an older history client keep reading display
+/// tables served by a newer build, and `/v2/txid/init` publishes this name as
+/// its `native_schema`.
+pub const NATIVE_SCHEMA: &str = "transparent-shard-v11";
 
 /// The bucket of the entry tagged `tag` among `n_buckets`.
 pub fn bucket(tag: &Tag, n_buckets: u32) -> u32 {
@@ -167,8 +174,14 @@ impl DisplayKind {
 /// Domain-separated by the history schema string, so a future schema reusing
 /// these names does not reuse their seeds.
 pub fn setup_seed_named(geometry_name: &str, table: &str) -> u64 {
+    setup_seed_in(crate::manifest::SCHEMA, geometry_name, table)
+}
+
+/// [`setup_seed_named`] under `schema`: the history schema for history
+/// tables, [`NATIVE_SCHEMA`] for display tables.
+pub fn setup_seed_in(schema: &str, geometry_name: &str, table: &str) -> u64 {
     let digest = Sha256::new()
-        .chain_update(crate::manifest::SCHEMA.as_bytes())
+        .chain_update(schema.as_bytes())
         .chain_update(b"/setup-seed\0")
         .chain_update(geometry_name.as_bytes())
         .chain_update(b"\0")
@@ -178,9 +191,9 @@ pub fn setup_seed_named(geometry_name: &str, table: &str) -> u64 {
 }
 
 /// The setup seed of a display table kind at `geometry`, as `/v2/txid/init`
-/// publishes it.
+/// publishes it: derived under [`NATIVE_SCHEMA`], whatever history's schema.
 pub fn setup_seed(geometry: &Geometry, kind: DisplayKind) -> u64 {
-    setup_seed_named(geometry.name, kind.as_str())
+    setup_seed_in(NATIVE_SCHEMA, geometry.name, kind.as_str())
 }
 
 /// Binds a query to one revision and one table, buckets included, so a body
@@ -222,7 +235,7 @@ mod tests {
     fn setup_seeds_are_golden() {
         assert_eq!(
             setup_seed(&TXID_2K8, DisplayKind::TxDirectory),
-            0x04fa_b978_5ce5_c875
+            0xd56b_6038_d7ca_811f
         );
         assert_eq!(DisplayTable::Directory(5).kind(), DisplayKind::TxDirectory);
     }
