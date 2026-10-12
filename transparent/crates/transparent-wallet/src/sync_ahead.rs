@@ -37,8 +37,9 @@
 //!
 //! When requests are sent. The service sees a pass's manifests and setups
 //! together, then its directory queries together, instead of interleaved with
-//! commits. Page work is not batched: which pages a script needs is known only
-//! after its directory entry decodes.
+//! commits. Page work is not looked ahead: which pages a script needs is known
+//! only after its directory entry decodes. The chain walk batches each of its
+//! own rounds instead, across every script it walks.
 //!
 //! Requests the walk ends up not using are extra on the wire. If the walk stops
 //! or restarts before a shard it looked ahead to — an exhausted overload
@@ -324,7 +325,11 @@ pub(super) fn look_ahead<S: WalletStore, F: FilterSource, T: ShardTransport>(
             let open = clients
                 .prepared
                 .get(&entry.geometry)
-                .is_some_and(|prepared| prepared.directory.is_open(revision, segment));
+                .is_some_and(|prepared| {
+                    prepared
+                        .directory
+                        .is_open(revision, Table::Directory, segment)
+                });
             let key = SetupKey {
                 set_digest: set_digest.clone(),
                 revision_digest: revision.to_string(),
@@ -415,10 +420,11 @@ pub(super) fn look_ahead<S: WalletStore, F: FilterSource, T: ShardTransport>(
             };
             for &row in queried {
                 let (_, within) = transparent_shard::layout::split_row(row, layout.directory_rows);
-                let Ok(query) = prepared
-                    .directory
-                    .prepare(&entry.manifest_digest, within as usize)
-                else {
+                let Ok(query) = prepared.directory.prepare(
+                    &entry.manifest_digest,
+                    Table::Directory,
+                    within as usize,
+                ) else {
                     break 'shards;
                 };
                 queries.push(Ahead {
@@ -464,6 +470,7 @@ pub(super) fn look_ahead<S: WalletStore, F: FilterSource, T: ShardTransport>(
         if let Some(prepared) = clients.prepared.get_mut(&ahead.geometry) {
             prepared.directory.stash(
                 revision,
+                Table::Directory,
                 ahead.row,
                 ahead.query,
                 reply.map(|(bytes, _)| bytes),

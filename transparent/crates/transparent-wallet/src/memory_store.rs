@@ -31,6 +31,8 @@ struct State {
     pending: BTreeMap<u64, PendingPages>,
     next_pending: u64,
     setups: BTreeMap<SetupKey, SetupBlob>,
+    /// Run histories by page shard identity and script.
+    runs: BTreeMap<(String, Vec<u8>), Vec<TransparentEvent>>,
     filters: BTreeMap<String, (String, bool, Vec<u8>)>,
     commits: u64,
 }
@@ -215,6 +217,19 @@ impl WalletStore for MemoryStore {
         if pending_after > limit {
             return Err(StoreError::PendingLimit { limit });
         }
+        for run in &commit.cached_runs {
+            if self
+                .state
+                .runs
+                .get(&(run.child_digest.clone(), run.script.clone()))
+                .is_some_and(|held| *held != run.events)
+            {
+                return Err(StoreError::Corrupt(format!(
+                    "page shard {} holds two histories for one script",
+                    run.child_digest
+                )));
+            }
+        }
 
         for (key, event) in new_receives {
             self.state.receives.insert(key, event);
@@ -268,6 +283,11 @@ impl WalletStore for MemoryStore {
         }
         for id in &commit.pending_complete {
             self.state.pending.remove(id);
+        }
+        for run in commit.cached_runs {
+            self.state
+                .runs
+                .insert((run.child_digest, run.script), run.events);
         }
         for mut pending in commit.pending_upsert {
             let id = match pending.id {
@@ -328,6 +348,11 @@ impl WalletStore for MemoryStore {
                 true
             });
         }
+        // A cached history above the cut rests on a page shard the chain may
+        // no longer hold; its identity would not recur, but it is not kept.
+        self.state
+            .runs
+            .retain(|_, events| events.iter().all(|event| Self::height_of(event) <= height));
         // All pending retrievals are inexpensive to re-plan and may contain old-branch data.
         self.state.pending.clear();
         if let Some(anchor) = &mut self.state.anchor {
@@ -368,6 +393,18 @@ impl WalletStore for MemoryStore {
 
     fn pending(&self) -> Result<Vec<PendingPages>, StoreError> {
         Ok(self.state.pending.values().cloned().collect())
+    }
+
+    fn cached_run(
+        &self,
+        child_digest: &str,
+        script: &[u8],
+    ) -> Result<Option<Vec<TransparentEvent>>, StoreError> {
+        Ok(self
+            .state
+            .runs
+            .get(&(child_digest.to_string(), script.to_vec()))
+            .cloned())
     }
 
     fn pending_limit(&self) -> usize {

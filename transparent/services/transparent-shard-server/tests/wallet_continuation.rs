@@ -11,7 +11,7 @@ use common::*;
 use std::path::Path;
 use transparent_events::{ReceiveEvent, TransparentEvent};
 use transparent_filter::{ScriptBytes, ShardMap};
-use transparent_shard::layout::{RECENT_4K, RECENT_8K};
+use transparent_shard::layout::{DECOUPLED_2K_8K};
 use transparent_wallet::client::Table;
 use transparent_wallet::http::{HttpOptions, HttpShardTransport};
 use transparent_wallet::store::{
@@ -738,7 +738,7 @@ async fn a_superseded_provisional_tail_is_truncated_and_replayed_not_appended() 
     let map_b = publish_with(
         dir_b.path(),
         &after,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         1,
         &map_a.shards[3].manifest_digest,
         hash_at,
@@ -818,9 +818,9 @@ async fn a_reorg_below_the_tier_boundary_rewinds_to_the_accepted_ancestor() {
     let all = chain();
     let two_tier = |shard: u64| -> &'static transparent_shard::layout::Geometry {
         if shard < 2 {
-            &RECENT_4K
+            &DECOUPLED_2K_8K
         } else {
-            &RECENT_8K
+            &DECOUPLED_2K_8K
         }
     };
     let dir_a = tempfile::tempdir().unwrap();

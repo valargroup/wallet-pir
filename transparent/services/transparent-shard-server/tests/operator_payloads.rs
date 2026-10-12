@@ -48,14 +48,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tower::ServiceExt;
 use transparent_events::{ReceiveEvent, TransparentEvent, Txid};
-use transparent_filter::{
-    filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
-};
-use transparent_shard::build::build_shard;
-use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
-};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+#[path = "support/revision.rs"]
+mod revision;
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 
@@ -65,7 +61,7 @@ const SPAN: u64 = 40;
 
 /// The two cheapest registry geometries. A wider pair would say nothing more
 /// about the payload shape and would cost megabytes per table to hash.
-const GEOMETRIES: [&Geometry; 2] = [&RECENT_4K, &RECENT_8K];
+const GEOMETRIES: [&Geometry; 2] = [&DECOUPLED_2K_8K, &DECOUPLED_2K_8K];
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -126,112 +122,26 @@ fn write_shard(
     let start = FIRST + shard_id * SPAN;
     let end = start + SPAN - 1;
     let content = events(start, end);
-    let built = build_shard(
-        shard_id,
-        start,
-        end,
-        genesis(),
-        hash_at(end),
-        transparent_filter::RANGE_PROFILE,
-        geometry,
+    revision::write(
+        dir,
+        &revision::Revision {
+            shard_id,
+            start,
+            end,
+            geometry,
+            sealed,
+            revision: 0,
+            supersedes: "",
+            parent_digest: parent_manifest_digest,
+            children: 1,
+            genesis: genesis(),
+            hash: &hash_at,
+        },
         &content,
     )
-    .expect("build");
-
-    let table_geometry = |segments: &[Vec<u8>], rows: u64, row_bytes: u32| {
-        segments
-            .iter()
-            .map(|segment| TableGeometry {
-                rows,
-                row_bytes,
-                sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-            })
-            .collect::<Vec<_>>()
-    };
-
-    let manifest = ShardManifest {
-        schema: SCHEMA.to_string(),
-        profile: transparent_filter::RANGE_PROFILE.to_string(),
-        geometry: geometry.name.to_string(),
-        network: transparent_filter::NETWORK.to_string(),
-        genesis_hash: GENESIS.to_string(),
-        shard_id,
-        start_height: start,
-        end_height: end,
-        parent_block_hash: hash_at(start - 1).to_display_hex(),
-        terminal_block_hash: hash_at(end).to_display_hex(),
-        tag_salt_counter: built.tag_salt_counter,
-        parent_manifest_digest: parent_manifest_digest.to_string(),
-        sealed,
-        revision: 0,
-        supersedes: String::new(),
-        seal: ManifestSeal {
-            scripts_target: 8_192,
-            scripts_capacity: 16_384,
-            page_rows_target: 2_048,
-            page_rows_capacity: 4_096,
-        },
-        layout: ManifestLayout {
-            max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-            inline_events: transparent_shard::INLINE_EVENTS,
-            events_per_page: transparent_shard::EVENTS_PER_PAGE,
-            page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-            page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-            directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-        },
-        filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-        directory_segments: table_geometry(
-            &built.directory,
-            geometry.directory_rows,
-            geometry.directory_row_bytes as u32,
-        ),
-        page_segments: table_geometry(
-            &built.pages,
-            geometry.page_rows,
-            geometry.page_row_bytes as u32,
-        ),
-        occupancy: ManifestOccupancy {
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            fragments: built.fragments,
-            events: built.events,
-            blocks: SPAN,
-            txids: 0,
-            excluded_scripts: built.excluded_scripts,
-        },
-        directory_choice: None,
-    };
-
-    let digest = manifest.digest();
-    let shard_dir = dir.join(&digest);
-    std::fs::create_dir_all(&shard_dir).unwrap();
-    std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-    std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-    for (index, segment) in built.directory.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
-    }
-    for (index, segment) in built.pages.iter().enumerate() {
-        std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
-    }
-
-    ShardMapEntry {
-        shard_id,
-        geometry: geometry.name.to_string(),
-        start_height: start,
-        end_height: end,
-        parent_block_hash: manifest.parent_block_hash.clone(),
-        terminal_block_hash: manifest.terminal_block_hash.clone(),
-        filter_hash: manifest.filter_hash.clone(),
-        scripts: built.scripts,
-        page_rows: built.page_rows,
-        txids: 0,
-        directory_segments: built.directory_segments(),
-        page_segments: built.page_segments(),
-        manifest_digest: digest,
-        revision: manifest.revision,
-        sealed,
-    }
+    .1
 }
+
 
 /// Publishes a two-geometry set: an earlier sealed shard, then an unsealed tail.
 ///

@@ -10,18 +10,17 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use std::path::Path;
 use tower::ServiceExt;
-use transparent_filter::{filter_hash, BlockHash, ScriptBytes, ShardMap, ShardMapEntry};
-use transparent_shard::build::build_shard;
-use transparent_shard::layout::{Geometry, RECENT_8K};
-use transparent_shard::manifest::{
-    query_binding, ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry,
-    SCHEMA,
-};
+#[path = "support/revision.rs"]
+mod revision;
+
+use transparent_filter::{BlockHash, ScriptBytes, ShardMap};
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
+use transparent_shard::manifest::{query_binding, ShardManifest};
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
-use transparent_shard_server::shardset::{ShardSet, Table, DEFAULT_RETAIN_REVISIONS};
+use transparent_shard_server::shardset::{ShardSet, Table, TableRef, DEFAULT_RETAIN_REVISIONS};
 
 /// The geometry this fixture publishes at.
-const GEOMETRY: Geometry = RECENT_8K;
+const GEOMETRY: Geometry = DECOUPLED_2K_8K;
 
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const SHARDS: u64 = 3;
@@ -54,7 +53,6 @@ fn publish(dir: &Path) -> ShardMap {
     for shard_id in 0..SHARDS {
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
-        let terminal = hash_at(end);
 
         let mut events = Vec::new();
         for tag in 0..40u32 {
@@ -81,108 +79,26 @@ fn publish(dir: &Path) -> ShardMap {
             }
         }
 
-        let built = build_shard(
-            shard_id,
-            start,
-            end,
-            genesis(),
-            terminal,
-            transparent_filter::RANGE_PROFILE,
-            &GEOMETRY,
+        let sealed = shard_id + 1 < SHARDS;
+        let (_, entry) = revision::write(
+            dir,
+            &revision::Revision {
+                shard_id,
+                start,
+                end,
+                geometry: &GEOMETRY,
+                sealed,
+                revision: 0,
+                supersedes: "",
+                parent_digest: &parent_digest,
+                children: 1,
+                genesis: genesis(),
+                hash: &hash_at,
+            },
             &events,
-        )
-        .expect("build");
-
-        let manifest = ShardManifest {
-            schema: SCHEMA.to_string(),
-            profile: transparent_filter::RANGE_PROFILE.to_string(),
-            geometry: GEOMETRY.name.to_string(),
-            network: transparent_filter::NETWORK.to_string(),
-            genesis_hash: GENESIS.to_string(),
-            shard_id,
-            start_height: start,
-            end_height: end,
-            parent_block_hash: hash_at(start - 1).to_display_hex(),
-            terminal_block_hash: terminal.to_display_hex(),
-            tag_salt_counter: built.tag_salt_counter,
-            parent_manifest_digest: parent_digest.clone(),
-            sealed: shard_id + 1 < SHARDS,
-            revision: 0,
-            supersedes: String::new(),
-            seal: ManifestSeal {
-                scripts_target: 8_192,
-                scripts_capacity: 16_384,
-                page_rows_target: 2_048,
-                page_rows_capacity: 4_096,
-            },
-            layout: ManifestLayout {
-                max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-                inline_events: transparent_shard::INLINE_EVENTS,
-                events_per_page: transparent_shard::EVENTS_PER_PAGE,
-                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-                directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-            },
-            filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory_segments: built
-                .directory
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: GEOMETRY.directory_rows,
-                    row_bytes: GEOMETRY.directory_row_bytes as u32,
-                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-                })
-                .collect(),
-            page_segments: built
-                .pages
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: GEOMETRY.page_rows,
-                    row_bytes: GEOMETRY.page_row_bytes as u32,
-                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-                })
-                .collect(),
-            occupancy: ManifestOccupancy {
-                scripts: built.scripts,
-                page_rows: built.page_rows,
-                fragments: built.fragments,
-                events: built.events,
-                blocks: SPAN,
-                txids: 0,
-                excluded_scripts: built.excluded_scripts,
-            },
-            directory_choice: None,
-        };
-
-        let digest = manifest.digest();
-        let shard_dir = dir.join(&digest);
-        std::fs::create_dir_all(&shard_dir).unwrap();
-        std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-        std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-        for (index, segment) in built.directory.iter().enumerate() {
-            std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
-        }
-        for (index, segment) in built.pages.iter().enumerate() {
-            std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
-        }
-
-        entries.push(ShardMapEntry {
-            shard_id,
-            geometry: GEOMETRY.name.to_string(),
-            start_height: start,
-            end_height: end,
-            parent_block_hash: manifest.parent_block_hash.clone(),
-            terminal_block_hash: manifest.terminal_block_hash.clone(),
-            filter_hash: manifest.filter_hash.clone(),
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            txids: 0,
-            directory_segments: built.directory_segments(),
-            page_segments: built.page_segments(),
-            manifest_digest: digest.clone(),
-            revision: 0,
-            sealed: manifest.sealed,
-        });
+        );
+        let digest = entry.manifest_digest.clone();
+        entries.push(entry);
         parent_digest = digest;
     }
 
@@ -271,7 +187,7 @@ fn revision_of(f: &Fixture, shard_id: u64) -> String {
 
 /// Builds a client for one table and retrieves `row` from `shard_id` with the
 /// 49-bit query every deployed wallet sends.
-async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u8> {
+async fn retrieve(f: &Fixture, shard_id: u64, table: TableRef, row: usize) -> Vec<u8> {
     retrieve_at(f, shard_id, table, row, false).await
 }
 
@@ -279,7 +195,7 @@ async fn retrieve(f: &Fixture, shard_id: u64, table: Table, row: usize) -> Vec<u
 async fn retrieve_at(
     f: &Fixture,
     shard_id: u64,
-    table: Table,
+    table: TableRef,
     row: usize,
     dithered: bool,
 ) -> Vec<u8> {
@@ -291,7 +207,7 @@ async fn retrieve_at(
         .iter()
         .find(|entry| entry["name"] == GEOMETRY.name)
         .expect("the fixture's geometry is published");
-    let scheme_key = match table {
+    let scheme_key = match table.kind() {
         Table::Directory => "directory_scheme",
         Table::Pages => "pages_scheme",
         Table::TxDirectory => unreachable!("history-only fixture"),
@@ -306,7 +222,7 @@ async fn retrieve_at(
         &f.state,
         &format!(
             "/v1/shards/{shard_id}/revisions/{revision}/setup/{}/0",
-            table.as_str()
+            table.name()
         ),
     )
     .await;
@@ -323,9 +239,9 @@ async fn retrieve_at(
     let profile = transparent_native::TableProfile::new(
         transparent_shard::manifest::SCHEMA,
         GEOMETRY.name,
-        table.as_str(),
-        table.rows(&GEOMETRY),
-        table.row_bytes(&GEOMETRY),
+        table.kind().as_str(),
+        table.kind().rows(&GEOMETRY),
+        table.kind().row_bytes(&GEOMETRY),
     )
     .unwrap();
     assert_eq!(
@@ -345,7 +261,7 @@ async fn retrieve_at(
     };
     let used = if dithered { &dithered_scheme } else { &scheme };
     assert_eq!(upload.len(), used.request_bytes);
-    let binding = query_binding(&revision, table.as_str());
+    let binding = query_binding(&revision, table.name());
     let mut body = binding.to_vec();
     body.extend(upload);
 
@@ -353,7 +269,7 @@ async fn retrieve_at(
         &f.state,
         &format!(
             "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-            table.as_str()
+            table.name()
         ),
         body,
     )
@@ -381,15 +297,15 @@ fn raw_row(table_bytes: &[u8], row_bytes: usize, row: usize) -> &[u8] {
 async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
     let f = fixture();
     for shard_id in 0..SHARDS {
-        for (table, row) in [(Table::Directory, 11usize), (Table::Pages, 3)] {
+        for (table, row) in [(TableRef::Directory, 11usize), (TableRef::Pages(0), 3)] {
             let decoded = retrieve(&f, shard_id, table, row).await;
             let shard = f.set.get(shard_id).unwrap();
             let published = shard.segment(table, 0).unwrap().load().unwrap();
             assert_eq!(
                 decoded,
-                raw_row(&published, table.row_bytes(&GEOMETRY) as usize, row),
+                raw_row(&published, table.kind().row_bytes(&GEOMETRY) as usize, row),
                 "shard {shard_id} {} row {row}",
-                table.as_str()
+                table.name()
             );
         }
     }
@@ -401,15 +317,15 @@ async fn rows_retrieved_from_each_shard_equal_that_shards_published_table() {
 async fn dithered_queries_retrieve_each_shards_published_rows() {
     let f = fixture();
     for shard_id in 0..SHARDS {
-        for (table, row) in [(Table::Directory, 11usize), (Table::Pages, 3)] {
+        for (table, row) in [(TableRef::Directory, 11usize), (TableRef::Pages(0), 3)] {
             let shard = f.set.get(shard_id).unwrap();
             let published = shard.segment(table, 0).unwrap().load().unwrap();
-            let expected = raw_row(&published, table.row_bytes(&GEOMETRY) as usize, row);
+            let expected = raw_row(&published, table.kind().row_bytes(&GEOMETRY) as usize, row);
             assert_eq!(
                 retrieve_at(&f, shard_id, table, row, true).await,
                 expected,
                 "shard {shard_id} {} row {row}",
-                table.as_str()
+                table.name()
             );
         }
     }
@@ -417,17 +333,17 @@ async fn dithered_queries_retrieve_each_shards_published_rows() {
 
 /// A full-length 49-bit query body for the fixture's geometry, prefixed as
 /// `revision` and `table` require.
-fn padded_body(revision: &str, table: Table) -> Vec<u8> {
+fn padded_body(revision: &str, table: TableRef) -> Vec<u8> {
     padded_body_of(
         revision,
         table,
-        transparent_native::request_len(table.rows(&GEOMETRY) as usize),
+        transparent_native::request_len(table.kind().rows(&GEOMETRY) as usize),
     )
 }
 
 /// A query body of `request` bytes after the binding.
-fn padded_body_of(revision: &str, table: Table, request: usize) -> Vec<u8> {
-    let mut body = query_binding(revision, table.as_str()).to_vec();
+fn padded_body_of(revision: &str, table: TableRef, request: usize) -> Vec<u8> {
+    let mut body = query_binding(revision, table.name()).to_vec();
     body.resize(8 + request, 0);
     body
 }
@@ -482,7 +398,7 @@ async fn a_query_built_for_one_shard_is_refused_by_another() {
     let zero = revision_of(&f, 0);
     let one = revision_of(&f, 1);
     // Shard zero's binding, sent to shard one's revision.
-    let body = padded_body(&zero, Table::Directory);
+    let body = padded_body(&zero, TableRef::Directory);
     let (status, _) = post(
         &f.state,
         &format!("/v1/shards/1/revisions/{one}/query/directory"),
@@ -498,7 +414,7 @@ async fn a_query_built_for_one_shard_is_refused_by_another() {
 async fn a_query_built_for_one_table_is_refused_by_the_other() {
     let f = fixture();
     let revision = revision_of(&f, 0);
-    let body = padded_body(&revision, Table::Pages);
+    let body = padded_body(&revision, TableRef::Pages(0));
     let (status, _) = post(
         &f.state,
         &format!("/v1/shards/0/revisions/{revision}/query/directory"),
@@ -529,7 +445,7 @@ async fn a_truncated_query_is_refused_rather_than_padded() {
 async fn an_oversized_query_is_refused_before_any_work() {
     let f = fixture();
     let revision = revision_of(&f, 0);
-    let mut body = padded_body(&revision, Table::Directory);
+    let mut body = padded_body(&revision, TableRef::Directory);
     body.push(0);
     let (status, raw) = post(
         &f.state,
@@ -610,7 +526,7 @@ async fn a_slow_upload_times_out_without_holding_a_place() {
     )
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
-    let expected = padded_body(&revision, Table::Directory).len();
+    let expected = padded_body(&revision, TableRef::Directory).len();
     let response = router(state.clone())
         .oneshot(streaming_request(
             &format!("/v1/shards/0/revisions/{revision}/query/directory"),
@@ -668,7 +584,7 @@ async fn a_full_queue_refuses_retryably_and_a_cancelled_waiter_frees_its_place()
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
     let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
-    let body = padded_body(&revision, Table::Directory);
+    let body = padded_body(&revision, TableRef::Directory);
 
     // The only slot is busy.
     let held = state.hold_query_slot().await;
@@ -760,7 +676,7 @@ async fn a_capacity_refusal_reads_the_upload_and_keeps_the_connection() {
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
     let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
-    let body = padded_body(&revision, Table::Directory);
+    let body = padded_body(&revision, TableRef::Directory);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
@@ -841,7 +757,7 @@ async fn a_request_that_outwaits_its_deadline_is_refused_retryably() {
     .expect("state");
     let revision = state_revision(&state, dir.path(), 0);
     let path = format!("/v1/shards/0/revisions/{revision}/query/directory");
-    let body = padded_body(&revision, Table::Directory);
+    let body = padded_body(&revision, TableRef::Directory);
     let _held = state.hold_query_slot().await;
     let (status, _) = post(&state, &path, body).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -1039,18 +955,20 @@ async fn the_map_is_identical_under_both_paths() {
 /// says can hold data. That upload is the full one's byte prefix and is
 /// answered byte for byte the same, and it decodes the published row.
 #[tokio::test]
-async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
+async fn a_page_shards_prefix_query_is_answered_as_its_full_one() {
     let f = fixture();
-    let tail = SHARDS - 1;
+    // A sealed directory shard's page shard: sealed or open, any page shard
+    // in one segment selects over the rows its manifest entry says hold data.
+    let tail = 0;
     let shard = f.set.get(tail).unwrap();
-    assert!(!shard.manifest.sealed);
+    assert!(shard.manifest.sealed);
     let rows = Table::Pages.rows(&GEOMETRY) as usize;
-    let query_rows = shard.manifest.pages_query_rows() as usize;
+    let query_rows = shard.manifest.page_children[0].query_rows() as usize;
     assert!(query_rows < rows && query_rows.is_multiple_of(transparent_native::D));
-    assert!(shard.manifest.occupancy.page_rows as usize <= query_rows);
+    assert!(shard.manifest.page_children[0].occupancy.page_rows as usize <= query_rows);
 
     let profile = transparent_native::TableProfile::new(
-        SCHEMA,
+        transparent_shard::manifest::SCHEMA,
         GEOMETRY.name,
         "pages",
         rows as u64,
@@ -1058,8 +976,8 @@ async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
     )
     .unwrap();
     let revision = revision_of(&f, tail);
-    let path = format!("/v1/shards/{tail}/revisions/{revision}/query/pages");
-    let binding = query_binding(&revision, "pages");
+    let path = format!("/v1/shards/{tail}/revisions/{revision}/query/pages-0");
+    let binding = query_binding(&revision, "pages-0");
     let (_, upload) = profile.prepare(3).unwrap();
     let mut full = binding.to_vec();
     full.extend(upload);
@@ -1072,7 +990,7 @@ async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
 
     let (status, raw) = get(
         &f.state,
-        &format!("/v1/shards/{tail}/revisions/{revision}/setup/pages/0"),
+        &format!("/v1/shards/{tail}/revisions/{revision}/setup/pages-0/0"),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -1088,35 +1006,32 @@ async fn a_growing_tails_prefix_pages_query_is_answered_as_its_full_one() {
     assert_eq!(body.len(), 8 + transparent_native::request_len(query_rows));
     let (status, response) = post(&f.state, &path, body).await;
     assert_eq!(status, StatusCode::OK);
-    let published = shard.segment(Table::Pages, 0).unwrap().load().unwrap();
+    let published = shard.segment(TableRef::Pages(0), 0).unwrap().load().unwrap();
     assert_eq!(
         profile.decode(&secret, &public, &response[16..]).unwrap(),
         raw_row(&published, GEOMETRY.page_row_bytes, 3)
     );
 }
 
-/// Only a growing tail's pages take the shorter length, and only the one its
-/// manifest fixes: sealed shards and the directory keep one length, so their
-/// uploads stay alike.
+/// Only a page shard takes the shorter length, and only the one its manifest
+/// entry fixes: the directory keeps one length, so its uploads stay alike.
 #[tokio::test]
-async fn only_a_growing_tails_pages_take_a_prefix_and_only_its_own() {
+async fn only_page_shards_take_a_prefix_and_only_their_own() {
     let f = fixture();
-    let short = |revision: &str, table: Table, rows: usize| {
+    let short = |revision: &str, table: TableRef, rows: usize| {
         let mut body = padded_body(revision, table);
         body.truncate(8 + transparent_native::request_len(rows));
         body
     };
     let tail = SHARDS - 1;
     let tail_revision = revision_of(&f, tail);
-    let query_rows = f.set.get(tail).unwrap().manifest.pages_query_rows() as usize;
-    let sealed = revision_of(&f, 0);
+    let query_rows = f.set.get(tail).unwrap().manifest.page_children[0].query_rows() as usize;
     for (shard_id, revision, table, rows) in [
-        (0, sealed.as_str(), Table::Pages, query_rows),
-        (tail, tail_revision.as_str(), Table::Directory, query_rows),
+        (tail, tail_revision.as_str(), TableRef::Directory, query_rows),
         (
             tail,
             tail_revision.as_str(),
-            Table::Pages,
+            TableRef::Pages(0),
             query_rows + transparent_native::D,
         ),
     ] {
@@ -1124,7 +1039,7 @@ async fn only_a_growing_tails_pages_take_a_prefix_and_only_its_own() {
             &f.state,
             &format!(
                 "/v1/shards/{shard_id}/revisions/{revision}/query/{}",
-                table.as_str()
+                table.name()
             ),
             short(revision, table, rows),
         )
@@ -1133,7 +1048,7 @@ async fn only_a_growing_tails_pages_take_a_prefix_and_only_its_own() {
             status,
             StatusCode::BAD_REQUEST,
             "{shard_id} {}",
-            table.as_str()
+            table.name()
         );
         assert!(String::from_utf8_lossy(&raw).contains("must be exactly"));
     }

@@ -19,7 +19,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use transparent_filter::BlockHash;
 use transparent_filter_server::events::EventStore;
-use transparent_shard::build::build_shard;
+use transparent_shard::build::build_directory_shard;
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
@@ -299,7 +299,7 @@ fn main() -> Result<(), BoxError> {
     let multi: Vec<u64> = map
         .shards
         .iter()
-        .filter(|e| e.directory_segments > 1 || e.page_segments > 1)
+        .filter(|e| e.directory_segments > 1)
         .map(|e| e.shard_id)
         .collect();
     eprintln!("     multi-segment shards: {multi:?}");
@@ -329,7 +329,7 @@ fn main() -> Result<(), BoxError> {
             chosen.insert(0);
             chosen.insert(map.shards.len() - 1);
             for (index, entry) in map.shards.iter().enumerate() {
-                if entry.directory_segments > 1 || entry.page_segments > 1 {
+                if entry.directory_segments > 1 {
                     chosen.insert(index);
                 }
             }
@@ -342,24 +342,37 @@ fn main() -> Result<(), BoxError> {
             let shard = set.get(entry.shard_id).expect("the map names it");
             let manifest = &shard.manifest;
             let started = std::time::Instant::now();
-            let mut events = Vec::new();
+            let mut blocks = Vec::new();
+            let mut events = 0usize;
             for height in manifest.start_height..=manifest.end_height {
-                events.extend(
-                    store
-                        .events_at(height)?
-                        .ok_or_else(|| format!("height {height} is missing from the journal"))?,
+                let block = store
+                    .events_at(height)?
+                    .ok_or_else(|| format!("height {height} is missing from the journal"))?;
+                events += block.len();
+                blocks.push((height, block));
+            }
+            // Rebuilt at the page-shard boundaries the manifest publishes:
+            // what is checked is that the tables are a function of the events
+            // and those boundaries. That the sealer would choose the same
+            // boundaries is the publisher's own check.
+            let child_ends: Vec<u64> = manifest.page_children.iter().map(|c| c.end_height).collect();
+            let mut terminals = std::collections::BTreeMap::new();
+            for child in &manifest.page_children {
+                terminals.insert(
+                    child.end_height,
+                    BlockHash::from_display_hex(&child.terminal_block_hash)?,
                 );
             }
-            let terminal = BlockHash::from_display_hex(&manifest.terminal_block_hash)?;
-            let built = build_shard(
+            let terminal = |height: u64| terminals[&height];
+            let (built, children) = build_directory_shard(
                 manifest.shard_id,
-                manifest.start_height,
-                manifest.end_height,
-                genesis,
-                terminal,
-                &manifest.profile,
                 shard.geometry,
-                &events,
+                genesis,
+                &manifest.profile,
+                blocks,
+                &child_ends,
+                &terminal,
+                manifest.sealed,
             )?;
             let filter_ok = transparent_filter::filter_hash(built.filter.as_slice())
                 .to_display_hex()
@@ -372,10 +385,11 @@ fn main() -> Result<(), BoxError> {
                     .all(|(bytes, published)| {
                         hex::encode(Sha256::digest(bytes)) == published.sha256
                     });
-            let pages_ok = built.pages.len() == manifest.page_segments.len()
-                && built.pages.iter().zip(manifest.page_segments.iter()).all(
-                    |(bytes, published)| hex::encode(Sha256::digest(bytes)) == published.sha256,
-                );
+            let pages_ok = children.len() == manifest.page_children.len()
+                && children
+                    .iter()
+                    .zip(&manifest.page_children)
+                    .all(|(child, published)| child.describe(shard.geometry) == *published);
             let ok = filter_ok && directory_ok && pages_ok;
             check(
                 &format!("rebuild-{}", entry.shard_id),
@@ -384,7 +398,7 @@ fn main() -> Result<(), BoxError> {
                     "{}-{} {} events, filter {}, directory {}, pages {}, {:.1}s",
                     manifest.start_height,
                     manifest.end_height,
-                    events.len(),
+                    events,
                     if filter_ok { "same" } else { "DIFFERENT" },
                     if directory_ok { "same" } else { "DIFFERENT" },
                     if pages_ok { "same" } else { "DIFFERENT" },
@@ -394,7 +408,7 @@ fn main() -> Result<(), BoxError> {
             rebuilt.push(serde_json::json!({
                 "shard_id": entry.shard_id,
                 "geometry": entry.geometry,
-                "events": events.len(),
+                "events": events,
                 "filter": filter_ok,
                 "directory": directory_ok,
                 "pages": pages_ok,

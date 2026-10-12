@@ -4,7 +4,7 @@ mod common;
 use common::*;
 use sha2::{Digest, Sha256};
 use transparent_regression::{reference, Case, Checkpoint, EventRecord, Fixture, SCHEMA};
-use transparent_shard::layout::RECENT_8K;
+use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_wallet::Anchor;
 #[tokio::test(flavor = "multi_thread")]
 async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
@@ -164,7 +164,7 @@ async fn executable_checks_frozen_checkpoints_and_reports_publication_drift() {
     // continuously publishing origin does between any two fetches; the fixture
     // still pins its sealed entries and the run must still pass.
     let moved = tempfile::tempdir().unwrap();
-    let republished = publish_with(moved.path(), &all, |_| &RECENT_8K, 1, "", hash_at);
+    let republished = publish_with(moved.path(), &all, |_| &DECOUPLED_2K_8K, 1, "", hash_at);
     assert!(
         !republished.shards.last().unwrap().sealed,
         "the synthetic set must end in an unsealed tail"

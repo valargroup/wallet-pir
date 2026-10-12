@@ -1233,7 +1233,7 @@ pub(crate) mod tests {
 
     use super::*;
     use transparent_shard::display::TXID_2K8;
-    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+    use transparent_shard::layout::{DECOUPLED_32K_32K, DECOUPLED_2K_8K};
 
     fn reservation(rows: u64, row_bytes: usize) -> u64 {
         reserved_bytes(rows, row_bytes as u32)
@@ -1293,7 +1293,7 @@ pub(crate) mod tests {
         let matrix_narrow = (native::D * native::D * native::ELL * 4) as u64;
         let matrix_packed = (native::D * (native::D * native::ELL / 8) * 27 + 8) as u64;
         for (geometry, table) in [
-            (&RECENT_8K, Table::Directory),
+            (&DECOUPLED_2K_8K, Table::Directory),
             (&TXID_2K8, Table::TxDirectory),
         ] {
             let shared = SharedParams::build(geometry, table).unwrap();
@@ -1380,7 +1380,7 @@ pub(crate) mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_build_in_flight_keeps_its_bound_until_the_runtime_exists() {
         use std::io::Write;
-        let geometry = &transparent_shard::layout::RECENT_4K;
+        let geometry = &transparent_shard::layout::DECOUPLED_2K_8K;
         let dir = tempfile::tempdir().unwrap();
         let shared = Arc::new(SharedParams::build(geometry, Table::Directory).unwrap());
         let rows = vec![7u8; shared.profile.rows * shared.profile.row_bytes];
@@ -1511,7 +1511,7 @@ pub(crate) mod tests {
     #[test]
     fn the_reservation_is_the_native_upper_bound() {
         assert_eq!(
-            reservation(RECENT_8K.directory_rows, RECENT_8K.directory_row_bytes),
+            reservation(DECOUPLED_2K_8K.directory_rows, DECOUPLED_2K_8K.directory_row_bytes),
             (32 << 20) + 14_848 + 16 + (32 + 2 * 2_048 * 8 + 8) + (64 << 20)
         );
     }
@@ -1522,10 +1522,10 @@ pub(crate) mod tests {
     /// the shard count, and it is the whole basis of the archive tier.
     #[test]
     fn only_the_database_term_follows_the_row_count() {
-        let narrow = reservation(RECENT_8K.page_rows, RECENT_8K.page_row_bytes);
-        let wide = reservation(ARCHIVE_WIDE.page_rows, ARCHIVE_WIDE.page_row_bytes);
-        let fixed = narrow - RECENT_8K.page_rows * RECENT_8K.page_row_bytes as u64;
-        let ratio = ARCHIVE_WIDE.page_rows / RECENT_8K.page_rows;
+        let narrow = reservation(DECOUPLED_2K_8K.page_rows, DECOUPLED_2K_8K.page_row_bytes);
+        let wide = reservation(DECOUPLED_32K_32K.page_rows, DECOUPLED_32K_32K.page_row_bytes);
+        let fixed = narrow - DECOUPLED_2K_8K.page_rows * DECOUPLED_2K_8K.page_row_bytes as u64;
+        let ratio = DECOUPLED_32K_32K.page_rows / DECOUPLED_2K_8K.page_rows;
         assert_eq!(wide - fixed, (narrow - fixed) * ratio);
     }
 
@@ -1535,7 +1535,7 @@ pub(crate) mod tests {
     #[test]
     fn masks_rebuilt_from_row_bytes_equal_the_served_masks() {
         let shared =
-            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
         let profile = &shared.profile;
         let rows: Vec<u8> = (0..profile.rows * profile.row_bytes)
             .map(|i| (i.wrapping_mul(2_654_435_761) >> 7) as u8)
@@ -1562,7 +1562,7 @@ pub(crate) mod tests {
     #[test]
     fn trailing_zero_blocks_leave_the_published_masks_unchanged() {
         let shared =
-            SharedParams::build(&transparent_shard::layout::RECENT_4K, Table::Pages).unwrap();
+            SharedParams::build(&transparent_shard::layout::DECOUPLED_2K_8K, Table::Pages).unwrap();
         let profile = &shared.profile;
         let full = |rows: &[u8]| {
             let columns: Vec<Vec<u16>> = (0..profile.cols)
@@ -1608,8 +1608,8 @@ pub(crate) mod tests {
     #[test]
     fn the_batched_hint_runtime_is_the_reference_runtime() {
         for (geometry, table, filled) in [
-            (&RECENT_8K, Table::Directory, 8_192),
-            (&RECENT_8K, Table::Pages, 5_000),
+            (&DECOUPLED_2K_8K, Table::Directory, 8_192),
+            (&DECOUPLED_2K_8K, Table::Pages, 5_000),
             (&TXID_2K8, Table::TxDirectory, 2_048),
             (&TXID_2K8, Table::TxDirectory, 700),
         ] {
@@ -1670,7 +1670,7 @@ pub(crate) mod tests {
     #[test]
     fn the_batched_hint_is_dispatched_for_recent_geometries_only() {
         use transparent_shard::display::DISPLAY_PROFILES;
-        use transparent_shard::layout::{ARCHIVE_32K, PROFILES};
+        use transparent_shard::layout::{DECOUPLED_32K_32K, PROFILES};
         for geometry in PROFILES {
             assert_eq!(
                 uses_batched_hint(geometry),
@@ -1679,9 +1679,9 @@ pub(crate) mod tests {
                 geometry.name
             );
         }
-        assert!(!uses_batched_hint(&ARCHIVE_32K));
-        assert!(!uses_batched_hint(&ARCHIVE_WIDE));
-        assert!(uses_batched_hint(&RECENT_8K));
+        assert!(!uses_batched_hint(&DECOUPLED_32K_32K));
+        assert!(!uses_batched_hint(&DECOUPLED_32K_32K));
+        assert!(uses_batched_hint(&DECOUPLED_2K_8K));
         assert!(DISPLAY_PROFILES.iter().all(uses_batched_hint));
         for geometry in BATCHED_HINT_GEOMETRIES {
             let tables = if DISPLAY_PROFILES.contains(geometry) {

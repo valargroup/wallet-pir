@@ -131,10 +131,10 @@ pub fn packing() -> Result<(), AnyError> {
             &payload,
         )?);
     }
-    let built = transparent_shard::txid::build(0, &transparent_shard::RECENT_4K, &records)?;
+    let built = transparent_shard::txid::build(0, &transparent_shard::DECOUPLED_2K_8K, &records)?;
     transparent_shard::txid::verify(
         0,
-        &transparent_shard::RECENT_4K,
+        &transparent_shard::DECOUPLED_2K_8K,
         &built.directory,
         &built.pages,
         built.records,

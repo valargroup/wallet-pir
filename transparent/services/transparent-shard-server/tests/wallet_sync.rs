@@ -12,18 +12,21 @@
 mod prepared;
 use prepared::prepared_shard;
 
+#[path = "support/revision.rs"]
+mod revision;
+
+/// Page shards each directory shard holds: two, so every walk crosses a
+/// page-shard boundary.
+const CHILDREN: u32 = 2;
+
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
-use transparent_filter::{
-    filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
-};
-use transparent_shard::build::BuiltShard;
-use transparent_shard::layout::{Geometry, RECENT_4K, RECENT_8K};
-use transparent_shard::manifest::{
-    ManifestLayout, ManifestOccupancy, ManifestSeal, ShardManifest, TableGeometry, SCHEMA,
-};
+use transparent_filter::{BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry};
+use transparent_shard::build::BuiltDirectory;
+use transparent_shard::layout::{Geometry, DECOUPLED_2K_8K};
+use transparent_shard::manifest::ShardManifest;
 use transparent_shard_server::service::{router, ServiceConfig, ServiceState};
 use transparent_shard_server::shardset::{ShardSet, DEFAULT_RETAIN_REVISIONS};
 use transparent_wallet::client::Table;
@@ -157,7 +160,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
 
 /// Writes a publishable shard set to `dir`, as the publisher would.
 fn publish(dir: &Path, per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> ShardMap {
-    publish_with(dir, per_shard, |_| &RECENT_8K, 0, "")
+    publish_with(dir, per_shard, |_| &DECOUPLED_2K_8K, 0, "")
 }
 
 /// Writes a publishable shard set whose shards may name different geometries.
@@ -195,7 +198,7 @@ fn publish_choosing(
     geometry_for: impl Fn(u64) -> &'static Geometry,
     tail_revision: u32,
     tail_supersedes: &str,
-    choice: impl Fn(u64, &BuiltShard) -> Option<String>,
+    choice: impl Fn(u64, &BuiltDirectory) -> Option<String>,
 ) -> ShardMap {
     publish_profiled(
         dir,
@@ -215,7 +218,7 @@ fn publish_profiled(
     geometry_for: impl Fn(u64) -> &'static Geometry,
     tail_revision: u32,
     tail_supersedes: &str,
-    choice: impl Fn(u64, &BuiltShard) -> Option<String>,
+    choice: impl Fn(u64, &BuiltDirectory) -> Option<String>,
     profile: &str,
 ) -> ShardMap {
     let mut entries = Vec::new();
@@ -225,115 +228,39 @@ fn publish_profiled(
         let geometry = geometry_for(shard_id);
         let start = FIRST + shard_id * SPAN;
         let end = start + SPAN - 1;
-        let built = prepared_shard(
+        let sealed = shard_id + 1 < SHARDS;
+        let prepared = prepared_shard(
             shard_id,
             start,
             end,
             genesis(),
-            hash_at(end),
+            &hash_at,
             profile,
             geometry,
+            CHILDREN,
+            sealed,
             events,
         );
-
-        let manifest = ShardManifest {
-            schema: SCHEMA.to_string(),
-            profile: profile.to_string(),
-            geometry: geometry.name.to_string(),
-            network: transparent_filter::NETWORK.to_string(),
-            genesis_hash: GENESIS.to_string(),
+        let (built, children) = (&prepared.0, &prepared.1);
+        let spec = revision::Revision {
             shard_id,
-            start_height: start,
-            end_height: end,
-            parent_block_hash: hash_at(start - 1).to_display_hex(),
-            terminal_block_hash: hash_at(end).to_display_hex(),
-            tag_salt_counter: built.tag_salt_counter,
-            parent_manifest_digest: parent_digest.clone(),
-            sealed: shard_id + 1 < SHARDS,
-            revision: if shard_id + 1 == SHARDS {
-                tail_revision
-            } else {
-                0
-            },
-            supersedes: if shard_id + 1 == SHARDS {
-                tail_supersedes.to_string()
-            } else {
-                String::new()
-            },
-            seal: ManifestSeal {
-                scripts_target: 8_192,
-                scripts_capacity: 16_384,
-                page_rows_target: 2_048,
-                page_rows_capacity: 4_096,
-            },
-            layout: ManifestLayout {
-                max_script_bytes: transparent_shard::MAX_SCRIPT_BYTES as u32,
-                inline_events: transparent_shard::INLINE_EVENTS,
-                events_per_page: transparent_shard::EVENTS_PER_PAGE,
-                page_row_header_bytes: transparent_shard::PAGE_ROW_HEADER_BYTES as u32,
-                page_entry_header_bytes: transparent_shard::PAGE_ENTRY_HEADER_BYTES as u32,
-                directory_choices: transparent_shard::build::DIRECTORY_CHOICES as u32,
-            },
-            filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
-            directory_segments: built
-                .directory
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: geometry.directory_rows,
-                    row_bytes: geometry.directory_row_bytes as u32,
-                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-                })
-                .collect(),
-            page_segments: built
-                .pages
-                .iter()
-                .map(|segment| TableGeometry {
-                    rows: geometry.page_rows,
-                    row_bytes: geometry.page_row_bytes as u32,
-                    sha256: hex::encode(<sha2::Sha256 as sha2::Digest>::digest(segment)),
-                })
-                .collect(),
-            occupancy: ManifestOccupancy {
-                scripts: built.scripts,
-                page_rows: built.page_rows,
-                fragments: built.fragments,
-                events: built.events,
-                blocks: SPAN,
-                txids: 0,
-                excluded_scripts: built.excluded_scripts,
-            },
-            directory_choice: choice(shard_id, &built),
+            start,
+            end,
+            geometry,
+            sealed,
+            revision: if sealed { 0 } else { tail_revision },
+            supersedes: if sealed { "" } else { tail_supersedes },
+            parent_digest: &parent_digest,
+            children: CHILDREN,
+            genesis: genesis(),
+            hash: &hash_at,
         };
-
-        let digest = manifest.digest();
-        let shard_dir = dir.join(&digest);
-        std::fs::create_dir_all(&shard_dir).unwrap();
-        std::fs::write(shard_dir.join("manifest.json"), manifest.canonical_bytes()).unwrap();
-        std::fs::write(shard_dir.join("filter.bin"), built.filter.as_slice()).unwrap();
-        for (index, segment) in built.directory.iter().enumerate() {
-            std::fs::write(shard_dir.join(format!("directory.{index}.bin")), segment).unwrap();
-        }
-        for (index, segment) in built.pages.iter().enumerate() {
-            std::fs::write(shard_dir.join(format!("pages.{index}.bin")), segment).unwrap();
-        }
-
-        entries.push(ShardMapEntry {
-            shard_id,
-            geometry: geometry.name.to_string(),
-            start_height: start,
-            end_height: end,
-            parent_block_hash: manifest.parent_block_hash.clone(),
-            terminal_block_hash: manifest.terminal_block_hash.clone(),
-            filter_hash: manifest.filter_hash.clone(),
-            scripts: built.scripts,
-            page_rows: built.page_rows,
-            txids: 0,
-            directory_segments: built.directory_segments(),
-            page_segments: built.page_segments(),
-            manifest_digest: digest.clone(),
-            revision: manifest.revision,
-            sealed: manifest.sealed,
-        });
+        let mut manifest = revision::manifest(&spec, built, children);
+        manifest.profile = profile.to_string();
+        manifest.directory_choice = choice(shard_id, built);
+        let (_, entry) = revision::write_manifest(dir, &spec, manifest, built, children);
+        let digest = entry.manifest_digest.clone();
+        entries.push(entry);
         parent_digest = digest;
     }
 
@@ -797,8 +724,8 @@ async fn a_wallet_sends_dithered_queries_only_where_they_are_advertised() {
     let wallet = vec![script(1), script(2), script(3)];
     let expected = traverse(&per_shard, &wallet, 0);
 
-    let rows = RECENT_8K.directory_rows as usize;
-    assert_eq!(RECENT_8K.page_rows as usize, rows);
+    let rows = DECOUPLED_2K_8K.directory_rows as usize;
+    assert_eq!(DECOUPLED_2K_8K.page_rows as usize, rows);
     let dithered = run_sync(dir.path(), base.clone(), wallet.clone(), FIRST, map.clone()).await;
     let legacy = run_sync_with_init(dir.path(), base, wallet, FIRST, map, |init| {
         for entry in init["geometries"].as_array_mut().unwrap() {
@@ -1407,18 +1334,18 @@ async fn a_wallet_syncs_across_a_geometry_boundary_exactly() {
         &per_shard,
         |shard_id| {
             if shard_id < SHARDS / 2 {
-                &RECENT_4K
+                &DECOUPLED_2K_8K
             } else {
-                &RECENT_8K
+                &DECOUPLED_2K_8K
             }
         },
         0,
         "",
     );
-    assert_eq!(map.shards[0].geometry, RECENT_4K.name);
+    assert_eq!(map.shards[0].geometry, DECOUPLED_2K_8K.name);
     assert_eq!(
         map.shards[(SHARDS - 1) as usize].geometry,
-        RECENT_8K.name,
+        DECOUPLED_2K_8K.name,
         "the set must actually span two geometries"
     );
     assert_eq!(
@@ -1448,9 +1375,9 @@ async fn init_declares_one_parameter_set_per_geometry() {
         &per_shard,
         |shard_id| {
             if shard_id < SHARDS / 2 {
-                &RECENT_4K
+                &DECOUPLED_2K_8K
             } else {
-                &RECENT_8K
+                &DECOUPLED_2K_8K
             }
         },
         0,
@@ -1475,7 +1402,7 @@ async fn init_declares_one_parameter_set_per_geometry() {
         .iter()
         .map(|entry| entry.name.as_str())
         .collect();
-    assert_eq!(names, vec![RECENT_4K.name, RECENT_8K.name]);
+    assert_eq!(names, vec![DECOUPLED_2K_8K.name, DECOUPLED_2K_8K.name]);
 
     // The dimensions travel with the scheme so the client can check the pair.
     // A service that published one geometry's name over another's row counts
@@ -1654,7 +1581,7 @@ async fn replaced_tail_recovers(filter_race: bool, concurrency: usize) {
     let map_after = publish_with(
         after_dir.path(),
         &after_chain,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         1,
         &stale_digest,
     );
@@ -2104,7 +2031,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
     publish_with(
         after_dir.path(),
         &before_chain,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         1,
         &stale_digest,
     );
@@ -2177,7 +2104,7 @@ async fn unhelpful_refresh_stops(corrupt_filter: bool, concurrency: usize) {
 }
 
 /// Publishes the choice table the builder made for every shard.
-fn tabled(_: u64, built: &BuiltShard) -> Option<String> {
+fn tabled(_: u64, built: &BuiltDirectory) -> Option<String> {
     built
         .choice
         .as_ref()
@@ -2207,7 +2134,7 @@ async fn a_choice_table_sends_one_directory_query_per_matched_script() {
     let two = tempfile::tempdir().unwrap();
     let two_map = publish(two.path(), &per_shard);
     let one = tempfile::tempdir().unwrap();
-    let one_map = publish_choosing(one.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let one_map = publish_choosing(one.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     for (a, b) in two_map.shards.iter().zip(&one_map.shards) {
         assert_ne!(a.manifest_digest, b.manifest_digest);
         assert_eq!(
@@ -2252,7 +2179,7 @@ async fn a_tail_without_a_table_keeps_two_directory_queries() {
     let map = publish_choosing(
         dir.path(),
         &per_shard,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         0,
         "",
         |id, built| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten(),
@@ -2293,7 +2220,7 @@ async fn a_choice_table_costs_one_query_per_script_whatever_the_script() {
         }
     }
     let per_shard = vec![events];
-    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let map = publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     let base = serve(dir.path()).await;
     for scripts in 1..=3usize {
         let wallet: Vec<ScriptBytes> = (0..scripts as u32).map(script).collect();
@@ -2313,23 +2240,23 @@ fn a_server_refuses_a_choice_table_that_does_not_match() {
     use transparent_shard::manifest::encode_directory_choice;
     use transparent_shard::ChoiceTable;
 
-    let short = |id: u64, _: &BuiltShard| {
+    let short = |id: u64, _: &BuiltDirectory| {
         Some(encode_directory_choice(
             &ChoiceTable::build(id, &[(&[0x51][..], 0)]).unwrap(),
         ))
     };
-    let garbage = |_: u64, _: &BuiltShard| Some("not base64!".to_string());
+    let garbage = |_: u64, _: &BuiltDirectory| Some("not base64!".to_string());
 
     let per_shard = chain();
     for (name, choose) in [
         (
             "short",
-            &short as &dyn Fn(u64, &BuiltShard) -> Option<String>,
+            &short as &dyn Fn(u64, &BuiltDirectory) -> Option<String>,
         ),
         ("garbage", &garbage),
     ] {
         let dir = tempfile::tempdir().unwrap();
-        publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", choose);
+        publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", choose);
         let error = ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS)
             .err()
             .unwrap_or_else(|| panic!("a {name} table was loaded"));
@@ -2337,7 +2264,7 @@ fn a_server_refuses_a_choice_table_that_does_not_match() {
     }
 
     let dir = tempfile::tempdir().unwrap();
-    publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     ShardSet::open(dir.path(), DEFAULT_RETAIN_REVISIONS).expect("a genuine table loads");
 }
 
@@ -2531,12 +2458,12 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
         vec![script(1), script(2), script(100), script(101)],
     ];
     let tabled_but_tail =
-        |id: u64, built: &BuiltShard| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten();
+        |id: u64, built: &BuiltDirectory| (id + 1 < SHARDS).then(|| tabled(id, built)).flatten();
     let two_tiers = |shard_id: u64| {
         if shard_id < SHARDS / 2 {
-            &RECENT_4K
+            &DECOUPLED_2K_8K
         } else {
-            &RECENT_8K
+            &DECOUPLED_2K_8K
         }
     };
     let mut publications: Vec<(&str, tempfile::TempDir, ShardMap)> = Vec::new();
@@ -2544,13 +2471,13 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
     let map = publish(dir.path(), &per_shard);
     publications.push(("no tables", dir, map));
     let dir = tempfile::tempdir().unwrap();
-    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let map = publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     publications.push(("tables", dir, map));
     let dir = tempfile::tempdir().unwrap();
     let map = publish_choosing(
         dir.path(),
         &per_shard,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         0,
         "",
         tabled_but_tail,
@@ -2631,7 +2558,7 @@ async fn concurrent_requests_change_nothing_but_when_they_are_sent() {
 async fn a_failed_batch_falls_back_to_the_sequential_walk() {
     let per_shard = chain();
     let dir = tempfile::tempdir().unwrap();
-    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let map = publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     let base = serve(dir.path()).await;
     let wallet = vec![script(1), script(2), script(3), script(999)];
     let (sequential, reference) = run_recorded(
@@ -2696,7 +2623,7 @@ async fn serve_delayed(dir: &Path, delay: std::time::Duration) -> String {
 async fn concurrency_under_emulated_delay() {
     let per_shard = chain();
     let dir = tempfile::tempdir().unwrap();
-    let map = publish_choosing(dir.path(), &per_shard, |_| &RECENT_8K, 0, "", tabled);
+    let map = publish_choosing(dir.path(), &per_shard, |_| &DECOUPLED_2K_8K, 0, "", tabled);
     let base = serve_delayed(dir.path(), std::time::Duration::from_millis(100)).await;
     let wallet = vec![script(1), script(2), script(3), script(100), script(101)];
     for concurrency in [1usize, 2, 4, 8] {
@@ -2743,7 +2670,7 @@ async fn a_set_under_the_v2_range_profile_syncs_exactly_with_smaller_filters() {
     let v2_map = publish_profiled(
         v2.path(),
         &per_shard,
-        |_| &RECENT_8K,
+        |_| &DECOUPLED_2K_8K,
         0,
         "",
         tabled,

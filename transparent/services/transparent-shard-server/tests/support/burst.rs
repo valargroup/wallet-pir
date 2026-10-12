@@ -2,7 +2,7 @@
 use super::*;
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
-use transparent_shard::layout::RECENT_8K;
+use transparent_shard::layout::DECOUPLED_2K_8K;
 use transparent_shard_server::live::{Command, LiveService, Publication};
 use transparent_shard_server::service::ReadinessMode;
 use transparent_shard_server::shardset::LoadOptions;
@@ -89,8 +89,8 @@ async fn publication_burst_under_exact_load() {
                 std::fs::create_dir(&directory).unwrap();
                 let end = FIRST + 40 + u64::from(revision);
                 let (digest, count) =
-                    write_revision_geometry(&directory, end, revision, &predecessor, &RECENT_8K);
-                write_map_geometry(&directory, &digest, end, revision, count, &RECENT_8K);
+                    write_revision_geometry(&directory, end, revision, &predecessor, &DECOUPLED_2K_8K);
+                write_map_geometry(&directory, &digest, end, revision, count, &DECOUPLED_2K_8K);
                 predecessor = digest;
                 let map_sha256 = ShardSet::open(&directory, 3).unwrap().map_digest;
                 publications.push(Publication {

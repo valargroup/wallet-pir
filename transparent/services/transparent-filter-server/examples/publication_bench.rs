@@ -341,12 +341,12 @@ fn main() {
     let mut runtime = Vec::new();
     if cli.runtime {
         use transparent_shard_server::runtime::{SharedParams, TableRuntime};
-        use transparent_shard_server::shardset::{ShardSet, Table};
+        use transparent_shard_server::shardset::ShardSet;
         let set = ShardSet::open(&previous, 3).unwrap();
         let tail = previous_map.shards.last().unwrap();
         let shard = set.revision(&tail.manifest_digest).unwrap();
-        for table in [Table::Directory, Table::Pages] {
-            let shared = SharedParams::build(shard.geometry, table).unwrap();
+        for table in shard.tables().collect::<Vec<_>>() {
+            let shared = SharedParams::build(shard.geometry, table.kind()).unwrap();
             for segment in 0..shard.segments(table) {
                 let bytes = shard.segment(table, segment).unwrap().load().unwrap();
                 for repeat in 0..cli.runtime_repeats {
@@ -355,7 +355,7 @@ fn main() {
                         .install(|| TableRuntime::build(&shared, &bytes))
                         .unwrap();
                     let record = serde_json::json!({
-                        "table": table.as_str(),
+                        "table": table.name(),
                         "segment": segment,
                         "repeat": repeat,
                         "build_threads": transparent_shard_server::runtime::build_pool()

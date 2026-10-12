@@ -11,7 +11,7 @@ use transparent_filter::{BlockHash, ScriptBytes};
 use transparent_shard::{
     build_shard, candidate_rows, decode_directory_row, decode_page_row,
     packing::{HistoryLayout, PackedDemand},
-    script_tag, tag_salt, RECENT_4K_8K,
+    script_tag, tag_salt, DECOUPLED_2K_8K,
 };
 
 #[derive(Deserialize)]
@@ -145,7 +145,7 @@ fn main() {
         BlockHash([0; 32]),
         BlockHash(terminal),
         transparent_filter::profile::RANGE_PROFILE_V2.name,
-        &RECENT_4K_8K,
+        &DECOUPLED_2K_8K,
         &events,
     )
     .expect("build");
@@ -158,7 +158,7 @@ fn main() {
         let candidates = candidate_rows(
             0,
             script,
-            RECENT_4K_8K.directory_rows * u64::from(built.directory_segments()),
+            DECOUPLED_2K_8K.directory_rows * u64::from(built.directory_segments()),
         );
         let choice = built
             .choice

@@ -17,7 +17,9 @@ use transparent_events::{ReceiveEvent, SpendEvent, TransparentEvent, Txid};
 use transparent_filter::{
     filter_hash, BlockHash, ScriptBytes, SealParameters, ShardMap, ShardMapEntry,
 };
-use transparent_shard::build::{build_shard, BuiltShard};
+use transparent_shard::build::{Block, Built, BuiltChild, BuiltDirectory, ShardStream};
+use transparent_shard::layout::DECOUPLED_2K_8K;
+use transparent_shard::seal::{DecoupledPolicy, Limit};
 use transparent_wallet::client::Table;
 use transparent_wallet::ledger::Ledger;
 use transparent_wallet::sync::{sync, ServiceGeometry};
@@ -26,7 +28,7 @@ use transparent_wallet::transport::{BoxError, FilterSource, ShardTransport};
 const GENESIS: &str = transparent_filter::MAINNET_GENESIS_DISPLAY;
 const FIRST: u64 = 3_428_143;
 const SPAN: u64 = 200;
-const SHARDS: u64 = 4;
+const SPANS: u64 = 4;
 
 fn genesis() -> BlockHash {
     BlockHash::from_display_hex(GENESIS).unwrap()
@@ -53,20 +55,19 @@ fn txid(tag: u64) -> Txid {
 }
 
 /// A synthetic chain: some scripts receive and are later spent, one has a long
-/// history that needs pages, and one is never used at all.
+/// history that needs pages in several page shards, and one is never used.
 ///
-/// Returns the events per shard, in chain order.
-fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
-    let mut per_shard: Vec<Vec<(ScriptBytes, TransparentEvent)>> =
-        (0..SHARDS).map(|_| Vec::new()).collect();
-
+/// Returns every block from `FIRST`, in chain order, empty ones included.
+fn chain() -> Vec<Block> {
+    let mut blocks: Vec<Block> = (FIRST..FIRST + SPANS * SPAN)
+        .map(|height| (height, Vec::new()))
+        .collect();
     let mut push = |height: u64, script: ScriptBytes, event: TransparentEvent| {
-        let shard = ((height - FIRST) / SPAN) as usize;
-        per_shard[shard].push((script, event));
+        blocks[(height - FIRST) as usize].1.push((script, event));
     };
 
-    // Wallet script 1: receives in shard 0, spent in shard 2. A zero balance
-    // with real history — the case an empty UTXO set must not be read as.
+    // Wallet script 1: receives early, spent later. A zero balance with real
+    // history — the case an empty UTXO set must not be read as.
     push(
         FIRST + 5,
         script(1),
@@ -94,7 +95,7 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         }),
     );
 
-    // Wallet script 2: receives in shard 1 and shard 3, never spent.
+    // Wallet script 2: two receives far apart, never spent.
     for (n, height) in [FIRST + SPAN + 3, FIRST + 3 * SPAN + 7].iter().enumerate() {
         push(
             *height,
@@ -111,10 +112,11 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         );
     }
 
-    // Wallet script 3: a long history in shard 1, enough to need pages.
+    // Wallet script 3: a long history, enough to need several fragments and
+    // to be pushed into more than one page shard.
     let long = transparent_shard::EVENTS_PER_PAGE + transparent_shard::INLINE_EVENTS + 5;
     for i in 0..long {
-        let height = FIRST + SPAN + 20 + u64::from(i) % 100;
+        let height = FIRST + SPAN + 20 + u64::from(i) * 2;
         push(
             height,
             script(3),
@@ -130,28 +132,49 @@ fn chain() -> Vec<Vec<(ScriptBytes, TransparentEvent)>> {
         );
     }
 
-    // Unrelated chain activity in every shard, so the wallet's scripts are not
-    // the only thing in the filters.
-    for shard in 0..SHARDS {
+    // Unrelated chain activity in every span, with histories long enough to
+    // page, so page shards close and the wallet's scripts are not the only
+    // thing in the filters.
+    for span in 0..SPANS {
         for tag in 100..400u32 {
-            let height = FIRST + shard * SPAN + u64::from(tag % 50);
-            push(
-                height,
-                script(tag),
-                TransparentEvent::Receive(ReceiveEvent {
-                    metadata: None,
-                    height: height as u32,
-                    txid: txid(u64::from(tag) * 1_000 + shard),
-                    transaction_index: 3,
-                    output_index: 0,
-                    value: 1,
-                    coinbase: false,
-                }),
-            );
+            for repeat in 0..3u64 {
+                let height = FIRST + span * SPAN + u64::from(tag % 50) + repeat * 60;
+                push(
+                    height,
+                    script(tag),
+                    TransparentEvent::Receive(ReceiveEvent {
+                        metadata: None,
+                        height: height as u32,
+                        txid: txid(u64::from(tag) * 1_000_000 + span * 10 + repeat),
+                        transaction_index: 3,
+                        output_index: 0,
+                        value: 1,
+                        coinbase: false,
+                    }),
+                );
+            }
         }
     }
+    blocks
+}
 
-    per_shard
+/// Small enough that page shards close every few blocks and directory shards
+/// on the page-shard limit, so histories cross page shards and directory
+/// shards.
+fn policy() -> DecoupledPolicy {
+    DecoupledPolicy {
+        scripts: Limit::new(10_000, 20_000).unwrap(),
+        directory_bytes: Limit::new(1_000_000, 2_000_000).unwrap(),
+        page_rows: Limit::new(4, 8).unwrap(),
+        max_children: 8,
+        ..DecoupledPolicy::for_geometry(&DECOUPLED_2K_8K)
+    }
+}
+
+/// One published directory shard with its page shards.
+struct Directory {
+    built: BuiltDirectory,
+    children: Vec<BuiltChild>,
 }
 
 /// A published shard set held in memory.
@@ -159,63 +182,63 @@ struct Published {
     map: ShardMap,
     map_bytes: u64,
     filters: BTreeMap<u64, Vec<u8>>,
-    /// Per shard and table, one entry per segment. Ordinarily one.
-    tables: BTreeMap<(u64, &'static str), Vec<Vec<u8>>>,
+    directories: Vec<Directory>,
 }
 
-impl Published {
-    /// One row of a shard's logical row space, which is its segments
-    /// concatenated.
-    fn row(&self, shard_id: u64, table: &'static str, row: u64, width: usize) -> &[u8] {
-        let segments = &self.tables[&(shard_id, table)];
-        let per_segment = (segments[0].len() / width) as u64;
-        let segment = &segments[(row / per_segment) as usize];
-        let at = (row % per_segment) as usize * width;
-        &segment[at..at + width]
+fn publish(blocks: &[Block]) -> Published {
+    let mut stream = ShardStream::with_policy(
+        &DECOUPLED_2K_8K,
+        policy(),
+        FIRST,
+        0,
+        genesis(),
+        transparent_filter::RANGE_PROFILE,
+    )
+    .unwrap();
+    let terminal = |height: u64| Some(hash_at(height));
+    let mut built = Vec::new();
+    for block in blocks {
+        built.extend(stream.push_block(block.clone(), &terminal).unwrap());
     }
-}
+    built.extend(stream.finish(&terminal).unwrap());
+    let mut directories = Vec::new();
+    let mut children = Vec::new();
+    for item in built {
+        match item {
+            Built::Child(child) => children.push(child),
+            Built::Directory { built, .. } => directories.push(Directory {
+                built,
+                children: std::mem::take(&mut children),
+            }),
+        }
+    }
+    assert!(
+        children.is_empty(),
+        "every page shard belongs to a directory shard"
+    );
 
-fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
     let mut entries = Vec::new();
     let mut filters = BTreeMap::new();
-    let mut tables = BTreeMap::new();
-
-    for (shard_id, events) in per_shard.iter().enumerate() {
-        let shard_id = shard_id as u64;
-        let start = FIRST + shard_id * SPAN;
-        let end = start + SPAN - 1;
-        let built: BuiltShard = build_shard(
-            shard_id,
-            start,
-            end,
-            genesis(),
-            hash_at(end),
-            transparent_filter::RANGE_PROFILE,
-            &transparent_shard::layout::RECENT_8K,
-            events,
-        )
-        .expect("build");
-
+    for directory in &directories {
+        let built = &directory.built;
         entries.push(ShardMapEntry {
-            shard_id,
-            geometry: transparent_shard::layout::RECENT_8K.name.to_string(),
-            start_height: start,
-            end_height: end,
-            parent_block_hash: hash_at(start - 1).to_display_hex(),
-            terminal_block_hash: hash_at(end).to_display_hex(),
+            shard_id: built.shard_id,
+            geometry: DECOUPLED_2K_8K.name.to_string(),
+            start_height: built.start_height,
+            end_height: built.end_height,
+            parent_block_hash: hash_at(built.start_height - 1).to_display_hex(),
+            terminal_block_hash: hash_at(built.end_height).to_display_hex(),
             filter_hash: filter_hash(built.filter.as_slice()).to_display_hex(),
             scripts: built.scripts,
-            page_rows: built.page_rows,
+            page_rows: directory.children.iter().map(|c| c.page_rows).sum(),
             txids: 0,
             directory_segments: built.directory_segments(),
-            page_segments: built.page_segments(),
-            manifest_digest: format!("{shard_id:064x}"),
+            page_segments: built.children,
+            manifest_digest: format!("{:064x}", built.shard_id),
             revision: 0,
-            sealed: shard_id + 1 < SHARDS,
+            sealed: built.sealed,
         });
-        filters.insert(shard_id, built.filter.as_slice().to_vec());
-        tables.insert((shard_id, "directory"), built.directory);
-        tables.insert((shard_id, "pages"), built.pages);
+        filters.insert(built.shard_id, built.filter.as_slice().to_vec());
     }
 
     let map = ShardMap {
@@ -225,10 +248,10 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
         range_envelope_version: transparent_filter::RANGE_ENVELOPE_VERSION,
         start_height: FIRST,
         seal: BTreeMap::from([(
-            transparent_shard::layout::RECENT_8K.name.to_string(),
+            DECOUPLED_2K_8K.name.to_string(),
             SealParameters {
-                max_scripts: 8_192,
-                max_page_rows: 2_048,
+                max_scripts: 10_000,
+                max_page_rows: 4,
                 max_txids: 0,
             },
         )]),
@@ -240,8 +263,74 @@ fn publish(per_shard: &[Vec<(ScriptBytes, TransparentEvent)>]) -> Published {
         map,
         map_bytes,
         filters,
-        tables,
+        directories,
     }
+}
+
+/// The history one directory shard holds for `script`: its inline events and
+/// every run its chain links, read straight from the tables.
+fn read_history(directory: &Directory, script: &[u8]) -> Vec<TransparentEvent> {
+    let built = &directory.built;
+    let geometry = built.geometry;
+    let salt = transparent_shard::tag_salt(
+        built.shard_id,
+        &hash_at(built.end_height),
+        built.tag_salt_counter,
+    );
+    let wanted = transparent_shard::script_tag(&salt, script);
+    let rows = geometry.directory_rows * u64::from(built.directory_segments());
+    let mut found = None;
+    for row in transparent_shard::build::candidate_rows(built.shard_id, script, rows) {
+        for entry in transparent_shard::records::decode_directory_row(
+            built.directory_row(row),
+            built.children,
+        )
+        .unwrap()
+        {
+            if entry.tag == wanted {
+                found = Some(entry);
+            }
+        }
+    }
+    let Some(entry) = found else {
+        return Vec::new();
+    };
+    let mut history = entry.inline.clone();
+    let mut next = entry.head();
+    while let Some((child, row)) = next {
+        let page = &directory.children[child as usize];
+        let page_salt = transparent_shard::page_tag_salt(
+            built.shard_id,
+            page.index,
+            page.end_height,
+            &page.terminal_block_hash,
+            page.tag_salt_counter,
+        );
+        let tag = transparent_shard::script_tag(&page_salt, script);
+        let mut run = Vec::new();
+        let mut ordinal = 0u32;
+        let mut count = 1u32;
+        while ordinal < count {
+            // A packed row carries several scripts; take the one fragment
+            // that claims this tag and ordinal.
+            let fragment = transparent_shard::decode_page_row(
+                page.page_row(geometry, u64::from(row) + u64::from(ordinal)),
+            )
+            .unwrap()
+            .into_iter()
+            .find(|e| e.tag == tag && e.ordinal == ordinal)
+            .expect("a located row holds the fragment that named it");
+            if ordinal == 0 {
+                count = fragment.fragment_count;
+                next = fragment.link.previous();
+            }
+            run.extend(fragment.events);
+            ordinal += 1;
+        }
+        run.extend(history);
+        history = run;
+    }
+    history
 }
 
 /// Serves filters, charging their real size.
@@ -270,32 +359,18 @@ impl FilterSource for Filters<'_> {
 
 /// A stand-in for the private transport.
 ///
-/// It returns the requested row directly, which means it *sees* the selection —
-/// so it can only measure the shape of the exchange, never its privacy. The
-/// real scheme is exercised by the shard server's round trip; here the query
-/// body is still built and charged at its true size so the accounting is real.
-struct DirectRows<'a> {
-    published: &'a Published,
-    row_bytes: BTreeMap<&'static str, usize>,
-}
+/// It serves no manifests, so a sync through it stops at the manifest check;
+/// it exists to keep the transport trait honest. The walk itself is exercised
+/// over real rows by the wallet's unit tests and by the shard server's round
+/// trip.
+struct DirectRows;
 
-impl DirectRows<'_> {
-    fn table_name(table: Table) -> &'static str {
-        match table {
-            Table::Directory => "directory",
-            Table::Pages => "pages",
-        }
-    }
-}
-
-impl ShardTransport for DirectRows<'_> {
+impl ShardTransport for DirectRows {
     fn init(&mut self) -> Result<(Vec<u8>, u64), BoxError> {
         Ok((Vec::new(), 0))
     }
 
     fn manifest(&mut self, shard_id: u64, revision: &str) -> Result<(Vec<u8>, u64), BoxError> {
-        // The stand-in serves rows straight off disk and publishes no
-        // manifests; a sync through it would stop at the manifest check.
         let _ = (shard_id, revision);
         Err("the direct-rows stand-in serves no manifests".into())
     }
@@ -307,10 +382,7 @@ impl ShardTransport for DirectRows<'_> {
         table: Table,
         segment: u32,
     ) -> Result<(Vec<u8>, u64), BoxError> {
-        // A real service publishes c1 here. The stand-in cannot, so it returns
-        // an empty document and the sync's setup path is exercised in the
-        // server's own round trip instead.
-        let _ = (shard_id, revision, table, segment);
+        let _ = (shard_id, revision, table.name(), segment);
         Ok((Vec::new(), 0))
     }
 
@@ -321,24 +393,8 @@ impl ShardTransport for DirectRows<'_> {
         table: Table,
         body: &[u8],
     ) -> Result<Vec<u8>, BoxError> {
-        let _ = revision;
-        // The row index is the last thing the caller encoded; recover it from
-        // the trailing marker this stand-in agrees on.
-        let row = u64::from_le_bytes(body[body.len() - 8..].try_into()?) as usize;
-        let name = Self::table_name(table);
-        let width = self.row_bytes[name];
-        let segments = self
-            .published
-            .tables
-            .get(&(shard_id, name))
-            .ok_or("no such table")?;
-        // Every segment answers the same query, in segment order, as the real
-        // service does.
-        let mut answer = Vec::new();
-        for segment in segments {
-            answer.extend_from_slice(&segment[row * width..(row + 1) * width]);
-        }
-        Ok(answer)
+        let _ = (shard_id, revision, table.name(), body);
+        Err("the direct-rows stand-in answers no queries".into())
     }
 }
 
@@ -347,14 +403,13 @@ impl ShardTransport for DirectRows<'_> {
 /// This is the independent result the reconstruction is compared against. It
 /// shares only the ledger arithmetic; it does not share a filter, a shard, a
 /// row or a page.
-fn traverse(
-    per_shard: &[Vec<(ScriptBytes, TransparentEvent)>],
-    wallet: &[ScriptBytes],
-    from_shard: usize,
-) -> Ledger {
+fn traverse(blocks: &[Block], wallet: &[ScriptBytes], from_height: u64) -> Ledger {
     let mut events: Vec<(Vec<u8>, TransparentEvent)> = Vec::new();
-    for shard in per_shard.iter().skip(from_shard) {
-        for (script, event) in shard {
+    for (height, block) in blocks {
+        if *height < from_height {
+            continue;
+        }
+        for (script, event) in block {
             if wallet.iter().any(|s| s.as_slice() == script.as_slice()) {
                 events.push((script.as_slice().to_vec(), *event));
             }
@@ -384,76 +439,33 @@ fn compare(recovered: &Ledger, expected: &Ledger) {
 
 #[test]
 fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
-    // Drives the ledger from the published tables, decoded directly, so the
-    // comparison covers the whole build-and-decode path without needing the
-    // cryptographic transport.
-    let per_shard = chain();
-    let published = publish(&per_shard);
+    // Drives the ledger from the published tables, decoded directly and
+    // walked along each chain of runs, so the comparison covers the whole
+    // build-and-decode path without needing the cryptographic transport.
+    let blocks = chain();
+    let published = publish(&blocks);
     let wallet = vec![script(1), script(2), script(3), script(999)];
+    assert!(
+        published.directories.len() > 1,
+        "more than one directory shard"
+    );
 
     let mut events: Vec<(Vec<u8>, TransparentEvent)> = Vec::new();
-    for entry in &published.map.shards {
+    let mut runs_crossed = 0;
+    for directory in &published.directories {
         for want in &wallet {
-            let rows = transparent_shard::DIRECTORY_ROWS as u64 * entry.directory_segments as u64;
-            for row in
-                transparent_shard::build::candidate_rows(entry.shard_id, want.as_slice(), rows)
-            {
-                let decoded = transparent_shard::records::decode_directory_row(published.row(
-                    entry.shard_id,
-                    "directory",
-                    row,
-                    transparent_shard::DIRECTORY_ROW_BYTES,
-                ))
-                .unwrap();
-                let salt =
-                    transparent_shard::tag_salt(entry.shard_id, &hash_at(entry.end_height), 0);
-                let wanted = transparent_shard::script_tag(&salt, want.as_slice());
-                for found in decoded {
-                    if found.tag != wanted {
-                        continue;
-                    }
-                    for event in &found.inline {
-                        events.push((want.as_slice().to_vec(), *event));
-                    }
-                    let Some(base) = found.page_base() else {
-                        continue;
-                    };
-                    let first = transparent_shard::decode_page_row(published.row(
-                        entry.shard_id,
-                        "pages",
-                        u64::from(base),
-                        transparent_shard::PAGE_ROW_BYTES,
-                    ))
-                    .unwrap()
-                    .into_iter()
-                    .find(|e| e.tag == wanted && e.ordinal == 0)
-                    .expect("a located row holds the fragment that named it");
-                    for ordinal in 0..first.fragment_count {
-                        // A packed row carries several scripts; take the one
-                        // fragment that claims this tag and ordinal.
-                        let row = transparent_shard::decode_page_row(published.row(
-                            entry.shard_id,
-                            "pages",
-                            u64::from(base) + u64::from(ordinal),
-                            transparent_shard::PAGE_ROW_BYTES,
-                        ))
-                        .unwrap();
-                        let fragment = row
-                            .into_iter()
-                            .find(|e| e.tag == wanted && e.ordinal == ordinal)
-                            .expect("a located row holds the fragment that named it");
-                        for event in fragment.events {
-                            events.push((want.as_slice().to_vec(), event));
-                        }
-                    }
-                }
+            let history = read_history(directory, want.as_slice());
+            for event in history {
+                events.push((want.as_slice().to_vec(), event));
             }
         }
+        runs_crossed += directory.children.iter().filter(|c| c.runs > 0).count();
     }
+    assert!(runs_crossed > 1, "histories cross page shards");
 
     let mut recovered = Ledger::new();
     recovered.replay(&mut events).expect("replay");
-    let expected = traverse(&per_shard, &wallet, 0);
+    let expected = traverse(&blocks, &wallet, 0);
     compare(&recovered, &expected);
 
     // The fixture must actually exercise what it claims to.
@@ -472,26 +484,41 @@ fn the_ledger_replays_identically_from_shards_and_from_a_direct_traversal() {
 /// full-history one.
 #[test]
 fn a_later_birthday_recovers_exactly_the_history_from_that_shard_forward() {
-    let per_shard = chain();
-    let published = publish(&per_shard);
+    let blocks = chain();
+    let published = publish(&blocks);
     let wallet = vec![script(1), script(2)];
 
-    // Shard 2 holds script 1's spend but not its receive, so this is also the
-    // unresolved-spend case: a wallet starting there sees money leave an output
-    // it never saw arrive, and must say so rather than ignore it.
-    let expected = traverse(&per_shard, &wallet, 2);
+    // The directory shard holding script 1's spend but not its receive, so
+    // this is also the unresolved-spend case: a wallet starting there sees
+    // money leave an output it never saw arrive, and must say so rather than
+    // ignore it.
+    let spend_height = FIRST + 2 * SPAN + 10;
+    let entry = published
+        .map
+        .shard_for_height(spend_height)
+        .expect("in range")
+        .clone();
+    assert!(
+        entry.start_height > FIRST + 5,
+        "the receive is in an earlier shard"
+    );
+    let expected = traverse(&blocks, &wallet, entry.start_height);
     assert_eq!(expected.unresolved().len(), 1);
 
-    let birthday = published.map.shards[2].start_height;
-    assert_eq!(
-        published
-            .map
-            .shard_for_height(birthday)
-            .expect("in range")
-            .shard_id,
-        2,
-        "the map must locate the birthday shard"
-    );
+    let mut events = Vec::new();
+    for directory in &published.directories {
+        if directory.built.end_height < entry.start_height {
+            continue;
+        }
+        for want in &wallet {
+            for event in read_history(directory, want.as_slice()) {
+                events.push((want.as_slice().to_vec(), event));
+            }
+        }
+    }
+    let mut recovered = Ledger::new();
+    recovered.replay(&mut events).expect("replay");
+    compare(&recovered, &expected);
 }
 
 /// Filters are paid for by every wallet, matched or not. That unconditional
@@ -499,18 +526,17 @@ fn a_later_birthday_recovers_exactly_the_history_from_that_shard_forward() {
 /// separate rather than folding it into a total.
 #[test]
 fn byte_accounting_separates_the_unconditional_floor_from_the_gated_work() {
-    let per_shard = chain();
-    let published = publish(&per_shard);
+    let published = publish(&chain());
 
     let mut charges = transparent_wallet::ByteCharges {
         map_bytes: published.map_bytes,
         ..Default::default()
     };
-    for shard_id in 0..SHARDS {
-        charges.filter_bytes += published.filters[&shard_id].len() as u64;
+    for bytes in published.filters.values() {
+        charges.filter_bytes += bytes.len() as u64;
         charges.filters_checked += 1;
     }
-    assert_eq!(charges.filters_checked, SHARDS);
+    assert_eq!(charges.filters_checked, published.map.shards.len() as u64);
     assert_eq!(charges.public_floor(), charges.total());
 
     charges.add_query(transparent_wallet::client::Table::Directory, 100_000, 5_000);
@@ -532,8 +558,7 @@ fn byte_accounting_separates_the_unconditional_floor_from_the_gated_work() {
 /// This is the case the whole arrangement is meant to make cheap.
 #[test]
 fn an_unused_wallet_matches_nothing_and_issues_no_queries() {
-    let per_shard = chain();
-    let published = publish(&per_shard);
+    let published = publish(&chain());
     let wallet = vec![script(900_001), script(900_002)];
 
     let mut matched = 0;
@@ -566,10 +591,7 @@ fn sync_signature_is_usable(
     scripts: &[ScriptBytes],
 ) {
     let mut filters = Filters { published };
-    let mut rows = DirectRows {
-        published,
-        row_bytes: BTreeMap::new(),
-    };
+    let mut rows = DirectRows;
     let _ = sync(
         &published.map,
         published.map_bytes,

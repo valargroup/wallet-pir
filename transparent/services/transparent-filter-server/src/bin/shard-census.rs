@@ -202,7 +202,7 @@ struct Cli {
     max_page_children: u32,
     /// Page entry header bytes in the decoupled layout. 40 carries the chain
     /// fields; 34 prices the same content without them.
-    #[arg(long, default_value_t = transparent_shard::seal::DECOUPLED_PAGE_ENTRY_HEADER_BYTES)]
+    #[arg(long, default_value_t = transparent_shard::layout::PAGE_ENTRY_HEADER_BYTES)]
     page_entry_header: usize,
     /// A workload sample (`sample.json`): print each sampled script's per-shard
     /// page cost, for the first policy only, as `sample` rows.
@@ -1531,14 +1531,14 @@ fn decoupled(
         name: "decoupled",
         directory_rows,
         page_rows,
-        ..transparent_shard::layout::RECENT_8K
+        ..transparent_shard::layout::DECOUPLED_2K_8K
     };
     geometry.validate()?;
     if cli.max_page_children == 0 || cli.max_page_children > 32 {
         return Err("--max-page-children must be 1 to 32 (five bits in the entry)".into());
     }
     let policy =
-        DecoupledPolicy::for_geometry(&geometry, cli.max_page_children, cli.page_entry_header);
+        DecoupledPolicy::scoring(&geometry, cli.max_page_children, cli.page_entry_header);
     println!(
         "\ndecoupled: directory {directory_rows} rows, page shards {page_rows} rows, at most {} \
 page shards, {}-byte page entry header; {policy:?}",
@@ -1761,7 +1761,22 @@ fn drain_scripts_in_tier(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transparent_shard::layout::{ARCHIVE_WIDE, RECENT_8K};
+    use transparent_shard::layout::DECOUPLED_2K_8K;
+
+    /// The coupled v11 shapes the archived censuses were taken at, which the
+    /// census still scores: no longer in the registry.
+    const RECENT_8K: Geometry = Geometry {
+        name: "recent-8k",
+        directory_rows: 8_192,
+        page_rows: 8_192,
+        ..DECOUPLED_2K_8K
+    };
+    const ARCHIVE_WIDE: Geometry = Geometry {
+        name: "archive-wide",
+        directory_rows: 32_768,
+        page_rows: 65_536,
+        ..DECOUPLED_2K_8K
+    };
 
     /// At the compiled geometry the sweep is pinned, so a change to it is a
     /// deliberate edit. The archived censuses under

@@ -434,7 +434,7 @@ async fn a_replaced_tail_rewinds_pending_events_without_completed_coverage() {
     let map = publish_with(
         new_dir.path(),
         &all,
-        |_| &transparent_shard::layout::RECENT_8K,
+        |_| &transparent_shard::layout::DECOUPLED_2K_8K,
         1,
         &old.shards[3].manifest_digest,
         hash_at,
@@ -520,7 +520,7 @@ async fn an_exact_common_ancestor_inside_a_shard_survives_a_real_fork() {
     let map = publish_with(
         new_dir.path(),
         &changed,
-        |_| &transparent_shard::layout::RECENT_8K,
+        |_| &transparent_shard::layout::DECOUPLED_2K_8K,
         0,
         "",
         hash_forked(fork),

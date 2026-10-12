@@ -371,7 +371,7 @@ pub fn publish_with(
     let mut children: Vec<PageChild> = Vec::new();
 
     let terminal = |height: u64| store.block_at(height).map(|block| block.block_hash);
-    let mut publish_built = |built: Vec<Built>,
+    let publish_built = |built: Vec<Built>,
                              children: &mut Vec<PageChild>,
                              entries: &mut Vec<transparent_filter::ShardMapEntry>,
                              parent_block_hash: &mut BlockHash,
@@ -1127,7 +1127,7 @@ mod tests {
                     }),
                     height: h as u32,
                     txid: transparent_events::Txid(txid),
-                    transaction_index: u32::from(k),
+                    transaction_index: u16::from(k),
                     output_index: 0,
                     value: 100,
                     coinbase: false,
