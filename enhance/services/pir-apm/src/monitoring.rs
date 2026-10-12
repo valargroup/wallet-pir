@@ -169,6 +169,11 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
         }
     });
     let eval_dashboard = dashboard.clone();
+    let state_path = path.clone();
+    let mut service_stores: BTreeMap<String, Store> = BTreeMap::new();
+    // Named apart from the Enhance `capacity` family, with its mode in the
+    // Transparent config (`capacity_alert_mode`).
+    let mut transparent_capacity_store = Store::open(&path)?.with_family("transparent_capacity");
     tokio::spawn(async move {
         let mut store = store;
         let mut router_history = BTreeMap::new();
@@ -228,32 +233,44 @@ pub fn start(dashboard: SharedDashboard, config: Config) -> Result<()> {
             }
             let result = (|| -> Result<(Vec<Incident>, DeliveryHealth)> {
                 store.evaluate(&conditions, now, shadow, &config.environment, &url)?;
-                let mut quality_conditions = crate::quality::conditions(&snapshot.quality, now);
-                if snapshot.quality.enabled
-                    && !snapshot.quality.inventory_error
-                    && now.saturating_sub(snapshot.quality.collected_at) <= 45
-                {
-                    for incident in &snapshot.monitoring.incidents {
-                        if let Some(c) = &incident.condition {
-                            if c.key.starts_with("quality_")
-                                && c.resource != "history"
-                                && c.resource != "transparent"
-                                && !snapshot.quality.sources.contains_key(&c.resource)
-                            {
-                                let mut retired = c.clone();
-                                retired.retired = true;
-                                retired.sample = now;
-                                quality_conditions.push(retired);
-                            }
-                        }
-                    }
-                }
+                let mut quality =
+                    crate::quality::conditions(&snapshot.quality, now, &policy.quality);
+                crate::quality::retire(
+                    &snapshot.quality,
+                    &snapshot.monitoring.incidents,
+                    now,
+                    &mut quality,
+                );
                 quality_store.evaluate(
-                    &quality_conditions,
+                    &quality.shared,
                     now,
                     quality_mode != "active",
                     &config.environment,
                     &transparent_url,
+                )?;
+                // Each Transparent service is its own family, in its configured mode.
+                for (service, conditions) in &quality.services {
+                    let shadow = snapshot.quality.service(service).is_none_or(|s| s.shadow);
+                    let store = match service_stores.entry(service.clone()) {
+                        std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
+                        std::collections::btree_map::Entry::Vacant(e) => e.insert(
+                            Store::open(&state_path)?.with_family(&format!("quality-{service}")),
+                        ),
+                    };
+                    store.evaluate(
+                        conditions,
+                        now,
+                        shadow,
+                        &config.environment,
+                        &format!("{}/quality/?service={service}", url.trim_end_matches('/')),
+                    )?;
+                }
+                transparent_capacity_store.evaluate(
+                    &quality.capacity,
+                    now,
+                    snapshot.quality.capacity.shadow,
+                    &config.environment,
+                    &format!("{}/capacity/", url.trim_end_matches('/')),
                 )?;
                 capacity_store.evaluate(
                     &capacity_conditions,
@@ -309,6 +326,8 @@ pub struct Policy {
     pub publication_warning_blocks: u64,
     pub publication_critical_blocks: u64,
     pub publication_failure_hold_seconds: u64,
+    /// Transparent service-quality and capacity thresholds.
+    pub quality: crate::quality::Policy,
 }
 impl Default for Policy {
     fn default() -> Self {
@@ -328,11 +347,12 @@ impl Default for Policy {
             publication_warning_blocks: 8,
             publication_critical_blocks: 16,
             publication_failure_hold_seconds: 120,
+            quality: Default::default(),
         }
     }
 }
 impl Policy {
-    fn load() -> Result<Self> {
+    pub(crate) fn load() -> Result<Self> {
         let p: Self = match std::env::var("PIR_APM_ALERT_POLICY") {
             Ok(path) => serde_json::from_slice(&std::fs::read(path)?)?,
             Err(_) => Self::default(),
@@ -355,7 +375,8 @@ impl Policy {
                 && p.publication_critical_seconds >= p.publication_warning_seconds
                 && p.publication_warning_blocks > 0
                 && p.publication_critical_blocks > p.publication_warning_blocks
-                && p.publication_failure_hold_seconds > 0,
+                && p.publication_failure_hold_seconds > 0
+                && p.quality.valid(),
             "invalid alert policy"
         );
         Ok(p)

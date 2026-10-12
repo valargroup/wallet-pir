@@ -1,9 +1,12 @@
+use super::capacity::{Daily, Sample, DAY};
 use super::data::Point;
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 
 pub const RETENTION: u64 = 7 * 24 * 3600;
+/// Daily memory rollups outlive minute history so forecasts see months of growth.
+pub const CAPACITY_RETENTION: u64 = 180 * DAY;
 pub struct Store {
     db: Connection,
 }
@@ -15,8 +18,60 @@ impl Store {
             CREATE TABLE IF NOT EXISTS quality_points(service TEXT NOT NULL,source TEXT NOT NULL,minute INTEGER NOT NULL,last_sample INTEGER NOT NULL,value TEXT NOT NULL,PRIMARY KEY(service,source,minute));
             CREATE INDEX IF NOT EXISTS quality_retention ON quality_points(minute);
             CREATE TABLE IF NOT EXISTS quality_events(at INTEGER NOT NULL,service TEXT NOT NULL,source TEXT NOT NULL,kind TEXT NOT NULL);
-            CREATE INDEX IF NOT EXISTS quality_event_retention ON quality_events(at);")?;
+            CREATE INDEX IF NOT EXISTS quality_event_retention ON quality_events(at);
+            CREATE TABLE IF NOT EXISTS capacity_daily(host TEXT NOT NULL,unit TEXT NOT NULL,day INTEGER NOT NULL,at INTEGER NOT NULL,size TEXT,memory_total REAL,min_available REAL,unit_peak REAL,unit_max REAL,cache_peak REAL,PRIMARY KEY(host,unit,day));")?;
         Ok(Self { db })
+    }
+    /// Folds one host or unit observation into its UTC day: the lowest available
+    /// memory, the highest unit and cache use, and the latest size and limits.
+    pub fn record_capacity(&mut self, s: &Sample) -> Result<()> {
+        self.db.execute(
+            "INSERT INTO capacity_daily VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(host,unit,day) DO UPDATE SET
+             at=MAX(at,excluded.at),
+             size=COALESCE(excluded.size,size),
+             memory_total=COALESCE(excluded.memory_total,memory_total),
+             min_available=MIN(COALESCE(min_available,excluded.min_available),COALESCE(excluded.min_available,min_available)),
+             unit_peak=MAX(COALESCE(unit_peak,excluded.unit_peak),COALESCE(excluded.unit_peak,unit_peak)),
+             unit_max=COALESCE(excluded.unit_max,unit_max),
+             cache_peak=MAX(COALESCE(cache_peak,excluded.cache_peak),COALESCE(excluded.cache_peak,cache_peak))",
+            params![
+                s.host,
+                s.unit,
+                s.at / DAY,
+                s.at,
+                s.size,
+                s.memory_total,
+                s.memory_available,
+                s.unit_peak,
+                s.unit_max,
+                s.cache_resident
+            ],
+        )?;
+        Ok(())
+    }
+    /// Daily rows from `since_day` on, ordered by host, unit and day.
+    pub fn capacity(&self, since_day: u64) -> Result<Vec<Daily>> {
+        let mut stmt = self.db.prepare(
+            "SELECT host,unit,day,at,size,memory_total,min_available,unit_peak,unit_max,cache_peak
+             FROM capacity_daily WHERE day>=? ORDER BY host,unit,day",
+        )?;
+        let rows = stmt
+            .query_map([since_day], |r| {
+                Ok(Daily {
+                    host: r.get(0)?,
+                    unit: r.get(1)?,
+                    day: r.get(2)?,
+                    at: r.get(3)?,
+                    size: r.get(4)?,
+                    memory_total: r.get(5)?,
+                    min_available: r.get(6)?,
+                    unit_peak: r.get(7)?,
+                    unit_max: r.get(8)?,
+                    cache_peak: r.get(9)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
     pub fn record(&mut self, service: &str, source: &str, point: &Point) -> Result<()> {
         let tx = self.db.transaction()?;
@@ -52,6 +107,10 @@ impl Store {
         self.db.execute(
             "DELETE FROM quality_events WHERE at < ?",
             [now.saturating_sub(RETENTION)],
+        )?;
+        self.db.execute(
+            "DELETE FROM capacity_daily WHERE day < ?",
+            [now.saturating_sub(CAPACITY_RETENTION) / DAY],
         )?;
         self.db.execute_batch("PRAGMA wal_checkpoint(PASSIVE)")?;
         Ok(())
@@ -118,6 +177,48 @@ mod tests {
             .history("transparent", RETENTION + 200, RETENTION)
             .unwrap()
             .is_empty());
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+    #[test]
+    fn capacity_rollup_keeps_daily_extremes_for_180_days() {
+        let path = std::env::temp_dir().join(format!(
+            "pir-capacity-{}-{}.sqlite",
+            std::process::id(),
+            pir_apm::incidents::unix_time()
+        ));
+        let mut store = Store::open(&path).unwrap();
+        let sample = |at, available, peak: Option<f64>| Sample {
+            host: "h".into(),
+            unit: String::new(),
+            at,
+            size: Some("s-4vcpu-8gb".into()),
+            memory_total: Some(100.),
+            memory_available: Some(available),
+            unit_peak: peak,
+            ..Default::default()
+        };
+        store
+            .record_capacity(&sample(DAY + 10, 60., Some(5.)))
+            .unwrap();
+        store.record_capacity(&sample(DAY + 20, 40., None)).unwrap();
+        store
+            .record_capacity(&sample(DAY + 30, 50., Some(3.)))
+            .unwrap();
+        store
+            .record_capacity(&sample(2 * DAY + 5, 70., None))
+            .unwrap();
+        let rows = store.capacity(0).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].min_available, Some(40.));
+        assert_eq!(rows[0].unit_peak, Some(5.));
+        assert_eq!(rows[0].at, DAY + 30);
+        assert_eq!(rows[1].min_available, Some(70.));
+        assert_eq!(rows[1].unit_peak, None);
+        store.prune(CAPACITY_RETENTION + DAY + 10).unwrap();
+        assert_eq!(store.capacity(0).unwrap().len(), 2);
+        store.prune(CAPACITY_RETENTION + 2 * DAY + 10).unwrap();
+        assert_eq!(store.capacity(0).unwrap().len(), 1);
         drop(store);
         let _ = std::fs::remove_file(path);
     }

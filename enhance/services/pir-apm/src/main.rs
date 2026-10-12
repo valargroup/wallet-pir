@@ -330,6 +330,8 @@ fn dashboard_router(dashboard: SharedDashboard) -> Router {
         .route("/quality/", get(quality::page))
         .route("/apm/transparent/workers/:name/", get(quality::worker_page))
         .route("/transparent/workers/:name/", get(quality::worker_page))
+        .route("/apm/capacity/", get(quality::capacity_page))
+        .route("/capacity/", get(quality::capacity_page))
         .route("/apm/api/quality", get(quality::api))
         .route("/api/quality", get(quality::api))
         .route("/", get(dashboard::index))

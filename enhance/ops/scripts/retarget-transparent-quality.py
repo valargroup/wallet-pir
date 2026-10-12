@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Point Transparent quality monitoring at a new shard schema's files.
 
-`apm`, on the coordinator, rewrites only `roster` and `synthetic_status` in the
-APM Transparent config and `roster.path` in the host sampler config, after
-checking that the new roster parses and the load status is current.
+`apm`, on the coordinator, rewrites only `roster` (and, with --load-status,
+`synthetic_status`) of one history service in the APM Transparent config and
+`roster.path` in the host sampler config, after checking that the new roster
+parses and the load status is current.
 `monitor`, on the monitor host, rewrites only the Transparent probe's canary
 binary, fixture and pins (from transparent-canary-pins.py) in the service-probe
 config, after the new command passes once.
@@ -49,13 +50,19 @@ def check_status(path, now, max_age):
     return status.get('mode')
 
 
-def apm_changes(apm, hosts, roster, status):
+def apm_changes(apm, hosts, roster, status, service='transparent'):
     changes = {}
     config = load(apm)
-    if set(config) - {'publisher_url', 'roster', 'router_metrics_url', 'synthetic_status',
-                      'host_snapshot', 'public_origins'} or 'roster' not in config:
+    if set(config) - {'host_snapshot', 'capacity_alert_mode', 'services'} \
+            or not isinstance(config.get('services'), list):
         raise ValueError(f'{apm} is not an APM Transparent config')
-    updated = {**config, 'roster': str(roster), 'synthetic_status': str(status)}
+    entries = [s for s in config['services'] if isinstance(s, dict) and s.get('service') == service]
+    if len(entries) != 1 or entries[0].get('kind') != 'history':
+        raise ValueError(f'{apm} has no single history service named {service}')
+    moved = {**entries[0], 'roster': str(roster)}
+    if status is not None:
+        moved['synthetic_status'] = str(status)
+    updated = {**config, 'services': [moved if s is entries[0] else s for s in config['services']]}
     if updated != config:
         changes[Path(apm)] = (config, updated)
     sampler = load(hosts)
@@ -112,9 +119,10 @@ def main(argv=None, now=time.time, run=subprocess.run):
     apm = sub.add_parser('apm')
     apm.add_argument('--apm-config', type=Path, required=True)
     apm.add_argument('--hosts-config', type=Path, default=Path('/etc/pir-quality/hosts.json'))
-    apm.add_argument('--roster', type=Path, default=Path('/opt/transparent-publisher/v11/roster.json'))
+    apm.add_argument('--service', default='transparent', help='history service to move')
+    apm.add_argument('--roster', type=Path, default=Path('/opt/transparent-publisher/v12/roster.json'))
     apm.add_argument('--load-status', type=Path,
-                     default=Path('/srv/transparent-activity/canonical-load/v11/status.json'))
+                     help='continuous load status to point synthetic_status at; omitted leaves it')
     apm.add_argument('--max-status-age', type=int, default=120)
     monitor = sub.add_parser('monitor')
     monitor.add_argument('--probes-config', type=Path, required=True)
@@ -130,8 +138,10 @@ def main(argv=None, now=time.time, run=subprocess.run):
         parser.error('--apply requires --backup-dir')
     if args.role == 'apm':
         workers = check_roster(args.roster)
-        mode = check_status(args.load_status, now(), args.max_status_age)
-        changes = apm_changes(args.apm_config, args.hosts_config, args.roster, args.load_status)
+        mode = None if args.load_status is None else check_status(args.load_status, now(),
+                                                                  args.max_status_age)
+        changes = apm_changes(args.apm_config, args.hosts_config, args.roster, args.load_status,
+                              args.service)
         print(json.dumps({'roster_workers': workers, 'load_mode': mode,
                           'sampler_follows_roster': load(args.hosts_config).get('roster') is not None}))
         show(changes)

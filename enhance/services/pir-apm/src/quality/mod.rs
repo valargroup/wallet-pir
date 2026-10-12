@@ -1,15 +1,21 @@
 //! Independent aggregate collectors and seven-day service-quality history.
+mod capacity;
 mod data;
 mod publication;
+mod rules;
+mod services;
 mod store;
 mod view;
 use crate::{config::Config, dashboard::SharedDashboard};
 use anyhow::{Context, Result};
+pub use capacity::page as capacity_page;
 use data::{Histogram, Point, Reading};
-use pir_apm::incidents::{unix_time, Condition};
-use serde::{Deserialize, Serialize};
+use pir_apm::incidents::unix_time;
+pub use rules::{conditions, retire, Policy};
+use serde::Serialize;
+use services::validate_url;
 use std::{
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, BTreeSet, VecDeque},
     path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -17,19 +23,24 @@ use std::{
     },
     time::Duration,
 };
-pub use view::{api, page, summary, worker_page};
+pub use view::{api, page, summary, tabs, worker_page};
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct Source {
     pub publication: Option<String>,
     pub service: String,
     pub role: String,
+    /// Host id from the host snapshot; several sources can share one host.
+    pub host: Option<String>,
     pub sampled_at: u64,
     pub error: Option<String>,
     pub ready: Option<bool>,
     pub current: data::Values,
     #[serde(skip)]
     pub recent: VecDeque<Point>,
+    /// Rebuild and prepare timings only, kept for the fifteen-minute rules.
+    #[serde(skip)]
+    pub long: VecDeque<(u64, BTreeMap<String, Histogram>)>,
 }
 impl Source {
     pub fn fresh(&self, now: u64) -> bool {
@@ -52,44 +63,77 @@ impl Source {
         }
         p
     }
+    /// Rebuild and prepare histograms merged over the last fifteen minutes.
+    /// A histogram whose buckets changed inside the window is dropped.
+    pub fn long_window(&self, now: u64) -> BTreeMap<String, Histogram> {
+        let mut merged: BTreeMap<String, Histogram> = BTreeMap::new();
+        let mut invalid = BTreeSet::new();
+        for (at, histograms) in &self.long {
+            if *at <= now.saturating_sub(rules::LONG_WINDOW) {
+                continue;
+            }
+            for (key, h) in histograms {
+                if invalid.contains(key) {
+                    continue;
+                }
+                match merged.get_mut(key) {
+                    Some(old) => {
+                        if !old.merge(h) {
+                            merged.remove(key);
+                            invalid.insert(key.clone());
+                        }
+                    }
+                    None => {
+                        merged.insert(key.clone(), h.clone());
+                    }
+                }
+            }
+        }
+        merged
+    }
+}
+
+/// One configured Transparent service as the rules and pages see it.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct ServiceView {
+    pub name: String,
+    pub kind: services::Kind,
+    pub path_prefix: String,
+    pub public_origins: Vec<String>,
+    pub shadow: bool,
+    pub inventory_error: bool,
+    pub publication: publication::View,
+    pub synthetic: Option<serde_json::Value>,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct View {
-    pub publication: publication::View,
+    pub services: Vec<ServiceView>,
     pub enabled: bool,
     pub collected_at: u64,
     pub persisted_at: u64,
     pub storage_error: bool,
     pub dropped_batches: u64,
     pub last_dropped_at: u64,
+    /// The Enhance worker and packing-router inventories.
     pub inventory_error: bool,
     pub sources: BTreeMap<String, Source>,
-    pub synthetic: Option<serde_json::Value>,
+    pub capacity: capacity::View,
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
+impl View {
+    pub fn service(&self, name: &str) -> Option<&ServiceView> {
+        self.services.iter().find(|s| s.name == name)
+    }
+    fn service_mut(&mut self, name: &str) -> Option<&mut ServiceView> {
+        self.services.iter_mut().find(|s| s.name == name)
+    }
+}
 
-#[derive(Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct TransparentConfig {
-    publisher_url: String,
-    roster: PathBuf,
-    router_metrics_url: Option<String>,
-    synthetic_status: Option<PathBuf>,
-    host_snapshot: Option<PathBuf>,
-    #[serde(default)]
-    public_origins: Vec<String>,
-}
-#[derive(Deserialize)]
-struct Worker {
-    id: String,
-    role: String,
-    upstream: String,
-}
 #[derive(Clone)]
 struct Target {
     id: String,
-    service: &'static str,
+    service: String,
     role: String,
     url: String,
     ready: Option<String>,
@@ -97,86 +141,15 @@ struct Target {
     endpoint: Option<&'static str>,
 }
 
-fn validate_url(value: &str) -> Result<()> {
-    let u = reqwest::Url::parse(value)?;
-    if u.scheme() == "file" {
-        anyhow::ensure!(
-            u.host_str().is_none()
-                && u.to_file_path().is_ok()
-                && u.query().is_none()
-                && u.fragment().is_none(),
-            "invalid local metrics snapshot"
-        );
-        return Ok(());
-    }
-    anyhow::ensure!(
-        matches!(u.scheme(), "http" | "https")
-            && u.host_str().is_some()
-            && u.username().is_empty()
-            && u.password().is_none()
-            && u.query().is_none()
-            && u.fragment().is_none(),
-        "metrics URL must be credential-free HTTP(S)"
-    );
-    Ok(())
-}
-fn transparent_targets(config: &TransparentConfig) -> Result<Vec<Target>> {
-    let bytes = std::fs::read(&config.roster)?;
-    anyhow::ensure!(bytes.len() <= 64 * 1024, "roster too large");
-    let roster: Vec<Worker> = serde_json::from_slice(&bytes)?;
-    anyhow::ensure!(
-        !roster.is_empty() && roster.len() <= 32,
-        "roster must contain 1..32 workers"
-    );
-    let mut ids = std::collections::BTreeSet::new();
-    let mut targets = vec![Target {
-        id: "transparent-publisher".into(),
-        service: "transparent",
-        role: "publisher".into(),
-        url: config.publisher_url.clone(),
-        ready: None,
-        status_operation: None,
-        endpoint: None,
-    }];
-    for w in roster {
-        anyhow::ensure!(
-            w.id.len() <= 80
-                && w.id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                && ids.insert(w.id.clone())
-                && matches!(w.role.as_str(), "archive-owner" | "recent-replica"),
-            "invalid worker identity or role"
-        );
-        let origin = format!("http://{}", w.upstream);
-        let u = reqwest::Url::parse(&origin)?;
-        anyhow::ensure!(u.path() == "/", "worker upstream must be host:port");
-        targets.push(Target {
-            id: w.id,
-            service: "transparent",
-            role: w.role,
-            url: format!("{origin}/metrics"),
-            ready: Some(format!("{origin}/v1/ready")),
-            status_operation: None,
-            endpoint: None,
-        });
-    }
-    if let Some(url) = &config.router_metrics_url {
-        targets.push(Target {
-            id: "transparent-edge".into(),
-            service: "transparent",
-            role: "edge".into(),
-            url: url.clone(),
-            ready: None,
-            status_operation: None,
-            endpoint: None,
-        });
-    }
-    for target in &targets {
-        validate_url(&target.url)?;
-    }
-    Ok(targets)
-}
+/// Histograms the fifteen-minute rules read; everything else stays in the
+/// five-minute window and the minute history.
+const LONG_HISTOGRAMS: [&str; 4] = [
+    "transparent_publication_cycle_seconds",
+    "txid_display_cycle_seconds",
+    "transparent_shard_prepare_seconds",
+    "transparent_display_prepare_seconds",
+];
+
 async fn fetch(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, &'static str> {
     if url.starts_with("file:") {
         let path = reqwest::Url::parse(url)
@@ -338,6 +311,50 @@ fn probe_read(bytes: &[u8], service: &str, now: u64) -> Result<Reading, &'static
     Ok(r)
 }
 
+/// Host snapshot fields copied onto a source as `pir_host_*` gauges.
+const HOST_GAUGES: [&str; 10] = [
+    "cpu_seconds",
+    "memory_available_bytes",
+    "memory_total_bytes",
+    "cgroup_memory_bytes",
+    "oom_kills",
+    "restarts",
+    "disk_available_bytes",
+    "disk_total_bytes",
+    "swap_total_bytes",
+    "swap_free_bytes",
+];
+
+/// Current targets of every configured service. A service whose roster cannot be
+/// read, or whose worker ids collide with an earlier service's, keeps its last
+/// valid inventory and is marked.
+fn refresh(
+    configured: &[services::Service],
+    inventory: &mut BTreeMap<String, Vec<Target>>,
+) -> BTreeMap<String, bool> {
+    let mut errors = BTreeMap::new();
+    let mut ids = BTreeSet::new();
+    for s in configured {
+        let fresh = s.targets().ok().filter(|targets| {
+            targets.iter().all(|t| {
+                !ids.contains(&t.id) && targets.iter().filter(|o| o.id == t.id).count() == 1
+            })
+        });
+        errors.insert(s.service.clone(), fresh.is_none());
+        if let Some(targets) = fresh {
+            inventory.insert(s.service.clone(), targets);
+        }
+        ids.extend(
+            inventory
+                .get(&s.service)
+                .into_iter()
+                .flatten()
+                .map(|t| t.id.clone()),
+        );
+    }
+    errors
+}
+
 pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
     let path = std::env::var_os("PIR_APM_HISTORY_PATH")
         .map(PathBuf::from)
@@ -350,25 +367,33 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         return Ok(());
     };
     let transparent = std::env::var_os("PIR_APM_TRANSPARENT_CONFIG")
-        .map(|p| -> Result<TransparentConfig> { Ok(serde_json::from_slice(&std::fs::read(p)?)?) })
+        .map(|p| -> Result<services::Config> {
+            services::Config::parse(&std::fs::read(p)?)
+                .context("reading PIR_APM_TRANSPARENT_CONFIG")
+        })
         .transpose()?;
-    let mut transparent_inventory = transparent
+    let configured = transparent
         .as_ref()
-        .map(transparent_targets)
-        .transpose()?
+        .map(|c| c.services.clone())
         .unwrap_or_default();
-    if let Some(t) = &transparent {
-        anyhow::ensure!(
-            t.public_origins.len() <= 2,
-            "at most two public map origins are supported"
-        );
-        for origin in &t.public_origins {
-            validate_url(origin)?;
-        }
+    let host_snapshot = transparent.as_ref().and_then(|c| c.host_snapshot.clone());
+    let capacity_shadow = transparent
+        .as_ref()
+        .is_none_or(|c| c.capacity_alert_mode == services::Mode::Shadow);
+    let policy = crate::monitoring::Policy::load()?.quality;
+    let mut service_inventory = BTreeMap::new();
+    for s in &configured {
+        service_inventory.insert(s.service.clone(), s.targets()?);
     }
+    anyhow::ensure!(
+        !refresh(&configured, &mut service_inventory)
+            .values()
+            .any(|e| *e),
+        "Transparent services must not share worker ids"
+    );
     let mut targets = vec![Target {
         id: "enhance-init".into(),
-        service: "enhance",
+        service: "enhance".into(),
         role: "init".into(),
         url: format!("{}{}", config.scrape_url, config.metrics_path),
         ready: None,
@@ -383,7 +408,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
     for (i, url) in queries.into_iter().enumerate() {
         targets.push(Target {
             id: format!("enhance-query-{i}"),
-            service: "enhance",
+            service: "enhance".into(),
             role: "query".into(),
             url,
             ready: None,
@@ -398,7 +423,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         if let Some(url) = url {
             targets.push(Target {
                 id: id.into(),
-                service: "status",
+                service: "status".into(),
                 role: if operation == "init" { "init" } else { "query" }.into(),
                 url: url.clone(),
                 ready: None,
@@ -415,7 +440,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         for service in ["status", "transparent"] {
             targets.push(Target {
                 id: format!("{service}-independent-probe"),
-                service,
+                service: service.into(),
                 role: "independent-probe".into(),
                 url: url.clone(),
                 ready: None,
@@ -427,7 +452,8 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
     let worker_config = config.worker_config.clone();
     let packing_config = config.packing_router_config.clone();
     let mut db = store::Store::open(&path).context("opening service-quality database")?;
-    let (sender, mut receiver) = tokio::sync::mpsc::channel::<Vec<(String, String, Point)>>(128);
+    type Batch = (Vec<(String, String, Point)>, Vec<capacity::Sample>);
+    let (sender, mut receiver) = tokio::sync::mpsc::channel::<Batch>(128);
     let failed = Arc::new(AtomicBool::new(false));
     let persisted = Arc::new(AtomicU64::new(0));
     let write_failed = failed.clone();
@@ -436,11 +462,14 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         .name("pir-quality-store".into())
         .spawn(move || {
             let mut pruned = 0;
-            while let Some(batch) = receiver.blocking_recv() {
+            while let Some((points, samples)) = receiver.blocking_recv() {
                 let now = unix_time();
                 let outcome = (|| -> Result<()> {
-                    for (service, source, point) in batch {
+                    for (service, source, point) in points {
                         db.record(&service, &source, &point)?;
+                    }
+                    for sample in &samples {
+                        db.record_capacity(sample)?;
                     }
                     if now / 60 != pruned {
                         db.prune(now)?;
@@ -458,7 +487,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         .timeout(Duration::from_secs(4))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    if let Some(t) = transparent.clone() {
+    for service in configured.clone() {
         let dashboard = dashboard.clone();
         let client = client.clone();
         tokio::spawn(async move {
@@ -466,16 +495,40 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                let result = publication::check(&client, &t.publisher_url, &t.public_origins).await;
-                dashboard.write().await.quality.publication = result;
+                let result = publication::check(&client, &service).await;
+                if let Some(s) = dashboard
+                    .write()
+                    .await
+                    .quality
+                    .service_mut(&service.service)
+                {
+                    s.publication = result;
+                }
             }
         });
     }
+    let synthetic_ids: BTreeSet<String> = configured
+        .iter()
+        .filter(|s| s.synthetic_status.is_some())
+        .map(|s| format!("{}-synthetic", s.service))
+        .collect();
     tokio::spawn(async move {
         {
             let mut d = dashboard.write().await;
             d.quality.enabled = true;
-            d.quality.path = Some(path);
+            d.quality.path = Some(path.clone());
+            d.quality.capacity.shadow = capacity_shadow;
+            d.quality.services = configured
+                .iter()
+                .map(|s| ServiceView {
+                    name: s.service.clone(),
+                    kind: s.kind,
+                    path_prefix: s.path_prefix.clone(),
+                    public_origins: s.public_origins.clone(),
+                    shadow: s.alert_mode == services::Mode::Shadow,
+                    ..Default::default()
+                })
+                .collect();
         }
         let mut previous: BTreeMap<String, Reading> = BTreeMap::new();
         let mut tick = tokio::time::interval(Duration::from_secs(5));
@@ -483,6 +536,11 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
         let mut inventory_at = 0;
         let mut fleet_targets = Vec::new();
         let mut last_hosts: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        let mut host_seen: BTreeMap<String, u64> = BTreeMap::new();
+        let mut recent_capacity = capacity::Recent::default();
+        let mut capacity_at = 0;
+        let mut capacity_rows = Vec::new();
+        let mut capacity_error = false;
         loop {
             tick.tick().await;
             let now = unix_time();
@@ -495,7 +553,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                         {
                             fleet.push(Target {
                                 id,
-                                service: "enhance",
+                                service: "enhance".into(),
                                 role: "worker".into(),
                                 url: format!("{}/internal/metrics", w.url),
                                 ready: None,
@@ -511,7 +569,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                         {
                             fleet.push(Target {
                                 id,
-                                service: "enhance",
+                                service: "enhance".into(),
                                 role: "packing-router".into(),
                                 url: format!("{}/internal/metrics", r.sample.url),
                                 ready: None,
@@ -522,38 +580,34 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                     }
                     Ok(fleet)
                 })();
-                let mut inventory_error = discovered.is_err();
+                let inventory_error = discovered.is_err();
                 if let Ok(fleet) = discovered {
                     fleet_targets = fleet;
                 }
-                if let Some(t) = &transparent {
-                    match transparent_targets(t) {
-                        Ok(v) => {
-                            transparent_inventory = v;
-                        }
-                        Err(_) => inventory_error = true,
-                    }
+                let service_errors = refresh(&configured, &mut service_inventory);
+                let mut d = dashboard.write().await;
+                d.quality.inventory_error = inventory_error;
+                for s in &mut d.quality.services {
+                    s.inventory_error = service_errors.get(&s.name).copied().unwrap_or(true);
                 }
-                dashboard.write().await.quality.inventory_error = inventory_error;
                 inventory_at = now;
             }
             let all = targets
                 .iter()
-                .chain(&transparent_inventory)
+                .chain(service_inventory.values().flatten())
                 .chain(&fleet_targets)
                 .cloned()
                 .collect::<Vec<_>>();
-            let hosts: BTreeMap<String, serde_json::Value> =
-                if let Some(path) = transparent.as_ref().and_then(|t| t.host_snapshot.as_ref()) {
-                    tokio::fs::read(path)
-                        .await
-                        .ok()
-                        .filter(|b| b.len() <= 262144)
-                        .and_then(|b| serde_json::from_slice(&b).ok())
-                        .unwrap_or_else(|| last_hosts.clone())
-                } else {
-                    BTreeMap::new()
-                };
+            let hosts: BTreeMap<String, serde_json::Value> = if let Some(path) = &host_snapshot {
+                tokio::fs::read(path)
+                    .await
+                    .ok()
+                    .filter(|b| b.len() <= 262144)
+                    .and_then(|b| serde_json::from_slice(&b).ok())
+                    .unwrap_or_else(|| last_hosts.clone())
+            } else {
+                BTreeMap::new()
+            };
             last_hosts = hosts.clone();
             let sem = Arc::new(tokio::sync::Semaphore::new(8));
             let mut tasks = tokio::task::JoinSet::new();
@@ -597,16 +651,7 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                                 .gauges
                                 .insert("pir_host_observation_available".into(), f64::from(fresh));
                             if fresh {
-                                for key in [
-                                    "cpu_seconds",
-                                    "memory_available_bytes",
-                                    "memory_total_bytes",
-                                    "cgroup_memory_bytes",
-                                    "oom_kills",
-                                    "restarts",
-                                    "disk_available_bytes",
-                                    "disk_total_bytes",
-                                ] {
+                                for key in HOST_GAUGES {
                                     if let Some(n) = host[key].as_u64() {
                                         reading
                                             .values
@@ -627,18 +672,21 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                     } else {
                         None
                     };
-                    (target, result, ready)
+                    (target, result, ready, host)
                 });
             }
             let mut batch = Vec::new();
             while let Some(result) = tasks.join_next().await {
-                let Ok((target, result, ready)) = result else {
+                let Ok((target, result, ready, host)) = result else {
                     continue;
                 };
                 let mut d = dashboard.write().await;
                 let source = d.quality.sources.entry(target.id.clone()).or_default();
-                source.service = target.service.into();
+                source.service = target.service.clone();
                 source.role = target.role;
+                source.host = host
+                    .as_ref()
+                    .map(|h| capacity::host_id(h, &target.id).to_owned());
                 source.ready = ready.as_ref().and_then(|v| v["ready"].as_bool());
                 source.publication = ready
                     .as_ref()
@@ -663,14 +711,33 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                         {
                             source.recent.pop_front();
                         }
-                        batch.push((target.service.into(), target.id.clone(), point));
+                        let long: BTreeMap<_, _> = point
+                            .values
+                            .histograms
+                            .iter()
+                            .filter(|(k, _)| {
+                                LONG_HISTOGRAMS.contains(&k.split('|').next().unwrap_or(""))
+                            })
+                            .map(|(k, h)| (k.clone(), h.clone()))
+                            .collect();
+                        if !long.is_empty() {
+                            source.long.push_back((point.at, long));
+                        }
+                        while source
+                            .long
+                            .front()
+                            .is_some_and(|(at, _)| *at <= now.saturating_sub(rules::LONG_WINDOW))
+                        {
+                            source.long.pop_front();
+                        }
+                        batch.push((target.service.clone(), target.id.clone(), point));
                         previous.insert(target.id, reading);
                     }
                     Err(error) => {
                         source.error = Some(error.into());
                         previous.remove(&target.id);
                         batch.push((
-                            target.service.into(),
+                            target.service.clone(),
                             target.id,
                             Point {
                                 at: now,
@@ -682,68 +749,96 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                     }
                 }
             }
-            if let Some(t) = &transparent {
-                if let Some(path) = &t.synthetic_status {
-                    let value = read_synthetic(path);
-                    if let Some(v) = value.as_ref().filter(|v| v["fresh"] == true) {
-                        let at =
-                            chrono::DateTime::parse_from_rfc3339(v["utc"].as_str().unwrap_or(""))
-                                .map(|d| d.timestamp().max(0) as u64)
-                                .unwrap_or(0);
-                        let mut reading = Reading {
-                            at,
-                            incarnation: v["started_unix"].as_f64().map(|n| n.to_string()),
-                            ..Default::default()
-                        };
-                        for group in ["counts", "trailing_60s"] {
-                            if let Some(fields) = v[group].as_object() {
-                                for (key, value) in fields {
-                                    if let Some(n) = value.as_f64() {
-                                        if group == "counts" {
-                                            reading
-                                                .values
-                                                .counters
-                                                .insert(format!("synthetic_{key}_total"), n);
-                                        } else {
-                                            reading
-                                                .values
-                                                .gauges
-                                                .insert(format!("synthetic_{key}"), n);
-                                        }
+            for s in &configured {
+                let Some(path) = &s.synthetic_status else {
+                    continue;
+                };
+                let id = format!("{}-synthetic", s.service);
+                let value = read_synthetic(path);
+                if let Some(v) = value.as_ref().filter(|v| v["fresh"] == true) {
+                    let at = chrono::DateTime::parse_from_rfc3339(v["utc"].as_str().unwrap_or(""))
+                        .map(|d| d.timestamp().max(0) as u64)
+                        .unwrap_or(0);
+                    let mut reading = Reading {
+                        at,
+                        incarnation: v["started_unix"].as_f64().map(|n| n.to_string()),
+                        ..Default::default()
+                    };
+                    for group in ["counts", "trailing_60s"] {
+                        if let Some(fields) = v[group].as_object() {
+                            for (key, value) in fields {
+                                if let Some(n) = value.as_f64() {
+                                    if group == "counts" {
+                                        reading
+                                            .values
+                                            .counters
+                                            .insert(format!("synthetic_{key}_total"), n);
+                                    } else {
+                                        reading.values.gauges.insert(format!("synthetic_{key}"), n);
                                     }
                                 }
                             }
                         }
-                        if previous
-                            .get("transparent-synthetic")
-                            .is_none_or(|p| p.at != at)
-                        {
-                            let point = reading.delta(previous.get("transparent-synthetic"));
-                            batch.push((
-                                "transparent".into(),
-                                "transparent-synthetic".into(),
-                                point,
-                            ));
-                            previous.insert("transparent-synthetic".into(), reading);
-                        }
-                    } else {
-                        previous.remove("transparent-synthetic");
-                        batch.push((
-                            "transparent".into(),
-                            "transparent-synthetic".into(),
-                            Point {
-                                at: now,
-                                seconds: 5,
-                                discontinuities: 1,
-                                ..Default::default()
-                            },
-                        ));
                     }
-                    dashboard.write().await.quality.synthetic = value;
+                    if previous.get(&id).is_none_or(|p| p.at != at) {
+                        let point = reading.delta(previous.get(&id));
+                        batch.push((s.service.clone(), id.clone(), point));
+                        previous.insert(id, reading);
+                    }
+                } else {
+                    previous.remove(&id);
+                    batch.push((
+                        s.service.clone(),
+                        id,
+                        Point {
+                            at: now,
+                            seconds: 5,
+                            discontinuities: 1,
+                            ..Default::default()
+                        },
+                    ));
+                }
+                if let Some(view) = dashboard.write().await.quality.service_mut(&s.service) {
+                    view.synthetic = value;
                 }
             }
+            let samples = {
+                let d = dashboard.read().await;
+                capacity::samples(
+                    &hosts,
+                    |name| {
+                        d.quality
+                            .sources
+                            .get(name)
+                            .filter(|s| s.fresh(now))
+                            .and_then(|s| {
+                                s.current
+                                    .gauges
+                                    .get("transparent_shard_cache_resident_bytes")
+                            })
+                            .copied()
+                    },
+                    now,
+                )
+            };
+            // Each host observation is folded in once, however often it is reread.
+            let samples: Vec<_> = samples
+                .into_iter()
+                .filter(|s| {
+                    let key = format!("{}\u{0}{}", s.host, s.unit);
+                    let new = host_seen.get(&key).is_none_or(|at| *at < s.at);
+                    if new {
+                        host_seen.insert(key, s.at);
+                    }
+                    new
+                })
+                .collect();
+            host_seen.retain(|_, at| now.saturating_sub(*at) <= 86400);
+            for s in &samples {
+                recent_capacity.observe(s);
+            }
             let mut d = dashboard.write().await;
-            if sender.try_send(batch).is_err() {
+            if sender.try_send((batch, samples)).is_err() {
                 d.quality.dropped_batches += 1;
                 d.quality.last_dropped_at = now;
             }
@@ -754,8 +849,29 @@ pub fn start(dashboard: SharedDashboard, config: &Config) -> Result<()> {
                 .sources
                 .retain(|name, _| all.iter().any(|t| t.id == *name));
             previous.retain(|name, _| {
-                name == "transparent-synthetic" || all.iter().any(|t| t.id == *name)
+                synthetic_ids.contains(name) || all.iter().any(|t| t.id == *name)
             });
+            drop(d);
+            if host_snapshot.is_some() {
+                // Daily rows change slowly; live use and 24-hour peaks every tick.
+                if now.saturating_sub(capacity_at) >= 60 {
+                    capacity_at = now;
+                    let path = path.clone();
+                    let rows = tokio::task::spawn_blocking(move || {
+                        store::Store::open(&path)?
+                            .capacity((now / capacity::DAY).saturating_sub(31))
+                    })
+                    .await;
+                    capacity_error = !matches!(rows, Ok(Ok(_)));
+                    if let Ok(Ok(rows)) = rows {
+                        capacity_rows = rows;
+                    }
+                }
+                let mut view = capacity::build(&capacity_rows, &recent_capacity, now, &policy);
+                view.shadow = capacity_shadow;
+                view.error = capacity_error;
+                dashboard.write().await.quality.capacity = view;
+            }
         }
     });
     Ok(())
@@ -825,437 +941,9 @@ fn read_synthetic(path: &std::path::Path) -> Option<serde_json::Value> {
     Some(output.into())
 }
 
-pub fn conditions(view: &View, now: u64) -> Vec<Condition> {
-    if !view.enabled {
-        return vec![];
-    }
-    let mut conditions = Vec::new();
-    let mut add = |key: String,
-                   resource: String,
-                   firing: Option<bool>,
-                   severity: &str,
-                   hold: u64,
-                   sample: u64,
-                   observed: String,
-                   threshold: &str| {
-        conditions.push(Condition {
-            retired: false,
-            key: format!("quality_{key}"),
-            resource,
-            severity: severity.into(),
-            firing,
-            observed,
-            threshold: threshold.into(),
-            hold_seconds: hold,
-            sample,
-        })
-    };
-    add(
-        "storage".into(),
-        "history".into(),
-        Some(
-            view.storage_error
-                || (view.collected_at > 0
-                    && (view.persisted_at == 0 || now.saturating_sub(view.persisted_at) > 60)),
-        ),
-        "critical",
-        60,
-        now,
-        "Seven-day metrics persistence".into(),
-        "history writes unavailable for 60s",
-    );
-    add(
-        "dropped_history".into(),
-        "history".into(),
-        Some(view.last_dropped_at > 0 && now.saturating_sub(view.last_dropped_at) <= 60),
-        "warning",
-        0,
-        now,
-        format!("{} batches dropped", view.dropped_batches),
-        "history writer queue dropped a batch in the last minute",
-    );
-    add(
-        "inventory".into(),
-        "transparent".into(),
-        Some(view.inventory_error),
-        "warning",
-        45,
-        now,
-        "Service fleet inventory".into(),
-        "invalid inventory for 45s",
-    );
-    let publication_fresh =
-        view.publication.sampled_at > 0 && now.saturating_sub(view.publication.sampled_at) <= 45;
-    if view.sources.values().any(|s| s.service == "transparent") {
-        for (key, verdict) in [
-            ("canonical", view.publication.canonical),
-            ("origins", view.publication.origins_agree),
-        ] {
-            add(
-                format!("publication_{key}"),
-                "transparent".into(),
-                verdict.filter(|_| publication_fresh).map(|v| !v),
-                "critical",
-                if key == "canonical" { 0 } else { 30 },
-                view.publication.sampled_at,
-                "Independent public publication check".into(),
-                "public anchor must be canonical; both origins must agree",
-            );
-            add(
-                format!("publication_{key}_coverage"),
-                "transparent".into(),
-                Some(!publication_fresh || verdict.is_none()),
-                "warning",
-                45,
-                now,
-                "Publication verification coverage".into(),
-                "verification unavailable for 45s",
-            );
-        }
-    }
-    for (name, s) in &view.sources {
-        let fresh = s.fresh(now);
-        add(
-            format!("coverage_{name}"),
-            name.clone(),
-            Some(!fresh),
-            "warning",
-            45,
-            now,
-            if fresh { "fresh" } else { "unavailable" }.into(),
-            "source unavailable for 45s",
-        );
-        let gauge = |key: &str| s.current.gauges.get(key).copied().filter(|_| fresh);
-        if s.current
-            .gauges
-            .contains_key("pir_host_observation_available")
-        {
-            add(
-                format!("host_coverage_{name}"),
-                name.clone(),
-                Some(gauge("pir_host_observation_available") != Some(1.)),
-                "warning",
-                45,
-                now,
-                "Host resource observation coverage".into(),
-                "host observation unavailable for 45s",
-            );
-        }
-        for (kind, available, total, limit) in [
-            (
-                "memory",
-                "pir_host_memory_available_bytes",
-                "pir_host_memory_total_bytes",
-                0.15,
-            ),
-            (
-                "disk",
-                "pir_host_disk_available_bytes",
-                "pir_host_disk_total_bytes",
-                0.10,
-            ),
-        ] {
-            let ratio = gauge(available)
-                .zip(gauge(total))
-                .filter(|(_, t)| *t > 0.)
-                .map(|(a, t)| a / t);
-            add(
-                format!("{kind}_{name}"),
-                name.clone(),
-                ratio.map(|r| r < limit),
-                "warning",
-                120,
-                s.sampled_at,
-                ratio
-                    .map(|r| format!("{:.1}% available", r * 100.))
-                    .unwrap_or_else(|| "unavailable".into()),
-                "memory <15% or disk <10% available for 120s",
-            );
-        }
-        let oom = s
-            .recent
-            .front()
-            .and_then(|p| p.values.gauges.get("pir_host_oom_kills"))
-            .copied()
-            .zip(gauge("pir_host_oom_kills"))
-            .map(|(old, new)| new > old);
-        add(
-            format!("oom_{name}"),
-            name.clone(),
-            oom,
-            "critical",
-            0,
-            s.sampled_at,
-            "OOM kill counter change".into(),
-            "new OOM kills in the observation window",
-        );
-        if s.service != "transparent" {
-            continue;
-        }
-        if matches!(
-            s.role.as_str(),
-            "publisher" | "recent-replica" | "archive-owner"
-        ) {
-            add(
-                format!("http_coverage_{name}"),
-                name.clone(),
-                Some(!fresh || gauge("pir_http_observation_version") != Some(1.)),
-                "warning",
-                45,
-                now,
-                "Outer HTTP observation capability".into(),
-                "HTTP observation version 1 unavailable for 45s",
-            );
-        }
-        let window = s.window(now);
-        let outcomes: Vec<_> = window
-            .values
-            .counters
-            .iter()
-            .filter(|(k, _)| k.starts_with("pir_http_responses_total|"))
-            .collect();
-        let mut completed = outcomes.iter().map(|(_, v)| **v).sum::<f64>();
-        let mut errors = outcomes
-            .iter()
-            .filter(|(k, _)| k.contains("code=5xx"))
-            .map(|(_, v)| **v)
-            .sum::<f64>();
-        let mut known = fresh && window.observed_seconds > 0 && !outcomes.is_empty();
-        if s.role == "edge" {
-            let requests = window
-                .values
-                .counters
-                .iter()
-                .filter(|(k, _)| k.starts_with("caddy_http_requests_total|"))
-                .collect::<Vec<_>>();
-            completed = requests.iter().map(|(_, v)| **v).sum();
-            errors = window
-                .values
-                .counters
-                .iter()
-                .filter(|(k, _)| {
-                    k.starts_with("caddy_http_request_errors_total|")
-                        || (k.starts_with("caddy_http_request_duration_seconds_count|")
-                            && k.contains("code=5"))
-                })
-                .map(|(_, v)| *v)
-                .sum();
-            known =
-                fresh && window.observed_seconds > 0 && !requests.is_empty() && errors <= completed;
-        }
-        add(
-            format!("http_errors_{name}"),
-            name.clone(),
-            known.then_some(completed >= 10. && errors / completed > 0.05),
-            "warning",
-            0,
-            s.sampled_at,
-            format!("{errors:.0} server errors / {completed:.0} responses"),
-            "5xx >5% with at least 10 responses in 5m",
-        );
-        for (key, h) in &window.values.histograms {
-            if !key.starts_with("pir_http_duration_seconds|") {
-                continue;
-            }
-            let endpoint = key.split("endpoint=").nth(1).unwrap_or("unknown");
-            let budget = if endpoint.starts_with("query") || endpoint == "setup" {
-                5.
-            } else {
-                2.
-            };
-            let count = h.counts.last().copied().unwrap_or(0.);
-            let exceeds = if count < 20. {
-                false
-            } else {
-                h.quantile(0.99).is_none_or(|p| p > budget)
-            };
-            add(
-                format!("latency_{name}_{endpoint}"),
-                name.clone(),
-                known.then_some(exceeds),
-                "warning",
-                120,
-                s.sampled_at,
-                format!(
-                    "{endpoint} p99 {}s",
-                    h.quantile(0.99)
-                        .map(|n| format!("{n:.3}"))
-                        .unwrap_or_else(|| "overflow/unavailable".into())
-                ),
-                "p99 metadata >2s or setup/query >5s, >=20 samples, 120s",
-            );
-        }
-        if s.role == "archive-owner" {
-            add(
-                format!("ready_{name}"),
-                name.clone(),
-                (fresh && publication_fresh && view.publication.map_sha256.is_some()).then_some(
-                    s.ready != Some(true) || s.publication != view.publication.map_sha256,
-                ),
-                "critical",
-                60,
-                s.sampled_at,
-                "Archive owner readiness".into(),
-                "archive coverage unavailable for 60s",
-            );
-        }
-        if s.role == "publisher" {
-            let age = s
-                .current
-                .gauges
-                .get("transparent_publication_oldest_unpublished_seconds")
-                .copied()
-                .filter(|_| fresh);
-            for (level, budget, hold) in [("warning", 30., 0), ("critical", 60., 60)] {
-                add(
-                    format!("publication_{level}"),
-                    name.clone(),
-                    age.map(|v| v > budget),
-                    level,
-                    hold,
-                    s.sampled_at,
-                    age.map(|v| format!("{v:.1}s unpublished"))
-                        .unwrap_or_else(|| "unknown".into()),
-                    if budget == 30. {
-                        "unpublished age >30s"
-                    } else {
-                        "unpublished age >60s for 60s"
-                    },
-                );
-            }
-            let withdrawn = s
-                .current
-                .gauges
-                .get("transparent_publication_withdrawn")
-                .copied()
-                .filter(|_| fresh);
-            add(
-                "withdrawn".into(),
-                name.clone(),
-                withdrawn.map(|v| v == 1.),
-                "critical",
-                60,
-                s.sampled_at,
-                "Public coverage withdrawn".into(),
-                "withdrawn for 60s",
-            );
-        }
-    }
-    let recent: Vec<_> = view
-        .sources
-        .values()
-        .filter(|s| s.role == "recent-replica")
-        .collect();
-    if !recent.is_empty() {
-        let known = publication_fresh
-            && view.publication.map_sha256.is_some()
-            && recent.iter().all(|s| s.fresh(now));
-        let ready = recent
-            .iter()
-            .filter(|s| s.ready == Some(true) && s.publication == view.publication.map_sha256)
-            .count();
-        add(
-            "recent_availability".into(),
-            "transparent".into(),
-            known.then_some(ready == 0),
-            "critical",
-            60,
-            now,
-            format!("{ready} ready replicas"),
-            "no recent replica for 60s",
-        );
-        add(
-            "recent_redundancy".into(),
-            "transparent".into(),
-            known.then_some(ready < 2),
-            "warning",
-            120,
-            now,
-            format!("{ready} ready replicas"),
-            "fewer than two recent replicas for 120s",
-        );
-    }
-    conditions
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn missing_http_capability_is_unknown_and_has_coverage_alert() {
-        let mut view = View {
-            enabled: true,
-            ..Default::default()
-        };
-        view.sources.insert(
-            "worker".into(),
-            Source {
-                service: "transparent".into(),
-                role: "recent-replica".into(),
-                sampled_at: 100,
-                ..Default::default()
-            },
-        );
-        let c = conditions(&view, 110);
-        assert_eq!(
-            c.iter()
-                .find(|c| c.key == "quality_http_errors_worker")
-                .unwrap()
-                .firing,
-            None
-        );
-        assert_eq!(
-            c.iter()
-                .find(|c| c.key == "quality_http_coverage_worker")
-                .unwrap()
-                .firing,
-            Some(true)
-        );
-    }
-    #[test]
-    fn http_ratio_counts_server_errors_and_stale_samples_cannot_recover() {
-        let mut source = Source {
-            service: "transparent".into(),
-            role: "recent-replica".into(),
-            sampled_at: 100,
-            ..Default::default()
-        };
-        let mut p = Point {
-            at: 100,
-            observed_seconds: 5,
-            ..Default::default()
-        };
-        p.values.counters.insert(
-            "pir_http_responses_total|code=2xx,endpoint=query_pages".into(),
-            18.,
-        );
-        p.values.counters.insert(
-            "pir_http_responses_total|code=5xx,endpoint=query_pages".into(),
-            2.,
-        );
-        source.recent.push_back(p);
-        let view = View {
-            enabled: true,
-            sources: BTreeMap::from([("worker".into(), source)]),
-            ..Default::default()
-        };
-        assert_eq!(
-            conditions(&view, 110)
-                .iter()
-                .find(|c| c.key == "quality_http_errors_worker")
-                .unwrap()
-                .firing,
-            Some(true)
-        );
-        assert_eq!(
-            conditions(&view, 160)
-                .iter()
-                .find(|c| c.key == "quality_http_errors_worker")
-                .unwrap()
-                .firing,
-            None
-        );
-    }
     #[test]
     fn independent_probe_rejects_stale_and_does_not_expose_raw_output() {
         let bytes=br#"{"services":{"transparent":{"sampled_at":100,"duration_seconds":0.5,"category":"answer_mismatch","private_row":"never retain"}}}"#;
@@ -1265,5 +953,24 @@ mod tests {
             .unwrap()
             .contains("private_row"));
         assert!(probe_read(bytes, "transparent", 200).is_err());
+    }
+    #[test]
+    fn long_window_merges_fifteen_minutes_and_drops_changed_buckets() {
+        let h = |n: f64| Histogram {
+            bounds: vec![Some(10.), Some(60.), None],
+            counts: vec![n, n, n],
+        };
+        let mut s = Source::default();
+        for at in [200, 500, 1000] {
+            s.long
+                .push_back((at, BTreeMap::from([("cycle".to_string(), h(1.))])));
+        }
+        assert_eq!(s.long_window(1000)["cycle"].counts, vec![3., 3., 3.]);
+        assert_eq!(s.long_window(1150)["cycle"].counts, vec![2., 2., 2.]);
+        let mut other = h(1.);
+        other.bounds[0] = Some(5.);
+        s.long
+            .push_back((1001, BTreeMap::from([("cycle".to_string(), other)])));
+        assert!(!s.long_window(1001).contains_key("cycle"));
     }
 }

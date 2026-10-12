@@ -109,9 +109,34 @@ Optional `PIR_APM_ALERT_POLICY` names a JSON file. Fields and defaults:
   "publication_critical_seconds": 300,
   "publication_warning_blocks": 8,
   "publication_critical_blocks": 16,
-  "publication_failure_hold_seconds": 120
+  "publication_failure_hold_seconds": 120,
+  "quality": {
+    "history_unpublished_warning_seconds": 30,
+    "history_unpublished_critical_seconds": 60,
+    "txid_unpublished_critical_seconds": 180,
+    "lag_warning_blocks": 2,
+    "lag_hold_seconds": 300,
+    "last_success_warning_seconds": 300,
+    "last_success_critical_seconds": 900,
+    "history_rebuild_warning_seconds": 45,
+    "txid_rebuild_warning_seconds": 20,
+    "rebuild_critical_seconds": 75,
+    "prepare_warning_seconds": 30,
+    "prepare_critical_seconds": 60,
+    "capacity_warning_days": 30,
+    "capacity_critical_days": 7,
+    "host_floor_ratio": 0.2,
+    "unit_forecast_ratio": 0.9,
+    "unit_memory_ratio": 0.85,
+    "unit_memory_hold_seconds": 600
+  }
 }
 ```
+
+The `quality` object holds the Transparent service and capacity thresholds
+described in [Transparent service alerts](#transparent-service-alerts) and
+[Transparent RAM capacity](#transparent-ram-capacity). Any field may be left
+out to keep its default; warnings must not exceed their critical limits.
 
 The independent checker requires:
 
@@ -244,10 +269,24 @@ review can distinguish stalls from sustained backlog and transient retries.
 
 ## Seven-day quality history and Transparent page
 
-`/apm/transparent/` is a separate service page. `/apm/quality/?service=enhance`
-and `?service=status` expose the same history controls for existing services.
-Worker links retain the selected service. The aggregate API is
-`/apm/api/quality?service=transparent&range=1h` (`24h` and `7d` also supported).
+Each configured Transparent service has its own page,
+`/apm/quality/?service=<name>`, and a tab on `/apm/`; `/apm/transparent/` opens
+the `transparent` service. `/apm/quality/?service=enhance` and `?service=status`
+expose the same history controls for existing services. Worker links retain the
+selected service. The aggregate API is
+`/apm/api/quality?service=<name>&range=1h` (`24h` and `7d` also supported).
+
+A service page shows, for the selected range:
+
+- **Publication freshness**: the node's height against the published height,
+  the lag in blocks, how long the oldest unpublished block has waited, time since
+  the last successful publication, and p50/p95/p99 of the publication cycle and
+  of publication visibility, plus the canonical-anchor and public-origin checks.
+- **Recent rebuild**: the txid display cycle and each of its stages (build,
+  verify, digest, write, prebuild, ship, prepare, activate) at p50/p95, or the
+  history publication cycle; and each worker's time to prepare a new revision.
+- **Host memory**: one line per host behind the service, memory in use as a
+  share of the host's memory, linking to the capacity page.
 History begins at deployment; it does not backfill earlier observations.
 
 Set `PIR_APM_HISTORY_PATH` to a writable SQLite file (defaults to `quality.sqlite`
@@ -258,21 +297,54 @@ counter resets and missing observations break continuity. Gauges retain their
 latest value in each bin. Database failure and dropped batches are exposed by
 the API; history work runs outside request and scrape tasks.
 
-`PIR_APM_TRANSPARENT_CONFIG` names a root-owned JSON file:
+`PIR_APM_TRANSPARENT_CONFIG` names a root-owned JSON file listing the monitored
+Transparent services. Production monitors only the v12 history and the one-query
+txid display, both under `/v2` on the shared public origin; the v1 API is being
+retired and is not monitored:
 
 ```json
 {
-  "publisher_url": "http://127.0.0.1:8094/metrics",
-  "roster": "/opt/transparent-publisher/v11/roster.json",
-  "router_metrics_url": "file:///var/lib/pir-apm/edge.prom",
-  "synthetic_status": "/srv/transparent-activity/canonical-load/v11/status.json",
   "host_snapshot": "/var/lib/pir-apm/hosts.json",
-  "public_origins": [
-    "https://transparent-pir.valargroup.dev",
-    "https://enhance-pir.valargroup.dev"
+  "capacity_alert_mode": "shadow",
+  "services": [
+    {"service": "transparent", "kind": "history",
+     "publisher_url": "http://127.0.0.1:8094/metrics",
+     "status_url": "http://127.0.0.1:8094/v1/status",
+     "roster": "/opt/transparent-publisher/v12/roster.json",
+     "router_metrics_url": null, "synthetic_status": null,
+     "public_origins": ["https://transparent-pir.valargroup.dev"],
+     "path_prefix": "/v2", "alert_mode": "shadow"},
+    {"service": "txid", "kind": "txid",
+     "controller_url": "http://127.0.0.1:8098",
+     "workers": [{"id": "transparent-pir-txid-k8-01", "role": "display-worker", "upstream": "10.142.0.18:8095"}],
+     "public_origins": ["https://transparent-pir.valargroup.dev"],
+     "path_prefix": "/v2", "alert_mode": "shadow"}
   ]
 }
 ```
+
+- `service` is a unique name of 1–32 lowercase letters, digits and hyphens. It
+  names the service's page, its alert family and every one of its incident keys.
+- `kind` is `history` (a publisher with a worker roster) or `txid` (a display
+  controller with its display workers). Rules choose by kind, never by name.
+- `path_prefix` is empty or `/v<digits>`. The public-origin check reads
+  `<origin><path_prefix>/shards/init` for history and
+  `<origin><path_prefix>/txid/init` for txid, and requires every origin to serve
+  the coordinator's current map. Operator probes keep `/v1/health`, `/v1/ready`
+  and `/v1/status` on the private listeners.
+- `alert_mode` (`shadow` or `active`, default `shadow`) is the service family's
+  rollout mode. `capacity_alert_mode` is the capacity family's.
+- History: `publisher_url` (its `/metrics`), optional `status_url` (default:
+  the publisher's origin plus `/v1/status`), `roster` (reread every 15 s; roles
+  `archive-owner` and `recent-replica`), optional `router_metrics_url` and
+  `synthetic_status`.
+- Txid: `controller_url`, scraped at `/metrics` (role `display-controller`) with
+  its published block and map read from `/v1/status`; `workers` with role
+  `display-worker`, each scraped at `/metrics` and `/v1/ready`.
+
+Source ids are `<service>-publisher`, `<service>-controller`, `<service>-edge`
+and `<service>-synthetic`, plus each worker's id; worker ids must be unique across
+services. The old single-service object is refused.
 
 The existing fleet roster is authoritative. No public metrics route is added.
 The host sampler uses explicitly configured private SSH targets and loopback
@@ -310,14 +382,15 @@ belongs to the stopped v10 load and is kept as v10 rollback state; neither APM
 nor the v11 load reads it.
 
 `enhance/ops/scripts/retarget-transparent-quality.py` makes both moves. Its
-`apm` mode, on the coordinator, rewrites only those inputs and restarts only
-`pir-apm`; its `monitor` mode rewrites only the Transparent probe's canary,
+`apm` mode, on the coordinator, rewrites only the named history service's
+(`--service`, default `transparent`) `roster`, and its `synthetic_status` when
+`--load-status` is given, and restarts only `pir-apm`; its `monitor` mode rewrites only the Transparent probe's canary,
 fixture and pins after the new command passes once, then restarts `pir-monitor`.
 Without `--apply` it only prints the changes. `--apply --backup-dir DIR` copies
 each changed file into DIR first; restore those copies and restart the same
-service to roll back. It never changes an alert mode, so check
-`PIR_APM_QUALITY_ALERT_MODE` and `PIR_MONITOR_SERVICE_ALERT_MODE` are `shadow`
-before the move and promote nothing until the canary passes.
+service to roll back. It never changes an alert mode, so check the
+service's `alert_mode` and `PIR_MONITOR_SERVICE_ALERT_MODE` are `shadow` before
+the move and promote nothing until the canary passes.
 
 Transparent HTTP instrumentation measures arrivals, cancellations, status
 classes, consumed request bytes, emitted response bytes, body errors and dropped
@@ -359,8 +432,11 @@ SHA-256 and the anchor: the terminal block of the highest fixture shard, checked
 at the node. Rebuild the canary from source that supports the new schema; its
 query binds to the fixture's schema, not to the compiled default.
 
-New alert families have independent modes: `PIR_APM_QUALITY_ALERT_MODE` and
-`PIR_MONITOR_SERVICE_ALERT_MODE`, both defaulting to `shadow`. Existing active
+New alert families have independent modes, all defaulting to `shadow`:
+`PIR_APM_QUALITY_ALERT_MODE` for the shared `quality` family (history writes,
+the Enhance inventory, and Enhance and Status sources), each Transparent
+service's `alert_mode`, the config's `capacity_alert_mode`, and
+`PIR_MONITOR_SERVICE_ALERT_MODE`. Existing active
 alerts and outbox state retain their mode. New rules cover metric/resource
 coverage, publication identity/freshness, readiness/redundancy, HTTP outcomes,
 latency, OOM/disk/memory, history writes, and independent probe availability and
@@ -477,3 +553,105 @@ routers removed from a valid inventory retire their incidents.
 Deploy the worker and router binaries first, so coverage is already healthy
 when the APM starts evaluating. Then follow the quality-family gates: 24 hours
 in shadow, review every candidate, then activate.
+
+## Transparent service alerts
+
+Each configured Transparent service is its own alert family (`quality-<name>`)
+in its config `alert_mode`; keys are `quality.<name>.<rule>`, so the Slack title
+and incident id name the service. Every rule reads the newest sample: a stale or
+missing value is unknown, never fires and never counts as a recovery. Holds are
+applied by the incident engine. "Coordinator" is the history publisher or the
+txid display controller.
+
+| Key (after `quality.<name>.`) | Kinds | Severity | Fires when | Hold |
+| --- | --- | --- | --- | --- |
+| `inventory` | both | warning | roster or worker list invalid | 45 s |
+| `publication_canonical` | both | critical | published block hash differs from the node's | – |
+| `publication_origins` | both | critical | a public origin serves another map (only with origins) | 30 s |
+| `publication_*_coverage` | both | warning | that check unavailable | 45 s |
+| `publication_warning` | history | warning | oldest unpublished block > 30 s | – |
+| `publication_critical` | history | critical | oldest unpublished block > 60 s | 60 s |
+| `publication_critical` | txid | critical | oldest unpublished block > 180 s | – |
+| `publication_lag` | both | warning | coordinator ≥ 2 blocks behind its node | 5 min |
+| `last_success_warning` | both | warning | no successful publication for 5 min while the node is ahead | – |
+| `last_success_critical` | both | critical | the same for 15 min | – |
+| `stalled`, `halted` | txid | critical | controller reports stalled or halted | – |
+| `withdrawn` | history | critical | public coverage withdrawn | 60 s |
+| `rebuild_warning` | both | warning | 15-min p95 of the coordinator cycle > 45 s (history) or > 20 s (txid) | 60 s |
+| `rebuild_critical` | both | critical | 15-min p95 of the coordinator cycle > 75 s | 60 s |
+| `prepare_<worker>_warning`, `_critical` | both | warning / critical | 15-min p95 of revision prepare > 30 s / > 60 s | 60 s |
+| `ready_<worker>` | archive owner, display worker | critical | not ready on the published map | 60 s |
+| `recent_availability` | history | critical | no recent replica ready on the published map | 60 s |
+| `recent_redundancy` | history | warning | fewer than two ready recent replicas | 120 s |
+| `coverage_<source>` | both | warning | source unavailable | 45 s |
+| `http_coverage_<source>` | history | warning | publisher or worker lacks HTTP observation version 1 | 45 s |
+| `http_errors_<source>` | both | warning | 5xx > 5% with ≥ 10 responses in 5 min | – |
+| `latency_<source>_<endpoint>` | both | warning | p99 > 2 s (metadata) or > 5 s (setup, query), ≥ 20 samples | 120 s |
+| `memory_<source>`, `disk_<source>` | both | warning | host memory < 15% or disk < 10% available | 120 s |
+| `oom_<source>` | both | critical | new OOM kills | – |
+
+History keeps its 30 s and 60 s unpublished-age rules, which already page
+earlier than 180 s; the txid display seals every block, so it has only the 180 s
+page and relies on the lag rule for its warning. Time since the last success
+counts only while the node's height is above the published height, so an idle
+chain does not fire it, and a coordinator that reports 0 (no success since its
+restart) is unknown. The cycle is `transparent_publication_cycle_seconds`
+(history) or `txid_display_cycle_seconds` (txid); prepare is
+`transparent_shard_prepare_seconds{phase="total"}` (history workers) or
+`transparent_display_prepare_seconds` (display workers). A 15-minute window
+without a cycle or prepare is unknown. Display workers have no outer HTTP layer
+yet, so their 5xx and latency rules stay unknown until they export `pir_http_*`.
+Histogram deltas need a `*process_start_time_seconds` gauge on each scraped
+process to detect restarts.
+
+When a service's inventory is valid, incidents of a source it no longer lists
+are retired, and incidents of a service no longer configured (or keys of the old
+single-service shape) are retired by the shared family.
+
+## Transparent RAM capacity
+
+The host sampler's snapshot (`host_snapshot`) has one entry per source with
+`at`, memory, disk, restarts, `cgroup_memory_bytes`, `cpu_seconds` and
+`oom_kills`, and may add `host_id` (stable host name; several sources may share
+a host), `size` (DigitalOcean size), `swap_total_bytes`, `swap_free_bytes` and
+`units`: `{"<unit>": {"memory_current_bytes", "memory_peak_bytes",
+"memory_max_bytes" (null when unlimited), "oom_kills"}}`. Hosts with no worker,
+such as the coordinator and router, appear under their host id. Absent fields
+are unknown.
+
+Every fresh observation is folded into a daily row per host and per unit (UTC
+days, kept 180 days, in the quality history database): the lowest available
+memory, the highest unit use (its recorded peak or current use, whichever is
+larger), its MemoryMax, the highest worker cache residency and the latest size.
+Minute history stays seven days.
+
+A straight-line least-squares fit through the daily peaks of the last 14 days
+and of the last 30 days forecasts, for a host, the days until available memory
+falls below 20% of total, and for a unit, the days until its peak passes 90% of
+its MemoryMax. A window with fewer than three days is unknown; a flat or falling
+trend never reaches the floor; a peak already past the floor is 0 days. Alerts
+use the sooner of the two known forecasts.
+
+`/apm/capacity/` lists one row per host and per unit: size, RAM (or MemoryMax),
+the 24-hour peak, the unit's peak against MemoryMax, headroom from the 24-hour
+peak to the floor, growth per week, days to floor on each window, the next size
+and its monthly price, and **reprovision** when either forecast is under 30
+days. The next size follows s-2vcpu-4gb ($24) → s-4vcpu-8gb ($48) →
+s-8vcpu-16gb ($96) → m-4vcpu-32gb ($168) → m-8vcpu-64gb ($336) →
+m-16vcpu-128gb ($672) → m-32vcpu-256gb ($1344); an `-intel` size moves to the
+same next tier. The 24-hour peak is kept in memory and restarts with the APM.
+
+These alerts form the `transparent_capacity` family, apart from the Enhance
+`capacity` family, in the config's `capacity_alert_mode` (default `shadow`).
+The host memory below 15% and new-OOM rules stay in each service family.
+
+| Key | Severity | Fires when | Hold |
+| --- | --- | --- | --- |
+| `transparent_capacity_floor_warning_<host>` | warning | sooner forecast < 30 days to the host floor | 30 min |
+| `transparent_capacity_floor_critical_<host>` | critical | sooner forecast < 7 days | 30 min |
+| `transparent_capacity_unit_warning_<host>_<unit>` | warning | sooner forecast < 30 days to 90% of MemoryMax | 30 min |
+| `transparent_capacity_unit_critical_<host>_<unit>` | critical | sooner forecast < 7 days | 30 min |
+| `transparent_capacity_unit_memory_<host>_<unit>` | warning | unit memory > 85% of MemoryMax | 10 min |
+
+Forecasts older than 15 minutes, or for a host not observed in 15 minutes, are
+unknown. A host that leaves the capacity view retires its incidents.

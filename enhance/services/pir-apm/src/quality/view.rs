@@ -1,4 +1,7 @@
-use super::{data::Point, store, Source};
+use super::{
+    data::{Histogram, Point},
+    store, Source,
+};
 use crate::dashboard::SharedDashboard;
 use axum::{
     extract::{Path, Query, State},
@@ -19,9 +22,18 @@ pub struct Selection {
     service: Option<String>,
     range: Option<String>,
 }
-fn selection(s: &Selection) -> Result<(&str, u64), StatusCode> {
-    let service = s.service.as_deref().unwrap_or("transparent");
-    if !matches!(service, "enhance" | "status" | "transparent") {
+/// Enhance, Status or a configured Transparent service; without one, the
+/// `transparent` service when configured, else the first configured service.
+fn selection(s: &Selection, view: &super::View) -> Result<(String, u64), StatusCode> {
+    let service = match s.service.as_deref() {
+        Some(name) => name.to_owned(),
+        None => view
+            .service("transparent")
+            .or(view.services.first())
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "enhance".into()),
+    };
+    if !matches!(service.as_str(), "enhance" | "status") && view.service(&service).is_none() {
         return Err(StatusCode::BAD_REQUEST);
     }
     let seconds = match s.range.as_deref().unwrap_or("1h") {
@@ -68,17 +80,18 @@ pub async fn api(
     State(state): State<SharedDashboard>,
     Query(query): Query<Selection>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let (service, seconds) = selection(&query)?;
     let view = state.read().await.quality.clone();
-    let data = history(view.path.clone(), service.into(), seconds).await?;
+    let (service, seconds) = selection(&query, &view)?;
+    let data = history(view.path.clone(), service.clone(), seconds).await?;
     let sources = view
         .sources
         .iter()
         .filter(|(_, s)| s.service == service)
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect::<BTreeMap<_, _>>();
+    let configured = view.service(&service);
     Ok(Json(
-        serde_json::json!({"schema_version":1,"service":service,"range_seconds":seconds,"retention_seconds":store::RETENTION,"collected_at":view.collected_at,"persisted_at":view.persisted_at,"storage_error":view.storage_error,"dropped_batches":view.dropped_batches,"publication":if service=="transparent"{Some(view.publication)}else{None},"sources":sources,"history":*data,"synthetic":if service=="transparent"{view.synthetic}else{None}}),
+        serde_json::json!({"schema_version":2,"service":service,"kind":configured.map(|s|s.kind),"alert_mode":configured.map(|s|if s.shadow{"shadow"}else{"active"}),"range_seconds":seconds,"retention_seconds":store::RETENTION,"collected_at":view.collected_at,"persisted_at":view.persisted_at,"storage_error":view.storage_error,"dropped_batches":view.dropped_batches,"publication":configured.map(|s|&s.publication),"sources":sources,"history":*data,"synthetic":configured.and_then(|s|s.synthetic.as_ref())}),
     ))
 }
 pub async fn page(
@@ -329,13 +342,235 @@ fn chart(
     }
     format!("<figure><figcaption>{} · {} · upper scale {:.3}</figcaption><svg role=\"img\" aria-label=\"Metric history with gaps\" viewBox=\"0 0 700 150\"><g fill=\"none\" stroke=\"#b9915f\" stroke-width=\"2\">{paths}</g><g fill=\"#b9915f\">{dots}</g></svg></figure>",escape(&metric_label(name)),escape(unit),max)
 }
+/// A service's display name: its configured name with a capital first letter.
+pub fn title(name: &str) -> String {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .map(|c| c.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+/// The `/apm/` tabs after Enhance and Status: one per configured service, then capacity.
+pub fn tabs(view: &super::View) -> String {
+    let mut out = String::new();
+    for s in &view.services {
+        out.push_str(&format!(
+            "<a href=\"/apm/quality/?service={}\">{} APM</a>",
+            escape(&s.name),
+            escape(&title(&s.name))
+        ));
+    }
+    if view.enabled {
+        out.push_str("<a href=\"/apm/capacity/\">Capacity</a>");
+    }
+    out
+}
+/// Links to every pane: Enhance, Status, each configured service and capacity.
+pub(super) fn nav(view: &super::View) -> String {
+    let mut out = String::from("<nav class=\"quality-nav\"><a href=\"/apm/?pane=enhance\">Enhance</a><a href=\"/apm/?pane=status\">Status</a>");
+    for s in &view.services {
+        out.push_str(&format!(
+            "<a href=\"/apm/quality/?service={}\">{}</a>",
+            escape(&s.name),
+            escape(&title(&s.name))
+        ));
+    }
+    if view.enabled {
+        out.push_str("<a href=\"/apm/capacity/\">Capacity</a>");
+    }
+    out.push_str("</nav>");
+    out
+}
+/// One histogram merged over every stored bin; None without data or when its
+/// buckets changed within the range.
+fn merged(points: &[Point], key: &str) -> Option<Histogram> {
+    let mut out: Option<Histogram> = None;
+    for p in points {
+        if p.invalid_histograms.contains(key) {
+            return None;
+        }
+        if let Some(h) = p.values.histograms.get(key) {
+            match &mut out {
+                Some(o) => {
+                    if !o.merge(h) {
+                        return None;
+                    }
+                }
+                None => out = Some(h.clone()),
+            }
+        }
+    }
+    out.filter(|h| h.counts.last().is_some_and(|n| *n > 0.))
+}
+fn seconds(h: Option<&Histogram>, q: f64) -> String {
+    match h.map(|h| (h.quantile(q), h)) {
+        Some((Some(v), _)) => format!("{v:.2} s"),
+        Some((None, h)) => format!(
+            "> {} s",
+            number(h.bounds.iter().rev().flatten().next().copied())
+        ),
+        None => "—".into(),
+    }
+}
+fn timing_row(label: &str, h: Option<&Histogram>, p99: bool) -> String {
+    format!(
+        "<tr><th>{}</th><td>{:.0}</td><td>{}</td><td>{}</td>{}</tr>",
+        escape(label),
+        h.and_then(|h| h.counts.last().copied()).unwrap_or(0.),
+        seconds(h, 0.5),
+        seconds(h, 0.95),
+        if p99 {
+            format!("<td>{}</td>", seconds(h, 0.99))
+        } else {
+            String::new()
+        }
+    )
+}
+fn age(now: u64, at: Option<f64>) -> String {
+    at.map(|t| format!("{:.0} s", (now as f64 - t).max(0.)))
+        .unwrap_or_else(|| "—".into())
+}
+
+/// Node and published heights, backlog, last success, and publication cycle
+/// and visibility percentiles over the selected range.
+fn publication_block(
+    svc: &super::ServiceView,
+    sources: &[(&String, &Source)],
+    history: &History,
+    range: &str,
+) -> String {
+    let now = unix_time();
+    let c = super::rules::coordinator(svc.kind);
+    let coordinator = sources.iter().find(|(_, s)| s.role == c.role);
+    let gauge = |key: &str| {
+        coordinator.and_then(|(_, s)| s.current.gauges.get(key).copied().filter(|_| s.fresh(now)))
+    };
+    let p = &svc.publication;
+    let verdict = |v: Option<bool>| match v {
+        Some(true) => "Verified",
+        Some(false) => "Mismatch",
+        None => "Unavailable",
+    };
+    let points = coordinator
+        .and_then(|(name, _)| history.get(name.as_str()))
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let mut out = format!("<section class=\"card\"><h2>Publication freshness</h2><div class=\"stats\"><p><strong>{}</strong>Node height</p><p><strong>{}</strong>Published height</p><p><strong>{}</strong>Lag (blocks)</p><p><strong>{}</strong>Oldest unpublished</p><p><strong>{}</strong>Since last success</p></div><p>Canonical anchor: <strong>{}</strong> · Public origins agree on <code>{}</code>: <strong>{}</strong> · verification age {} s · independent node lag {} blocks. Idle-chain time is not publication backlog.</p><div class=\"table-wrap\"><table><thead><tr><th>Over {}</th><th>Samples</th><th>p50</th><th>p95</th><th>p99</th></tr></thead><tbody>",
+        number(gauge(c.node_height)),
+        number(gauge(c.published_height)),
+        number(gauge(c.lag)),
+        gauge(c.oldest_unpublished).map(|v| format!("{v:.0} s")).unwrap_or_else(|| "—".into()),
+        age(now, gauge(c.last_success)),
+        verdict(p.canonical),
+        escape(&format!("{}{}", svc.path_prefix, match svc.kind { super::services::Kind::History => "/shards/init", super::services::Kind::Txid => "/txid/init" })),
+        if svc.public_origins.is_empty() { "not configured" } else { verdict(p.origins_agree) },
+        now.saturating_sub(p.sampled_at),
+        p.lag_blocks.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+        escape(range),
+    );
+    out.push_str(&timing_row(
+        "Publication cycle",
+        merged(points, c.cycle).as_ref(),
+        true,
+    ));
+    out.push_str(&timing_row(
+        "Publication visibility",
+        merged(points, c.freshness).as_ref(),
+        true,
+    ));
+    out.push_str("</tbody></table></div></section>");
+    out
+}
+
+/// How long rebuilding takes: per-stage timings of the txid display cycle or
+/// the history publication cycle, and each worker's revision prepare.
+fn rebuild_block(
+    svc: &super::ServiceView,
+    sources: &[(&String, &Source)],
+    history: &History,
+    range: &str,
+) -> String {
+    let c = super::rules::coordinator(svc.kind);
+    let (roles, prepare) = super::rules::workers(svc.kind);
+    let mut out = format!("<section class=\"card\"><h2>Recent rebuild</h2><div class=\"table-wrap\"><table><thead><tr><th>Over {}</th><th>Samples</th><th>p50</th><th>p95</th></tr></thead><tbody>", escape(range));
+    if let Some((name, _)) = sources.iter().find(|(_, s)| s.role == c.role) {
+        let points = history.get(name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+        out.push_str(&timing_row(
+            "Whole cycle",
+            merged(points, c.cycle).as_ref(),
+            false,
+        ));
+        if svc.kind == super::services::Kind::Txid {
+            for stage in [
+                "build", "verify", "digest", "write", "prebuild", "ship", "prepare", "activate",
+            ] {
+                let key = format!("txid_display_cycle_stage_seconds|stage={stage}");
+                out.push_str(&timing_row(
+                    &format!("Stage: {stage}"),
+                    merged(points, &key).as_ref(),
+                    false,
+                ));
+            }
+        }
+    }
+    for (name, s) in sources {
+        if roles.contains(&s.role.as_str()) {
+            let points = history.get(name.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            out.push_str(&timing_row(
+                &format!("Prepare · {name}"),
+                merged(points, prepare).as_ref(),
+                false,
+            ));
+        }
+    }
+    out.push_str("</tbody></table></div><p>Fifteen-minute p95s of the same timings drive the rebuild and prepare alerts.</p></section>");
+    out
+}
+
+/// Memory in use on each host behind the service, one line per host.
+fn memory_block(sources: &[(&String, &Source)], history: &History) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut out = String::new();
+    for (name, s) in sources {
+        let host = s.host.clone().unwrap_or_else(|| name.to_string());
+        let Some(points) = history.get(name.as_str()) else {
+            continue;
+        };
+        if !points.iter().any(|p| {
+            p.values
+                .gauges
+                .contains_key("pir_host_memory_available_bytes")
+        }) || !seen.insert(host.clone())
+        {
+            continue;
+        }
+        out.push_str(&chart(
+            points,
+            &format!("Memory in use · {host}"),
+            "% of host memory",
+            true,
+            |p| {
+                let g = &p.values.gauges;
+                let total = g.get("pir_host_memory_total_bytes").filter(|t| **t > 0.)?;
+                Some((1. - g.get("pir_host_memory_available_bytes")? / total) * 100.)
+            },
+        ));
+    }
+    if out.is_empty() {
+        return String::new();
+    }
+    format!("<section class=\"card\"><h2>Host memory</h2>{out}<p><a href=\"/apm/capacity/\">Capacity forecasts and next sizes</a></p></section>")
+}
+
 async fn render(
     state: SharedDashboard,
     query: Selection,
     worker: Option<String>,
 ) -> Result<Html<String>, StatusCode> {
-    let (service, seconds) = selection(&query)?;
     let d = state.read().await.clone();
+    let (service, seconds) = selection(&query, &d.quality)?;
+    let service = service.as_str();
+    let configured = d.quality.service(service);
     if let Some(name) = &worker {
         if d.quality
             .sources
@@ -345,11 +580,18 @@ async fn render(
             return Err(StatusCode::NOT_FOUND);
         }
     }
+    let range = query.range.clone().unwrap_or_else(|| "1h".into());
     let h = history(d.quality.path.clone(), service.into(), seconds).await;
-    let mut out=format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"30\"><title>{} service quality · PIR APM</title><style>{} main{{max-width:1280px;margin:auto;padding:24px}} .stats{{display:flex;gap:32px;flex-wrap:wrap}} .stats strong{{display:block;font-size:28px;color:var(--gold)}} pre{{white-space:pre-wrap;overflow-wrap:anywhere}} a{{color:var(--gold)}} .quality-nav{{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0}} .card{{margin:24px 0}} figure{{margin:24px 0}} svg{{width:100%;max-height:180px}} th{{text-align:left;overflow-wrap:anywhere}} td,th{{padding:8px}} .table-wrap{{overflow-x:auto}} details{{margin:20px 0}} h1{{font-size:36px}}</style></head><body><main><nav class=\"quality-nav\"><a href=\"/apm/?pane=enhance\">Enhance</a><a href=\"/apm/?pane=status\">Status</a><a href=\"/apm/transparent/\">Transparent</a></nav><h1>{} service quality</h1><p>Seven-day retention · history starts when collection is enabled · refreshes every 30 seconds · UTC</p><nav class=\"quality-nav\">",escape(service),crate::dashboard::STYLE,match service {"transparent"=>"Transparent", "enhance"=>"Enhance", _=>"Status"});
+    let heading = match service {
+        "enhance" => "Enhance".into(),
+        "status" => "Status".into(),
+        name => title(name),
+    };
+    let mut out=format!("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><meta http-equiv=\"refresh\" content=\"30\"><title>{} service quality · PIR APM</title><style>{} main{{max-width:1280px;margin:auto;padding:24px}} .stats{{display:flex;gap:32px;flex-wrap:wrap}} .stats strong{{display:block;font-size:28px;color:var(--gold)}} pre{{white-space:pre-wrap;overflow-wrap:anywhere}} a{{color:var(--gold)}} .quality-nav{{display:flex;gap:20px;flex-wrap:wrap;margin:24px 0}} .card{{margin:24px 0}} figure{{margin:24px 0}} svg{{width:100%;max-height:180px}} th{{text-align:left;overflow-wrap:anywhere}} td,th{{padding:8px}} .table-wrap{{overflow-x:auto}} details{{margin:20px 0}} h1{{font-size:36px}}</style></head><body><main>{}<h1>{} service quality</h1><p>Seven-day retention · history starts when collection is enabled · refreshes every 30 seconds · UTC</p><nav class=\"quality-nav\">",escape(&heading),crate::dashboard::STYLE,nav(&d.quality),escape(&heading));
     for range in ["1h", "24h", "7d"] {
         out.push_str(&format!(
-            "<a href=\"?service={service}&amp;range={range}\">{range}</a>"
+            "<a href=\"?service={}&amp;range={range}\">{range}</a>",
+            escape(service)
         ));
     }
     out.push_str("</nav>");
@@ -357,18 +599,18 @@ async fn render(
     let sources: Vec<_> = d
         .quality
         .sources
-        .values()
-        .filter(|s| s.service == service)
+        .iter()
+        .filter(|(_, s)| s.service == service)
         .collect();
+    let shadow = match configured {
+        Some(s) => s.shadow,
+        None => std::env::var("PIR_APM_QUALITY_ALERT_MODE").as_deref() != Ok("active"),
+    };
     out.push_str(&format!(
         "<p>{}/{} sources fresh · New quality alerts: <strong>{}</strong></p>",
-        sources.iter().filter(|s| s.fresh(now)).count(),
+        sources.iter().filter(|(_, s)| s.fresh(now)).count(),
         sources.len(),
-        if std::env::var("PIR_APM_QUALITY_ALERT_MODE").as_deref() == Ok("active") {
-            "active"
-        } else {
-            "shadow"
-        }
+        if shadow { "shadow" } else { "active" }
     ));
     if !d.quality.enabled {
         out.push_str("<p>Quality collection is not configured.</p>");
@@ -376,20 +618,16 @@ async fn render(
     if d.quality.storage_error || h.is_err() {
         out.push_str("<p class=\"warn\">History storage is unavailable. Live data may still be collected.</p>");
     }
-    if d.quality.inventory_error {
+    if configured.map_or(d.quality.inventory_error, |s| s.inventory_error) {
         out.push_str(
             "<p class=\"warn\">Fleet inventory is invalid. Retaining the last valid inventory.</p>",
         );
     }
-    if service == "transparent" {
-        let p = &d.quality.publication;
-        let verdict = |v: Option<bool>| match v {
-            Some(true) => "Verified",
-            Some(false) => "Mismatch",
-            None => "Unavailable",
-        };
-        out.push_str(&format!("<section class=\"card\"><h2>Publication and coverage</h2><p>Public height <strong>{}</strong> · Independent node lag <strong>{}</strong> blocks</p><p>Canonical anchor: <strong>{}</strong> · Public origins agree: <strong>{}</strong></p><p>Verification age: {} seconds. Idle-chain time is not publication backlog.</p></section>",p.public_height.map(|n|n.to_string()).unwrap_or_else(||"—".into()),p.lag_blocks.map(|n|n.to_string()).unwrap_or_else(||"—".into()),verdict(p.canonical),verdict(p.origins_agree),unix_time().saturating_sub(p.sampled_at)));
-        if let Some(synthetic) = &d.quality.synthetic {
+    let empty = BTreeMap::new();
+    let history = h.as_ref().map(|v| v.as_ref()).unwrap_or(&empty);
+    if let (Some(svc), None) = (configured, &worker) {
+        out.push_str(&publication_block(svc, &sources, history, &range));
+        if let Some(synthetic) = &svc.synthetic {
             out.push_str("<section class=\"card\"><h2>Continuous exact-query test</h2><p>Synthetic public-path requests from the coordinator. Exact queries test individual rows; whole-wallet completion is a separate measure.</p>");
             out.push_str(&format!(
                 "<p class=\"{}\">{} · {}</p><div class=\"stats\">",
@@ -424,15 +662,19 @@ async fn render(
             ));
             out.push_str("</pre></details></section>");
         }
+        out.push_str(&rebuild_block(svc, &sources, history, &range));
+        out.push_str(&memory_block(&sources, history));
     }
-    let empty = BTreeMap::new();
-    let history = h.as_ref().map(|v| v.as_ref()).unwrap_or(&empty);
-    for (name, source) in &d.quality.sources {
-        if source.service == service && worker.as_ref().is_none_or(|n| n == name) {
+    for (name, source) in &sources {
+        if worker.as_ref().is_none_or(|n| n == *name) {
             if worker.is_none()
                 && matches!(
                     source.role.as_str(),
-                    "recent-replica" | "archive-owner" | "worker" | "packing-router"
+                    "recent-replica"
+                        | "archive-owner"
+                        | "display-worker"
+                        | "worker"
+                        | "packing-router"
                 )
             {
                 let w = source.window(unix_time());
@@ -441,24 +683,28 @@ async fn render(
                         || k.contains("evaluation_duration"))
                         && h.counts.last().is_some_and(|n| *n > 0.)
                 });
-                out.push_str(&format!("<section class=\"card\"><h2><a href=\"/apm/transparent/workers/{}/?service={}\">{}</a></h2><p>{} · {} · {}</p><p>Query/evaluation p99: {} · observed {}s of the last five minutes</p><p>Process RSS: {} MiB · cache resident: {} MiB</p></section>",escape(name),service,escape(name),escape(&source.role),if source.fresh(unix_time()){"Fresh"}else{"Stale / unavailable"},match source.ready{Some(true)=>"Ready",Some(false)=>"Not ready",None=>"Readiness unavailable"},latency.map(|(_,h)|quantile(h,0.99)).unwrap_or_else(||"—".into()),w.observed_seconds,number(source.current.gauges.get("transparent_shard_process_rss_bytes").or_else(||source.current.gauges.get("enhance_worker_process_rss_bytes")).map(|v|v/1048576.)),number(source.current.gauges.get("transparent_shard_cache_resident_bytes").map(|v|v/1048576.))));
+                out.push_str(&format!("<section class=\"card\"><h2><a href=\"/apm/transparent/workers/{}/?service={}\">{}</a></h2><p>{} · {} · {}</p><p>Query/evaluation p99: {} · observed {}s of the last five minutes</p><p>Process RSS: {} MiB · cache resident: {} MiB</p></section>",escape(name),escape(service),escape(name),escape(&source.role),if source.fresh(unix_time()){"Fresh"}else{"Stale / unavailable"},match source.ready{Some(true)=>"Ready",Some(false)=>"Not ready",None=>"Readiness unavailable"},latency.map(|(_,h)|quantile(h,0.99)).unwrap_or_else(||"—".into()),w.observed_seconds,number(source.current.gauges.get("transparent_shard_process_rss_bytes").or_else(||source.current.gauges.get("enhance_worker_process_rss_bytes")).map(|v|v/1048576.)),number(source.current.gauges.get("transparent_shard_cache_resident_bytes").map(|v|v/1048576.))));
             } else {
                 out.push_str(&source_card(
                     name,
                     source,
-                    history.get(name).map(Vec::as_slice).unwrap_or(&[]),
+                    history.get(name.as_str()).map(Vec::as_slice).unwrap_or(&[]),
                 ));
             }
         }
     }
     out.push_str("<section class=\"card\"><h2>Incidents</h2>");
+    let prefix = super::rules::service_prefix(service);
     for incident in &d.monitoring.incidents {
         if incident.active {
             if let Some(c) = &incident.condition {
-                if c.resource.contains(service)
-                    || c.key.contains(service)
-                    || c.key == "quality_storage"
-                {
+                let ours = if configured.is_some() {
+                    c.key.starts_with(&prefix)
+                } else {
+                    c.key.starts_with("quality_")
+                        && (c.resource.contains(service) || c.key.contains(service))
+                };
+                if ours || c.key == "quality_storage" {
                     out.push_str(&format!(
                         "<p>{} · {} · {}</p>",
                         escape(&c.severity),
@@ -471,4 +717,28 @@ async fn render(
     }
     out.push_str("</section><p>HTTP timing ends at response construction unless labeled as edge timing. Worker evaluation and queue timings are independent scopes. Synthetic checks include client processing. Percentiles are merged from histogram buckets; gaps and overflow remain explicit. Byte counters measure payload consumption/emission, not successful receipt by a wallet.</p></main></body></html>");
     Ok(Html(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn range_percentiles_merge_buckets_and_break_on_changed_bounds() {
+        let point = |bounds: Vec<Option<f64>>, counts: Vec<f64>| {
+            let mut p = Point::default();
+            p.values
+                .histograms
+                .insert("cycle".into(), Histogram { bounds, counts });
+            p
+        };
+        let a = point(vec![Some(1.), Some(10.), None], vec![5., 10., 10.]);
+        let h = merged(&[a.clone(), a.clone()], "cycle").unwrap();
+        assert_eq!(h.counts, vec![10., 20., 20.]);
+        assert_eq!(seconds(Some(&h), 0.25), "0.50 s");
+        assert_eq!(seconds(None, 0.5), "—");
+        let b = point(vec![Some(2.), Some(10.), None], vec![1., 1., 1.]);
+        assert!(merged(&[a, b], "cycle").is_none());
+        assert!(merged(&[], "cycle").is_none());
+        assert_eq!(title("txid"), "Txid");
+    }
 }

@@ -42,10 +42,16 @@ class ApmTest(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         d = self.root = Path(self.directory.name)
         self.apm = d / 'transparent.json'
-        self.apm.write_text(json.dumps({'publisher_url': 'http://127.0.0.1:8094/metrics',
-                                        'roster': '/opt/transparent-publisher/roster.json',
-                                        'synthetic_status': '/opt/transparent-5qps-20260929/status.json',
-                                        'host_snapshot': '/var/lib/pir-apm/hosts.json'}))
+        self.txid = {'service': 'txid', 'kind': 'txid', 'controller_url': 'http://127.0.0.1:8098',
+                     'workers': [{'id': 'transparent-pir-txid-k8-01', 'role': 'display-worker',
+                                  'upstream': '10.142.0.18:8095'}],
+                     'path_prefix': '/v2', 'alert_mode': 'shadow'}
+        self.apm.write_text(json.dumps({'host_snapshot': '/var/lib/pir-apm/hosts.json', 'services': [
+            {'service': 'transparent', 'kind': 'history', 'publisher_url': 'http://127.0.0.1:8094/metrics',
+             'roster': '/opt/transparent-publisher/roster.json',
+             'synthetic_status': '/opt/transparent-5qps-20260929/status.json',
+             'path_prefix': '/v2', 'alert_mode': 'shadow'},
+            self.txid]}))
         self.apm.chmod(0o640)
         self.hosts = d / 'hosts.json'
         self.hosts.write_text(json.dumps({'roster': {'path': '/opt/transparent-publisher/roster.json',
@@ -82,18 +88,35 @@ class ApmTest(unittest.TestCase):
         backups = self.root / 'backup'
         code, _ = run_main(self.argv('--apply', '--backup-dir', str(backups)), runs)
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(self.apm.read_text()),
-                         {**original, 'roster': str(self.roster), 'synthetic_status': str(self.status)})
+        history = {**original['services'][0], 'roster': str(self.roster), 'synthetic_status': str(self.status)}
+        self.assertEqual(json.loads(self.apm.read_text()), {**original, 'services': [history, self.txid]})
         self.assertEqual(self.apm.stat().st_mode & 0o777, 0o640)
         self.assertEqual(json.loads(self.hosts.read_text())['roster'],
                          {'path': str(self.roster), 'unit': 'transparent-shard-server.service'})
         self.assertEqual(runs.calls, [['systemctl', 'restart', 'pir-apm']])
-        restored = {json.loads(p.read_text()).get('synthetic_status') for p in backups.iterdir()}
-        self.assertIn('/opt/transparent-5qps-20260929/status.json', restored)
+        restored = [json.loads(p.read_text()) for p in backups.iterdir()]
+        self.assertIn(original, restored)
         # A second apply would overwrite the original backup; it refuses instead.
         self.apm.write_text(json.dumps(original))
         with self.assertRaises(ValueError):
             run_main(self.argv('--apply', '--backup-dir', str(backups)), Runs())
+
+    def test_without_load_status_only_the_roster_moves(self):
+        original = json.loads(self.apm.read_text())
+        argv = ['apm', '--apm-config', str(self.apm), '--hosts-config', str(self.hosts),
+                '--roster', str(self.roster), '--apply', '--backup-dir', str(self.root / 'backup')]
+        code, _ = run_main(argv, Runs())
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(self.apm.read_text())['services'][0],
+                         {**original['services'][0], 'roster': str(self.roster)})
+
+    def test_only_a_history_service_or_the_service_shape_is_moved(self):
+        with self.assertRaises(ValueError):
+            run_main(self.argv('--service', 'txid'), Runs())
+        self.apm.write_text(json.dumps({'publisher_url': 'http://127.0.0.1:8094/metrics',
+                                        'roster': '/opt/transparent-publisher/roster.json'}))
+        with self.assertRaises(ValueError):
+            run_main(self.argv(), Runs())
 
     def test_stale_status_or_unreadable_roster_refuses(self):
         self.write_status(NOW - 3600)

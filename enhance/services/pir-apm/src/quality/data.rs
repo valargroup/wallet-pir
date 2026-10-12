@@ -201,7 +201,22 @@ fn label_allowed(key: &str, value: &str) -> bool {
                     || matches!(value, "1xx" | "2xx" | "3xx" | "4xx" | "5xx"))
         }
         "outcome" | "result" => matches!(value, "success" | "error" | "cancelled" | "failure"),
-        "stage" => matches!(value, "total" | "worker" | "packing" | "queue"),
+        "stage" => matches!(
+            value,
+            "total"
+                | "worker"
+                | "packing"
+                | "queue"
+                | "build"
+                | "verify"
+                | "digest"
+                | "write"
+                | "prebuild"
+                | "ship"
+                | "prepare"
+                | "activate"
+        ),
+        "phase" => matches!(value, "loading" | "warming" | "total"),
         "table" => matches!(value, "directory" | "pages"),
         "server" => matches!(value, "srv0" | "srv1" | "srv2" | "srv3"),
         "method" => matches!(
@@ -225,6 +240,8 @@ fn allowed(name: &str) -> bool {
         "pir_http_",
         "transparent_shard_",
         "transparent_publication_",
+        "transparent_display_",
+        "txid_display_",
         "enhance_http_",
         "enhance_query_stage_",
         "enhance_worker_",
@@ -398,6 +415,32 @@ mod tests {
                 .unwrap()
                 .contains("assignment_sha256"));
         }
+    }
+    #[test]
+    fn txid_display_and_prepare_metrics_keep_their_stage_and_phase() {
+        let text = "txid_display_stalled 0\n\
+            txid_display_cycle_stage_seconds_bucket{stage=\"prebuild\",le=\"1\"} 0\n\
+            txid_display_cycle_stage_seconds_bucket{stage=\"prebuild\",le=\"+Inf\"} 0\n\
+            txid_display_cycle_stage_seconds_count{stage=\"prebuild\"} 0\n\
+            transparent_shard_prepare_seconds_bucket{phase=\"total\",le=\"60\"} 2\n\
+            transparent_shard_prepare_seconds_bucket{phase=\"total\",le=\"+Inf\"} 3\n\
+            transparent_shard_prepare_seconds_count{phase=\"total\"} 3\n\
+            transparent_display_prepare_seconds_bucket{le=\"+Inf\"} 1\n\
+            transparent_display_prepare_seconds_count 1\n";
+        let r = parse(text, 100).unwrap();
+        assert_eq!(r.values.gauges["txid_display_stalled"], 0.);
+        assert!(r
+            .values
+            .histograms
+            .contains_key("txid_display_cycle_stage_seconds|stage=prebuild"));
+        assert!(r
+            .values
+            .histograms
+            .contains_key("transparent_shard_prepare_seconds|phase=total"));
+        assert!(r
+            .values
+            .histograms
+            .contains_key("transparent_display_prepare_seconds"));
     }
     #[test]
     fn label_order_is_canonical_across_counter_samples() {
